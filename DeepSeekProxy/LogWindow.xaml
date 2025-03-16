@@ -1,0 +1,15 @@
+<Window x:Class="DeepSeekProxy.LogWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="日志窗口" Height="450" Width="800">
+    <Grid>
+        <TextBox x:Name="LogTextBox" 
+                 IsReadOnly="True" 
+                 TextWrapping="Wrap" 
+                 VerticalScrollBarVisibility="Auto"
+                 FontFamily="Consolas"
+                 FontSize="12"
+                 Background="Black"
+                 Foreground="White"/>
+    </Grid>
+</Window>

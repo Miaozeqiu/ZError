@@ -1,22 +1,20 @@
-﻿using System.Configuration;
-using System.Data;
+﻿using System;
 using System.Windows;
-using System.Windows.Media.Imaging;
+using Application = System.Windows.Application;
 
 namespace DeepSeekProxy
 {
-    /// <summary>
-    /// Interaction logic for App.xaml
-    /// </summary>
-    public partial class App : System.Windows.Application
+    public partial class App : Application
     {
         protected override void OnStartup(StartupEventArgs e)
         {
             base.OnStartup(e);
             
-            // 设置任务栏图标
-            var iconUri = new System.Uri("pack://application:,,,/Resources/app.ico");
-            this.Resources.Add("AppIcon", BitmapFrame.Create(iconUri));
+            // 重定向控制台输出
+            Console.SetOut(new LogWriter());
+            
+            // 显示日志窗口
+            //LogWindow.Instance.Show();
         }
     }
 }

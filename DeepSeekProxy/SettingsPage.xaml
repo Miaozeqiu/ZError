@@ -1,0 +1,38 @@
+<Page x:Class="DeepSeekProxy.SettingsPage"
+      xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+      xmlns:hc="http://handyorg.github.io/handycontrol"
+      Title="设置">
+    <Grid Margin="20">
+        <StackPanel>
+            <TextBlock Text="API 设置" 
+                       FontSize="24" 
+                       Foreground="{DynamicResource PrimaryTextBrush}"
+                       Margin="0,0,0,20"/>
+            
+            <GroupBox Header="API 密钥配置" Margin="0,0,0,20" Padding="10">
+                <StackPanel Margin="10">
+                    <TextBlock Text="DeepSeek 官方 API 密钥:" Margin="0,0,0,5"/>
+                    <TextBox x:Name="DeepseekApiKeyTextBox" Margin="0,0,0,10" Height="30"
+                             Tag="请输入 DeepSeek API 密钥"/>
+                    
+                    <TextBlock Text="阿里云百炼 API 密钥:" Margin="0,0,0,5"/>
+                    <TextBox x:Name="AliyunApiKeyTextBox" Margin="0,0,0,10" Height="30"
+                             Tag="请输入阿里云百炼 API 密钥"/>
+                    
+                    <TextBlock Text="硅基流动 API 密钥:" Margin="0,0,0,5"/>
+                    <TextBox x:Name="SiliconFlowApiKeyTextBox" Margin="0,0,0,10" Height="30"
+                             Tag="请输入硅基流动 API 密钥"/>
+                    
+                    <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                        <Button x:Name="SaveAllApiKeysButton" Content="保存所有密钥" Width="120" 
+                                Height="30" Margin="0,0,10,0" Style="{StaticResource ButtonSuccess}"/>
+                        <Button x:Name="GetApiKeyButton" Content="获得API密钥" Width="120"
+                                Height="30" Style="{StaticResource ButtonInfo}"/>
+                    </StackPanel>
+                </StackPanel>
+            </GroupBox>
+            
+        </StackPanel>
+    </Grid>
+</Page>
