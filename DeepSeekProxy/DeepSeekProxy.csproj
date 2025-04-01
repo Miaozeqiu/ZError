@@ -18,6 +18,8 @@
 
   <ItemGroup>
     <PackageReference Include="HandyControl" Version="3.5.1" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="9.0.3" />
+    <PackageReference Include="System.Data.SQLite.Core" Version="1.0.119" />
     <!-- 删除下面这行，因为 .NET SDK 已经默认包含了项目中的所有 .cs 文件 -->
     <!-- <Compile Include="Properties\Settings.cs" /> -->
   </ItemGroup>

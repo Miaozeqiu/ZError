@@ -146,29 +146,26 @@ namespace ZJOOCHelper
                             {
                                 foreach (JsonElement resource in resources.EnumerateArray())
                                 {
-                                    // 只显示未完成的视频
-                                    if (resource.GetProperty("learnStatus").GetInt32() == 0)
+                                    // 移除 learnStatus 的检查，处理所有视频
+                                    var videoInfo = new Dictionary<string, object>
                                     {
-                                        var videoInfo = new Dictionary<string, object>
-                                        {
-                                            { "Name", $"{chapterName}-{sectionName}-{resource.GetProperty("name").GetString()}" },
-                                            { "courseId", courseId },
-                                            { "chapterId", resource.GetProperty("id").GetString() },
-                                            { "learnStatus", 0 }
-                                        };
-                                        
-                                        // 获取视频时长
-                                        if (resource.TryGetProperty("vedioTimeLength", out JsonElement timeLength))
-                                        {
-                                            videoInfo["time"] = timeLength.GetInt32();
-                                        }
-                                        else
-                                        {
-                                            videoInfo["time"] = 0;
-                                        }
-                                        
-                                        videoMsg.Add(videoInfo);
+                                        { "Name", $"{chapterName}-{sectionName}-{resource.GetProperty("name").GetString()}" },
+                                        { "courseId", courseId },
+                                        { "chapterId", resource.GetProperty("id").GetString() },
+                                        { "learnStatus", resource.GetProperty("learnStatus").GetInt32() }
+                                    };
+                                    
+                                    // 获取视频时长
+                                    if (resource.TryGetProperty("vedioTimeLength", out JsonElement timeLength))
+                                    {
+                                        videoInfo["time"] = timeLength.GetInt32();
                                     }
+                                    else
+                                    {
+                                        videoInfo["time"] = 0;
+                                    }
+                                    
+                                    videoMsg.Add(videoInfo);
                                 }
                             }
                         }

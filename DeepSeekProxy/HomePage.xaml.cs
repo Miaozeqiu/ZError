@@ -8,10 +8,28 @@ namespace DeepSeekProxy
     public partial class HomePage : Page
     {
         private ProxyService proxyService;
-        
+        private readonly string apiConfig; // 添加 apiConfig 变量声明
         public HomePage(ProxyService proxyService)
         {
             InitializeComponent();
+            apiConfig = @"[{
+    ""name"": ""ZE题库(自建版)"",
+    ""homepage"": ""https://pages.zaizhexue.top/"",
+    ""url"": ""http://localhost:5233/query"",
+    ""method"": ""get"",
+    ""type"": ""GM_xmlhttpRequest"",
+    ""contentType"": ""json"",
+    ""data"": {
+        ""title"": ""${title}"",
+        ""options"": ""${options}"",
+        ""type"": ""${type}""
+    },
+    ""handler"": ""return (res)=>res.code === 0 ? [undefined, undefined] : [undefined,res.data.data]""
+}]";
+
+            // 在TextBox中显示配置
+            ConfigTextBox.Text = apiConfig;
+        
             this.proxyService = proxyService;
             
             // 设置ComboBox选择变更事件
@@ -28,6 +46,19 @@ namespace DeepSeekProxy
             UpdateButtonStates();
         }
         
+        private void CopyConfig_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                System.Windows.Clipboard.SetText(apiConfig);
+                HandyControl.Controls.MessageBox.Success("配置已复制到剪贴板！", "成功");
+            }
+            catch (Exception ex)
+            {
+                HandyControl.Controls.MessageBox.Error($"复制失败：{ex.Message}", "错误");
+            }
+        }
+
         // 添加一个方法来根据当前API类型设置ComboBox的选中项
         private void SetComboBoxSelectionByApiType()
         {
