@@ -51,11 +51,11 @@ namespace DeepSeekProxy
             try
             {
                 System.Windows.Clipboard.SetText(apiConfig);
-                HandyControl.Controls.MessageBox.Success("配置已复制到剪贴板！", "成功");
+                System.Windows.MessageBox.Show("配置已复制到剪贴板！", "成功");
             }
             catch (Exception ex)
             {
-                HandyControl.Controls.MessageBox.Error($"复制失败：{ex.Message}", "错误");
+                System.Windows.MessageBox.Show($"复制失败：{ex.Message}", "错误");
             }
         }
 

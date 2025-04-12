@@ -43,7 +43,7 @@ namespace DeepSeekProxy
             command.ExecuteNonQuery();
         }
         
-        private static async Task<string> GetCachedResponse(string title, string options, string questionType)
+        private static async Task<string> GetCachedResponse(string title)
         {
             using var connection = new SQLiteConnection($"Data Source={DbPath}");
             connection.Open();
@@ -115,7 +115,7 @@ namespace DeepSeekProxy
                 string questionType = queryParams["question_type"] ?? "";
 
                 // 在调用 AI 之前先检查缓存
-                string cachedAnswer = await GetCachedResponse(title, options, questionType);
+                string cachedAnswer = await GetCachedResponse(title);
                 string answer;
                 
                 if (!string.IsNullOrEmpty(cachedAnswer))

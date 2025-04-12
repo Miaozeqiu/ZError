@@ -22,26 +22,70 @@ namespace DeepSeekProxy
         private readonly string siliconFlowUrl = "https://api.siliconflow.cn/v1/chat/completions";
         private bool isRunning;
         private int apiType = 0; // 0: DeepSeek 官方, 1: 阿里云, 2: 硅基流动
-        
+
         // 添加 CurrentApiType 属性
         public string CurrentApiType { get; set; } = "deepseek";
-        
+
         // 添加 API 密钥存储
         private string deepseekApiKey = "";
         private string aliyunApiKey = "";
         private string siliconFlowApiKey = "";
-        
+        // 在类的成员变量部分
+        private Dictionary<string, bool> routeEnabledStatus = new Dictionary<string, bool>();
+
+        // 在构造函数中
         public ProxyService()
         {
-            listener = new HttpListener();
-            listener.Prefixes.Add("http://localhost:5233/");
-            
-            // 在构造函数中加载之前保存的 API 密钥
-            LoadApiKeysFromConfig();
+            // 初始化路由状态
+            InitRouteStatus();
+
             // 加载上次选择的 API 类型
             LoadLastSelectedApi();
+
+            // 加载保存的 API 密钥
+            LoadApiKeysFromConfig();
+            listener = new HttpListener();
+            listener.Prefixes.Add("http://localhost:5233/");
         }
-        
+
+        // 初始化路由状态
+        private void InitRouteStatus()
+        {
+            // 默认所有路由都启用
+            routeEnabledStatus["/"] = true;        // 默认API路由
+            routeEnabledStatus["/query"] = true;   // 查询路由
+            routeEnabledStatus["/courseware"] = true; // 课件路由
+
+            // 尝试从配置文件加载路由状态
+            LoadRouteStatusFromConfig();
+        }
+
+        // 从配置文件加载路由状态
+        private void LoadRouteStatusFromConfig()
+        {
+            try
+            {
+                string configPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "routestatus.json");
+                if (File.Exists(configPath))
+                {
+                    string json = File.ReadAllText(configPath);
+                    var loadedStatus = JsonSerializer.Deserialize<Dictionary<string, bool>>(json);
+                    if (loadedStatus != null)
+                    {
+                        foreach (var kvp in loadedStatus)
+                        {
+                            routeEnabledStatus[kvp.Key] = kvp.Value;
+                        }
+                        Console.WriteLine("成功加载路由状态配置");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"加载路由状态配置失败: {ex.Message}");
+            }
+        }
+
         // 添加加载上次选择的 API 的方法
         public void LoadLastSelectedApi()
         {
@@ -55,7 +99,7 @@ namespace DeepSeekProxy
                     if (document.RootElement.TryGetProperty("lastApiType", out var lastApiType))
                     {
                         CurrentApiType = lastApiType.GetString() ?? "deepseek";
-                        
+
                         // 同时更新 apiType 整数值
                         switch (CurrentApiType.ToLower())
                         {
@@ -80,7 +124,7 @@ namespace DeepSeekProxy
                 apiType = 0;
             }
         }
-        
+
         // 添加保存当前选择的 API 的方法
         public void SaveLastSelectedApi()
         {
@@ -99,7 +143,7 @@ namespace DeepSeekProxy
                         CurrentApiType = "deepseek";
                         break;
                 }
-                
+
                 string configPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "apiconfig.json");
                 var config = new { lastApiType = CurrentApiType };
                 string json = JsonSerializer.Serialize(config);
@@ -110,7 +154,7 @@ namespace DeepSeekProxy
                 Console.WriteLine($"保存当前选择的 API 失败: {ex.Message}");
             }
         }
-        
+
         // 获取当前 API 密钥
         public string GetCurrentApiKey()
         {
@@ -124,7 +168,7 @@ namespace DeepSeekProxy
                     return deepseekApiKey;
             }
         }
-        
+
         // 设置 API 密钥
         public void SetApiKey(int type, string apiKey)
         {
@@ -141,7 +185,7 @@ namespace DeepSeekProxy
                     break;
             }
         }
-        
+
         // 获取指定类型的 API 密钥
         public string GetApiKey(int type)
         {
@@ -155,37 +199,37 @@ namespace DeepSeekProxy
                     return deepseekApiKey;
             }
         }
-    
+
         // 设置 API 类型的方法
         public void SetApiType(int type)
         {
             apiType = type;
         }
-    
+
         // 获取当前使用的 API 类型
         public int GetApiType()
         {
             return apiType;
         }
-    
+
         // 兼容旧代码的方法
         public void SetUseAliyunApi(bool useAliyun)
         {
             apiType = useAliyun ? 1 : 0;
         }
-    
+
         public bool IsUsingAliyunApi()
         {
             return apiType == 1;
         }
-        
+
         // 保存 API 密钥到配置文件
         public void SaveApiKeysToConfig()
         {
             try
             {
                 string configPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "apikeys.config");
-                File.WriteAllText(configPath, 
+                File.WriteAllText(configPath,
                     $"{deepseekApiKey}\n{aliyunApiKey}\n{siliconFlowApiKey}");
             }
             catch (Exception ex)
@@ -193,7 +237,7 @@ namespace DeepSeekProxy
                 Console.WriteLine($"保存 API 密钥失败: {ex.Message}");
             }
         }
-        
+
         // 从配置文件加载 API 密钥
         public void LoadApiKeysFromConfig()
         {
@@ -208,7 +252,14 @@ namespace DeepSeekProxy
                         deepseekApiKey = lines[0];
                         aliyunApiKey = lines[1];
                         siliconFlowApiKey = lines[2];
+
+                        // 添加日志以便调试
+                        Console.WriteLine("成功加载 API 密钥");
                     }
+                }
+                else
+                {
+                    Console.WriteLine("API 密钥配置文件不存在");
                 }
             }
             catch (Exception ex)
@@ -216,9 +267,10 @@ namespace DeepSeekProxy
                 Console.WriteLine($"加载 API 密钥失败: {ex.Message}");
             }
         }
-        
+
         public bool IsRunning => isRunning; // 添加属性以便外部检查服务状态
-        
+
+
         public string Start()
         {
             if (!isRunning)
@@ -258,7 +310,7 @@ namespace DeepSeekProxy
             }
             return "服务已在运行中";
         }
-        
+
         public string Stop()
         {
             if (isRunning)
@@ -279,7 +331,7 @@ namespace DeepSeekProxy
             }
             return "服务未在运行";
         }
-    
+
         private async Task HandleRequests()
         {
             while (isRunning)
@@ -295,7 +347,7 @@ namespace DeepSeekProxy
                 }
             }
         }
-    
+
         private async Task ProcessRequestAsync(HttpListenerContext context)
         {
             try
@@ -305,7 +357,7 @@ namespace DeepSeekProxy
                 context.Response.Headers.Add("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
                 context.Response.Headers.Add("Access-Control-Allow-Headers", "Content-Type, Authorization");
                 context.Response.Headers.Add("Access-Control-Max-Age", "86400");
-    
+
                 // Handle OPTIONS
                 if (context.Request.HttpMethod.Equals("OPTIONS", StringComparison.OrdinalIgnoreCase))
                 {
@@ -313,34 +365,34 @@ namespace DeepSeekProxy
                     context.Response.Close();
                     return;
                 }
-    
+
                 // 处理 /query 路由
                 if (context.Request.Url?.AbsolutePath?.Equals("/query", StringComparison.OrdinalIgnoreCase) == true)
                 {
                     await QueryHandler.HandleRequest(context);
                     return;
                 }
-    
+
                 // 处理 /courseware 路由
                 if (context.Request.Url?.AbsolutePath?.Equals("/courseware", StringComparison.OrdinalIgnoreCase) == true)
                 {
                     await CoursewareHandler.HandleRequest(context);
                     return;
                 }
-    
+
                 // Read request body
                 string requestBody;
                 using (var reader = new StreamReader(context.Request.InputStream))
                 {
                     requestBody = await reader.ReadToEndAsync();
                 }
-    
+
                 // Validate request body
                 if (string.IsNullOrEmpty(requestBody))
                 {
                     throw new Exception("Request body is empty");
                 }
-    
+
                 // Ensure messages field exists
                 try
                 {
@@ -362,7 +414,7 @@ namespace DeepSeekProxy
                                 modelName = "deepseek-chat";
                                 break;
                         }
-                        
+
                         var jsonObj = new
                         {
                             model = modelName,
@@ -387,7 +439,7 @@ namespace DeepSeekProxy
                                 modelName = "deepseek-chat";
                                 break;
                         }
-                        
+
                         // 如果存在 model 字段，根据 API 类型强制更新
                         var jsonObj = new
                         {
@@ -402,10 +454,10 @@ namespace DeepSeekProxy
                 {
                     throw new Exception("Invalid JSON format in request body");
                 }
-                
+
                 Console.WriteLine($"Modified Request Body: {requestBody}"); // Log modified request
                 Console.WriteLine($"Request Body: {requestBody}"); // Log request
-    
+
                 using (var client = new HttpClient())
                 {
                     // 根据设置选择使用的 API 接口
@@ -426,7 +478,7 @@ namespace DeepSeekProxy
                     {
                         Content = new StringContent(requestBody, Encoding.UTF8, "application/json")
                     };
-                    
+
                     // 复制请求头并确保设置流式传输
                     foreach (string headerName in context.Request.Headers.Keys)
                     {
@@ -435,7 +487,7 @@ namespace DeepSeekProxy
                             request.Headers.TryAddWithoutValidation(headerName, context.Request.Headers[headerName]);
                         }
                     }
-                    
+
                     // 使用保存的 API 密钥
                     string apiKey = GetCurrentApiKey();
                     if (!string.IsNullOrEmpty(apiKey))
@@ -450,18 +502,48 @@ namespace DeepSeekProxy
                     context.Response.ContentType = "text/event-stream";
                     context.Response.Headers.Add("Cache-Control", "no-cache");
                     context.Response.Headers.Add("Connection", "keep-alive");
-    
+
                     using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
                     context.Response.StatusCode = (int)response.StatusCode;
-                    
+
                     using var stream = await response.Content.ReadAsStreamAsync();
                     using var reader = new StreamReader(stream);
-                    
+
+                    StringBuilder responseBuilder = new StringBuilder();
                     string? line;
                     while ((line = await reader.ReadLineAsync()) != null)
                     {
                         if (!string.IsNullOrEmpty(line))
                         {
+                            // 记录AI响应
+                            if (line.StartsWith("data: {"))
+                            {
+                                try
+                                {
+                                    var json = line.Substring(6); // 去掉"data: "前缀
+                                    using var doc = JsonDocument.Parse(json);
+                                    if (doc.RootElement.TryGetProperty("choices", out var choices) && 
+                                        choices.GetArrayLength() > 0)
+                                    {
+                                        var choice = choices[0];
+                                        if (choice.TryGetProperty("delta", out var delta) && 
+                                            delta.TryGetProperty("content", out var content))
+                                        {
+                                            var contentText = content.GetString();
+                                            if (!string.IsNullOrEmpty(contentText))
+                                            {
+                                                responseBuilder.Append(contentText);
+                                                // 更新日志窗口
+                                                MainWindow.Log(contentText);
+                                            }
+                                        }
+                                    }}
+                                    catch (Exception ex)
+                                    {
+                                        Console.WriteLine($"解析AI响应失败: {ex.Message}");
+                                    }
+                                }
+
                             // 确保每条消息都有正确的 SSE 格式
                             if (!line.StartsWith("data: "))
                             {
@@ -485,8 +567,43 @@ namespace DeepSeekProxy
             {
                 context.Response.Close();
             }
+        } // 确保这里有大括号闭合
+
+        // 保存路由状态到配置文件
+        public void SaveRouteStatusToConfig()
+        {
+            try
+            {
+                string configPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "routestatus.json");
+                string json = JsonSerializer.Serialize(routeEnabledStatus);
+                File.WriteAllText(configPath, json);
+                Console.WriteLine("成功保存路由状态配置");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"保存路由状态配置失败: {ex.Message}");
+            }
         }
-    
- 
+        // 获取所有路由状态
+        public Dictionary<string, bool> GetAllRouteStatus()
+        {
+            // 返回路由状态字典的副本
+            return new Dictionary<string, bool>(routeEnabledStatus);
+        }
+
+        // 设置路由启用状态
+        public void SetRouteEnabled(string route, bool enabled)
+        {
+            if (routeEnabledStatus.ContainsKey(route))
+            {
+                routeEnabledStatus[route] = enabled;
+            }
+            else
+            {
+                routeEnabledStatus.Add(route, enabled);
+            }
+        }
+
     }
 }
+

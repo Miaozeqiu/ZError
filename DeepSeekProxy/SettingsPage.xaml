@@ -5,34 +5,111 @@
       Title="设置">
     <Grid Margin="20">
         <StackPanel>
-            <TextBlock Text="API 设置" 
+            <TextBlock Text="设置" 
                        FontSize="24" 
                        Foreground="{DynamicResource PrimaryTextBrush}"
                        Margin="0,0,0,20"/>
             
             <GroupBox Header="API 密钥配置" Margin="0,0,0,20" Padding="10">
                 <StackPanel Margin="10">
-                    <TextBlock Text="DeepSeek 官方 API 密钥:" Margin="0,0,0,5"/>
-                    <TextBox x:Name="DeepseekApiKeyTextBox" Margin="0,0,0,10" Height="30"
-                             Tag="请输入 DeepSeek API 密钥"/>
+                    <TextBlock Text="DeepSeek 官方 API 密钥:" Margin="0,0,0,5" FontWeight="Medium" Foreground="#555555"/>
+                    <Border BorderThickness="1" BorderBrush="#DDDDDD" CornerRadius="4" Margin="0,0,0,15">
+                        <TextBox x:Name="DeepseekApiKeyTextBox" Height="32" 
+                                 Tag="请输入 DeepSeek API 密钥"
+                                 BorderThickness="0"
+                                 Padding="10,0"
+                                 VerticalContentAlignment="Center"
+                                 Background="Transparent"/>
+                    </Border>
                     
-                    <TextBlock Text="阿里云百炼 API 密钥:" Margin="0,0,0,5"/>
-                    <TextBox x:Name="AliyunApiKeyTextBox" Margin="0,0,0,10" Height="30"
-                             Tag="请输入阿里云百炼 API 密钥"/>
+                    <TextBlock Text="阿里云百炼 API 密钥:" Margin="0,0,0,5" FontWeight="Medium" Foreground="#555555"/>
+                    <Border BorderThickness="1" BorderBrush="#DDDDDD" CornerRadius="4" Margin="0,0,0,15">
+                        <TextBox x:Name="AliyunApiKeyTextBox" Height="32"
+                                 Tag="请输入阿里云百炼 API 密钥"
+                                 BorderThickness="0"
+                                 Padding="10,0"
+                                 VerticalContentAlignment="Center"
+                                 Background="Transparent"/>
+                    </Border>
                     
-                    <TextBlock Text="硅基流动 API 密钥:" Margin="0,0,0,5"/>
-                    <TextBox x:Name="SiliconFlowApiKeyTextBox" Margin="0,0,0,10" Height="30"
-                             Tag="请输入硅基流动 API 密钥"/>
+                    <TextBlock Text="硅基流动 API 密钥:" Margin="0,0,0,5" FontWeight="Medium" Foreground="#555555"/>
+                    <Border BorderThickness="1" BorderBrush="#DDDDDD" CornerRadius="4" Margin="0,0,0,15">
+                        <TextBox x:Name="SiliconFlowApiKeyTextBox" Height="32"
+                                 Tag="请输入硅基流动 API 密钥"
+                                 BorderThickness="0"
+                                 Padding="10,0"
+                                 VerticalContentAlignment="Center"
+                                 Background="Transparent"/>
+                    </Border>
                     
                     <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
                         <Button x:Name="SaveAllApiKeysButton" Content="保存所有密钥" Width="120" 
-                                Height="30" Margin="0,0,10,0" Style="{StaticResource ButtonSuccess}"/>
+                                Height="36" Margin="0,0,15,0" Style="{StaticResource ButtonSuccess}"/>
                         <Button x:Name="GetApiKeyButton" Content="获得API密钥" Width="120"
-                                Height="30" Style="{StaticResource ButtonInfo}"/>
+                                Height="36" Style="{StaticResource ButtonInfo}"/>
                     </StackPanel>
                 </StackPanel>
             </GroupBox>
             
+            <!-- API 密钥设置部分之后添加 -->
+            <GroupBox Header="路由服务设置" Margin="0,20,0,0">
+                <StackPanel Margin="10">
+                    <TextBlock Text="启用或禁用特定路由服务" Margin="0,0,0,10"/>
+                    
+                    <Grid Margin="0,5,0,5">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel>
+                            <TextBlock Text="AI代理" VerticalAlignment="Center"/>
+                            <TextBlock Text="(必须保持开启)" FontSize="11" Foreground="#888888" Margin="0,2,0,0"/>
+                        </StackPanel>
+                        <ToggleButton x:Name="DefaultApiRouteCheckBox" 
+                                    Grid.Column="1"
+                                    IsChecked="True"
+                                    IsEnabled="False"
+                                    Checked="RouteToggle_Changed"
+                                    Unchecked="RouteToggle_Changed"
+                                    Width="50" Height="24"
+                                    Background="#CCCCCC"
+                                    Foreground="#888888"
+                                    Style="{StaticResource ToggleButtonSwitch}"/>
+                    </Grid>
+                    
+                    <Grid Margin="0,5,0,5">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="AI题库" VerticalAlignment="Center"/>
+                        <TextBlock Text="(/query)" FontSize="11" Foreground="#888888" Margin="0,28,0,0"/>
+                        <ToggleButton x:Name="QueryRouteCheckBox" 
+                                    Grid.Column="1"
+                                    IsChecked="True"
+                                    Checked="RouteToggle_Changed"
+                                    Unchecked="RouteToggle_Changed"
+                                    Width="50" Height="24"
+                                    Style="{StaticResource ToggleButtonSwitch}"/>
+                    </Grid>
+                    
+                    <Grid Margin="0,5,0,5">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="课件速刷（在浙学用户）" VerticalAlignment="Center"/>
+                        <TextBlock Text="(/courseware)" FontSize="11" Foreground="#888888" Margin="0,28,0,0"/>
+                        <ToggleButton x:Name="CoursewareRouteCheckBox" 
+                                    Grid.Column="1"
+                                    IsChecked="True"
+                                    Checked="RouteToggle_Changed"
+                                    Unchecked="RouteToggle_Changed"
+                                    Width="50" Height="24"
+                                    Style="{StaticResource ToggleButtonSwitch}"/>
+                    </Grid>
+                </StackPanel>
+            </GroupBox>
         </StackPanel>
     </Grid>
 </Page>

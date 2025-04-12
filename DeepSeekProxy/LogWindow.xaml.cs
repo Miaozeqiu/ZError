@@ -14,6 +14,7 @@ namespace DeepSeekProxy
                 if (instance == null)
                 {
                     instance = new LogWindow();
+                    instance.Closed += (s, e) => instance = null; // 窗口关闭时释放实例
                 }
                 return instance;
             }
@@ -22,26 +23,18 @@ namespace DeepSeekProxy
         private LogWindow()
         {
             InitializeComponent();
-            
-            // 窗口关闭时只隐藏不销毁
-            this.Closing += (s, e) =>
-            {
-                e.Cancel = true;
-                this.Hide();
-            };
         }
 
         public void Log(string message)
         {
-            // 确保在UI线程上执行
-            if (!Dispatcher.CheckAccess())
+            Dispatcher.Invoke(() => 
             {
-                Dispatcher.Invoke(() => Log(message));
-                return;
-            }
-
-            LogTextBox.AppendText($"{DateTime.Now:yyyy-MM-dd HH:mm:ss} - {message}\n");
-            LogTextBox.ScrollToEnd();
+                if (LogTextBox != null) // 添加空引用检查
+                {
+                    LogTextBox.AppendText(message);
+                    LogTextBox.ScrollToEnd();
+                }
+            });
         }
     }
 }
