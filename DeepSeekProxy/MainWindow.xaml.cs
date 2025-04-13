@@ -108,14 +108,14 @@ namespace DeepSeekProxy
             this.WindowState = WindowState.Normal;
             this.Activate();
 
-            // 显示日志窗口
-            var logWindow = LogWindow.Instance;
-            if (!logWindow.IsVisible)
-            {
-                logWindow.Show();
-                logWindow.Topmost = true;  // 确保窗口在最前
-                logWindow.Topmost = false;  // 然后取消最前状态，使其行为正常
-            }
+            // 注释掉以下日志窗口显示代码
+            // var logWindow = LogWindow.Instance;
+            // if (!logWindow.IsVisible)
+            // {
+            //     logWindow.Show();
+            //     logWindow.Topmost = true;
+            //     logWindow.Topmost = false;
+            // }
         }
 
         private void ExitMenuItem_Click(object sender, EventArgs e)
@@ -150,10 +150,11 @@ namespace DeepSeekProxy
                 try
                 {
                     var logWindow = LogWindow.Instance;
-                    if (!logWindow.IsVisible)
-                    {
-                        logWindow.Show();
-                    }
+                    // 注释掉自动显示日志窗口的代码
+                    // if (!logWindow.IsVisible)
+                    // {
+                    //     logWindow.Show();
+                    // }
                     logWindow.Log(message);
                 }
                 catch (Exception ex)

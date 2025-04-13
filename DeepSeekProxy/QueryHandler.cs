@@ -153,7 +153,7 @@ namespace DeepSeekProxy
         private static async Task<string> QueryAI(string title, string options, string questionType)
         {
             // 构建提示内容
-            string promptContent = "你是一个题库接口函数，请根据问题和选项提供答案。如果是选择题，直接返回对应选项的内容，注意是内容，不是对应字母；如果题目是多选题，将内容用\"###\"连接；如果选项内容是\"对\",\"错\"，且只有两项，或者question_type是judgement，你直接返回\"对\"或\"错\"的文字，不要返回字母；如果是填空题，直接返回填空内容，多个空使用###连接。回答格式为：\"{\\\"anwser\\\":\\\"your_anwser_str\\\"}\"，严格使用此格式回答。比如我问你一个问题，你回答的是\"是\"，你回答的格式为：\"{\\\"anwser\\\":\\\"是\\\"}\"。不要回答嗯，好的，我知道了之类的话，你的回答只能是json。下面是一个问题，请你用json格式回答我，绝对不要使用自然语言";
+            string promptContent = "你是一个题库接口函数，请根据问题和选项提供答案。如果是选择题，直接返回对应选项的内容，注意是内容，不是对应字母；如果题目是多选题，将内容用\"###\"连接；如果选项内容是\"对\",\"错\"，且只有两项，或者question_type是judgement，你直接返回\"对\"或\"错\"的文字，不要返回字母；如果是填空题，直接返回填空内容，多个空使用###连接。回答格式为：\"{\\\"anwser\\\":\\\"your_anwser_str\\\"}\"，严格使用此格式回答。比如我问你一个问题，你回答的是\"是\"，你回答的格式为：\"{\\\"anwser\\\":\\\"是\\\"}\"。不要回答嗯，好的，我知道了之类的话，你的回答只能是json。下面是一个问题，请你用json格式回答我，绝对不要使用自然语言，并且不要使用转义字符";
             promptContent += $@"{{
                 ""问题"": ""{title}"",
                 ""选项"": ""{options}"",
@@ -238,62 +238,64 @@ namespace DeepSeekProxy
         {
             try
             {
-                // 尝试提取 JSON 部分
-                int startIdx = aiAnswer.IndexOf('{');
-                int endIdx = aiAnswer.LastIndexOf('}') + 1;
-                
-                if (startIdx >= 0 && endIdx > startIdx)
+                // 先尝试直接解析整个字符串
+                try
                 {
-                    string jsonStr = aiAnswer.Substring(startIdx, endIdx - startIdx);
-                    
-                    // 处理可能的格式问题
-                    // 1. 替换单引号为双引号
-                    jsonStr = jsonStr.Replace('\'', '"');
-                    
-                    // 2. 处理没有引号的键名
-                    jsonStr = System.Text.RegularExpressions.Regex.Replace(jsonStr, @"{(\s*)(\w+)(\s*):", @"{$1""$2""$3:");
-                    jsonStr = System.Text.RegularExpressions.Regex.Replace(jsonStr, @",(\s*)(\w+)(\s*):", @",$1""$2""$3:");
-                    
-                    // 3. 移除所有换行符和多余空格
-                    jsonStr = System.Text.RegularExpressions.Regex.Replace(jsonStr, @"\s+", " ").Trim();
-                    
-                    Console.WriteLine($"处理后的JSON字符串: {jsonStr}");
-                    
-                    // 尝试解析 JSON
-                    using var jsonDoc = JsonDocument.Parse(jsonStr);
+                    using var jsonDoc = JsonDocument.Parse(aiAnswer);
                     var root = jsonDoc.RootElement;
                     
-                    // 提取 answer 字段
                     if (root.TryGetProperty("answer", out var answerElement))
                     {
                         return answerElement.GetString();
                     }
-                    else if (root.TryGetProperty("anwser", out var anwserElement)) // 处理可能的拼写错误
+                    else if (root.TryGetProperty("anwser", out var anwserElement))
                     {
                         return anwserElement.GetString();
                     }
                 }
-                
-                // 如果无法提取 JSON，尝试使用正则表达式提取引号中的内容
-                var answerMatch = System.Text.RegularExpressions.Regex.Match(aiAnswer, @"""answer""\s*:\s*""([^""]+)""");
-                if (answerMatch.Success)
+                catch (JsonException)
                 {
-                    return answerMatch.Groups[1].Value;
+                    // 如果直接解析失败，尝试提取JSON部分
+                    int startIdx = aiAnswer.IndexOf('{');
+                    int endIdx = aiAnswer.LastIndexOf('}') + 1;
+                    
+                    if (startIdx >= 0 && endIdx > startIdx)
+                    {
+                        string jsonStr = aiAnswer.Substring(startIdx, endIdx - startIdx);
+                        
+                        // 再次尝试解析提取的部分
+                        using var jsonDoc = JsonDocument.Parse(jsonStr);
+                        var root = jsonDoc.RootElement;
+                        
+                        if (root.TryGetProperty("answer", out var answerElement))
+                        {
+                            return answerElement.GetString();
+                        }
+                        else if (root.TryGetProperty("anwser", out var anwserElement))
+                        {
+                            return anwserElement.GetString();
+                        }
+                    }
                 }
+
+                // 如果JSON解析都失败，使用正则表达式提取
+                var match = System.Text.RegularExpressions.Regex.Match(
+                    aiAnswer, 
+                    @"""an?wser""\s*:\s*""([^""\\]*(?:\\.[^""\\]*)*)""",
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase);
                 
-                var anwserMatch = System.Text.RegularExpressions.Regex.Match(aiAnswer, @"""anwser""\s*:\s*""([^""]+)""");
-                if (anwserMatch.Success)
+                if (match.Success)
                 {
-                    return anwserMatch.Groups[1].Value;
+                    return match.Groups[1].Value.Replace("\\\"", "\"");
                 }
-                
+
                 // 如果所有方法都失败，返回原始回答
                 return aiAnswer;
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"解析AI回答失败: {ex.Message}");
-                return aiAnswer; // 返回原始回答
+                return aiAnswer;
             }
         }
 
