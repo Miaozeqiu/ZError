@@ -1,9 +1,9 @@
-# DeepSeekProxy 代理服务
+# ZError
 
 <div align="center">
   <img src="https://img.picui.cn/free/2025/04/14/67fd2249779d0.png" alt="ZError Logo" width="128">
   <br>
-  <h3>智能API代理服务</h3>
+  <h3>OCS AI题库软件</h3>
 </div>
 
 ## 项目简介
@@ -27,7 +27,7 @@ ZError是一个功能强大的AI题库软件，支持多种AI平台接口，提�
 
 ## 使用教程
 
-<iframe src="//player.bilibili.com/player.html?isOutside=true&aid=114341810539182&bvid=BV1TPoFY8E4V&cid=29430644774&p=1" scrolling="no" border="0" frameborder="no" framespacing="0" allowfullscreen="true"></iframe>
+https://www.bilibili.com/video/BV1TPoFY8E4V
 
 ## 系统要求
 
@@ -36,7 +36,7 @@ ZError是一个功能强大的AI题库软件，支持多种AI平台接口，提�
 
 ## 安装方法
 
-1. 从[ruaa](https://github.com/yourusername/DeepSeekProxy/releases)下载最新版本
+1. 从[官网](https://zerror.neoregion.cn/)下载最新版本
 2. 运行安装程序
 3. 运行软件
 
