@@ -8,7 +8,8 @@ using System.Reflection;
 using System.Diagnostics; // 添加Debug命名空间
 using Newtonsoft.Json.Linq; // 需要安装Newtonsoft.Json包
 using Application = System.Windows.Application;
-using MessageBox = System.Windows.MessageBox; // 使用WPF的MessageBox替代WinMessageBox
+using MessageBox = System.Windows.MessageBox;
+using System.Data.SQLite; // 使用WPF的MessageBox替代WinMessageBox
 
 namespace DeepSeekProxy
 {
@@ -21,11 +22,54 @@ namespace DeepSeekProxy
         {
             base.OnStartup(e);
             
+            // 检测并初始化数据库
+            CheckAndInitializeDatabase();
+            
             // 初始化托盘图标
             InitializeNotifyIcon();
             
             // 异步检查更新
             _ = CheckForUpdatesAsync();
+        }
+
+        private void CheckAndInitializeDatabase()
+        {
+            try
+            {
+                string dbPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "airesponses.db");
+                
+                // 如果数据库文件不存在，则创建
+                if (!File.Exists(dbPath))
+                {
+                    SQLiteConnection.CreateFile(dbPath);
+                }
+
+                // 检查表结构
+                using (var connection = new SQLiteConnection($"Data Source={dbPath}"))
+                {
+                    connection.Open();
+                    
+                    // 检查AIResponses表是否存在
+                    using (var command = connection.CreateCommand())
+                    {
+                        command.CommandText = @"
+                            CREATE TABLE IF NOT EXISTS AIResponses (
+                                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                Question TEXT NOT NULL,
+                                Options TEXT,
+                                QuestionType TEXT,
+                                Answer TEXT NOT NULL,
+                                CreateTime DATETIME DEFAULT CURRENT_TIMESTAMP
+                            )";
+                        command.ExecuteNonQuery();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"数据库初始化失败: {ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+                // 可以考虑记录日志或采取其他恢复措施
+            }
         }
 
         private async Task CheckForUpdatesAsync()

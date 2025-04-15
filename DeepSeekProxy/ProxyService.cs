@@ -366,6 +366,31 @@ namespace DeepSeekProxy
                     return;
                 }
 
+                // 处理根路由 GET 或 HEAD 请求
+                if (context.Request.Url?.AbsolutePath == "/" && 
+                    (context.Request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) ||
+                     context.Request.HttpMethod.Equals("HEAD", StringComparison.OrdinalIgnoreCase)))
+                {
+                    // 获取查询参数
+                    var queryString = context.Request.Url.Query;
+                    var queryParams = HttpUtility.ParseQueryString(queryString);
+                    
+                    // 返回200状态码和固定文本
+                    string responseText = "zerror.neoregion.cn";
+                    byte[] buffer = Encoding.UTF8.GetBytes(responseText);
+                    context.Response.ContentType = "text/plain";
+                    context.Response.ContentLength64 = buffer.Length;
+                    context.Response.StatusCode = 200;
+                    
+                    // 对于HEAD请求，不发送实际内容
+                    if (!context.Request.HttpMethod.Equals("HEAD", StringComparison.OrdinalIgnoreCase))
+                    {
+                        await context.Response.OutputStream.WriteAsync(buffer, 0, buffer.Length);
+                    }
+                    context.Response.Close();
+                    return;
+                }
+
                 // 处理 /query 路由
                 if (context.Request.Url?.AbsolutePath?.Equals("/query", StringComparison.OrdinalIgnoreCase) == true)
                 {

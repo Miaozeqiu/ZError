@@ -14,7 +14,7 @@ namespace DeepSeekProxy
             InitializeComponent();
             apiConfig = @"[{
     ""name"": ""ZE题库(自建版)"",
-    ""homepage"": ""https://pages.zaizhexue.top/"",
+    ""homepage"": ""http://zerror.neoregion.cn"",
     ""url"": ""http://localhost:5233/query"",
     ""method"": ""get"",
     ""type"": ""GM_xmlhttpRequest"",
