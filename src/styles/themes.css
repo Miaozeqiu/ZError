@@ -1,0 +1,737 @@
+/* 主题系统 - CSS变量定义 */
+
+/* 浅色主题（默认） */
+:root {
+  /* 基础颜色 */
+  --color-primary: #667eea;
+  --color-primary-hover: #5a67d8;
+  --color-secondary: #764ba2;
+  --color-accent: #ff8928;
+  --color-accent-light: #fef6e7;
+  
+  /* 按钮颜色 */
+  --btn-primary-bg: #e1e1e1;
+  --btn-primary-hover: #d1d1d1;
+  --btn-primary-text: #6d6d6d;
+  
+  /* 平台开关颜色 */
+  --platform-toggle-bg: #e2e8f0;
+  --platform-toggle-slider: #ffffff;
+  --platform-toggle-active: #48bb78;
+  --platform-toggle-active-hover: #38a169;
+  
+  /* Toggle组件颜色 */
+  --toggle-default-bg: #cbd5e0;
+  --toggle-default-slider: #ffffff;
+  --toggle-default-active: #3182ce;
+  --toggle-success-bg: #cbd5e0;
+  --toggle-success-slider: #ffffff;
+  --toggle-success-active: #48bb78;
+  --toggle-warning-bg: #cbd5e0;
+  --toggle-warning-slider: #ffffff;
+  --toggle-warning-active: #ed8936;
+  --toggle-danger-bg: #cbd5e0;
+  --toggle-danger-slider: #ffffff;
+  --toggle-danger-active: #e53e3e;
+  
+  /* 模型选中状态颜色 */
+  --model-selected-color: #48a9ff;
+  --model-selected-active: #3b82f6;
+  
+  /* 题目详情相关颜色 */
+  --question-detail-search-placeholder: #9ca3af;
+  --question-detail-clear-btn-bg: #f3f4f6;
+  --question-detail-clear-btn-text: #6b7280;
+  --question-detail-clear-btn-hover-bg: #e5e7eb;
+  --question-detail-clear-btn-hover-text: #374151;
+  --question-detail-add-btn-bg: #10b981;
+  --question-detail-add-btn-text: #ffffff;
+  --question-detail-add-btn-hover-bg: #059669;
+  --question-detail-search-info-text: #6b7280;
+  --question-detail-search-highlight-bg: #fef3c7;
+  --question-detail-search-highlight-text: #92400e;
+  --question-detail-edit-btn-text: #666666;
+  --question-detail-edit-btn-hover-text: #333333;
+  --question-detail-back-icon-fill: #666666;
+  --question-detail-back-icon-hover-fill: #333333;
+  --question-detail-type-tag-bg: #e3f2fd;
+  --question-detail-type-tag-text: #1976d2;
+  --question-detail-cancel-btn-bg: #f8f9fa;
+  --question-detail-cancel-btn-text: #666666;
+  --question-detail-cancel-btn-border: #ddd;
+  --question-detail-cancel-btn-hover-bg: #e9ecef;
+  --question-detail-cancel-btn-hover-text: #333333;
+  --question-detail-save-btn-bg: #007acc;
+  --question-detail-save-btn-text: #ffffff;
+  --question-detail-save-btn-hover-bg: #0056b3;
+  --question-detail-save-btn-disabled-bg: #ccc;
+
+  /* UrlContent页面颜色 */
+  --bg-primary: #ffffff;
+  --bg-secondary: #f5f5f5;
+  --bg-tertiary: #e9e9e9;
+  --text-primary: #333333;
+  --text-secondary: #666666;
+  --border-color: #dddddd;
+  --danger-color: #e74c3c;
+
+  /* 复选框颜色 */
+  --checkbox-bg: #ffffff;
+  --checkbox-border: #d1d5db;
+  --checkbox-checked-bg: #3b82f6;
+  --checkbox-checked-border: #3b82f6;
+  --checkbox-hover-bg: #f9fafb;
+  --checkbox-hover-border: #9ca3af;
+  
+  /* 服务器切换按钮颜色 */
+  --server-toggle-bg: rgba(248, 182, 45, 0.2);
+  --server-toggle-text: #f6b826;
+  --server-toggle-hover-bg: #fcc454;
+  --server-toggle-hover-text: #ffffff;
+  --server-toggle-shadow: rgba(249, 167, 96, 0.8);
+  
+  /* 请求表格颜色 */
+  --request-table-header-text: #868686;
+  --request-table-border: #f1f5f9;
+  --request-table-hover-bg: #f8fafc;
+  
+  /* 请求详情面板颜色 */
+  --request-details-bg: #ffffff;
+  --request-details-border: #e2e8f0;
+  --request-details-shadow: rgba(0, 0, 0, 0.1);
+  --request-details-header-text: #2d3748;
+  --request-details-back-btn-text: #666666;
+  --request-details-back-btn-hover: #e2e8f0;
+  --request-details-tab-text: #4a5568;
+  --request-details-tab-active: #f7c934;
+  --request-details-section-title: #2d3748;
+  --request-details-section-border: #e2e8f0;
+  --request-details-label-text: #4a5568;
+  --request-details-value-text: #2d3748;
+  --request-details-headers-bg: #f8fafc;
+  --request-details-headers-border: #e2e8f0;
+  --request-details-headers-text: #4a5568;
+  --request-details-headers-strong: #2d3748;
+  --request-details-code-bg: #1a202c;
+  --request-details-code-text: #e2e8f0;
+  --request-details-code-border: #2d3748;
+  --request-details-model-calling-bg: #f7fafc;
+  --request-details-model-calling-text: #4a5568;
+  --request-details-streaming-bg: #f0fff4;
+  --request-details-streaming-border: #9ae6b4;
+  --request-details-streaming-text: #22543d;
+  --request-details-streaming-cursor: #38a169;
+  --request-details-selected-bg: #ebf4ff;
+  --request-details-resizer-hover: #e2e8f0;
+  --request-details-resizer-active: #667eea;
+  
+  /* 背景颜色 */
+  --bg-primary: #f4f4f4;
+  --bg-secondary: #fff;
+  --bg-tertiary: #f4f4f4;
+  --bg-sidebar: #2d3748;
+  --bg-overlay: rgba(0, 0, 0, 0.5);
+  
+  /* 文字颜色 */
+  --text-primary: #2d3748;
+  --text-secondary: #4a5568;
+  --text-tertiary: #718096;
+  --text-light: #a0aec0;
+  --text-white: #ffffff;
+  --text-accent: #ff8928;
+  
+  /* 边框颜色 */
+  --border-primary: #e2e8f0;
+  --border-secondary: #cbd5e0;
+  --border-focus: #667eea;
+  --border-color: #e2e8f0;
+  
+  /* 阴影 */
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1);
+  --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.1);
+  --shadow-xl: 0 20px 25px rgba(0, 0, 0, 0.1);
+  
+  /* 状态颜色 */
+  --color-success: #48bb78;
+  --color-warning: #ed8936;
+  --color-error: #f56565;
+  --color-info: #4299e1;
+  
+  /* 交互状态 */
+  --hover-bg: #f7fafc;
+  --active-bg: #edf2f7;
+  --selected-bg: #e3f2fd;
+  --disabled-bg: #e2e8f0;
+  --disabled-text: #a0aec0;
+  
+  /* 主要颜色映射 */
+  --primary-color: var(--color-primary);
+  --primary-hover: var(--color-primary-hover);
+  
+  /* 表格分割线 */
+  --table-divider: #e5e7eb;
+  --table-divider-hover: #d1d5db;
+  --table-divider-active: #93c5fd;
+  --table-divider-selected: #bfdbfe;
+  --table-header-divider: #d1d5db;
+  
+  /* 右键菜单相关颜色 */
+  --context-menu-bg: #ffffff;
+  --context-menu-border: #e2e8f0;
+  --context-menu-shadow: rgba(0, 0, 0, 0.1);
+  --context-menu-item-text: #2d3748;
+  --context-menu-item-hover-bg: #eaeaea;
+  --context-menu-item-disabled-text: #a0aec0;
+  --context-menu-divider-bg: #e2e8f0;
+
+  /* 侧边栏导航项颜色 */
+  --nav-item-text: #636363;
+  --nav-item-text-hover: #2d3748;
+  --nav-item-text-active: #ff8928;
+  --nav-item-bg: transparent;
+  --nav-item-bg-hover: #f7fafc;
+  --nav-item-bg-active: #f7fafc;
+  --nav-item-border: transparent;
+  --nav-item-border-hover: #e2e8f0;
+  --nav-item-border-active: #e2e8f0;
+
+  /* 平台列表项颜色 */
+  --platform-item-bg: transparent;
+  --platform-item-hover-bg: #f7fafc;
+  --platform-item-active-bg: #ebf8ff;
+  --platform-item-border: transparent;
+  --platform-item-hover-border: #e2e8f0;
+  --platform-item-active-border: #3182ce;
+  --platform-item-text: #2d3748;
+  --platform-item-hover-text: #2d3748;
+  --platform-item-active-text: #2d3748;
+  --platform-item-icon-bg: #f7fafc;
+  --platform-item-icon-hover-bg: #edf2f7;
+  --platform-item-icon-active-bg: #bee3f8;
+
+  /* 平台详情面板相关颜色 */
+  --platform-detail-bg: #ffffff;
+  --platform-detail-border: #e2e8f0;
+  --platform-detail-content-bg: #ffffff;
+  --platform-detail-section-border: #f7fafc;
+  --platform-detail-header-text: #2d3748;
+  --platform-detail-description-text: #718096;
+  --platform-detail-form-label-text: #2d3748;
+  --platform-detail-form-input-bg: #ffffff;
+  --platform-detail-form-input-border: #e2e8f0;
+  --platform-detail-form-input-focus-border: #3182ce;
+  --platform-detail-form-input-text: #2d3748;
+
+  /* 模型项相关颜色 */
+  --model-item-bg: #ffffff;
+  --model-item-border: #e2e8f0;
+  --model-item-hover-bg: #f7fafc;
+  --model-item-hover-border: #cbd5e0;
+  --model-item-active-bg: #ebf8ff;
+  --model-item-active-border: #3182ce;
+  --model-item-text: #2d3748;
+  --model-item-hover-text: #2d3748;
+  --model-item-active-text: #2d3748;
+  --model-item-name-text: #2d3748;
+  --model-item-description-text: #718096;
+  --model-item-specs-text: #a0aec0;
+  --model-item-selected-icon: #3182ce;
+
+  /* Dialog Button 颜色变量 */
+  --dialog-button-primary-bg: #3b82f6;
+  --dialog-button-primary-text: #ffffff;
+  --dialog-button-primary-hover: #2563eb;
+  --dialog-button-secondary-bg: #ffffff;
+  --dialog-button-secondary-text: #374151;
+  --dialog-button-secondary-border: #d1d5db;
+  --dialog-button-secondary-hover-bg: #f9fafb;
+  --dialog-button-secondary-hover-border: #9ca3af;
+  --dialog-button-danger-bg: #d73a49;
+  --dialog-button-danger-text: #ffffff;
+  --dialog-button-danger-hover: #cb2431;
+  --dialog-button-close-bg: transparent;
+  --dialog-button-close-text: #586069;
+  --dialog-button-close-hover-bg: #e1e4e8;
+  --dialog-button-close-hover-text: #24292e;
+
+  /* 平台配置对话框相关颜色 */
+  --platform-config-dialog-bg: #ffffff;
+  --platform-config-dialog-border: #e2e8f0;
+  --platform-config-dialog-header-border: #e2e8f0;
+  --platform-config-dialog-title-text: #2d3748;
+  --platform-config-dialog-close-text: #718096;
+  --platform-config-dialog-close-hover-bg: #f7fafc;
+  --platform-config-dialog-close-hover-text: #2d3748;
+  --platform-config-form-label-text: #2d3748;
+  --platform-config-form-input-border: #e2e8f0;
+  --platform-config-form-input-focus-border: #667eea;
+  --platform-config-btn-secondary-bg: #f7fafc;
+  --platform-config-btn-secondary-text: #4a5568;
+  --platform-config-btn-secondary-border: #e2e8f0;
+  --platform-config-btn-secondary-hover-bg: #667eea;
+  --platform-config-btn-secondary-hover-text: #ffffff;
+  --platform-config-icon-display-bg: #f7fafc;
+  --platform-config-icon-display-border: #e2e8f0;
+  --platform-config-icon-fallback-text: #718096;
+  --platform-config-icon-dropdown-bg: #ffffff;
+  --platform-config-icon-dropdown-border: #e2e8f0;
+  --platform-config-icon-section-title-text: #718096;
+  --platform-config-icon-section-title-bg: #f7fafc;
+  --platform-config-icon-option-bg: #ffffff;
+  --platform-config-icon-option-border: #e2e8f0;
+  --platform-config-icon-option-hover-border: #667eea;
+  --platform-config-icon-option-hover-bg: #f0f4ff;
+  --platform-config-icon-option-active-border: #667eea;
+  --platform-config-icon-option-active-bg: #667eea;
+  --platform-config-icon-option-active-text: #ffffff;
+  --platform-config-toggle-button-bg: #f7fafc;
+  --platform-config-toggle-button-text: #4a5568;
+  --platform-config-toggle-button-border: #e2e8f0;
+  --platform-config-toggle-button-hover-bg: #edf2f7;
+  --platform-config-toggle-button-hover-border: #cbd5e0;
+  --platform-config-icon-picker-content-bg: #f7fafc;
+  --platform-config-icon-picker-content-border: #e2e8f0;
+  --platform-config-icon-category-title-text: #718096;
+  --platform-config-error-text: #e53e3e;
+  --platform-config-error-bg: #fed7d7;
+
+  /* AboutApp 专用颜色变量（浅色模式） */
+  --about-section-title-color: #2d3748;
+  --about-section-title-border: #e2e8f0;
+  --about-text: #2d3748;
+  --about-text-secondary: #4a5568;
+  --about-card-bg: #ffffff;
+  --about-card-border: #e2e8f0;
+  --about-card-hover-bg: #f4f4f4;
+  --about-accent: #667eea;
+  --about-accent-hover: #5a67d8;
+  --about-link-icon-bg: #667eea;
+  --about-debug-button-bg: #ffffff;
+  --about-debug-button-border: #e2e8f0;
+  --about-debug-button-color: #2d3748;
+  --about-debug-button-hover-bg: #f4f4f4;
+  --about-debug-button-hover-border: #667eea;
+  --about-debug-button-hover-color: #667eea;
+
+  /* QuestionEditor 专用颜色变量（浅色模式） */
+  --question-editor-overlay-bg: rgba(0, 0, 0, 0.5);
+  --question-editor-modal-bg: #ffffff;
+  --question-editor-header-border: #e2e8f0;
+  --question-editor-header-title: #2d3748;
+  --question-editor-label-text: #374151;
+  --question-editor-textarea-bg: #ffffff;
+  --question-editor-textarea-border: #d1d5db;
+  --question-editor-textarea-text: #2d3748;
+  --question-editor-textarea-placeholder: #9ca3af;
+  --question-editor-textarea-focus-border: var(--border-focus);
+  --question-editor-textarea-focus-shadow: var(--border-focus);
+  --question-editor-actions-border: #e2e8f0;
+  --question-editor-submit-bg: #5f83e7;
+  --question-editor-submit-text: #ffffff;
+  --question-editor-submit-hover-bg: #2563eb;
+  --question-editor-submit-disabled-bg: #9ca3af;
+  
+
+}
+
+/* 深色主题 */
+[data-theme="dark"] {
+  /* 基础颜色 */
+  --color-primary: #667eea;
+  --color-primary-hover: #5a67d8;
+  --color-secondary: #764ba2;
+  --color-accent: #ffffff;
+  --color-accent-light: #4d4d4d;
+  
+  /* 按钮颜色 */
+  --btn-primary-bg: #4b4b4b;
+  --btn-primary-hover: #3e3e3e;
+  --btn-primary-text: #ffffff;
+  
+  /* 平台开关颜色 */
+  --platform-toggle-bg: #4a5568;
+  --platform-toggle-slider: #e2e8f0;
+  --platform-toggle-active: #68d391;
+  --platform-toggle-active-hover: #48bb78;
+  
+  /* Toggle组件颜色 */
+  --toggle-default-bg: #4a5568;
+  --toggle-default-slider: #e2e8f0;
+  --toggle-default-active: #63b3ed;
+  --toggle-success-bg: #4a5568;
+  --toggle-success-slider: #e2e8f0;
+  --toggle-success-active: #68d391;
+  --toggle-warning-bg: #4a5568;
+  --toggle-warning-slider: #e2e8f0;
+  --toggle-warning-active: #f6ad55;
+  --toggle-danger-bg: #4a5568;
+  --toggle-danger-slider: #e2e8f0;
+  --toggle-danger-active: #fc8181;
+  
+  /* 模型选中状态颜色 */
+  --model-selected-color: #124583;
+  --model-selected-active: #3b82f6;
+  
+  /* 题目详情相关颜色 */
+  --question-detail-search-placeholder: #6b7280;
+  --question-detail-clear-btn-bg: #374151;
+  --question-detail-clear-btn-text: #9ca3af;
+  --question-detail-clear-btn-hover-bg: #4b5563;
+  --question-detail-clear-btn-hover-text: #d1d5db;
+  --question-detail-add-btn-bg: #059669;
+  --question-detail-add-btn-text: #ffffff;
+  --question-detail-add-btn-hover-bg: #047857;
+  --question-detail-search-info-text: #9ca3af;
+  --question-detail-search-highlight-bg: #451a03;
+  --question-detail-search-highlight-text: #fbbf24;
+  --question-detail-edit-btn-text: #9ca3af;
+  --question-detail-edit-btn-hover-text: #d1d5db;
+  --question-detail-back-icon-fill: #9ca3af;
+  --question-detail-back-icon-hover-fill: #d1d5db;
+  --question-detail-type-tag-bg: #39435c;
+  --question-detail-type-tag-text: #93c5fd;
+  --question-detail-cancel-btn-bg: #374151;
+  --question-detail-cancel-btn-text: #9ca3af;
+  --question-detail-cancel-btn-border: #4b5563;
+  --question-detail-cancel-btn-hover-bg: #4b5563;
+  --question-detail-cancel-btn-hover-text: #d1d5db;
+  --question-detail-save-btn-bg: #1d4ed8;
+  --question-detail-save-btn-text: #ffffff;
+  --question-detail-save-btn-hover-bg: #1e40af;
+  --question-detail-save-btn-disabled-bg: #6b7280;
+  
+  /* UrlContent页面颜色 */
+  --bg-primary: #1f2937;
+  --bg-secondary: #374151;
+  --bg-tertiary: #4b5563;
+  --text-primary: #f9fafb;
+  --text-secondary: #d1d5db;
+  --border-color: #4b5563;
+  --danger-color: #ef4444;
+  
+  /* 复选框颜色 */
+  --checkbox-bg: #2d3748;
+  --checkbox-border: #4a5568;
+  --checkbox-checked-bg: #3b82f6;
+  --checkbox-checked-border: #3b82f6;
+  --checkbox-hover-bg: #374151;
+  --checkbox-hover-border: #6b7280;
+  
+  /* 服务器切换按钮颜色 */
+  --server-toggle-bg: rgba(255, 162, 86, 0.15);
+  --server-toggle-text: #ffa256;
+  --server-toggle-hover-bg: #e67e22;
+  --server-toggle-hover-text: #ffffff;
+  --server-toggle-shadow: rgba(255, 162, 86, 0.6);
+  
+  /* 请求表格颜色 */
+  --request-table-header-text: #a0aec0;
+  --request-table-border: #4a5568;
+  --request-table-hover-bg: #374151;
+  
+  /* 请求详情面板颜色 */
+  --request-details-bg: #2d3748;
+  --request-details-border: #4a5568;
+  --request-details-shadow: rgba(0, 0, 0, 0.3);
+  --request-details-header-text: #e2e8f0;
+  --request-details-back-btn-text: #a0aec0;
+  --request-details-back-btn-hover: #4a5568;
+  --request-details-tab-text: #cbd5e0;
+  --request-details-tab-active: #ffa256;
+  --request-details-section-title: #e2e8f0;
+  --request-details-section-border: #4a5568;
+  --request-details-label-text: #cbd5e0;
+  --request-details-value-text: #e2e8f0;
+  --request-details-headers-bg: #374151;
+  --request-details-headers-border: #4a5568;
+  --request-details-headers-text: #cbd5e0;
+  --request-details-headers-strong: #e2e8f0;
+  --request-details-code-bg: #1a202c;
+  --request-details-code-text: #e2e8f0;
+  --request-details-code-border: #2d3748;
+  --request-details-model-calling-bg: #374151;
+  --request-details-model-calling-text: #cbd5e0;
+  --request-details-streaming-bg: #22543d;
+  --request-details-streaming-border: #38a169;
+  --request-details-streaming-text: #f0fff4;
+  --request-details-streaming-cursor: #68d391;
+  --request-details-selected-bg: #2c5282;
+  --request-details-resizer-hover: #4a5568;
+  --request-details-resizer-active: #667eea;
+  
+  /* 背景颜色 */
+  --bg-primary: #3c3c3c;
+  --bg-secondary: #252526;
+  --bg-tertiary: #6c6c6c;
+  --bg-sidebar: #1a202c;
+  --bg-overlay: rgba(0, 0, 0, 0.7);
+  
+  /* 文字颜色 */
+  --text-primary: #dcdcdc;
+  --text-secondary: #e2e8f0;
+  --text-tertiary: #cbd5e0;
+  --text-light: #a0aec0;
+  --text-white: #ffffff;
+  --text-accent: #ffa256;
+  
+  /* 边框颜色 */
+  --border-primary: #3c3c3c;
+  --border-secondary: #2d3748;
+  --border-focus: #667eea;
+  --border-color: #4a5568;
+  
+  /* 阴影 */
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.3);
+  --shadow-xl: 0 20px 25px rgba(0, 0, 0, 0.3);
+  
+  /* 状态颜色 */
+  --color-success: #68d391;
+  --color-warning: #f6ad55;
+  --color-error: #fc8181;
+  --color-info: #63b3ed;
+  
+  /* 交互状态 */
+  --hover-bg: #2d3748;
+  --active-bg: #4a5568;
+  --selected-bg: #90949c;
+  --disabled-bg: #2d3748;
+  --disabled-text: #718096;
+  
+  /* 主要颜色映射 */
+  --primary-color: var(--color-primary);
+  --primary-hover: var(--color-primary-hover);
+  
+  /* 表格分割线 */
+  --table-divider: #4a5568;
+  --table-divider-hover: #8f969f;
+  --table-divider-active: #667eea;
+  --table-divider-selected: #5a67d8;
+  --table-header-divider: #718096;
+  
+  /* 右键菜单相关颜色 */
+  --context-menu-bg: #2d3748;
+  --context-menu-border: #4a5568;
+  --context-menu-shadow: rgba(0, 0, 0, 0.3);
+  --context-menu-item-text: #e2e8f0;
+  --context-menu-item-hover-bg: #4a5568;
+  --context-menu-item-disabled-text: #718096;
+  --context-menu-divider-bg: #4a5568;
+
+  /* 侧边栏导航项颜色 */
+  --nav-item-text: #a0aec0;
+  --nav-item-text-hover: #e2e8f0;
+  --nav-item-text-active: #ffa256;
+  --nav-item-bg: transparent;
+  --nav-item-bg-hover: #4a5568;
+  --nav-item-bg-active: #4a5568;
+  --nav-item-border: transparent;
+  --nav-item-border-hover: #4a5568;
+  --nav-item-border-active: #4a5568;
+
+  /* 平台列表项颜色 */
+  --platform-item-bg: transparent;
+  --platform-item-hover-bg: #464b52;
+  --platform-item-active-bg: #344458;
+  --platform-item-border: transparent;
+  --platform-item-hover-border: #4a5568;
+  --platform-item-active-border: #667eea;
+  --platform-item-text: #e2e8f0;
+  --platform-item-hover-text: #e2e8f0;
+  --platform-item-active-text: #ffffff;
+  --platform-item-icon-bg: #4a5568;
+  --platform-item-icon-hover-bg: #374151;
+  --platform-item-icon-active-bg: #3182ce;
+
+  /* 平台详情面板相关颜色 */
+  --platform-detail-bg: #252526;
+  --platform-detail-border: #252526;
+  --platform-detail-content-bg: #25252;
+  --platform-detail-section-border: #4a5568;
+  --platform-detail-header-text: #e2e8f0;
+  --platform-detail-description-text: #a0aec0;
+  --platform-detail-form-label-text: #e2e8f0;
+  --platform-detail-form-input-bg: #374151;
+  --platform-detail-form-input-border: #4a5568;
+  --platform-detail-form-input-focus-border: #667eea;
+  --platform-detail-form-input-text: #e2e8f0;
+
+  /* 模型项相关颜色 */
+  --model-item-bg: #2d2d2d;
+  --model-item-border: transparent;
+  --model-item-hover-bg: #4a5568;
+  --model-item-hover-border: #6b7280;
+  --model-item-active-bg: #44484f;
+  --model-item-active-border: #909090;
+  --model-item-text: #e2e8f0;
+  --model-item-hover-text: #f3f4f6;
+  --model-item-active-text: #ffffff;
+  --model-item-name-text: #f3f4f6;
+  --model-item-description-text: #cbd5e0;
+  --model-item-specs-text: #9ca3af;
+  --model-item-selected-icon: #667eea;
+
+  /* Dialog Button 颜色变量 */
+  --dialog-button-primary-bg: #667eea;
+  --dialog-button-primary-text: #ffffff;
+  --dialog-button-primary-hover: #5a67d8;
+  --dialog-button-secondary-bg: #4a5568;
+  --dialog-button-secondary-text: #e2e8f0;
+  --dialog-button-secondary-border: #4a5568;
+  --dialog-button-secondary-hover-bg: #3c4858;
+  --dialog-button-secondary-hover-border: #5a6578;
+  --dialog-button-danger-bg: #e53e3e;
+  --dialog-button-danger-text: #ffffff;
+  --dialog-button-danger-hover: #c53030;
+  --dialog-button-close-bg: transparent;
+  --dialog-button-close-text: #a0aec0;
+  --dialog-button-close-hover-bg: #4a5568;
+  --dialog-button-close-hover-text: #e2e8f0;
+
+  /* QuestionEditor 专用颜色变量（深色模式） */
+  --question-editor-overlay-bg: rgba(0, 0, 0, 0.7);
+  --question-editor-modal-bg: #2d3748;
+  --question-editor-header-border: #4a5568;
+  --question-editor-header-title: #e2e8f0;
+  --question-editor-label-text: #e2e8f0;
+  --question-editor-textarea-bg: #374151;
+  --question-editor-textarea-border: #4a5568;
+  --question-editor-textarea-text: #e2e8f0;
+  --question-editor-textarea-placeholder: #9ca3af;
+  --question-editor-textarea-focus-border: var(--border-focus);
+  --question-editor-textarea-focus-shadow: var(--border-focus);
+  --question-editor-actions-border: #4a5568;
+  --question-editor-submit-bg: #5f83e7;
+  --question-editor-submit-text: #ffffff;
+  --question-editor-submit-hover-bg: #2563eb;
+  --question-editor-submit-disabled-bg: #6b7280;
+
+  /* 平台配置对话框相关颜色 */
+  --platform-config-dialog-bg: #2d3748;
+  --platform-config-dialog-border: #4a5568;
+  --platform-config-dialog-header-border: #4a5568;
+  --platform-config-dialog-title-text: #e2e8f0;
+  --platform-config-dialog-close-text: #a0aec0;
+  --platform-config-dialog-close-hover-bg: #4a5568;
+  --platform-config-dialog-close-hover-text: #e2e8f0;
+  --platform-config-form-label-text: #e2e8f0;
+  --platform-config-form-input-border: #4a5568;
+  --platform-config-form-input-focus-border: #667eea;
+  --platform-config-btn-secondary-bg: #4a5568;
+  --platform-config-btn-secondary-text: #e2e8f0;
+  --platform-config-btn-secondary-border: #4a5568;
+  --platform-config-btn-secondary-hover-bg: #667eea;
+  --platform-config-btn-secondary-hover-text: #ffffff;
+  --platform-config-icon-display-bg: #4a5568;
+  --platform-config-icon-display-border: #4a5568;
+  --platform-config-icon-fallback-text: #a0aec0;
+  --platform-config-icon-dropdown-bg: #2d3748;
+  --platform-config-icon-dropdown-border: #4a5568;
+  --platform-config-icon-section-title-text: #a0aec0;
+  --platform-config-icon-section-title-bg: #4a5568;
+  --platform-config-icon-option-bg: #2d3748;
+  --platform-config-icon-option-border: #4a5568;
+  --platform-config-icon-option-hover-border: #667eea;
+  --platform-config-icon-option-hover-bg: #3c4858;
+  --platform-config-icon-option-active-border: #667eea;
+  --platform-config-icon-option-active-bg: #667eea;
+  --platform-config-icon-option-active-text: #ffffff;
+  --platform-config-toggle-button-bg: #4a5568;
+  --platform-config-toggle-button-text: #e2e8f0;
+  --platform-config-toggle-button-border: #4a5568;
+  --platform-config-toggle-button-hover-bg: #3c4858;
+  --platform-config-toggle-button-hover-border: #5a6578;
+  --platform-config-icon-picker-content-bg: #4a5568;
+  --platform-config-icon-picker-content-border: #4a5568;
+  --platform-config-icon-category-title-text: #a0aec0;
+  --platform-config-error-text: #fc8181;
+  --platform-config-error-bg: #742a2a;
+
+  /* AboutApp 专用颜色变量（深色模式） */
+  --about-section-title-color: #e2e8f0;
+  --about-section-title-border: #4a5568;
+  --about-text: #e2e8f0;
+  --about-text-secondary: #d1d5db;
+  --about-card-bg: #374151;
+  --about-card-border: #4a5568;
+  --about-card-hover-bg: #4b5563;
+  --about-accent: #667eea;
+  --about-accent-hover: #5a67d8;
+  --about-link-icon-bg: #667eea;
+  --about-debug-button-bg: #374151;
+  --about-debug-button-border: #4a5568;
+  --about-debug-button-color: #e2e8f0;
+  --about-debug-button-hover-bg: #4b5563;
+  --about-debug-button-hover-border: #667eea;
+  --about-debug-button-hover-color: #667eea;
+}
+
+/* 主题切换动画 */
+* {
+  transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+/* 禁用某些元素的过渡动画以避免闪烁 */
+.no-transition,
+.no-transition * {
+  transition: none !important;
+}
+
+/* 全局滚动条美化 */
+/* Webkit浏览器滚动条样式 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-primary);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-secondary);
+  border-radius: 4px;
+  transition: background-color 0.2s ease;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-tertiary);
+}
+
+::-webkit-scrollbar-thumb:active {
+  background: var(--color-primary);
+}
+
+::-webkit-scrollbar-corner {
+  background: var(--bg-primary);
+}
+
+/* Firefox滚动条样式 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-secondary) var(--bg-primary);
+}
+
+/* 深色主题下的滚动条优化 */
+[data-theme="dark"] ::-webkit-scrollbar-track {
+  background: var(--bg-secondary);
+}
+
+[data-theme="dark"] ::-webkit-scrollbar-thumb {
+  background: var(--border-primary);
+}
+
+[data-theme="dark"] ::-webkit-scrollbar-thumb:hover {
+  background: var(--text-light);
+}
+
+[data-theme="dark"] ::-webkit-scrollbar-corner {
+  background: var(--bg-secondary);
+}
+
+[data-theme="dark"] * {
+  scrollbar-color: var(--border-primary) var(--bg-secondary);
+}

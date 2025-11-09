@@ -1,0 +1,175 @@
+[
+  {
+    "baseUrl": "https://api.siliconflow.cn/v1/chat/completions",
+    "description": "硅基流动AI平台服务",
+    "displayName": "硅基流动",
+    "icon": "siliconflow.png",
+    "id": "siliconflow",
+    "models": [
+      {
+        "category": "text",
+        "description": "DeepSeek-V3 高性能大语言模型",
+        "displayName": "DeepSeek-V3",
+        "enabled": true,
+        "id": "deepseek-v3",
+        "jsCode": "async function processModel(input, config, abortSignal) { \n   // 构建请求数据 \n   const requestData = { \n     messages: input.messages, \n     model: 'deepseek-ai/DeepSeek-V3', \n     stream: true, \n     max_tokens: 4096, \n     temperature: 0.7, \n     top_p:0.9 \n   }; \n   \n   console.log('SiliconFlow 请求:', requestData); \n   \n   try { \n     // 发送请求到SiliconFlow API \n     const response = await fetch(`${config.baseUrl}`, { \n       method: 'POST', \n       headers: { \n         'Authorization': `Bearer ${config.apiKey}`, \n         'Content-Type': 'application/json' \n       }, \n       body: JSON.stringify(requestData),\n       signal: abortSignal\n     }); \n     \n     if (!response.ok) { \n       const errorText = await response.text(); \n       throw new Error(`SiliconFlow API 错误 ${response.status}: ${errorText}`); \n     } \n     \n     // 处理流式响应 \n     const reader = response.body.getReader(); \n     const decoder = new TextDecoder(); \n     \n     // 返回异步生成器处理流式数据 \n     return (async function* () { \n       let buffer = ''; \n       \n       try { \n         while (true) { \n           const { done, value } = await reader.read(); \n           \n           if (done) { \n             break; \n           } \n           \n           // 解码数据块 \n           buffer += decoder.decode(value, { stream: true }); \n           const lines = buffer.split('\\n'); \n           buffer = lines.pop() || ''; \n           \n           for (const line of lines) { \n             const trimmedLine = line.trim(); \n             if (trimmedLine === '' || trimmedLine === 'data: [DONE]') { \n               continue; \n             } \n             \n             if (trimmedLine.startsWith('data: ')) { \n               try { \n                 const jsonStr = trimmedLine.slice(6); \n                 const data = JSON.parse(jsonStr); \n                 \n                 if (data.choices && data.choices[0] && data.choices[0].delta) { \n                   const content = data.choices[0].delta.content || ''; \n                   const finished = data.choices[0].finish_reason === 'stop'; \n                   \n                   if (content || finished) { \n                     yield { \n                       content: content, \n                       finished: finished \n                     }; \n                   } \n                 } \n               } catch (parseError) { \n                 console.warn('解析SSE数据失败:', parseError, trimmedLine); \n               } \n             } \n           } \n         } \n       } finally { \n         reader.releaseLock(); \n       } \n     })(); \n     \n   } catch (error) { \n     console.error('SiliconFlow API 调用失败:', error); \n     throw error; \n   } \n }",
+        "maxTokens": 4096,
+        "name": "deepseek-ai/DeepSeek-V3",
+        "platformId": "siliconflow",
+        "pricing": {
+          "inputTokens": 0.002,
+          "outputTokens": 0.006
+        },
+        "temperature": 0.7,
+        "topP": 0.9
+      },
+      {
+        "category": "text",
+        "description": "DeepSeek-V3.1-Terminus 最新版本大语言模型，性能更强",
+        "displayName": "DeepSeek-V3.1-Terminus",
+        "enabled": true,
+        "id": "deepseek-v31-terminus",
+        "jsCode": "async function processModel(input, config, abortSignal) { \n    // 构建请求数据 \n    const requestData = { \n      messages: input.messages, \n      model: 'deepseek-ai/DeepSeek-V3.1-Terminus', \n      stream: true, \n      max_tokens: 4096, \n      temperature: 0.7, \n      top_p:0.9 \n    }; \n    \n    console.log('SiliconFlow DeepSeek-V3.1-Terminus 请求:', requestData); \n    \n    try { \n      // 发送请求到SiliconFlow API \n      const response = await fetch(`${config.baseUrl}`, { \n        method: 'POST', \n        headers: { \n          'Authorization': `Bearer ${config.apiKey}`, \n          'Content-Type': 'application/json' \n        }, \n        body: JSON.stringify(requestData),\n        signal: abortSignal\n      }); \n      \n      if (!response.ok) { \n        const errorText = await response.text(); \n        throw new Error(`SiliconFlow DeepSeek-V3.1-Terminus API 错误 ${response.status}: ${errorText}`); \n      } \n      \n      // 处理流式响应 \n      const reader = response.body.getReader(); \n      const decoder = new TextDecoder(); \n      \n      // 返回异步生成器处理流式数据 \n      return (async function* () { \n        let buffer = ''; \n        \n        try { \n          while (true) { \n            const { done, value } = await reader.read(); \n            \n            if (done) { \n              break; \n            } \n            \n            // 解码数据块 \n            buffer += decoder.decode(value, { stream: true }); \n            const lines = buffer.split('\\n'); \n            buffer = lines.pop() || ''; \n            \n            for (const line of lines) { \n              const trimmedLine = line.trim(); \n              if (trimmedLine === '' || trimmedLine === 'data: [DONE]') { \n                continue; \n              } \n              \n              if (trimmedLine.startsWith('data: ')) { \n                try { \n                  const jsonStr = trimmedLine.slice(6); \n                  const data = JSON.parse(jsonStr); \n                  \n                  if (data.choices && data.choices[0] && data.choices[0].delta) { \n                    const content = data.choices[0].delta.content || ''; \n                    const finished = data.choices[0].finish_reason === 'stop'; \n                    \n                    if (content || finished) { \n                      yield { \n                        content: content, \n                        finished: finished \n                      }; \n                    } \n                  } \n                } catch (parseError) { \n                  console.warn('解析SSE数据失败:', parseError, trimmedLine); \n                } \n              } \n            } \n          } \n        } finally { \n          reader.releaseLock(); \n        } \n      })(); \n      \n    } catch (error) { \n      console.error('SiliconFlow DeepSeek-V3.1-Terminus API 调用失败:', error); \n      throw error; \n    } \n  }",
+        "maxTokens": 4096,
+        "name": "deepseek-ai/DeepSeek-V3.1-Terminus",
+        "platformId": "siliconflow",
+        "pricing": {
+          "inputTokens": 0.002,
+          "outputTokens": 0.006
+        },
+        "temperature": 0.7,
+        "topP": 0.9
+      },
+      {
+        "category": "text",
+        "description": "Kimi-K2-Instruct 高性能对话模型，支持长文本理解",
+        "displayName": "Kimi-K2-Instruct",
+        "enabled": true,
+        "id": "kimi-k2-instruct",
+        "jsCode": "async function processModel(input, config, abortSignal) { \n    // 构建请求数据 \n    const requestData = { \n      messages: input.messages, \n      model: 'moonshotai/Kimi-K2-Instruct-0905', \n      stream: true, \n      max_tokens: 4096, \n      temperature: 0.7, \n      top_p:0.9 \n    }; \n    \n    console.log('SiliconFlow Kimi 请求:', requestData); \n    \n    try { \n      // 发送请求到SiliconFlow API \n      const response = await fetch(`${config.baseUrl}`, { \n        method: 'POST', \n        headers: { \n          'Authorization': `Bearer ${config.apiKey}`, \n          'Content-Type': 'application/json' \n        }, \n        body: JSON.stringify(requestData),\n        signal: abortSignal\n      }); \n      \n      if (!response.ok) { \n        const errorText = await response.text(); \n        throw new Error(`SiliconFlow Kimi API 错误 ${response.status}: ${errorText}`); \n      } \n      \n      // 处理流式响应 \n      const reader = response.body.getReader(); \n      const decoder = new TextDecoder(); \n      \n      // 返回异步生成器处理流式数据 \n      return (async function* () { \n        let buffer = ''; \n        \n        try { \n          while (true) { \n            const { done, value } = await reader.read(); \n            \n            if (done) { \n              break; \n            } \n            \n            // 解码数据块 \n            buffer += decoder.decode(value, { stream: true }); \n            const lines = buffer.split('\\n'); \n            buffer = lines.pop() || ''; \n            \n            for (const line of lines) { \n              const trimmedLine = line.trim(); \n              if (trimmedLine === '' || trimmedLine === 'data: [DONE]') { \n                continue; \n              } \n              \n              if (trimmedLine.startsWith('data: ')) { \n                try { \n                  const jsonStr = trimmedLine.slice(6); \n                  const data = JSON.parse(jsonStr); \n                  \n                  if (data.choices && data.choices[0] && data.choices[0].delta) { \n                    const content = data.choices[0].delta.content || ''; \n                    const finished = data.choices[0].finish_reason === 'stop'; \n                    \n                    if (content || finished) { \n                      yield { \n                        content: content, \n                        finished: finished \n                      }; \n                    } \n                  } \n                } catch (parseError) { \n                  console.warn('解析SSE数据失败:', parseError, trimmedLine); \n                } \n              } \n            } \n          } \n        } finally { \n          reader.releaseLock(); \n        } \n      })(); \n      \n    } catch (error) { \n      console.error('SiliconFlow Kimi API 调用失败:', error); \n      throw error; \n    } \n  }",
+        "maxTokens": 4096,
+        "name": "moonshotai/Kimi-K2-Instruct-0905",
+        "platformId": "siliconflow",
+        "pricing": {
+          "inputTokens": 0.001,
+          "outputTokens": 0.003
+        },
+        "temperature": 0.7,
+        "topP": 0.9
+      },
+      {
+        "category": "vision",
+        "description": "Qwen2.5-VL-72B 视觉语言模型，支持图像理解和分析",
+        "displayName": "Qwen2.5-VL-72B",
+        "enabled": true,
+        "id": "qwen2-vl-72b",
+        "jsCode": "async function processModel(input, config, abortSignal) {\n    // 构建请求数据，支持视觉输入\n    const requestData = {\n      messages: input.messages,\n      model: 'Qwen/Qwen2.5-VL-72B-Instruct',\n      stream: true,\n      max_tokens: 4096,\n      temperature: 0.7,\n      top_p: 0.9\n    };\n    \n    console.log('SiliconFlow VLM 请求:', requestData);\n    \n    try {\n      // 发送请求到SiliconFlow API\n      const response = await fetch(`${config.baseUrl}`, {\n        method: 'POST',\n        headers: {\n          'Authorization': `Bearer ${config.apiKey}`,\n          'Content-Type': 'application/json'\n        },\n        body: JSON.stringify(requestData),\n        signal: abortSignal\n      });\n     \n     if (!response.ok) {\n       const errorText = await response.text();\n       throw new Error(`SiliconFlow VLM API 错误 ${response.status}: ${errorText}`);\n     }\n     \n     // 处理流式响应\n     const reader = response.body.getReader();\n     const decoder = new TextDecoder();\n     \n     // 返回异步生成器处理流式数据\n     return (async function* () {\n       let buffer = '';\n       \n       try {\n         while (true) {\n           const { done, value } = await reader.read();\n           \n           if (done) {\n             break;\n           }\n           \n           // 解码数据块\n           buffer += decoder.decode(value, { stream: true });\n           const lines = buffer.split('\\n');\n           buffer = lines.pop() || '';\n           \n           for (const line of lines) {\n             const trimmedLine = line.trim();\n             if (trimmedLine === '' || trimmedLine === 'data: [DONE]') {\n               continue;\n             }\n             \n             if (trimmedLine.startsWith('data: ')) {\n               try {\n                 const jsonStr = trimmedLine.slice(6);\n                 const data = JSON.parse(jsonStr);\n                 \n                 if (data.choices && data.choices[0] && data.choices[0].delta) {\n                   const content = data.choices[0].delta.content || '';\n                   const finished = data.choices[0].finish_reason === 'stop';\n                   \n                   if (content || finished) {\n                     yield {\n                       content: content,\n                       finished: finished\n                     };\n                   }\n                 }\n               } catch (parseError) {\n                 console.warn('解析SSE数据失败:', parseError, trimmedLine);\n               }\n             }\n           }\n         }\n       } finally {\n         reader.releaseLock();\n       }\n     })();\n     \n   } catch (error) {\n     console.error('SiliconFlow VLM API 调用失败:', error);\n     throw error;\n   }\n }",
+        "maxTokens": 4096,
+        "name": "Qwen/Qwen2.5-VL-72B-Instruct",
+        "platformId": "siliconflow",
+        "pricing": {
+          "inputTokens": 0.004,
+          "outputTokens": 0.012
+        },
+        "temperature": 0.7,
+        "topP": 0.9
+      },
+      {
+        "category": "vision",
+        "description": "Qwen3-VL-32B 最新视觉语言模型，支持图像、视频理解",
+        "displayName": "Qwen3-VL-32B",
+        "enabled": true,
+        "id": "qwen3-vl-32b",
+        "jsCode": "async function processModel(input, config, abortSignal) {\n    // 构建请求数据，支持视觉输入\n    const requestData = {\n      messages: input.messages,\n      model: 'Qwen/Qwen3-VL-32B-Instruct',\n      stream: true,\n      max_tokens: 4096,\n      temperature: 0.7,\n      top_p: 0.9\n    };\n    \n    console.log('SiliconFlow Qwen3-VL 请求:', requestData);\n    \n    try {\n      // 发送请求到SiliconFlow API\n      const response = await fetch(`${config.baseUrl}`, {\n        method: 'POST',\n        headers: {\n          'Authorization': `Bearer ${config.apiKey}`,\n          'Content-Type': 'application/json'\n        },\n        body: JSON.stringify(requestData),\n        signal: abortSignal\n      });\n     \n     if (!response.ok) {\n       const errorText = await response.text();\n       throw new Error(`SiliconFlow Qwen3-VL API 错误 ${response.status}: ${errorText}`);\n     }\n     \n     // 处理流式响应\n     const reader = response.body.getReader();\n     const decoder = new TextDecoder();\n     \n     // 返回异步生成器处理流式数据\n     return (async function* () {\n       let buffer = '';\n       \n       try {\n         while (true) {\n           const { done, value } = await reader.read();\n           \n           if (done) {\n             break;\n           }\n           \n           // 解码数据块\n           buffer += decoder.decode(value, { stream: true });\n           const lines = buffer.split('\\n');\n           buffer = lines.pop() || '';\n           \n           for (const line of lines) {\n             const trimmedLine = line.trim();\n             if (trimmedLine === '' || trimmedLine === 'data: [DONE]') {\n               continue;\n             }\n             \n             if (trimmedLine.startsWith('data: ')) {\n               try {\n                 const jsonStr = trimmedLine.slice(6);\n                 const data = JSON.parse(jsonStr);\n                 \n                 if (data.choices && data.choices[0] && data.choices[0].delta) {\n                   const content = data.choices[0].delta.content || '';\n                   const finished = data.choices[0].finish_reason === 'stop';\n                   \n                   if (content || finished) {\n                     yield {\n                       content: content,\n                       finished: finished\n                     };\n                   }\n                 }\n               } catch (parseError) {\n                 console.warn('解析SSE数据失败:', parseError, trimmedLine);\n               }\n             }\n           }\n         }\n       } finally {\n         reader.releaseLock();\n       }\n     })();\n     \n   } catch (error) {\n     console.error('SiliconFlow Qwen3-VL API 调用失败:', error);\n     throw error;\n   }\n }",
+        "maxTokens": 4096,
+        "name": "Qwen/Qwen3-VL-32B-Instruct",
+        "platformId": "siliconflow",
+        "pricing": {
+          "inputTokens": 0.003,
+          "outputTokens": 0.009
+        },
+        "temperature": 0.7,
+        "topP": 0.9
+      }
+    ],
+    "name": "siliconflow"
+  },
+  {
+    "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+    "description": "阿里云百炼AI平台服务",
+    "displayName": "阿里云百炼",
+    "icon": "bailian.png",
+    "id": "aliyun-bailian",
+    "models": [
+      {
+        "category": "text",
+        "description": "通义千问Plus 高性能大语言模型",
+        "displayName": "通义千问Plus",
+        "enabled": true,
+        "id": "qwen-plus",
+        "jsCode": "async function processModel(input, config) { \n   // 构建请求数据 \n   const requestData = { \n     messages: input.messages, \n     model: 'qwen-plus', \n     stream: true,\n   }; \n   \n   console.log('阿里云百炼 请求:', requestData); \n   \n   try { \n     // 发送请求到阿里云百炼 API \n     const response = await fetch(`${config.baseUrl}`, { \n       method: 'POST', \n       headers: { \n         'Authorization': `Bearer ${config.apiKey}`, \n         'Content-Type': 'application/json' \n       }, \n       body: JSON.stringify(requestData) \n     }); \n     \n     if (!response.ok) { \n       const errorText = await response.text(); \n       throw new Error(`阿里云百炼 API 错误 ${response.status}: ${errorText}`); \n     } \n     \n     // 处理流式响应 \n     const reader = response.body.getReader(); \n     const decoder = new TextDecoder(); \n     \n     // 返回异步生成器处理流式数据 \n     return (async function* () { \n       let buffer = ''; \n       \n       try { \n         while (true) { \n           const { done, value } = await reader.read(); \n           \n           if (done) { \n             break; \n           } \n           \n           // 解码数据块 \n           buffer += decoder.decode(value, { stream: true }); \n           const lines = buffer.split('\\n'); \n           buffer = lines.pop() || ''; \n           \n           for (const line of lines) { \n             const trimmedLine = line.trim(); \n             if (trimmedLine === '' || trimmedLine === 'data: [DONE]') { \n               continue; \n             } \n             \n             if (trimmedLine.startsWith('data: ')) { \n               try { \n                 const jsonStr = trimmedLine.slice(6); \n                 const data = JSON.parse(jsonStr); \n                 \n                 if (data.choices && data.choices[0] && data.choices[0].delta) { \n                   const content = data.choices[0].delta.content || ''; \n                   const finished = data.choices[0].finish_reason === 'stop'; \n                   \n                   if (content || finished) { \n                     yield { \n                       content: content, \n                       finished: finished \n                     }; \n                   } \n                 } \n               } catch (parseError) { \n                 console.warn('解析SSE数据失败:', parseError, trimmedLine); \n               } \n             } \n           } \n         } \n       } finally { \n         reader.releaseLock(); \n       } \n     })(); \n     \n   } catch (error) { \n     console.error('阿里云百炼 API 调用失败:', error); \n     throw error; \n   } \n }",
+        "maxTokens": 4096,
+        "name": "qwen-plus",
+        "platformId": "aliyun-bailian",
+        "pricing": {
+          "inputTokens": 0.004,
+          "outputTokens": 0.012
+        },
+        "temperature": 0.7,
+        "topP": 0.9
+      },
+      {
+        "category": "text",
+        "description": "通义千问3-Max 高性能大语言模型",
+        "displayName": "通义千问3-Max",
+        "enabled": true,
+        "id": "qwen3-max",
+        "jsCode": "async function processModel(input, config, abortSignal) { \n    // 构建请求数据 \n    const requestData = { \n      messages: input.messages, \n      model: 'qwen3-max', \n      stream: true, \n    }; \n    \n    console.log('阿里云百炼 Qwen3-Max 请求:', requestData); \n    \n    try { \n      // 发送请求到阿里云百炼 API \n      const response = await fetch(`${config.baseUrl}`, { \n        method: 'POST', \n        headers: { \n          'Authorization': `Bearer ${config.apiKey}`, \n          'Content-Type': 'application/json' \n        }, \n        body: JSON.stringify(requestData),\n        signal: abortSignal\n      }); \n      \n      if (!response.ok) { \n        const errorText = await response.text(); \n        throw new Error(`阿里云百炼 Qwen3-Max API 错误 ${response.status}: ${errorText}`); \n      } \n      \n      // 处理流式响应 \n      const reader = response.body.getReader(); \n      const decoder = new TextDecoder(); \n      \n      // 返回异步生成器处理流式数据 \n      return (async function* () { \n        let buffer = ''; \n        \n        try { \n          while (true) { \n            const { done, value } = await reader.read(); \n            \n            if (done) { \n              break; \n            } \n            \n            // 解码数据块 \n            buffer += decoder.decode(value, { stream: true }); \n            const lines = buffer.split('\\n'); \n            buffer = lines.pop() || ''; \n            \n            for (const line of lines) { \n              const trimmedLine = line.trim(); \n              if (trimmedLine === '' || trimmedLine === 'data: [DONE]') { \n                continue; \n              } \n              \n              if (trimmedLine.startsWith('data: ')) { \n                try { \n                  const jsonStr = trimmedLine.slice(6); \n                  const data = JSON.parse(jsonStr); \n                  \n                  if (data.choices && data.choices[0] && data.choices[0].delta) { \n                    const content = data.choices[0].delta.content || ''; \n                    const finished = data.choices[0].finish_reason === 'stop'; \n                    \n                    if (content || finished) { \n                      yield { \n                        content: content, \n                        finished: finished \n                      }; \n                    } \n                  } \n                } catch (parseError) { \n                  console.warn('解析SSE数据失败:', parseError, trimmedLine); \n                } \n              } \n            } \n          } \n        } finally { \n          reader.releaseLock(); \n        } \n      })(); \n      \n    } catch (error) { \n      console.error('阿里云百炼 Qwen3-Max API 调用失败:', error); \n      throw error; \n    } \n  }",
+        "maxTokens": 4096,
+        "name": "qwen3-max",
+        "platformId": "aliyun-bailian",
+        "pricing": {
+          "inputTokens": 0.004,
+          "outputTokens": 0.012
+        },
+        "temperature": 0.7,
+        "topP": 0.9
+      },
+      {
+        "category": "vision",
+        "description": "通义千问3-VL-Plus 视觉语言模型，支持图像理解和分析",
+        "displayName": "通义千问3-VL-Plus",
+        "enabled": true,
+        "id": "qwen3-vl-plus",
+        "jsCode": "async function processModel(input, config, abortSignal) { \n    // 构建请求数据，支持视觉输入 \n    const requestData = { \n      messages: input.messages, \n      model: 'qwen3-vl-plus', \n      stream: true, \n      max_tokens: 4096, \n      temperature: 0.7, \n      top_p: 0.9 \n    }; \n    \n    console.log('阿里云百炼 Qwen3-VL 请求:', requestData); \n    \n    try { \n      // 发送请求到阿里云百炼 API \n      const response = await fetch(`${config.baseUrl}`, { \n        method: 'POST', \n        headers: { \n          'Authorization': `Bearer ${config.apiKey}`, \n          'Content-Type': 'application/json' \n        }, \n        body: JSON.stringify(requestData),\n        signal: abortSignal\n      }); \n      \n      if (!response.ok) { \n        const errorText = await response.text(); \n        throw new Error(`阿里云百炼 Qwen3-VL API 错误 ${response.status}: ${errorText}`); \n      } \n      \n      // 处理流式响应 \n      const reader = response.body.getReader(); \n      const decoder = new TextDecoder(); \n      \n      // 返回异步生成器处理流式数据 \n      return (async function* () { \n        let buffer = ''; \n        \n        try { \n          while (true) { \n            const { done, value } = await reader.read(); \n            \n            if (done) { \n              break; \n            } \n            \n            // 解码数据块 \n            buffer += decoder.decode(value, { stream: true }); \n            const lines = buffer.split('\\n'); \n            buffer = lines.pop() || ''; \n            \n            for (const line of lines) { \n              const trimmedLine = line.trim(); \n              if (trimmedLine === '' || trimmedLine === 'data: [DONE]') { \n                continue; \n              } \n              \n              if (trimmedLine.startsWith('data: ')) { \n                try { \n                  const jsonStr = trimmedLine.slice(6); \n                  const data = JSON.parse(jsonStr); \n                  \n                  if (data.choices && data.choices[0] && data.choices[0].delta) { \n                    const content = data.choices[0].delta.content || ''; \n                    const finished = data.choices[0].finish_reason === 'stop'; \n                    \n                    if (content || finished) { \n                      yield { \n                        content: content, \n                        finished: finished \n                      }; \n                    } \n                  } \n                } catch (parseError) { \n                  console.warn('解析SSE数据失败:', parseError, trimmedLine); \n                } \n              } \n            } \n          } \n        } finally { \n          reader.releaseLock(); \n        } \n      })(); \n      \n    } catch (error) { \n      console.error('阿里云百炼 Qwen3-VL API 调用失败:', error); \n      throw error; \n    } \n  }",
+        "maxTokens": 4096,
+        "name": "qwen3-vl-plus",
+        "platformId": "aliyun-bailian",
+        "pricing": {
+          "inputTokens": 0.006,
+          "outputTokens": 0.018
+        },
+        "temperature": 0.7,
+        "topP": 0.9
+      },
+      {
+        "id": "deepseek-v3",
+        "name": "deepseek-v3",
+        "displayName": "deepseek-v3",
+        "platformId": "aliyun-bailian",
+        "maxTokens": 4096,
+        "temperature": 0.7,
+        "topP": 0.9,
+        "enabled": true,
+        "category": "text",
+        "description": "",
+        "pricing": {
+          "inputTokens": 0,
+          "outputTokens": 0
+        },
+        "jsCode": "async function processModel(input, config, abortSignal) {\n  // TODO: 实现模型的 API 请求逻辑\n  return '未实现';\n}"
+      }
+    ],
+    "name": "aliyun-bailian"
+  }
+]

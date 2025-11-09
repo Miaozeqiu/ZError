@@ -1,0 +1,49 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "url-content",
+  "description": "Capability for the URL content window",
+  "windows": ["url-content"],
+  "permissions": [
+    "core:default",
+    "core:path:default",
+    "fs:allow-resource-read-recursive",
+    {
+      "identifier": "opener:default",
+      "allow": [
+        {
+          "url": "https://app.zerror.cc/**"
+        }
+      ]
+    },
+    "sql:default",
+    "sql:allow-load",
+    "sql:allow-execute",
+    "sql:allow-select",
+    "sql:allow-close",
+    "http:allow-fetch",
+    {
+      "identifier": "http:default",
+      "allow": [
+        {
+          "url": "https://**"
+        },
+        {
+          "url": "http://**"
+        },
+        {
+          "url": "http://localhost:*"
+        },
+        {
+          "url": "http://127.0.0.1:*"
+        }
+      ]
+    },
+    "core:window:allow-start-dragging",
+    "core:window:allow-minimize",
+    "core:window:allow-maximize",
+    "core:window:allow-unmaximize",
+    "core:window:allow-close",
+    "core:window:allow-set-focus",
+    "core:window:allow-is-maximized"
+  ]
+}

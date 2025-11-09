@@ -1,0 +1,60 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "ZError",
+  "version": "2.0.0",
+  "identifier": "com.zerror.app",
+  "build": {
+    "beforeDevCommand": "bun run dev",
+    "devUrl": "http://localhost:1420",
+    "frontendDist": "../dist",
+    "beforeBuildCommand": "npx vite build"
+  },
+  "app": {
+    "windows": [
+      {
+        "fullscreen": false,
+        "resizable": true,
+        "title": "ZError",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 800,
+        "minHeight": 600,
+        "center": true,
+        "dragDropEnabled": false,
+        "decorations": false
+      }
+    ],
+    "security": {
+      "csp": null,
+      "capabilities": ["default", "url-content"]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["msi"],
+    "icon": [
+      "icons/favicon_128x128.ico",
+      "icons/favicon_128x128.ico",
+      "icons/favicon_128x128.ico",
+      "icons/favicon_256x256.ico",
+      "icons/favicon_256x256.ico",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": [
+      "../src/assets/images/**/*",
+      "../public/assets/images/**/*"
+    ],
+    "windows": {
+      "wix": {
+        "language": "zh-CN"
+      },
+      "nsis": null
+    }
+  },
+  "plugins": {
+    "sql": {
+      "preload": ["sqlite:airesponses.db"]
+    }
+  }
+}
