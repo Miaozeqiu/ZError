@@ -183,7 +183,7 @@ const PREDEFINED_PLATFORMS: Omit<AIPlatform, 'apiKey' | 'enabled'>[] = [
       top_p:0.9 
     }; 
     
-    console.log('SiliconFlow DeepSeek-V3.1-Terminus 请求:', requestData); 
+    console.log('SiliconFlow Qwen3-32B 请求:', requestData); 
     
     try { 
       // 发送请求到SiliconFlow API 
@@ -199,7 +199,7 @@ const PREDEFINED_PLATFORMS: Omit<AIPlatform, 'apiKey' | 'enabled'>[] = [
       
       if (!response.ok) { 
         const errorText = await response.text(); 
-        throw new Error(\`SiliconFlow DeepSeek-V3.1-Terminus API 错误 \${response.status}: \${errorText}\`); 
+        throw new Error(\`SiliconFlow Qwen3-32B API 错误 \${response.status}: \${errorText}\`); 
       } 
       
       // 处理流式响应 
@@ -220,7 +220,7 @@ const PREDEFINED_PLATFORMS: Omit<AIPlatform, 'apiKey' | 'enabled'>[] = [
             
             // 解码数据块 
             buffer += decoder.decode(value, { stream: true }); 
-            const lines = buffer.split('\n'); 
+            const lines = buffer.split('\\n'); 
             buffer = lines.pop() || ''; 
             
             for (const line of lines) { 
@@ -257,7 +257,7 @@ const PREDEFINED_PLATFORMS: Omit<AIPlatform, 'apiKey' | 'enabled'>[] = [
       })(); 
       
     } catch (error) { 
-      console.error('SiliconFlow DeepSeek-V3.1-Terminus API 调用失败:', error); 
+      console.error('SiliconFlow Qwen3-32B API 调用失败:', error); 
       throw error; 
     } 
   }`
@@ -321,7 +321,7 @@ const PREDEFINED_PLATFORMS: Omit<AIPlatform, 'apiKey' | 'enabled'>[] = [
 
           // 解码数据块
           buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
+          const lines = buffer.split('\\n');
           buffer = lines.pop() || '';
 
           for (const line of lines) {
@@ -846,7 +846,7 @@ const PREDEFINED_PLATFORMS: Omit<AIPlatform, 'apiKey' | 'enabled'>[] = [
 
           // 解码数据块
           buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
+          const lines = buffer.split('\\n');
           buffer = lines.pop() || '';
 
           for (const line of lines) {
@@ -1172,7 +1172,7 @@ const PREDEFINED_PLATFORMS: Omit<AIPlatform, 'apiKey' | 'enabled'>[] = [
  
            // 解码数据块 
            buffer += decoder.decode(value, { stream: true }); 
-           const lines = buffer.split('\n'); 
+           const lines = buffer.split('\\n'); 
            buffer = lines.pop() || ''; 
  
            for (const line of lines) { 
@@ -1284,7 +1284,7 @@ const PREDEFINED_PLATFORMS: Omit<AIPlatform, 'apiKey' | 'enabled'>[] = [
            
            // 解码数据块 
            buffer += decoder.decode(value, { stream: true }); 
-           const lines = buffer.split('\n'); 
+           const lines = buffer.split('\\n'); 
            buffer = lines.pop() || ''; 
            
            for (const line of lines) { 
@@ -1428,6 +1428,218 @@ const PREDEFINED_PLATFORMS: Omit<AIPlatform, 'apiKey' | 'enabled'>[] = [
     } 
   }`
       }
+    ],
+    description: '阿里云百炼AI平台服务'
+  },
+    {
+    id: 'deepseek',
+    name: 'deepseek',
+    displayName: 'Deepseek',
+    baseUrl: 'https://api.deepseek.com/chat/completions',
+    icon: 'deepseek.png',
+    models: [
+      {
+        id: 'deepseek-deepseek-chat',
+        name: 'deepseek-deepseek-chat',
+        displayName: 'DeepSeek-Chat',
+        platformId: 'deepseek',
+        maxTokens: 4096,
+        temperature: 0.7,
+        topP: 0.9,
+        enabled: true,
+        category: 'text',
+        description: 'DeepSeek最新的模型，非推理',
+        pricing: { inputTokens: 0.004, outputTokens: 0.012 },
+        jsCode: `async function processModel(input, config) { 
+   // 构建请求数据 
+   const requestData = { 
+     messages: input.messages, 
+     model: 'deepseek-chat', 
+     stream: true,
+   }; 
+   
+   console.log('DeepSeek开放平台 请求:', requestData); 
+   
+   try { 
+     // 发送请求到DeepSeek开放平台 API 
+     const response = await fetch(\`\${config.baseUrl}\`, { 
+       method: 'POST', 
+       headers: { 
+         'Authorization': \`Bearer \${config.apiKey}\`, 
+         'Content-Type': 'application/json' 
+       }, 
+       body: JSON.stringify(requestData) 
+     }); 
+     
+     if (!response.ok) { 
+       const errorText = await response.text(); 
+       throw new Error(\`DeepSeek开放平台 API 错误 \${response.status}: \${errorText}\`); 
+     } 
+     
+     // 处理流式响应 
+     const reader = response.body.getReader(); 
+     const decoder = new TextDecoder(); 
+     
+     // 返回异步生成器处理流式数据 
+     return (async function* () { 
+       let buffer = ''; 
+       
+       try { 
+         while (true) { 
+           const { done, value } = await reader.read(); 
+           
+           if (done) { 
+             break; 
+           } 
+           
+           // 解码数据块 
+           buffer += decoder.decode(value, { stream: true }); 
+           const lines = buffer.split('\\n'); 
+           buffer = lines.pop() || ''; 
+           
+           for (const line of lines) { 
+             const trimmedLine = line.trim(); 
+             if (trimmedLine === '' || trimmedLine === 'data: [DONE]') { 
+               continue; 
+             } 
+             
+             if (trimmedLine.startsWith('data: ')) { 
+               try { 
+                 const jsonStr = trimmedLine.slice(6); 
+                 const data = JSON.parse(jsonStr); 
+                 
+                 if (data.choices && data.choices[0] && data.choices[0].delta) { 
+                   const content = data.choices[0].delta.content || ''; 
+                   const finished = data.choices[0].finish_reason === 'stop'; 
+                   
+                   if (content || finished) { 
+                     yield { 
+                       content: content, 
+                       finished: finished 
+                     }; 
+                   } 
+                 } 
+               } catch (parseError) { 
+                 console.warn('解析SSE数据失败:', parseError, trimmedLine); 
+               } 
+             } 
+           } 
+         } 
+       } finally { 
+         reader.releaseLock(); 
+       } 
+     })(); 
+     
+   } catch (error) { 
+     console.error('DeepSeek开放平台 API 调用失败:', error); 
+     throw error; 
+   } 
+ }`
+      },
+      {
+        id: 'deepseek-deepseek-reasoner',
+        name: 'deepseek-deepseek-reasoner',
+        displayName: 'DeepSeek-Reasoner',
+        platformId: 'deepseek',
+        maxTokens: 4096,
+        temperature: 0.7,
+        topP: 0.9,
+        enabled: true,
+        category: 'text',
+        description: 'DeepSeek最新的思考模型',
+        pricing: { inputTokens: 0.004, outputTokens: 0.012 },
+       jsCode: `async function processModel(input, config) {
+  // 构建请求数据
+  const requestData = {
+    messages: input.messages,
+    model: 'deepseek-reasoner',
+    stream: true,
+  };
+
+  console.log('DeepSeek开放平台 请求:', requestData);
+
+  try {
+    // 发送请求到 DeepSeek开放平台 API
+    const response = await fetch(\`\${config.baseUrl}\`, {
+      method: 'POST',
+      headers: {
+        'Authorization': \`Bearer \${config.apiKey}\`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(requestData)
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(\`DeepSeek开放平台 API 错误 \${response.status}: \${errorText}\`);
+    }
+
+    // 处理流式响应
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+
+    // 返回异步生成器处理流式数据
+    return (async function* () {
+      let buffer = '';
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+
+          if (done) {
+            break;
+          }
+
+          // 解码数据块
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            const trimmedLine = line.trim();
+
+            if (trimmedLine === '' || trimmedLine === 'data: [DONE]') {
+              continue;
+            }
+
+            if (trimmedLine.startsWith('data: ')) {
+              try {
+                const jsonStr = trimmedLine.slice(6);
+                const data = JSON.parse(jsonStr);
+
+                if (data.choices && data.choices[0] && data.choices[0].delta) {
+                  const delta = data.choices[0].delta;
+
+                  const content = delta.content ?? '';
+                  const reasoning_content = delta.reasoning_content ?? '';
+                  const finished = data.choices[0].finish_reason === 'stop';
+
+                  // 只要有任意内容或结束标记就 yield
+                  if (content || reasoning_content || finished) {
+                    yield {
+                      content,
+                      reasoning_content,       
+                      finished
+                    };
+                  }
+                }
+              } catch (parseError) {
+                console.warn('解析 SSE 数据失败:', parseError, trimmedLine);
+              }
+            }
+          }
+        }
+      } finally {
+        reader.releaseLock();
+      }
+    })();
+  } catch (error) {
+    console.error('DeepSeek开放平台 调用失败:', error);
+    throw error;
+  }
+}`
+      },
+      
     ],
     description: '阿里云百炼AI平台服务'
   },

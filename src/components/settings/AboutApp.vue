@@ -10,7 +10,7 @@
 
         <div class="app-details">
           <h3 class="app-name">ZError</h3>
-          <p class="app-version">版本 2.0.0</p>
+          <p class="app-version">版本 2.0.2</p>
           <p class="app-description">支持OCS的AI题库</p>
         </div>
       </div>
@@ -86,9 +86,9 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { useSettingsManager } from '../composables/useSettingsManager'
-import { useModelConfig } from '../services/modelConfig'
-import { environmentDetector } from '../services/environmentDetector'
+import { useSettingsManager } from '../../composables/useSettingsManager'
+import { useModelConfig } from '../../services/modelConfig'
+import { environmentDetector } from '../../services/environmentDetector'
 
 // 获取设置和模型配置
 const { settings } = useSettingsManager()

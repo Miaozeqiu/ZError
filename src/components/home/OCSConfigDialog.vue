@@ -34,7 +34,9 @@
               </div>
 
               <div class="json-container">
-                <pre class="json-code"><code v-html="highlightedJson"></code></pre>
+                <div class="code-editor">
+                  <div ref="cmContainerRef" class="cm-container"></div>
+                </div>
               </div>
             </div>
 
@@ -57,7 +59,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
+import { EditorState } from '@codemirror/state'
+import { EditorView } from '@codemirror/view'
+import { javascript } from '@codemirror/lang-javascript'
+import { defaultHighlightStyle, syntaxHighlighting } from '@codemirror/language'
+import { oneDark } from '@codemirror/theme-one-dark'
 
 interface Props {
   visible: boolean
@@ -76,7 +83,7 @@ const copySuccess = ref(false)
 // OCS配置JSON数据
 const ocsConfig = [{
   "name": "ZE题库(自建版)",
-  "homepage": "http://zerror.neoregion.cn",
+  "homepage": "http://app.zerror.cc",
   "url": "http://localhost:3002/query",
   "method": "get",
   "type": "GM_xmlhttpRequest",
@@ -98,22 +105,99 @@ const formattedConfig = computed(() => {
   return JSON.stringify(configWithCurrentPort, null, 2)
 })
 
-// JSON语法高亮
-const highlightedJson = computed(() => {
-  const json = formattedConfig.value
-  return json
-    // 首先处理字符串值（包含各种特殊字符）
-    .replace(/:\s*("(?:[^"\\]|\\.)*")/g, ': <span style="color: #22c55e;">$1</span>')
-    // 然后处理键名
-    .replace(/("(?:[^"\\]|\\.)*")(\s*:)/g, '<span style="color: #8b5cf6; font-weight: bold;">$1</span>$2')
-    // 处理数字
-    .replace(/:\s*(\d+)/g, ': <span style="color: #3b82f6; font-weight: bold;">$1</span>')
-    // 处理布尔值
-    .replace(/:\s*(true|false)/g, ': <span style="color: #f59e0b; font-weight: bold;">$1</span>')
-    // 处理null值
-    .replace(/:\s*(null)/g, ': <span style="color: #ef4444; font-weight: bold;">$1</span>')
-    // 处理标点符号
-    .replace(/([{}[\],])/g, '<span style="color: #6b7280; font-weight: bold;">$1</span>')
+const cmContainerRef = ref<HTMLElement | null>(null)
+let cmView: EditorView | null = null
+let themeObserver: MutationObserver | null = null
+
+const initCodeMirror = async () => {
+  if (!cmContainerRef.value || cmView) return
+  const isDarkTheme = document.documentElement.getAttribute('data-theme') === 'dark'
+  let langExt: any = null
+  try {
+    const mod = await import('@codemirror/lang-json')
+    langExt = mod.json()
+  } catch {
+    langExt = javascript()
+  }
+  const baseExtensions = [
+    langExt,
+    EditorState.readOnly.of(true),
+    EditorView.theme({
+      '.cm-content': {
+        fontFamily: "'Consolas','Monaco','Courier New',monospace",
+        fontSize: '13px',
+        lineHeight: '20px'
+      },
+      '&.cm-editor': { height: '100%' }
+    })
+  ]
+  const themeExtensions = isDarkTheme
+    ? [oneDark]
+    : [syntaxHighlighting(defaultHighlightStyle, { fallback: true })]
+
+  const state = EditorState.create({
+    doc: formattedConfig.value,
+    extensions: [...baseExtensions, ...themeExtensions]
+  })
+  cmView = new EditorView({ state, parent: cmContainerRef.value })
+}
+
+const setEditorDoc = (text: string) => {
+  if (!cmView) return
+  const state = cmView.state
+  cmView.dispatch(state.update({ changes: { from: 0, to: state.doc.length, insert: text ?? '' } }))
+}
+
+watch(() => props.visible, async (visible) => {
+  if (visible) {
+    await nextTick()
+    if (cmView) {
+      cmView.destroy()
+      cmView = null
+    }
+    await initCodeMirror()
+  } else {
+    if (cmView) {
+      cmView.destroy()
+      cmView = null
+    }
+  }
+})
+
+watch(() => formattedConfig.value, (json) => {
+  if (cmView) setEditorDoc(json)
+})
+
+onMounted(() => {
+  themeObserver = new MutationObserver((mutations) => {
+    for (const m of mutations) {
+      if (m.type === 'attributes' && m.attributeName === 'data-theme') {
+        if (props.visible) {
+          const currentText = cmView ? cmView.state.doc.toString() : formattedConfig.value
+          if (cmView) {
+            cmView.destroy()
+            cmView = null
+          }
+          nextTick(async () => {
+            await initCodeMirror()
+            setEditorDoc(currentText)
+          })
+        }
+      }
+    }
+  })
+  themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
+})
+
+onUnmounted(() => {
+  if (cmView) {
+    cmView.destroy()
+    cmView = null
+  }
+  if (themeObserver) {
+    themeObserver.disconnect()
+    themeObserver = null
+  }
 })
 
 // 复制配置到剪贴板
@@ -296,18 +380,29 @@ const testConnection = () => {
   border: 1px solid var(--border-color);
   border-radius: 8px;
   overflow: hidden;
+  font-family: 'Consolas','Monaco','Courier New',monospace;
+  min-height: 200px;
 }
 
 .json-code {
   margin: 0;
   padding: 20px;
-  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
   font-size: 13px;
   line-height: 1.5;
   color: var(--text-color);
   background: transparent;
   overflow-x: auto;
   white-space: pre;
+}
+
+.code-editor { position: relative; min-height: 200px; }
+.cm-container { position: relative; width: 100%; height: 100%; }
+.json-container :deep(.cm-editor) { height: 100%; }
+.json-container :deep(.cm-content) {
+  padding: 12px;
+  font-family: 'Consolas','Monaco','Courier New',monospace;
+  font-size: 13px;
+  line-height: 20px;
 }
 
 /* JSON语法高亮 */
@@ -384,7 +479,7 @@ const testConnection = () => {
   border: 1px solid var(--border-color);
   border-radius: 6px;
   padding: 12px;
-  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-family: 'Consolas','Monaco','Courier New',monospace;
   font-size: 12px;
   color: var(--code-color);
   overflow-x: auto;

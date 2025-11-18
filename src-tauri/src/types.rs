@@ -86,7 +86,7 @@ impl QueryResponse {
     /// 创建错误响应
     pub fn error(message: String) -> Self {
         Self {
-            code: -1,
+            code: 0,
             data: None,
             message: Some(message),
         }

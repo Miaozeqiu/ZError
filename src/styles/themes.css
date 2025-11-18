@@ -128,7 +128,7 @@
   /* 背景颜色 */
   --bg-primary: #f4f4f4;
   --bg-secondary: #fff;
-  --bg-tertiary: #f4f4f4;
+  --bg-tertiary: #e8e8e8;
   --bg-sidebar: #2d3748;
   --bg-overlay: rgba(0, 0, 0, 0.5);
   
@@ -257,6 +257,7 @@
 
   /* 平台配置对话框相关颜色 */
   --platform-config-dialog-bg: #ffffff;
+  --platform-config-overlay-bg: rgba(0, 0, 0, 0.5);
   --platform-config-dialog-border: #e2e8f0;
   --platform-config-dialog-header-border: #e2e8f0;
   --platform-config-dialog-title-text: #2d3748;
@@ -352,8 +353,8 @@
   /* 平台开关颜色 */
   --platform-toggle-bg: #4a5568;
   --platform-toggle-slider: #e2e8f0;
-  --platform-toggle-active: #68d391;
-  --platform-toggle-active-hover: #48bb78;
+  --platform-toggle-active: #41a269;
+  --platform-toggle-active-hover: #38a169;
   
   /* Toggle组件颜色 */
   --toggle-default-bg: #4a5568;
@@ -533,11 +534,11 @@
 
   /* 平台列表项颜色 */
   --platform-item-bg: transparent;
-  --platform-item-hover-bg: #464b52;
+  --platform-item-hover-bg: #3b3b3b;
   --platform-item-active-bg: #344458;
   --platform-item-border: transparent;
-  --platform-item-hover-border: #4a5568;
-  --platform-item-active-border: #667eea;
+  --platform-item-hover-border: transparent;
+  --platform-item-active-border: transparent;
   --platform-item-text: #e2e8f0;
   --platform-item-hover-text: #e2e8f0;
   --platform-item-active-text: #ffffff;
@@ -561,10 +562,10 @@
   /* 模型项相关颜色 */
   --model-item-bg: #2d2d2d;
   --model-item-border: transparent;
-  --model-item-hover-bg: #4a5568;
-  --model-item-hover-border: #6b7280;
-  --model-item-active-bg: #44484f;
-  --model-item-active-border: #909090;
+  --model-item-hover-bg: #3b3b3b;
+  --model-item-hover-border: transparent;
+  --model-item-active-bg: #344458;
+  --model-item-active-border: transparent;
   --model-item-text: #e2e8f0;
   --model-item-hover-text: #f3f4f6;
   --model-item-active-text: #ffffff;
@@ -609,12 +610,13 @@
   --question-editor-submit-disabled-bg: #6b7280;
 
   /* 平台配置对话框相关颜色 */
-  --platform-config-dialog-bg: #2d3748;
-  --platform-config-dialog-border: #4a5568;
-  --platform-config-dialog-header-border: #4a5568;
+  --platform-config-dialog-bg: #2d2d2d;
+  --platform-config-overlay-bg: rgba(0, 0, 0, 0.6);
+  --platform-config-dialog-border: #424242;
+  --platform-config-dialog-header-border: #4c4c4c;
   --platform-config-dialog-title-text: #e2e8f0;
   --platform-config-dialog-close-text: #a0aec0;
-  --platform-config-dialog-close-hover-bg: #4a5568;
+  --platform-config-dialog-close-hover-bg: #303030;
   --platform-config-dialog-close-hover-text: #e2e8f0;
   --platform-config-form-label-text: #e2e8f0;
   --platform-config-form-input-border: #4a5568;
@@ -631,8 +633,8 @@
   --platform-config-icon-dropdown-border: #4a5568;
   --platform-config-icon-section-title-text: #a0aec0;
   --platform-config-icon-section-title-bg: #4a5568;
-  --platform-config-icon-option-bg: #2d3748;
-  --platform-config-icon-option-border: #4a5568;
+  --platform-config-icon-option-bg: #434343;
+  --platform-config-icon-option-border: #4d4d4d;
   --platform-config-icon-option-hover-border: #667eea;
   --platform-config-icon-option-hover-bg: #3c4858;
   --platform-config-icon-option-active-border: #667eea;

@@ -29,6 +29,8 @@ export class InitializationService {
       
       // 2. 检查并创建数据库文件
       await this.ensureDatabaseFile();
+      // 执行数据库模式迁移（补充缺失字段）
+      await this.ensureDatabaseSchema();
       
       // 由于已在数据库服务中特殊处理默认文件夹的查询逻辑，
       // 不再需要修复ParentId字段，保持原有的数据结构
@@ -137,6 +139,31 @@ export class InitializationService {
     } catch (error) {
       console.error('创建数据库文件失败:', error);
       throw error;
+    }
+  }
+
+  /**
+   * 确保数据库表结构为最新（如补充 AIResponses.IsAi 字段）
+   */
+  private async ensureDatabaseSchema(): Promise<void> {
+    try {
+      const dbPath = await this.getDatabasePath();
+      const db = await Database.load(`sqlite:${dbPath}`);
+
+      const columns = await db.select<any[]>("PRAGMA table_info('AIResponses')");
+      const hasIsAi = Array.isArray(columns) && columns.some((col: any) => col.name === 'IsAi');
+
+      if (!hasIsAi) {
+        console.log('检测到 AIResponses 表缺少 IsAi 字段，准备添加...');
+        await db.execute("ALTER TABLE AIResponses ADD COLUMN IsAi BOOLEAN DEFAULT 1");
+        // 初始化已有数据，避免出现 NULL 值
+        await db.execute("UPDATE AIResponses SET IsAi = 1 WHERE IsAi IS NULL");
+        console.log('已为 AIResponses 表添加 IsAi 字段并初始化现有数据');
+      } else {
+        console.log('AIResponses 表已包含 IsAi 字段');
+      }
+    } catch (error) {
+      console.warn('检查/迁移数据库表结构失败（可能非Tauri环境或数据库不可用）:', error);
     }
   }
 

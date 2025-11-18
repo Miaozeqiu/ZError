@@ -109,8 +109,8 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { useModelConfig } from '../services/modelConfig'
-import type { AIPlatform, AIModel } from '../services/modelConfig'
+import { useModelConfig } from '../../services/modelConfig'
+import type { AIPlatform, AIModel } from '../../services/modelConfig'
 
 interface Props {
   currentModel?: AIModel | null

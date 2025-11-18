@@ -290,19 +290,19 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, computed } from 'vue'
-import { useModelConfig } from '../services/modelConfig'
-import type { AIPlatform, AIModel } from '../services/modelConfig'
-import { environmentDetector } from '../services/environmentDetector'
-import PlatformConfigDialog from './PlatformConfigDialog.vue'
-import ModelConfigDialog from './ModelConfigDialog.vue'
-import PlatformContextMenu from './PlatformContextMenu.vue'
-import ModelContextMenu from './ModelContextMenu.vue'
-import ModelTestDialog from './ModelTestDialog.vue'
-import MarkdownDemoDialog from './MarkdownDemoDialog.vue'
-import ModelDeleteConfirmDialog from './ModelDeleteConfirmDialog.vue'
-import PlatformDeleteConfirmDialog from './PlatformDeleteConfirmDialog.vue'
-import Toggle from './Toggle.vue'
-import ModelCategorySwitch from './ModelCategorySwitch.vue'
+import { useModelConfig } from '../../services/modelConfig'
+import type { AIPlatform, AIModel } from '../../services/modelConfig'
+import { environmentDetector } from '../../services/environmentDetector'
+import PlatformConfigDialog from '../PlatformConfigDialog.vue'
+import ModelConfigDialog from '../ModelConfigDialog.vue'
+import PlatformContextMenu from '../PlatformContextMenu.vue'
+import ModelContextMenu from '../ModelContextMenu.vue'
+import ModelTestDialog from '../ModelTestDialog.vue'
+import MarkdownDemoDialog from '../MarkdownDemoDialog.vue'
+import ModelDeleteConfirmDialog from '../ModelDeleteConfirmDialog.vue'
+import PlatformDeleteConfirmDialog from '../PlatformDeleteConfirmDialog.vue'
+import Toggle from '../Toggle.vue'
+import ModelCategorySwitch from '../ModelCategorySwitch.vue'
 
 // 模型配置管理
 const { 

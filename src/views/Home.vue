@@ -346,6 +346,12 @@
     :server-response="urlContentData.serverResponse"
     @close="showUrlContentDialog = false"
   />
+  <ModelWarningDialog 
+    :visible="showNoModelDialog"
+    @close="showNoModelDialog = false"
+    @still-open="handleNoModelStillOpen"
+    @select-model="handleNoModelSelect"
+  />
 </template>
 
 <script setup lang="ts">
@@ -354,12 +360,13 @@ import { useSettings } from '../services/settings'
 import { useModelConfig } from '../services/modelConfig'
 import type { AIModel } from '../services/modelConfig'
 import { databaseService } from '../services/database'
-import LayeredModelSelector from '../components/LayeredModelSelector.vue'
-import PortConfigDialog from '../components/PortConfigDialog.vue'
-import ModelSelectorDialog from '../components/ModelSelectorDialog.vue'
-import OCSConfigDialog from '../components/OCSConfigDialog.vue'
-import UrlContentDialog from '../components/UrlContentDialog.vue'
+import LayeredModelSelector from '../components/home/LayeredModelSelector.vue'
+import PortConfigDialog from '../components/home/PortConfigDialog.vue'
+import ModelSelectorDialog from '../components/home/ModelSelectorDialog.vue'
+import OCSConfigDialog from '../components/home/OCSConfigDialog.vue'
+import UrlContentDialog from '../components/home/UrlContentDialog.vue'
 import MarkdownRenderer from '../components/MarkdownRenderer.vue'
+import ModelWarningDialog from '../components/home/ModelWarningDialog.vue'
 
 const emit = defineEmits(['navigate'])
 
@@ -396,6 +403,8 @@ const showPortDialog = ref(false)
 
 // 模型选择对话框状态
 const showModelSelector = ref(false)
+const showNoModelDialog = ref(false)
+const pendingStart = ref(false)
 
 // OCS题库配置对话框状态
 const showOCSConfig = ref(false)
@@ -1090,6 +1099,11 @@ const toggleServer = async () => {
   if (serverRunning.value) {
     await stopServer()
   } else {
+    if (!globalSelectedTextModel.value && !settings.suppressNoModelWarning) {
+      pendingStart.value = true
+      showNoModelDialog.value = true
+      return
+    }
     await startServer()
   }
 }
@@ -1577,6 +1591,33 @@ const callModelAPI = async (requestId: string, query: string) => {
     }
   }
 }
+
+const handleNoModelStillOpen = (dontRemind: boolean) => {
+  if (dontRemind) {
+    set('suppressNoModelWarning', true)
+    save()
+  }
+  showNoModelDialog.value = false
+  if (pendingStart.value) {
+    pendingStart.value = false
+    startServer()
+  }
+}
+const handleNoModelSelect = (dontRemind: boolean) => {
+  if (dontRemind) {
+    set('suppressNoModelWarning', true)
+    save()
+  }
+  showNoModelDialog.value = false
+  showModelSelector.value = true
+}
+
+watch(globalSelectedTextModel, (newTextModel) => {
+  if (newTextModel && pendingStart.value) {
+    pendingStart.value = false
+    startServer()
+  }
+})
 
 // 发送模型响应到后端
 const sendModelResponseToBackend = async (requestId: string, content: string, isSuccess: boolean = true) => {

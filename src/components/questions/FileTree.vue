@@ -62,7 +62,7 @@ import { ref, reactive, onMounted, onUnmounted, nextTick } from 'vue';
 import FileTreeNode from './FileTreeNode.vue';
 import ContextMenu from './ContextMenu.vue';
 import DeleteConfirmDialog from './DeleteConfirmDialog.vue';
-import { databaseService, type Folder } from '../services/database';
+import { databaseService, type Folder } from '../../services/database';
 
 interface TreeNode {
   id: string;

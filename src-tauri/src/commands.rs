@@ -5,6 +5,31 @@ use crate::database::{get_username as db_get_username, file_exists as db_file_ex
 use std::fs;
 use base64::{Engine as _, engine::general_purpose};
 use urlencoding;
+use std::path::PathBuf;
+use std::sync::{OnceLock, atomic::{AtomicBool, Ordering}};
+
+static ELEVATION_FLAG: OnceLock<AtomicBool> = OnceLock::new();
+fn elevation_requested() -> &'static AtomicBool { ELEVATION_FLAG.get_or_init(|| AtomicBool::new(false)) }
+
+pub fn spawn_elevated_self() -> Result<(), String> {
+    let exe: PathBuf = std::env::current_exe().map_err(|e| format!("{}", e))?;
+    #[cfg(target_os = "windows")]
+    {
+        let already = elevation_requested().swap(true, Ordering::SeqCst);
+        if already { return Err("already_requested".to_string()); }
+        let status = runas::Command::new(exe)
+            .arg("--elevated")
+            .gui(true)
+            .status()
+            .map_err(|e| format!("{}", e))?;
+        if !status.success() {
+            return Err("elevation_failed".to_string());
+        }
+        return Ok(());
+    }
+    #[allow(unreachable_code)]
+    Err("unsupported_platform".to_string())
+}
 
 #[tauri::command]
 pub fn greet(name: &str) -> String {
@@ -301,5 +326,16 @@ pub async fn open_devtools(app: tauri::AppHandle) -> Result<String, String> {
         Ok("开发者工具已打开".to_string())
     } else {
         Err("无法找到主窗口".to_string())
+    }
+}
+
+#[tauri::command]
+pub fn request_admin_elevation(app: tauri::AppHandle) -> Result<String, String> {
+    match spawn_elevated_self() {
+        Ok(_) => {
+            app.exit(0);
+            Ok("ok".to_string())
+        }
+        Err(e) => Err(e)
     }
 }

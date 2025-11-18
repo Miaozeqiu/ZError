@@ -553,21 +553,29 @@ const chooseCustomPlatform = () => {
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--platform-config-overlay-bg);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 1000;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  animation: overlay-fade-in 160ms ease-out both;
 }
 
 .marketplace-panel {
-  background: var(--bg-secondary, #ffffff);
+  background: var(--platform-config-dialog-bg);
+  border: 1px solid var(--platform-config-dialog-border);
   border-radius: 12px;
   box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
   width: 92vw;
   max-width: 1100px;
   max-height: 90vh;
   overflow: hidden;
+  will-change: transform, opacity;
+  transform-origin: center center;
+  backface-visibility: hidden;
+  animation: popup-in 180ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
 }
 
 .marketplace-header {
@@ -632,16 +640,24 @@ const chooseCustomPlatform = () => {
   gap: 10px;
 }
 
+.platform-item-icon{
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .platform-item-icon img {
-  width: 28px;
-  height: 28px;
+  width: 40px;
+  height: 40px;
+  max-width: 40px;
+  max-height: 40px;
   object-fit: contain;
   border-radius: 6px;
 }
 
 .icon-fallback-small {
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   border-radius: 6px;
   display: flex;
   align-items: center;
@@ -713,21 +729,29 @@ const chooseCustomPlatform = () => {
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--platform-config-overlay-bg);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 1000;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  animation: overlay-fade-in 160ms ease-out both;
 }
 
 .dialog-content {
-  background: var(--bg-primary);
+  background: var(--platform-config-dialog-bg);
+  border: 1px solid var(--platform-config-dialog-border);
   border-radius: 12px;
   width: 90%;
   max-width: 600px;
   max-height: 90vh;
   overflow: hidden;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  will-change: transform, opacity;
+  transform-origin: center center;
+  backface-visibility: hidden;
+  animation: popup-in 180ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
 }
 
 .dialog-header {
@@ -782,7 +806,7 @@ const chooseCustomPlatform = () => {
   box-sizing: border-box;
   width: 100%;
   padding: 10px 12px;
-  border: none;
+  border: 1px solid var(--border-color, #e2e8f0);
   border-radius: 8px;
   font-size: 14px;
   transition: border-color 0.2s ease;
@@ -799,7 +823,7 @@ const chooseCustomPlatform = () => {
   box-sizing: border-box;
   width: 100%;
   padding: 10px 12px;
-  border: none;
+  border: 1px solid var(--border-color, #e2e8f0);
   border-radius: 8px;
   font-size: 14px;
   resize: none;
@@ -1121,5 +1145,19 @@ const chooseCustomPlatform = () => {
   padding: 8px;
   background: var(--platform-config-error-bg);
   border-radius: 4px;
+}
+@keyframes popup-in {
+  from {
+    transform: translateY(10px) scale(0.98);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+}
+@keyframes overlay-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 </style>

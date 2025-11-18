@@ -261,13 +261,14 @@ pub async fn start_server(
                             logger.send_model_call_request(request_id.clone(), formatted_query);
                             
                             // 等待模型调用完成（最多等待30秒）
-                            match logger.wait_for_model_response(request_id.clone(), 30).await {
-                                Ok(model_content) => {
-                                    println!("✅ Received model response: {}", model_content);
-                                    
-                                    // 尝试从JSON响应中提取answer字段
+                        match logger.wait_for_model_response(request_id.clone(), 30).await {
+                            Ok(model_content) => {
+                                println!("✅ Received model response: {}", model_content);
+                                if let Some(err_msg) = is_model_error(&model_content) {
+                                    let response = QueryResponse::error(err_msg);
+                                    (500, response)
+                                } else {
                                     let extracted_answer = extract_answer_from_json(&model_content);
-                                    
                                     let data = QueryData {
                                         question: request.title.clone(),
                                         answer: extracted_answer,
@@ -276,12 +277,13 @@ pub async fn start_server(
                                     let response = QueryResponse::success(data);
                                     (200, response)
                                 }
-                                Err(e) => {
-                                    println!("❌ Model call timeout or error: {}", e);
-                                    let response = QueryResponse::error(format!("Model call failed: {}", e));
-                                    (408, response) // Request Timeout
-                                }
                             }
+                            Err(e) => {
+                                println!("❌ Model call timeout or error: {}", e);
+                                let response = QueryResponse::error(format!("Model call failed: {}", e));
+                                (408, response) // Request Timeout
+                            }
+                        }
                         }
                     }
                     Err(e) => {
@@ -475,12 +477,13 @@ pub async fn start_server(
                             
                             // 等待模型调用完成（最多等待30秒）
                             match logger.wait_for_model_response(request_id.clone(), 30).await {
-                                Ok(model_content) => {
-                                    println!("✅ Received model response: {}", model_content);
-                                    
-                                    // 尝试从JSON响应中提取answer字段
+                            Ok(model_content) => {
+                                println!("✅ Received model response: {}", model_content);
+                                if let Some(err_msg) = is_model_error(&model_content) {
+                                    let response = QueryResponse::error(err_msg);
+                                    (500, response)
+                                } else {
                                     let extracted_answer = extract_answer_from_json(&model_content);
-                                    
                                     let data = QueryData {
                                         question: request.title.clone(),
                                         answer: extracted_answer,
@@ -489,12 +492,13 @@ pub async fn start_server(
                                     let response = QueryResponse::success(data);
                                     (200, response)
                                 }
-                                Err(e) => {
-                                    println!("❌ Model call timeout or error: {}", e);
-                                    let response = QueryResponse::error(format!("Model call failed: {}", e));
-                                    (408, response) // Request Timeout
-                                }
                             }
+                            Err(e) => {
+                                println!("❌ Model call timeout or error: {}", e);
+                                let response = QueryResponse::error(format!("Model call failed: {}", e));
+                                (408, response) // Request Timeout
+                            }
+                        }
                         }
                     }
                     Err(e) => {
@@ -539,10 +543,14 @@ pub async fn start_server(
                 // 发送模型调用响应事件
                 logger.send_model_call_response(request.request_id.clone(), request.content.clone());
                 
-                // 存储AI响应到数据库
-                match store_ai_response_to_database(&request.request_id, &request.content).await {
-                    Ok(_) => println!("✅ AI响应已成功存储到数据库"),
-                    Err(e) => println!("❌ 存储AI响应到数据库失败: {}", e),
+                let should_store = is_model_error(&request.content).is_none();
+                if should_store {
+                    match store_ai_response_to_database(&request.request_id, &request.content).await {
+                        Ok(_) => println!("✅ AI响应已成功存储到数据库"),
+                        Err(e) => println!("❌ 存储AI响应到数据库失败: {}", e),
+                    }
+                } else {
+                    println!("⚠️ 检测到模型错误响应，跳过存储到数据库");
                 }
                 
                 // 返回成功响应
@@ -1017,4 +1025,63 @@ fn extract_answer_from_json(json_content: &str) -> String {
     // 5) 回退：返回原始内容
     println!("⚠️ 未能提取到结构化答案，返回原始内容");
     json_content.to_string()
+}
+
+fn is_model_error(text: &str) -> Option<String> {
+    let mut cleaned = text.trim().to_string();
+    if cleaned.starts_with("```json") {
+        cleaned = cleaned[7..].to_string();
+    } else if cleaned.starts_with("```") {
+        cleaned = cleaned[3..].to_string();
+    }
+    if cleaned.ends_with("```") {
+        cleaned = cleaned[..cleaned.len() - 3].to_string();
+    }
+    let cleaned = cleaned.trim().to_string();
+
+    if cleaned.starts_with("错误:") || cleaned.starts_with("Error:") {
+        return Some(cleaned);
+    }
+
+    if cleaned.contains("\"error\"") {
+        if let Ok(v) = serde_json::from_str::<Value>(&cleaned) {
+            if let Some(err) = v.get("error") {
+                if let Some(msg) = err.get("message").and_then(|m| m.as_str()) {
+                    return Some(msg.to_string());
+                }
+                return Some(err.to_string());
+            }
+        }
+
+        fn extract_last_balanced_json(text: &str) -> Option<String> {
+            let bytes = text.as_bytes();
+            let mut end: Option<usize> = None;
+            let mut depth: i32 = 0;
+            let mut i = bytes.len();
+            while i > 0 {
+                i -= 1;
+                let b = bytes[i];
+                if end.is_none() {
+                    if b == b'}' { end = Some(i); depth = 1; continue; }
+                } else {
+                    if b == b'}' { depth += 1; }
+                    else if b == b'{' { depth -= 1; if depth == 0 { let start = i; let slice = &text[start..=end.unwrap()]; return Some(slice.to_string()); } }
+                }
+            }
+            None
+        }
+
+        if let Some(json_str) = extract_last_balanced_json(&cleaned) {
+            if let Ok(v) = serde_json::from_str::<Value>(&json_str) {
+                if let Some(err) = v.get("error") {
+                    if let Some(msg) = err.get("message").and_then(|m| m.as_str()) {
+                        return Some(msg.to_string());
+                    }
+                    return Some(err.to_string());
+                }
+            }
+        }
+    }
+
+    None
 }

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref } from "vue";
-import FileTree from "../components/FileTree.vue";
-import QuestionList from "../components/QuestionList.vue";
+import FileTree from "../components/questions/FileTree.vue";
+import QuestionList from "../components/questions/QuestionList.vue";
 import type { AIResponse } from "../services/database";
 
 // 接收来自顶层 App 的折叠触发器，用于在切换 tab 时收起题目详情
@@ -18,6 +18,7 @@ const isResizing = ref(false);
 // 子组件引用
 const fileTreeRef = ref<InstanceType<typeof FileTree> | null>(null);
 const questionListRef = ref<InstanceType<typeof QuestionList> | null>(null);
+const layoutRef = ref<HTMLElement | null>(null);
 
 const handleFolderSelect = async (folderId: number, folderName: string) => {
   try {
@@ -77,13 +78,14 @@ const startResize = (event: MouseEvent) => {
 
 const handleResize = (event: MouseEvent) => {
   if (!isResizing.value) return;
-  
-  const newWidth = event.clientX;
+
+  const rect = layoutRef.value?.getBoundingClientRect();
+  const relativeX = rect ? event.clientX - rect.left : event.clientX;
   const minWidth = 200;
-  const maxWidth = window.innerWidth * 0.6; // 最大占屏幕宽度的60%
-  
-  if (newWidth >= minWidth && newWidth <= maxWidth) {
-    sidebarWidth.value = newWidth;
+  const maxWidth = window.innerWidth * 0.6;
+
+  if (relativeX >= minWidth && relativeX <= maxWidth) {
+    sidebarWidth.value = relativeX;
   }
 };
 
@@ -95,7 +97,7 @@ const stopResize = () => {
 </script>
 
 <template>
-  <div class="questions-layout">
+  <div class="questions-layout" ref="layoutRef">
     <!-- 文件树侧边栏 -->
     <div class="file-sidebar" :style="{ width: sidebarWidth + 'px' }">
       <!-- 刷新按钮 -->

@@ -28,7 +28,7 @@ const collapseTrigger = ref(0);
 // 版本更新相关状态
 const showUpdateDialog = ref(false);
 const updateInfo = ref<VersionInfo | null>(null);
-const currentVersion = ref('2.0.0'); // 当前版本，可以从package.json或其他配置文件读取
+const currentVersion = ref('2.0.2'); // 当前版本，可以从package.json或其他配置文件读取
 
 // 导航处理函数
 const handleNavigate = (tab: string) => {

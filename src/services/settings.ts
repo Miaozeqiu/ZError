@@ -30,6 +30,7 @@ export interface AppSettings {
   }
   autoUpdate: boolean
   enableNotifications: boolean
+  suppressNoModelWarning: boolean
 }
 
 // 默认设置
@@ -54,6 +55,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   },
   autoUpdate: true,
   enableNotifications: true
+  , suppressNoModelWarning: false
 }
 
 // 设置存储键
@@ -258,11 +260,13 @@ class SettingsManager {
       language: '应用界面语言',
       autoSave: '自动保存设置',
       autoAddToQuestionBank: '自动将AI返回的题目添加到本地题库',
+      enableNonThinkingModelAnalysis: '非思考模型分析开关',
       network: '网络配置设置',
       windowSize: '窗口大小',
       windowPosition: '窗口位置',
       autoUpdate: '自动更新应用',
       enableNotifications: '启用通知'
+      , suppressNoModelWarning: '未选择模型提醒'
     }
   }
 }

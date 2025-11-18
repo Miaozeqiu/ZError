@@ -65,8 +65,8 @@
 
 <script setup lang="ts">
 import { defineProps, defineEmits, computed, ref, watch } from 'vue'
-import type { AIModel, AIPlatform } from '../services/modelConfig'
-import ModelCategorySwitch from './ModelCategorySwitch.vue'
+import type { AIModel, AIPlatform } from '../../services/modelConfig'
+import ModelCategorySwitch from '../ModelCategorySwitch.vue'
 
 interface Props {
   show: boolean

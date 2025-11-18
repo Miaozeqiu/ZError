@@ -12,7 +12,10 @@
             @click="activeCategory = category.id"
           >
             <div class="category-icon">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <svg v-if="category.id === 'models'" width="20" height="20" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+                <path d="M469.333333 42.666667v42.666666H298.666667a128 128 0 0 0-128 128v128a213.333333 213.333333 0 0 0 213.333333 213.333334h256a213.333333 213.333333 0 0 0 213.333333-213.333334V213.333333a128 128 0 0 0-128-128h-170.666666V42.666667h-85.333334zM256 213.333333a42.666667 42.666667 0 0 1 42.666667-42.666666h426.666666a42.666667 42.666667 0 0 1 42.666667 42.666666v128a128 128 0 0 1-128 128H384a128 128 0 0 1-128-128V213.333333z m149.333333 170.666667a64 64 0 1 0 0-128 64 64 0 0 0 0 128z m213.333334 0a64 64 0 1 0 0-128 64 64 0 0 0 0 128zM256 938.666667a256 256 0 0 1 512 0h85.333333a341.333333 341.333333 0 1 0-682.666666 0h85.333333z" fill="currentColor"/>
+              </svg>
+              <svg v-else width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <path :d="category.icon" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
               </svg>
             </div>
@@ -79,11 +82,11 @@
 import { ref, onMounted, onUnmounted, nextTick } from 'vue'
 import { useSettingsManager } from '../composables/useSettingsManager'
 import { useTheme } from '../composables/useTheme'
-import GeneralSettings from '../components/GeneralSettings.vue'
-import NetworkSettings from '../components/NetworkSettings.vue'
-import ModelSettings from '../components/ModelSettings.vue'
-import QuestionBankSettings from '../components/QuestionBankSettings.vue'
-import AboutApp from '../components/AboutApp.vue'
+import GeneralSettings from '../components/settings/GeneralSettings.vue'
+import NetworkSettings from '../components/settings/NetworkSettings.vue'
+import ModelSettings from '../components/settings/ModelSettings.vue'
+import QuestionBankSettings from '../components/settings/QuestionBankSettings.vue'
+import AboutApp from '../components/settings/AboutApp.vue'
 
 // 设置管理
 const { settings, saveSettings, resetSettings, addSettingsListener, setSetting } = useSettingsManager()

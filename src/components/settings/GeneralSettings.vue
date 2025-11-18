@@ -26,8 +26,8 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { useSettingsManager } from '../composables/useSettingsManager'
-import { useTheme } from '../composables/useTheme'
+import { useSettingsManager } from '../../composables/useSettingsManager'
+import { useTheme } from '../../composables/useTheme'
 
 // 设置管理
 const { settings, saveSettings, setSetting } = useSettingsManager()

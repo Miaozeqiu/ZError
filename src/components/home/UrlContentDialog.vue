@@ -39,7 +39,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import MarkdownRenderer from './MarkdownRenderer.vue'
+import MarkdownRenderer from '../MarkdownRenderer.vue'
 
 interface Props {
   visible: boolean

@@ -62,9 +62,9 @@
 </template>
 
 <script setup lang="ts">
-import { useSettingsManager } from '../composables/useSettingsManager'
-import { environmentDetector } from '../services/environmentDetector'
-import Toggle from './Toggle.vue'
+import { useSettingsManager } from '../../composables/useSettingsManager'
+import { environmentDetector } from '../../services/environmentDetector'
+import Toggle from '../Toggle.vue'
 
 // 获取设置管理器
 const { settings, setSetting } = useSettingsManager()

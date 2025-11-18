@@ -14,7 +14,7 @@ export interface VersionInfo {
 
 export class VersionCheckService {
   private static readonly API_URL = 'https://app.zerror.cc/latest_version.json';
-  private static readonly CURRENT_VERSION = '2.0.0'; // 当前软件版本
+  private static readonly CURRENT_VERSION = '2.0.2'; // 当前软件版本
 
   /**
    * 获取最新版本信息

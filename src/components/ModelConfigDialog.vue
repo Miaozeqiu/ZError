@@ -21,8 +21,16 @@
               :class="{ active: selectedPlatformId === p.id }"
               @click="selectPlatform(p.id)"
             >
-              <div class="platform-name">{{ p.displayName || p.name || p.id }}</div>
-              <div class="platform-desc">{{ p.description }}</div>
+              <div class="platform-item-row">
+                <div class="platform-item-icon">
+                  <img v-if="p.icon && isImageIcon(p.icon)" :src="getIconUrl(p.icon)" :alt="p.displayName || p.name || p.id" />
+                  <div v-else class="icon-fallback-small">{{ (p.displayName || p.name || p.id).slice(0,2).toUpperCase() }}</div>
+                </div>
+                <div class="platform-item-info">
+                  <div class="platform-name">{{ p.displayName || p.name || p.id }}</div>
+                  <div class="platform-desc">{{ p.description }}</div>
+                </div>
+              </div>
             </div>
           </div>
           <div v-else class="marketplace-placeholder">
@@ -517,6 +525,22 @@ const confirmMarketplaceSelection = () => {
   rebuildEditorWithDoc(formData.value.jsCode || DEFAULT_JS_CODE)
 }
 
+const isImageIcon = (icon: string) => icon?.includes('.')
+
+const getIconUrl = (icon: string) => {
+  if (!icon) return ''
+  if (icon.startsWith('http://') || icon.startsWith('https://')) return icon
+  if (icon.includes('.')) {
+    const isTauriEnv = typeof window !== 'undefined' && (window.__TAURI__ || window.__TAURI_INTERNALS__)
+    const isDev = import.meta.env?.DEV
+    if (isTauriEnv) {
+      return isDev ? `/src/assets/images/providers/${icon}` : `/assets/images/providers/${icon}`
+    }
+    return `/assets/images/providers/${icon}`
+  }
+  return icon
+}
+
 // 自定义模型入口：不依赖远程数据，打开编辑并填充默认值
 const chooseCustomModel = () => {
   // 回填默认值到表单
@@ -557,15 +581,19 @@ const handleSubmit = () => {
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--platform-config-overlay-bg);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 1000;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  animation: overlay-fade-in 160ms ease-out both;
 }
 
 .dialog-content {
-  background: var(--bg-secondary, #ffffff);
+  background: var(--platform-config-dialog-bg);
+  border: 1px solid var(--platform-config-dialog-border);
   border-radius: 12px;
   box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
   width: 92vw;           /* 随主窗口变化的宽度 */
@@ -574,6 +602,10 @@ const handleSubmit = () => {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  will-change: transform, opacity;
+  transform-origin: center center;
+  backface-visibility: hidden;
+  animation: popup-in 180ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
 }
 
 .dialog-header {
@@ -968,28 +1000,36 @@ const handleSubmit = () => {
 .marketplace-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,0.4);
+  background: var(--platform-config-overlay-bg);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 1001;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  animation: overlay-fade-in 160ms ease-out both;
 }
 
 .marketplace-panel {
   width: 90vw;
   max-width: 1200px;
   height: 80vh;
-  background: var(--bg-secondary, #ffffff);
+  background: var(--platform-config-dialog-bg, #ffffff);
+  border: 1px solid var(--platform-config-dialog-border);
   border-radius: 12px;
   box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  will-change: transform, opacity;
+  transform-origin: center center;
+  backface-visibility: hidden;
+  animation: popup-in 180ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
 }
 
 .marketplace-header {
   padding: 16px 20px;
-  border-bottom: 1px solid var(--border-color, #e2e8f0);
+  border-bottom: 1px solid var(--platform-config-dialog-header-border);
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -1014,7 +1054,7 @@ const handleSubmit = () => {
 
 .marketplace-left {
   flex: 0 0 380px;
-  border-right: 1px solid var(--border-color, #e2e8f0);
+  border-right: 1px solid var(--platform-config-dialog-header-border);
   padding: 12px;
   overflow: auto;
 }
@@ -1039,16 +1079,44 @@ const handleSubmit = () => {
 }
 
 .platform-item, .model-item {
-  border: 1px solid var(--border-color, #e2e8f0);
+  border: 1px solid var(--platform-config-icon-option-border, #e2e8f0);
   border-radius: 8px;
   padding: 10px 12px;
-  background: var(--bg-primary, #ffffff);
+  background: var(--platform-config-icon-option-bg, #ffffff);
   cursor: pointer;
+}
+
+.platform-item-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.platform-item-icon img {
+  width: 40px;
+  height: 40px;
+  max-width: 40px;
+  max-height: 40px;
+  object-fit: contain;
+  border-radius: 6px;
+}
+
+.icon-fallback-small {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--platform-config-icon-fallback-text);
+  border: 2px solid var(--platform-config-icon-display-border);
 }
 
 /* 自定义项与模型项保持一致的外观 */
 .custom-item {
-  border: 1px solid var(--border-color, #e2e8f0);
+  border: 1px solid var(--platform-config-icon-option-bg, #e2e8f0);
   border-radius: 8px;
   padding: 10px 12px;
   background: var(--bg-primary, #ffffff);
@@ -1059,9 +1127,14 @@ const handleSubmit = () => {
   background: var(--bg-tertiary, #f7fafc);
 }
 
+.platform-item:hover, .model-item:hover {
+  border-color: var(--primary, #667eea);
+  background: var(--platform-item-active-bg, #f7fafc);
+}
+
 .platform-item.active, .model-item.active {
   border-color: var(--primary, #667eea);
-  background: var(--bg-tertiary, #f7fafc);
+  background: var(--platform-item-active-bg, #f7fafc);
 }
 
 .platform-name { font-weight: 600; }
@@ -1075,6 +1148,7 @@ const handleSubmit = () => {
 
 .model-name { font-weight: 600; }
 .model-tag {
+  background-color: var(--platform-config-icon-section-title-bg);
   font-size: 12px;
   color: var(--text-secondary, #718096);
   border: 1px solid var(--border-color, #e2e8f0);
@@ -1085,5 +1159,23 @@ const handleSubmit = () => {
 .model-desc { font-size: 12px; color: var(--text-secondary, #718096); margin-top: 6px; }
 
 .marketplace-placeholder { font-size: 13px; color: var(--text-secondary, #718096); padding: 12px; }
+
+</style>
+<style scoped>
+@keyframes popup-in {
+  from {
+    transform: translateY(10px) scale(0.98);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes overlay-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
 
 </style>
