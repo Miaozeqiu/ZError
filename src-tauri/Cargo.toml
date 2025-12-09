@@ -39,5 +39,7 @@ reqwest = { version = "0.12", features = ["json"] }
 base64 = "0.22"
 urlencoding = "2.1"
 url = "2.5"
+
+[target.'cfg(windows)'.dependencies]
 runas = "1.0"
 windows = { version = "0.56", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_Threading", "Win32_Security"] }

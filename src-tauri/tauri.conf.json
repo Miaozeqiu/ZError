@@ -13,26 +13,37 @@
     "windows": [],
     "security": {
       "csp": null,
-      "capabilities": ["default", "url-content"]
+      "capabilities": [
+        "default",
+        "url-content"
+      ]
     }
   },
   "bundle": {
     "active": true,
-    "targets": ["msi"],
+    "targets": "all",
     "icon": [
-      "icons/favicon_128x128.ico",
-      "icons/favicon_128x128.ico",
-      "icons/favicon_128x128.ico",
-      "icons/favicon_256x256.ico",
-      "icons/favicon_256x256.ico",
-      "icons/icon.icns",
-      "icons/icon.ico"
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/256x256.png",
+      "icons/512x512.png",
+      "icons/icon.ico",
+      "icons/icon.icns"
     ],
     "resources": [
       "icons/**/*",
       "../src/assets/images/**/*",
       "../public/assets/images/**/*"
     ],
+    "linux": {
+      "rpm": {
+        "epoch": 0,
+        "release": "1"
+      }
+    },
+    "shortDescription": "ZError - AI错题助手",
+    "longDescription": "ZError 是一个智能错题管理和学习辅助工具",
+    "category": "Education",
     "windows": {
       "wix": {
         "language": "zh-CN"
