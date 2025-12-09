@@ -21,6 +21,16 @@
         </div>
 
         <div class="form-group">
+          <label for="options">选项</label>
+          <textarea
+            id="options"
+            v-model="formData.options"
+            placeholder="请输入选项...（可选）"
+            rows="4"
+          ></textarea>
+        </div>
+
+        <div class="form-group">
           <label for="answer">答案 *</label>
           <textarea
             id="answer"
@@ -58,6 +68,7 @@ const emit = defineEmits<{
   close: [];
   submit: [data: {
     content: string;
+    options?: string;
     answer: string;
     folderId: string | null;
   }];
@@ -66,6 +77,7 @@ const emit = defineEmits<{
 // 表单数据
 const formData = ref({
   content: '',
+  options: '',
   answer: ''
 });
 
@@ -78,6 +90,7 @@ const isFormValid = computed(() => {
 const resetForm = () => {
   formData.value = {
     content: '',
+    options: '',
     answer: ''
   };
 };
@@ -88,6 +101,7 @@ const handleSubmit = () => {
   
   emit('submit', {
     content: formData.value.content.trim(),
+    options: formData.value.options.trim() || undefined,
     answer: formData.value.answer.trim(),
     folderId: props.selectedFolderId || '0' // 默认使用文件夹ID为0
   });

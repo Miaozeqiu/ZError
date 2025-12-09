@@ -46,6 +46,20 @@
           </div>
         </div>
         <div class="detail-item">
+          <label>选项:</label>
+          <div class="options-content">
+            <template v-for="(part, i) in optionsParts" :key="'opt-' + i">
+              <span v-if="part.type === 'text'">{{ part.text }}</span>
+              <img 
+                v-else-if="imgSrc(part.url as string)" 
+                :src="imgSrc(part.url as string)" 
+                :class="['question-image', invertClass(part.url as string)]" 
+              />
+              <span v-else class="image-loading">[图片加载中]</span>
+            </template>
+          </div>
+        </div>
+        <div class="detail-item">
           <label>答案:</label>
           <div class="answer-content">{{ question?.answer }}</div>
         </div>
@@ -67,17 +81,30 @@
           <label>题目内容:</label>
           <textarea 
             :value="editQuestion"
-            @input="$emit('update:editQuestion', ($event.target as HTMLTextAreaElement).value)"
+            @input="onQuestionInput"
+            ref="questionTextarea"
             class="edit-textarea"
             rows="4"
             placeholder="请输入题目内容..."
           ></textarea>
         </div>
         <div class="form-group">
+          <label>选项:</label>
+          <textarea 
+            :value="editOptions"
+            @input="onOptionsInput"
+            ref="optionsTextarea"
+            class="edit-textarea"
+            rows="4"
+            placeholder="请输入选项..."
+          ></textarea>
+        </div>
+        <div class="form-group">
           <label>答案:</label>
           <textarea 
             :value="editAnswer"
-            @input="$emit('update:editAnswer', ($event.target as HTMLTextAreaElement).value)"
+            @input="onAnswerInput"
+            ref="answerTextarea"
             class="edit-textarea"
             rows="6"
             placeholder="请输入答案..."
@@ -102,7 +129,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, nextTick, onMounted } from 'vue'
 import type { AIResponse } from '../../services/database'
 import { invoke } from '@tauri-apps/api/core'
 
@@ -112,6 +139,7 @@ interface Props {
   width: number
   isEditMode: boolean
   editQuestion: string
+  editOptions: string
   editAnswer: string
   editType: string
   isEditFormValid: boolean
@@ -121,7 +149,7 @@ interface Props {
 
 const props = defineProps<Props>()
 
-defineEmits<{
+const emit = defineEmits<{
   (e: 'close'): void
   (e: 'toggle-edit'): void
   (e: 'cancel-edit'): void
@@ -130,6 +158,7 @@ defineEmits<{
   (e: 'resize-over'): void
   (e: 'resize-leave'): void
   (e: 'update:editQuestion', v: string): void
+  (e: 'update:editOptions', v: string): void
   (e: 'update:editAnswer', v: string): void
   (e: 'update:editType', v: string): void
 }>()
@@ -154,10 +183,60 @@ const contentParts = computed<Part[]>(() => {
   return parts.length ? parts : [{ type: 'text', text }]
 })
 
-const imageUrls = computed(() => contentParts.value.filter(p => p.type === 'image').map(p => p.url as string))
+const optionsParts = computed<Part[]>(() => {
+  const text = props.question?.options || ''
+  const parts: Part[] = []
+  let lastIndex = 0
+  const regex = new RegExp(urlRegex.source, 'gi')
+  let m: RegExpExecArray | null
+  while ((m = regex.exec(text)) !== null) {
+    const off = m.index
+    if (off > lastIndex) parts.push({ type: 'text', text: text.slice(lastIndex, off) })
+    parts.push({ type: 'image', url: m[0] })
+    lastIndex = off + m[0].length
+  }
+  if (lastIndex < text.length) parts.push({ type: 'text', text: text.slice(lastIndex) })
+  return parts.length ? parts : [{ type: 'text', text }]
+})
+
+const imageUrls = computed(() => {
+  const qUrls = contentParts.value.filter(p => p.type === 'image').map(p => p.url as string)
+  const oUrls = optionsParts.value.filter(p => p.type === 'image').map(p => p.url as string)
+  return Array.from(new Set([...qUrls, ...oUrls]))
+})
 
 const imgSrc = (u: string) => imageSrcMap.value[u]
 const invertClass = (u: string) => blackOnlyMap.value[u] ? 'invert-on-dark' : ''
+
+const questionTextarea = ref<HTMLTextAreaElement | null>(null)
+const optionsTextarea = ref<HTMLTextAreaElement | null>(null)
+const answerTextarea = ref<HTMLTextAreaElement | null>(null)
+
+const autoResize = (el: HTMLTextAreaElement) => {
+  el.style.height = 'auto'
+  el.style.height = el.scrollHeight + 'px'
+}
+
+const onQuestionInput = (e: Event) => {
+  const v = (e.target as HTMLTextAreaElement).value
+  emit('update:editQuestion', v)
+  const el = questionTextarea.value
+  if (el) autoResize(el)
+}
+
+const onOptionsInput = (e: Event) => {
+  const v = (e.target as HTMLTextAreaElement).value
+  emit('update:editOptions', v)
+  const el = optionsTextarea.value
+  if (el) autoResize(el)
+}
+
+const onAnswerInput = (e: Event) => {
+  const v = (e.target as HTMLTextAreaElement).value
+  emit('update:editAnswer', v)
+  const el = answerTextarea.value
+  if (el) autoResize(el)
+}
 
 const toBase64 = (bytes: Uint8Array) => {
   let binary = ''
@@ -221,10 +300,44 @@ const analyzeImage = (url: string, src: string) => {
   } catch {}
 }
 
-watch(() => props.question?.question, async () => {
+watch(() => [props.question?.question, props.question?.options], async () => {
   imageSrcMap.value = {}
   await fetchImages(imageUrls.value)
 }, { immediate: true })
+
+watch(() => props.editQuestion, async () => {
+  await nextTick()
+  const el = questionTextarea.value
+  if (el) autoResize(el)
+})
+
+watch(() => props.editOptions, async () => {
+  await nextTick()
+  const el = optionsTextarea.value
+  if (el) autoResize(el)
+})
+
+watch(() => props.editAnswer, async () => {
+  await nextTick()
+  const el = answerTextarea.value
+  if (el) autoResize(el)
+})
+
+watch(() => props.isEditMode, async (v) => {
+  if (v) {
+    await nextTick()
+    if (questionTextarea.value) autoResize(questionTextarea.value)
+    if (optionsTextarea.value) autoResize(optionsTextarea.value)
+    if (answerTextarea.value) autoResize(answerTextarea.value)
+  }
+})
+
+onMounted(async () => {
+  await nextTick()
+  if (questionTextarea.value) autoResize(questionTextarea.value)
+  if (optionsTextarea.value) autoResize(optionsTextarea.value)
+  if (answerTextarea.value) autoResize(answerTextarea.value)
+})
 </script>
 
 <style scoped>
@@ -350,6 +463,17 @@ watch(() => props.question?.question, async () => {
   white-space: pre-wrap;
 }
 
+.options-content {
+  overflow-x: auto;
+  font-size: 14px;
+  color: var(--text-primary);
+  line-height: 1.5;
+  padding: 12px;
+  background-color: var(--bg-tertiary);
+  border-radius: 6px;
+  white-space: pre-wrap;
+}
+
 .answer-content {
   font-size: 14px;
   color: var(--text-primary);
@@ -407,7 +531,9 @@ watch(() => props.question?.question, async () => {
 }
 
 .edit-textarea {
-  height: 250px;
+  min-height: 96px;
+  height: auto;
+  overflow-y: hidden;
   color: var(--text-primary);
   background-color: var(--bg-secondary);
   width: 100%;

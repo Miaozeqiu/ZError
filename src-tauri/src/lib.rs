@@ -11,7 +11,8 @@ pub mod commands;
 pub use database::*;
 pub use types::*;
 pub use server::{start_server, stop_server, get_server_status};
-pub use commands::{greet, create_directory, get_username, file_exists, get_request_logs, clear_request_logs, open_devtools, fetch_image_as_base64, open_url_content_window, set_non_thinking_analysis_enabled, set_current_model_is_thinking, request_admin_elevation};
+pub use commands::{greet, create_directory, get_username, file_exists, get_request_logs, clear_request_logs, open_devtools, fetch_image_as_base64, open_url_content_window, set_non_thinking_analysis_enabled, set_current_model_is_thinking, request_admin_elevation, read_file_text, read_file_bytes, read_excel_headers, read_excel_range, read_docx_range, read_doc_range, read_file_range, convert_doc_to_docx};
+pub use commands::open_text_window;
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -19,14 +20,17 @@ pub fn run() {
     tauri::Builder::default()
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                let _ = window.hide();
-                api.prevent_close();
+                if window.label() == "main" {
+                    let _ = window.hide();
+                    api.prevent_close();
+                }
             }
         })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_sql::Builder::default().build())
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(ServerState::default())
         .invoke_handler(tauri::generate_handler![
             greet,
@@ -41,9 +45,18 @@ pub fn run() {
             open_devtools,
             fetch_image_as_base64,
             open_url_content_window,
+            open_text_window,
             set_non_thinking_analysis_enabled
             , set_current_model_is_thinking
             , request_admin_elevation
+            , read_file_text
+            , read_file_bytes
+            , read_excel_headers
+            , read_excel_range
+            , read_docx_range
+            , read_doc_range
+            , read_file_range
+            , convert_doc_to_docx
         ])
         .setup(|app| {
             let elevated_arg = std::env::args().any(|a| a == "--elevated");

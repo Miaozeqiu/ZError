@@ -2,6 +2,7 @@
   <div class="file-tree-node">
     <div 
       class="node-content" 
+      ref="nodeContent"
       :class="{ 
         'selected': isSelected, 
         'folder': node.type === 'folder',
@@ -13,15 +14,11 @@
         'drag-over-center': dragPosition === 'center'
       }"
       :style="{ paddingLeft: (level * 16) + 'px' }"
-      :draggable="node.type === 'folder' && !isRenaming"
+      :draggable="false"
+      :data-node-id="node.id"
       @click="handleClick"
       @contextmenu.prevent="handleRightClick"
-      @dragstart="handleDragStart"
-      @dragend="handleDragEnd"
-      @dragenter="handleDragEnter"
-      @dragover.prevent="handleDragOver"
-      @dragleave="handleDragLeave"
-      @drop.prevent="handleDrop"
+      @mousedown="onMouseDown"
     >
       <!-- 层级连接线 -->
       <div class="level-lines">
@@ -124,9 +121,12 @@
         @select="(id) => emit('select', id)"
         @context-menu="(data) => emit('context-menu', data)"
         @expand-folder="(id) => emit('expand-folder', id)"
+        :hover-target-id="propsHoverTargetId"
+        :hover-position="propsHoverPosition"
         @move-folder="(data) => emit('move-folder', data)"
         @drag-start="(nodeId) => emit('drag-start', nodeId)"
         @drag-end="() => emit('drag-end')"
+        @drag-hover="(data) => emit('drag-hover', data)"
         @rename-save="(nodeId, newName) => emit('rename-save', nodeId, newName)"
         @rename-cancel="() => emit('rename-cancel')"
       />
@@ -154,6 +154,8 @@ interface Props {
   expandedFolders: Set<string>;
   renamingNodeId?: string | null;
   renameValue?: string;
+  hoverTargetId?: string | null;
+  hoverPosition?: 'top' | 'center' | 'bottom' | null;
 }
 
 const props = defineProps<Props>();
@@ -165,6 +167,7 @@ const emit = defineEmits<{
   'move-folder': [{ sourceId: string; targetId: string; position: 'before' | 'after' | 'inside' }];
   'drag-start': [nodeId: string];
   'drag-end': [];
+  'drag-hover': [{ id: string | null, position: 'top' | 'center' | 'bottom' | null }];
   'rename-save': [nodeId: string, newName: string];
   'rename-cancel': [];
 }>();
@@ -174,6 +177,31 @@ const isDragging = ref(false);
 const isDragOver = ref(false);
 const dragPosition = ref<'top' | 'center' | 'bottom' | null>(null);
 const dragExpandTimer = ref<number | null>(null); // 拖拽展开定时器
+const nodeContent = ref<HTMLElement | null>(null);
+const dragImageEl = ref<HTMLElement | null>(null);
+const dragOverlayEl = ref<HTMLDivElement | null>(null);
+const dragCursorOffsetX = ref(0);
+const dragCursorOffsetY = ref(0);
+const dragStarted = ref(false);
+const dragStartX = ref(0);
+const dragStartY = ref(0);
+const DRAG_START_THRESHOLD = 6;
+const onDragMove = (e: DragEvent) => {
+  if (dragOverlayEl.value) {
+    const x = e.clientX - dragCursorOffsetX.value;
+    const y = e.clientY - dragCursorOffsetY.value;
+    dragOverlayEl.value.style.transform = `translate(${x}px, ${y}px)`;
+  }
+};
+const currentHoverId = ref<string | null>(null);
+
+const propsHoverTargetId = computed(() => props.hoverTargetId ?? null);
+const propsHoverPosition = computed(() => props.hoverPosition ?? null);
+
+watch([propsHoverTargetId, propsHoverPosition], ([id, pos]) => {
+  isDragOver.value = id === props.node.id;
+  dragPosition.value = id === props.node.id ? pos : null;
+});
 
 const isSelected = computed(() => props.selectedId === props.node.id);
 
@@ -304,6 +332,29 @@ const handleDragStart = (event: DragEvent) => {
       name: props.node.name,
       type: props.node.type
     });
+
+    if (nodeContent.value) {
+      const overlay = document.createElement('div');
+      overlay.style.position = 'fixed';
+      overlay.style.top = '0px';
+      overlay.style.left = '0px';
+      overlay.style.transform = 'translate(-9999px, -9999px)';
+      overlay.style.zIndex = '9999';
+      overlay.style.pointerEvents = 'none';
+      const cloned = nodeContent.value.cloneNode(true) as HTMLElement;
+      const lines = cloned.querySelector('.level-lines') as HTMLElement | null;
+      if (lines) lines.remove();
+      cloned.style.width = nodeContent.value.offsetWidth + 'px';
+      cloned.style.height = nodeContent.value.offsetHeight + 'px';
+      cloned.classList.add('dragging');
+      overlay.appendChild(cloned);
+      document.body.appendChild(overlay);
+      dragOverlayEl.value = overlay;
+      const transparent = new Image();
+      transparent.src = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9cGxG50AAAAASUVORK5CYII=';
+      event.dataTransfer.setDragImage(transparent, 0, 0);
+      document.addEventListener('dragover', onDragMove);
+    }
   }
 };
 
@@ -321,6 +372,16 @@ const handleDragEnd = () => {
   emit('drag-end');
   
   console.log('FileTreeNode: 通知父组件清理拖拽状态');
+
+  if (dragImageEl.value) {
+    document.body.removeChild(dragImageEl.value);
+    dragImageEl.value = null;
+  }
+  if (dragOverlayEl.value) {
+    document.body.removeChild(dragOverlayEl.value);
+    dragOverlayEl.value = null;
+  }
+  document.removeEventListener('dragover', onDragMove);
 };
 
 const handleDragOver = (event: DragEvent) => {
@@ -336,12 +397,9 @@ const handleDragOver = (event: DragEvent) => {
     dataTransfer: event.dataTransfer ? Array.from(event.dataTransfer.types) : []
   });
   
-  if (!props.draggedNodeId || props.draggedNodeId === props.node.id) {
-    // 不能拖拽到自己身上
-    console.log(`FileTreeNode[${props.node.id}]: dragover 被阻止 - draggedNodeId=${props.draggedNodeId}, currentId=${props.node.id}`);
+  if (props.draggedNodeId && props.draggedNodeId === props.node.id) {
     if (event.dataTransfer) {
       event.dataTransfer.dropEffect = 'none';
-      console.log('FileTreeNode: 设置 dropEffect 为 none (不能拖拽到自己)');
     }
     return;
   }
@@ -409,6 +467,9 @@ const handleDragEnter = (event: DragEvent) => {
   // 确保 dropEffect 正确设置
   if (event.dataTransfer && props.draggedNodeId && props.draggedNodeId !== props.node.id) {
     event.dataTransfer.dropEffect = 'move';
+  }
+  if (props.draggedNodeId && props.draggedNodeId !== props.node.id) {
+    isDragOver.value = true;
   }
 };
 
@@ -485,6 +546,136 @@ const handleDrop = (event: DragEvent) => {
   isDragOver.value = false;
   dragPosition.value = null;
 };
+
+// 手动拖拽（替代 HTML5 Drag API）
+const onMouseDown = (e: MouseEvent) => {
+  if (e.button !== 0) return;
+  if (props.node.type !== 'folder' || isRenaming.value) return;
+  dragStarted.value = false;
+  if (nodeContent.value) {
+    const rect = nodeContent.value.getBoundingClientRect();
+    dragCursorOffsetX.value = e.clientX - rect.left;
+    dragCursorOffsetY.value = e.clientY - rect.top;
+  }
+  dragStartX.value = e.clientX;
+  dragStartY.value = e.clientY;
+
+  const onMouseMove = (ev: MouseEvent) => {
+    if (!dragStarted.value) {
+      const dx = ev.clientX - dragStartX.value;
+      const dy = ev.clientY - dragStartY.value;
+      if (Math.sqrt(dx * dx + dy * dy) >= DRAG_START_THRESHOLD) {
+        dragStarted.value = true;
+        isDragging.value = true;
+        emit('drag-start', props.node.id);
+        if (nodeContent.value) {
+          const overlay = document.createElement('div');
+          overlay.style.position = 'fixed';
+          overlay.style.top = '0px';
+          overlay.style.left = '0px';
+          overlay.style.transform = `translate(${ev.clientX - dragCursorOffsetX.value}px, ${ev.clientY - dragCursorOffsetY.value}px)`;
+          overlay.style.zIndex = '9999';
+          overlay.style.pointerEvents = 'none';
+          const cloned = nodeContent.value.cloneNode(true) as HTMLElement;
+          const lines = cloned.querySelector('.level-lines') as HTMLElement | null;
+          if (lines) lines.remove();
+          cloned.style.width = nodeContent.value.offsetWidth + 'px';
+          cloned.style.height = nodeContent.value.offsetHeight + 'px';
+          cloned.classList.add('dragging');
+          overlay.appendChild(cloned);
+          document.body.appendChild(overlay);
+          dragOverlayEl.value = overlay;
+        }
+        e.preventDefault();
+      }
+      return;
+    }
+
+    if (dragOverlayEl.value) {
+      const x = ev.clientX - dragCursorOffsetX.value;
+      const y = ev.clientY - dragCursorOffsetY.value;
+      dragOverlayEl.value.style.transform = `translate(${x}px, ${y}px)`;
+    }
+    const el = document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null;
+    const target = el?.closest('.node-content') as HTMLElement | null;
+    const targetId = target ? target.getAttribute('data-node-id') : null;
+    currentHoverId.value = targetId;
+
+    if (target && targetId && targetId !== props.node.id) {
+      const rect = target.getBoundingClientRect();
+      const y = ev.clientY - rect.top;
+      const height = rect.height;
+      let position: 'top' | 'center' | 'bottom';
+      if (y < height * 0.25) position = 'top';
+      else if (y > height * 0.75) position = 'bottom';
+      else position = 'center';
+
+      emit('drag-hover', { id: targetId, position });
+
+      if (position === 'center') {
+        const comp = findNodeByIdInProps(targetId);
+        const hasChild = comp?.children && comp.children.length > 0;
+        const expanded = props.expandedFolders.has(targetId);
+        if (hasChild && !expanded && !dragExpandTimer.value) {
+          dragExpandTimer.value = window.setTimeout(() => {
+            emit('expand-folder', targetId);
+            dragExpandTimer.value = null;
+          }, 300);
+        }
+      } else if (dragExpandTimer.value) {
+        clearTimeout(dragExpandTimer.value);
+        dragExpandTimer.value = null;
+      }
+    } else {
+      emit('drag-hover', { id: null, position: null });
+      if (dragExpandTimer.value) {
+        clearTimeout(dragExpandTimer.value);
+        dragExpandTimer.value = null;
+      }
+    }
+  };
+
+  const onMouseUp = () => {
+    document.removeEventListener('mousemove', onMouseMove);
+    document.removeEventListener('mouseup', onMouseUp);
+    if (dragOverlayEl.value) {
+      document.body.removeChild(dragOverlayEl.value);
+      dragOverlayEl.value = null;
+    }
+    if (dragStarted.value) {
+      isDragging.value = false;
+      emit('drag-end');
+      const targetId = currentHoverId.value;
+      if (targetId && targetId !== props.node.id) {
+        const position = dragPosition.value || 'inside';
+        emit('move-folder', { sourceId: props.node.id, targetId, position });
+      }
+      emit('drag-hover', { id: null, position: null });
+      currentHoverId.value = null;
+    }
+    dragStarted.value = false;
+  };
+
+  document.addEventListener('mousemove', onMouseMove);
+  document.addEventListener('mouseup', onMouseUp);
+};
+
+// 简单根据 id 在当前 props.node 树里查找（用于判断是否有子节点）
+const findNodeByIdInProps = (id: string): TreeNode | null => {
+  const dfs = (n: TreeNode): TreeNode | null => {
+    if (n.id === id) return n;
+    if (n.children) {
+      for (const c of n.children) {
+        const r = dfs(c);
+        if (r) return r;
+      }
+    }
+    return null;
+  };
+  // 从当前根向上没有全树引用，这里只能从本节点向下搜索
+  // 父组件持有全树，高亮与展开仍通过事件让父组件处理
+  return dfs(props.node);
+};
 </script>
 
 <style scoped>
@@ -498,29 +689,30 @@ const handleDrop = (event: DragEvent) => {
   align-items: center;
   height: 32px;
   cursor: pointer;
-  color: var(--text-primary);
+  color: var(--filetree-node-text);
   font-size: 13px;
   transition: background-color 0.1s;
   white-space: nowrap;
   position: relative;
   padding-right: 8px;
   border-radius: 6px;
+  background-color: transparent;
 }
 
 .node-content:hover {
-  background-color: var(--hover-bg);
+  background-color: var(--filetree-node-hover-bg);
   cursor: pointer;
+}
+
+.node-content.selected {
+  background-color: var(--filetree-node-selected-bg);
+  color: var(--filetree-node-text);
 }
 
 .node-content.dragging {
   opacity: 0.5;
-  background-color: var(--active-bg);
+  background-color: transparent;
   cursor: default !important;
-}
-
-.node-content.selected {
-  background-color: var(--active-bg);
-  color: var(--text-primary);
 }
 
 .node-content.selected:focus {
@@ -541,7 +733,7 @@ const handleDrop = (event: DragEvent) => {
   top: 0;
   width: 0.5px;
   height: 100%;
-  background-color: #c2c2c2;
+  background-color: var(--filetree-level-line-color);
 }
 
 .current-level-line {
@@ -549,7 +741,7 @@ const handleDrop = (event: DragEvent) => {
   top: 0;
   width: 0.5px;
   height: 50%;
-  background-color: #c2c2c2;
+  background-color: var(--filetree-level-line-color);
 }
 
 /* 展开箭头 */
@@ -560,7 +752,7 @@ const handleDrop = (event: DragEvent) => {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  color: #cccccc;
+  color: var(--filetree-expand-arrow-color);
   transition: transform 0.2s ease;
 }
 
@@ -569,7 +761,7 @@ const handleDrop = (event: DragEvent) => {
 }
 
 .expand-arrow:hover {
-  color: #cccccc;
+  color: var(--filetree-expand-arrow-color);
 }
 
 .arrow-icon,
@@ -628,31 +820,24 @@ const handleDrop = (event: DragEvent) => {
 }
 
 .question-count {
-  height: 20px;
+  height: 16px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   vertical-align: middle;
-  border: 1px solid var(--border-secondary);
   margin-left: auto;
   font-size: 11px;
   color: var(--text-secondary);
   background-color: var(--bg-tertiary);
   padding: 2px 6px;
   border-radius: 8px;
-  min-width: 16px;
+  min-width: 12px;
   text-align: center;
 }
 
-/* 拖拽相关样式 */
-.node-content.dragging {
-  opacity: 0.5;
-  background-color: var(--active-bg);
-  cursor: default !important;
-}
 
 .node-content.drag-over {
-  background-color: var(--hover-bg);
+  background-color: var(--filetree-node-dragover-bg);
 }
 
 .node-content.drag-over-top::before {
@@ -661,9 +846,9 @@ const handleDrop = (event: DragEvent) => {
   top: -1px;
   left: 0;
   right: 0;
-  height: 2px;
-  background-color: var(--primary-color);
-  border-radius: 1px;
+  height: 0;
+  background-color: transparent;
+  border-radius: 0;
   pointer-events: none;
 }
 
@@ -673,15 +858,14 @@ const handleDrop = (event: DragEvent) => {
   bottom: -1px;
   left: 0;
   right: 0;
-  height: 2px;
-  background-color: var(--primary-color);
-  border-radius: 1px;
+  height: 0;
+  background-color: transparent;
+  border-radius: 0;
   pointer-events: none;
 }
 
 .node-content.drag-over-center {
-  background-color: var(--hover-bg);
-  /* border: 2px dashed #0969da; */
+  background-color: var(--filetree-node-dragover-bg);
   border-radius: 6px;
 }
 

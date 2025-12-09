@@ -1,10 +1,10 @@
 <template>
   <div v-if="visible" class="dialog-overlay" @click="handleOverlayClick">
     <div class="dialog-content test-dialog" @click.stop>
-      <div class="dialog-header">
+      <!-- <div class="dialog-header">
         <h3 class="dialog-title">测试模型: {{ modelName }}</h3>
         <button class="dialog-close" @click="closeDialog">×</button>
-      </div>
+      </div> -->
       <div class="dialog-body">
         <!-- 测试进行中 -->
         <div v-if="testing" class="test-status testing">
@@ -201,7 +201,8 @@ watch(() => props.visible, (newVisible) => {
   width: 500px;
   max-width: 90vw;
   max-height: 80vh;
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
 }
 
 .dialog-content {
@@ -209,6 +210,7 @@ watch(() => props.visible, (newVisible) => {
   border-radius: 8px;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
   border: 1px solid var(--border-color);
+  overflow: hidden;
 }
 
 .dialog-header {
@@ -249,6 +251,8 @@ watch(() => props.visible, (newVisible) => {
 
 .dialog-body {
   padding: 20px;
+  flex: 1;
+  overflow-y: auto;
 }
 
 .dialog-footer {

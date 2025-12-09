@@ -567,7 +567,7 @@ onUnmounted(() => {
   border-radius: 8px;
   cursor: pointer;
   transition: all 0.2s ease;
-  color: var(--text-secondary);
+  color: var(--text-primary);
 }
 
 .category-item:hover {

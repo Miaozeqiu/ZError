@@ -56,7 +56,7 @@ const PREDEFINED_PLATFORMS: Omit<AIPlatform, 'apiKey' | 'enabled'>[] = [
     name: 'siliconflow',
     displayName: '硅基流动',
     baseUrl: 'https://api.siliconflow.cn/v1/chat/completions',
-    icon: 'siliconflow.png',
+    icon: 'silicon.png',
     models: [
       {
         id: 'deepseek-v3',

@@ -181,12 +181,11 @@ const stopResize = () => {
 }
 
 .refresh-btn:hover {
-  background-color: var(--bg-hover, #e9ecef);
-  border-color: var(--border-hover, #d0d7de);
+  background-color: var(--model-item-hover-bg, #e9ecef);
 }
 
 .refresh-btn:active {
-  background-color: var(--bg-active, #dee2e6);
+  background-color: var(--model-item-active-bg, #dee2e6);
   transform: translateY(1px);
 }
 

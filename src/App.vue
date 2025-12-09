@@ -7,6 +7,9 @@ import Home from "./views/Home.vue";
 import Settings from "./views/Settings.vue";
 import QuestionBank from "./views/QuestionBank.vue";
 import UrlContent from "./views/UrlContent.vue";
+import FileInfo from "./views/FileInfo.vue";
+import FileTree from "./components/questions/FileTree.vue";
+import { databaseService } from "./services/database";
 import { initializationService } from "./services/initialization";
 import { initGlobalTheme } from "./composables/useTheme";
 import { VersionCheckService } from "./services/versionCheck";
@@ -17,7 +20,14 @@ const isUrlContentPage = computed(() => {
   return window.location.pathname === '/url-content' || 
          window.location.search.includes('question=') ||
          window.location.hash === '#/url-content' ||
-         window.location.hash.startsWith('#/url-content')
+          window.location.hash.startsWith('#/url-content')
+})
+
+const isFileInfoPage = computed(() => {
+  return window.location.pathname === '/file-info' ||
+         window.location.search.includes('name=') ||
+         window.location.hash === '#/file-info' ||
+         window.location.hash.startsWith('#/file-info')
 })
 
 // 当前活跃的页面
@@ -28,7 +38,7 @@ const collapseTrigger = ref(0);
 // 版本更新相关状态
 const showUpdateDialog = ref(false);
 const updateInfo = ref<VersionInfo | null>(null);
-const currentVersion = ref('2.0.2'); // 当前版本，可以从package.json或其他配置文件读取
+const currentVersion = ref('2.1.0'); // 当前版本，可以从package.json或其他配置文件读取
 
 // 导航处理函数
 const handleNavigate = (tab: string) => {
@@ -108,31 +118,124 @@ const handleWeekLater = () => {
   console.log('用户选择一周后更新，提醒时间:', oneWeekLater.toISOString());
 };
 
+const showImportDialog = ref(false);
+const closeImportDialog = () => {
+  showImportDialog.value = false;
+};
+
+const importItems = ref<any[]>([]);
+const importTreeRef = ref<any>(null);
+const selectedImportFolderId = ref<number | null>(null);
+const selectedImportFolderName = ref("");
+const importing = ref(false);
+
+const normalizeImportItems = (items: any): any[] => {
+  const arr = Array.isArray(items) ? items : [];
+  return arr.map((x: any) => {
+    const q = x?.Question ?? x?.question ?? "";
+    const opts = x?.Options ?? x?.options ?? null;
+    const ans = x?.Answer ?? x?.answer ?? "";
+    const type = x?.QuestionType ?? x?.question_type ?? "";
+    return { content: String(q), options: Array.isArray(opts) ? opts : (typeof opts === "string" ? opts : null), answer: String(ans), question_type: String(type) };
+  });
+};
+
+const handleFolderSelect = (folderId: number, folderName: string) => {
+  selectedImportFolderId.value = folderId;
+  selectedImportFolderName.value = folderName;
+};
+
+  const handleImportConfirm = async () => {
+    if (selectedImportFolderId.value === null) return;
+    if (!importItems.value || importItems.value.length === 0) return;
+    importing.value = true;
+    try {
+      await databaseService.connect();
+      let count = 0;
+      for (const item of importItems.value) {
+        const content = String(item.content || item.question || "");
+        if (!content) continue;
+        const optionsStr = Array.isArray(item.options) ? item.options.join("\n") : (typeof item.options === "string" ? item.options : undefined);
+        const answerStr = String(item.answer ?? "");
+        await databaseService.addQuestion({ content, options: optionsStr, answer: answerStr, folderId: selectedImportFolderId.value });
+        count++;
+      }
+      showImportDialog.value = false;
+      
+      // 发出全局事件，通知其他组件刷新数据
+      try {
+        const { emit } = await import('@tauri-apps/api/event');
+        await emit('refresh-data');
+      } catch {}
+
+      try { importTreeRef.value?.refreshData?.(); } catch {}
+      alert(`成功导入 ${count} 条数据！`);
+    } catch (e) {
+      console.error('导入失败:', e);
+      alert('导入失败: ' + (e as Error).message);
+    } finally {
+      importing.value = false;
+    }
+  };
+
+onMounted(async () => {
+  const isMainWindow = !isFileInfoPage.value && !isUrlContentPage.value;
+  if (isMainWindow) {
+    try {
+      const { listen } = await import('@tauri-apps/api/event')
+      const { getCurrentWindow } = await import('@tauri-apps/api/window')
+      await listen('open-import-dialog', async (event: any) => {
+        console.log('收到导入事件:', event);
+        const payload = event?.payload || {};
+        importItems.value = normalizeImportItems(payload.items);
+        showImportDialog.value = true;
+        
+        // 聚焦当前窗口（主窗口）
+        try {
+          const win = getCurrentWindow()
+          await win.setFocus()
+        } catch (e) {
+          console.error('聚焦窗口失败:', e)
+        }
+      })
+    } catch (error) {
+      console.error('监听事件失败:', error);
+    }
+  }
+  (window as any).__appImportDialogReady = isMainWindow;
+});
+
 // 应用初始化
 onMounted(async () => {
+  if (isFileInfoPage.value) return;
   try {
     console.log('开始应用初始化...');
-    
-    // 初始化主题系统
     await initGlobalTheme();
     console.log('主题系统初始化完成');
-    
-    // 初始化其他服务
     await initializationService.initialize();
     console.log('应用初始化完成');
-    
-    // 检查版本更新
     await checkForUpdates();
   } catch (error) {
     console.error('应用初始化失败:', error);
-    // 可以在这里显示错误提示给用户
   }
+});
+
+onMounted(async () => {
+  if (!isFileInfoPage.value) return;
+  try {
+    const { getCurrentWindow, LogicalSize } = await import('@tauri-apps/api/window')
+    const win = getCurrentWindow()
+    try { await win.unmaximize() } catch {}
+    await win.setSize(new LogicalSize(1280, 900))
+    try { await win.center() } catch {}
+  } catch {}
 });
 </script>
 
 <template>
   <!-- URL内容处理页面 -->
   <UrlContent v-if="isUrlContentPage" />
+  <FileInfo v-else-if="isFileInfoPage" />
   
   <!-- 主应用界面 -->
   <div v-else class="app-container">
@@ -167,6 +270,28 @@ onMounted(async () => {
       @later="handleLater"
       @week-later="handleWeekLater"
     />
+  </div>
+
+  <div v-if="!isUrlContentPage && !isFileInfoPage && showImportDialog" class="modal" @click="closeImportDialog">
+    <div class="modal-content" @click.stop>
+      <div class="modal-header">
+        <span>导入</span>
+        <button @click="closeImportDialog">×</button>
+      </div>
+      <div class="modal-body">
+        <FileTree style="border-radius: 6px;" ref="importTreeRef" @folder-select="handleFolderSelect" />
+      </div>
+      <div class="modal-footer">
+        <div class="footer-info">
+          <span>目标文件夹：{{ selectedImportFolderName || '未选择' }}</span>
+          <span style="margin-left:12px;">待导入：{{ importItems.length }} 条</span>
+        </div>
+        <div class="footer-actions">
+          <button @click="closeImportDialog" :disabled="importing">取消</button>
+          <button @click="handleImportConfirm" :disabled="importing || selectedImportFolderId === null || !importItems.length">导入</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -342,6 +467,62 @@ button {
   button:active {
     background-color: var(--active-bg, #0f0f0f69);
   }
+}
+
+.modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+}
+
+.modal-content {
+  background: var(--bg-primary, #fff);
+  border: 1px solid var(--border-color, #ddd);
+  border-radius: 4px;
+  width: 600px;
+  max-height: 80vh;
+  overflow: hidden;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px;
+  border-bottom: 1px solid var(--border-color, #ddd);
+}
+
+.modal-header button {
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 18px;
+  color: var(--text-secondary, #666);
+  padding: 4px;
+  border-radius: 4px;
+}
+
+.modal-body {
+  padding: 12px;
+}
+
+.modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px;
+  border-top: 1px solid var(--border-color, #ddd);
+}
+
+.footer-actions button {
+  margin-left: 8px;
 }
 
 </style>

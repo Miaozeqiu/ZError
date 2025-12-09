@@ -12,6 +12,7 @@ export interface Folder {
 export interface AIResponse {
   id: number;
   question: string;
+  options?: string;
   answer?: string;
   question_type: string;
   folder_id: number;
@@ -277,6 +278,7 @@ class DatabaseService {
       return result.map(response => ({
         id: response.Id || response.id,
         question: response.Question || response.question,
+        options: response.Options || response.options,
         answer: response.Answer || response.answer,
         question_type: response.QuestionType || response.question_type,
         folder_id: response.FolderId || response.folder_id,
@@ -323,6 +325,7 @@ class DatabaseService {
           SELECT 
             ar.Id as id,
             ar.Question as question,
+            ar.Options as options,
             ar.Answer as answer,
             ar.QuestionType as question_type,
             ar.FolderId as folder_id,
@@ -348,6 +351,7 @@ class DatabaseService {
           SELECT 
             ar.Id as id,
             ar.Question as question,
+            ar.Options as options,
             ar.Answer as answer,
             ar.QuestionType as question_type,
             ar.FolderId as folder_id,
@@ -366,6 +370,7 @@ class DatabaseService {
       return result.map(response => ({
         id: response.id,
         question: response.question,
+        options: response.options,
         answer: response.answer,
         question_type: response.question_type,
         folder_id: response.folder_id,
@@ -434,6 +439,7 @@ class DatabaseService {
         SELECT 
           ar.Id as id,
           ar.Question as question,
+          ar.Options as options,
           ar.Answer as answer,
           ar.QuestionType as question_type,
           ar.FolderId as folder_id,
@@ -460,6 +466,7 @@ class DatabaseService {
             SELECT 
               ar.Id as id,
               ar.Question as question,
+              ar.Options as options,
               ar.Answer as answer,
               ar.QuestionType as question_type,
               ar.FolderId as folder_id,
@@ -484,6 +491,7 @@ class DatabaseService {
             SELECT 
               ar.Id as id,
               ar.Question as question,
+              ar.Options as options,
               ar.Answer as answer,
               ar.QuestionType as question_type,
               ar.FolderId as folder_id,
@@ -507,6 +515,7 @@ class DatabaseService {
       return result.map(response => ({
         id: response.id,
         question: response.question,
+        options: response.options,
         answer: response.answer,
         question_type: response.question_type,
         folder_id: response.folder_id,
@@ -718,7 +727,7 @@ class DatabaseService {
     try {
       // 获取原题目信息
       const originalQuestion = await this.db.select<AIResponse[]>(`
-        SELECT Question, Answer, QuestionType, IsAi 
+        SELECT Question, Options, Answer, QuestionType, IsAi 
         FROM AIResponses 
         WHERE Id = ?
       `, [questionId]);
@@ -731,14 +740,15 @@ class DatabaseService {
       
       // 插入新题目到目标文件夹，保持原有的IsAi值
       await this.db.execute(`
-        INSERT INTO AIResponses (Question, Answer, QuestionType, FolderId, IsAi, CreateTime)
-        VALUES (?, ?, ?, ?, ?, datetime('now'))
+        INSERT INTO AIResponses (Question, Options, Answer, QuestionType, FolderId, IsAi, CreateTime)
+        VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
       `, [
-        (question as any).Question || question.question,
-        (question as any).Answer || question.answer || null,
-        (question as any).QuestionType || question.question_type,
+        (question as any).Question || (question as any).question,
+        (question as any).Options || (question as any).options || null,
+        (question as any).Answer || (question as any).answer || null,
+        (question as any).QuestionType || (question as any).question_type,
         actualTargetFolderId,
-        (question as any).IsAi !== undefined ? (question as any).IsAi : 1  // 保持原有的IsAi值，默认为1
+        (question as any).IsAi !== undefined ? (question as any).IsAi : 1
       ]);
       
       console.log(`题目已复制到文件夹ID: ${actualTargetFolderId}`);
@@ -799,7 +809,7 @@ class DatabaseService {
   }
 
   // 添加新题目
-  async addQuestion(questionData: { content: string; answer: string; folderId: string | number }): Promise<AIResponse> {
+  async addQuestion(questionData: { content: string; options?: string; answer: string; question_type?: string; folderId: string | number; isAi?: number }): Promise<AIResponse> {
     await this.ensureConnection();
     
     const folderId = typeof questionData.folderId === 'string' ? parseInt(questionData.folderId) : questionData.folderId;
@@ -814,8 +824,9 @@ class DatabaseService {
       const newQuestion: AIResponse = {
         id: Math.max(...mockAIResponses.map(q => q.id)) + 1,
         question: questionData.content,
+        options: questionData.options,
         answer: questionData.answer,
-        question_type: '',
+        question_type: questionData.question_type || '',
         folder_id: folderId,
         folder_name: targetFolder.name,
         create_time: new Date().toISOString()
@@ -836,14 +847,15 @@ class DatabaseService {
       
       // 插入新题目到数据库
       const result = await this.db.execute(`
-        INSERT INTO AIResponses (Question, Answer, QuestionType, FolderId, IsAi, CreateTime)
-        VALUES (?, ?, ?, ?, ?, datetime('now'))
+        INSERT INTO AIResponses (Question, Options, Answer, QuestionType, FolderId, IsAi, CreateTime)
+        VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
       `, [
         questionData.content,
+        questionData.options || null,
         questionData.answer,
-        '',
+        questionData.question_type || '',
         targetFolderId,
-        0  // 手动添加的题目，IsAi设置为0
+        questionData.isAi !== undefined ? questionData.isAi : 0
       ]);
       
       // 获取插入的题目ID
@@ -859,6 +871,7 @@ class DatabaseService {
         SELECT 
           ar.Id as id,
           ar.Question as question,
+          ar.Options as options,
           ar.Answer as answer,
           ar.QuestionType as question_type,
           ar.FolderId as folder_id,
@@ -887,6 +900,7 @@ class DatabaseService {
       const newQuestion: AIResponse = {
         id: insertedQuestion[0].id,
         question: insertedQuestion[0].question,
+        options: insertedQuestion[0].options,
         answer: insertedQuestion[0].answer,
         question_type: insertedQuestion[0].question_type,
         folder_id: insertedQuestion[0].folder_id,
@@ -903,7 +917,7 @@ class DatabaseService {
   }
 
   // 更新题目
-  async updateQuestion(questionId: number, updateData: { question?: string; answer?: string; question_type?: string }): Promise<void> {
+  async updateQuestion(questionId: number, updateData: { question?: string; options?: string | null; answer?: string; question_type?: string }): Promise<void> {
     await this.ensureConnection();
     
     if (!this.isTauri) {
@@ -916,6 +930,9 @@ class DatabaseService {
       // 更新题目数据
       if (updateData.question !== undefined) {
         question.question = updateData.question;
+      }
+      if (updateData.options !== undefined) {
+        (question as any).options = updateData.options as any;
       }
       if (updateData.answer !== undefined) {
         question.answer = updateData.answer;
@@ -940,6 +957,10 @@ class DatabaseService {
       if (updateData.question !== undefined) {
         updateFields.push('Question = ?');
         updateValues.push(updateData.question);
+      }
+      if (updateData.options !== undefined) {
+        updateFields.push('Options = ?');
+        updateValues.push(updateData.options);
       }
       if (updateData.answer !== undefined) {
         updateFields.push('Answer = ?');

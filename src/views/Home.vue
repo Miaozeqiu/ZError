@@ -1676,14 +1676,25 @@ const sendModelProgressToBackend = async (requestId: string, content: string) =>
 // 存储AI响应到数据库
 const storeAIResponseToDatabase = async (requestId: string, content: string) => {
   try {
-    // 从请求日志中找到对应的请求，获取实际的title
+    // 从请求日志中找到对应的请求，获取实际的title, options, type
     const logIndex = requestLogs.value.findIndex(log => log.id === requestId)
     let title = 'Unknown'
+    let options = ''
+    let type = ''
 
     if (logIndex !== -1) {
       const log = requestLogs.value[logIndex]
-      // 从请求体中提取title
-      title = getTitleFromRequestBody(log.requestBody || '')
+      // 从请求体中提取参数
+      if (log.requestBody) {
+        try {
+          const parsed = JSON.parse(log.requestBody)
+          title = parsed.title || 'Unknown'
+          options = parsed.options || ''
+          type = parsed.type || ''
+        } catch (e) {
+          console.error('解析请求体失败:', e)
+        }
+      }
     }
 
     // 从AI响应中提取答案（稳健处理混合文本）
@@ -1775,8 +1786,11 @@ const storeAIResponseToDatabase = async (requestId: string, content: string) => 
     // 使用数据库服务存储AI响应
     await databaseService.addQuestion({
       content: title, // 使用实际的请求title
+      options: options, // 使用请求中的options
       answer: extractedAnswer, // 使用解析后的答案
-      folderId: 0 // 存储到ID为0的文件夹
+      question_type: type, // 使用请求中的type
+      folderId: 0, // 存储到ID为0的文件夹
+      isAi: 1 // 标记为AI生成的题目
     })
 
     console.log('✅ AI响应已成功存储到数据库:', { requestId, title, extractedAnswer, contentLength: extractedAnswer.length })

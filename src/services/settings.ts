@@ -31,6 +31,14 @@ export interface AppSettings {
   autoUpdate: boolean
   enableNotifications: boolean
   suppressNoModelWarning: boolean
+  algorithms: AlgorithmConfig[]
+}
+
+export interface AlgorithmConfig {
+  id: string
+  name: string
+  applicableType: string
+  code: string
 }
 
 // 默认设置
@@ -56,6 +64,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   autoUpdate: true,
   enableNotifications: true
   , suppressNoModelWarning: false
+  , algorithms: []
 }
 
 // 设置存储键
@@ -245,7 +254,12 @@ class SettingsManager {
       () => !settings.language || ['zh-CN', 'en-US'].includes(settings.language),
       () => !settings.autoSave || typeof settings.autoSave === 'boolean',
       () => !settings.autoAddToQuestionBank || typeof settings.autoAddToQuestionBank === 'boolean',
-      () => !settings.enableNonThinkingModelAnalysis || typeof settings.enableNonThinkingModelAnalysis === 'boolean'
+      () => !settings.enableNonThinkingModelAnalysis || typeof settings.enableNonThinkingModelAnalysis === 'boolean',
+      () => !settings.algorithms || (
+        Array.isArray(settings.algorithms) && settings.algorithms.every((a: any) => (
+          a && typeof a === 'object' && typeof a.id === 'string' && typeof a.name === 'string' && typeof a.applicableType === 'string' && typeof a.code === 'string'
+        ))
+      )
     ]
 
     return validations.every(validation => validation())
@@ -267,6 +281,7 @@ class SettingsManager {
       autoUpdate: '自动更新应用',
       enableNotifications: '启用通知'
       , suppressNoModelWarning: '未选择模型提醒'
+      , algorithms: '算法配置列表'
     }
   }
 }
