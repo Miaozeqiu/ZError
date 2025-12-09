@@ -8,25 +8,28 @@
         <div class="loading">加载中...</div>
       </template>
       <template v-else-if="treeData && treeData.length > 0">
-        <FileTreeNode
-          v-for="item in treeData"
-          :key="item.id"
-          :node="item"
-          :level="0"
-          :selected-id="selectedId"
-          :dragged-node-id="draggedNodeId"
-          :expanded-folders="expandedFolders"
-          :renaming-node-id="renamingNodeId"
-          :rename-value="renameInputValue"
-          @select="handleSelect"
-          @context-menu="handleContextMenu"
-          @expand-folder="handleExpandFolder"
-          @move-folder="handleMoveFolder"
-          @drag-start="handleDragStart"
-          @drag-end="handleDragEnd"
-          @rename-save="handleRenameSave"
-          @rename-cancel="cancelRename"
-        />
+      <FileTreeNode
+        v-for="item in treeData"
+        :key="item.id"
+        :node="item"
+        :level="0"
+        :selected-id="selectedId"
+        :dragged-node-id="draggedNodeId"
+        :expanded-folders="expandedFolders"
+        :renaming-node-id="renamingNodeId"
+        :rename-value="renameInputValue"
+        :hover-target-id="dragHoverTargetId"
+        :hover-position="dragHoverPosition"
+        @select="handleSelect"
+        @context-menu="handleContextMenu"
+        @expand-folder="handleExpandFolder"
+        @move-folder="handleMoveFolder"
+        @drag-start="handleDragStart"
+        @drag-end="handleDragEnd"
+        @drag-hover="handleDragHover"
+        @rename-save="handleRenameSave"
+        @rename-cancel="cancelRename"
+      />
       </template>
       <template v-else>
         <div class="empty">暂无数据</div>
@@ -96,6 +99,8 @@ const deleteDialog = reactive({
 
 // 全局拖拽状态管理
 const draggedNodeId = ref<string | null>(null);
+const dragHoverTargetId = ref<string | null>(null);
+const dragHoverPosition = ref<'top' | 'center' | 'bottom' | null>(null);
 
 // 展开状态管理
 const expandedFolders = ref<Set<string>>(new Set());
@@ -238,30 +243,25 @@ const emit = defineEmits<{
   'expand-folder': [id: string]
 }>();
 
-// 查找节点的辅助函数
-const findNodeById = (targetId: string): TreeNode | null => {
-  const findInNodes = (nodes: TreeNode[]): TreeNode | null => {
-    for (const node of nodes) {
-      if (node.id === targetId) {
-        return node;
-      }
-      if (node.children) {
-        const found = findInNodes(node.children);
-        if (found) return found;
-      }
-    }
-    return null;
-  };
-  return findInNodes(treeData.value);
-};
-
 const handleSelect = (id: string) => {
   try {
     selectedId.value = id;
     emit('select', id);
     
     // 如果选中的是文件夹，触发文件夹选择事件
-    const node = findNodeById(id);
+    // 查找节点
+    const findNodeById = (nodes: TreeNode[], targetId: string): TreeNode | null => {
+      for (const node of nodes) {
+        if (node.id === targetId) return node;
+        if (node.children) {
+          const found = findNodeById(node.children, targetId);
+          if (found) return found;
+        }
+      }
+      return null;
+    };
+
+    const node = findNodeById(treeData.value, id);
     if (node && node.type === 'folder') {
       console.log('FileTree: 选择文件夹', { id, name: node.name, parsedId: parseInt(id) });
       // 使用 nextTick 确保组件更新完成后再触发事件
@@ -525,8 +525,15 @@ const handleDragEnd = () => {
   // 延迟清理，确保其他事件能正确读取
   setTimeout(() => {
     draggedNodeId.value = null;
+    dragHoverTargetId.value = null;
+    dragHoverPosition.value = null;
     console.log('FileTree: 拖拽状态已清理');
   }, 100);
+};
+
+const handleDragHover = (data: { id: string | null, position: 'top' | 'center' | 'bottom' | null }) => {
+  dragHoverTargetId.value = data.id;
+  dragHoverPosition.value = data.position;
 };
 
 // 处理重命名保存
@@ -578,6 +585,7 @@ defineExpose({
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  -webkit-app-region: no-drag;
 }
 
 .tree-header {
@@ -601,5 +609,6 @@ defineExpose({
   flex: 1;
   overflow-y: auto;
   padding: 4px 0;
+  -webkit-app-region: no-drag;
 }
 </style>

@@ -149,7 +149,7 @@ const saveNetworkSettings = async () => {
 
 .setting-title {
   font-size: 16px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--text-primary);
   margin: 0 0 8px 0;
 }

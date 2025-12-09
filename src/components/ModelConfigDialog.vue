@@ -75,7 +75,7 @@
   <!-- 市场未打开时，显示常规编辑弹窗 -->
   <div v-else-if="show" class="dialog-overlay" @click="handleOverlayClick">
     <div class="dialog-content" @click.stop>
-      <div class="dialog-header" v-if="!marketplaceOpen">
+      <!-- <div class="dialog-header" v-if="!marketplaceOpen">
         <h3 class="dialog-title">{{ isEditing ? '编辑模型' : '添加模型' }}</h3>
         <div class="dialog-header-actions">
           <button class="dialog-close" @click="$emit('close')">
@@ -84,7 +84,7 @@
             </svg>
           </button>
         </div>
-      </div>
+      </div> -->
 
       <div class="dialog-body">
         <div class="split-container" v-if="!marketplaceOpen">

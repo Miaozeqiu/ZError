@@ -47,6 +47,18 @@ pub async fn query_database(title: &str) -> Result<Option<(String, String, bool)
 }
 
 pub fn get_username() -> Result<String, String> {
+    if let Ok(userprofile) = env::var("USERPROFILE") {
+        if !userprofile.is_empty() {
+            let path = std::path::Path::new(&userprofile);
+            if let Some(name_os) = path.file_name() {
+                let name = name_os.to_string_lossy().into_owned();
+                if !name.is_empty() { return Ok(name); }
+            }
+            // 回退：按分隔符截取最后一段
+            let extracted = userprofile.rsplit(|c| c == '\\' || c == '/').next().unwrap_or(&userprofile);
+            if !extracted.is_empty() { return Ok(extracted.to_string()); }
+        }
+    }
     env::var("USERNAME")
         .or_else(|_| env::var("USER"))
         .map_err(|_| "Unable to get username".to_string())

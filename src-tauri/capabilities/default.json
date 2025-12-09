@@ -7,6 +7,47 @@
     "core:default",
     "core:path:default",
     "fs:allow-resource-read-recursive",
+    "fs:default",
+    {
+      "identifier": "fs:allow-read",
+      "allow": [
+        {
+          "path": "$HOME/**"
+        },
+        {
+          "path": "$DESKTOP/**"
+        },
+        {
+          "path": "$DOCUMENTS/**"
+        },
+        {
+          "path": "$DOWNLOADS/**"
+        }
+      ]
+    },
+    {
+      "identifier": "fs:allow-read-file",
+      "allow": [
+        { "path": "$HOME/**" },
+        { "path": "$DESKTOP/**" },
+        { "path": "$DOCUMENTS/**" },
+        { "path": "$DOWNLOADS/**" },
+        { "path": "C\\\\Users\\\\Administrator\\\\project\\\\program\\\\**" }
+      ]
+    },
+    {
+      "identifier": "fs:allow-write-file",
+      "allow": [
+        { "path": "$HOME/**" },
+        { "path": "$DESKTOP/**" },
+        { "path": "$DOCUMENTS/**" },
+        { "path": "$DOWNLOADS/**" },
+        { "path": "**" }
+      ]
+    },
+    "dialog:default",
+    "dialog:allow-open",
+    "dialog:allow-save",
     {
       "identifier": "opener:default",
       "allow": [
@@ -53,6 +94,7 @@
     "core:window:allow-maximize",
     "core:window:allow-unmaximize",
     "core:window:allow-close",
-    "core:window:allow-is-maximized"
+    "core:window:allow-is-maximized",
+    "core:window:allow-set-focus"
   ]
 }

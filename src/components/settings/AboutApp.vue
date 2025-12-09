@@ -10,7 +10,7 @@
 
         <div class="app-details">
           <h3 class="app-name">ZError</h3>
-          <p class="app-version">版本 2.0.2</p>
+          <p class="app-version">版本 2.1.0</p>
           <p class="app-description">支持OCS的AI题库</p>
         </div>
       </div>
@@ -300,7 +300,7 @@ const openDebugPanel = async () => {
 
 .setting-title {
   font-size: 16px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--text-primary);
   margin-bottom: 4px;
 }

@@ -1211,7 +1211,7 @@ onUnmounted(() => {
 
 .sidebar-title {
   font-size: 16px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--text-primary, #2d3748);
   margin: 0;
 }
