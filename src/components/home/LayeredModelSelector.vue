@@ -7,7 +7,7 @@
     >
       <span class="current-model-info">
         <span class="model-name">{{ currentModel?.name || '选择模型' }}</span>
-        <span v-if="currentModel" class="platform-name">{{ currentModel.platform }}</span>
+        <span v-if="currentModel" class="platform-name">{{ currentPlatformName }}</span>
       </span>
       <svg class="dropdown-icon" :class="{ 'rotated': isOpen }" width="16" height="16" viewBox="0 0 16 16" fill="none">
         <path d="M4 6L8 10L12 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
@@ -108,7 +108,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useModelConfig } from '../../services/modelConfig'
 import type { AIPlatform, AIModel } from '../../services/modelConfig'
 
@@ -139,12 +139,18 @@ const modelLayerRef = ref<HTMLElement | null>(null)
 
 // 计算属性
 const enabledPlatforms = computed(() => {
-  return platforms.filter(platform => 
+  return platforms.value.filter(platform => 
     // 平台必须启用，且有启用的模型才显示
     platform.enabled && 
     platform.models && 
     platform.models.some(model => model.enabled)
   )
+})
+
+const currentPlatformName = computed(() => {
+  if (!props.currentModel) return ''
+  const p = platforms.value.find(p => p.id === props.currentModel?.platformId)
+  return p ? p.displayName : props.currentModel.platformId
 })
 
 // 方法

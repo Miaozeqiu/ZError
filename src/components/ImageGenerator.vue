@@ -178,7 +178,7 @@ const integratedContent = computed(() => {
     const markdownHtml = marked(processedContent, {
       breaks: true,
       gfm: true
-    })
+    }) as string
     
     // 删除<br>换行标签
     return markdownHtml.replace(/<br\s*\/?>/gi, '')
@@ -388,7 +388,7 @@ const retryRender = () => {
 }
 
 // 监听内容变化和渲染控制
-watch(() => [props.content, props.shouldRender], async ([newContent, shouldRender]) => {
+watch(() => [props.content, props.shouldRender], async ([newContent, shouldRender]: [any, any]) => {
   if (shouldRender && hasUrls.value) {
     console.log('🔄 内容变化，开始渲染:', { 
       hasUrls: hasUrls.value, 

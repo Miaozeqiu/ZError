@@ -92,7 +92,7 @@ const handleOverlayClick = (event: MouseEvent) => {
       return
     }
     
-    emit('close')
+    emit('cancel')
   }, 0)
 };
 </script>

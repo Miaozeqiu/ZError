@@ -839,7 +839,7 @@ const fetchRequestLogs = async () => {
     const logs = await invoke('get_request_logs')
 
     // 转换日志格式以匹配前端接口
-    const formattedLogs = logs.map((log: any) => ({
+    const formattedLogs = (logs as any[]).map((log: any) => ({
       id: `${log.timestamp}-${Math.random().toString(36).substr(2, 9)}`,
       timestamp: new Date(log.timestamp).getTime(),
       method: log.method,
@@ -1017,9 +1017,9 @@ const getServerStatus = async () => {
   try {
     const { invoke } = await import('@tauri-apps/api/core')
     const status = await invoke('get_server_status')
-    serverRunning.value = status.running
-    serverUrl.value = status.url || ''
-    serverPort.value = status.port
+    serverRunning.value = (status as any).running
+    serverUrl.value = (status as any).url || ''
+    serverPort.value = (status as any).port
   } catch (error) {
     console.error('Failed to get server status:', error)
     // Fallback to default state if Tauri API is not available
@@ -1048,11 +1048,11 @@ const startServer = async () => {
       bindAddress: bindAddress
     })
 
-    serverRunning.value = result.running
-    serverUrl.value = result.url || ''
+    serverRunning.value = (result as any).running
+    serverUrl.value = (result as any).url || ''
 
     // 服务器启动成功后，启动SSE连接接收实时日志
-    if (result.running) {
+    if ((result as any).running) {
       startSSEConnection()
     }
 
@@ -1076,9 +1076,9 @@ const stopServer = async () => {
     const { invoke } = await import('@tauri-apps/api/core')
     const result = await invoke('stop_server')
 
-    serverRunning.value = result.running
-    serverUrl.value = result.url || ''
-    serverPort.value = result.port
+    serverRunning.value = (result as any).running
+    serverUrl.value = (result as any).url || ''
+    serverPort.value = (result as any).port
 
     // 服务器停止后，停止SSE连接和轮询机制
     stopSSEConnection()

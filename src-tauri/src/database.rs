@@ -112,7 +112,7 @@ pub fn init_database_schema(db_path: &str) -> Result<(), String> {
         .map_err(|e| format!("{}", e))?;
     let mut has_is_ai = false;
     let cols = stmt
-        .query_map([], |row| Ok((row.get::<_, String>(1)?)))
+        .query_map([], |row| Ok(row.get::<_, String>(1)?))
         .map_err(|e| format!("{}", e))?;
     for c in cols {
         if let Ok(name) = c {

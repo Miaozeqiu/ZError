@@ -3,7 +3,7 @@ use std::collections::{VecDeque, HashMap};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
-use tokio::time::{timeout, Duration};
+use tokio::time::Duration;
 use uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -35,7 +35,7 @@
         <div v-if="item.icon" class="menu-icon">
           <!-- SVG 图标 -->
           <svg 
-            v-if="item.icon.type === 'svg'" 
+            v-if="typeof item.icon === 'object' && item.icon.type === 'svg'" 
             width="16" 
             height="16" 
             :viewBox="item.icon.viewBox || '0 0 24 24'" 
@@ -74,10 +74,13 @@
           </svg>
           
           <!-- Emoji 图标 -->
-          <span v-else-if="item.icon.type === 'emoji'">{{ item.icon.content }}</span>
+          <span v-else-if="typeof item.icon === 'object' && item.icon.type === 'emoji'">{{ item.icon.content }}</span>
           
           <!-- 文本图标 -->
-          <span v-else-if="item.icon.type === 'text'">{{ item.icon.content }}</span>
+          <span v-else-if="typeof item.icon === 'object' && item.icon.type === 'text'">{{ item.icon.content }}</span>
+          
+          <!-- 纯字符串图标 (如果是字符串) -->
+          <span v-else-if="typeof item.icon === 'string'">{{ item.icon }}</span>
         </div>
         
         <!-- 标签 -->
@@ -123,6 +126,8 @@ export interface MenuIcon {
   emoji?: string
   // 文本图标属性
   text?: string
+  // 通用内容属性
+  content?: string
 }
 
 export interface MenuItem {

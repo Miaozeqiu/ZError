@@ -93,8 +93,8 @@ const handleUpdateDialogClose = () => {
 const handleDownload = (downloadUrl: string) => {
   // 在Tauri环境中打开下载链接
   if (window.__TAURI_INTERNALS__) {
-    import('@tauri-apps/plugin-opener').then(({ open }) => {
-      open(downloadUrl);
+    import('@tauri-apps/plugin-opener').then((mod: any) => {
+      mod.open(downloadUrl);
     });
   } else {
     // 在浏览器环境中打开链接

@@ -92,7 +92,7 @@ import { environmentDetector } from '../../services/environmentDetector'
 
 // 获取设置和模型配置
 const { settings } = useSettingsManager()
-const { modelConfig } = useModelConfig()
+const { settings: modelSettings } = useModelConfig()
 
 // 调试信息
 const debugInfo = ref({
@@ -137,7 +137,7 @@ const openDebugPanel = async () => {
       console.log('Tauri 环境:', debugInfo.value.tauriEnv)
       console.log('可用 API:', debugInfo.value.availableApis)
       console.log('设置信息:', settings.value)
-      console.log('模型配置:', modelConfig.value)
+      console.log('模型配置:', modelSettings)
       
       // 尝试触发浏览器开发者工具（某些浏览器支持）
       if (typeof window !== 'undefined') {

@@ -81,17 +81,17 @@ export class EnvironmentDetector {
       switch (apiName) {
         case 'invoke':
           return typeof window.__TAURI__ !== 'undefined' && 
-                 typeof window.__TAURI__.core !== 'undefined' &&
-                 typeof window.__TAURI__.core.invoke === 'function';
+                 typeof (window.__TAURI__ as any).core !== 'undefined' &&
+                 typeof (window.__TAURI__ as any).core.invoke === 'function';
         case 'shell':
           return typeof window.__TAURI__ !== 'undefined' && 
-                 typeof window.__TAURI__.shell !== 'undefined';
+                 typeof (window.__TAURI__ as any).shell !== 'undefined';
         case 'fs':
           return typeof window.__TAURI__ !== 'undefined' && 
-                 typeof window.__TAURI__.fs !== 'undefined';
+                 typeof (window.__TAURI__ as any).fs !== 'undefined';
         case 'path':
           return typeof window.__TAURI__ !== 'undefined' && 
-                 typeof window.__TAURI__.path !== 'undefined';
+                 typeof (window.__TAURI__ as any).path !== 'undefined';
         default:
           return false;
       }
