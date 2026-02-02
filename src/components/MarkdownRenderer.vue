@@ -147,9 +147,8 @@ const textOnlyContent = computed(() => {
     // 然后渲染Markdown
     return marked(mathProcessed, {
       breaks: true,
-      gfm: true,
-      sanitize: false
-    })
+      gfm: true
+    }) as string
   } catch (error) {
     console.error('Markdown render error:', error)
     return textWithPlaceholders
@@ -176,9 +175,8 @@ const integratedContent = computed(() => {
     // 渲染Markdown
     let htmlContent = marked(mathProcessed, {
       breaks: true,
-      gfm: true,
-      sanitize: false
-    })
+      gfm: true
+    }) as string
     
     // 将占位符替换为图片占位符的HTML
     urls.forEach((url, index) => {
@@ -362,9 +360,8 @@ const renderedContent = computed(() => {
     // 然后渲染Markdown
     return marked(mathProcessed, {
       breaks: true,
-      gfm: true,
-      sanitize: false // 允许HTML，因为我们需要KaTeX生成的HTML
-    })
+      gfm: true
+    }) as string
   } catch (error) {
     console.error('Markdown render error:', error)
     return props.content // 如果渲染失败，返回原始内容

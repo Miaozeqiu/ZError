@@ -53,9 +53,8 @@ const renderedContent = computed(() => {
     // 渲染Markdown
     return marked(mathProcessed, {
       breaks: true,
-      gfm: true,
-      sanitize: false
-    })
+      gfm: true
+    }) as string
   } catch (error) {
     console.error('Markdown render error:', error)
     return props.content

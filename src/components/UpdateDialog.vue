@@ -54,7 +54,7 @@
 import { computed } from 'vue'
 import type { VersionInfo } from '../services/versionCheck'
 import { VersionCheckService } from '../services/versionCheck'
-import { environmentDetector } from '@/services/environmentDetector'
+import { environmentDetector } from '../services/environmentDetector'
 
 interface Props {
   visible: boolean

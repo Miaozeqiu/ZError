@@ -59,48 +59,68 @@ pub fn run() {
             , convert_doc_to_docx
         ])
         .setup(|app| {
-            let elevated_arg = std::env::args().any(|a| a == "--elevated");
-            unsafe {
-                use windows::core::w;
-                use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS};
-                use windows::Win32::System::Threading::CreateMutexW;
-                use windows::Win32::UI::WindowsAndMessaging::{FindWindowW, ShowWindow, SetForegroundWindow, SW_RESTORE};
-                let _mutex = CreateMutexW(None, false, w!("Global\\ZError_SingleInstance"));
-                let err = GetLastError();
-                if err.0 == ERROR_ALREADY_EXISTS.0 && !elevated_arg {
-                    let hwnd = FindWindowW(None, w!("ZError"));
-                    if hwnd.0 != 0 {
-                        let _ = ShowWindow(hwnd, SW_RESTORE);
-                        let _ = SetForegroundWindow(hwnd);
-                    }
-                    std::process::exit(0);
-                }
-            }
-            let username = crate::database::get_username().unwrap_or_else(|_| "Administrator".to_string());
-            let base_dir = format!("C:\\Users\\{}\\AppData\\Local\\ZError", username);
-            let db_path = format!("{}\\airesponses.db", base_dir);
-
-            let mut need_elevation = false;
-            if let Err(e) = std::fs::create_dir_all(&base_dir) {
-                println!("⚠️ 创建数据目录失败: {}", e);
-                need_elevation = true;
-            } else {
-                match crate::database::init_database_schema(&db_path) {
-                    Ok(_) => {}
-                    Err(e) => {
-                        println!("⚠️ 初始化数据库失败: {}", e);
-                        need_elevation = true;
-                    }
-                }
-            }
-
-            if need_elevation && !elevated_arg {
-                match crate::commands::spawn_elevated_self() {
-                    Ok(_) => {
+            // Windows-specific single instance check and elevation logic
+            #[cfg(target_os = "windows")]
+            {
+                let elevated_arg = std::env::args().any(|a| a == "--elevated");
+                unsafe {
+                    use windows::core::w;
+                    use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS};
+                    use windows::Win32::System::Threading::CreateMutexW;
+                    use windows::Win32::UI::WindowsAndMessaging::{FindWindowW, ShowWindow, SetForegroundWindow, SW_RESTORE};
+                    let _mutex = CreateMutexW(None, false, w!("Global\\ZError_SingleInstance"));
+                    let err = GetLastError();
+                    if err.0 == ERROR_ALREADY_EXISTS.0 && !elevated_arg {
+                        let hwnd = FindWindowW(None, w!("ZError"));
+                        if hwnd.0 != 0 {
+                            let _ = ShowWindow(hwnd, SW_RESTORE);
+                            let _ = SetForegroundWindow(hwnd);
+                        }
                         std::process::exit(0);
                     }
-                    Err(err) => {
-                        println!("❌ 请求管理员权限失败: {}", err);
+                }
+                let username = crate::database::get_username().unwrap_or_else(|_| "Administrator".to_string());
+                let base_dir = format!("C:\\Users\\{}\\AppData\\Local\\ZError", username);
+                let db_path = format!("{}\\airesponses.db", base_dir);
+
+                let mut need_elevation = false;
+                if let Err(e) = std::fs::create_dir_all(&base_dir) {
+                    println!("⚠️ 创建数据目录失败: {}", e);
+                    need_elevation = true;
+                } else {
+                    match crate::database::init_database_schema(&db_path) {
+                        Ok(_) => {}
+                        Err(e) => {
+                            println!("⚠️ 初始化数据库失败: {}", e);
+                            need_elevation = true;
+                        }
+                    }
+                }
+
+                if need_elevation && !elevated_arg {
+                    match crate::commands::spawn_elevated_self() {
+                        Ok(_) => {
+                            std::process::exit(0);
+                        }
+                        Err(err) => {
+                            println!("❌ 请求管理员权限失败: {}", err);
+                        }
+                    }
+                }
+            }
+
+            // Linux/macOS database initialization
+            #[cfg(not(target_os = "windows"))]
+            {
+                let home_dir = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+                let base_dir = format!("{}/.local/share/zerror", home_dir);
+                let db_path = format!("{}/airesponses.db", base_dir);
+
+                if let Err(e) = std::fs::create_dir_all(&base_dir) {
+                    println!("⚠️ 创建数据目录失败: {}", e);
+                } else {
+                    if let Err(e) = crate::database::init_database_schema(&db_path) {
+                        println!("⚠️ 初始化数据库失败: {}", e);
                     }
                 }
             }

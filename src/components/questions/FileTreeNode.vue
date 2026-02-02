@@ -647,7 +647,10 @@ const onMouseDown = (e: MouseEvent) => {
       emit('drag-end');
       const targetId = currentHoverId.value;
       if (targetId && targetId !== props.node.id) {
-        const position = dragPosition.value || 'inside';
+        let position: 'before' | 'after' | 'inside' = 'inside';
+        if (dragPosition.value === 'top') position = 'before';
+        else if (dragPosition.value === 'bottom') position = 'after';
+
         emit('move-folder', { sourceId: props.node.id, targetId, position });
       }
       emit('drag-hover', { id: null, position: null });

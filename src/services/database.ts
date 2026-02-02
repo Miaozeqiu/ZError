@@ -570,7 +570,7 @@ class DatabaseService {
 
       // 检查是否存在默认文件夹（ID为0）
       const defaultFolderCheck = await this.db.select('SELECT COUNT(*) as count FROM Folders WHERE Id = 0');
-      const defaultFolderExists = defaultFolderCheck && defaultFolderCheck.length > 0 && 
+      const defaultFolderExists = defaultFolderCheck && (defaultFolderCheck as any[]).length > 0 && 
         (defaultFolderCheck[0] as any).count > 0;
 
       if (!defaultFolderExists) {
@@ -1272,7 +1272,7 @@ class DatabaseService {
       `, [parentId]);
       
       let siblingCount = 0;
-      if (siblingCountResult && siblingCountResult.length > 0) {
+      if (siblingCountResult && (siblingCountResult as any[]).length > 0) {
         const row = siblingCountResult[0];
         siblingCount = row.count || row.COUNT || row['COUNT(*)'] || 0;
       }
@@ -1288,7 +1288,7 @@ class DatabaseService {
         `, [parentId]);
         
         let questionCount = 0;
-        if (questionCountResult && questionCountResult.length > 0) {
+        if (questionCountResult && (questionCountResult as any[]).length > 0) {
           const row = questionCountResult[0];
           questionCount = row.count || row.COUNT || row['COUNT(*)'] || 0;
         }
@@ -1534,9 +1534,9 @@ class DatabaseService {
         console.log(`找到文件夹 (数据库环境): ${JSON.stringify(folder)}`);
         
         // 数据库返回的字段名是大写的，需要转换为小写
-        const folderName = folder.Name || folder.name;
-        const folderIdFromDb = folder.Id || folder.id;
-        const parentId = folder.ParentId !== undefined ? folder.ParentId : folder.parent_id;
+        const folderName = (folder as any).Name || folder.name;
+        const folderIdFromDb = (folder as any).Id || folder.id;
+        const parentId = (folder as any).ParentId !== undefined ? (folder as any).ParentId : folder.parent_id;
         
         // 如果有父文件夹，转移到父文件夹下的未分类文件夹；如果没有父文件夹，转移到默认文件夹（ID: 0）
         let targetFolderId: number;
@@ -1550,7 +1550,7 @@ class DatabaseService {
           
           // 处理不同数据库返回格式的count字段
           let count = 0;
-          if (siblingCountResult && siblingCountResult.length > 0) {
+          if (siblingCountResult && (siblingCountResult as any[]).length > 0) {
             const row = siblingCountResult[0];
             count = row.count || row.COUNT || row['COUNT(*)'] || 0;
           }
@@ -1572,7 +1572,7 @@ class DatabaseService {
               `, [folderIdFromDb]);
               
               let questionCount = 0;
-              if (questionCountResult && questionCountResult.length > 0) {
+              if (questionCountResult && (questionCountResult as any[]).length > 0) {
                 const row = questionCountResult[0];
                 questionCount = row.count || row.COUNT || row['COUNT(*)'] || 0;
               }
@@ -1687,8 +1687,8 @@ class DatabaseService {
       `, parentId !== null && parentId !== 0 ? [uncategorizedName, parentId] : [uncategorizedName]);
       
       if (existingResult.length > 0) {
-        console.log(`找到已存在的未分类文件夹 (数据库环境): ${uncategorizedName} (ID: ${existingResult[0].Id || existingResult[0].id}, ParentId: ${existingResult[0].ParentId || existingResult[0].parent_id})`);
-        return existingResult[0].Id || existingResult[0].id;
+        console.log(`找到已存在的未分类文件夹 (数据库环境): ${uncategorizedName} (ID: ${(existingResult[0] as any).Id || existingResult[0].id}, ParentId: ${(existingResult[0] as any).ParentId || existingResult[0].parent_id})`);
+        return (existingResult[0] as any).Id || existingResult[0].id;
       }
       
       // 创建新的未分类文件夹

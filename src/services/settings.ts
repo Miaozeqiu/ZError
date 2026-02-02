@@ -12,6 +12,11 @@ export interface AppSettings {
   // 非思考模型分析开关（影响后端提示词）
   enableNonThinkingModelAnalysis: boolean
   
+  // 题目显示设置
+  defaultDifficulty: 'easy' | 'medium' | 'hard'
+  itemsPerPage: number
+  showExplanation: boolean
+  
   // 网络设置
   network: {
     serverPort: number
@@ -48,6 +53,9 @@ const DEFAULT_SETTINGS: AppSettings = {
   autoSave: true,
   autoAddToQuestionBank: false,
   enableNonThinkingModelAnalysis: false,
+  defaultDifficulty: 'medium',
+  itemsPerPage: 20,
+  showExplanation: true,
   network: {
     serverPort: 3000,
     enableLanAccess: false,
@@ -282,6 +290,9 @@ class SettingsManager {
       enableNotifications: '启用通知'
       , suppressNoModelWarning: '未选择模型提醒'
       , algorithms: '算法配置列表'
+      , defaultDifficulty: '默认题目难度'
+      , itemsPerPage: '每页显示题目数'
+      , showExplanation: '显示题目解析'
     }
   }
 }
