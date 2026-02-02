@@ -2,11 +2,18 @@ use std::env;
 use rusqlite::Connection;
 
 pub async fn query_database(title: &str) -> Result<Option<(String, String, bool)>, Box<dyn std::error::Error + Send + Sync>> {
-    // 获取用户名
-    let username = get_username().unwrap_or_else(|_| "Administrator".to_string());
+    // 构建跨平台数据库路径
+    #[cfg(target_os = "windows")]
+    let db_path = {
+        let username = get_username().unwrap_or_else(|_| "Administrator".to_string());
+        format!("C:\\Users\\{}\\AppData\\Local\\ZError\\airesponses.db", username)
+    };
     
-    // 构建数据库路径
-    let db_path = format!("C:\\Users\\{}\\AppData\\Local\\ZError\\airesponses.db", username);
+    #[cfg(not(target_os = "windows"))]
+    let db_path = {
+        let home_dir = env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+        format!("{}/.local/share/zerror/airesponses.db", home_dir)
+    };
     
     let title_clone = title.to_string();
     let db_path_clone = db_path.clone();

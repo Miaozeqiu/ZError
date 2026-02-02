@@ -5,7 +5,9 @@ use crate::database::{get_username as db_get_username, file_exists as db_file_ex
 use std::fs;
 use base64::{Engine as _, engine::general_purpose};
 use urlencoding;
+#[cfg(target_os = "windows")]
 use std::path::PathBuf;
+#[cfg(target_os = "windows")]
 use std::sync::{OnceLock, atomic::{AtomicBool, Ordering}};
 use calamine::{open_workbook_auto, Reader, DataType};
 use std::fs::File;
@@ -17,13 +19,15 @@ use std::io::Write as _;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
+#[cfg(target_os = "windows")]
 static ELEVATION_FLAG: OnceLock<AtomicBool> = OnceLock::new();
+#[cfg(target_os = "windows")]
 fn elevation_requested() -> &'static AtomicBool { ELEVATION_FLAG.get_or_init(|| AtomicBool::new(false)) }
 
 pub fn spawn_elevated_self() -> Result<(), String> {
-    let exe: PathBuf = std::env::current_exe().map_err(|e| format!("{}", e))?;
     #[cfg(target_os = "windows")]
     {
+        let exe: PathBuf = std::env::current_exe().map_err(|e| format!("{}", e))?;
         let already = elevation_requested().swap(true, Ordering::SeqCst);
         if already { return Err("already_requested".to_string()); }
         let status = runas::Command::new(exe)
@@ -36,7 +40,7 @@ pub fn spawn_elevated_self() -> Result<(), String> {
         }
         return Ok(());
     }
-    #[allow(unreachable_code)]
+    #[cfg(not(target_os = "windows"))]
     Err("unsupported_platform".to_string())
 }
 
@@ -447,13 +451,13 @@ fn read_docx_paragraphs(path: &str) -> Result<Vec<String>, String> {
     let mut buf = Vec::new();
     let mut paragraphs: Vec<String> = Vec::new();
     let mut current = String::new();
-    let mut in_p = false;
+    let mut _in_p = false;
     let mut in_text = false;
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(e)) => {
                 let name = e.name().as_ref().to_vec();
-                if name.ends_with(b"p") { in_p = true; current.clear(); }
+                if name.ends_with(b"p") { _in_p = true; current.clear(); }
                 if name.ends_with(b"t") { in_text = true; }
             }
             Ok(Event::Text(t)) => {
@@ -462,7 +466,7 @@ fn read_docx_paragraphs(path: &str) -> Result<Vec<String>, String> {
             Ok(Event::End(e)) => {
                 let name = e.name().as_ref().to_vec();
                 if name.ends_with(b"t") { in_text = false; }
-                if name.ends_with(b"p") { in_p = false; paragraphs.push(current.clone()); current.clear(); }
+                if name.ends_with(b"p") { _in_p = false; paragraphs.push(current.clone()); current.clear(); }
             }
             Ok(Event::Eof) => break,
             Err(e) => return Err(format!("解析docx失败: {}", e)),
@@ -506,9 +510,8 @@ fn read_doc_paragraphs(path: &str) -> Result<Vec<String>, String> {
                         if i + 2 < bytes.len() {
                             let h1 = bytes[i + 1] as char;
                             let h2 = bytes[i + 2] as char;
-                            let mut v: u8 = 0;
-                            fn hex(c: char) -> u8 { match c { '0'..='9' => (c as u8 - b'0'), 'a'..='f' => (c as u8 - b'a' + 10), 'A'..='F' => (c as u8 - b'A' + 10), _ => 0 } }
-                            v = (hex(h1) << 4) | hex(h2);
+                            fn hex(c: char) -> u8 { match c { '0'..='9' => c as u8 - b'0', 'a'..='f' => c as u8 - b'a' + 10, 'A'..='F' => c as u8 - b'A' + 10, _ => 0 } }
+                            let v: u8 = (hex(h1) << 4) | hex(h2);
                             out.push(v as char);
                             i += 3;
                             continue;
