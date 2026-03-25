@@ -1,37 +1,643 @@
 use std::env;
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
+use strsim::normalized_levenshtein;
+use serde::{Serialize, Deserialize};
+use regex::Regex;
 
-pub async fn query_database(title: &str) -> Result<Option<(String, String, bool)>, Box<dyn std::error::Error + Send + Sync>> {
-    // 构建跨平台数据库路径
+/// 提取字符串中所有 URL（http/https），返回排序后的列表
+fn extract_urls(text: &str) -> Vec<String> {
+    // 匹配 http(s):// 开头，到空白字符或常见中文标点结束
+    let re = Regex::new(r"https?://[^\s]+").unwrap();
+    let mut urls: Vec<String> = re.find_iter(text)
+        .map(|m| {
+            // 去掉末尾可能粘连的中文标点（句号、逗号等 UTF-8 多字节字符不在 \s 范围内）
+            let s = m.as_str().trim_end_matches(|c: char| {
+                matches!(c, '，' | '。' | '！' | '？' | '、' | '；' | '：' | '\u{300c}'..='\u{300f}' | '（' | '）' | '【' | '】')
+            });
+            s.to_string()
+        })
+        .collect();
+    urls.sort();
+    urls
+}
+
+/// 将字符串中所有 URL 替换为统一占位符，用于相似度比较
+fn normalize_urls(text: &str) -> String {
+    let re = Regex::new(r"https?://[^\s]+").unwrap();
+    // 先替换，再去掉占位符末尾可能残留的中文标点（不影响相似度计算）
+    re.replace_all(text, "__URL__").to_string()
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AIResponse {
+    pub id: i64,
+    pub question: String,
+    pub options: Option<String>,
+    pub answer: Option<String>,
+    pub question_type: Option<String>,
+    pub folder_id: i64,
+    pub folder_name: Option<String>,
+    pub create_time: Option<String>,
+    pub is_ai: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Folder {
+    pub id: i64,
+    pub name: String,
+    pub parent_id: i64,
+    pub create_time: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FolderStat {
+    pub folder_id: i64,
+    pub folder_name: String,
+    pub question_count: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FolderPathItem {
+    pub id: i64,
+    pub name: String,
+}
+
+fn get_db_path() -> String {
     #[cfg(target_os = "windows")]
-    let db_path = {
+    {
         let username = get_username().unwrap_or_else(|_| "Administrator".to_string());
         format!("C:\\Users\\{}\\AppData\\Local\\ZError\\airesponses.db", username)
-    };
+    }
     
     #[cfg(not(target_os = "windows"))]
-    let db_path = {
+    {
         let home_dir = env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
         format!("{}/.local/share/zerror/airesponses.db", home_dir)
+    }
+}
+
+fn get_conn() -> Result<Connection, String> {
+    let db_path = get_db_path();
+    Connection::open(&db_path).map_err(|e| format!("{}", e))
+}
+
+#[tauri::command]
+pub async fn get_folders() -> Result<Vec<Folder>, String> {
+    let conn = get_conn()?;
+    let mut stmt = conn.prepare("SELECT Id, Name, ParentId, CreateTime FROM Folders ORDER BY Name").map_err(|e| format!("{}", e))?;
+    
+    let rows = stmt.query_map([], |row| {
+        Ok(Folder {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            parent_id: row.get(2)?,
+            create_time: row.get(3)?,
+        })
+    }).map_err(|e| format!("{}", e))?;
+
+    let mut folders = Vec::new();
+    for row in rows {
+        folders.push(row.map_err(|e| format!("{}", e))?);
+    }
+    Ok(folders)
+}
+
+#[tauri::command]
+pub async fn get_ai_responses(folder_id: Option<i64>) -> Result<Vec<AIResponse>, String> {
+    let conn = get_conn()?;
+    let query = if folder_id.is_some() {
+        "SELECT ar.Id, ar.Question, ar.Options, ar.Answer, ar.QuestionType, ar.FolderId, f.Name as FolderName, ar.CreateTime, ar.IsAi 
+         FROM AIResponses ar 
+         LEFT JOIN Folders f ON ar.FolderId = f.Id 
+         WHERE ar.FolderId = ? 
+         ORDER BY ar.CreateTime DESC"
+    } else {
+        "SELECT ar.Id, ar.Question, ar.Options, ar.Answer, ar.QuestionType, ar.FolderId, f.Name as FolderName, ar.CreateTime, ar.IsAi 
+         FROM AIResponses ar 
+         LEFT JOIN Folders f ON ar.FolderId = f.Id 
+         ORDER BY ar.CreateTime DESC"
+    };
+
+    let mut stmt = conn.prepare(query).map_err(|e| format!("{}", e))?;
+    let params_vec: Vec<&dyn rusqlite::ToSql> = if let Some(ref fid) = folder_id {
+        vec![fid]
+    } else {
+        vec![]
     };
     
-    let title_clone = title.to_string();
-    let db_path_clone = db_path.clone();
+    let rows = stmt.query_map(params_vec.as_slice(), |row| {
+        Ok(AIResponse {
+            id: row.get(0)?,
+            question: row.get(1)?,
+            options: row.get(2)?,
+            answer: row.get(3)?,
+            question_type: row.get(4)?,
+            folder_id: row.get(5)?,
+            folder_name: row.get(6)?,
+            create_time: row.get(7)?,
+            is_ai: row.get(8)?,
+        })
+    }).map_err(|e| format!("{}", e))?;
+
+    let mut responses = Vec::new();
+    for row in rows {
+        responses.push(row.map_err(|e| format!("{}", e))?);
+    }
+    Ok(responses)
+}
+
+#[tauri::command]
+pub async fn get_questions_recursive(folder_id: i64) -> Result<Vec<AIResponse>, String> {
+    let conn = get_conn()?;
     
-    let result = tokio::task::spawn_blocking(move || -> Result<Option<(String, String, bool)>, Box<dyn std::error::Error + Send + Sync>> {
-        let conn = match Connection::open(&db_path_clone) {
+    let query = if folder_id == 0 {
+        "WITH RECURSIVE folder_tree AS (
+          SELECT Id, Name, ParentId FROM Folders WHERE Id = 0
+          UNION ALL
+          SELECT f.Id, f.Name, f.ParentId FROM Folders f
+          INNER JOIN folder_tree ft ON f.ParentId = ft.Id AND f.Id != ft.Id
+        )
+        SELECT 
+          ar.Id, ar.Question, ar.Options, ar.Answer, ar.QuestionType, 
+          ar.FolderId, f.Name as FolderName, ar.CreateTime, ar.IsAi
+        FROM AIResponses ar
+        INNER JOIN folder_tree ft ON ar.FolderId = ft.Id
+        INNER JOIN Folders f ON ar.FolderId = f.Id
+        ORDER BY ar.CreateTime DESC"
+    } else {
+        "WITH RECURSIVE folder_tree AS (
+          SELECT Id, Name, ParentId FROM Folders WHERE Id = ?
+          UNION ALL
+          SELECT f.Id, f.Name, f.ParentId FROM Folders f
+          INNER JOIN folder_tree ft ON f.ParentId = ft.Id
+        )
+        SELECT 
+          ar.Id, ar.Question, ar.Options, ar.Answer, ar.QuestionType, 
+          ar.FolderId, f.Name as FolderName, ar.CreateTime, ar.IsAi
+        FROM AIResponses ar
+        INNER JOIN folder_tree ft ON ar.FolderId = ft.Id
+        INNER JOIN Folders f ON ar.FolderId = f.Id
+        ORDER BY ar.CreateTime DESC"
+    };
+
+    let mut stmt = conn.prepare(query).map_err(|e| format!("{}", e))?;
+    let params: Vec<&dyn rusqlite::ToSql> = if folder_id == 0 { vec![] } else { vec![&folder_id] };
+    
+    let rows = stmt.query_map(params.as_slice(), |row| {
+        Ok(AIResponse {
+            id: row.get(0)?,
+            question: row.get(1)?,
+            options: row.get(2)?,
+            answer: row.get(3)?,
+            question_type: row.get(4)?,
+            folder_id: row.get(5)?,
+            folder_name: row.get(6)?,
+            create_time: row.get(7)?,
+            is_ai: row.get(8)?,
+        })
+    }).map_err(|e| format!("{}", e))?;
+
+    let mut responses = Vec::new();
+    for row in rows {
+        responses.push(row.map_err(|e| format!("{}", e))?);
+    }
+    Ok(responses)
+}
+
+#[tauri::command]
+pub async fn get_folder_question_count(folder_id: i64) -> Result<i64, String> {
+    let conn = get_conn()?;
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM AIResponses WHERE FolderId = ?",
+        [&folder_id],
+        |row| row.get(0),
+    ).map_err(|e| format!("{}", e))?;
+    Ok(count)
+}
+
+#[tauri::command]
+pub async fn get_folder_path(folder_id: i64) -> Result<Vec<FolderPathItem>, String> {
+    let conn = get_conn()?;
+    let mut stmt = conn.prepare(
+        "WITH RECURSIVE folder_path AS (
+          SELECT Id as id, Name as name, ParentId, 0 as level
+          FROM Folders 
+          WHERE Id = ?
+          
+          UNION ALL
+          
+          SELECT f.Id as id, f.Name as name, f.ParentId, fp.level + 1 as level
+          FROM Folders f
+          INNER JOIN folder_path fp ON f.Id = fp.ParentId
+          WHERE f.Id != fp.id
+        )
+        SELECT id, name
+        FROM folder_path
+        ORDER BY level DESC"
+    ).map_err(|e| format!("{}", e))?;
+
+    let rows = stmt.query_map([&folder_id], |row| {
+        Ok(FolderPathItem {
+            id: row.get(0)?,
+            name: row.get(1)?,
+        })
+    }).map_err(|e| format!("{}", e))?;
+
+    let mut path = Vec::new();
+    for row in rows {
+        path.push(row.map_err(|e| format!("{}", e))?);
+    }
+    Ok(path)
+}
+
+#[tauri::command]
+pub async fn get_folder_stats() -> Result<Vec<FolderStat>, String> {
+    let conn = get_conn()?;
+    let mut stmt = conn.prepare(
+        "SELECT 
+          f.Id,
+          COALESCE(f.Name, '[未分类]'),
+          COUNT(ar.Id) as questionCount
+        FROM Folders f
+        LEFT JOIN AIResponses ar ON f.Id = ar.FolderId
+        GROUP BY f.Id, f.Name
+        ORDER BY questionCount DESC, f.Name"
+    ).map_err(|e| format!("{}", e))?;
+
+    let rows = stmt.query_map([], |row| {
+        Ok(FolderStat {
+            folder_id: row.get(0)?,
+            folder_name: row.get(1)?,
+            question_count: row.get(2)?,
+        })
+    }).map_err(|e| format!("{}", e))?;
+
+    let mut stats = Vec::new();
+    for row in rows {
+        stats.push(row.map_err(|e| format!("{}", e))?);
+    }
+    Ok(stats)
+}
+
+// 辅助函数：获取目标文件夹（智能归类）
+fn get_target_folder_id(conn: &Connection, parent_folder_id: i64) -> Result<i64, rusqlite::Error> {
+    if parent_folder_id == 0 {
+        return Ok(0);
+    }
+
+    let sub_folders_exist: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM Folders WHERE ParentId = ?)",
+        [&parent_folder_id],
+        |row| row.get(0),
+    )?;
+
+    if !sub_folders_exist {
+        return Ok(parent_folder_id);
+    }
+
+    let uncategorized_id: Option<i64> = conn.query_row(
+        "SELECT Id FROM Folders WHERE ParentId = ? AND Name = '[未分类]'",
+        [&parent_folder_id],
+        |row| Ok(row.get(0)?),
+    ).optional()?;
+
+    if let Some(id) = uncategorized_id {
+        Ok(id)
+    } else {
+        conn.execute(
+            "INSERT INTO Folders (Name, ParentId, CreateTime) VALUES (?, ?, datetime('now'))",
+            rusqlite::params!["[未分类]", parent_folder_id],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+}
+
+#[tauri::command]
+pub async fn add_question(content: String, options: Option<String>, answer: String, question_type: Option<String>, folder_id: i64, is_ai: Option<bool>) -> Result<AIResponse, String> {
+    let conn = get_conn()?;
+    
+    let target_folder_id = get_target_folder_id(&conn, folder_id).map_err(|e| format!("{}", e))?;
+    
+    conn.execute(
+        "INSERT INTO AIResponses (Question, Options, Answer, QuestionType, FolderId, IsAi, CreateTime)
+        VALUES (?, ?, ?, ?, ?, ?, datetime('now'))",
+        rusqlite::params![content, options, answer, question_type, target_folder_id, is_ai.unwrap_or(false)],
+    ).map_err(|e| format!("{}", e))?;
+
+    let id = conn.last_insert_rowid();
+    
+    // 获取完整的插入数据返回
+    let response = conn.query_row(
+        "SELECT ar.Id, ar.Question, ar.Options, ar.Answer, ar.QuestionType, ar.FolderId, f.Name as FolderName, ar.CreateTime, ar.IsAi 
+         FROM AIResponses ar 
+         LEFT JOIN Folders f ON ar.FolderId = f.Id 
+         WHERE ar.Id = ?",
+        [id],
+        |row| Ok(AIResponse {
+            id: row.get(0)?,
+            question: row.get(1)?,
+            options: row.get(2)?,
+            answer: row.get(3)?,
+            question_type: row.get(4)?,
+            folder_id: row.get(5)?,
+            folder_name: row.get(6)?,
+            create_time: row.get(7)?,
+            is_ai: row.get(8)?,
+        })
+    ).map_err(|e| format!("{}", e))?;
+
+    Ok(response)
+}
+
+#[tauri::command]
+pub async fn update_question(id: i64, question: Option<String>, options: Option<String>, answer: Option<String>, question_type: Option<String>) -> Result<(), String> {
+    let conn = get_conn()?;
+    
+    // 动态构建更新语句
+    // 由于 rusqlite params 宏的限制，这里我们需要更灵活的方式，或者简单的全量更新（不推荐），或者分步处理
+    // 简单起见，我们使用 Option 检查并构建 SQL
+    
+    if let Some(q) = question {
+        conn.execute("UPDATE AIResponses SET Question = ? WHERE Id = ?", rusqlite::params![q, id]).map_err(|e| format!("{}", e))?;
+    }
+    if let Some(o) = options {
+        conn.execute("UPDATE AIResponses SET Options = ? WHERE Id = ?", rusqlite::params![o, id]).map_err(|e| format!("{}", e))?;
+    }
+    if let Some(a) = answer {
+        conn.execute("UPDATE AIResponses SET Answer = ? WHERE Id = ?", rusqlite::params![a, id]).map_err(|e| format!("{}", e))?;
+    }
+    if let Some(t) = question_type {
+        conn.execute("UPDATE AIResponses SET QuestionType = ? WHERE Id = ?", rusqlite::params![t, id]).map_err(|e| format!("{}", e))?;
+    }
+    
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn move_question(question_id: i64, target_folder_id: i64) -> Result<(), String> {
+    let conn = get_conn()?;
+    let actual_target_id = get_target_folder_id(&conn, target_folder_id).map_err(|e| format!("{}", e))?;
+    
+    conn.execute(
+        "UPDATE AIResponses SET FolderId = ? WHERE Id = ?",
+        rusqlite::params![actual_target_id, question_id],
+    ).map_err(|e| format!("{}", e))?;
+    
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn copy_question(question_id: i64, target_folder_id: i64) -> Result<(), String> {
+    let conn = get_conn()?;
+    let actual_target_id = get_target_folder_id(&conn, target_folder_id).map_err(|e| format!("{}", e))?;
+    
+    // 获取原题
+    let (q, o, a, qt, ia): (String, Option<String>, String, Option<String>, bool) = conn.query_row(
+        "SELECT Question, Options, Answer, QuestionType, IsAi FROM AIResponses WHERE Id = ?",
+        [question_id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
+    ).map_err(|e| format!("{}", e))?;
+
+    conn.execute(
+        "INSERT INTO AIResponses (Question, Options, Answer, QuestionType, FolderId, IsAi, CreateTime)
+        VALUES (?, ?, ?, ?, ?, ?, datetime('now'))",
+        rusqlite::params![q, o, a, qt, actual_target_id, ia],
+    ).map_err(|e| format!("{}", e))?;
+    
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn delete_question(id: i64) -> Result<(), String> {
+    let conn = get_conn()?;
+    conn.execute("DELETE FROM AIResponses WHERE Id = ?", [id]).map_err(|e| format!("{}", e))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn delete_questions(ids: Vec<i64>) -> Result<(), String> {
+    let conn = get_conn()?;
+    // 由于 rusqlite 批量删除比较麻烦，这里采用循环方式
+    for id in ids {
+        conn.execute("DELETE FROM AIResponses WHERE Id = ?", [id]).map_err(|e| format!("{}", e))?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn delete_folder(id: i64, delete_questions: bool) -> Result<(), String> {
+    let conn = get_conn()?;
+    
+    // 递归获取所有子文件夹 ID
+    let mut stmt = conn.prepare(
+        "WITH RECURSIVE folder_tree AS (
+          SELECT Id FROM Folders WHERE Id = ?
+          UNION ALL
+          SELECT f.Id FROM Folders f
+          INNER JOIN folder_tree ft ON f.ParentId = ft.Id
+        )
+        SELECT Id FROM folder_tree"
+    ).map_err(|e| format!("{}", e))?;
+
+    let folder_ids_iter = stmt.query_map([id], |row| row.get::<_, i64>(0)).map_err(|e| format!("{}", e))?;
+    let mut folder_ids = Vec::new();
+    for fid in folder_ids_iter {
+        folder_ids.push(fid.map_err(|e| format!("{}", e))?);
+    }
+
+    if delete_questions {
+        // 删除所有这些文件夹中的题目
+        for fid in &folder_ids {
+            conn.execute("DELETE FROM AIResponses WHERE FolderId = ?", [fid]).map_err(|e| format!("{}", e))?;
+        }
+    } else {
+        // 将题目移到父文件夹或默认文件夹 (0)
+        let parent_id: i64 = conn.query_row(
+            "SELECT ParentId FROM Folders WHERE Id = ?",
+            [id],
+            |row| row.get(0)
+        ).unwrap_or(0);
+        
+        for fid in &folder_ids {
+            conn.execute("UPDATE AIResponses SET FolderId = ? WHERE FolderId = ?", [parent_id, *fid]).map_err(|e| format!("{}", e))?;
+        }
+    }
+
+    // 删除所有文件夹
+    for fid in &folder_ids {
+        conn.execute("DELETE FROM Folders WHERE Id = ?", [fid]).map_err(|e| format!("{}", e))?;
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn rename_folder(id: i64, new_name: String) -> Result<(), String> {
+    let conn = get_conn()?;
+    conn.execute("UPDATE Folders SET Name = ? WHERE Id = ?", rusqlite::params![new_name, id]).map_err(|e| format!("{}", e))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn move_folder(id: i64, parent_id: i64) -> Result<(), String> {
+    let conn = get_conn()?;
+    // 检查防止循环嵌套（虽然前端会有检查，但后端建议也做简单保护）
+    if id == parent_id {
+        return Err("Cannot move folder to itself".to_string());
+    }
+    
+    conn.execute("UPDATE Folders SET ParentId = ? WHERE Id = ?", [parent_id, id]).map_err(|e| format!("{}", e))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn add_folder(name: String, parent_id: i64) -> Result<i64, String> {
+    let conn = get_conn()?;
+    conn.execute(
+        "INSERT INTO Folders (Name, ParentId, CreateTime) VALUES (?, ?, datetime('now'))",
+        rusqlite::params![name, parent_id],
+    ).map_err(|e| format!("{}", e))?;
+    
+    Ok(conn.last_insert_rowid())
+}
+
+#[tauri::command]
+pub async fn search_questions_fuzzy(keyword: String, folder_id: Option<i64>) -> Result<Vec<AIResponse>, String> {
+    let db_path = get_db_path();
+    let keyword_clone = keyword.clone();
+    
+    let result = tokio::task::spawn_blocking(move || -> Result<Vec<AIResponse>, String> {
+        let conn = Connection::open(&db_path).map_err(|e| format!("{}", e))?;
+        
+        // 1. 获取候选题目（根据文件夹过滤）
+        let query = if let Some(fid) = folder_id {
+            if fid == 0 {
+                // 默认文件夹及其子文件夹
+                "WITH RECURSIVE folder_tree AS (
+                  SELECT Id, Name, ParentId FROM Folders WHERE Id = 0
+                  UNION ALL
+                  SELECT f.Id, f.Name, f.ParentId FROM Folders f
+                  INNER JOIN folder_tree ft ON f.ParentId = ft.Id AND f.Id != ft.Id
+                )
+                SELECT 
+                  ar.Id, ar.Question, ar.Options, ar.Answer, ar.QuestionType, 
+                  ar.FolderId, f.Name as FolderName, ar.CreateTime, ar.IsAi
+                FROM AIResponses ar
+                INNER JOIN folder_tree ft ON ar.FolderId = ft.Id
+                INNER JOIN Folders f ON ar.FolderId = f.Id"
+            } else {
+                // 指定文件夹及其子文件夹
+                "WITH RECURSIVE folder_tree AS (
+                  SELECT Id, Name, ParentId FROM Folders WHERE Id = ?
+                  UNION ALL
+                  SELECT f.Id, f.Name, f.ParentId FROM Folders f
+                  INNER JOIN folder_tree ft ON f.ParentId = ft.Id
+                )
+                SELECT 
+                  ar.Id, ar.Question, ar.Options, ar.Answer, ar.QuestionType, 
+                  ar.FolderId, f.Name as FolderName, ar.CreateTime, ar.IsAi
+                FROM AIResponses ar
+                INNER JOIN folder_tree ft ON ar.FolderId = ft.Id
+                INNER JOIN Folders f ON ar.FolderId = f.Id"
+            }
+        } else {
+            // 所有文件夹
+            "SELECT 
+              ar.Id, ar.Question, ar.Options, ar.Answer, ar.QuestionType, 
+              ar.FolderId, f.Name as FolderName, ar.CreateTime, ar.IsAi
+            FROM AIResponses ar
+            LEFT JOIN Folders f ON ar.FolderId = f.Id"
+        };
+
+        let mut stmt = conn.prepare(query).map_err(|e| format!("{}", e))?;
+        
+        let params_vec: Vec<&dyn rusqlite::ToSql> = if let Some(ref fid) = folder_id {
+            if *fid == 0 { vec![] } else { vec![fid] }
+        } else {
+            vec![]
+        };
+        let params = params_vec.as_slice();
+        
+        let rows = stmt.query_map(params, |row| {
+            Ok(AIResponse {
+                id: row.get(0)?,
+                question: row.get(1)?,
+                options: row.get(2)?,
+                answer: row.get(3)?,
+                question_type: row.get(4)?,
+                folder_id: row.get(5)?,
+                folder_name: row.get(6)?,
+                create_time: row.get(7)?,
+                is_ai: row.get(8)?,
+            })
+        }).map_err(|e| format!("{}", e))?;
+
+        let mut results = Vec::new();
+        let keyword_lower = keyword_clone.to_lowercase();
+        let keywords: Vec<&str> = keyword_lower.split_whitespace().collect();
+
+        if keywords.is_empty() {
+            // 如果关键词为空，返回所有结果
+            for row in rows {
+                if let Ok(item) = row {
+                    results.push((item, 1.0));
+                }
+            }
+        } else {
+            for row in rows {
+                if let Ok(item) = row {
+                    let q_lower = item.question.to_lowercase();
+                    let a_lower = item.answer.clone().unwrap_or_default().to_lowercase();
+                    let o_lower = item.options.clone().unwrap_or_default().to_lowercase();
+                    
+                    let mut all_terms_matched = true;
+
+                    for term in &keywords {
+                        let mut term_matched = false;
+                        if q_lower.contains(term) || a_lower.contains(term) || o_lower.contains(term) {
+                            term_matched = true;
+                        }
+                        if !term_matched {
+                            all_terms_matched = false;
+                            break;
+                        }
+                    }
+
+                    if all_terms_matched {
+                        results.push((item, 1.0));
+                    }
+                }
+            }
+        }
+        
+        // 按分数降序排序，分数相同按时间倒序
+        results.sort_by(|a, b| {
+            b.1.partial_cmp(&a.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| b.0.create_time.cmp(&a.0.create_time))
+        });
+        
+        Ok(results.into_iter().map(|(item, _)| item).collect())
+    }).await.map_err(|e| format!("{}", e))??;
+    
+    Ok(result)
+}
+
+pub async fn query_database(title: &str) -> Result<Vec<(String, String, bool)>, Box<dyn std::error::Error + Send + Sync>> {
+    let db_path = get_db_path();
+    let title_clone = title.to_string();
+    
+    let result = tokio::task::spawn_blocking(move || -> Result<Vec<(String, String, bool)>, Box<dyn std::error::Error + Send + Sync>> {
+        let conn = match Connection::open(&db_path) {
             Ok(c) => c,
             Err(e) => {
                 return Err(Box::new(e) as Box<dyn std::error::Error + Send + Sync>);
             }
         };
         
-        // 准备查询语句
-        let mut stmt = conn.prepare("SELECT Question, Answer, IsAi FROM AIResponses WHERE Question LIKE ?1 LIMIT 1")?;
+        let mut stmt = conn.prepare("SELECT Question, Answer, IsAi FROM AIResponses")?;
         
-        // 执行查询
-        let search_pattern = format!("%{}%", title_clone);
-        let mut rows = stmt.query_map([&search_pattern], |row| {
+        let rows = stmt.query_map([], |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
@@ -39,19 +645,55 @@ pub async fn query_database(title: &str) -> Result<Option<(String, String, bool)
             ))
         })?;
         
-        // 获取第一行结果
-        if let Some(row) = rows.next() {
+        let mut results = Vec::new();
+        for row in rows {
             match row {
-                Ok(data) => Ok(Some(data)),
-                Err(e) => Err(Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+                Ok(data) => {
+                    let (q, _, _) = &data;
+
+                    // 如果查询题目包含 URL，要求数据库记录的 URL 集合完全一致
+                    // 避免"设A图那么B图"误匹配"设C图那么B图"
+                    let query_urls = extract_urls(&title_clone);
+                    if !query_urls.is_empty() {
+                        let db_urls = extract_urls(q);
+                        if query_urls != db_urls {
+                            continue;
+                        }
+                    }
+
+                    // 用 URL 归一化后的文本计算相似度，防止 URL hash 差异被稀释
+                    let norm_query = normalize_urls(&title_clone);
+                    let norm_db = normalize_urls(q);
+                    let similarity = normalized_levenshtein(&norm_query, &norm_db);
+                    if similarity >= 0.8 {
+                        results.push((data, similarity));
+                    }
+                },
+                Err(e) => return Err(Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
             }
-        } else {
-            Ok(None)
         }
+        
+        results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        
+        let final_results: Vec<(String, String, bool)> = results.into_iter().take(50).map(|(data, _)| data).collect();
+        
+        Ok(final_results)
     }).await?;
     
     result
 }
+
+pub fn insert_ai_response(question: &str, answer: &str, options: Option<String>, question_type: Option<String>, is_ai: bool) -> Result<(), String> {
+    let conn = get_conn()?;
+    
+    conn.execute(
+        "INSERT INTO AIResponses (Question, Answer, Options, QuestionType, IsAi, CreateTime, FolderId, FolderName) VALUES (?, ?, ?, ?, ?, datetime('now'), 0, '默认文件夹')",
+        rusqlite::params![question, answer, options, question_type, is_ai],
+    ).map_err(|e| format!("{}", e))?;
+    
+    Ok(())
+}
+
 
 pub fn get_username() -> Result<String, String> {
     if let Ok(userprofile) = env::var("USERPROFILE") {

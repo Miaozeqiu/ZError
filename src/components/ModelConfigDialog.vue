@@ -155,7 +155,7 @@ const emit = defineEmits<Emits>()
 
 const formData = ref({
   displayName: '',
-  category: 'text' as 'text' | 'vision',
+  category: 'text' as 'text' | 'vision' | 'summary',
   jsCode: ''
 })
 
@@ -531,11 +531,6 @@ const getIconUrl = (icon: string) => {
   if (!icon) return ''
   if (icon.startsWith('http://') || icon.startsWith('https://')) return icon
   if (icon.includes('.')) {
-    const isTauriEnv = typeof window !== 'undefined' && (window.__TAURI__ || window.__TAURI_INTERNALS__)
-    const isDev = import.meta.env?.DEV
-    if (isTauriEnv) {
-      return isDev ? `/src/assets/images/providers/${icon}` : `/assets/images/providers/${icon}`
-    }
     return `/assets/images/providers/${icon}`
   }
   return icon
@@ -574,21 +569,13 @@ const handleSubmit = () => {
 }
 </script>
 
+<style>
+@import '../styles/dialog.css';
+</style>
+
 <style scoped>
 .dialog-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
   background: var(--platform-config-overlay-bg);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
-  animation: overlay-fade-in 160ms ease-out both;
 }
 
 .dialog-content {
@@ -1159,23 +1146,5 @@ const handleSubmit = () => {
 .model-desc { font-size: 12px; color: var(--text-secondary, #718096); margin-top: 6px; }
 
 .marketplace-placeholder { font-size: 13px; color: var(--text-secondary, #718096); padding: 12px; }
-
-</style>
-<style scoped>
-@keyframes popup-in {
-  from {
-    transform: translateY(10px) scale(0.98);
-    opacity: 0;
-  }
-  to {
-    transform: translateY(0) scale(1);
-    opacity: 1;
-  }
-}
-
-@keyframes overlay-fade-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
 
 </style>

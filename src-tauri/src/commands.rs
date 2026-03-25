@@ -8,7 +8,7 @@ use urlencoding;
 #[cfg(target_os = "windows")]
 use std::path::PathBuf;
 #[cfg(target_os = "windows")]
-use std::sync::{OnceLock, atomic::{AtomicBool, Ordering}};
+use std::sync::atomic::{AtomicBool, Ordering};
 use calamine::{open_workbook_auto, Reader, DataType};
 use std::fs::File;
 use zip::ZipArchive;
@@ -18,6 +18,18 @@ use std::process::Command;
 use std::io::Write as _;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+use jieba_rs::Jieba;
+use std::sync::OnceLock;
+
+static JIEBA: OnceLock<Jieba> = OnceLock::new();
+
+#[tauri::command]
+pub fn segment_text(text: String) -> Vec<String> {
+    let jieba = JIEBA.get_or_init(Jieba::new);
+    // 使用搜索引擎模式分词，对应 python 的 jieba.cut_for_search
+    let words = jieba.cut_for_search(&text, false);
+    words.into_iter().map(|s| s.to_string()).collect()
+}
 
 #[cfg(target_os = "windows")]
 static ELEVATION_FLAG: OnceLock<AtomicBool> = OnceLock::new();
@@ -71,7 +83,26 @@ pub fn set_current_model_is_thinking(state: State<'_, ServerState>, is_thinking:
 }
 
 #[tauri::command]
-pub async fn fetch_image_as_base64(url: String) -> Result<String, String> {
+pub async fn fetch_image_as_base64(app: tauri::AppHandle, url: String) -> Result<String, String> {
+    // --- 磁盘缓存 ---
+    let cache_dir = app.path().app_local_data_dir()
+        .map_err(|e| e.to_string())
+        .map(|d| d.join("image_cache"))?;
+    let _ = std::fs::create_dir_all(&cache_dir);
+
+    // 用 URL 的哈希值作为文件名
+    let mut hasher = DefaultHasher::new();
+    url.hash(&mut hasher);
+    let hash = hasher.finish();
+    let cache_file = cache_dir.join(format!("{}.b64", hash));
+
+    // 命中缓存直接返回
+    if let Ok(cached) = std::fs::read_to_string(&cache_file) {
+        if !cached.is_empty() {
+            return Ok(cached);
+        }
+    }
+
     println!("🖼️ 开始获取图片: {}", url);
     
     // 尝试多种请求策略
@@ -99,6 +130,8 @@ pub async fn fetch_image_as_base64(url: String) -> Result<String, String> {
                             let data_url = format!("data:{};base64,{}", content_type, base64_string);
                             
                             println!("✅ 图片获取成功 ({}), 大小: {} bytes", strategy_name, bytes.len());
+                            // 写入磁盘缓存
+                            let _ = std::fs::write(&cache_file, &data_url);
                             return Ok(data_url);
                         }
                         Err(e) => {
@@ -233,9 +266,19 @@ fn detect_image_type(bytes: &[u8]) -> &'static str {
 #[tauri::command]
 pub async fn open_url_content_window(
     app: tauri::AppHandle,
-    questions: String, // 改为支持多个题目的JSON字符串
+    questions: String,
+    window_id: Option<String>,
 ) -> Result<String, String> {
     println!("🪟 创建URL内容处理窗口");
+    
+    // 使用传入的 windowId，或生成一个新的
+    let window_id = window_id.unwrap_or_else(|| {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+            .to_string()
+    });
     
     // 先尝试关闭已存在的窗口
     if let Some(existing_window) = app.get_webview_window("url-content") {
@@ -256,13 +299,15 @@ pub async fn open_url_content_window(
     let window_url = if is_dev {
         // 开发环境：使用localhost
         format!(
-            "http://localhost:1420/#/url-content?questions={}",
+            "http://localhost:1420/#/url-content?windowId={}&questions={}",
+            window_id,
             urlencoding::encode(&questions)
         )
     } else {
         // 生产环境：使用tauri://localhost
         format!(
-            "tauri://localhost/#/url-content?questions={}",
+            "tauri://localhost/#/url-content?windowId={}&questions={}",
+            window_id,
             urlencoding::encode(&questions)
         )
     };
@@ -276,7 +321,7 @@ pub async fn open_url_content_window(
         if is_dev {
             tauri::WebviewUrl::External(window_url.parse().unwrap())
         } else {
-            tauri::WebviewUrl::App(format!("/#/url-content?questions={}", urlencoding::encode(&questions)).into())
+            tauri::WebviewUrl::App(format!("/#/url-content?windowId={}&questions={}", window_id, urlencoding::encode(&questions)).into())
         }
     )
     .title("URL内容处理")
@@ -745,4 +790,83 @@ pub fn request_admin_elevation(app: tauri::AppHandle) -> Result<String, String> 
         }
         Err(e) => Err(e)
     }
+}
+
+/// 获取 exe 同级目录
+fn get_exe_dir() -> std::path::PathBuf {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+}
+
+/// 获取配置文件路径（exe 同级目录下的 config.json）
+fn get_config_path() -> std::path::PathBuf {
+    get_exe_dir().join("config.json")
+}
+
+/// 读取配置文件
+#[tauri::command]
+pub fn read_config() -> Result<String, String> {
+    let path = get_config_path();
+    if path.exists() {
+        std::fs::read_to_string(&path).map_err(|e| e.to_string())
+    } else {
+        Ok(String::new())
+    }
+}
+
+/// 写入配置文件
+#[tauri::command]
+pub fn write_config(content: String) -> Result<(), String> {
+    let path = get_config_path();
+    std::fs::write(&path, content).map_err(|e| e.to_string())
+}
+
+/// 读取模型配置文件
+#[tauri::command]
+pub fn read_model_config() -> Result<String, String> {
+    let path = get_exe_dir().join("model_config.json");
+    if path.exists() {
+        std::fs::read_to_string(&path).map_err(|e| e.to_string())
+    } else {
+        Ok(String::new())
+    }
+}
+
+/// 写入模型配置文件
+#[tauri::command]
+pub fn write_model_config(content: String) -> Result<(), String> {
+    let path = get_exe_dir().join("model_config.json");
+    std::fs::write(&path, content).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn open_cache_dir(app: tauri::AppHandle) -> Result<(), String> {
+    let cache_dir = app.path().app_local_data_dir()
+        .map_err(|e| e.to_string())?;
+
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("explorer")
+            .arg(cache_dir.to_str().unwrap_or(""))
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg(cache_dir.to_str().unwrap_or(""))
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        Command::new("xdg-open")
+            .arg(cache_dir.to_str().unwrap_or(""))
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
 }

@@ -1,4 +1,5 @@
 import { reactive, watch } from 'vue'
+import { environmentDetector } from './environmentDetector'
 
 // 设置接口定义
 export interface AppSettings {
@@ -11,6 +12,8 @@ export interface AppSettings {
   autoAddToQuestionBank: boolean
   // 非思考模型分析开关（影响后端提示词）
   enableNonThinkingModelAnalysis: boolean
+  // 文本模型最长响应时间（秒）
+  modelResponseTimeout: number
   
   // 题目显示设置
   defaultDifficulty: 'easy' | 'medium' | 'hard'
@@ -20,6 +23,7 @@ export interface AppSettings {
   // 网络设置
   network: {
     serverPort: number
+    webPort: number
     enableLanAccess: boolean
     bindAddress: string
   }
@@ -37,6 +41,18 @@ export interface AppSettings {
   enableNotifications: boolean
   suppressNoModelWarning: boolean
   algorithms: AlgorithmConfig[]
+  adminToken: string
+  multiUser: {
+    enabled: boolean
+    users: UserConfig[]
+  }
+}
+
+export interface UserConfig {
+  id: string
+  name: string
+  token: string
+  createdAt: string
 }
 
 export interface AlgorithmConfig {
@@ -53,11 +69,13 @@ const DEFAULT_SETTINGS: AppSettings = {
   autoSave: true,
   autoAddToQuestionBank: false,
   enableNonThinkingModelAnalysis: false,
+  modelResponseTimeout: 40,
   defaultDifficulty: 'medium',
   itemsPerPage: 20,
   showExplanation: true,
   network: {
     serverPort: 3000,
+    webPort: 8080,
     enableLanAccess: false,
     bindAddress: '127.0.0.1'
   },
@@ -73,6 +91,11 @@ const DEFAULT_SETTINGS: AppSettings = {
   enableNotifications: true
   , suppressNoModelWarning: false
   , algorithms: []
+  , adminToken: ''
+  , multiUser: {
+    enabled: false
+    , users: []
+  }
 }
 
 // 设置存储键
@@ -89,18 +112,19 @@ class SettingsManager {
   constructor() {
     this.settings = reactive(this.loadSettings())
     this.setupAutoSave()
+    // 异步从文件加载设置并合并
+    this.loadFromFile()
   }
 
   /**
-   * 从本地存储加载设置
+   * 从本地存储加载设置（同步，作为初始值）
    */
   private loadSettings(): AppSettings {
     try {
       const stored = localStorage.getItem(SETTINGS_STORAGE_KEY)
       if (stored) {
         const parsedSettings = JSON.parse(stored)
-        // 合并默认设置和存储的设置，确保新增的设置项有默认值
-        return { ...DEFAULT_SETTINGS, ...parsedSettings }
+        return { ...DEFAULT_SETTINGS, ...parsedSettings, network: { ...DEFAULT_SETTINGS.network, ...(parsedSettings.network || {}) } }
       }
     } catch (error) {
       console.warn('加载设置失败，使用默认设置:', error)
@@ -109,7 +133,25 @@ class SettingsManager {
   }
 
   /**
-   * 保存设置到本地存储
+   * 从 exe 同级目录的 config.json 异步加载设置
+   */
+  private async loadFromFile(): Promise<void> {
+    if (!environmentDetector.isTauriEnvironment(true)) return
+    try {
+      const { invoke } = await import('@tauri-apps/api/core')
+      const content = await invoke<string>('read_config')
+      if (content) {
+        const parsed = JSON.parse(content)
+        Object.assign(this.settings, { ...DEFAULT_SETTINGS, ...parsed, network: { ...DEFAULT_SETTINGS.network, ...(parsed.network || {}) } })
+        console.log('已从配置文件加载设置')
+      }
+    } catch (error) {
+      console.warn('从配置文件加载设置失败:', error)
+    }
+  }
+
+  /**
+   * 保存设置到本地存储及 exe 同级目录的 config.json
    */
   private saveSettings(): void {
     try {
@@ -118,6 +160,13 @@ class SettingsManager {
     } catch (error) {
       console.error('保存设置失败:', error)
       throw new Error('设置保存失败')
+    }
+    // 异步写入配置文件
+    if (environmentDetector.isTauriEnvironment(true)) {
+      import('@tauri-apps/api/core').then(({ invoke }) => {
+        invoke('write_config', { content: JSON.stringify(this.settings, null, 2) })
+          .catch(e => console.warn('写入配置文件失败:', e))
+      })
     }
   }
 
@@ -283,6 +332,7 @@ class SettingsManager {
       autoSave: '自动保存设置',
       autoAddToQuestionBank: '自动将AI返回的题目添加到本地题库',
       enableNonThinkingModelAnalysis: '非思考模型分析开关',
+      modelResponseTimeout: '文本模型最长响应时间（秒）',
       network: '网络配置设置',
       windowSize: '窗口大小',
       windowPosition: '窗口位置',

@@ -11,7 +11,8 @@ pub mod commands;
 pub use database::*;
 pub use types::*;
 pub use server::{start_server, stop_server, get_server_status};
-pub use commands::{greet, create_directory, get_username, file_exists, get_request_logs, clear_request_logs, open_devtools, fetch_image_as_base64, open_url_content_window, set_non_thinking_analysis_enabled, set_current_model_is_thinking, request_admin_elevation, read_file_text, read_file_bytes, read_excel_headers, read_excel_range, read_docx_range, read_doc_range, read_file_range, convert_doc_to_docx};
+pub use commands::{greet, create_directory, get_username, file_exists, get_request_logs, clear_request_logs, open_devtools, fetch_image_as_base64, open_url_content_window, set_non_thinking_analysis_enabled, set_current_model_is_thinking, request_admin_elevation, read_file_text, read_file_bytes, read_excel_headers, read_excel_range, read_docx_range, read_doc_range, read_file_range, convert_doc_to_docx, segment_text, read_config, write_config, read_model_config, write_model_config, open_cache_dir};
+pub use database::{delete_question, delete_questions, delete_folder, rename_folder, move_folder};
 pub use commands::open_text_window;
 use tauri::Manager;
 
@@ -57,6 +58,29 @@ pub fn run() {
             , read_doc_range
             , read_file_range
             , convert_doc_to_docx
+            , segment_text
+            , read_config
+            , write_config
+            , read_model_config
+            , write_model_config
+            , open_cache_dir
+            , search_questions_fuzzy
+            , get_folders
+            , get_ai_responses
+            , get_questions_recursive
+            , get_folder_question_count
+            , get_folder_path
+            , get_folder_stats
+            , add_question
+            , update_question
+            , move_question
+            , copy_question
+            , add_folder
+            , delete_question
+            , delete_questions
+            , delete_folder
+            , rename_folder
+            , move_folder
         ])
         .setup(|app| {
             // Windows-specific single instance check and elevation logic

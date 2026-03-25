@@ -1,7 +1,15 @@
 <template>
   <div class="file-tree">
     <div class="tree-header">
-      <h3>题目管理器</h3>
+      <h3 v-if="!props.currentFolderPath?.length || props.currentFolderPath.length <= 1">题目管理器</h3>
+      <div v-else class="breadcrumb-path">
+        <template v-for="(item, index) in props.currentFolderPath.slice(1)" :key="item.id">
+          <span class="breadcrumb-item">
+            <span class="breadcrumb-name">{{ item.name }}</span>
+            <span v-if="index < props.currentFolderPath.length - 2" class="breadcrumb-separator">›</span>
+          </span>
+        </template>
+      </div>
     </div>
     <div class="tree-content" @click="hideContextMenu" @contextmenu="handleTreeContentRightClick">
       <template v-if="loading">
@@ -63,6 +71,10 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, onUnmounted, nextTick } from 'vue';
 import FileTreeNode from './FileTreeNode.vue';
+
+const props = defineProps<{
+  currentFolderPath?: { id: number, name: string }[] | null
+}>();
 import ContextMenu from './ContextMenu.vue';
 import DeleteConfirmDialog from './DeleteConfirmDialog.vue';
 import { databaseService, type Folder } from '../../services/database';
@@ -592,6 +604,9 @@ defineExpose({
   padding: 8px 12px;
   border-bottom: 1px solid var(--border-primary);
   background-color: var(--bg-secondary);
+  display: flex;
+  align-items: center;
+  min-height: 32px;
 }
 
 .tree-header h3 {
@@ -601,6 +616,37 @@ defineExpose({
   text-transform: uppercase;
   color: var(--text-secondary);
   letter-spacing: 0.5px;
+}
+
+.breadcrumb-path {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  overflow: hidden;
+  gap: 2px;
+}
+
+.breadcrumb-item {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.breadcrumb-name {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.breadcrumb-separator {
+  font-size: 11px;
+  color: var(--text-secondary);
+  opacity: 0.5;
+  flex-shrink: 0;
 }
 
 .tree-content {

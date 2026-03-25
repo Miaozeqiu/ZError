@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <!-- 当平台广场打开时，独立显示市场弹窗，不渲染底层编辑弹窗阴影 -->
   <div v-if="show && marketplaceOpen" class="marketplace-overlay" @click="handleMarketplaceOverlay">
     <div class="marketplace-panel" @click.stop>
@@ -56,18 +56,19 @@
   <div v-else-if="show" class="dialog-overlay" @click="handleOverlayClick">
     <div class="dialog-content" @click.stop>
       <div class="dialog-header">
-        <h3 class="dialog-title">{{ isEditing ? '编辑平台' : '添加平台' }}</h3>
-        <button class="dialog-close" @click="$emit('close')">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        <button class="btn-back" @click="$emit('close')" title="返回">
+          <svg t="1774357412434" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" width="18" height="18">
+            <path d="M768 96c19.2-19.2 19.2-51.2 0-70.4-19.2-19.2-51.2-19.2-70.4 0l-448 448c-19.2 19.2-19.2 51.2 0 70.4l448 448c19.2 19.2 51.2 19.2 70.4 0 19.2-19.2 19.2-51.2 0-70.4L358.4 512l409.6-416z" fill="currentColor"/>
           </svg>
         </button>
+        <h3 class="dialog-title">{{ isEditing ? '编辑平台' : '添加平台' }}</h3>
+        <button class="btn-confirm" @click="handleSubmit">完成</button>
       </div>
 
       <div class="dialog-body">
         <!-- 平台图标显示区域 - 顶部居中 -->
         <div class="icon-display-section">
-          <div class="icon-preview-large">
+          <div class="icon-preview-large" ref="iconPreviewRef" @click="toggleIconPicker">
             <img 
               v-if="formData.icon && !iconLoadError && isImageIcon(formData.icon)"
               :src="getIconUrl(formData.icon)"
@@ -87,70 +88,66 @@
             >
               {{ getInitials(formData.name) }}
             </div>
-          </div>
-          
-          <!-- 可折叠的图标选择器 -->
-          <div class="icon-selector-toggle">
-            <button 
-              type="button"
-              class="toggle-button"
-              @click="showIconPicker = !showIconPicker"
-            >
-              <span>选择图标</span>
-              <svg 
+            <!-- 右下角展开箭头 -->
+            <div class="icon-expand-badge">
+              <svg
                 class="toggle-arrow"
                 :class="{ 'rotated': showIconPicker }"
-                width="16" 
-                height="16" 
-                viewBox="0 0 1024 1024" 
+                width="10"
+                height="10"
+                viewBox="0 0 1024 1024"
                 xmlns="http://www.w3.org/2000/svg"
               >
                 <path d="M512 714.666667c-8.533333 0-17.066667-2.133333-23.466667-8.533334L146.133333 362.666667c-12.8-12.8-12.8-32 0-44.8s32-12.8 44.8 0L512 640l321.066667-322.133333c12.8-12.8 32-12.8 44.8 0s12.8 32 0 44.8L535.466667 706.133333c-6.4 6.4-14.933333 8.533333-23.466667 8.533334z" fill="currentColor"/>
               </svg>
-            </button>
+            </div>
           </div>
           
+  
+          
           <!-- 图标选择器内容 -->
-          <div v-if="showIconPicker" class="icon-picker-content">
-            <div v-if="iconError" class="icon-error">
-              {{ iconError }}
-            </div>
-            <div class="icon-picker">
-              <div class="icon-category">
-                <h5>预设图标</h5>
-                <div class="icon-grid">
-                  <div 
-                    v-for="icon in availableIcons" 
-                    :key="icon"
-                    class="icon-option"
-                    :class="{ active: formData.icon === icon }"
-                    @click="selectIcon(icon)"
-                  >
-                    <img 
-                      :src="iconUrls[icon] || getIconUrl(icon)"
-                      :alt="icon"
-                      @error="handleIconError(icon)"
-                      class="icon-option-image"
-                    />
+          <Teleport to="body">
+            <div v-if="showIconPicker" ref="iconPickerRef" class="icon-picker-content" :style="pickerStyle">
+              <div v-if="iconError" class="icon-error">
+                {{ iconError }}
+              </div>
+              <div class="icon-picker">
+                <div class="icon-category">
+                  <h5>预设图标</h5>
+                  <div class="icon-grid">
+                    <div 
+                      v-for="icon in availableIcons" 
+                      :key="icon"
+                      class="icon-option"
+                      :class="{ active: formData.icon === icon }"
+                      @click="selectIcon(icon)"
+                    >
+                      <img 
+                        :src="iconUrls[icon] || getIconUrl(icon)"
+                        :alt="icon"
+                        @error="handleIconError(icon)"
+                        class="icon-option-image"
+                      />
+                    </div>
+                  </div>
+                </div>
+                <div class="icon-category">
+                  <h5>Emoji图标</h5>
+                  <div class="icon-grid">
+                    <div 
+                      v-for="emoji in emojiOptions" 
+                      :key="emoji"
+                      class="icon-option emoji-option"
+                      :class="{ active: formData.icon === emoji }"
+                      @click="selectIcon(emoji)"
+                    >
+                      {{ emoji }}
+                    </div>
                   </div>
                 </div>
               </div>
-              <div class="icon-category">
-                <h5>Emoji图标</h5>
-                <div class="icon-grid">
-                  <div 
-                    v-for="emoji in emojiOptions" 
-                    :key="emoji"
-                    class="icon-option emoji-option"
-                    :class="{ active: formData.icon === emoji }"
-                    @click="selectIcon(emoji)"
-                  >
-                    {{ emoji }}
-                  </div>
-                </div>
-              </div>
             </div>
-          </div>
+          </Teleport>
         </div>
 
         <form @submit.prevent="handleSubmit">
@@ -196,14 +193,6 @@
             >
           </div>
 
-          <div class="dialog-actions">
-            <button type="button" class="btn btn-secondary" @click="$emit('close')">
-              取消
-            </button>
-            <button type="submit" class="btn btn-primary">
-              {{ isEditing ? '保存' : '添加' }}
-            </button>
-          </div>
         </form>
       </div>
     </div>
@@ -241,6 +230,37 @@ const formData = ref({
 const iconLoadError = ref(false)
 const iconError = ref('')
 const showIconPicker = ref(false)
+const iconPreviewRef = ref<HTMLElement | null>(null)
+const iconPickerRef = ref<HTMLElement | null>(null)
+
+const pickerStyle = ref<Record<string, string>>({})
+
+const updatePickerPosition = () => {
+  if (!iconPreviewRef.value) return
+  const previewRect = iconPreviewRef.value.getBoundingClientRect()
+  // 用实际渲染宽度，fallback 到 CSS 计算值
+  const pickerWidth = iconPickerRef.value
+    ? iconPickerRef.value.getBoundingClientRect().width
+    : Math.min(520, window.innerWidth * 0.8)
+  const centerX = previewRect.left + previewRect.width / 2
+  let left = centerX - pickerWidth / 2
+  if (left + pickerWidth > window.innerWidth - 8) left = window.innerWidth - pickerWidth - 8
+  if (left < 8) left = 8
+  console.log('[picker] previewRect:', previewRect, 'centerX:', centerX, 'pickerWidth:', pickerWidth, 'left:', left)
+  pickerStyle.value = {
+    top: `${previewRect.bottom + 8}px`,
+    left: `${left}px`,
+  }
+}
+
+const toggleIconPicker = async () => {
+  showIconPicker.value = !showIconPicker.value
+  if (showIconPicker.value) {
+    await nextTick()
+    await nextTick() // 第二次确保 picker DOM 完全渲染
+    updatePickerPosition()
+  }
+}
 
 // 可用图标列表
 const availableIcons = ref<string[]>([])
@@ -322,45 +342,12 @@ const getIconUrl = (icon: string) => {
     return icon
   }
   
-  // 如果是文件名，构建本地路径
+  // 如果是文件名，使用 public 目录路径
   if (icon.includes('.')) {
-    try {
-      // 使用更可靠的环境检测
-      const isTauriEnv = typeof window !== 'undefined' && (window.__TAURI__ || window.__TAURI_INTERNALS__)
-      console.log('🔍 [DEBUG] Environment detection - isTauriEnv:', isTauriEnv)
-      
-      if (isTauriEnv) {
-        // 检查是否在开发环境
-        const isDev = import.meta.env.DEV
-        console.log('🔍 [DEBUG] import.meta.env.DEV:', isDev)
-        
-        if (isDev) {
-          // 开发环境：使用 Vite 开发服务器路径
-          const devPath = `/src/assets/images/providers/${icon}`
-          console.log('✅ [DEBUG] Using development path:', devPath)
-          return devPath
-        } else {
-          // 生产环境：使用 frontendDist 管理的静态资源路径
-          console.log('🚀 [DEBUG] Production environment detected')
-          
-          // 直接使用 public 目录中的资源路径
-          const publicPath = `/assets/images/providers/${icon}`
-          console.log('✅ [DEBUG] Using public path:', publicPath)
-          return publicPath
-        }
-      } else {
-        // 在浏览器环境中使用 public 目录路径
-        const browserPath = `/assets/images/providers/${icon}`
-        console.log('🌐 [DEBUG] Using browser path:', browserPath)
-        return browserPath
-      }
-    } catch (error) {
-      console.error('💥 [DEBUG] Critical error in getIconUrl:', error)
-      // 回退到 public 目录路径
-      const emergencyPath = `/assets/images/providers/${icon}`
-      console.log('🆘 [DEBUG] Using emergency fallback path:', emergencyPath)
-      return emergencyPath
-    }
+    // 无论是开发环境还是生产环境，public 目录下的资源都可以通过 /assets/... 访问
+    const iconPath = `/assets/images/providers/${icon}`
+    console.log('✅ [DEBUG] Using public path:', iconPath)
+    return iconPath
   }
   
   // 如果不是文件名，返回原始值
@@ -378,6 +365,7 @@ const getInitials = (name: string) => {
 const selectIcon = (icon: string) => {
   formData.value.icon = icon
   iconLoadError.value = false
+  showIconPicker.value = false
 }
 
 const handleIconLoadError = () => {
@@ -404,22 +392,24 @@ watch(() => props.platform, (platform) => {
   }
 }, { immediate: true })
 
-// 打开时：加载图标列表，并在“添加模式”默认进入平台广场
-watch(() => props.show, async (show) => {
+// 打开时：加载图标列表
+watch(() => props.show, (show) => {
   if (show) {
     loadAvailableIcons()
-    await nextTick()
-    if (!isEditing.value) {
-      marketplaceOpen.value = true
-      // 首次进入时加载平台列表
-      if (!marketPlatforms.value.length) {
-        await loadMarketplace()
-      }
-    }
+    marketplaceOpen.value = false
+    showIconPicker.value = false
   }
 })
 
 const handleSubmit = () => {
+  if (!formData.value.name.trim()) {
+    alert('请填写平台名称')
+    return
+  }
+  if (!formData.value.baseUrl.trim()) {
+    alert('请填写 API 基础URL')
+    return
+  }
   const platformData: any = {
     name: formData.value.name,
     displayName: formData.value.name, // 设置displayName与name相同
@@ -546,199 +536,13 @@ const chooseCustomPlatform = () => {
 }
 </script>
 
+<style>
+/* 引入通用弹窗样式 */
+@import '../styles/dialog.css';
+</style>
+
 <style scoped>
-.marketplace-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: var(--platform-config-overlay-bg);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
-  animation: overlay-fade-in 160ms ease-out both;
-}
-
-.marketplace-panel {
-  background: var(--platform-config-dialog-bg);
-  border: 1px solid var(--platform-config-dialog-border);
-  border-radius: 12px;
-  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
-  width: 92vw;
-  max-width: 1100px;
-  max-height: 90vh;
-  overflow: hidden;
-  will-change: transform, opacity;
-  transform-origin: center center;
-  backface-visibility: hidden;
-  animation: popup-in 180ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
-}
-
-.marketplace-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--platform-config-dialog-header-border);
-}
-
-.marketplace-title {
-  font-size: 16px;
-  font-weight: 600;
-  margin: 0;
-}
-
-.marketplace-body {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0;
-  height: calc(90vh - 80px);
-}
-
-.marketplace-left,
-.marketplace-right {
-  padding: 16px;
-  overflow-y: auto;
-}
-
-.marketplace-list-title {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--platform-config-icon-category-title-text);
-  margin-bottom: 8px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.platform-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.platform-item {
-  border: 1px solid var(--platform-config-icon-option-border);
-  border-radius: 8px;
-  padding: 10px;
-  cursor: pointer;
-  transition: all 0.15s ease;
-  background: var(--platform-config-icon-option-bg);
-}
-
-.platform-item:hover {
-  border-color: var(--platform-config-icon-option-hover-border);
-  background: var(--platform-config-icon-option-hover-bg);
-}
-
-.platform-item-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.platform-item-icon{
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.platform-item-icon img {
-  width: 40px;
-  height: 40px;
-  max-width: 40px;
-  max-height: 40px;
-  object-fit: contain;
-  border-radius: 6px;
-}
-
-.icon-fallback-small {
-  width: 24px;
-  height: 24px;
-  border-radius: 6px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--platform-config-icon-fallback-text);
-  border: 2px solid var(--platform-config-icon-display-border);
-}
-
-.platform-item-info .platform-name {
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.platform-item-info .platform-desc {
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-
-.marketplace-placeholder {
-  border: 1px dashed var(--platform-config-icon-option-border);
-  border-radius: 8px;
-  padding: 16px;
-  text-align: center;
-  color: var(--text-secondary);
-}
-
-.custom-item {
-  border: 1px solid var(--platform-config-icon-option-border);
-  border-radius: 8px;
-  padding: 12px;
-  cursor: pointer;
-  transition: all 0.15s ease;
-  background: var(--platform-config-icon-option-bg);
-}
-
-.custom-item:hover {
-  border-color: var(--platform-config-icon-option-hover-border);
-  background: var(--platform-config-icon-option-hover-bg);
-}
-
-.model-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.model-name {
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.model-tag {
-  font-size: 12px;
-  padding: 2px 6px;
-  border-radius: 10px;
-  background: var(--platform-config-icon-section-title-bg);
-}
-
-.model-desc {
-  margin-top: 6px;
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-.dialog-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: var(--platform-config-overlay-bg);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
-  animation: overlay-fade-in 160ms ease-out both;
-}
-
+/* 组件私有样式：dialog-content 尺寸覆盖 */
 .dialog-content {
   background: var(--platform-config-dialog-bg);
   border: 1px solid var(--platform-config-dialog-border);
@@ -746,418 +550,15 @@ const chooseCustomPlatform = () => {
   width: 90%;
   max-width: 600px;
   max-height: 90vh;
-  overflow: hidden;
+  overflow: clip;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-  will-change: transform, opacity;
   transform-origin: center center;
   backface-visibility: hidden;
   animation: popup-in 180ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
 }
 
-.dialog-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 20px 24px;
-  border-bottom: 1px solid var(--platform-config-dialog-header-border);
-}
-
-.dialog-title {
-  font-size: 18px;
-  font-weight: 600;
-  color: var(--platform-config-dialog-title-text);
-  margin: 0;
-}
-
-.dialog-close {
-  background: none;
-  border: none;
-  cursor: pointer;
-  padding: 4px;
-  color: var(--platform-config-dialog-close-text);
-  border-radius: 4px;
-  transition: all 0.2s ease;
-}
-
-.dialog-close:hover {
-  background: var(--platform-config-dialog-close-hover-bg);
-  color: var(--platform-config-dialog-close-hover-text);
-}
-
-.dialog-body {
-  padding: 24px;
-  max-height: calc(90vh - 140px);
-  overflow-y: auto;
-}
-
-.form-group {
-  margin-bottom: 20px;
-}
-
-.form-label {
-  display: block;
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--platform-config-form-label-text);
-  margin-bottom: 6px;
-}
-
-.form-input {
-  box-sizing: border-box;
-  width: 100%;
-  padding: 10px 12px;
-  border: 1px solid var(--border-color, #e2e8f0);
-  border-radius: 8px;
-  font-size: 14px;
-  transition: border-color 0.2s ease;
-  background-color: var(--bg-secondary);
-}
-
-.form-input:focus {
-  outline: none;
-  border-color: var(--platform-config-form-input-focus-border);
-}
-
-.form-textarea {
-  color: var(--text-primary);
-  box-sizing: border-box;
-  width: 100%;
-  padding: 10px 12px;
-  border: 1px solid var(--border-color, #e2e8f0);
-  border-radius: 8px;
-  font-size: 14px;
-  resize: none;
-  min-height: 80px;
-  transition: border-color 0.2s ease;
-  background-color: var(--bg-secondary);
-}
-
-.form-textarea:focus {
-  outline: none;
-  border-color: var(--platform-config-form-input-focus-border);
-}
-
-.btn-secondary:hover {
-  background: #667eea;
-  color: white;
-}
-
-.dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 12px;
-  margin-top: 24px;
-  padding-top: 20px;
-  border-top: 1px solid var(--platform-config-dialog-header-border);
-}
-
-.btn {
-  padding: 10px 20px;
-  border: none;
-  border-radius: 8px;
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.btn-primary {
-  background: var(--dialog-button-primary-bg);
-  color: var(--dialog-button-primary-text);
-}
-
-.btn-primary:hover {
-  background: var(--dialog-button-primary-hover);
-}
-
-.btn-secondary {
-  background: var(--platform-config-btn-secondary-bg);
-  color: var(--platform-config-btn-secondary-text);
-  border: 1px solid var(--platform-config-btn-secondary-border);
-}
-
 .btn-secondary:hover {
   background: var(--platform-config-btn-secondary-hover-bg);
   color: var(--platform-config-btn-secondary-hover-text);
-}
-
-/* 图标相关样式 */
-.icon-section {
-  margin-bottom: 20px;
-}
-
-.icon-preview {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 12px;
-}
-
-.icon-display {
-  width: 40px;
-  height: 40px;
-  border-radius: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: 2px solid var(--platform-config-icon-display-border);
-  background: var(--platform-config-icon-display-bg);
-}
-
-.icon-image {
-  width: 32px;
-  height: 32px;
-  object-fit: contain;
-  border-radius: 4px;
-}
-
-.icon-emoji {
-  font-size: 24px;
-}
-
-.icon-fallback {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--platform-config-icon-fallback-text);
-}
-
-.icon-input-group {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 12px;
-}
-
-.icon-input {
-  flex: 1;
-}
-
-.btn-icon {
-  padding: 10px 16px;
-  background: var(--platform-config-btn-secondary-bg);
-  border: 1px solid var(--platform-config-btn-secondary-border);
-  border-radius: 8px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.btn-icon:hover {
-  background: var(--platform-config-toggle-button-hover-bg);
-}
-
-.icon-picker {
-  position: relative;
-}
-
-.icon-dropdown {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  right: 0;
-  background: var(--platform-config-icon-dropdown-bg);
-  border: 1px solid var(--platform-config-icon-dropdown-border);
-  border-radius: 8px;
-  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
-  z-index: 1001;
-  max-height: 300px;
-  overflow-y: auto;
-}
-
-.icon-section-title {
-  padding: 12px 16px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--platform-config-icon-section-title-text);
-  background: var(--platform-config-icon-section-title-bg);
-  border-bottom: 1px solid var(--platform-config-icon-dropdown-border);
-}
-
-.icon-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(50px, 1fr));
-  gap: 8px;
-  padding: 12px;
-}
-
-.icon-option {
-  width: 50px;
-  height: 50px;
-  border: 1px solid var(--platform-config-icon-option-border);
-  border-radius: 6px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  background: var(--platform-config-icon-option-bg);
-}
-
-.icon-option:hover {
-  border-color: var(--platform-config-icon-option-hover-border);
-  background: var(--platform-config-icon-option-hover-bg);
-}
-
-.icon-option img {
-  width: 32px;
-  height: 32px;
-  object-fit: contain;
-}
-
-.icon-option .emoji {
-  font-size: 20px;
-}
-
-/* 新的图标显示区域样式 */
-.icon-display-section {
-  text-align: center;
-  margin-bottom: 24px;
-  padding: 20px;
-  border-bottom: 1px solid #e2e8f0;
-}
-
-.icon-preview-large {
-  width: 80px;
-  height: 80px;
-  margin: 0 auto 16px;
-  border-radius: 12px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--platform-config-icon-display-bg);
-  border: 2px solid var(--platform-config-icon-display-border);
-}
-
-.icon-image-large {
-  width: 60px;
-  height: 60px;
-  object-fit: contain;
-  border-radius: 8px;
-}
-
-.icon-emoji-large {
-  font-size: 48px;
-  line-height: 1;
-}
-
-.icon-fallback-large {
-  font-size: 24px;
-  font-weight: 600;
-  color: var(--platform-config-icon-fallback-text);
-  background: linear-gradient(135deg, #667eea, #764ba2);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-}
-
-.icon-selector-toggle {
-  display: flex;
-  justify-content: right;
-  margin-bottom: 16px;
-}
-
-.toggle-button {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 16px;
-  background: var(--platform-config-toggle-button-bg);
-  border: 1px solid var(--platform-config-toggle-button-border);
-  border-radius: 8px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  font-size: 14px;
-  color: var(--platform-config-toggle-button-text);
-}
-
-.toggle-button:hover {
-  background: var(--platform-config-toggle-button-hover-bg);
-  border-color: var(--platform-config-toggle-button-hover-border);
-}
-
-.toggle-arrow {
-  transition: transform 0.2s ease;
-}
-
-.toggle-arrow.rotated {
-  transform: rotate(180deg);
-}
-
-.icon-picker-content {
-  background: var(--platform-config-icon-picker-content-bg);
-  border: 1px solid var(--platform-config-icon-picker-content-border);
-  border-radius: 8px;
-  padding: 16px;
-  margin-top: 8px;
-}
-
-.icon-category {
-  margin-bottom: 16px;
-}
-
-.icon-category:last-child {
-  margin-bottom: 0;
-}
-
-.icon-category h5 {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--platform-config-icon-category-title-text);
-  margin: 0 0 8px 0;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.icon-option {
-  width: 40px;
-  height: 40px;
-  border: 1px solid var(--platform-config-icon-option-border);
-  border-radius: 6px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  background: var(--platform-config-icon-option-bg);
-}
-
-.icon-option:hover {
-  border-color: var(--platform-config-icon-option-hover-border);
-  background: var(--platform-config-icon-option-hover-bg);
-}
-
-.icon-option.active {
-  border-color: var(--platform-config-icon-option-active-border);
-}
-
-.icon-option-image {
-  width: 24px;
-  height: 24px;
-  object-fit: contain;
-}
-
-.emoji-option {
-  font-size: 18px;
-}
-
-.icon-error {
-  color: var(--platform-config-error-text);
-  font-size: 12px;
-  margin-bottom: 8px;
-  padding: 8px;
-  background: var(--platform-config-error-bg);
-  border-radius: 4px;
-}
-@keyframes popup-in {
-  from {
-    transform: translateY(10px) scale(0.98);
-    opacity: 0;
-  }
-  to {
-    transform: translateY(0) scale(1);
-    opacity: 1;
-  }
-}
-@keyframes overlay-fade-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
 }
 </style>

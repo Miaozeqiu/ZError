@@ -15,7 +15,7 @@
             <div class="response-section">
               <p><strong>实时响应:</strong></p>
               <div class="response-content streaming">
-                <MarkdownRenderer :content="streamingResponse" />
+                <MarkdownRender :content="streamingResponse" />
               </div>
             </div>
             <!-- 原始输出内容 -->
@@ -28,7 +28,7 @@
           <div v-if="streamingReasoning" class="reasoning-section">
             <p class="reasoning-title"><strong>实时思考过程:</strong></p>
             <div class="reasoning-content streaming">
-              <MarkdownRenderer :content="streamingReasoning" />
+              <MarkdownRender :content="streamingReasoning" />
             </div>
           </div>
         </div>
@@ -44,14 +44,14 @@
             <div class="response-section">
               <p><strong>模型响应:</strong></p>
               <div class="response-content">
-                <MarkdownRenderer :content="testResult.response" />
+                <MarkdownRender :content="testResult.response" />
               </div>
             </div>
             <!-- 思考过程（reasoning_content）显示 -->
             <div v-if="testResult.reasoning_content" class="reasoning-section">
               <p class="reasoning-title">🧠 思考过程</p>
               <div class="reasoning-content">
-                <MarkdownRenderer :content="testResult.reasoning_content" />
+                <MarkdownRender :content="testResult.reasoning_content" />
               </div>
             </div>
             <!-- 原始输出内容 -->
@@ -80,7 +80,8 @@
 
 <script setup lang="ts">
 import { ref, watch, computed, nextTick } from 'vue'
-import MarkdownRenderer from './MarkdownRenderer.vue'
+import MarkdownRender from 'markstream-vue'
+import 'markstream-vue/index.css'
 
 interface TestResult {
   success: boolean

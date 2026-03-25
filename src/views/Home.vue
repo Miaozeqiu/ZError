@@ -244,7 +244,7 @@
           <!-- 请求体 -->
           <div v-if="activeTab === 'requestBody'" class="detail-section">
             <div v-if="selectedLog && selectedLog.requestBody">
-              <pre class="code-content">{{ formatJSON(selectedLog.requestBody) }}</pre>
+              <JsonCodeViewer :content="formatJSON(selectedLog.requestBody)" />
             </div>
             <div v-else class="no-data">
               <span class="no-data-text">暂无请求体数据</span>
@@ -254,7 +254,7 @@
           <!-- 响应体 -->
           <div v-if="activeTab === 'responseBody'" class="detail-section">
             <div v-if="selectedLog && selectedLog.responseBody">
-              <pre class="code-content">{{ formatJSON(selectedLog.responseBody) }}</pre>
+              <JsonCodeViewer :content="formatJSON(selectedLog.responseBody)" />
             </div>
             <div v-else class="no-data">
               <span class="no-data-text">
@@ -266,60 +266,165 @@
 
           <!-- 模型响应部分 -->
           <div v-if="activeTab === 'modelResponse'" class="detail-section">
-            <!-- 模型信息显示 -->
-            <div v-if="selectedLog && selectedLog.modelInfo" class="model-info">
-              <div class="model-info-header">
-                <h4>使用的AI模型</h4>
-              </div>
-              <div class="model-info-content">
-                <div class="model-info-item">
-                  <label>平台:</label>
-                  <span>{{ selectedLog.modelInfo.platformName }}</span>
+
+            <!-- ===== URL 题目视觉分析视图 ===== -->
+            <template v-if="selectedLog && selectedLog.urlQuestion">
+              <div class="url-analysis-panel">
+                <!-- 题目图片区域：URL 转 base64 后渲染 -->
+                <div class="url-image-box">
+                  <div v-if="selectedLog.urlQuestion.renderedHtml" class="url-image-ready" v-html="selectedLog.urlQuestion.renderedHtml"></div>
+                  <div v-else class="loading-indicator">
+                    <div class="loading-spinner"></div>
+                    <span>图片加载中...</span>
+                  </div>
                 </div>
-                <div class="model-info-item">
-                  <label>模型:</label>
-                  <span>{{ selectedLog.modelInfo.modelName }}</span>
+
+                <!-- 分析结果区域 -->
+                <div class="url-analysis-result">
+                  <div v-if="selectedLog.urlQuestion.analyzing">
+                    <div v-if="!selectedLog.urlQuestion.streamingResponse" class="loading-indicator">
+                      <div class="loading-spinner"></div>
+                      <span>视觉模型分析中...</span>
+                    </div>
+                    <div v-if="selectedLog.urlQuestion.streamingResponse" class="streaming-response">
+                      <MarkdownRender :content="selectedLog.urlQuestion.streamingResponse" />
+                      <div class="streaming-cursor">▋</div>
+                    </div>
+                  </div>
+                  <div v-else-if="selectedLog.urlQuestion.analysisResult">
+                    <MarkdownRender :content="selectedLog.urlQuestion.analysisResult" />
+                  </div>
+                  <div v-else-if="selectedLog.urlQuestion.analysisError" class="url-analysis-error">
+                    <span>{{ selectedLog.urlQuestion.analysisError }}</span>
+                    <button class="retry-btn-sm" @click="analyzeUrlQuestion(selectedLog!.id)">重试</button>
+                  </div>
+                  <div v-else class="no-data">
+                    <span class="no-data-text">暂无分析结果</span>
+                  </div>
                 </div>
-                <div class="model-info-item">
-                  <label>模型ID:</label>
-                  <span>{{ selectedLog.modelInfo.modelId }}</span>
+              </div>
+            </template>
+
+            <!-- ===== 多模型切换视图 ===== -->
+            <template v-if="selectedLog && selectedLog.multiModelResponses && selectedLog.multiModelResponses.length > 0 && !selectedLog.urlQuestion">
+              <!-- 横向模型选择器 -->
+              <div class="multi-model-tabs">
+                <button
+                  v-for="mr in selectedLog.multiModelResponses"
+                  :key="mr.modelId"
+                  class="multi-model-tab"
+                  :class="{
+                    active: activeModelTab === mr.modelId,
+                    loading: mr.isLoading,
+                    summary: mr.modelName.startsWith('总结:')
+                  }"
+                  @click="activeModelTab = mr.modelId"
+                >
+                  <div v-if="mr.isLoading" class="loading-spinner-sm"></div>
+                  <svg v-else-if="mr.modelName.startsWith('总结:')" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                    <path d="M9 11l3 3L22 4" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+                  </svg>
+                  <span>{{ mr.modelName }}</span>
+                </button>
+              </div>
+
+              <!-- 当前选中模型的响应内容 -->
+              <template v-for="mr in selectedLog.multiModelResponses" :key="mr.modelId">
+                <div v-if="activeModelTab === mr.modelId || (!activeModelTab && selectedLog.multiModelResponses[0].modelId === mr.modelId)" class="model-response-card" :class="{ 'is-loading': mr.isLoading, 'is-summary': mr.modelName.startsWith('总结:') }">
+                  <div class="model-response-card-header">
+                    <div class="model-response-card-title">
+                      <div v-if="mr.modelName.startsWith('总结:')" class="summary-result-icon" title="最终总结答案">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                          <path d="M9 11l3 3L22 4" />
+                          <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+                        </svg>
+                      </div>
+                      <span class="card-model-name">{{ mr.modelName }}</span>
+                      <span v-if="mr.modelName.startsWith('总结:')" class="summary-tag">最终答案</span>
+                      <span class="card-platform-name">{{ mr.platformName }}</span>
+                    </div>
+                    <div v-if="mr.isLoading" class="card-loading-badge">
+                      <div class="loading-spinner-sm"></div>
+                      <span>响应中</span>
+                    </div>
+                    <div v-else class="card-done-badge">✓ 完成</div>
+                  </div>
+                  <div class="model-response-card-body">
+                    <div v-if="mr.response" class="streaming-response">
+                      <MarkdownRender :content="mr.response" />
+                      <div v-if="mr.isLoading" class="streaming-cursor">▋</div>
+                    </div>
+                    <div v-else-if="mr.isLoading" class="card-waiting">
+                      <div class="loading-dots"><span></span><span></span><span></span></div>
+                    </div>
+                    <div v-else class="no-data"><span class="no-data-text">暂无响应</span></div>
+                    <details v-if="mr.streamingReasoning || mr.reasoningContent" class="reasoning-details">
+                      <summary class="reasoning-summary">思考过程</summary>
+                      <MarkdownRender :content="mr.streamingReasoning || mr.reasoningContent || ''" />
+                    </details>
+                  </div>
+                </div>
+              </template>
+            </template>
+
+            <!-- ===== 单模型视图（原有逻辑） ===== -->
+            <template v-else-if="!selectedLog?.urlQuestion">
+              <!-- 模型信息显示 -->
+              <div v-if="selectedLog && selectedLog.modelInfo" class="model-info">
+                <div class="model-info-header">
+                  <h4>使用的AI模型</h4>
+                </div>
+                <div class="model-info-content">
+                  <div class="model-info-item">
+                    <label>平台:</label>
+                    <span>{{ selectedLog.modelInfo.platformName }}</span>
+                  </div>
+                  <div class="model-info-item">
+                    <label>模型:</label>
+                    <span>{{ selectedLog.modelInfo.modelName }}</span>
+                  </div>
+                  <div class="model-info-item">
+                    <label>模型ID:</label>
+                    <span>{{ selectedLog.modelInfo.modelId }}</span>
+                  </div>
                 </div>
               </div>
-            </div>
-            
-            <!-- 模型响应内容 -->
-            <div v-if="selectedLog && selectedLog.isModelCalling" class="model-calling">
-              <div class="loading-indicator">
-                <div class="loading-spinner"></div>
-                <span>正在调用模型...</span>
+
+              <!-- 模型响应内容 -->
+              <div v-if="selectedLog && selectedLog.isModelCalling" class="model-calling">
+                <div class="loading-indicator">
+                  <div class="loading-spinner"></div>
+                  <span>正在调用模型...</span>
+                </div>
+                <!-- 流式显示正在生成的内容 -->
+                <div v-if="selectedLog.modelResponse" class="streaming-response">
+                  <MarkdownRender :content="selectedLog.modelResponse" />
+                  <div class="streaming-cursor">▋</div>
+                </div>
+                <!-- 流式显示正在生成的思考过程 -->
+                <div v-if="selectedLog.streamingReasoning" class="streaming-reasoning">
+                  <div class="reasoning-title">实时思考过程</div>
+                  <MarkdownRender :content="selectedLog.streamingReasoning" />
+                  <div class="streaming-cursor">▋</div>
+                </div>
               </div>
-              <!-- 流式显示正在生成的内容 -->
-              <div v-if="selectedLog.modelResponse" class="streaming-response">
-                <MarkdownRenderer :content="selectedLog.modelResponse" />
-                <div class="streaming-cursor">▋</div>
+              <div v-else-if="selectedLog && (selectedLog.modelResponse || selectedLog.reasoningContent)" class="model-response">
+                <div v-if="selectedLog.modelResponse" class="response-section">
+                  <MarkdownRender :content="selectedLog.modelResponse" />
+                </div>
+                <div v-if="selectedLog.reasoningContent" class="reasoning-section">
+                  <div class="reasoning-title">思考过程</div>
+                  <MarkdownRender :content="selectedLog.reasoningContent" />
+                </div>
               </div>
-              <!-- 流式显示正在生成的思考过程 -->
-              <div v-if="selectedLog.streamingReasoning" class="streaming-reasoning">
-                <div class="reasoning-title">实时思考过程</div>
-                <MarkdownRenderer :content="selectedLog.streamingReasoning" />
-                <div class="streaming-cursor">▋</div>
+              <div v-else class="no-data">
+                <span class="no-data-text">
+                  <span v-if="selectedLog && !selectedLog.status">等待AI模型响应...</span>
+                  <span v-else>暂无AI模型响应数据</span>
+                </span>
               </div>
-            </div>
-            <div v-else-if="selectedLog && (selectedLog.modelResponse || selectedLog.reasoningContent)" class="model-response">
-              <div v-if="selectedLog.modelResponse" class="response-section">
-                <MarkdownRenderer :content="selectedLog.modelResponse" />
-              </div>
-              <div v-if="selectedLog.reasoningContent" class="reasoning-section">
-                <div class="reasoning-title">思考过程</div>
-                <MarkdownRenderer :content="selectedLog.reasoningContent" />
-              </div>
-            </div>
-            <div v-else class="no-data">
-              <span class="no-data-text">
-                <span v-if="selectedLog && !selectedLog.status">等待AI模型响应...</span>
-                <span v-else>暂无AI模型响应数据</span>
-              </span>
-            </div>
+            </template>
+
           </div>
         </div>
       </div>
@@ -330,8 +435,16 @@
       @confirm="handlePortConfirm" />
 
     <!-- 模型选择对话框 -->
-    <ModelSelectorDialog :show="showModelSelector" :current-text-model="globalSelectedTextModel" :current-vision-model="globalSelectedVisionModel" :available-models="availableModels"
-      :platforms="platforms" @close="showModelSelector = false" @model-selected="selectModel" />
+    <ModelSelectorDialog 
+      :show="showModelSelector" 
+      :selected-text-model-ids="globalSelectedTextModels.map(m => m.id)" 
+      :selected-vision-model-id="globalSelectedVisionModel?.id || null"
+      :selected-summary-model-ids="globalSelectedSummaryModels.map(m => m.id)"
+      :available-models="availableModels"
+      :platforms="platforms" 
+      @close="showModelSelector = false" 
+      @model-selected="selectModel" 
+    />
 
   </div>
   
@@ -352,7 +465,8 @@
     @still-open="handleNoModelStillOpen"
     @select-model="handleNoModelSelect"
   />
-</template>
+
+  <!-- 后台自动渲染 URL 题目图片已移除，现直接使用原始 URL 渲染 img 标签 --></template>
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed, nextTick, watch } from 'vue'
@@ -365,8 +479,11 @@ import PortConfigDialog from '../components/home/PortConfigDialog.vue'
 import ModelSelectorDialog from '../components/home/ModelSelectorDialog.vue'
 import OCSConfigDialog from '../components/home/OCSConfigDialog.vue'
 import UrlContentDialog from '../components/home/UrlContentDialog.vue'
-import MarkdownRenderer from '../components/MarkdownRenderer.vue'
+import MarkdownRender from 'markstream-vue'
+import 'markstream-vue/index.css'
 import ModelWarningDialog from '../components/home/ModelWarningDialog.vue'
+import JsonCodeViewer from '../components/home/JsonCodeViewer.vue'
+import ImageGenerator from '../components/ImageGenerator.vue'
 
 const emit = defineEmits(['navigate'])
 
@@ -379,15 +496,22 @@ const {
   availableModels,
   selectedModel: globalSelectedModel,
   selectedTextModel: globalSelectedTextModel,
+  selectedTextModels: globalSelectedTextModels,
+  selectedSummaryModels: globalSelectedSummaryModels,
   selectedVisionModel: globalSelectedVisionModel,
   setSelectedModel,
   setSelectedTextModel,
   setSelectedVisionModel,
+  toggleSelectedTextModel,
+  toggleSelectedSummaryModel,
   platforms
 } = useModelConfig()
 
+import { serverRunning as globalServerRunning } from '../services/serverState'
+
 // Server state
 const serverRunning = ref(false)
+watch(serverRunning, (val) => { globalServerRunning.value = val })
 const isToggling = ref(false)
 const serverUrl = ref('')
 
@@ -416,8 +540,20 @@ const urlContentData = ref({
   originalOptions: '',
   serverResponse: ''
 })
+// 当前 URL 内容窗口的唯一 ID，用于隔离多窗口数据
+const currentUrlWindowId = ref('')
 
 // 请求记录相关状态
+interface MultiModelResponse {
+  modelId: string
+  modelName: string
+  platformName: string
+  response: string
+  reasoningContent?: string
+  streamingReasoning?: string
+  isLoading: boolean
+}
+
 interface RequestLog {
   id: string
   timestamp: number
@@ -431,14 +567,25 @@ interface RequestLog {
   responseBody?: string
   headers?: Record<string, string>
   stage?: string // 'started' 或 'completed'
-  modelResponse?: string // 模型响应内容
-  reasoningContent?: string // 模型思考过程（最终）
-  streamingReasoning?: string // 模型思考过程（流式）
+  modelResponse?: string // 模型响应内容（单模型）
+  reasoningContent?: string // 模型思考过程（最终，单模型）
+  streamingReasoning?: string // 模型思考过程（流式，单模型）
   isModelCalling?: boolean // 是否正在调用模型
-  modelInfo?: { // 模型信息
+  modelInfo?: { // 模型信息（单模型）
     platformName: string
     modelName: string
     modelId: string
+  }
+  multiModelResponses?: MultiModelResponse[] // 多模型并发响应
+  urlQuestion?: { // URL 题目数据（视觉分析）
+    title: string
+    options: string
+    imageUrl: string | null
+    analyzing: boolean
+    analysisResult: string | null
+    analysisError: string
+    streamingResponse: string
+    renderedHtml?: string // 将 URL 替换为 base64 后的展示 HTML
   }
 }
 
@@ -449,6 +596,7 @@ const slideInActive = ref(false)
 
 // 标签页相关状态
 const activeTab = ref('basic')
+const activeModelTab = ref('')
 
 // 接收来自顶层 App 的折叠触发器，并在切换顶层 tab 时收起详情面板
 const props = defineProps<{ collapseTrigger?: number }>()
@@ -574,6 +722,7 @@ const startSSEConnection = () => {
 
           console.log('创建的请求开始日志:', newLog)
           requestLogs.value.unshift(newLog)
+          injectUrlQuestionIfNeeded(newLog)
 
         } else if (logData.stage === 'completed') {
           // 请求完成阶段，更新现有记录
@@ -655,6 +804,7 @@ const startSSEConnection = () => {
 
             console.log('创建的请求开始日志:', newLog)
             requestLogs.value.unshift(newLog)
+            injectUrlQuestionIfNeeded(newLog)
 
           } else if (logData.stage === 'completed') {
             // 请求完成阶段，更新现有记录
@@ -715,6 +865,12 @@ const startSSEConnection = () => {
         const requestData = eventData.ModelCallRequest || eventData
 
         console.log('模型调用请求数据:', requestData)
+
+        // 检测是否是 URL 题目，触发视觉分析窗口
+        if (requestData.query && requestData.query.startsWith('__URL_QUESTION__:')) {
+          handleUrlQuestionRequest(requestData.request_id, requestData.query.slice('__URL_QUESTION__:'.length))
+          return
+        }
 
         // 调用模型API
         callModelAPI(requestData.request_id, requestData.query)
@@ -903,12 +1059,12 @@ const truncateTitle = (title: string) => {
 const showRequestDetails = (log: RequestLog) => {
   selectedLog.value = log
   showLogDetails.value = true
-  slideInActive.value = false // 确保初始状态
+  slideInActive.value = false
+  activeModelTab.value = log.multiModelResponses?.[0]?.modelId || ''
 
-  // 使用setTimeout而不是nextTick，确保DOM完全渲染
   setTimeout(() => {
     slideInActive.value = true
-  }, 10) // 给一个很小的延迟
+  }, 10)
 }
 
 // 关闭请求详情
@@ -1045,6 +1201,7 @@ const startServer = async () => {
 
     const result = await invoke('start_server', {
       port: networkConfig.serverPort,
+      webPort: networkConfig.webPort ?? 8080,
       bindAddress: bindAddress
     })
 
@@ -1099,7 +1256,7 @@ const toggleServer = async () => {
   if (serverRunning.value) {
     await stopServer()
   } else {
-    if (!globalSelectedTextModel.value && !settings.suppressNoModelWarning) {
+    if ((!globalSelectedTextModels.value || globalSelectedTextModels.value.length === 0) && !settings.suppressNoModelWarning) {
       pendingStart.value = true
       showNoModelDialog.value = true
       return
@@ -1148,33 +1305,6 @@ const testOCSConnection = async () => {
 }
 
 const openModelSelector = () => {
-  // 刷新模型数据，确保获取最新的可用模型和平台信息
-  console.log('打开模型选择器，刷新数据...')
-  console.log('当前可用模型数量:', availableModels.value.length)
-  console.log('当前平台数量:', platforms.value.length)
-  console.log('当前选中模型:', globalSelectedModel.value?.displayName || '无')
-  
-  // 添加更详细的调试信息
-  console.log('所有平台详情:', platforms.value.map(p => ({
-    id: p.id,
-    name: p.displayName,
-    enabled: p.enabled,
-    modelCount: p.models?.length || 0,
-    enabledModelCount: p.models?.filter(m => m.enabled).length || 0,
-    models: p.models?.map(m => ({
-      id: m.id,
-      name: m.displayName,
-      enabled: m.enabled
-    })) || []
-  })))
-  
-  console.log('可用模型详情:', availableModels.value.map(m => ({
-    id: m.id,
-    name: m.displayName,
-    platformId: m.platformId,
-    enabled: m.enabled
-  })))
-  
   showModelSelector.value = true
 }
 
@@ -1229,36 +1359,39 @@ const toggleNetworkAccess = async () => {
 }
 
 // 模型选择相关方法
-const selectModel = (model: AIModel) => {
-  currentModel.value = model
+const selectModel = (model: any) => {
+  const category = model.category || 'text'
   
-  // 移除单选逻辑，允许同时选择文本和视觉模型
-  if (model.category === 'text') {
-    setSelectedTextModel(model.id)
-    // 保持向后兼容性：仅在选择文本模型时更新旧的 selectedModel
-    setSelectedModel(model.id)
-  } else if (model.category === 'vision') {
+  if (category === 'summary') {
+    toggleSelectedSummaryModel(model.id)
+  } else if (category === 'vision') {
     setSelectedVisionModel(model.id)
-    // 注意：不更新 selectedModel，避免覆盖文本模型选择
+  } else {
+    toggleSelectedTextModel(model.id)
   }
-  
-  console.log('已选择模型:', model.displayName, '类别:', model.category)
 
-  // 同步当前模型是否为思考模型到后端
-  updateThinkingModelFlag(model)
+  // 同步更新思考模型状态（如果是 text 或 summary 类别，模型通常就是 text 类型的 AIModel）
+  // vision 模型暂不参与此逻辑，但为了安全可以加判断
+  if (category !== 'vision') {
+    updateThinkingModelFlag(model)
+  }
+}
+
+// 去除 markdown 代码块包裹（如 ```json\n...\n```）
+const stripMarkdownCodeBlock = (content: string): string => {
+  return content.replace(/^```[\w]*\n?/, '').replace(/\n?```$/, '')
 }
 
 // 调用模型函数 - 支持流式显示
-const callModelWithStreaming = async (model: AIModel, query: string, requestId: string) => {
-  // 添加调试信息
-  console.log('调试信息 - 当前模型:', model)
-  console.log('调试信息 - 可用平台:', platforms.value)
-  console.log('调试信息 - 平台数量:', platforms.value.length)
-  
+const callModelWithStreaming = async (
+  model: AIModel,
+  query: string,
+  requestId: string,
+  onChunk?: (content: string) => void,
+  onReasoning?: (text: string) => void
+) => {
   // 获取模型所属的平台
   const platform = platforms.value.find(p => p.models.some(m => m.id === model.id))
-  
-  console.log('调试信息 - 找到的平台:', platform)
   
   if (!platform) {
     console.error('未找到模型所属平台 - 详细信息:')
@@ -1292,14 +1425,25 @@ const callModelWithStreaming = async (model: AIModel, query: string, requestId: 
     ...model
   }
 
-  // 动态导入Tauri HTTP插件
+  // 读取超时配置（秒转毫秒）
+  const { settings: appSettings } = useSettings()
+  const timeoutMs = (appSettings.modelResponseTimeout ?? 40) * 1000
+
+  // AbortController 用于超时中断 fetch
+  const abortController = new AbortController()
+  const timeoutHandle = setTimeout(() => abortController.abort(), timeoutMs)
+
+  // 动态导入Tauri HTTP插件，将 signal 注入 fetch
   let tauriFetch
   try {
     const tauriHttp = await import('@tauri-apps/plugin-http')
-    tauriFetch = tauriHttp.fetch
+    // 包装 fetch，自动附加 abort signal
+    tauriFetch = (input: RequestInfo | URL, init?: RequestInit) =>
+      tauriHttp.fetch(input as any, { ...init, signal: abortController.signal } as any)
   } catch (importError) {
     console.warn('Tauri HTTP插件不可用，使用浏览器fetch:', importError)
-    tauriFetch = fetch
+    tauriFetch = (input: RequestInfo | URL, init?: RequestInit) =>
+      fetch(input, { ...init, signal: abortController.signal })
   }
 
   // 执行JavaScript配置代码
@@ -1309,64 +1453,82 @@ const callModelWithStreaming = async (model: AIModel, query: string, requestId: 
     let processModel
 
     if (executableCode.startsWith('async function') || executableCode.startsWith('function')) {
-      // 如果是完整的函数声明，使用eval在安全环境中执行
-      const safeEval = new Function('input', 'config', 'fetch', `
+      const safeEval = new Function('input', 'config', 'fetch', 'abortSignal', `
         ${executableCode}
         return processModel;
       `)
-      processModel = safeEval(testInput, config, tauriFetch)
+      processModel = safeEval(testInput, config, tauriFetch, abortController.signal)
     } else {
-      // 如果是函数体，包装为async函数
-      const wrapperFunction = new Function('input', 'config', 'fetch', `
+      const wrapperFunction = new Function('input', 'config', 'fetch', 'abortSignal', `
         return (async function processModel(input, config) {
           ${executableCode}
         });
       `)
-      processModel = wrapperFunction(testInput, config, tauriFetch)
+      processModel = wrapperFunction(testInput, config, tauriFetch, abortController.signal)
     }
 
-    // 执行模型调用
-    const result = await processModel(testInput, config)
+    try {
+      // 执行模型调用
+      const result = await processModel(testInput, config, abortController.signal)
 
-    if (result) {
-      // 如果返回的是生成器或异步迭代器，进行流式处理
-      if (result[Symbol.asyncIterator]) {
-        let fullResponse = ''
-        let fullReasoning = ''
-        // 进度发送节流：每800ms向后端发送一次进度心跳
-        let lastProgressSentAt = 0
-        for await (const chunk of result) {
-          if (chunk.content) {
-            fullResponse += chunk.content
-            // 实时更新UI显示
-            updateStreamingResponse(requestId, fullResponse)
-            const now = Date.now()
-            if (now - lastProgressSentAt > 800) {
-              // 将当前累计内容作为进度心跳发送到后端，避免误判为超时
-              sendModelProgressToBackend(requestId, fullResponse)
-              lastProgressSentAt = now
+      if (result) {
+        // 如果返回的是生成器或异步迭代器，进行流式处理
+        if (result[Symbol.asyncIterator]) {
+          let fullResponse = ''
+          let fullReasoning = ''
+          // 进度发送节流：每800ms向后端发送一次进度心跳
+          let lastProgressSentAt = 0
+          for await (const chunk of result) {
+            if (chunk.content) {
+              fullResponse += chunk.content
+              // 实时更新UI显示
+              if (onChunk) {
+                onChunk(fullResponse)
+              } else {
+                updateStreamingResponse(requestId, fullResponse)
+              }
+              const now = Date.now()
+              if (now - lastProgressSentAt > 800) {
+                sendModelProgressToBackend(requestId, fullResponse)
+                lastProgressSentAt = now
+              }
+            }
+            const rc = chunk.reasoning_content ?? chunk.reasoning ?? chunk.reasoningContent
+            if (rc) {
+              fullReasoning += rc
+              if (onReasoning) {
+                onReasoning(fullReasoning)
+              } else {
+                updateStreamingReasoning(requestId, fullReasoning)
+              }
             }
           }
-          const rc = chunk.reasoning_content ?? chunk.reasoning ?? chunk.reasoningContent
-          if (rc) {
-            fullReasoning += rc
-            updateStreamingReasoning(requestId, fullReasoning)
+          if (fullReasoning) {
+            if (onReasoning) {
+              onReasoning(fullReasoning)
+            } else {
+              updateRequestDetailsWithModelReasoning(requestId, fullReasoning)
+            }
           }
+          return fullResponse
+        } else {
+          // 非流式响应，直接返回
+          const response = typeof result === 'string' ? result : JSON.stringify(result)
+          if (onChunk) {
+            onChunk(response)
+          } else {
+            updateStreamingResponse(requestId, response)
+          }
+          return response
         }
-        if (fullReasoning) {
-          updateRequestDetailsWithModelReasoning(requestId, fullReasoning)
-        }
-        return fullResponse
       } else {
-        // 非流式响应，直接返回
-        const response = typeof result === 'string' ? result : JSON.stringify(result)
-        updateStreamingResponse(requestId, response)
-        return response
+        throw new Error('模型配置代码未返回有效结果')
       }
-    } else {
-      throw new Error('模型配置代码未返回有效结果')
+    } finally {
+      clearTimeout(timeoutHandle)
     }
   } else {
+    clearTimeout(timeoutHandle)
     throw new Error('模型未配置JavaScript代码')
   }
 }
@@ -1385,6 +1547,22 @@ const updateStreamingReasoning = (requestId: string, reasoning: string) => {
   if (logIndex !== -1) {
     requestLogs.value[logIndex].streamingReasoning = reasoning
   }
+}
+
+// 更新多模型模式下某个模型的流式响应
+const updateMultiModelStreamingResponse = (requestId: string, modelId: string, content: string) => {
+  const log = requestLogs.value.find(l => l.id === requestId)
+  if (!log || !log.multiModelResponses) return
+  const entry = log.multiModelResponses.find(r => r.modelId === modelId)
+  if (entry) entry.response = content
+}
+
+// 更新多模型模式下某个模型的流式思考过程
+const updateMultiModelStreamingReasoning = (requestId: string, modelId: string, reasoning: string) => {
+  const log = requestLogs.value.find(l => l.id === requestId)
+  if (!log || !log.multiModelResponses) return
+  const entry = log.multiModelResponses.find(r => r.modelId === modelId)
+  if (entry) entry.streamingReasoning = reasoning
 }
 
 // 调用模型函数
@@ -1511,85 +1689,248 @@ watch(globalSelectedModel, (newModel) => {
   }
 }, { immediate: false })
 
-// 调用模型API
-const callModelAPI = async (requestId: string, query: string) => {
-  console.log('开始调用模型API:', { requestId, query })
-
-  // 更新请求状态为正在调用模型
-  const logIndex = requestLogs.value.findIndex(log => log.id === requestId)
+// 单个模型调用，独立日志条目，返回响应文本
+const callSingleModelAPI = async (model: AIModel, query: string, logId: string): Promise<string> => {
+  const logIndex = requestLogs.value.findIndex(log => log.id === logId)
   if (logIndex !== -1) {
     requestLogs.value[logIndex].isModelCalling = true
-    requestLogs.value[logIndex].modelResponse = '' // 初始化流式响应内容
-    requestLogs.value[logIndex].streamingReasoning = '' // 初始化流式思考过程
-    requestLogs.value[logIndex].reasoningContent = '' // 初始化最终思考过程
-    
-    // 添加模型信息
-    if (currentModel.value) {
-      const platform = platforms.value.find(p => p.models.some(m => m.id === currentModel.value!.id))
-      if (platform) {
-        requestLogs.value[logIndex].modelInfo = {
-          platformName: platform.displayName,
-          modelName: currentModel.value.displayName,
-          modelId: currentModel.value.id
-        }
+    requestLogs.value[logIndex].modelResponse = ''
+    requestLogs.value[logIndex].streamingReasoning = ''
+    requestLogs.value[logIndex].reasoningContent = ''
+    const platform = platforms.value.find(p => p.models.some(m => m.id === model.id))
+    if (platform) {
+      requestLogs.value[logIndex].modelInfo = {
+        platformName: platform.displayName,
+        modelName: model.displayName,
+        modelId: model.id
       }
     }
-
-    // 启动心跳定时器：即使模型尚未开始输出内容，也每1秒向后端发送一次进度心跳，避免静默超时
-    if (serverRunning.value && serverUrl.value && !heartbeatIntervals.has(requestId)) {
+    if (serverRunning.value && serverUrl.value && !heartbeatIntervals.has(logId)) {
       const timerId = window.setInterval(() => {
         try {
-          const currentContent = requestLogs.value[logIndex]?.modelResponse || ''
-          sendModelProgressToBackend(requestId, currentContent)
-        } catch (e) {
-          // 心跳发送失败忽略
-        }
+          const currentContent = requestLogs.value[requestLogs.value.findIndex(l => l.id === logId)]?.modelResponse || ''
+          sendModelProgressToBackend(logId, currentContent)
+        } catch (e) { /* ignore */ }
       }, 1000)
-      heartbeatIntervals.set(requestId, timerId)
+      heartbeatIntervals.set(logId, timerId)
     }
   }
-
-  let fullResponse = ''
 
   try {
-    if (!currentModel.value) {
-      throw new Error('未选择模型')
-    }
-
-    // 调用模型配置中的callModel方法，支持流式处理
-    const response = await callModelWithStreaming(currentModel.value, query, requestId)
-    fullResponse = response
-    console.log('模型API调用成功:', response)
-
-    // 发送完整模型响应到后端
-    await sendModelResponseToBackend(requestId, response, true)
-
+    const response = await callModelWithStreaming(model, query, logId)
+    const idx = requestLogs.value.findIndex(l => l.id === logId)
+    if (idx !== -1) requestLogs.value[idx].isModelCalling = false
+    const timerId = heartbeatIntervals.get(logId)
+    if (typeof timerId === 'number') { window.clearInterval(timerId); heartbeatIntervals.delete(logId) }
+    return response
   } catch (error) {
-    console.error('调用模型API失败:', error)
-
-    // 发送错误响应到后端，但不保存到数据库
     const errorMessage = error instanceof Error ? error.message : '模型调用失败'
-    fullResponse = `错误: ${errorMessage}`
-    await sendModelResponseToBackend(requestId, fullResponse, false)
+    const errText = `错误: ${errorMessage}`
+    const idx = requestLogs.value.findIndex(l => l.id === logId)
+    if (idx !== -1) {
+      requestLogs.value[idx].modelResponse = errText
+      requestLogs.value[idx].isModelCalling = false
+    }
+    const timerId = heartbeatIntervals.get(logId)
+    if (typeof timerId === 'number') { window.clearInterval(timerId); heartbeatIntervals.delete(logId) }
+    return errText
+  }
+}
 
-    // 更新UI显示错误信息
+// 调用模型API（支持多模型并发）
+const callModelAPI = async (requestId: string, query: string) => {
+  let finalOutput = ''
+  console.log('开始调用模型API:', { requestId, query })
+
+  // 只有文本模型参与基础输出；视觉模型仅在 query 包含图片时才加入
+  const hasImage = /https?:\/\/\S+\.(png|jpg|jpeg|gif|webp)/i.test(query) || query.includes('base64')
+  const selectedModels = [...globalSelectedTextModels.value]
+  if (hasImage && globalSelectedVisionModel.value) {
+    selectedModels.push(globalSelectedVisionModel.value)
+  }
+
+  if (selectedModels.length === 0) {
     const logIndex = requestLogs.value.findIndex(log => log.id === requestId)
-    if (logIndex !== -1) {
-      requestLogs.value[logIndex].modelResponse = fullResponse
+    const errorText = '错误: 未选择模型'
+    if (logIndex !== -1) requestLogs.value[logIndex].modelResponse = errorText
+    await sendModelResponseToBackend(requestId, errorText, false)
+    return
+  }
+
+  const logIndex = requestLogs.value.findIndex(l => l.id === requestId)
+  
+  // --- 阶段 1: 基础模型调用 (Base Model Phase) ---
+  if (logIndex !== -1) {
+    requestLogs.value[logIndex].isModelCalling = true
+    requestLogs.value[logIndex].modelResponse = undefined
+    requestLogs.value[logIndex].streamingReasoning = undefined
+    requestLogs.value[logIndex].reasoningContent = undefined
+    requestLogs.value[logIndex].modelInfo = undefined
+    
+    // 初始化多模型响应数组
+    requestLogs.value[logIndex].multiModelResponses = selectedModels.map(model => {
+      const platform = platforms.value.find(p => p.models.some(m => m.id === model.id))
+      return {
+        modelId: model.id,
+        modelName: model.displayName,
+        platformName: platform?.displayName || '未知平台',
+        response: '',
+        streamingReasoning: '',
+        reasoningContent: '',
+        isLoading: true
+      } as MultiModelResponse
+    })
+  }
+
+  // 启动心跳
+  if (serverRunning.value && serverUrl.value && !heartbeatIntervals.has(requestId)) {
+    const timerId = window.setInterval(() => {
+      try {
+        const log = requestLogs.value.find(l => l.id === requestId)
+        if (log?.multiModelResponses) {
+          const currentContent = log.multiModelResponses
+            .map(r => `[${r.modelName}]\n${r.response}`).join('\n\n')
+          sendModelProgressToBackend(requestId, currentContent)
+        }
+      } catch (e) { /* ignore */ }
+    }, 1000)
+    heartbeatIntervals.set(requestId, timerId)
+  }
+
+  // 并发调用基础模型
+  const results = await Promise.all(
+    selectedModels.map(async (model) => {
+      try {
+        const response = await callModelWithStreaming(
+          model,
+          query,
+          requestId,
+          (content) => updateMultiModelStreamingResponse(requestId, model.id, stripMarkdownCodeBlock(content)),
+          (reasoning) => updateMultiModelStreamingReasoning(requestId, model.id, reasoning)
+        )
+        const strippedResponse = stripMarkdownCodeBlock(response)
+        const log = requestLogs.value.find(l => l.id === requestId)
+        if (log?.multiModelResponses) {
+          const entry = log.multiModelResponses.find(r => r.modelId === model.id)
+          if (entry) { entry.isLoading = false; entry.response = strippedResponse }
+        }
+        return strippedResponse
+      } catch (error) {
+        const errText = `错误: ${error instanceof Error ? error.message : '模型调用失败'}`
+        const log = requestLogs.value.find(l => l.id === requestId)
+        if (log?.multiModelResponses) {
+          const entry = log.multiModelResponses.find(r => r.modelId === model.id)
+          if (entry) { entry.isLoading = false; entry.response = errText }
+        }
+        return errText
+      }
+    })
+  )
+
+  // --- 阶段 2: 汇总与总结 (Summary Phase) ---
+  const summaryModels = globalSelectedSummaryModels.value
+
+  // 过滤掉失败的基础模型结果，只用成功的部分做总结
+  const successfulResults = results.filter(r => !r.startsWith('错误:'))
+  const successfulModels = selectedModels.filter((_, i) => !results[i].startsWith('错误:'))
+
+  const baseCombinedResponse = successfulModels.length === 1
+    ? successfulResults[0]
+    : successfulModels.map((model, i) => `[${model.displayName}]\n${successfulResults[i]}`).join('\n\n')
+
+  if (summaryModels.length > 0 && successfulResults.length > 0) {
+    console.log('开始总结阶段:', summaryModels.map(m => m.displayName))
+    
+    // 在日志中添加总结模型的占位项（如果尚未在多模型数组中）
+    const log = requestLogs.value.find(l => l.id === requestId)
+    if (log) {
+      if (!log.multiModelResponses) {
+        log.multiModelResponses = []
+      }
+      
+      // 避免重复添加（针对可能的并发重试）
+      const existingIds = new Set(log.multiModelResponses.map(r => r.modelId))
+      summaryModels.forEach(model => {
+        const summaryKey = `summary:${model.id}`
+        if (!existingIds.has(summaryKey)) {
+          const platform = platforms.value.find(p => p.models.some(m => m.id === model.id))
+          log.multiModelResponses!.push({
+            modelId: summaryKey,
+            modelName: `总结: ${model.displayName}`,
+            platformName: platform?.displayName || '未知平台',
+            response: '',
+            streamingReasoning: '',
+            reasoningContent: '',
+            isLoading: true
+          })
+        }
+      })
     }
-  } finally {
-    // 更新请求状态
-    const logIndex = requestLogs.value.findIndex(log => log.id === requestId)
-    if (logIndex !== -1) {
-      requestLogs.value[logIndex].isModelCalling = false
-    }
-    // 清理心跳定时器
-    const timerId = heartbeatIntervals.get(requestId)
-    if (typeof timerId === 'number') {
-      window.clearInterval(timerId)
-      heartbeatIntervals.delete(requestId)
+
+    const summaryQuery = `你是一个总结专家。下面是用户的问题以及AI模型的回答。请根据回答内容，整理并总结出一个最准确、最全面的最终答案。
+
+用户原始问题：
+${query}
+
+模型回答内容：
+${baseCombinedResponse}
+
+请直接给出最终总结答案：`
+
+    const summaryResults = await Promise.all(
+      summaryModels.map(async (model) => {
+        const summaryKey = `summary:${model.id}`
+        try {
+          const response = await callModelWithStreaming(
+            model,
+            summaryQuery,
+            requestId,
+            (content) => updateMultiModelStreamingResponse(requestId, summaryKey, content),
+            (reasoning) => updateMultiModelStreamingReasoning(requestId, summaryKey, reasoning)
+          )
+          const l = requestLogs.value.find(l => l.id === requestId)
+          if (l?.multiModelResponses) {
+            const entry = l.multiModelResponses.find(r => r.modelId === summaryKey)
+            if (entry) { entry.isLoading = false; entry.response = response }
+          }
+          return response
+        } catch (error) {
+          const errText = `错误: ${error instanceof Error ? error.message : '总结失败'}`
+          const l = requestLogs.value.find(l => l.id === requestId)
+          if (l?.multiModelResponses) {
+            const entry = l.multiModelResponses.find(r => r.modelId === summaryKey)
+            if (entry) { entry.isLoading = false; entry.response = errText }
+          }
+          return errText
+        }
+      })
+    )
+    
+    finalOutput = summaryModels.length === 1 
+      ? summaryResults[0] 
+      : summaryModels.map((m, i) => `[${m.displayName} 总结]\n${summaryResults[i]}`).join('\n\n')
+    
+    await sendModelResponseToBackend(requestId, finalOutput, !finalOutput.startsWith('错误:'))
+  } else {
+    // 无总结模型或全部基础模型失败，直接发送基础结果
+    const fallbackResponse = selectedModels.length === 1
+      ? results[0]
+      : selectedModels.map((model, i) => `[${model.displayName}]\n${results[i]}`).join('\n\n')
+    finalOutput = fallbackResponse
+    await sendModelResponseToBackend(requestId, finalOutput, successfulResults.length > 0)
+  }
+
+  // --- 结束 ---
+  const finalLogIdx = requestLogs.value.findIndex(l => l.id === requestId)
+  if (finalLogIdx !== -1) {
+    requestLogs.value[finalLogIdx].isModelCalling = false
+    // 将最终结果也设为主要 modelResponse，方便单视图查看
+    if (finalOutput) {
+      requestLogs.value[finalLogIdx].modelResponse = finalOutput
     }
   }
+  const timerId = heartbeatIntervals.get(requestId)
+  if (typeof timerId === 'number') { window.clearInterval(timerId); heartbeatIntervals.delete(requestId) }
 }
 
 const handleNoModelStillOpen = (dontRemind: boolean) => {
@@ -1612,8 +1953,8 @@ const handleNoModelSelect = (dontRemind: boolean) => {
   showModelSelector.value = true
 }
 
-watch(globalSelectedTextModel, (newTextModel) => {
-  if (newTextModel && pendingStart.value) {
+watch(globalSelectedTextModels, (newModels) => {
+  if (newModels && newModels.length > 0 && pendingStart.value) {
     pendingStart.value = false
     startServer()
   }
@@ -1641,7 +1982,10 @@ const sendModelResponseToBackend = async (requestId: string, content: string, is
 
     // 只有在成功调用模型时才存储AI响应到数据库
     if (isSuccess) {
-      await storeAIResponseToDatabase(requestId, content)
+      // 2024-05-21: 禁用前端存储以防止重复条目。
+      // 后端 (server.rs) 在从前端接收到响应后已经执行了存储操作。
+      // await storeAIResponseToDatabase(requestId, content)
+      console.log('前端跳过存储AI响应 (已由后端处理):', { requestId })
     } else {
       console.log('AI调用失败，跳过保存到数据库:', { requestId, content })
     }
@@ -1825,6 +2169,92 @@ const updateRequestDetailsWithModelReasoning = (requestId: string, reasoning: st
 // 已处理的请求ID集合，用于避免重复处理
 const processedRequestIds = new Set<string>()
 
+// 处理 URL 题目请求（由 SSE model_call_request 事件触发）
+const handleUrlQuestionRequest = async (requestId: string, rawTitle: string) => {
+  if (processedRequestIds.has(requestId)) return
+  processedRequestIds.add(requestId)
+
+  // 解析 title 和内嵌的 __OPTIONS__: 字段
+  let title = rawTitle
+  let originalOptions = ''
+  const optionsMarker = '\n__OPTIONS__:'
+  const optIdx = rawTitle.indexOf(optionsMarker)
+  if (optIdx !== -1) {
+    title = rawTitle.slice(0, optIdx)
+    originalOptions = rawTitle.slice(optIdx + optionsMarker.length)
+  }
+
+  // 如果 query 里没有 options，从请求日志的 requestBody 中补充
+  if (!originalOptions) {
+    const matchedLog = requestLogs.value.find(l => l.id === requestId)
+    if (matchedLog?.requestBody) {
+      try {
+        const rb = JSON.parse(matchedLog.requestBody)
+        originalOptions = rb.options || ''
+      } catch (e) {}
+    }
+  }
+
+  // 在对应 log 上标记为 URL 题目，在详情面板内处理
+  // SSE model_call_request 可能比 started 日志事件更早到达，需要重试等待 log 出现
+  const urlQuestionData = {
+    title,
+    options: originalOptions,
+    imageUrl: null as string | null,
+    analyzing: false,
+    analysisResult: null as string | null,
+    analysisError: '',
+    streamingResponse: '',
+    renderedHtml: undefined as string | undefined
+  }
+
+  const applyAndAnalyze = () => {
+    const logIndex = requestLogs.value.findIndex(l => l.id === requestId)
+    if (logIndex !== -1) {
+      requestLogs.value[logIndex].urlQuestion = { ...urlQuestionData }
+      // 异步生成 base64 渲染 HTML
+      buildRenderedHtml(title, originalOptions).then(html => {
+        const l = requestLogs.value.find(l => l.id === requestId)
+        if (l?.urlQuestion) l.urlQuestion.renderedHtml = html
+      })
+      requestLogs.value[logIndex].isModelCalling = true
+
+      // 如果当前正在查看该请求，切换到 modelResponse tab
+      if (selectedLog.value?.id === requestId) {
+        activeTab.value = 'modelResponse'
+      }
+
+      // 直接触发视觉分析
+      analyzeUrlQuestion(requestId)
+    } else {
+      // log 还未到达，100ms 后重试，最多重试 30 次（3 秒）
+      let retries = 0
+      const timer = setInterval(() => {
+        retries++
+        const idx = requestLogs.value.findIndex(l => l.id === requestId)
+        if (idx !== -1) {
+          clearInterval(timer)
+          requestLogs.value[idx].urlQuestion = { ...urlQuestionData }
+          buildRenderedHtml(title, originalOptions).then(html => {
+            const l = requestLogs.value.find(l => l.id === requestId)
+            if (l?.urlQuestion) l.urlQuestion.renderedHtml = html
+          })
+          requestLogs.value[idx].isModelCalling = true
+          if (selectedLog.value?.id === requestId) {
+            activeTab.value = 'modelResponse'
+          }
+          analyzeUrlQuestion(requestId)
+        } else if (retries >= 30) {
+          clearInterval(timer)
+          console.warn('handleUrlQuestionRequest: log 未在 3 秒内出现，放弃:', requestId)
+        }
+      }, 100)
+    }
+  }
+
+  applyAndAnalyze()
+}
+
 // 检查并显示URL处理弹窗
 const checkAndShowUrlDialog = async (log: RequestLog) => {
   try {
@@ -1841,7 +2271,12 @@ const checkAndShowUrlDialog = async (log: RequestLog) => {
       // 检查是否是URL检测响应
       if (responseData.code === 1 && 
           responseData.data && 
-          responseData.data.answer === '题目中含有URL，无法直接展示') {
+          (
+            // data 是对象的情况
+            (responseData.data.answer === '题目中含有URL，无法直接展示') ||
+            // data 是数组的情况
+            (Array.isArray(responseData.data) && responseData.data[0]?.answer === '题目中含有URL，无法直接展示')
+          )) {
         
         // 标记请求为已处理
         processedRequestIds.add(log.id)
@@ -1973,6 +2408,7 @@ const checkAndShowUrlDialog = async (log: RequestLog) => {
                    // 方法1: 通过事件发送新题目数据
                    const { emit } = await import('@tauri-apps/api/event')
                    await emit('new-question-added', {
+                     windowId: currentUrlWindowId.value,
                      questions: existingQuestions,
                      latestQuestion: questionData
                    })
@@ -2027,8 +2463,10 @@ const checkAndShowUrlDialog = async (log: RequestLog) => {
           
           // 如果窗口不存在，创建新窗口
           if (!windowExists) {
+            currentUrlWindowId.value = `w${Date.now()}`
             await invoke('open_url_content_window', {
-              questions: JSON.stringify(existingQuestions)
+              questions: JSON.stringify(existingQuestions),
+              windowId: currentUrlWindowId.value
             })
             
             console.log('✅ URL内容处理窗口创建成功:', {
@@ -2060,7 +2498,8 @@ const checkAndShowUrlDialog = async (log: RequestLog) => {
 // 获取已存在的题目数据
 const getExistingQuestions = () => {
   try {
-    const stored = localStorage.getItem('urlContentQuestions')
+    const key = currentUrlWindowId.value ? `urlContentQuestions_${currentUrlWindowId.value}` : 'urlContentQuestions'
+    const stored = localStorage.getItem(key)
     return stored ? JSON.parse(stored) : []
   } catch (error) {
     console.error('获取存储的题目失败:', error)
@@ -2071,10 +2510,247 @@ const getExistingQuestions = () => {
 // 保存题目数据到本地存储
 const saveQuestionsToStorage = (questions: any[]) => {
   try {
-    localStorage.setItem('urlContentQuestions', JSON.stringify(questions))
+    const key = currentUrlWindowId.value ? `urlContentQuestions_${currentUrlWindowId.value}` : 'urlContentQuestions'
+    localStorage.setItem(key, JSON.stringify(questions))
   } catch (error) {
     console.error('保存题目数据失败:', error)
   }
+}
+
+// ---- URL 题目视觉分析（在详情面板内执行）----
+
+// 解析选项字符串为编号映射
+const parseUrlOptions = (optionsStr: string): Map<string, string> => {
+  const map = new Map<string, string>()
+  if (!optionsStr?.trim()) return map
+  const matches = [...optionsStr.matchAll(/(?:^|\n)\s*([A-Za-z])[\.、．]\s*([^\n]*)/g)]
+  if (matches.length >= 2) {
+    matches.forEach((m, i) => map.set(String(i + 1), m[2].trim()))
+    return map
+  }
+  const lines = optionsStr.split('\n').map(l => l.trim()).filter(Boolean)
+  lines.forEach((line, i) => map.set(String(i + 1), line))
+  return map
+}
+
+// 从 AI 响应中解析 ANSWER: 字段并转换为原始文本
+const resolveUrlAnswer = (response: string, optionMap: Map<string, string>): string => {
+  const match = response.match(/ANSWER:\s*(.+)/i)
+  if (!match) return ''
+  const nums = match[1].trim().split(/[,，\s]+/).map(s => s.trim()).filter(Boolean)
+  if (nums.length === 0) return ''
+  return nums.map(n => optionMap.get(n) || n).join('###')
+}
+
+// 将题目文本按 URL 拆分，组装成交错的多模态 content 数组
+// 例："题目文字 http://xxx.gif 更多文字" →
+// 将文本中所有 URL 通过后端转为 base64，返回替换后的 HTML 字符串
+const buildRenderedHtml = async (title: string, options: string): Promise<string> => {
+  const text = title + (options ? '\n\n选项：\n' + options : '')
+  const urlRegex = /https?:\/\/[^\s\u4e00-\u9fff\uff00-\uffef，。；：！？""''（）【】《》]+/g
+  const urls = Array.from(new Set(Array.from(text.matchAll(urlRegex)).map(m => m[0].replace(/[.,;!?]*$/, ''))))
+
+  // 并发获取所有图片 base64
+  const base64Map = new Map<string, string>()
+  await Promise.all(urls.map(async (url) => {
+    try {
+      const { invoke: tauriInvoke } = await import('@tauri-apps/api/core')
+      const b64 = await tauriInvoke('fetch_image_as_base64', { url }) as string
+      base64Map.set(url, b64)
+    } catch {
+      base64Map.set(url, '') // 失败时留空，降级为文字
+    }
+  }))
+
+  // 替换文本中的 URL 为 img 标签或文字占位
+  return text.replace(urlRegex, (raw) => {
+    const url = raw.replace(/[.,;!?]*$/, '')
+    const b64 = base64Map.get(url)
+    if (b64) return `<img src="${b64}" style="max-width:100%;vertical-align:middle;" />`
+    return `[图片: ${url}]`
+  }).replace(/\n/g, '<br/>')
+}
+
+// 如果请求体中的 title 含有 URL，为 log 设置 urlQuestion 展示字段（不触发分析）
+const injectUrlQuestionIfNeeded = (log: RequestLog) => {
+  if (log.urlQuestion) return // 已设置过，跳过
+  if (!log.requestBody) return
+  try {
+    const rb = JSON.parse(log.requestBody)
+    const title: string = rb.title || ''
+    const options: string = rb.options || ''
+    if (/https?:\/\//.test(title) || /https?:\/\//.test(options)) {
+      log.urlQuestion = {
+        title,
+        options,
+        imageUrl: null,
+        analyzing: false,
+        analysisResult: null,
+        analysisError: '',
+        streamingResponse: '',
+        renderedHtml: undefined
+      }
+      // 异步生成 base64 渲染 HTML
+      buildRenderedHtml(title, options).then(html => {
+        if (log.urlQuestion) log.urlQuestion.renderedHtml = html
+      })
+    }
+  } catch { /* 解析失败忽略 */ }
+}
+
+// 将文本中的 URL 替换为 <img> 标签，返回 HTML 字符串（用于展示）
+const renderUrlsAsHtml = (text: string): string => {
+  const urlRegex = /https?:\/\/[^\s\u4e00-\u9fff\uff00-\uffef，。；：！？""''（）【】《》]+/g
+  return text.replace(urlRegex, (url) => {
+    const cleanUrl = url.replace(/[.,;!?]*$/, '')
+    return `<img src="${cleanUrl}" style="max-width:100%;vertical-align:middle;" />`
+  })
+}
+
+// 将文本按 URL 拆分为多模态内容数组，直接使用原始 URL（无需下载 base64）
+const buildMultimodalContent = (text: string): any[] => {
+  const urlRegex = /https?:\/\/[^\s\u4e00-\u9fff\uff00-\uffef，。；：！？""''（）【】《》]+/g
+  const parts: any[] = []
+  let lastIndex = 0
+  let match: RegExpExecArray | null
+
+  while ((match = urlRegex.exec(text)) !== null) {
+    const url = match[0].replace(/[.,;!?]*$/, '')
+    const before = text.slice(lastIndex, match.index)
+    if (before) parts.push({ type: 'text', text: before })
+    parts.push({ type: 'image_url', image_url: { url, detail: 'high' } })
+    lastIndex = match.index + match[0].length
+  }
+
+  const tail = text.slice(lastIndex)
+  if (tail) parts.push({ type: 'text', text: tail })
+
+  return parts
+}
+
+// 对指定 requestId 的 URL 题目执行视觉分析
+const analyzeUrlQuestion = async (requestId: string) => {
+  const log = requestLogs.value.find(l => l.id === requestId)
+  if (!log?.urlQuestion) return
+  // 防止重复分析
+  if (log.urlQuestion.analyzing || log.urlQuestion.analysisResult) return
+
+  const visionModel = globalSelectedVisionModel.value
+  if (!visionModel) {
+    log.urlQuestion.analysisError = '请先在模型选择中配置视觉模型'
+    return
+  }
+
+  log.urlQuestion.analyzing = true
+  log.urlQuestion.analysisResult = null
+  log.urlQuestion.analysisError = ''
+  log.urlQuestion.streamingResponse = ''
+
+  try {
+    const platform = platforms.value.find(p => p.models.some(m => m.id === visionModel.id))
+    if (!platform) throw new Error('找不到视觉模型对应的平台')
+
+    const { title, options } = log.urlQuestion
+    const optionMap = parseUrlOptions(options)
+    const hasOptions = optionMap.size > 0
+
+    // 构建选项文本
+    let optionsText = ''
+    if (hasOptions) {
+      optionsText = '\n\n选项：\n' + Array.from(optionMap.entries()).map(([k, v]) => `${k}. ${v}`).join('\n')
+    }
+
+    const instruction = `\n\n请仔细分析上述题目，给出详细的解题过程和答案。\n\n在回答末尾，严格按照以下格式单独一行给出答案：\nANSWER: <答案>\n\n其中规则：\n${hasOptions
+      ? `- 单选题：写正确选项的编号，如 ANSWER: 2\n- 多选题：多个编号用空格分隔，如 ANSWER: 1 3\n- 判断题：写 正确 或 错误`
+      : `- 填空/解答题：写完整答案内容，如 ANSWER: 42`}`
+
+    // 将 title + options + instruction 拼成完整文本，按 URL 拆分为交错多模态内容
+    const fullText = title + optionsText + instruction
+    const multimodalContent = buildMultimodalContent(fullText)
+
+    const analysisInput = {
+      messages: [{ role: 'user', content: multimodalContent }],
+      model: visionModel.id,
+      stream: true
+    }
+    const config = { apiKey: platform.apiKey, baseUrl: platform.baseUrl, model: visionModel.id, ...visionModel }
+
+    let tauriFetch: typeof fetch
+    try { const h = await import('@tauri-apps/plugin-http'); tauriFetch = h.fetch as any } catch { tauriFetch = fetch }
+
+    if (!visionModel.jsCode) throw new Error('视觉模型未配置 JavaScript 代码')
+
+    const executableCode = visionModel.jsCode.trim()
+    let processModel: any
+    if (executableCode.startsWith('async function') || executableCode.startsWith('function')) {
+      processModel = new Function('input', 'config', 'fetch', 'abortSignal', `${executableCode}\nreturn processModel;`)(analysisInput, config, tauriFetch, null)
+    } else {
+      processModel = new Function('input', 'config', 'fetch', 'abortSignal', `return (async function processModel(input, config) { ${executableCode} });`)(analysisInput, config, tauriFetch, null)
+    }
+
+    const result = await processModel(analysisInput, config)
+    if (!result) throw new Error('模型未返回有效结果')
+
+    // 启动心跳，防止后端 inactivity 超时
+    if (!heartbeatIntervals.has(requestId)) {
+      const timerId = window.setInterval(() => {
+        const l = requestLogs.value.find(x => x.id === requestId)
+        const currentContent = l?.urlQuestion?.streamingResponse || ''
+        sendModelProgressToBackend(requestId, currentContent)
+      }, 1000)
+      heartbeatIntervals.set(requestId, timerId)
+    }
+
+    let fullResponse = ''
+    if (result[Symbol.asyncIterator]) {
+      for await (const chunk of result) {
+        if (chunk.content) {
+          fullResponse += chunk.content
+          const l = requestLogs.value.find(x => x.id === requestId)
+          if (l?.urlQuestion) l.urlQuestion.streamingResponse = fullResponse
+        }
+      }
+    } else {
+      fullResponse = typeof result === 'string' ? result : JSON.stringify(result)
+    }
+
+    // 停止心跳
+    const timerId = heartbeatIntervals.get(requestId)
+    if (typeof timerId === 'number') { window.clearInterval(timerId); heartbeatIntervals.delete(requestId) }
+
+    const answer = resolveUrlAnswer(fullResponse, optionMap)
+    const l = requestLogs.value.find(x => x.id === requestId)
+    if (l?.urlQuestion) {
+      l.urlQuestion.analysisResult = fullResponse
+      l.urlQuestion.analyzing = false
+    }
+    if (l) l.isModelCalling = false
+
+    if (answer) {
+      await sendModelResponseToBackend(requestId, JSON.stringify({ answer }), true)
+    } else {
+      await sendModelResponseToBackend(requestId, fullResponse, true)
+    }
+  } catch (err: any) {
+    // 停止心跳
+    const timerId = heartbeatIntervals.get(requestId)
+    if (typeof timerId === 'number') { window.clearInterval(timerId); heartbeatIntervals.delete(requestId) }
+    const l = requestLogs.value.find(x => x.id === requestId)
+    if (l?.urlQuestion) {
+      l.urlQuestion.analysisError = err.message || '分析失败'
+      l.urlQuestion.analyzing = false
+    }
+    if (l) l.isModelCalling = false
+    // 通知后端分析失败，让 wait_for_model_response 尽快返回错误
+    await sendModelResponseToBackend(requestId, `错误: ${err.message || '分析失败'}`, false)
+  }
+}
+
+// 当详情面板中的 ImageGenerator 渲染完成时，仅更新展示用的 imageUrl
+const onUrlImageReady = (requestId: string, imageUrl: string) => {
+  const log = requestLogs.value.find(l => l.id === requestId)
+  if (!log?.urlQuestion) return
+  log.urlQuestion.imageUrl = imageUrl
 }
 
 onUnmounted(() => {
@@ -2127,11 +2803,6 @@ onUnmounted(() => {
 .server-action {
   display: flex;
   align-items: center;
-}
-
-.server-card:hover {
-  /* transform: translateY(-2px);
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.12); */
 }
 
 .server-info {
@@ -2771,8 +3442,6 @@ body.resizing {
   width: 20%;
 }
 
-.tab-button.active {}
-
 .tab-button.active::after {
   width: 40%;
 }
@@ -2843,7 +3512,7 @@ body.resizing {
 
 .header-item {
   margin-bottom: 8px;
-  font-family: 'Courier New', monospace;
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
   font-size: 13px;
   color: var(--request-details-headers-text);
 }
@@ -3199,4 +3868,269 @@ body.resizing {
     font-size: 11px;
   }
 }
+/* 多模型对比视图 */
+.multi-model-header {
+  margin-bottom: 16px;
+}
+
+.multi-model-comparison {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* 横向模型切换 tab */
+.multi-model-tabs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.multi-model-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  border-radius: 20px;
+  border: 1px solid var(--request-details-headers-border);
+  background: var(--bg-primary);
+  color: var(--request-details-label-text);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.multi-model-tab:hover {
+  border-color: #6366f1;
+  color: #6366f1;
+}
+
+.multi-model-tab.active {
+  background: #6366f1;
+  border-color: #6366f1;
+  color: #fff;
+}
+
+.multi-model-tab.summary.active {
+  background: #f59e0b;
+  border-color: #f59e0b;
+}
+
+.multi-model-tab.summary:hover {
+  border-color: #f59e0b;
+  color: #f59e0b;
+}
+
+.multi-model-tab.loading {
+  opacity: 0.75;
+}
+
+.model-response-card {
+  border: 1px solid var(--request-details-headers-border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--bg-primary);
+  transition: box-shadow 0.2s;
+}
+
+.model-response-card.is-loading {
+  border-color: var(--request-details-streaming-border, #6366f1);
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.08);
+}
+
+.model-response-card.is-summary {
+  border-color: var(--warning-color, #f59e0b);
+  background: var(--request-details-headers-bg);
+  box-shadow: 0 2px 10px rgba(245, 158, 11, 0.1);
+}
+
+.model-response-card.is-summary .model-response-card-header {
+  background: rgba(245, 158, 11, 0.05);
+  border-bottom-color: var(--warning-color, #f59e0b);
+}
+
+.summary-result-icon {
+  color: var(--warning-color, #f59e0b);
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.summary-tag {
+  background: var(--warning-color, #f59e0b);
+  color: white;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.model-response-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  background: var(--request-details-headers-bg);
+  border-bottom: 1px solid var(--request-details-headers-border);
+  gap: 12px;
+}
+
+.model-response-card-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.card-model-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--request-details-value-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.card-platform-name {
+  font-size: 11px;
+  color: var(--request-details-label-text);
+  opacity: 0.7;
+  white-space: nowrap;
+}
+
+.card-loading-badge {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--request-details-label-text);
+  flex-shrink: 0;
+}
+
+.card-done-badge {
+  font-size: 12px;
+  color: #22c55e;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.model-response-card-body {
+  padding: 14px 16px;
+}
+
+/* Small spinner for card header */
+.loading-spinner-sm {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--request-details-headers-border);
+  border-top-color: #6366f1;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+/* Loading dots for card waiting state */
+.card-waiting {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 60px;
+}
+
+.loading-dots {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.loading-dots span {
+  width: 7px;
+  height: 7px;
+  background: var(--request-details-label-text);
+  border-radius: 50%;
+  opacity: 0.4;
+  animation: dot-pulse 1.2s ease-in-out infinite;
+}
+
+.loading-dots span:nth-child(2) { animation-delay: 0.2s; }
+.loading-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes dot-pulse {
+  0%, 80%, 100% { opacity: 0.4; transform: scale(0.8); }
+  40% { opacity: 1; transform: scale(1.1); }
+}
+
+/* Reasoning collapsible inside card */
+.reasoning-details {
+  margin-top: 12px;
+  border-top: 1px solid var(--request-details-headers-border);
+  padding-top: 10px;
+}
+
+.reasoning-summary {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--request-details-label-text);
+  user-select: none;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.reasoning-summary::-webkit-details-marker { display: none; }
+.reasoning-summary::before { content: '▶'; font-size: 10px; transition: transform 0.2s; }
+details[open] .reasoning-summary::before { transform: rotate(90deg); }
+
+/* URL 题目视觉分析面板 */
+.url-analysis-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.url-image-box {
+  background: var(--bg-tertiary, #f8f9fa);
+  border: 1px solid var(--border-color, #e0e0e0);
+  border-radius: 8px;
+  padding: 12px;
+  text-align: center;
+}
+
+.url-rendered-image {
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+}
+
+.url-analysis-result {
+  min-height: 40px;
+}
+
+.url-analysis-error {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #e74c3c;
+  font-size: 13px;
+}
+
+.retry-btn-sm {
+  padding: 3px 10px;
+  border: 1px solid var(--color-primary, #007acc);
+  background: transparent;
+  color: var(--color-primary, #007acc);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  white-space: nowrap;
+  transition: all 0.15s;
+}
+
+.retry-btn-sm:hover { background: var(--color-primary, #007acc); color: white; }
+
 </style>

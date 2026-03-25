@@ -35,6 +35,7 @@
     "katex": "^0.16.25",
     "mammoth": "^1.11.0",
     "marked": "^16.4.1",
+    "markstream-vue": "^0.0.10-beta.1",
     "officeparser": "^5.2.2",
     "pdfjs-dist": "^5.4.394",
     "vue": "^3.5.13",

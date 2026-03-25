@@ -1,0 +1,569 @@
+/* ============================================================
+ * 通用弹窗样式 - 供各弹窗组件复用
+ * ============================================================ */
+
+/* --- 遮罩层 --- */
+.dialog-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  overflow: hidden;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  animation: overlay-fade-in 160ms ease-out both;
+}
+
+/* --- 弹窗容器 --- */
+.dialog-panel {
+  background: var(--platform-config-dialog-bg);
+  border: 1px solid var(--platform-config-dialog-border);
+  border-radius: 12px;
+  width: 90%;
+  max-width: 600px;
+  max-height: 90vh;
+  overflow: clip;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  transform-origin: center center;
+  backface-visibility: hidden;
+  animation: popup-in 180ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+/* --- 弹窗头部 --- */
+.dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 24px;
+  position: relative;
+}
+
+.dialog-header::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 24px;
+  right: 24px;
+  height: 1px;
+  background: var(--platform-config-dialog-header-border);
+}
+
+.dialog-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--platform-config-dialog-title-text);
+  margin: 0;
+}
+
+/* --- 弹窗主体 --- */
+.dialog-body {
+  padding: 24px;
+  max-height: calc(90vh - 140px);
+  overflow-y: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.dialog-body::-webkit-scrollbar {
+  width: 0 !important;
+  display: none !important;
+}
+
+/* --- 关闭按钮 --- */
+.dialog-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px;
+  color: var(--platform-config-dialog-close-text);
+  border-radius: 4px;
+  transition: all 0.2s ease;
+}
+
+.dialog-close:hover {
+  background: var(--platform-config-dialog-close-hover-bg);
+  color: var(--platform-config-dialog-close-hover-text);
+}
+
+/* --- 返回按钮 --- */
+.btn-back {
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: none;
+  color: #979797;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: color 0.15s ease;
+  flex-shrink: 0;
+  line-height: 0;
+  padding: 0;
+}
+
+.btn-back:hover {
+  color: var(--platform-config-dialog-title-text, #2d3748);
+  background: var(--platform-config-toggle-button-hover-bg);
+  border-color: var(--platform-config-toggle-button-hover-border);
+}
+
+.btn-back svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  display: block;
+}
+
+/* --- 确认按钮 --- */
+.btn-confirm {
+  background: #F8B62B;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  color: #fff;
+  padding: 6px 14px;
+  border-radius: 999px;
+  transition: opacity 0.15s ease;
+  flex-shrink: 0;
+}
+
+.btn-confirm:hover {
+  opacity: 0.85;
+}
+
+/* ============================================================
+ * 表单样式
+ * ============================================================ */
+.form-group {
+  margin-bottom: 20px;
+}
+
+.form-label {
+  display: block;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--platform-config-form-label-text);
+  margin-bottom: 6px;
+}
+
+.form-input,
+.form-textarea {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font-size: 14px;
+  color: var(--text-primary);
+  background-color: var(--form-input-bg, #F7F7F7);
+  transition: border-color 0.2s ease, background-color 0.2s ease;
+}
+
+.form-textarea {
+  resize: none;
+  min-height: 80px;
+}
+
+.form-input:hover,
+.form-textarea:hover {
+  background-color: var(--form-input-hover-bg, #f0f0f0);
+  border-color: var(--form-input-hover-border, transparent);
+}
+
+.form-input:focus,
+.form-textarea:focus {
+  outline: none;
+  background-color: var(--form-input-bg, #F7F7F7);
+  border-color: #e3e3e3;
+}
+
+/* ============================================================
+ * 市场广场（Marketplace）样式
+ * ============================================================ */
+.marketplace-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: var(--platform-config-overlay-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  overflow: hidden;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  animation: overlay-fade-in 160ms ease-out both;
+}
+
+.marketplace-panel {
+  background: var(--platform-config-dialog-bg);
+  border: 1px solid var(--platform-config-dialog-border);
+  border-radius: 12px;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+  width: 92vw;
+  max-width: 1100px;
+  max-height: 90vh;
+  overflow: hidden;
+  transform-origin: center center;
+  backface-visibility: hidden;
+  animation: popup-in 180ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+.marketplace-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--platform-config-dialog-header-border);
+}
+
+.marketplace-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.marketplace-body {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+  height: calc(90vh - 80px);
+}
+
+.marketplace-left,
+.marketplace-right {
+  padding: 16px;
+  overflow-y: auto;
+}
+
+.marketplace-left::-webkit-scrollbar,
+.marketplace-right::-webkit-scrollbar {
+  width: 0;
+  display: none;
+}
+
+.marketplace-list-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--platform-config-icon-category-title-text);
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.marketplace-placeholder {
+  border: 1px dashed var(--platform-config-icon-option-border);
+  border-radius: 8px;
+  padding: 16px;
+  text-align: center;
+  color: var(--text-secondary);
+}
+
+/* --- 平台列表项 --- */
+.platform-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.platform-item {
+  border: 1px solid var(--platform-config-icon-option-border);
+  border-radius: 8px;
+  padding: 10px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  background: var(--platform-config-icon-option-bg);
+}
+
+.platform-item:hover,
+.platform-item.active {
+  border-color: var(--platform-config-icon-option-hover-border);
+  background: var(--platform-config-icon-option-hover-bg);
+}
+
+.platform-item-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.platform-item-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.platform-item-icon img {
+  width: 40px;
+  height: 40px;
+  max-width: 40px;
+  max-height: 40px;
+  object-fit: contain;
+  border-radius: 6px;
+}
+
+.icon-fallback-small {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--platform-config-icon-fallback-text);
+  border: 2px solid var(--platform-config-icon-display-border);
+}
+
+.platform-item-info .platform-name {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.platform-item-info .platform-desc {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* --- 自定义/模型卡片 --- */
+.custom-item {
+  border: 1px solid var(--platform-config-icon-option-border);
+  border-radius: 8px;
+  padding: 12px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  background: var(--platform-config-icon-option-bg);
+}
+
+.custom-item:hover {
+  border-color: var(--platform-config-icon-option-hover-border);
+  background: var(--platform-config-icon-option-hover-bg);
+}
+
+.model-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.model-name {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.model-tag {
+  font-size: 12px;
+  padding: 2px 6px;
+  border-radius: 10px;
+  background: var(--platform-config-icon-section-title-bg);
+}
+
+.model-desc {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* ============================================================
+ * 图标选择器样式
+ * ============================================================ */
+
+/* 大图标预览区 */
+.icon-display-section {
+  text-align: center;
+  margin-bottom: 24px;
+  padding: 20px;
+  position: relative;
+}
+
+.icon-preview-large {
+  width: 80px;
+  height: 80px;
+  margin: 0 auto 16px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--platform-config-icon-display-bg);
+  border: 2px solid var(--platform-config-icon-display-border);
+  cursor: pointer;
+  position: relative;
+  transition: border-color 0.15s ease;
+}
+
+.icon-expand-badge {
+  position: absolute;
+  bottom: -6px;
+  right: -6px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--platform-config-dialog-bg);
+  border: 1px solid var(--platform-config-icon-display-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--platform-config-dialog-title-text);
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.icon-preview-large:hover .icon-expand-badge {
+  background: var(--platform-config-toggle-button-hover-bg);
+  border-color: var(--platform-config-toggle-button-hover-border);
+}
+
+.toggle-arrow {
+  transition: transform 0.2s ease;
+}
+
+.toggle-arrow.rotated {
+  transform: rotate(180deg);
+}
+
+.icon-image-large {
+  width: 60px;
+  height: 60px;
+  object-fit: contain;
+  border-radius: 8px;
+}
+
+.icon-emoji-large {
+  font-size: 48px;
+  line-height: 1;
+}
+
+.icon-fallback-large {
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--platform-config-icon-fallback-text);
+  background: linear-gradient(135deg, #667eea, #764ba2);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* 图标选择器浮层（Teleport 到 body，需用全局选择器） */
+.icon-picker-content {
+  position: fixed;
+  width: min(520px, 80vw);
+  z-index: 99999999999;
+  background: var(--platform-config-icon-picker-content-bg, #fff);
+  border: 1px solid var(--platform-config-icon-picker-content-border, #e2e8f0);
+  border-radius: 8px;
+  padding: 16px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  max-height: 50vh;
+  overflow-y: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  animation: picker-expand 0.2s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+.icon-picker-content::-webkit-scrollbar {
+  width: 0 !important;
+  display: none !important;
+}
+
+.icon-category {
+  margin-bottom: 16px;
+}
+
+.icon-category:last-child {
+  margin-bottom: 0;
+}
+
+.icon-category h5 {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--platform-config-icon-category-title-text);
+  margin: 0 0 8px 0;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.icon-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(50px, 1fr));
+  gap: 8px;
+  padding: 4px;
+}
+
+.icon-option {
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--platform-config-icon-option-border, #e2e8f0);
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  background: var(--platform-config-icon-option-bg, #fff);
+}
+
+.icon-option:hover {
+  border-color: var(--platform-config-icon-option-hover-border);
+  background: var(--platform-config-icon-option-hover-bg);
+}
+
+.icon-option.active {
+  border-color: var(--platform-config-icon-option-active-border);
+}
+
+.icon-option-image {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+}
+
+.emoji-option {
+  font-size: 18px;
+}
+
+.icon-error {
+  color: var(--platform-config-error-text);
+  font-size: 12px;
+  margin-bottom: 8px;
+  padding: 8px;
+  background: var(--platform-config-error-bg);
+  border-radius: 4px;
+}
+
+/* ============================================================
+ * 动画
+ * ============================================================ */
+@keyframes popup-in {
+  from {
+    transform: translateY(10px) scale(0.98);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes overlay-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes picker-expand {
+  from {
+    opacity: 0;
+    transform: scaleY(0.9) translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: scaleY(1) translateY(0);
+  }
+}

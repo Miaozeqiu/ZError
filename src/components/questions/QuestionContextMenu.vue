@@ -53,20 +53,20 @@ const menuItems = computed<MenuItem[]>(() => {
         id: 'batch-copy',
         label: '批量复制',
         action: 'batch-copy',
-        icon: { type: 'emoji', content: '📋' }
+        icon: { type: 'emoji', content: '' }
       },
       {
         id: 'batch-cut',
         label: '批量剪切',
         action: 'batch-cut',
-        icon: { type: 'emoji', content: '✂️' }
+        icon: { type: 'emoji', content: '' }
       },
       {
         id: 'paste',
         label: '粘贴',
         action: 'paste',
         disabled: !props.canPaste,
-        icon: { type: 'emoji', content: '📄' }
+        icon: { type: 'emoji', content: '' }
       },
       { type: 'divider' },
       {
@@ -74,7 +74,7 @@ const menuItems = computed<MenuItem[]>(() => {
         label: '批量删除',
         action: 'batch-delete',
         danger: true,
-        icon: { type: 'emoji', content: '🗑️' }
+        icon: { type: 'emoji', content: '' }
       }
     )
   } else {
@@ -85,26 +85,26 @@ const menuItems = computed<MenuItem[]>(() => {
           id: 'copy-question',
           label: '复制题目',
           action: 'copy-question',
-          icon: { type: 'emoji', content: '📝' }
+          icon: { type: 'emoji', content: '' }
         },
         {
           id: 'copy-answer',
           label: '复制答案',
           action: 'copy-answer',
-          icon: { type: 'emoji', content: '💡' }
+          icon: { type: 'emoji', content: '' }
         },
         { type: 'divider' },
         {
           id: 'copy',
           label: '复制',
           action: 'copy',
-          icon: { type: 'emoji', content: '📋' }
+          icon: { type: 'emoji', content: '' }
         },
         {
           id: 'cut',
           label: '剪切',
           action: 'cut',
-          icon: { type: 'emoji', content: '✂️' }
+          icon: { type: 'emoji', content: '' }
         }
       )
     }
@@ -114,7 +114,7 @@ const menuItems = computed<MenuItem[]>(() => {
       label: '粘贴',
       action: 'paste',
       disabled: !props.canPaste,
-      icon: { type: 'emoji', content: '📄' }
+      icon: { type: 'emoji', content: '' }
     })
     
     if (props.hasSelectedQuestion) {
@@ -125,7 +125,7 @@ const menuItems = computed<MenuItem[]>(() => {
           label: '删除题目',
           action: 'delete',
           danger: true,
-          icon: { type: 'emoji', content: '🗑️' }
+          icon: { type: 'emoji', content: '' }
         }
       )
     }

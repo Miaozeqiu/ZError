@@ -1,15 +1,20 @@
 <template>
   <Teleport to="body">
     <div v-if="show" class="dialog-overlay" @click="handleOverlayClick">
-      <div class="dialog-content" @click.stop>
+      <div class="dialog-panel port-config-panel" @click.stop>
         <div class="dialog-header">
-          <h3 class="dialog-title">配置端口</h3>
-
+          <button class="btn-back" @click="$emit('close')" title="取消">
+            <svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" width="18" height="18">
+              <path d="M768 96c19.2-19.2 19.2-51.2 0-70.4-19.2-19.2-51.2-19.2-70.4 0l-448 448c-19.2 19.2-19.2 51.2 0 70.4l448 448c19.2 19.2 51.2 19.2 70.4 0 19.2-19.2 19.2-51.2 0-70.4L358.4 512l409.6-416z" fill="currentColor"/>
+            </svg>
+          </button>
+          <h3 class="dialog-title" style="visibility:hidden">配置端口</h3>
+          <button class="btn-confirm" @click="handleConfirm" :disabled="!isValid">确认</button>
         </div>
-        
+
         <div class="dialog-body">
           <div class="form-group">
-            <label for="port-input">端口号 (1-65535):</label>
+            <label class="form-label">端口号 (1-65535)</label>
             <input
               id="port-input"
               v-model="portValue"
@@ -23,11 +28,6 @@
             />
             <div v-if="error" class="error-message">{{ error }}</div>
           </div>
-        </div>
-        
-        <div class="dialog-actions">
-          <button class="btn btn-secondary" @click="$emit('close')">取消</button>
-          <button class="btn btn-primary" @click="handleConfirm" :disabled="!isValid">确认</button>
         </div>
       </div>
     </div>
@@ -78,30 +78,16 @@ const handleConfirm = () => {
 }
 
 const handleOverlayClick = (event: MouseEvent) => {
-  // 检查点击是否来自输入框或其相关操作
   const target = event.target as HTMLElement
-  if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.closest('input') || target.closest('textarea')) {
-    return
-  }
-  
-  // 使用 setTimeout 延迟检查文本选择状态，避免时序问题
+  if (target.closest('input')) return
   setTimeout(() => {
-    const selection = window.getSelection()
-    if (selection && selection.toString().length > 0) {
-      return
-    }
-    
-    // 检查是否有任何输入框处于焦点状态
-    const activeElement = document.activeElement
-    if (activeElement && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA')) {
-      return
-    }
-    
+    if (window.getSelection()?.toString()) return
+    const active = document.activeElement
+    if (active?.tagName === 'INPUT') return
     emit('close')
   }, 0)
 }
 
-// 当对话框显示时，设置初始值并聚焦输入框
 watch(() => props.show, async (show) => {
   if (show) {
     portValue.value = (props.currentPort ?? 8080).toString()
@@ -112,79 +98,16 @@ watch(() => props.show, async (show) => {
   }
 })
 
-// 监听输入变化，实时验证
 watch(portValue, validatePort)
 </script>
 
+<style>
+@import '../../styles/dialog.css';
+</style>
+
 <style scoped>
-.dialog-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 9999;
-}
-
-.dialog-content {
-  background: var(--bg-secondary);
-  border-radius: 8px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
-  width: 400px;
-  max-width: 90vw;
-  max-height: 90vh;
-  overflow: hidden;
-}
-
-.dialog-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--border-primary);
-}
-
-.dialog-title {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-
-
-
-
-.dialog-body {
-  padding: 20px;
-}
-
-.form-group {
-  margin-bottom: 16px;
-}
-
-.form-group label {
-  display: block;
-  margin-bottom: 8px;
-  font-weight: 500;
-  color: var(--text-primary);
-}
-
-.form-input {
-  box-sizing: border-box;
-  width: 100%;
-  padding: 8px 12px;
-  border: 1px solid var(--border-primary);
-  border-radius: 4px;
-  background: var(--bg-secondary);
-  color: var(--text-primary);
-  font-size: 14px;
-  transition: border-color 0.2s;
-  -moz-appearance: textfield;
+.port-config-panel {
+  max-width: 400px;
 }
 
 .form-input::-webkit-outer-spin-button,
@@ -193,59 +116,18 @@ watch(portValue, validatePort)
   margin: 0;
 }
 
-.form-input:focus {
-  outline: none;
-  border-color: var(--color-primary);
+.form-input {
+  -moz-appearance: textfield;
 }
 
 .error-message {
-  margin-top: 8px;
-  color: #e53e3e;
+  margin-top: 6px;
+  color: var(--color-error);
   font-size: 12px;
 }
 
-.dialog-actions {
-  display: flex;
-  gap: 12px;
-  padding: 16px 20px;
-  border-top: 1px solid var(--border-primary);
-  justify-content: flex-end;
-}
-
-.btn {
-  padding: 8px 16px;
-  border: none;
-  border-radius: 4px;
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.btn:disabled {
+.btn-confirm:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
-
-.btn-secondary {
-  background: var(--dialog-button-secondary-bg);
-  color: var(--dialog-button-secondary-text);
-  border: 1px solid var(--dialog-button-secondary-border);
-}
-
-.btn-secondary:hover:not(:disabled) {
-  background: var(--dialog-button-secondary-hover-bg);
-  color: var(--dialog-button-secondary-hover-text);
-}
-
-.btn-primary {
-  background: var(--dialog-button-primary-bg);
-  color: var(--dialog-button-primary-text);
-}
-
-.btn-primary:hover {
-  background: var(--dialog-button-primary-hover);
-}
-
-
 </style>

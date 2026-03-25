@@ -37,6 +37,7 @@ futures-util = "0.3.31"
 rusqlite = { version = "0.32", features = ["bundled"] }
 regex = "1.0"
 reqwest = { version = "0.12", features = ["json"] }
+bytes = "1"
 base64 = "0.22"
 urlencoding = "2.1"
 url = "2.5"
@@ -44,6 +45,7 @@ calamine = "0.22"
 zip = "0.6"
 quick-xml = "0.31"
 jieba-rs = "0.8.1"
+strsim = "0.10"
 
 [target.'cfg(windows)'.dependencies]
 runas = "1.0"

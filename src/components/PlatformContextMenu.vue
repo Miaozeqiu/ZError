@@ -24,14 +24,19 @@ const props = defineProps<Props>()
 
 const emit = defineEmits<{
   'edit-platform': []
+  'duplicate-platform': []
   'add-model': []
   'delete-platform': []
 }>()
 
 // 定义菜单项
 const menuItems = computed<MenuItem[]>(() => {
-  const items: MenuItem[] = [
-    {
+  const isRemote = props.platform?.isRemote
+
+  const items: MenuItem[] = []
+
+  if (!isRemote) {
+    items.push({
       id: 'edit-platform',
       label: '编辑平台',
       action: 'edit-platform',
@@ -42,28 +47,34 @@ const menuItems = computed<MenuItem[]>(() => {
           { d: 'M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z' }
         ]
       }
-    },
-    { type: 'divider' },
-    {
-      id: 'add-model',
-      label: '添加模型',
-      action: 'add-model',
+    })
+    items.push({
+      id: 'duplicate-platform',
+      label: '复制平台',
+      action: 'duplicate-platform',
       icon: {
         type: 'svg',
-        paths: [
-          { d: 'M12 5v14' },
-          { d: 'M5 12h14' }
-        ]
+        rects: [{ x: 9, y: 9, width: 13, height: 13, rx: 2, ry: 2 }],
+        paths: [{ d: 'M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1' }]
       }
-    }
-  ]
+    })
+    items.push({ type: 'divider' })
+  }
 
-  // 只有非预定义平台才显示删除选项
-  // 预定义平台ID列表
-  const predefinedPlatformIds = ['siliconflow', 'aliyun-bailian']
-  const isBuiltIn = props.platform && predefinedPlatformIds.includes(props.platform.id)
-  
-  if (!isBuiltIn) {
+  items.push({
+    id: 'add-model',
+    label: '添加模型',
+    action: 'add-model',
+    icon: {
+      type: 'svg',
+      paths: [
+        { d: 'M12 5v14' },
+        { d: 'M5 12h14' }
+      ]
+    }
+  })
+
+  if (!isRemote) {
     items.push(
       { type: 'divider' },
       {
@@ -88,6 +99,9 @@ const handleItemClick = (item: MenuItem) => {
   switch (item.action) {
     case 'edit-platform':
       emit('edit-platform')
+      break
+    case 'duplicate-platform':
+      emit('duplicate-platform')
       break
     case 'add-model':
       emit('add-model')

@@ -56,6 +56,16 @@
         }
       ]
     },
+    "opener:allow-open-path",
+    {
+      "identifier": "opener:allow-open-path",
+      "allow": [
+        { "path": "$APPLOCALDATA/**" },
+        { "path": "$APPDATA/**" },
+        { "path": "$APPCONFIG/**" },
+        { "path": "$APPCACHE/**" }
+      ]
+    },
     "sql:default",
     "sql:allow-load",
     "sql:allow-execute",
@@ -69,9 +79,14 @@
         {
           "url": "https://**"
         },
-
         {
           "url": "http://**"
+        },
+        {
+          "url": "http://*:*"
+        },
+        {
+          "url": "https://*:*"
         },
 
         {

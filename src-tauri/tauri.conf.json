@@ -4,10 +4,10 @@
   "version": "2.1.0",
   "identifier": "com.zerror.app",
   "build": {
-    "beforeDevCommand": "bun run dev",
+    "beforeDevCommand": "(cd web-app && bun run dev) & bun run dev",
     "devUrl": "http://localhost:1420",
     "frontendDist": "../dist",
-    "beforeBuildCommand": "npx vite build"
+    "beforeBuildCommand": "cd web-app && bun install && bun run build && cd ..  && npx vite build"
   },
   "app": {
     "windows": [],
@@ -30,8 +30,8 @@
     ],
     "resources": [
       "icons/**/*",
-      "../src/assets/images/**/*",
-      "../public/assets/images/**/*"
+      "../public/assets/images/**/*",
+      "web/**/*"
     ],
     "windows": {
       "wix": {

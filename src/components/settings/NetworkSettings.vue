@@ -1,6 +1,5 @@
 <template>
   <div class="network-settings">
-    <h2 class="section-title">网络设置</h2>
     
     <div class="setting-item">
       <div class="setting-info">
@@ -22,6 +21,7 @@
         </div>
       </div>
     </div>
+
 
     <div class="setting-item">
       <div class="setting-info">
@@ -119,9 +119,6 @@ const saveNetworkSettings = async () => {
 </script>
 
 <style scoped>
-.network-settings {
-  /* 继承父组件的样式 */
-}
 
 .section-title {
   font-size: 20px;
@@ -155,7 +152,7 @@ const saveNetworkSettings = async () => {
 }
 
 .setting-description {
-  font-size: 14px;
+  font-size: 12px;
   color: var(--text-secondary);
   margin: 0;
   line-height: 1.5;

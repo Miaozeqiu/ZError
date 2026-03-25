@@ -3,20 +3,21 @@
     <!-- 左侧平台列表 -->
     <div class="platform-sidebar">
       <div class="sidebar-header">
-        <h3 class="sidebar-title">AI 平台管理</h3>
-        <div class="header-actions">
-          <button class="btn btn-small btn-secondary help-button" @click="openModelConfigDocs" title="查看模型配置文档">
+        <div class="sidebar-title-row">
+          <h3 class="sidebar-title">AI 平台管理</h3>
+          <button class="icon-action-btn icon-action-btn--ghost icon-action-btn--sm" @click="openModelConfigDocs" title="查看模型配置文档">
             <svg width="14" height="14" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
               <path d="M463.99957 784.352211c0 26.509985 21.490445 48.00043 48.00043 48.00043s48.00043-21.490445 48.00043-48.00043c0-26.509985-21.490445-48.00043-48.00043-48.00043S463.99957 757.842226 463.99957 784.352211z" fill="currentColor"></path>
               <path d="M512 960c-247.039484 0-448-200.960516-448-448S264.960516 64 512 64 960 264.960516 960 512 759.039484 960 512 960zM512 128.287273c-211.584464 0-383.712727 172.128262-383.712727 383.712727 0 211.551781 172.128262 383.712727 383.712727 383.712727 211.551781 0 383.712727-172.159226 383.712727-383.712727C895.712727 300.415536 723.551781 128.287273 512 128.287273z" fill="currentColor"></path>
               <path d="M512 673.695256c-17.664722 0-32.00086-14.336138-32.00086-31.99914l0-54.112297c0-52.352533 39.999785-92.352318 75.32751-127.647359 25.887273-25.919957 52.67249-52.67249 52.67249-74.016718 0-53.343368-43.07206-96.735385-95.99914-96.735385-53.823303 0-95.99914 41.535923-95.99914 94.559333 0 17.664722-14.336138 31.99914-32.00086 31.99914s-32.00086-14.336138-32.00086-31.99914c0-87.423948 71.775299-158.559333 160.00086-158.559333s160.00086 72.095256 160.00086 160.735385c0 47.904099-36.32028 84.191695-71.424378 119.295794-27.839699 27.776052-56.575622 56.511974-56.575622 82.3356l0 54.112297C544.00086 659.328155 529.664722 673.695256 512 673.695256z" fill="currentColor"></path>
             </svg>
           </button>
-          <button class="btn btn-small btn-primary" @click="showAddPlatformDialog = true">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M12 5v14m-7-7h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </div>
+        <div class="header-actions">
+          <button class="icon-action-btn icon-action-btn--add icon-action-btn--sm" @click="showAddPlatformDialog = true" title="添加平台">
+            <svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" width="16" height="16">
+              <path d="M544.256 480.256h307.2a32.256 32.256 0 0 1 0 64h-307.2v307.2a32.256 32.256 0 0 1-64 0v-307.2h-307.2a32.256 32.256 0 1 1 0-64h307.2v-307.2a32.256 32.256 0 1 1 64 0z" fill="currentColor"/>
             </svg>
-            添加
           </button>
         </div>
       </div>
@@ -30,16 +31,16 @@
           @click="selectPlatform(platform)"
           @contextmenu="showPlatformMenu($event, platform)"
         >
-          <div class="platform-icon">
+          <div class="platform-icon" :class="{ 'platform-icon--bg': needsIconBg(platform.icon) }">
             <!-- 如果是emoji，直接显示 -->
-            <div 
+            <div
               v-if="platform.icon && isEmoji(platform.icon)"
               class="icon-emoji"
             >
               {{ platform.icon }}
             </div>
             <!-- 如果是图片URL，使用img标签 -->
-            <img 
+            <img
               v-else-if="platform.icon && !isEmoji(platform.icon) && !iconLoadErrors[platform.id]"
               :src="platformIconUrls[platform.id]"
               :alt="platform.displayName"
@@ -47,41 +48,84 @@
               class="icon-image"
             />
             <!-- 否则显示文字回退 -->
-            <div 
+            <div
               v-else
               class="icon-fallback"
             >
               {{ getPlatformInitials(platform.displayName) }}
             </div>
+            <!-- 选中模型数量 badge -->
+            <span
+              v-if="getPlatformSelectedCount(platform) > 0 && selectedCategory === 'text'"
+              class="platform-selected-badge platform-selected-badge--count"
+            >{{ getPlatformSelectedCount(platform) }}</span>
+            <span
+              v-else-if="getPlatformSelectedCount(platform) > 0"
+              class="platform-selected-badge"
+            ></span>
           </div>
           <div class="platform-info">
             <h4 class="platform-name">{{ platform.displayName }}</h4>
           </div>
-          <!-- 启用开关 - 右侧 -->
-          <Toggle
-            v-model="platform.enabled"
-            variant="platform"
-            size="medium"
-            @change="updatePlatformEnabled"
-            @click.stop
-          />
+          <div class="platform-tags">
+            <span v-if="isPlatformSelectedForCategory(platform, 'text')" class="platform-tag">文本</span>
+            <span v-if="isPlatformSelectedForCategory(platform, 'vision')" class="platform-tag">视觉</span>
+            <span v-if="isPlatformSelectedForCategory(platform, 'summary')" class="platform-tag">总结</span>
+          </div>
+          <!-- 启用开关已移至详情面板 -->
         </div>
       </div>
     </div>
 
     <!-- 右侧平台详情 -->
     <div class="platform-detail">
-      <div v-if="selectedPlatform" class="detail-content">
+      <div v-if="selectedPlatform" class="detail-scroll-wrap" ref="detailScrollWrap">
+        <div class="detail-content" ref="detailContent" @scroll="onDetailScroll">
         <!-- 平台基本信息 -->
         <div class="detail-section">
           <div class="section-header">
-          <div class="header-actions">
-            <!-- <button class="btn btn-small btn-primary" @click="showMarkdownDemo = true">
-              Markdown 演示
-            </button> -->
+            <div class="platform-title-row">
+              <h4 class="subsection-title">{{ selectedPlatform.displayName }}</h4>
+              <button
+                v-if="selectedPlatform.url"
+                class="platform-link-btn"
+                @click="openPlatformUrl(selectedPlatform.url)"
+                title="打开平台官网"
+              >
+                <svg t="1745846730970" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" width="11" height="11">
+                  <path d="M359.86136 0.00382a51.199909 51.199909 0 0 1 0 102.399818H153.599727a51.199909 51.199909 0 0 0-51.199909 51.199909V870.400273a51.199909 51.199909 0 0 0 51.199909 51.199909h716.796726a51.199909 51.199909 0 0 0 51.199909-51.199909V665.600637a51.199909 51.199909 0 0 1 102.399818 0v204.799636a153.599727 153.599727 0 0 1-153.599727 153.599727H153.599727A153.599727 153.599727 0 0 1 0 870.400273V153.603547A153.599727 153.599727 0 0 1 153.599727 0.00382h206.261633z m620.980897 0.584999h2.193996a29.256948 29.256948 0 0 1 5.119991 1.243998h0.730998a24.209957 24.209957 0 0 1 5.85199 2.559995 56.2469 56.2469 0 0 1 5.85099 3.071995l2.193996 1.315997a27.793951 27.793951 0 0 1 5.851989 5.412991l-0.731998-1.243998 0.731998 0.731999v0.511999l4.387993 4.168992 1.462997 2.193996a84.113851 84.113851 0 0 1 7.314987 13.969976v0.512999c0.730999 2.193996 0.730999 4.460992 1.461997 6.728988v2.119996a25.892954 25.892954 0 0 1 0.731999 7.314987v332.799408a51.199909 51.199909 0 0 1-102.399818 0V174.813509l-373.759336 373.393337a51.199909 51.199909 0 0 1-70.215875 1.900996l-2.193996-1.900996a52.149907 52.149907 0 0 1 0-72.411872l373.758336-373.392336H639.997863a51.199909 51.199909 0 0 1-51.199909-48.639914v-2.559995a51.199909 51.199909 0 0 1 51.199909-51.199909h332.798408a41.105927 41.105927 0 0 1 7.313987 0.584999h0.731999z m0 0" fill="currentColor"/>
+                </svg>
+              </button>
+              <button
+                v-if="selectedPlatform.inviteUrl"
+                class="platform-link-btn platform-invite-btn"
+                @click="openPlatformUrl(selectedPlatform.inviteUrl)"
+                :title="selectedPlatform.inviteText || '邀请链接'"
+              >
+                <span class="invite-gift-wrap">
+                  <!-- 盒身（下半部分） -->
+                  <svg class="invite-gift-icon gift-body" t="1774416753013" viewBox="0 0 1132 1024" xmlns="http://www.w3.org/2000/svg" width="20" height="20">
+                    <path d="M142.335165 475.823312h848.049308c6.557851 0 11.923365 5.365514 11.923365 11.923365V1012.076635c0 6.557851-5.365514 11.923365-11.923365 11.923365h-848.049308c-6.557851 0-11.923365-5.365514-11.923365-11.923365V487.746677c0-6.557851 5.365514-11.923365 11.923365-11.923365z" fill="#FF6174"/>
+                    <path d="M491.83879 479.99649h149.042058v544.00351H491.83879z" fill="#FFB82C"/>
+                    <path d="M491.83879 141.521977h149.042058V1024H491.83879z" fill="#FFCA3E"/>
+                  </svg>
+                  <!-- 盖子（上半部分） -->
+                  <svg class="invite-gift-icon gift-lid" t="1774416753013" viewBox="0 0 1132 1024" xmlns="http://www.w3.org/2000/svg" width="20" height="20">
+                    <path d="M17.885047 226.624992h1096.949544c9.836776 0 17.885047 8.048271 17.885047 17.885047v213.428226c0 9.836776-8.048271 17.885047-17.885047 17.885047H17.885047c-9.836776 0-17.885047-8.048271-17.885047-17.885047V244.510039c0-9.836776 8.048271-17.885047 17.885047-17.885047z" fill="#FF505D"/>
+                    <path d="M258.438928 160.59936S128.474254 135.560294 102.540936 126.617771l45.904953 66.025631L65.578505 225.581697s193.903717 35.919136 402.860682 4.918388L367.835798 184.893215l-109.39687-24.293855zM351.888298 3.359989c-66.025632-11.774323-97.473506 11.178154-97.473506 11.178155l-18.034089 114.017174s46.650164-31.745958 101.944768-18.034089c71.987314 18.034089 162.008717 119.978856 162.008717 119.978856v-77.948996S441.313533 19.307489 351.888298 3.359989zM989.639263 192.643402l46.053996-66.025631c-25.933318 8.942523-155.897992 33.981589-155.897993 33.981589L770.398396 184.893215l-100.603389 45.755912c208.956965 31.000748 402.860682-5.06743 402.860682-5.06743L989.639263 192.643402zM901.704449 128.555318L883.819402 14.687186s-31.447874-22.952477-97.473506-11.178155C696.920662 19.456531 637.900007 152.700131 637.900007 152.700131v77.948996s89.872361-101.944767 161.859674-119.978856c55.145561-13.860911 101.944767 17.885047 101.944768 17.885047z" fill="#FFCA3E"/>
+                    <path d="M387.211266 127.959149c-64.982337-37.558599-142.186123-24.890024-150.681521 0.745211-9.38965 28.168949 36.664346 58.126402 103.286146 93.002244 43.818365 22.952477 160.667338 8.942523 160.667339 8.942523s-48.289627-65.280421-113.271964-102.689978zM901.704449 128.555318c-8.495397-25.635234-85.699183-38.303809-150.681521-0.745211s-113.271964 102.689978-113.271963 102.689978 116.998015 14.009953 160.667338-8.942523c66.6218-34.726799 112.675796-64.833295 103.286146-93.002244z" fill="#FFB82C"/>
+                  </svg>
+                </span>
+                <span v-if="selectedPlatform.inviteText" class="invite-text">{{ selectedPlatform.inviteText }}</span>
+              </button>
+            </div>
+            <Toggle
+              v-model="selectedPlatform.enabled"
+              variant="platform"
+              size="medium"
+              @change="updatePlatformEnabled"
+            />
           </div>
-        </div>
-          <p class="platform-description">{{ selectedPlatform.description }}</p>
         </div>
 
         <!-- API Key 配置 -->
@@ -161,24 +205,37 @@
             <div class="header-actions">
               <!-- 模型分类筛选 -->
               <ModelCategorySwitch v-model="selectedCategory" />
-              <button class="btn btn-small btn-primary" @click="addNewModel">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M12 5v14m-7-7h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              <!-- 添加模型按钮 -->
+              <button class="icon-action-btn icon-action-btn--add icon-action-btn--model-add" @click="openQuickAdd" title="添加模型">
+                <svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" width="20" height="20">
+                  <path d="M544.256 480.256h307.2a32.256 32.256 0 0 1 0 64h-307.2v307.2a32.256 32.256 0 0 1-64 0v-307.2h-307.2a32.256 32.256 0 1 1 0-64h307.2v-307.2a32.256 32.256 0 1 1 64 0z" fill="currentColor"/>
                 </svg>
-                添加模型
               </button>
             </div>
           </div>
           
+          <div v-if="selectedCategory !== 'vision'" class="model-list-hint">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4m0 4h.01"/></svg>
+            <template v-if="selectedCategory === 'text'">可多选，最多 5 个（已选 {{ currentMultiModels.length }}/5）</template>
+            <template v-else-if="selectedCategory === 'summary'">只能选择 1 个（已选 {{ currentMultiModels.length }}/1）</template>
+          </div>
           <div class="model-list">
             <div 
               v-for="model in filteredModels" 
               :key="model.id"
               class="model-item"
-              :class="{ active: currentModel?.id === model.id }"
+              :class="{ 
+                active: selectedCategory === 'vision' 
+                  ? (currentVisionModel?.id === model.id)
+                  : (selectedCategory === 'summary' ? isSummaryModelSelected(model.id) : isTextModelSelected(model.id))
+              }"
               @click="selectModel(model)"
               @contextmenu.prevent="showModelContextMenuHandler($event, model)"
             >
+              <div class="model-icon-wrap">
+                <img v-if="getModelIcon(model)" :src="getModelIcon(model)" :alt="model.displayName" class="model-icon-img" />
+                <div v-else class="model-icon-fallback">{{ (model.displayName || model.name).charAt(0).toUpperCase() }}</div>
+              </div>
               <div class="model-info">
                 <div class="model-header">
                   <h5 class="model-name">{{ model.displayName }}</h5>
@@ -187,18 +244,24 @@
                 
               </div>
               <div class="model-actions">
-                <div v-if="currentModel && currentModel.id === model.id" class="model-selected">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
-                  </svg>
+                <div 
+                  v-if="selectedCategory === 'vision' ? (currentVisionModel && currentVisionModel.id === model.id) : (selectedCategory === 'summary' ? isSummaryModelSelected(model.id) : isTextModelSelected(model.id))" 
+                  :class="selectedCategory !== 'vision' ? 'model-selected model-selected--multi' : 'model-selected'"
+                >
+                  <span class="model-dot"></span>
                 </div>
               </div>
             </div>
           </div>
         </div>
+        </div>
+        <!-- 自定义滚动条 -->
+        <div class="custom-scrollbar" :class="{ 'is-visible': scrollbarVisible }" ref="customScrollbar" @mousedown="onScrollbarMousedown">
+          <div class="custom-scrollbar-thumb" ref="customScrollbarThumb"></div>
+        </div>
       </div>
-      
-      <div v-else class="empty-state">
+
+      <div v-if="!selectedPlatform" class="empty-state">
         <div class="empty-icon">
           <svg width="48" height="48" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
             <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
@@ -286,10 +349,17 @@
       @cancel="cancelDeletePlatform"
     />
   </div>
+
+  <!-- 快速添加模型弹窗 -->
+  <ModelQuickAddDialog 
+    :show="showQuickAddDialog"
+    @close="showQuickAddDialog = false"
+    @save="handleQuickAddSave"
+  />
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch, computed } from 'vue'
+import { ref, onMounted, onUnmounted, watch, computed, nextTick } from 'vue'
 import { useModelConfig } from '../../services/modelConfig'
 import type { AIPlatform, AIModel } from '../../services/modelConfig'
 import { environmentDetector } from '../../services/environmentDetector'
@@ -303,19 +373,98 @@ import ModelDeleteConfirmDialog from '../ModelDeleteConfirmDialog.vue'
 import PlatformDeleteConfirmDialog from '../PlatformDeleteConfirmDialog.vue'
 import Toggle from '../Toggle.vue'
 import ModelCategorySwitch from '../ModelCategorySwitch.vue'
+import ModelQuickAddDialog from '../ModelQuickAddDialog.vue'
 
-// 模型配置管理
-const { 
-  settings: modelConfig, 
-  addPlatform, 
-  updatePlatform, 
-  removePlatform, 
-  setSelectedModel: setCurrentModel, 
+const detailScrollWrap = ref<HTMLElement | null>(null)
+const detailContent = ref<HTMLElement | null>(null)
+const customScrollbar = ref<HTMLElement | null>(null)
+const customScrollbarThumb = ref<HTMLElement | null>(null)
+
+let isDraggingScrollbar = false
+let dragStartY = 0
+let dragStartScrollTop = 0
+let scrollHideTimer: ReturnType<typeof setTimeout> | null = null
+const scrollbarVisible = ref(false)
+
+const showScrollbar = () => {
+  scrollbarVisible.value = true
+  if (scrollHideTimer) clearTimeout(scrollHideTimer)
+  scrollHideTimer = setTimeout(() => {
+    scrollbarVisible.value = false
+  }, 1500)
+}
+
+const updateScrollbarThumb = () => {
+  const content = detailContent.value
+  const thumb = customScrollbarThumb.value
+  const bar = customScrollbar.value
+  if (!content || !thumb || !bar) return
+
+  const ratio = content.clientHeight / content.scrollHeight
+  if (ratio >= 1) return
+
+  const thumbHeight = Math.max(ratio * bar.clientHeight, 32)
+  const thumbTop = (content.scrollTop / (content.scrollHeight - content.clientHeight)) * (bar.clientHeight - thumbHeight)
+  thumb.style.height = `${thumbHeight}px`
+  thumb.style.transform = `translateY(${thumbTop}px)`
+}
+
+const onDetailScroll = () => {
+  updateScrollbarThumb()
+  showScrollbar()
+}
+
+const onScrollbarMousedown = (e: MouseEvent) => {
+  const thumb = customScrollbarThumb.value
+  const content = detailContent.value
+  const bar = customScrollbar.value
+  if (!thumb || !content || !bar) return
+
+  isDraggingScrollbar = true
+  dragStartY = e.clientY
+  dragStartScrollTop = content.scrollTop
+
+  const onMousemove = (e: MouseEvent) => {
+    if (!isDraggingScrollbar) return
+    const thumbHeight = thumb.clientHeight
+    const barHeight = bar.clientHeight
+    const delta = e.clientY - dragStartY
+    const scrollRatio = delta / (barHeight - thumbHeight)
+    content.scrollTop = dragStartScrollTop + scrollRatio * (content.scrollHeight - content.clientHeight)
+  }
+
+  const onMouseup = () => {
+    isDraggingScrollbar = false
+    document.removeEventListener('mousemove', onMousemove)
+    document.removeEventListener('mouseup', onMouseup)
+  }
+
+  document.addEventListener('mousemove', onMousemove)
+  document.addEventListener('mouseup', onMouseup)
+  e.preventDefault()
+}
+const {
+  settings: modelConfig,
+  addPlatform,
+  updatePlatform,
+  removePlatform,
+  addModelToPlatform,
+  updateModel,
+  removeModel,
+  setSelectedModel: setCurrentModel,
   setSelectedTextModel,
   setSelectedVisionModel,
+  toggleSelectedTextModel,
+  toggleSelectedSummaryModel,
+  isTextModelSelected,
+  isSummaryModelSelected,
   selectedModel: globalSelectedModel,
   selectedTextModel: globalSelectedTextModel,
-  selectedVisionModel: globalSelectedVisionModel
+  selectedTextModels: globalSelectedTextModels,
+  selectedSummaryModel: globalSelectedSummaryModel,
+  selectedSummaryModels: globalSelectedSummaryModels,
+  selectedVisionModel: globalSelectedVisionModel,
+  syncRemotePlatforms
 } = useModelConfig()
 
 // 对话框状态
@@ -330,12 +479,41 @@ const editingModel = ref<AIModel | null>(null)
 // 模型设置相关状态
 const selectedPlatform = ref<AIPlatform | null>(null)
 const selectedModel = ref<AIModel | null>(null)
-const currentTextModel = ref<AIModel | null>(null)
 const currentVisionModel = ref<AIModel | null>(null)
 const showApiKey = ref(false)
 
+// 选中列表（根据当前分类动态切换）
+const currentMultiModels = computed(() => {
+  if (selectedCategory.value === 'text') return globalSelectedTextModels.value
+  if (selectedCategory.value === 'summary') return globalSelectedSummaryModels.value
+  return []
+})
+
+// 计算某平台下被选中的模型数量（用于 badge）
+const getPlatformSelectedCount = (platform: AIPlatform): number => {
+  if (selectedCategory.value === 'vision') {
+    return globalSelectedVisionModel.value?.platformId === platform.id ? 1 : 0
+  }
+  const ids = currentMultiModels.value.map(m => m.id)
+  return platform.models.filter(m => (m.category === 'text' || m.category === 'summary') && ids.includes(m.id)).length
+}
+
 // 模型分类筛选状态
-const selectedCategory = ref<'text' | 'vision'>('text')
+const selectedCategory = ref<'summary' | 'text' | 'vision'>('text')
+
+// 检查平台是否有模型被选中（针对特定分类）
+const isPlatformSelectedForCategory = (platform: AIPlatform, category: 'summary' | 'text' | 'vision') => {
+  if (category === 'text') {
+    return globalSelectedTextModels.value.some(m => m.platformId === platform.id)
+  }
+  if (category === 'summary') {
+    return globalSelectedSummaryModels.value.some(m => m.platformId === platform.id)
+  }
+  if (category === 'vision') {
+    return globalSelectedVisionModel.value?.platformId === platform.id
+  }
+  return false
+}
 
 // 计算属性：根据分类筛选模型
 const filteredModels = computed(() => {
@@ -343,14 +521,20 @@ const filteredModels = computed(() => {
   
   const models = selectedPlatform.value.models || []
   
-  return models.filter(model => model.category === selectedCategory.value)
+  // 'summary' 和 'text' 都显示文本模型
+  if (selectedCategory.value === 'summary' || selectedCategory.value === 'text') {
+    return models.filter(model => model.category === 'text')
+  }
+  
+  return models.filter(model => model.category === 'vision')
 })
 
-// 计算属性：当前选中的模型（根据分类）
+// 计算属性：当前选中的模型（根据分类，文本分类返回第一个选中模型用于兼容）
 const currentModel = computed(() => {
-  // 优先返回当前分类对应的模型
   if (selectedCategory.value === 'text') {
-    return currentTextModel.value
+    return globalSelectedTextModel.value
+  } else if (selectedCategory.value === 'summary') {
+    return globalSelectedSummaryModel.value
   } else {
     return currentVisionModel.value
   }
@@ -492,21 +676,14 @@ const selectPlatform = (platform: AIPlatform) => {
 }
 
 const selectModel = (model: AIModel) => {
-  console.log('🔍 [DEBUG] selectModel called with:', model.displayName, 'category:', model.category)
-  
-  // 根据模型类别更新对应的状态
-  if (model.category === 'text') {
-    console.log('📝 [DEBUG] Setting text model:', model.displayName)
-    currentTextModel.value = model
-    setSelectedTextModel(model.id)
-  } else if (model.category === 'vision') {
-    console.log('👁️ [DEBUG] Setting vision model:', model.displayName)
+  if (selectedCategory.value === 'text') {
+    toggleSelectedTextModel(model.id)
+  } else if (selectedCategory.value === 'summary') {
+    toggleSelectedSummaryModel(model.id)
+  } else if (selectedCategory.value === 'vision') {
     currentVisionModel.value = model
     setSelectedVisionModel(model.id)
   }
-  
-  console.log('✅ [DEBUG] Model selection completed')
-  console.log('📊 [DEBUG] Current state - Text:', currentTextModel.value?.displayName, 'Vision:', currentVisionModel.value?.displayName)
 }
 
 // 图标相关方法
@@ -519,66 +696,12 @@ const getPlatformIconUrl = async (icon: string) => {
     return icon
   }
   
-  // 如果是文件名，构建本地路径
+  // 如果是文件名，使用 public 目录路径
   if (icon.includes('.')) {
-    try {
-      // 使用更可靠的环境检测
-      const isTauriEnv = typeof window !== 'undefined' && (window.__TAURI__ || window.__TAURI_INTERNALS__)
-      console.log('🔍 [DEBUG] Environment detection - isTauriEnv:', isTauriEnv)
-      
-      if (isTauriEnv) {
-        // 检查是否在开发环境
-        const isDev = import.meta.env.DEV
-        console.log('🔍 [DEBUG] import.meta.env.DEV:', isDev)
-        
-        if (isDev) {
-          // 开发环境：使用 Vite 开发服务器路径
-          const devPath = `/src/assets/images/providers/${icon}`
-          console.log('✅ [DEBUG] Using development path:', devPath)
-          return devPath
-        } else {
-          // 生产环境：使用 frontendDist 管理的静态资源路径
-          console.log('🚀 [DEBUG] Production environment detected')
-          
-          try {
-            // 方法1：使用 public 目录中的资源（通过 frontendDist 管理）
-            const publicPath = `/assets/images/providers/${icon}`
-            console.log('✅ [DEBUG] Using frontendDist managed path:', publicPath)
-            return publicPath
-          } catch (error) {
-            console.error('❌ [DEBUG] frontendDist path failed:', error)
-            
-            // 方法2：尝试使用 Tauri 资源解析
-            try {
-              console.log('🔍 [DEBUG] Attempting Tauri resource resolution')
-              const { convertFileSrc } = await import('@tauri-apps/api/core')
-              const resourcePath = `assets/images/providers/${icon}`
-              const convertedUrl = convertFileSrc(resourcePath)
-              console.log('✅ [DEBUG] Tauri converted URL:', convertedUrl)
-              return convertedUrl
-            } catch (tauriError) {
-              console.error('❌ [DEBUG] Tauri resource resolution failed:', tauriError)
-              
-              // 方法3：回退到相对路径
-              const fallbackPath = `/assets/images/providers/${icon}`
-              console.log('⚠️ [DEBUG] Using fallback path:', fallbackPath)
-              return fallbackPath
-            }
-          }
-        }
-      } else {
-        // 在浏览器环境中使用 public 目录路径
-        const browserPath = `/assets/images/providers/${icon}`
-        console.log('🌐 [DEBUG] Using browser path:', browserPath)
-        return browserPath
-      }
-    } catch (error) {
-      console.error('💥 [DEBUG] Critical error in getPlatformIconUrl:', error)
-      // 回退到 public 目录路径
-      const emergencyPath = `/assets/images/providers/${icon}`
-      console.log('🆘 [DEBUG] Using emergency fallback path:', emergencyPath)
-      return emergencyPath
-    }
+    // 无论是开发环境还是生产环境，public 目录下的资源都可以通过 /assets/... 访问
+    const iconPath = `/assets/images/providers/${icon}`
+    console.log('✅ [DEBUG] Using public path:', iconPath)
+    return iconPath
   }
   
   // 如果是emoji或其他字符，返回空字符串让其使用文字回退
@@ -611,7 +734,59 @@ const handleIconError = (platformId: string) => {
   iconLoadErrors.value[platformId] = true
 }
 
-// 右键菜单相关方法
+// 判断图标是否需要背景（svg/png/emoji 需要，jpg/webp 等不需要）
+const needsIconBg = (icon?: string): boolean => {
+  if (!icon) return true  // 无图标（文字回退）加背景
+  if (isEmoji(icon)) return true
+  const lower = icon.toLowerCase()
+  return lower.endsWith('.svg') || lower.endsWith('.png')
+}
+
+// 模型图标关键字映射表
+const MODEL_ICON_RULES: { keywords: string[]; icon: string }[] = [
+  { keywords: ['deepseek'],                         icon: 'deepseek.png' },
+  { keywords: ['claude', 'anthropic'],              icon: 'claude.png' },
+  { keywords: ['qwen', 'qwq'],                      icon: 'qwen.png' },
+  { keywords: ['gpt', 'chatgpt', 'openai', 'o1', 'o3', 'o4'], icon: 'chatgpt.jpeg' },
+  { keywords: ['gemini'],                           icon: 'gemini.png' },
+  { keywords: ['gemma'],                            icon: 'gemma.png' },
+  { keywords: ['llama'],                            icon: 'llama.png' },
+  { keywords: ['kimi', 'moonshot', 'moonshotai'],   icon: 'moonshot.png' },
+  { keywords: ['doubao'],                           icon: 'doubao.png' },
+  { keywords: ['grok'],                             icon: 'grok.png' },
+  { keywords: ['glm', 'chatglm', 'zhipu'],          icon: 'zhipu.png' },
+  { keywords: ['mistral', 'mixtral', 'codestral', 'pixtral'], icon: 'mixtral.png' },
+  { keywords: ['llava'],                            icon: 'llava.png' },
+  { keywords: ['internlm', 'internvl'],             icon: 'internlm.png' },
+  { keywords: ['yi-'],                              icon: 'yi.png' },
+  { keywords: ['baichuan'],                         icon: 'baichuan.png' },
+  { keywords: ['hunyuan'],                          icon: 'hunyuan.png' },
+  { keywords: ['spark', 'xinghuo'],                 icon: 'sparkdesk.png' },
+  { keywords: ['wenxin', 'ernie'],                  icon: 'wenxin.png' },
+  { keywords: ['minimax', 'abab'],                  icon: 'minimax.png' },
+  { keywords: ['hailuo'],                           icon: 'hailuo.png' },
+  { keywords: ['nvidia'],                           icon: 'nvidia.png' },
+  { keywords: ['cohere', 'command-r'],              icon: 'cohere.png' },
+  { keywords: ['perplexity'],                       icon: 'perplexity.png' },
+  { keywords: ['step-'],                            icon: 'step.png' },
+  { keywords: ['flux'],                             icon: 'flux.png' },
+  { keywords: ['dall-e', 'dalle'],                  icon: 'dalle.png' },
+  { keywords: ['copilot'],                          icon: 'copilot.png' },
+  { keywords: ['midjourney'],                       icon: 'midjourney.png' },
+  { keywords: ['huggingface'],                      icon: 'huggingface.png' },
+]
+
+const getModelIcon = (model: AIModel): string => {
+  const searchStr = `${model.displayName} ${model.name}`.toLowerCase()
+  for (const rule of MODEL_ICON_RULES) {
+    if (rule.keywords.some(kw => searchStr.includes(kw.toLowerCase()))) {
+      return `/assets/images/models/${rule.icon}`
+    }
+  }
+  return ''
+}
+
+
 const showPlatformMenu = (event: MouseEvent, platform: AIPlatform) => {
   event.preventDefault()
   contextMenuX.value = event.clientX
@@ -639,7 +814,7 @@ const hideModelMenu = () => {
 }
 
 const handleEditPlatform = () => {
-  if (contextMenuPlatform.value) {
+  if (contextMenuPlatform.value && !contextMenuPlatform.value.isRemote) {
     editPlatform(contextMenuPlatform.value)
   }
   hidePlatformMenu()
@@ -647,12 +822,22 @@ const handleEditPlatform = () => {
 
 const handleDuplicatePlatform = async () => {
   if (contextMenuPlatform.value) {
+    // 复制模型列表并生成新 ID
+    const newModels = (contextMenuPlatform.value.models || []).map(m => ({
+      ...m,
+      id: `${m.name}_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+      isRemote: false
+    }))
+
     const duplicatedPlatform = {
       ...contextMenuPlatform.value,
       displayName: `${contextMenuPlatform.value.displayName} (副本)`,
       id: undefined,
-      isBuiltIn: false
+      isBuiltIn: false,
+      isRemote: false,
+      models: newModels
     }
+    // @ts-ignore
     delete duplicatedPlatform.id
     await addPlatform(duplicatedPlatform)
   }
@@ -660,7 +845,7 @@ const handleDuplicatePlatform = async () => {
 }
 
 const handleDeletePlatform = async () => {
-  if (contextMenuPlatform.value) {
+  if (contextMenuPlatform.value && !contextMenuPlatform.value.isRemote) {
     deletePlatformName.value = contextMenuPlatform.value.name
     deletePlatformId.value = contextMenuPlatform.value.id
     showDeletePlatformDialog.value = true
@@ -669,7 +854,7 @@ const handleDeletePlatform = async () => {
 }
 
 const handleEditModel = () => {
-  if (contextMenuModel.value) {
+  if (contextMenuModel.value && !contextMenuModel.value.isRemote) {
     editModel(contextMenuModel.value)
   }
   hideModelMenu()
@@ -680,10 +865,14 @@ const handleDuplicateModel = async () => {
     const duplicatedModel = {
       ...contextMenuModel.value,
       displayName: `${contextMenuModel.value.displayName} (副本)`,
-      id: `model_${Date.now()}`,
-      name: `model_${Date.now()}`
+      isRemote: false,
     }
-    await addModel(selectedPlatform.value.id, duplicatedModel)
+    // @ts-ignore
+    delete duplicatedModel.id
+    // @ts-ignore
+    delete duplicatedModel.platformId
+    
+    await addModelToPlatform(selectedPlatform.value.id, duplicatedModel)
   }
   hideModelMenu()
 }
@@ -696,7 +885,7 @@ const handleTestModel = async () => {
 }
 
 const handleDeleteModel = async () => {
-  if (contextMenuModel.value) {
+  if (contextMenuModel.value && !contextMenuModel.value.isRemote) {
     deleteModelName.value = contextMenuModel.value.displayName || contextMenuModel.value.name
     deleteModelId.value = contextMenuModel.value.id
     showDeleteModelDialog.value = true
@@ -744,6 +933,45 @@ const updatePlatformBaseUrl = async () => {
   }
 }
 
+// -------- 添加模型下拉 --------
+const showAddModelDropdown = ref(false)
+const addModelDropdownRef = ref<HTMLElement | null>(null)
+
+const openAddModelDropdown = () => {
+  showAddModelDropdown.value = !showAddModelDropdown.value
+}
+
+const closeAddModelDropdown = () => {
+  showAddModelDropdown.value = false
+}
+
+const openTemplate = () => {
+  closeAddModelDropdown()
+  addNewModel()
+}
+
+// -------- 快速添加（OpenAI 兼容）--------
+const showQuickAddDialog = ref(false)
+
+const openQuickAdd = () => {
+  closeAddModelDropdown()
+  showQuickAddDialog.value = true
+}
+
+const handleQuickAddSave = async (newModel: any) => {
+  if (!selectedPlatform.value) return
+  await addModelToPlatform(selectedPlatform.value.id, newModel)
+  showQuickAddDialog.value = false
+}
+
+
+// 点击外部关闭下拉
+const handleAddModelOutsideClick = (e: MouseEvent) => {
+  if (addModelDropdownRef.value && !addModelDropdownRef.value.contains(e.target as Node)) {
+    closeAddModelDropdown()
+  }
+}
+
 const addNewModel = () => {
   if (selectedPlatform.value) {
     editingModel.value = null
@@ -766,37 +994,27 @@ const saveModel = async (modelData: Partial<AIModel>) => {
 
   try {
     if (editingModel.value) {
-      // 编辑现有模型
-      const modelIndex = selectedPlatform.value.models.findIndex(m => m.id === editingModel.value!.id)
-      if (modelIndex !== -1) {
-        // 更新displayName、jsCode和category字段
-        selectedPlatform.value.models[modelIndex].displayName = modelData.displayName!
-        selectedPlatform.value.models[modelIndex].jsCode = modelData.jsCode
-        selectedPlatform.value.models[modelIndex].category = modelData.category!
-        
-        if (selectedModel.value?.id === editingModel.value.id) {
-          selectedModel.value = selectedPlatform.value.models[modelIndex]
-        }
-      }
+      // 使用 ModelConfigManager 的 updateModel 以确保正确保存
+      await updateModel(editingModel.value.id, {
+        displayName: modelData.displayName,
+        jsCode: modelData.jsCode,
+        category: modelData.category
+      })
     } else {
-      // 添加新模型
-      const newModel: AIModel = {
-        id: `model_${Date.now()}`,
-        name: `model_${Date.now()}`,
-        displayName: modelData.displayName!,
-        platformId: selectedPlatform.value.id,
+      // 使用 addModelToPlatform 自动生成 ID 并保存
+      const newModelData = {
+        name: modelData.displayName || '新模型',
+        displayName: modelData.displayName || '新模型',
         maxTokens: 4096,
         temperature: 0.7,
         topP: 1.0,
         enabled: true,
-        jsCode: modelData.jsCode,
-        category: modelData.category!
+        jsCode: modelData.jsCode || '',
+        category: modelData.category || 'text' as const
       }
-      selectedPlatform.value.models.push(newModel)
-      selectedModel.value = newModel
+      await addModelToPlatform(selectedPlatform.value.id, newModelData)
     }
     
-    await updatePlatform(selectedPlatform.value.id, selectedPlatform.value)
     closeModelDialog()
   } catch (error) {
     console.error('保存模型失败:', error)
@@ -806,13 +1024,10 @@ const saveModel = async (modelData: Partial<AIModel>) => {
 
 const deleteModel = async (modelId: string) => {
   if (selectedPlatform.value) {
-    const modelIndex = selectedPlatform.value.models.findIndex(m => m.id === modelId)
-    if (modelIndex !== -1) {
-      selectedPlatform.value.models.splice(modelIndex, 1)
-      if (selectedModel.value?.id === modelId) {
-        selectedModel.value = null
-      }
-      await updatePlatform(selectedPlatform.value.id, selectedPlatform.value)
+    // 使用 ModelConfigManager 的 removeModel 以确保清理选中状态
+    await removeModel(modelId)
+    if (selectedModel.value?.id === modelId) {
+      selectedModel.value = null
     }
   }
 }
@@ -836,14 +1051,15 @@ const cancelDeleteModel = () => {
 
 const openModelConfigDocs = async () => {
   const url = 'https://docs.zerror.cc/docs/local/modelConfig'
-  
+  await openPlatformUrl(url)
+}
+
+const openPlatformUrl = async (url: string) => {
   if (environmentDetector.isTauriEnvironment) {
     try {
       const { openUrl } = await import('@tauri-apps/plugin-opener')
       await openUrl(url)
     } catch (error) {
-      console.error('Failed to open URL with Tauri opener:', error)
-      // 回退到 window.open
       window.open(url, '_blank')
     }
   } else {
@@ -896,7 +1112,7 @@ const testModel = async (model: AIModel) => {
           
           if (isDev) {
             // 开发环境：使用 Vite 开发服务器路径
-            imageUrl = '/src/assets/images/vlm_text/vlm_test.png'
+            imageUrl = '/assets/images/vlm_text/vlm_test.png'
             console.log('✅ [DEBUG] Using development path for test image:', imageUrl)
           } else {
             // 生产环境：使用 frontendDist 管理的静态资源路径
@@ -1128,16 +1344,43 @@ onMounted(() => {
   // 添加全局点击事件监听，用于隐藏右键菜单
   document.addEventListener('click', hidePlatformMenu)
   document.addEventListener('click', hideModelMenu)
+  document.addEventListener('click', handleAddModelOutsideClick)
   
   // 预加载平台图标
   loadPlatformIcons()
+
+  // 同步远程平台和模型
+  syncRemotePlatforms().then(() => {
+    // 同步完成后默认选中第一个平台
+    if (!selectedPlatform.value && modelConfig.platforms.length > 0) {
+      selectedPlatform.value = modelConfig.platforms[0]
+    }
+  })
+
+  // 默认选中第一个平台（同步前先选）
+  if (modelConfig.platforms.length > 0) {
+    selectedPlatform.value = modelConfig.platforms[0]
+  }
 })
 
-// 监听全局模型选择变化，同步本地状态
-watch(globalSelectedTextModel, (newModel) => {
-  console.log('🔄 [DEBUG] globalSelectedTextModel changed to:', newModel?.displayName || 'null')
-  currentTextModel.value = newModel
-}, { immediate: true })
+onUnmounted(() => {
+  document.removeEventListener('click', hidePlatformMenu)
+  document.removeEventListener('click', hideModelMenu)
+  document.removeEventListener('click', handleAddModelOutsideClick)
+})
+
+// 视觉模型：监听全局变化同步本地状态
+// 文本模型通过 currentTextModel computed 自动同步
+
+watch(selectedPlatform, async () => {
+  await nextTick()
+  updateScrollbarThumb()
+  // 重新注册 ResizeObserver
+  if (detailContent.value) {
+    const ro = new ResizeObserver(updateScrollbarThumb)
+    ro.observe(detailContent.value)
+  }
+})
 
 watch(globalSelectedVisionModel, (newModel) => {
   console.log('🔄 [DEBUG] globalSelectedVisionModel changed to:', newModel?.displayName || 'null')
@@ -1146,10 +1389,7 @@ watch(globalSelectedVisionModel, (newModel) => {
 
 // 初始化本地状态
 onMounted(() => {
-  console.log('🚀 [DEBUG] ModelSettings mounted, initializing local state')
-  currentTextModel.value = globalSelectedTextModel.value
   currentVisionModel.value = globalSelectedVisionModel.value
-  console.log('📊 [DEBUG] Initial state - Text:', currentTextModel.value?.displayName, 'Vision:', currentVisionModel.value?.displayName)
 })
 
 // 监听平台数据变化，重新加载图标
@@ -1216,18 +1456,30 @@ onUnmounted(() => {
   margin: 0;
 }
 
+.sidebar-title-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .platform-list {
+  display: flex;
+  align-items: center;
+  width: 100%;
   flex: 1;
-  overflow-y: auto;
-  padding: 8px;
+  padding: 12px;
+  overflow-y: none;
+  box-sizing: border-box;
+  scrollbar-gutter: stable;
 }
 
 .platform-item {
+  width: 100%;
+  box-sizing: border-box;
   display: flex;
   align-items: center;
   padding: 12px;
-  margin-bottom: 4px;
-  border-radius: 8px;
+  border-radius: 16px;
   cursor: pointer;
   transition: all 0.2s ease;
   border: 1px solid var(--platform-item-border);
@@ -1255,9 +1507,50 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   border-radius: 6px;
-  background-color: var(--platform-item-icon-bg);
+  background-color: transparent;
+  border: 1px solid var(--platform-config-dialog-header-border);
   flex-shrink: 0;
   transition: background-color 0.2s ease;
+  position: relative;
+}
+
+.platform-icon--bg {
+  background-color: var(--platform-item-icon-bg);
+}
+
+.platform-item:hover .platform-icon--bg {
+  background-color: var(--platform-item-icon-hover-bg);
+}
+
+.platform-item.active .platform-icon--bg {
+  background-color: var(--platform-item-icon-active-bg);
+}
+
+.platform-selected-badge {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 8px;
+  height: 8px;
+  background-color: #3b82f6;
+  border-radius: 50%;
+  pointer-events: none;
+  animation: dot-pop 0.2s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+.platform-selected-badge--count {
+  width: auto;
+  height: 14px;
+  min-width: 14px;
+  padding: 0 3px;
+  border-radius: 7px;
+  font-size: 9px;
+  font-weight: 700;
+  color: #fff;
+  line-height: 14px;
+  text-align: center;
+  top: -5px;
+  right: -5px;
 }
 
 .platform-item:hover .platform-icon {
@@ -1273,10 +1566,10 @@ onUnmounted(() => {
 }
 
 .icon-image {
-  border-radius: 4px;
-  width: 24px;
-  height: 24px;
-  object-fit: contain;
+  border-radius: 6px;
+  width: 32px;
+  height: 32px;
+  object-fit: cover;
 }
 
 .icon-fallback {
@@ -1300,6 +1593,31 @@ onUnmounted(() => {
   text-overflow: ellipsis;
 }
 
+.platform-tags {
+  display: flex;
+  gap: 3px;
+  flex-shrink: 0;
+  margin-left: auto;
+  margin-top: 0;
+}
+
+.platform-tag {
+  font-size: 10px;
+  padding: 0px 4px;
+  border-radius: 4px;
+  background-color: var(--platform-config-icon-section-title-bg);
+  color: var(--text-secondary, #718096);
+  border: 1px solid var(--platform-config-dialog-header-border);
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.platform-item.active .platform-tag {
+  background-color: var(--platform-config-icon-section-title-bg);
+  color: var(--text-secondary);
+  border-color: var(--platform-config-dialog-header-border);
+}
+
 .platform-detail {
   flex: 1;
   border-radius: 5px;
@@ -1309,33 +1627,165 @@ onUnmounted(() => {
   flex-direction: column;
 }
 
+.detail-scroll-wrap {
+  position: relative;
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
 .detail-content {
   padding: 24px;
-  overflow-y: auto;
+  overflow-y: scroll;
   flex: 1;
   background: var(--platform-detail-content-bg);
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.detail-content::-webkit-scrollbar {
+  display: none;
+}
+
+.detail-content::-webkit-scrollbar-button {
+  display: none;
+}
+
+.custom-scrollbar {
+  position: absolute;
+  right: 3px;
+  top: 4px;
+  bottom: 4px;
+  width: 4px;
+  border-radius: 4px;
+  opacity: 0;
+  transition: opacity 0.2s;
+  cursor: pointer;
+}
+
+.custom-scrollbar.is-visible {
+  opacity: 1;
+}
+
+.custom-scrollbar-thumb {
+  width: 4px;
+  border-radius: 4px;
+  background: var(--border-secondary);
+  transition: background 0.15s;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+}
+
+.custom-scrollbar:hover .custom-scrollbar-thumb {
+  background: var(--text-tertiary);
 }
 
 .detail-section {
-  margin-bottom: 32px;
+  margin-bottom: 24px;
+  border-bottom: 1px solid var(--border-primary);
 }
 
 .detail-section:last-child {
   margin-bottom: 0;
+  padding-bottom: 0;
+  border-bottom: none;
 }
 
 .section-header {
   display: flex;
+  align-items: center;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 16px;
+  margin-bottom: 8px;
+}
+
+.platform-title-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.platform-link-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 0.15s, color 0.15s;
+  font-size: 12px;
+}
+
+.platform-link-btn:first-of-type {
+  margin-right: 8px;
+}
+
+.platform-link-btn:hover {
+  background: var(--hover-bg);
+  color: var(--text-primary);
+}
+
+.platform-invite-btn {
+  color: #FF505D;
+}
+
+.platform-invite-btn:hover {
+  background: rgba(255, 80, 93, 0.08);
+  color: #FF505D;
+}
+
+.invite-text {
+  font-size: 12px;
+  white-space: nowrap;
+  color: #ff8c00;
+}
+
+.invite-gift-wrap {
+  position: relative;
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  transform: rotate(-15deg);
+  transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+  filter: drop-shadow(0 0 3px rgba(255, 80, 93, 0.6));
+  animation: gift-glow 2s ease-in-out infinite;
+}
+
+.platform-invite-btn:hover .invite-gift-wrap {
+  animation: none;
+  filter: none;
+}
+
+.invite-gift-icon {
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+
+.gift-lid {
+  transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.platform-invite-btn:hover .gift-lid {
+  transform: translateY(-6px) rotate(-20deg);
+  filter: drop-shadow(0 0 5px rgba(255, 160, 50, 0.9));
+}
+
+@keyframes gift-glow {
+  0%, 100% { filter: drop-shadow(0 0 3px rgba(255, 80, 93, 0.6)); }
+  50%       { filter: drop-shadow(0 0 7px rgba(255, 160, 50, 0.9)); }
 }
 
 .subsection-title {
   font-size: 16px;
   font-weight: 600;
   color: var(--platform-detail-header-text);
-  margin: 0 0 16px 0;
 }
 
 .platform-description {
@@ -1360,13 +1810,25 @@ onUnmounted(() => {
 .form-input {
   box-sizing: border-box;
   width: 100%;
-  padding: 8px 12px;
-  border: 1px solid var(--platform-detail-form-input-border);
-  border-radius: 6px;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: 8px;
   font-size: 14px;
-  transition: border-color 0.2s ease;
-  background-color: var(--platform-detail-form-input-bg);
-  color: var(--platform-detail-form-input-text);
+  color: var(--text-primary);
+  background-color: var(--form-input-bg, #F7F7F7);
+  transition: border-color 0.2s ease, background-color 0.2s ease;
+}
+
+.form-input:hover {
+  background-color: var(--form-input-hover-bg, #f0f0f0);
+  border-color: var(--form-input-hover-border, transparent);
+}
+
+.form-input:focus {
+  outline: none;
+  background-color: var(--form-input-bg, #F7F7F7);
+  border-color: #e3e3e3;
+  box-shadow: none;
 }
 
 .form-tip {
@@ -1381,12 +1843,6 @@ onUnmounted(() => {
 
 .api-doc-link:hover {
   color: var(--text-accent-hover, #ffbf84);
-}
-
-.form-input:focus {
-  outline: none;
-  border-color: var(--platform-detail-form-input-focus-border);
-  box-shadow: 0 0 0 3px var(--shadow-focus, rgba(49, 130, 206, 0.1));
 }
 
 .input-group {
@@ -1443,7 +1899,7 @@ input[type="password"].api-key-input::-ms-reveal {
   justify-content: space-between;
   padding: 12px;
   border: 1px solid var(--model-item-border);
-  border-radius: 8px;
+  border-radius: 16px;
   cursor: pointer;
   transition: all 0.2s ease;
   background: var(--model-item-bg);
@@ -1460,6 +1916,7 @@ input[type="password"].api-key-input::-ms-reveal {
   background-color: var(--model-item-active-bg);
   border-color: var(--model-item-active-border);
   color: var(--model-item-active-text);
+  box-shadow: var(--model-item-active-shadow);
 }
 
 .model-info {
@@ -1480,7 +1937,31 @@ input[type="password"].api-key-input::-ms-reveal {
 }
 
 .model-selected {
-  color: var(--text-success, #38a169);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.model-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #3b82f6;
+  display: block;
+  animation: dot-pop 0.2s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+@keyframes dot-pop {
+  from { transform: scale(0); opacity: 0; }
+  to   { transform: scale(1); opacity: 1; }
+}
+
+/* 多选模型选中状态 */
+.model-item.active {
+  background-color: var(--model-item-active-bg);
+  border-color: var(--model-item-active-border);
+  color: var(--model-item-active-text);
+  box-shadow: var(--model-item-active-shadow);
 }
 
 /* 空状态样式 */
@@ -1545,5 +2026,155 @@ input[type="password"].api-key-input::-ms-reveal {
   gap: 10px;
 }
 
+/* 图标操作按钮（与 add-question-button 风格一致） */
+.icon-action-btn {
+  padding: 6px;
+  width: 33px;
+  height: 33px;
+  background-color: var(--platform-config-toggle-button-bg);
+  color: var(--text-secondary);
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
 
+.icon-action-btn:hover {
+  background-color: var(--platform-config-toggle-button-hover-bg);
+  color: var(--text-primary);
+}
+
+.icon-action-btn--ghost {
+  background-color: transparent;
+}
+
+.icon-action-btn--ghost:hover {
+  background-color: var(--platform-config-toggle-button-hover-bg);
+}
+
+.icon-action-btn--sm {
+  width: 26px;
+  height: 26px;
+  padding: 4px;
+  border-radius: 5px;
+}
+
+.icon-action-btn--model-add {
+  border-radius: 8px;
+}
+
+.icon-action-btn--add {
+  background-color: var(--add-btn-icon-bg);
+  color: var(--add-btn-icon-color);
+}
+
+.icon-action-btn--add:hover {
+  background-color: var(--add-btn-icon-hover-bg);
+  color: var(--add-btn-icon-color);
+}
+
+
+/* 添加模型下拉按钮 */
+.add-model-dropdown-wrap {
+  position: relative;
+}
+
+.add-model-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.dropdown-arrow {
+  transition: transform 0.18s;
+  margin-left: 2px;
+}
+.dropdown-arrow.open {
+  transform: rotate(180deg);
+}
+
+.add-model-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 180px;
+  background: var(--bg-secondary, #fff);
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  z-index: 200;
+  overflow: hidden;
+}
+
+.add-model-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 14px;
+  border: none;
+  background: none;
+  color: var(--text-primary);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s;
+  text-align: left;
+}
+.add-model-menu-item:hover {
+  background: var(--hover-bg, rgba(0,0,0,0.05));
+}
+
+/* 模型列表多选提示 */
+.model-list-hint {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--text-secondary, #718096);
+  padding: 4px 4px 8px;
+  user-select: none;
+}
+
+/* 多选模型选中状态 */
+.model-item.active {
+  background-color: var(--model-item-active-bg);
+  border-color: var(--model-item-active-border);
+  color: var(--model-item-active-text);
+  box-shadow: var(--model-item-active-shadow);
+}
+
+/* 模型图标 */
+.model-icon-wrap {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 4px;
+}
+.model-icon-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: 6px;
+}
+.model-icon-fallback {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-accent-light, rgba(49,130,206,0.1));
+  color: var(--btn-primary, #3182ce);
+  font-size: 12px;
+  font-weight: 700;
+  border-radius: 6px;
+}
 </style>

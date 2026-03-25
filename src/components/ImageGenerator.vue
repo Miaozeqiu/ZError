@@ -305,6 +305,16 @@ const renderCompleteContent = async () => {
     // 额外等待确保所有内容完全渲染
     await new Promise(resolve => setTimeout(resolve, 1000))
     
+    // 截图前临时将容器移到可见区域（html-to-image 需要元素在视口内才能正确计算尺寸）
+    const originalTop = renderContainer.value.style.top
+    const originalLeft = renderContainer.value.style.left
+    const originalOpacity = renderContainer.value.style.opacity
+    // opacity:0 让元素透明但仍参与布局，html-to-image 能正确计算尺寸
+    renderContainer.value.style.top = '0'
+    renderContainer.value.style.left = '0'
+    renderContainer.value.style.opacity = '0'
+    await new Promise(resolve => setTimeout(resolve, 100))
+    
     // 强制重新计算布局
     contentElement.style.display = 'none'
     contentElement.offsetHeight // 触发重排
@@ -353,9 +363,9 @@ const renderCompleteContent = async () => {
       width: captureWidth,
       height: captureHeight,
       style: {
-        // 确保内容完全可见
         overflow: 'visible',
-        padding: '20px'
+        padding: '20px',
+        opacity: '1'  // 覆盖父容器的 opacity:0，确保截图内容可见
       },
       filter: (node) => {
         // 过滤掉加载失败的图片元素
@@ -369,6 +379,11 @@ const renderCompleteContent = async () => {
     finalImageUrl.value = dataUrl
     isRendering.value = false
     
+    // 恢复容器位置
+    renderContainer.value.style.top = originalTop
+    renderContainer.value.style.left = originalLeft
+    renderContainer.value.style.opacity = originalOpacity
+    
     console.log('✅ 完整内容渲染成功')
     
     // 发出事件
@@ -379,6 +394,12 @@ const renderCompleteContent = async () => {
     console.error('❌ 完整内容渲染失败:', error)
     renderError.value = `渲染失败: ${error instanceof Error ? error.message : '未知错误'}`
     isRendering.value = false
+    // 确保容器位置被恢复
+    if (renderContainer.value) {
+      renderContainer.value.style.top = '-9999px'
+      renderContainer.value.style.left = '-9999px'
+      renderContainer.value.style.opacity = ''
+    }
   }
 }
 

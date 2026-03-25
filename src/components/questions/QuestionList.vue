@@ -1,21 +1,13 @@
 <template>
   <div class="question-list">
     <div class="list-header">
-      <div class="header-content">
-        <div class="breadcrumb-container">
-          <div class="breadcrumb-path" v-if="folderPath.length > 0">
-            <span v-for="(item, index) in folderPath" :key="item.id" class="breadcrumb-item">
-              <span class="breadcrumb-name">{{ item.name }}</span>
-              <span v-if="index < folderPath.length - 1" class="breadcrumb-separator">></span>
-            </span>
-          </div>
-          <h3 v-else>题目列表</h3>
-        </div>
-        <div class="header-right">
+      <!-- 搜索框 -->
+      <div class="search-container">
+        <!-- 题目数量 + 分页，显示在搜索栏最左侧 -->
+        <div class="search-left-info">
           <div class="question-count-info">
             共 {{ totalQuestions }} 道题目
           </div>
-          <!-- 分页控制器 -->
           <div class="pagination-container" v-if="totalQuestions > 0">
             <div class="pagination">
               <button class="pagination-btn prev-btn" :disabled="currentPage <= 1" @click="goToPreviousPage">
@@ -23,11 +15,9 @@
                   <polyline points="15,18 9,12 15,6"></polyline>
                 </svg>
               </button>
-
               <span class="page-info">
                 {{ currentPage }} / {{ Math.max(totalPages, 1) }}
               </span>
-
               <button class="pagination-btn next-btn" :disabled="currentPage >= totalPages" @click="goToNextPage">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <polyline points="9,6 15,12 9,18"></polyline>
@@ -36,11 +26,20 @@
             </div>
           </div>
         </div>
-      </div>
-
-      <!-- 搜索框 -->
-      <div class="search-container">
         <div class="search-box">
+          <!-- 刷新按钮 -->
+          <div
+            class="refresh-icon-button"
+            role="button"
+            tabindex="0"
+            title="刷新"
+            @click="emit('refresh')"
+            @keydown.enter.prevent="emit('refresh')"
+          >
+            <svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" width="16" height="16">
+              <path d="M379.392 870.4c-92.672-44.828-171.918-143.19-198.03-245.76-24.576-96.484-6.258-200.932 50.517-288.54 48.81-75.208 117.191-125.896 217.316-161.11 24.69-8.704 44.942-18.375 44.942-21.56 0-3.13-10.923-16.612-24.292-29.924-27.306-27.193-29.582-36.921-12.401-54.272 19.91-20.139 36.58-16.327 71.68 16.327 16.839 15.644 46.592 41.301 66.104 57.003 38.23 30.72 47.616 44.6 42.895 63.601-2.674 10.468-57.856 82.774-98.816 129.48-19.229 21.902-32.086 27.59-46.82 20.82a44.373 44.373 0 0 1-17.75-16.497c-7.11-13.54-0.682-27.762 28.787-63.374 10.808-13.085 19.74-25.6 19.74-27.705 0-7.794-25.657-10.013-54.955-4.722-51.257 9.216-96.825 34.987-141.994 80.213-22.528 22.585-45.227 50.745-52.167 64.683-48.925 98.361-46.536 211.797 6.371 302.763 24.462 41.927 81.237 95.858 122.937 116.622 96.825 48.242 204.345 45.397 294.684-7.737C806.4 737.166 867.556 601.26 842.183 480.825c-8.704-41.529-34.36-98.247-59.278-131.3-22.699-30.037-28.274-43.235-24.633-58.026 3.925-15.759 26.34-24.406 42.382-16.27 28.445 14.279 82.375 99.669 99.84 157.98 13.938 46.364 12.686 155.079-2.275 203.947-13.085 42.666-46.251 108.373-69.632 138.069-24.178 30.72-78.507 75.207-116.054 95.232-59.164 31.403-143.417 46.08-213.56 37.205-46.308-5.86-70.145-13.312-119.581-37.262z" fill="currentColor"/>
+            </svg>
+          </div>
           <div 
             class="import-icon-button" 
             :class="{ 'active': importMenuOpen }"
@@ -59,8 +58,7 @@
             </svg>
           </div>
           <div v-if="importMenuOpen" class="import-menu">
-            <button class="menu-item" @click="importSoftwareExportedFile">导入软件导出的文件</button>
-            <button class="menu-item" @click="importOtherFile">导入其他文件</button>
+            <button class="menu-item" @click="importSoftwareExportedFile">导入ZError导出的文件</button>
           </div>
 
           <!-- 导出按钮 -->
@@ -107,17 +105,9 @@
             ✕
           </button>
           <button @click="showAddQuestionDialog" class="add-question-button" title="添加题目">
-            <svg t="1760673866502" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg"
-              p-id="7075" width="16" height="16">
-              <path
-                d="M188.8 135.7c-29.7 0-53.8 24.1-53.8 53.7v644.7c0 29.7 24.1 53.7 53.8 53.7h645.4c29.7 0 53.8-24.1 53.8-53.7V189.4c0-29.7-24.1-53.7-53.8-53.7H188.8z m-13-71.1h671.5c61.8 0 111.9 50.1 111.9 111.8v670.8c0 61.7-50.1 111.8-111.9 111.8H175.8C114 959 63.9 909 63.9 847.2V176.4c0-61.8 50.1-111.8 111.9-111.8z m0 0"
-                p-id="7076" fill="currentColor"></path>
-              <path d="M673 548H351c-19.8 0-36-16.2-36-36s16.2-36 36-36h322c19.8 0 36 16.2 36 36s-16.2 36-36 36z"
-                p-id="7077" fill="currentColor"></path>
-              <path d="M476 673V351c0-19.8 16.2-36 36-36s36 16.2 36 36v322c0 19.8-16.2 36-36 36s-36-16.2-36-36z"
-                p-id="7078" fill="currentColor"></path>
+            <svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" width="16" height="16">
+              <path d="M544.256 480.256h307.2a32.256 32.256 0 0 1 0 64h-307.2v307.2a32.256 32.256 0 0 1-64 0v-307.2h-307.2a32.256 32.256 0 1 1 0-64h307.2v-307.2a32.256 32.256 0 1 1 64 0z" fill="currentColor"/>
             </svg>
-            添加题目
           </button>
         </div>
         <div v-if="isSearchMode" class="search-info">
@@ -300,7 +290,9 @@ const emit = defineEmits<{
   'question-select': [question: AIResponse],
   'question-pasted': [],
   'question-added': [],
-  'open-import-dialog': [items: any]
+  'open-import-dialog': [items: any],
+  'refresh': [],
+  'folder-path-change': [path: { id: number, name: string }[]]
 }>();
 
 const questions = ref<AIResponse[]>([]);
@@ -309,6 +301,11 @@ const selectedQuestionId = ref<number | null>(null);
 const selectedQuestionDetails = ref<AIResponse | null>(null);
 const showDetailOverlay = ref(false);
 const folderPath = ref<{ id: number, name: string }[]>([]);
+
+// folderPath 变化时通知父组件
+watch(folderPath, (path) => {
+  emit('folder-path-change', path)
+}, { deep: true })
 
 // 在切换顶层 tab 时，收起题目详情面板
 watch(() => props.collapseTrigger, () => {
@@ -327,6 +324,7 @@ const searchTerm = ref('');
 const isSearchMode = ref(false);
 const searchDebounceTimer = ref<number | null>(null);
 const originalQuestions = ref<AIResponse[]>([]); // 保存原始题目列表
+const highlightTerms = ref<string[]>([]); // 用于高亮的关键词
 
 // 拖拽相关状态
 const isResizing = ref(false);
@@ -381,24 +379,6 @@ const importSoftwareExportedFile = async () => {
   importMenuOpen.value = false;
 };
 
-const importOtherFile = async () => {
-  if (!isTauriEnvironment()) {
-    alert('此功能仅在 Tauri 应用中可用');
-    importMenuOpen.value = false;
-    return;
-  }
-  const { open } = await import('@tauri-apps/plugin-dialog');
-  const selected = await open({ multiple: false, directory: false });
-  if (selected) {
-    const path = Array.isArray(selected) ? selected[0] : selected;
-    try {
-      await invoke('open_text_window', { title: '文件信息', text: path });
-    } catch (e) {
-      console.error(e);
-    }
-  }
-  importMenuOpen.value = false;
-};
 
 // 导出菜单
 const exportMenuOpen = ref(false);
@@ -494,6 +474,10 @@ const editFormData = ref({
 });
 
 interface Part { type: 'text' | 'image'; text?: string; url?: string }
+
+// 模块级持久缓存，组件销毁后仍保留，避免重复请求
+const _imageCache = new Map<string, string>()
+
 const imageSrcMap = ref<Record<string, string>>({})
 const blackOnlyMap = ref<Record<string, boolean>>({})
 const urlRegex = /(https?:\/\/[^\s]+?\.(?:png|jpg|jpeg|webp|gif))(?:\b|(?=\s)|$)/gi
@@ -530,9 +514,16 @@ const visibleImageUrls = computed(() => {
 const fetchImages = async (urls: string[]) => {
   if (!urls.length) { imageSrcMap.value = {}; return }
   for (const url of urls) {
-    if (imageSrcMap.value[url]) continue
+    // 先查模块级缓存
+    if (_imageCache.has(url)) {
+      if (!imageSrcMap.value[url]) {
+        imageSrcMap.value = { ...imageSrcMap.value, [url]: _imageCache.get(url)! }
+      }
+      continue
+    }
     try {
       const dataUrl = await invoke<string>('fetch_image_as_base64', { url })
+      _imageCache.set(url, dataUrl)
       imageSrcMap.value = { ...imageSrcMap.value, [url]: dataUrl }
       analyzeImage(url, dataUrl)
     } catch { }
@@ -1016,6 +1007,20 @@ const performSearch = async () => {
     // 获取当前选中的文件夹ID
     const currentFolderId = props.selectedFolderId ? parseInt(props.selectedFolderId) : undefined;
 
+    // 获取用于高亮的关键词（进行分词）
+    try {
+      const segments = await invoke<string[]>('segment_text', { text: searchTerm.value.trim() });
+      if (segments && segments.length > 0) {
+        highlightTerms.value = segments;
+        console.log('获取分词关键词:', segments);
+      } else {
+        highlightTerms.value = searchTerm.value.trim().split(/\s+/).filter(t => t.length > 0);
+      }
+    } catch (error) {
+      console.warn('获取分词关键词失败:', error);
+      highlightTerms.value = searchTerm.value.trim().split(/\s+/).filter(t => t.length > 0);
+    }
+
     // 执行搜索
     questions.value = await databaseService.searchQuestionsByTitle(searchTerm.value.trim(), currentFolderId);
 
@@ -1030,6 +1035,7 @@ const performSearch = async () => {
 const clearSearch = () => {
   searchTerm.value = '';
   isSearchMode.value = false;
+  highlightTerms.value = [];
 
   // 清除防抖定时器
   if (searchDebounceTimer.value) {
@@ -1053,8 +1059,17 @@ const highlightSearchTerm = (text: string): string => {
     return text;
   }
 
-  const term = searchTerm.value.trim();
-  const regex = new RegExp(`(${term})`, 'gi');
+  // Use highlightTerms if available, otherwise split searchTerm
+  let terms = highlightTerms.value;
+  if (terms.length === 0) {
+    terms = searchTerm.value.trim().split(/\s+/).filter(t => t.length > 0);
+  }
+  
+  if (terms.length === 0) return text;
+
+  // Escape special regex characters in terms
+  const escapedTerms = terms.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  const regex = new RegExp(`(${escapedTerms.join('|')})`, 'gi');
   return text.replace(regex, '<mark class="search-highlight">$1</mark>');
 };
 
@@ -1380,18 +1395,6 @@ onUnmounted(() => {
   background-color: var(--bg-secondary);
 }
 
-.header-content {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-}
-
-.header-right {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
 /* 分页控制器样式 */
 .pagination-container {
   display: flex;
@@ -1402,10 +1405,10 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
-  background-color: var(--bg-primary);
-  border: 1px solid var(--border-color);
+  /* background-color: var(--bg-primary); */
+  /* border: 1px solid var(--border-color); */
   border-radius: 6px;
-  padding: 4px;
+  /* padding: 4px; */
 }
 
 .pagination-btn {
@@ -1442,62 +1445,28 @@ onUnmounted(() => {
   padding: 0 4px;
 }
 
-.breadcrumb-container {
-  flex: 1;
-}
-
-.breadcrumb-container h3 {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.list-header h3 {
-  margin: 0 0 4px 0;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.breadcrumb-path {
-  font-size: 14px;
-  font-weight: 600;
-  color: #333333;
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-}
-
-.breadcrumb-item {
-  display: inline-flex;
-  align-items: center;
-}
-
-.breadcrumb-name {
-  color: var(--text-primary);
-  font-weight: 500;
-}
-
-.breadcrumb-separator {
-  margin: 0 8px;
-  color: #666666;
-  font-weight: normal;
-}
-
 .question-count-info {
   font-size: 12px;
   color: #666666;
   white-space: nowrap;
-  margin-left: 16px;
+  /* margin-left: 16px; */
 }
 
 /* 搜索框样式 */
 .search-container {
-  margin-top: 12px;
+  /* margin-top: 12px; */
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.search-left-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 .search-box {
@@ -1584,30 +1553,28 @@ onUnmounted(() => {
 }
 
 .add-question-button {
-  padding: 8px 12px;
-  background-color: var(--question-detail-add-btn-bg);
-  color: var(--question-detail-add-btn-text);
+  padding: 6px;
+  width: 30px;
+  height: 30px;
+  background-color: var(--add-btn-icon-bg);
+  color: var(--add-btn-icon-color);
   border: none;
   border-radius: 6px;
   cursor: pointer;
-  font-size: 14px;
-  font-weight: 500;
   transition: background-color 0.2s ease;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .add-question-button svg {
   width: 16px;
   height: 16px;
-  fill: currentColor;
 }
 
 .add-question-button:hover {
-  background-color: var(--question-detail-add-btn-hover-bg);
+  background-color: var(--add-btn-icon-hover-bg);
 }
 
 /* 搜索图标按钮 */
@@ -1648,7 +1615,8 @@ onUnmounted(() => {
   flex-shrink: 0;
 }
 
-.import-icon-button {
+.import-icon-button,
+.refresh-icon-button {
   user-select: none;
   transition: background 20ms ease-in;
   cursor: pointer;
@@ -1678,7 +1646,8 @@ onUnmounted(() => {
 }
 
 .import-icon-button:hover,
-.import-icon-button.active {
+.import-icon-button.active,
+.refresh-icon-button:hover {
   background: var(--hover-bg);
 }
 

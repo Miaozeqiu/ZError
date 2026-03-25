@@ -315,11 +315,13 @@ body {
   padding: 0;
   background-color: var(--bg-tertiary, #f4f4f4);
   color: var(--text-primary, #2d3748);
+  overflow: hidden;
 }
 
 #app {
   height: 100vh;
   width: 100vw;
+  overflow: hidden;
   background-color: var(--bg-tertiary, #f4f4f4);
 }
 

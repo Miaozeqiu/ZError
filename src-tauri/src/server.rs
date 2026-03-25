@@ -1,7 +1,8 @@
 use tauri::State;
+use tokio::task::JoinHandle;
 use warp::Filter;
 use crate::types::{ServerInfo, ServerState, QueryData, QueryRequest, QueryResponse, ModelCallResponseRequest, ModelCallProgressRequest};
-use crate::database::query_database;
+use crate::database::{query_database, insert_ai_response};
 use futures_util::StreamExt;
 use tokio_stream::wrappers::BroadcastStream;
 use std::collections::HashMap;
@@ -10,16 +11,172 @@ use uuid;
 use serde_json::Value;
 use regex::Regex;
 
+/// 验证管理员 token（从 Authorization: Bearer <token> 或直接值中提取）
+fn check_admin_token(auth: &Option<String>) -> bool {
+    let token = match auth {
+        None => return false,
+        Some(v) => {
+            let v = v.trim();
+            if v.to_lowercase().starts_with("bearer ") {
+                v[7..].trim().to_string()
+            } else {
+                v.to_string()
+            }
+        }
+    };
+    if token.is_empty() {
+        return false;
+    }
+    let config_path = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("config.json");
+    let config: serde_json::Value = std::fs::read_to_string(&config_path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+    let admin_token = config.get("adminToken").and_then(|v| v.as_str()).unwrap_or("");
+    !admin_token.is_empty() && token == admin_token
+}
+
 /// 检测文本中是否包含URL
 fn contains_url(text: &str) -> bool {
     let url_regex = Regex::new(r"https?://[^\s]+").unwrap();
     url_regex.is_match(text)
 }
 
+/// 启动Web静态文件服务器
+async fn start_web_server(web_port: u16, bind_ip: [u8; 4]) -> JoinHandle<()> {
+    use warp::Filter;
+
+    let cors = warp::cors()
+        .allow_any_origin()
+        .allow_headers(vec!["content-type", "authorization"])
+        .allow_methods(vec!["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD"]);
+
+    // dev 模式：反向代理到 vite dev server (3002)
+    if cfg!(debug_assertions) {
+        println!("🌐 Web server (dev) proxying to http://localhost:3002");
+        let client = reqwest::Client::new();
+        let proxy_route = warp::any()
+            .and(warp::method())
+            .and(warp::path::full())
+            .and(warp::query::raw().or(warp::any().map(|| String::new())).unify())
+            .and(warp::header::headers_cloned())
+            .and(warp::body::bytes())
+            .and_then(move |method: warp::http::Method, path: warp::path::FullPath, query: String, headers: warp::http::HeaderMap, body: bytes::Bytes| {
+                let client = client.clone();
+                async move {
+                    let url = if query.is_empty() {
+                        format!("http://localhost:3002{}", path.as_str())
+                    } else {
+                        format!("http://localhost:3002{}?{}", path.as_str(), query)
+                    };
+                    let method_str = method.as_str().to_string();
+                    let req_method = reqwest::Method::from_bytes(method_str.as_bytes()).unwrap_or(reqwest::Method::GET);
+                    let mut req = client.request(req_method, &url).body(body);
+                    for (key, value) in headers.iter() {
+                        let name = key.as_str();
+                        if name != "host" {
+                            req = req.header(key.as_str(), value.as_bytes());
+                        }
+                    }
+                    match req.send().await {
+                        Ok(resp) => {
+                            let status = resp.status();
+                            let resp_headers = resp.headers().clone();
+                            let resp_body = resp.bytes().await.unwrap_or_default();
+                            let mut reply = warp::http::Response::builder().status(status.as_u16());
+                            for (key, value) in resp_headers.iter() {
+                                let name = key.as_str();
+                                if name != "transfer-encoding" {
+                                    reply = reply.header(key.as_str(), value.as_bytes());
+                                }
+                            }
+                            Ok::<_, warp::Rejection>(reply.body(resp_body.to_vec()).unwrap())
+                        }
+                        Err(_) => {
+                            Ok::<_, warp::Rejection>(warp::http::Response::builder()
+                                .status(502)
+                                .body(b"vite dev server not running on port 3002".to_vec())
+                                .unwrap())
+                        }
+                    }
+                }
+            });
+        return tokio::spawn(async move {
+            warp::serve(proxy_route.with(cors))
+                .run((bind_ip, web_port))
+                .await;
+        });
+    }
+
+    // release 模式：提供静态文件
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    let web_dir = exe_dir.join("web");
+    println!("🌐 Web server serving from: {:?}", web_dir);
+    let static_files = warp::fs::dir(web_dir.clone());
+    let index_fallback = warp::fs::file(web_dir.join("index.html"));
+
+    // /api/login 路由，避免跨端口 CORS 问题
+    let web_login_route = warp::path("api")
+        .and(warp::path("login"))
+        .and(warp::post())
+        .and(warp::body::json())
+        .and_then(|body: serde_json::Value| async move {
+            let token = body.get("token").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            if token.is_empty() {
+                let resp = serde_json::json!({"success": false, "message": "token不能为空"});
+                return Ok::<_, warp::Rejection>(warp::reply::json(&resp));
+            }
+            let config_path = std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+                .unwrap_or_else(|| std::path::PathBuf::from("."))
+                .join("config.json");
+            let config: serde_json::Value = std::fs::read_to_string(&config_path)
+                .ok()
+                .and_then(|s| serde_json::from_str(&s).ok())
+                .unwrap_or_default();
+            let admin_token = config.get("adminToken").and_then(|v| v.as_str()).unwrap_or("");
+            if !admin_token.is_empty() && token == admin_token {
+                return Ok::<_, warp::Rejection>(warp::reply::json(
+                    &serde_json::json!({"success": true, "role": "admin", "name": "管理员"})
+                ));
+            }
+            if let Some(users) = config.get("multiUser").and_then(|m| m.get("users")).and_then(|u| u.as_array()) {
+                for user in users {
+                    let ut = user.get("token").and_then(|v| v.as_str()).unwrap_or("");
+                    if !ut.is_empty() && token == ut {
+                        let name = user.get("name").and_then(|v| v.as_str()).unwrap_or("用户").to_string();
+                        return Ok::<_, warp::Rejection>(warp::reply::json(
+                            &serde_json::json!({"success": true, "role": "user", "name": name})
+                        ));
+                    }
+                }
+            }
+            Ok::<_, warp::Rejection>(warp::reply::json(
+                &serde_json::json!({"success": false, "message": "Token 无效"})
+            ))
+        });
+
+    let routes = web_login_route.or(static_files).or(index_fallback).with(cors);
+    tokio::spawn(async move {
+        warp::serve(routes)
+            .run((bind_ip, web_port))
+            .await;
+    })
+}
+
 /// 启动HTTP服务器
 #[tauri::command]
 pub async fn start_server(
     port: u16,
+    web_port: u16,
     bind_address: String,
     state: State<'_, ServerState>,
 ) -> Result<ServerInfo, String> {
@@ -165,116 +322,118 @@ pub async fn start_server(
 
                 // 先进行数据库查询（无论是否包含URL）
                 let result = match query_database(&request.title).await {
-                    Ok(Some((question, answer, is_ai))) => {
-                        println!("✅ 在数据库中找到匹配结果: {}", request.title);
-                        let data = QueryData {
-                            question,
-                            answer,
-                            is_ai,
-                        };
-                        let response = QueryResponse::success(data);
-                        (200, response)
-                    }
-                    Ok(None) => {
-                        println!("🔍 数据库中未找到匹配结果: {}", request.title);
-                        
-                        // 如果数据库中没有找到结果且检测到URL，返回URL处理消息
-                        if has_url {
-                            println!("🔗 检测到URL，返回URL处理消息");
-                            let data = QueryData {
-                                question: request.title.clone(),
-                                answer: "题目中含有URL，无法直接展示".to_string(),
-                                is_ai: false,
-                            };
-                            let response = QueryResponse::success(data);
+                    Ok(results) => {
+                        if !results.is_empty() {
+                            println!("✅ 在数据库中找到匹配结果: {} 条记录", results.len());
+                            let data_list: Vec<QueryData> = results.into_iter().map(|(question, answer, is_ai)| {
+                                QueryData {
+                                    question,
+                                    answer,
+                                    is_ai,
+                                }
+                            }).collect();
+                            let response = QueryResponse::success(data_list);
                             (200, response)
                         } else {
-                            // 数据库中没有找到结果且没有URL，发送模型调用请求事件并等待响应
-                            println!("🤖 Database query returned no results, requesting model call for: {}", request.title);
-                            
+                            println!("🔍 数据库中未找到匹配结果: {}", request.title);
+
                             // 判断当前模型是否为思考模型
                             let is_thinking_model = {
                                 let flag = thinking_flag.lock();
                                 *flag
                             };
-                            // 根据模型类型与后端开关选择提示词
                             let detailed_analysis_enabled = {
                                 let flag = analysis_flag.lock();
                                 *flag
                             };
-                            // 构建带有提示词的完整查询内容，包含options和type参数
-                            let mut formatted_query = if is_thinking_model {
-                                // 思考模型：始终使用简化提示词
-                                format!(
-                                    "请分析我给出的问题，将答案用JSON的格式回答我，格式{{\"answer\":\"答案\"}}。如果是选择题，请回答内容而非选项。题目：{}",
-                                    request.title
-                                )
-                            } else if detailed_analysis_enabled {
-                                // 非思考模型且开启分析：使用带思考过程的提示词
-                                format!(
-                                    "请先分析我给出的问题，给出简要的思考过程，如果问题比较复杂，给出详细思考过程。最后将答案用JSON的格式回答我，格式{{\"answer\":\"答案\"}}。如果是选择题，请回答内容而非选项。题目：{}",
-                                    request.title
-                                )
-                            } else {
-                                // 非思考模型且未开启分析：使用简化提示词
-                                format!(
-                                    "请分析我给出的问题，将答案用JSON的格式回答我，格式{{\"answer\":\"答案\"}}。如果是选择题，请回答内容而非选项。题目：{}",
-                                    request.title
-                                )
-                            };
-                            
-                            // 如果有options参数，添加到提示词中
-                            if let Some(options) = &request.options {
-                                if !options.is_empty() {
-                                    formatted_query.push_str(&format!("，选项：{}", options));
-                                }
-                            }
-                            
-                            // 如果有type参数，添加到提示词中，并转换为中文
-                            if let Some(query_type) = &request.query_type {
-                                if !query_type.is_empty() {
-                                    let chinese_type = match query_type.as_str() {
-                                        "single" => "单选",
-                                        "multiple" => "多选",
-                                        "judgement" => "判断",
-                                        "completion" => "填空",
-                                        _ => query_type, // 如果不是预定义的类型，使用原值
-                                    };
-                                    formatted_query.push_str(&format!("，题目类型：{}", chinese_type));
-                                    
-                                    // 为多选、填空和判断题添加特殊提示词
-                                    match query_type.as_str() {
-                                        "multiple" => {
-                                            formatted_query.push_str("。这是多选题，请你将答案用###连接");
-                                        },
-                                        "completion" => {
-                                            formatted_query.push_str("。这是填空题，如果有多个空，使用###连接");
-                                        },
-                                        "judgement" => {
-                                            formatted_query.push_str("。这是判断题，请你只回答\\\"正确\\\"或\\\"错误\\\"，不要添加任何其他内容");
-                                        },
-                                        _ => {}
+
+                            // 如果检测到URL，发送视觉分析请求（带 __URL_QUESTION__: 前缀）
+                            let formatted_query = if has_url {
+                                println!("🔗 检测到URL，发送视觉分析请求: {}", request.title);
+                                let mut q = format!("__URL_QUESTION__:{}", request.title);
+                                if let Some(options) = &request.options {
+                                    if !options.is_empty() {
+                                        q.push_str(&format!("\n__OPTIONS__:{}", options));
                                     }
                                 }
-                            }
-                            
+                                q
+                            } else {
+                                // 普通题目：构建文本模型提示词
+                                println!("🤖 Database query returned no results, requesting model call for: {}", request.title);
+                                let mut q = if is_thinking_model {
+                                    format!(
+                                        "请分析我给出的问题，将答案用JSON的格式回答我，格式{{\"answer\":\"答案\"}}。如果是选择题，请回答内容而非选项。题目：{}",
+                                        request.title
+                                    )
+                                } else if detailed_analysis_enabled {
+                                    format!(
+                                        "请先分析我给出的问题，给出简要的思考过程，如果问题比较复杂，给出详细思考过程。最后将答案用JSON的格式回答我，格式{{\"answer\":\"答案\"}}。如果是选择题，请回答内容而非选项。题目：{}",
+                                        request.title
+                                    )
+                                } else {
+                                    format!(
+                                        "请分析我给出的问题，将答案用JSON的格式回答我，格式{{\"answer\":\"答案\"}}。如果是选择题，请回答内容而非选项。题目：{}",
+                                        request.title
+                                    )
+                                };
+                                if let Some(options) = &request.options {
+                                    if !options.is_empty() {
+                                        q.push_str(&format!("，选项：{}", options));
+                                    }
+                                }
+                                if let Some(query_type) = &request.query_type {
+                                    if !query_type.is_empty() {
+                                        let chinese_type = match query_type.as_str() {
+                                            "single" => "单选",
+                                            "multiple" => "多选",
+                                            "judgement" => "判断",
+                                            "completion" => "填空",
+                                            _ => query_type,
+                                        };
+                                        q.push_str(&format!("，题目类型：{}", chinese_type));
+                                        match query_type.as_str() {
+                                            "multiple" => q.push_str("。这是多选题，请你将答案用###连接"),
+                                            "completion" => q.push_str("。这是填空题，如果有多个空，使用###连接"),
+                                            "judgement" => q.push_str("。这是判断题，请你只回答\\\"正确\\\"或\\\"错误\\\"，不要添加任何其他内容"),
+                                            _ => {}
+                                        }
+                                    }
+                                }
+                                q
+                            };
+
                             logger.send_model_call_request(request_id.clone(), formatted_query);
-                            
-                            // 等待模型调用完成（最多等待30秒）
-                        match logger.wait_for_model_response(request_id.clone(), 30).await {
+
+                            // 等待模型调用完成（URL题目等待更长时间：120秒）
+                            let wait_secs = if has_url { 120 } else { 30 };
+                        match logger.wait_for_model_response(request_id.clone(), wait_secs).await {
                             Ok(model_content) => {
                                 println!("✅ Received model response: {}", model_content);
                                 if let Some(err_msg) = is_model_error(&model_content) {
                                     let response = QueryResponse::error(err_msg);
                                     (500, response)
                                 } else {
-                                    let extracted_answer = extract_answer_from_json(&model_content);
+                                    let mut extracted_answer = extract_answer_from_json(&model_content);
+                                    
+                                    // Check for incomplete question response
+                                    if model_content.contains("题目不完整，无法确定具体问题。") {
+                                        extracted_answer = String::new();
+                                        println!("⚠️ 检测到题目不完整，将答案留空");
+                                    }
+
+                                    // Store to database
+                                    if let Err(e) = insert_ai_response(&request.title, &extracted_answer, request.options.clone(), request.query_type.clone(), true) {
+                                        println!("❌ Failed to store AI response: {}", e);
+                                    } else {
+                                        println!("✅ AI response stored to database");
+                                    }
+
                                     let data = QueryData {
                                         question: request.title.clone(),
                                         answer: extracted_answer,
                                         is_ai: true,
                                     };
-                                    let response = QueryResponse::success(data);
+                                    let response = QueryResponse::success(vec![data]);
                                     (200, response)
                                 }
                             }
@@ -380,116 +539,117 @@ pub async fn start_server(
 
                 // 先进行数据库查询（无论是否包含URL）
                 let result = match query_database(&request.title).await {
-                    Ok(Some((question, answer, is_ai))) => {
-                        println!("✅ 在数据库中找到匹配结果: {}", request.title);
-                        let data = QueryData {
-                            question,
-                            answer,
-                            is_ai,
-                        };
-                        let response = QueryResponse::success(data);
-                        (200, response)
-                    }
-                    Ok(None) => {
-                        println!("🔍 数据库中未找到匹配结果: {}", request.title);
-                        
-                        // 如果数据库中没有找到结果且检测到URL，返回URL处理消息
-                        if has_url {
-                            println!("🔗 检测到URL，返回URL处理消息");
-                            let data = QueryData {
-                                question: request.title.clone(),
-                                answer: "题目中含有URL，无法直接展示".to_string(),
-                                is_ai: false,
-                            };
-                            let response = QueryResponse::success(data);
+                    Ok(results) => {
+                        if !results.is_empty() {
+                            println!("✅ 在数据库中找到匹配结果: {} 条记录", results.len());
+                            let data_list: Vec<QueryData> = results.into_iter().map(|(question, answer, is_ai)| {
+                                QueryData {
+                                    question,
+                                    answer,
+                                    is_ai,
+                                }
+                            }).collect();
+                            let response = QueryResponse::success(data_list);
                             (200, response)
                         } else {
-                            // 数据库中没有找到结果且没有URL，发送模型调用请求事件并等待响应
-                            println!("🤖 Database query returned no results, requesting model call for: {}", request.title);
-                            
+                            println!("🔍 数据库中未找到匹配结果: {}", request.title);
+
                             // 判断当前模型是否为思考模型
                             let is_thinking_model = {
                                 let flag = thinking_flag.lock();
                                 *flag
                             };
-                            // 根据模型类型与后端开关选择提示词
                             let detailed_analysis_enabled = {
                                 let flag = analysis_flag.lock();
                                 *flag
                             };
-                            // 构建带有提示词的完整查询内容，包含options和type参数
-                            let mut formatted_query = if is_thinking_model {
-                                // 思考模型：始终使用简化提示词
-                                format!(
-                                    "请分析我给出的问题，将答案用JSON的格式回答我，格式{{\"answer\":\"答案\"}}。如果是选择题，请回答内容而非选项。题目：{}",
-                                    request.title
-                                )
-                            } else if detailed_analysis_enabled {
-                                // 非思考模型且开启分析：使用带思考过程的提示词
-                                format!(
-                                    "请先分析我给出的问题，给出简要的思考过程，如果问题比较复杂，给出详细思考过程。最后将答案用JSON的格式回答我，格式{{\"answer\":\"答案\"}}。如果是选择题，请回答内容而非选项。题目：{}",
-                                    request.title
-                                )
-                            } else {
-                                // 非思考模型且未开启分析：使用简化提示词
-                                format!(
-                                    "请分析我给出的问题，将答案用JSON的格式回答我，格式{{\"answer\":\"答案\"}}。如果是选择题，请回答内容而非选项。题目：{}",
-                                    request.title
-                                )
-                            };
-                            
-                            // 如果有options参数，添加到提示词中
-                            if let Some(options) = &request.options {
-                                if !options.is_empty() {
-                                    formatted_query.push_str(&format!("，选项：{}", options));
-                                }
-                            }
-                            
-                            // 如果有type参数，添加到提示词中，并转换为中文
-                            if let Some(query_type) = &request.query_type {
-                                if !query_type.is_empty() {
-                                    let chinese_type = match query_type.as_str() {
-                                        "single" => "单选",
-                                        "multiple" => "多选",
-                                        "judgement" => "判断",
-                                        "completion" => "填空",
-                                        _ => query_type, // 如果不是预定义的类型，使用原值
-                                    };
-                                    formatted_query.push_str(&format!("，题目类型：{}", chinese_type));
-                                    
-                                    // 为多选、填空和判断题添加特殊提示词
-                                    match query_type.as_str() {
-                                        "multiple" => {
-                                            formatted_query.push_str("。这是多选题，请你将答案用###连接");
-                                        },
-                                        "completion" => {
-                                            formatted_query.push_str("。这是填空题，如果有多个空，使用###连接");
-                                        },
-                                        "judgement" => {
-                                            formatted_query.push_str("。这是判断题，请你只回答\\\"正确\\\"或\\\"错误\\\"，不要添加任何其他内容");
-                                        },
-                                        _ => {}
+
+                            // 如果检测到URL，发送视觉分析请求（带 __URL_QUESTION__: 前缀）
+                            let formatted_query = if has_url {
+                                println!("🔗 检测到URL，发送视觉分析请求: {}", request.title);
+                                let mut q = format!("__URL_QUESTION__:{}", request.title);
+                                if let Some(options) = &request.options {
+                                    if !options.is_empty() {
+                                        q.push_str(&format!("\n__OPTIONS__:{}", options));
                                     }
                                 }
-                            }
-                            
+                                q
+                            } else {
+                                println!("🤖 Database query returned no results, requesting model call for: {}", request.title);
+                                let mut q = if is_thinking_model {
+                                    format!(
+                                        "请分析我给出的问题，将答案用JSON的格式回答我，格式{{\"answer\":\"答案\"}}。如果是选择题，请回答内容而非选项。题目：{}",
+                                        request.title
+                                    )
+                                } else if detailed_analysis_enabled {
+                                    format!(
+                                        "请先分析我给出的问题，给出简要的思考过程，如果问题比较复杂，给出详细思考过程。最后将答案用JSON的格式回答我，格式{{\"answer\":\"答案\"}}。如果是选择题，请回答内容而非选项。题目：{}",
+                                        request.title
+                                    )
+                                } else {
+                                    format!(
+                                        "请分析我给出的问题，将答案用JSON的格式回答我，格式{{\"answer\":\"答案\"}}。如果是选择题，请回答内容而非选项。题目：{}",
+                                        request.title
+                                    )
+                                };
+                                if let Some(options) = &request.options {
+                                    if !options.is_empty() {
+                                        q.push_str(&format!("，选项：{}", options));
+                                    }
+                                }
+                                if let Some(query_type) = &request.query_type {
+                                    if !query_type.is_empty() {
+                                        let chinese_type = match query_type.as_str() {
+                                            "single" => "单选",
+                                            "multiple" => "多选",
+                                            "judgement" => "判断",
+                                            "completion" => "填空",
+                                            _ => query_type,
+                                        };
+                                        q.push_str(&format!("，题目类型：{}", chinese_type));
+                                        match query_type.as_str() {
+                                            "multiple" => q.push_str("。这是多选题，请你将答案用###连接"),
+                                            "completion" => q.push_str("。这是填空题，如果有多个空，使用###连接"),
+                                            "judgement" => q.push_str("。这是判断题，请你只回答\\\"正确\\\"或\\\"错误\\\"，不要添加任何其他内容"),
+                                            _ => {}
+                                        }
+                                    }
+                                }
+                                q
+                            };
+
                             logger.send_model_call_request(request_id.clone(), formatted_query);
-                            
-                            // 等待模型调用完成（最多等待30秒）
-                            match logger.wait_for_model_response(request_id.clone(), 30).await {
+
+                            // 等待模型调用完成（URL题目等待更长时间：120秒）
+                            let wait_secs = if has_url { 120 } else { 30 };
+                            match logger.wait_for_model_response(request_id.clone(), wait_secs).await {
                             Ok(model_content) => {
                                 println!("✅ Received model response: {}", model_content);
                                 if let Some(err_msg) = is_model_error(&model_content) {
                                     let response = QueryResponse::error(err_msg);
                                     (500, response)
                                 } else {
-                                    let extracted_answer = extract_answer_from_json(&model_content);
+                                    let mut extracted_answer = extract_answer_from_json(&model_content);
+                                    
+                                    // Check for incomplete question response
+                                    if model_content.contains("题目不完整，无法确定具体问题。") {
+                                        extracted_answer = String::new();
+                                        println!("⚠️ 检测到题目不完整，将答案留空");
+                                    }
+
+                                    // Store to database
+                                    if let Err(e) = insert_ai_response(&request.title, &extracted_answer, request.options.clone(), request.query_type.clone(), true) {
+                                        println!("❌ Failed to store AI response: {}", e);
+                                    } else {
+                                        println!("✅ AI response stored to database");
+                                    }
+
                                     let data = QueryData {
                                         question: request.title.clone(),
                                         answer: extracted_answer,
                                         is_ai: true,
                                     };
-                                    let response = QueryResponse::success(data);
+                                    let response = QueryResponse::success(vec![data]);
                                     (200, response)
                                 }
                             }
@@ -804,6 +964,102 @@ pub async fn start_server(
             }
         });
 
+    // 登录路由：验证管理员token或用户token
+    let login_route = warp::path("api")
+        .and(warp::path("login"))
+        .and(warp::post())
+        .and(warp::body::json())
+        .and_then(move |body: serde_json::Value| async move {
+            let token = body.get("token").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            if token.is_empty() {
+                let resp = serde_json::json!({"success": false, "message": "token不能为空"});
+                return Ok::<_, warp::Rejection>(warp::reply::json(&resp));
+            }
+            // 读取配置文件
+            let config_path = {
+                let exe_dir = std::env::current_exe()
+                    .ok()
+                    .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+                    .unwrap_or_else(|| std::path::PathBuf::from("."));
+                exe_dir.join("config.json")
+            };
+            let config_str = std::fs::read_to_string(&config_path).unwrap_or_default();
+            let config: serde_json::Value = serde_json::from_str(&config_str).unwrap_or_default();
+            // 验证管理员token
+            let admin_token = config.get("adminToken").and_then(|v| v.as_str()).unwrap_or("");
+            if !admin_token.is_empty() && token == admin_token {
+                let resp = serde_json::json!({"success": true, "role": "admin", "name": "管理员"});
+                return Ok::<_, warp::Rejection>(warp::reply::json(&resp));
+            }
+            // 验证普通用户token
+            if let Some(users) = config.get("multiUser").and_then(|m| m.get("users")).and_then(|u| u.as_array()) {
+                for user in users {
+                    let user_token = user.get("token").and_then(|v| v.as_str()).unwrap_or("");
+                    if !user_token.is_empty() && token == user_token {
+                        let name = user.get("name").and_then(|v| v.as_str()).unwrap_or("用户");
+                        let resp = serde_json::json!({"success": true, "role": "user", "name": name});
+                        return Ok::<_, warp::Rejection>(warp::reply::json(&resp));
+                    }
+                }
+            }
+            let resp = serde_json::json!({"success": false, "message": "token无效"});
+            Ok::<_, warp::Rejection>(warp::reply::json(&resp))
+        });
+
+    // GET /api/models — 读取模型配置（需要管理员token验证）
+    let models_get_route = warp::path("api")
+        .and(warp::path("models"))
+        .and(warp::get())
+        .and(warp::header::optional::<String>("authorization"))
+        .and_then(|auth: Option<String>| async move {
+            if !check_admin_token(&auth) {
+                return Ok::<_, warp::Rejection>(warp::reply::with_status(
+                    warp::reply::json(&serde_json::json!({"success": false, "message": "未授权"})),
+                    warp::http::StatusCode::UNAUTHORIZED,
+                ));
+            }
+            let path = std::env::current_exe()
+                .ok().and_then(|p| p.parent().map(|d| d.to_path_buf()))
+                .unwrap_or_else(|| std::path::PathBuf::from("."))
+                .join("model_config.json");
+            let data: serde_json::Value = std::fs::read_to_string(&path)
+                .ok().and_then(|s| serde_json::from_str(&s).ok())
+                .unwrap_or(serde_json::json!({}));
+            Ok::<_, warp::Rejection>(warp::reply::with_status(
+                warp::reply::json(&serde_json::json!({"success": true, "data": data})),
+                warp::http::StatusCode::OK,
+            ))
+        });
+
+    // PUT /api/models — 写入模型配置（需要管理员token验证）
+    let models_put_route = warp::path("api")
+        .and(warp::path("models"))
+        .and(warp::put())
+        .and(warp::header::optional::<String>("authorization"))
+        .and(warp::body::json())
+        .and_then(|auth: Option<String>, body: serde_json::Value| async move {
+            if !check_admin_token(&auth) {
+                return Ok::<_, warp::Rejection>(warp::reply::with_status(
+                    warp::reply::json(&serde_json::json!({"success": false, "message": "未授权"})),
+                    warp::http::StatusCode::UNAUTHORIZED,
+                ));
+            }
+            let path = std::env::current_exe()
+                .ok().and_then(|p| p.parent().map(|d| d.to_path_buf()))
+                .unwrap_or_else(|| std::path::PathBuf::from("."))
+                .join("model_config.json");
+            match std::fs::write(&path, body.to_string()) {
+                Ok(_) => Ok::<_, warp::Rejection>(warp::reply::with_status(
+                    warp::reply::json(&serde_json::json!({"success": true})),
+                    warp::http::StatusCode::OK,
+                )),
+                Err(e) => Ok::<_, warp::Rejection>(warp::reply::with_status(
+                    warp::reply::json(&serde_json::json!({"success": false, "message": e.to_string()})),
+                    warp::http::StatusCode::INTERNAL_SERVER_ERROR,
+                )),
+            }
+        });
+
     // 组合所有路由（query路由和SSE路由不需要额外的日志中间件）
     let routes = root_route
         .or(root_head_route)
@@ -812,6 +1068,9 @@ pub async fn start_server(
         .or(model_response_route)
         .or(model_progress_route)
         .or(sse_logs_route)
+        .or(login_route)
+        .or(models_get_route)
+        .or(models_put_route)
         .with(cors);
 
     // 解析绑定地址
@@ -860,6 +1119,13 @@ pub async fn start_server(
     // 存储服务器句柄
     *state.handle.lock() = Some(server_handle);
 
+    // 启动 Web 静态文件服务器
+    if web_port > 0 {
+        let web_handle = start_web_server(web_port, bind_ip).await;
+        *state.web_handle.lock() = Some(web_handle);
+        println!("🌐 Web server started on port {}", web_port);
+    }
+
     Ok(result)
 }
 
@@ -883,6 +1149,11 @@ pub async fn stop_server(state: State<'_, ServerState>) -> Result<ServerInfo, St
     // 停止服务器
     if let Some(handle) = state.handle.lock().take() {
         handle.abort();
+    }
+
+    // 停止 Web 服务器
+    if let Some(web_handle) = state.web_handle.lock().take() {
+        web_handle.abort();
     }
 
     // 更新状态
@@ -922,8 +1193,14 @@ async fn store_ai_response_to_database(request_id: &str, content: &str) -> Resul
     // 记录AI响应信息，准备存储到数据库
     println!("📝 准备存储AI响应到数据库: request_id={}, content_length={}", request_id, content.len());
     
-    // TODO: 实际的数据库存储逻辑
-    // 这里应该调用数据库插入操作，将AI响应存储到数据库中
+    // 如果回答是"题目不完整，无法确定具体问题。"，则记录日志
+    if content.contains("题目不完整，无法确定具体问题。") {
+        println!("⚠️ 检测到题目不完整 (in callback)");
+    }
+
+    // TODO: 目前无法在此处存储，因为缺少原始问题的标题 (Title)。
+    // 完整的存储逻辑已在 query_post_route 中实现，那里有完整的上下文。
+    // 如果将来需要支持异步回调存储，需要实现通过 request_id 查找原始 title 的机制。
     
     Ok(())
 }
