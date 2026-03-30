@@ -1,7 +1,7 @@
 
 
 <div align="center">
-  <img src="https://app.zerror.cc/logo.ico" alt="ZError Logo" width="128">
+  <img src="https://free.picui.cn/free/2026/03/30/69ca3e6fe4eca.png" alt="ZError Logo" width="128">
   <br>
   <h2>ZError</h3>
   <span>支持OCS网课助手的AI题库管理软件</span>
@@ -11,7 +11,7 @@
 
 ZError是一款专为OCS网课助手设计的AI题库软件，可以方便地为OCS网课助手搭建本地AI题库。软件由Tauri架构开发，支持AI平台以及模型的自定义。
 
-![软件首页](https://free.picui.cn/free/2025/04/14/67fd2249779d0.png)
+![软件首页](https://free.picui.cn/free/2025/11/09/691031b4dd824.png)
 
 ## 主要功能
 
