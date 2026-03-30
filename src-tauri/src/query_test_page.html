@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ZError 查询测试页</title>
+    <style>
+        :root {
+            color-scheme: light;
+            --bg-start: #eef4ff;
+            --bg-end: #f8fafc;
+            --panel-bg: rgba(255, 255, 255, 0.92);
+            --panel-border: rgba(148, 163, 184, 0.22);
+            --panel-shadow: 0 24px 60px rgba(15, 23, 42, 0.12);
+            --title-text: #0f172a;
+            --muted-text: #475569;
+            --label-text: #334155;
+            --input-border: #dbe4f0;
+            --input-bg: #ffffff;
+            --input-focus: rgba(37, 99, 235, 0.16);
+            --primary: #2563eb;
+            --primary-hover: #1d4ed8;
+            --primary-shadow: rgba(37, 99, 235, 0.26);
+            --result-bg: #f8fafc;
+            --result-border: #cbd5e1;
+            --success-bg: #ecfdf3;
+            --success-border: #22c55e;
+            --error-bg: #fef2f2;
+            --error-border: #ef4444;
+            --loading-bg: #eff6ff;
+            --loading-border: #3b82f6;
+            --code-bg: #0f172a;
+            --code-text: #e2e8f0;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+            background: linear-gradient(160deg, var(--bg-start) 0%, var(--bg-end) 100%);
+            color: var(--title-text);
+        }
+
+        .page {
+            width: min(920px, calc(100% - 32px));
+            margin: 40px auto;
+        }
+
+        .container {
+            background: var(--panel-bg);
+            border: 1px solid var(--panel-border);
+            border-radius: 24px;
+            box-shadow: var(--panel-shadow);
+            overflow: hidden;
+            backdrop-filter: blur(10px);
+        }
+
+        .hero {
+            padding: 32px 32px 20px;
+            background: linear-gradient(135deg, rgba(37, 99, 235, 0.08), rgba(59, 130, 246, 0.02));
+            border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+        }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 14px;
+            border-radius: 999px;
+            background: rgba(37, 99, 235, 0.1);
+            color: var(--primary);
+            font-size: 13px;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+        }
+
+        h1 {
+            margin: 18px 0 12px;
+            font-size: clamp(28px, 4vw, 36px);
+            line-height: 1.2;
+        }
+
+        .description {
+            margin: 0;
+            color: var(--muted-text);
+            font-size: 15px;
+            line-height: 1.75;
+        }
+
+        .inline-code {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 8px;
+            background: rgba(37, 99, 235, 0.08);
+            color: #1d4ed8;
+            font-family: "Cascadia Code", "Consolas", monospace;
+            font-size: 0.92em;
+            line-height: 1.4;
+        }
+
+        .content {
+            padding: 28px 32px 32px;
+        }
+
+        .section-title {
+            margin: 0 0 18px;
+            font-size: 18px;
+            font-weight: 700;
+        }
+
+        .tips {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 12px;
+            margin-bottom: 24px;
+        }
+
+        .tip-card {
+            padding: 14px 16px;
+            border-radius: 16px;
+            background: rgba(248, 250, 252, 0.9);
+            border: 1px solid rgba(203, 213, 225, 0.8);
+        }
+
+        .tip-card strong {
+            display: block;
+            margin-bottom: 6px;
+            color: var(--label-text);
+            font-size: 14px;
+        }
+
+        .tip-card span {
+            color: var(--muted-text);
+            font-size: 13px;
+            line-height: 1.6;
+        }
+
+        form {
+            display: grid;
+            gap: 18px;
+        }
+
+        .form-group {
+            display: grid;
+            gap: 8px;
+        }
+
+        label {
+            color: var(--label-text);
+            font-size: 14px;
+            font-weight: 700;
+        }
+
+        input {
+            width: 100%;
+            padding: 14px 16px;
+            border: 1px solid var(--input-border);
+            border-radius: 14px;
+            background: var(--input-bg);
+            font-size: 14px;
+            color: var(--title-text);
+            transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+        }
+
+        input::placeholder {
+            color: #94a3b8;
+        }
+
+        input:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 4px var(--input-focus);
+            transform: translateY(-1px);
+        }
+
+        .submit-row {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin-top: 6px;
+        }
+
+        .submit-note {
+            color: var(--muted-text);
+            font-size: 13px;
+        }
+
+        button {
+            border: none;
+            border-radius: 14px;
+            padding: 14px 22px;
+            min-width: 144px;
+            background: linear-gradient(135deg, var(--primary), #3b82f6);
+            color: #ffffff;
+            font-size: 15px;
+            font-weight: 700;
+            cursor: pointer;
+            box-shadow: 0 12px 24px var(--primary-shadow);
+            transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+        }
+
+        button:hover {
+            background: linear-gradient(135deg, var(--primary-hover), var(--primary));
+            transform: translateY(-1px);
+            box-shadow: 0 16px 28px rgba(29, 78, 216, 0.28);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+
+        .result {
+            margin-top: 24px;
+            padding: 20px;
+            border-radius: 18px;
+            background: var(--result-bg);
+            border: 1px solid var(--result-border);
+        }
+
+        .result.success {
+            background: var(--success-bg);
+            border-color: rgba(34, 197, 94, 0.28);
+            box-shadow: inset 0 0 0 1px rgba(34, 197, 94, 0.08);
+        }
+
+        .result.error {
+            background: var(--error-bg);
+            border-color: rgba(239, 68, 68, 0.28);
+            box-shadow: inset 0 0 0 1px rgba(239, 68, 68, 0.08);
+        }
+
+        .result.loading {
+            background: var(--loading-bg);
+            border-color: rgba(59, 130, 246, 0.28);
+            box-shadow: inset 0 0 0 1px rgba(59, 130, 246, 0.08);
+        }
+
+        .result h3,
+        .result h4 {
+            margin: 0 0 12px;
+        }
+
+        .result p {
+            margin: 8px 0;
+            line-height: 1.7;
+        }
+
+        pre {
+            margin: 14px 0 0;
+            padding: 16px;
+            border-radius: 14px;
+            background: var(--code-bg);
+            color: var(--code-text);
+            font-size: 13px;
+            line-height: 1.7;
+            white-space: pre-wrap;
+            word-break: break-word;
+            overflow-x: auto;
+        }
+
+        .footer {
+            padding: 18px 32px 28px;
+            color: var(--muted-text);
+            font-size: 13px;
+            text-align: right;
+        }
+
+        @media (max-width: 640px) {
+            .page {
+                width: min(100%, calc(100% - 20px));
+                margin: 20px auto;
+            }
+
+            .hero,
+            .content,
+            .footer {
+                padding-left: 20px;
+                padding-right: 20px;
+            }
+
+            .submit-row {
+                align-items: stretch;
+            }
+
+            button {
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="page">
+        <div class="container">
+            <div class="hero">
+                <div class="badge">ZError Query Tester</div>
+                <h1>测试本地 <span class="inline-code">/query</span> 端点</h1>
+                <p class="description">用于快速验证查询接口是否可用，并查看返回的原始数据与解析结果。页面请求将自动使用当前服务地址，不依赖固定端口。</p>
+            </div>
+
+            <div class="content">
+                <h2 class="section-title">请求参数</h2>
+                <div class="tips">
+                    <div class="tip-card">
+                        <strong>title</strong>
+                        <span>必填，用于提交待查询的问题标题。</span>
+                    </div>
+                    <div class="tip-card">
+                        <strong>options</strong>
+                        <span>可选，适用于带选项的问题查询。</span>
+                    </div>
+                    <div class="tip-card">
+                        <strong>type</strong>
+                        <span>可选，可传题目类型或业务标识。</span>
+                    </div>
+                </div>
+
+                <form id="queryForm">
+                    <div class="form-group">
+                        <label for="title">标题 (title)</label>
+                        <input type="text" id="title" name="title" placeholder="请输入要查询的标题" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="options">选项 (options)</label>
+                        <input type="text" id="options" name="options" placeholder="可选，例如 A.选项1 B.选项2">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="type">类型 (type)</label>
+                        <input type="text" id="type" name="type" placeholder="可选，例如 single_choice">
+                    </div>
+
+                    <div class="submit-row">
+                        <span class="submit-note">提交前会先检查 <span class="inline-code">/api/status</span>。</span>
+                        <button type="submit">发送查询</button>
+                    </div>
+                </form>
+
+                <div id="result"></div>
+            </div>
+
+            <div class="footer">由ZError提供服务</div>
+        </div>
+    </div>
+
+    <script>
+        const queryForm = document.getElementById('queryForm');
+        const resultDiv = document.getElementById('result');
+
+        function escapeHtml(value) {
+            return String(value)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        function renderState(type, title, content) {
+            resultDiv.innerHTML = `
+                <div class="result ${type}">
+                    <h3>${escapeHtml(title)}</h3>
+                    ${content}
+                </div>
+            `;
+        }
+
+        function formatResult(result) {
+            let resultHtml = '<div class="result success">';
+            resultHtml += '<h3>查询结果</h3>';
+
+            if (result.code === 1 && result.data) {
+                const isAiGenerated = result.data.is_ai ?? result.data.ai ?? false;
+                resultHtml += '<p><strong>状态：</strong>查询成功</p>';
+                resultHtml += `<div><strong>问题：</strong>${result.data.question ?? '-'}</div>`;
+                resultHtml += `<p><strong>答案：</strong>${escapeHtml(result.data.answer ?? '-')}</p>`;
+                resultHtml += `<p><strong>AI生成：</strong>${isAiGenerated ? '是' : '否'}</p>`;
+                resultHtml += `<p><strong>待修正：</strong>${result.data.is_pending_correction ? '是' : '否'}</p>`;
+            } else if (result.code === 0) {
+                resultHtml += '<p><strong>状态：</strong>未找到匹配结果</p>';
+            } else {
+                resultHtml += '<p><strong>状态：</strong>查询返回异常结果</p>';
+            }
+
+            resultHtml += `<pre>${escapeHtml(JSON.stringify(result, null, 2))}</pre>`;
+            resultHtml += '</div>';
+            return resultHtml;
+        }
+
+        queryForm.addEventListener('submit', async function (e) {
+            e.preventDefault();
+
+            const title = document.getElementById('title').value;
+            const options = document.getElementById('options').value;
+            const type = document.getElementById('type').value;
+
+            const requestData = {
+                title,
+                options: options || null,
+                type: type || null
+            };
+
+            renderState('loading', '正在查询', '<p>正在检查服务状态并发送请求，请稍候...</p>');
+
+            try {
+                const statusResponse = await fetch('/api/status');
+                if (!statusResponse.ok) {
+                    throw new Error('本地服务器未运行，请先启动服务器');
+                }
+
+                const response = await fetch('/query', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(requestData)
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP错误: ${response.status}`);
+                }
+
+                const result = await response.json();
+                resultDiv.innerHTML = formatResult(result);
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                renderState('error', '请求失败', `<p>${escapeHtml(message)}</p>`);
+            }
+        });
+    </script>
+</body>
+</html>

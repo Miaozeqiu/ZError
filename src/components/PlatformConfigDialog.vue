@@ -157,7 +157,7 @@
               v-model="formData.name" 
               type="text" 
               class="form-input" 
-              placeholder="例如：硅基流动"
+              placeholder="例如：自定义平台"
               required
             >
           </div>
@@ -178,7 +178,7 @@
               v-model="formData.baseUrl" 
               type="url" 
               class="form-input" 
-              placeholder="https://api.siliconflow.cn/v1"
+              placeholder="https://api.example.com"
               required
             >
           </div>
@@ -201,7 +201,8 @@
 
 <script setup lang="ts">
 import { ref, watch, computed, nextTick } from 'vue'
-import type { AIPlatform, AIModel } from '../services/modelConfig'
+import { fetchRemoteModelsCatalog, type AIPlatform, type AIModel } from '../services/modelConfig'
+import { getPlatformIconDisplayUrl, isImageIconValue, resolvePlatformIconUrl } from '../services/iconCache'
 
 interface Props {
   show: boolean
@@ -265,54 +266,39 @@ const toggleIconPicker = async () => {
 // 可用图标列表
 const availableIcons = ref<string[]>([])
 const iconUrls = ref<Record<string, string>>({})
+const resolvedIconUrls = ref<Record<string, string>>({})
 const emojiOptions = ['🤖', '🧠', '🔍', '⚡', '🚀', '💡', '🎯', '🔥', '⭐', '💎', '🌟', '🎨']
+
+const primeIconUrlCache = async (icon?: string) => {
+  if (!icon || !isImageIconValue(icon)) return
+
+  resolvedIconUrls.value[icon] = getPlatformIconDisplayUrl(icon)
+
+  try {
+    resolvedIconUrls.value[icon] = await resolvePlatformIconUrl(icon)
+    if (formData.value.icon === icon) {
+      iconLoadError.value = false
+    }
+  } catch (error) {
+    console.warn('缓存平台图标失败，回退到原始地址:', icon, error)
+  }
+}
 
 // 获取可用图标列表
 const loadAvailableIcons = async () => {
-  // 这里可以从assets目录读取可用图标
-  // 暂时使用硬编码的常见图标
-  availableIcons.value = [
-    'silicon.png',
-    'deepseek.png',
-    'bailian.png',
-    'moonshot.png',
-    'doubao.png',
-    'zhipu.png',
-    'freeqwq.svg',
-    'lanyun.png',
-    'tencent-cloud-ti.png',
-    'xirang.png',
-    'bytedance.png',
-    'baidu-cloud.svg',
-    'baichuan.png',
-    'openai.png',
-    'fireworks.png',
-    'anthropic.png',
-    'google.png',
-    'gemini.png',
-    'grok.png',
-    'macos.svg',
-    'perplexity.png',
-    'aws-bedrock.webp',
-    'modelscope.png',
-    'baidu-cloud.svg',
-    'ollama.png',
-    'groq.png',
-    'perplexity.png',
-    'mistral.png',
-    '302ai.webp',
-    'longcat.png',
-    'dashscope.png',
-    'cohere.png',
-    'cephalon.jpeg',
-    'cherryin.png',
-    'gpustack.svg',
-    'infini.png'
-  ]
-  
-  // 预加载所有图标URL
+  iconError.value = ''
+
+  try {
+    const catalog = await fetchRemoteModelsCatalog()
+    availableIcons.value = catalog.providersList
+  } catch (error: any) {
+    console.warn('加载 providers_list 失败:', error)
+    availableIcons.value = []
+    iconError.value = error?.message || '图标列表加载失败'
+  }
+
   for (const icon of availableIcons.value) {
-    iconUrls.value[icon] = await getIconUrl(icon)
+    iconUrls.value[icon] = getPlatformIconDisplayUrl(icon)
   }
 }
 
@@ -329,30 +315,19 @@ const resetForm = () => {
 }
 
 // 图标相关方法
-const isImageIcon = (icon: string) => {
-  return icon.includes('.')
-}
+const isImageIcon = (icon: string) => isImageIconValue(icon)
 
 const getIconUrl = (icon: string) => {
-  console.log('🔍 [DEBUG] getIconUrl called with icon:', icon)
-  
-  // 如果是网络URL，直接返回
-  if (icon.startsWith('http://') || icon.startsWith('https://')) {
-    console.log('✅ [DEBUG] Using network URL:', icon)
-    return icon
-  }
-  
-  // 如果是文件名，使用 public 目录路径
-  if (icon.includes('.')) {
-    // 无论是开发环境还是生产环境，public 目录下的资源都可以通过 /assets/... 访问
-    const iconPath = `/assets/images/providers/${icon}`
-    console.log('✅ [DEBUG] Using public path:', iconPath)
-    return iconPath
-  }
-  
-  // 如果不是文件名，返回原始值
-  return icon
+  if (!icon) return ''
+  return resolvedIconUrls.value[icon] || getPlatformIconDisplayUrl(icon) || icon
 }
+
+watch(() => formData.value.icon, (icon) => {
+  if (icon) {
+    void primeIconUrlCache(icon)
+    iconLoadError.value = false
+  }
+})
 
 const getInitials = (name: string) => {
   return name
@@ -416,7 +391,8 @@ const handleSubmit = () => {
     description: formData.value.description,
     baseUrl: formData.value.baseUrl,
     apiKey: formData.value.apiKey || undefined,
-    icon: formData.value.icon || undefined
+    icon: formData.value.icon || undefined,
+    enabled: props.platform?.enabled ?? true
   }
   
   // 只有在创建新平台时才提供空的模型数组
@@ -495,25 +471,12 @@ const loadMarketplace = async () => {
   isLoadingMarket.value = true
   marketError.value = null
   try {
-    const remoteUrl = 'https://app.zerror.cc/models.json'
-    const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http')
-    const r = await tauriFetch(remoteUrl, { method: 'GET' })
-    if (!r.ok) throw new Error(`远程拉取失败 ${r.status}`)
-    const json = await r.json()
-    if (!Array.isArray(json)) throw new Error('数据格式错误：期望数组')
-    marketPlatforms.value = json as MarketplacePlatform[]
+    const catalog = await fetchRemoteModelsCatalog()
+    marketPlatforms.value = catalog.platforms as MarketplacePlatform[]
+    await Promise.all(marketPlatforms.value.map(platform => primeIconUrlCache(platform.icon)))
   } catch (err: any) {
-    console.warn('使用 Tauri HTTP 插件加载平台广场失败，回退到本地 models.json：', err)
-    try {
-      const localUrl = '/models.json'
-      const lr = await fetch(localUrl, { method: 'GET' })
-      if (!lr.ok) throw new Error(`本地拉取失败 ${lr.status}`)
-      const json = await lr.json()
-      if (!Array.isArray(json)) throw new Error('本地数据格式错误：期望数组')
-      marketPlatforms.value = json as MarketplacePlatform[]
-    } catch (err2: any) {
-      marketError.value = err2?.message || '无法加载平台广场数据'
-    }
+    console.warn('加载平台广场失败：', err)
+    marketError.value = err?.message || '无法加载平台广场数据'
   } finally {
     isLoadingMarket.value = false
   }

@@ -36,13 +36,13 @@
       </div>
 
       <div class="dialog-footer">
-        <button class="btn-secondary" @click="handleLater">
+        <button class="btn-neutral" @click="handleLater">
           稍后提醒
         </button>
-        <button class="btn-secondary" @click="handleWeekLater">
+        <button class="btn-neutral" @click="handleWeekLater">
           一周后提醒
         </button>
-        <button class="btn-primary" @click="handleDownload">
+        <button class="btn-secondary" @click="handleDownload">
           立即下载
         </button>
       </div>
@@ -202,8 +202,8 @@ const handleDownload = async () => {
   flex-shrink: 0;
   width: 40px;
   height: 40px;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
+  background: var(--update-dialog-header-icon-bg);
+  border: 1px solid var(--update-dialog-header-icon-border);
   border-radius: 8px;
   display: flex;
   align-items: center;
@@ -214,8 +214,9 @@ const handleDownload = async () => {
 .header-icon svg {
   width: 24px;
   height: 24px;
-  fill: var(--color-primary);
+  fill: var(--update-dialog-header-icon-color);
 }
+
 
 .header-content {
   flex: 1;
@@ -256,20 +257,21 @@ const handleDownload = async () => {
   width: 32px;
   height: 32px;
   border: none;
-  background: var(--dialog-button-close-bg);
+  background: var(--update-dialog-close-btn-bg);
   border-radius: 6px;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--dialog-button-close-text);
+  color: var(--update-dialog-close-btn-text);
   cursor: pointer;
   transition: all 0.2s ease;
 }
 
 .close-button:hover {
-  background: var(--dialog-button-close-hover-bg);
-  color: var(--dialog-button-close-hover-text);
+  background: var(--update-dialog-close-btn-hover-bg);
+  color: var(--update-dialog-close-btn-hover-text);
 }
+
 
 .dialog-body {
   padding: 0 24px 24px;
@@ -329,41 +331,66 @@ const handleDownload = async () => {
   justify-content: flex-end;
 }
 
+.btn-neutral,
 .btn-secondary {
   padding: 10px 20px;
-  border: 1px solid var(--dialog-button-secondary-border);
-  background: var(--dialog-button-secondary-bg);
-  color: var(--dialog-button-secondary-text);
   border-radius: 8px;
   font-size: 14px;
-  font-weight: 500;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+.btn-neutral {
+  border: 1px solid var(--update-dialog-neutral-btn-border);
+  background: var(--update-dialog-neutral-btn-bg);
+  color: var(--update-dialog-neutral-btn-text);
+  font-weight: 500;
+}
+
+.btn-neutral:hover {
+  background: var(--update-dialog-neutral-btn-hover-bg);
+  border-color: var(--update-dialog-neutral-btn-hover-border);
+  color: var(--update-dialog-neutral-btn-hover-text);
+}
+
+.btn-neutral:active {
+  background: var(--update-dialog-neutral-btn-hover-bg);
+  border-color: var(--update-dialog-neutral-btn-hover-border);
+  color: var(--update-dialog-neutral-btn-hover-text);
+}
+
+.btn-neutral:focus-visible {
+  outline: none;
+  border-color: var(--update-dialog-neutral-btn-focus-border);
+}
+
+
+.btn-secondary {
+  border: 1px solid var(--update-dialog-secondary-btn-border);
+  background: var(--update-dialog-secondary-btn-bg);
+  color: var(--update-dialog-secondary-btn-text);
+  font-weight: 600;
 }
 
 .btn-secondary:hover {
-  background: var(--dialog-button-secondary-hover-bg);
-  border-color: var(--dialog-button-secondary-hover-border);
-  color: var(--dialog-button-secondary-hover-text);
+  background: var(--update-dialog-secondary-btn-hover-bg);
+  border-color: var(--update-dialog-secondary-btn-hover-border);
+  color: var(--update-dialog-secondary-btn-hover-text);
 }
 
-.btn-primary {
-  padding: 10px 20px;
-  border: none;
-  background: var(--dialog-button-primary-bg);
-  color: var(--dialog-button-primary-text);
-  border-radius: 8px;
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.2s ease;
+.btn-secondary:active {
+  background: var(--update-dialog-secondary-btn-hover-bg);
+  border-color: var(--update-dialog-secondary-btn-hover-border);
+  color: var(--update-dialog-secondary-btn-hover-text);
 }
 
-.btn-primary:hover {
-  background: var(--dialog-button-primary-hover);
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+.btn-secondary:focus-visible {
+  outline: none;
+  border-color: var(--update-dialog-secondary-btn-focus-border);
 }
+
+
+
 
 @keyframes fadeIn {
   from {

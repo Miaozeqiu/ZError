@@ -1,15 +1,20 @@
+use crate::database::{insert_ai_response, query_database, set_question_pending_correction};
+use crate::types::{
+    ModelCallProgressRequest, ModelCallResponseRequest, QueryData, QueryRequest, QueryResponse,
+    ServerInfo, ServerState,
+};
+use futures_util::StreamExt;
+use regex::Regex;
+use serde_json::Value;
+use std::collections::HashMap;
 use tauri::State;
 use tokio::task::JoinHandle;
-use warp::Filter;
-use crate::types::{ServerInfo, ServerState, QueryData, QueryRequest, QueryResponse, ModelCallResponseRequest, ModelCallProgressRequest};
-use crate::database::{query_database, insert_ai_response};
-use futures_util::StreamExt;
 use tokio_stream::wrappers::BroadcastStream;
-use std::collections::HashMap;
-use warp::http::HeaderMap;
 use uuid;
-use serde_json::Value;
-use regex::Regex;
+use warp::http::HeaderMap;
+use warp::Filter;
+
+const QUERY_TEST_PAGE_HTML: &str = include_str!("query_test_page.html");
 
 /// 验证管理员 token（从 Authorization: Bearer <token> 或直接值中提取）
 fn check_admin_token(auth: &Option<String>) -> bool {
@@ -36,7 +41,10 @@ fn check_admin_token(auth: &Option<String>) -> bool {
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default();
-    let admin_token = config.get("adminToken").and_then(|v| v.as_str()).unwrap_or("");
+    let admin_token = config
+        .get("adminToken")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     !admin_token.is_empty() && token == admin_token
 }
 
@@ -44,6 +52,152 @@ fn check_admin_token(auth: &Option<String>) -> bool {
 fn contains_url(text: &str) -> bool {
     let url_regex = Regex::new(r"https?://[^\s]+").unwrap();
     url_regex.is_match(text)
+}
+
+fn resolve_request_origin(headers: &HeaderMap) -> String {
+    let host = headers
+        .get("host")
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("127.0.0.1:3000");
+    format!("http://{}", host)
+}
+
+fn escape_html(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
+}
+
+fn build_pending_correction_button(origin: &str, question_id: i64, is_pending_correction: bool) -> String {
+    if question_id <= 0 {
+        return String::new();
+    }
+
+    if is_pending_correction {
+        return "<button type=\"button\" disabled style=\"padding:4px 10px;border:none;border-radius:999px;background:#f59e0b;color:#fff;font-size:12px;cursor:not-allowed;opacity:0.75;white-space:nowrap;\">已标记待修正</button>".to_string();
+    }
+
+    let url = format!("{}/api/questions/{}/pending-correction", origin, question_id);
+    format!(
+        r#"<button type="button" style="padding:4px 10px;border:none;border-radius:999px;background:#ef4444;color:#fff;font-size:12px;cursor:pointer;white-space:nowrap;" onclick="(async()=>{{const btn=this;if(btn.dataset.loading==='1')return;const text=btn.textContent||'标记为待修正';btn.dataset.loading='1';btn.disabled=true;btn.textContent='标记中...';try{{const res=await fetch('{url}',{{method:'POST'}});const data=await res.json().catch(()=>({{success:false,message:'标记失败'}}));if(!res.ok||!data.success)throw new Error(data.message||'标记失败');btn.textContent='已标记待修正';btn.style.opacity='0.75';btn.style.cursor='not-allowed';}}catch(error){{btn.disabled=false;btn.textContent=text;alert(error&&error.message?error.message:'标记失败');}}finally{{delete btn.dataset.loading;}}}})()">标记为待修正</button>"#,
+        url = url
+    )
+}
+
+fn build_query_data(
+    origin: &str,
+    question_id: i64,
+    question: &str,
+    answer: String,
+    is_ai: bool,
+    is_pending_correction: bool,
+) -> QueryData {
+    let escaped_question = escape_html(question).replace('\n', "<br>");
+    let button_html = build_pending_correction_button(origin, question_id, is_pending_correction);
+    let question_html = if button_html.is_empty() {
+        escaped_question
+    } else {
+        format!(
+            "<div style=\"display:flex;align-items:flex-start;gap:8px;flex-wrap:wrap;\"><span style=\"flex:1 1 auto;min-width:0;\">{}</span>{}</div>",
+            escaped_question, button_html
+        )
+    };
+
+    QueryData {
+        id: question_id,
+        question: question_html,
+        answer,
+        is_ai,
+        is_pending_correction,
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum QuestionKind {
+    Single,
+    Multiple,
+    Judgement,
+    Completion,
+}
+
+impl QuestionKind {
+    fn chinese_name(&self) -> &'static str {
+        match self {
+            QuestionKind::Single => "单选",
+            QuestionKind::Multiple => "多选",
+            QuestionKind::Judgement => "判断",
+            QuestionKind::Completion => "填空",
+        }
+    }
+
+    fn prompt_hint(&self) -> &'static str {
+        match self {
+            QuestionKind::Single => "这是单选题，请返回正确选项的内容，不要返回选项字母、选项序号或无关说明。",
+            QuestionKind::Multiple => "这是多选题，请返回所有正确选项的内容，不要返回选项字母、选项序号。如果有多个正确选项，请使用“###”连接每个选项内容。",
+            QuestionKind::Judgement => "这是判断题，请只回答“正确”或“错误”，不要添加任何其他内容。",
+            QuestionKind::Completion => "这是一道填空题或者简答题，也有可能是名词解释。如果有多个空，请将每个空的答案使用“###”连接。",
+        }
+    }
+}
+
+fn detect_question_kind(query_type: &str) -> Option<QuestionKind> {
+    let trimmed = query_type.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let normalized = trimmed.to_lowercase();
+
+    if normalized.contains("single") || trimmed.contains("单选") || trimmed.contains("单项选择")
+    {
+        Some(QuestionKind::Single)
+    } else if normalized.contains("multiple")
+        || trimmed.contains("多选")
+        || trimmed.contains("多项选择")
+    {
+        Some(QuestionKind::Multiple)
+    } else if normalized.contains("judgement")
+        || normalized.contains("judgment")
+        || trimmed.contains("判断")
+    {
+        Some(QuestionKind::Judgement)
+    } else if normalized.contains("completion") || trimmed.contains("填空") {
+        Some(QuestionKind::Completion)
+    } else {
+        None
+    }
+}
+
+fn build_model_query_prompt(
+    title: &str,
+    options: Option<&str>,
+    query_type: Option<&str>,
+) -> String {
+    let mut q = String::from(
+        "请先分析我给出的问题，给出简要的思考过程，如果问题比较复杂，给出详细思考过程。最后将答案用JSON的格式回答我，格式{\"answer\":\"答案\"}。"
+    );
+
+    q.push_str("如果是选择题，请返回对应选项的内容，不要返回选项字母或选项序号。");
+
+    if let Some(raw_type) = query_type.map(str::trim).filter(|value| !value.is_empty()) {
+        if let Some(kind) = detect_question_kind(raw_type) {
+            q.push_str(&format!("题目类型：{}题。", kind.chinese_name()));
+            q.push_str(kind.prompt_hint());
+        } else {
+            q.push_str(&format!("题目类型字段：{}。", raw_type));
+        }
+    }
+
+    q.push_str(&format!("题目：{}", title));
+
+    if let Some(options) = options.map(str::trim).filter(|value| !value.is_empty()) {
+        q.push_str(&format!("，选项：{}", options));
+    }
+
+    q
 }
 
 /// 启动Web静态文件服务器
@@ -62,49 +216,61 @@ async fn start_web_server(web_port: u16, bind_ip: [u8; 4]) -> JoinHandle<()> {
         let proxy_route = warp::any()
             .and(warp::method())
             .and(warp::path::full())
-            .and(warp::query::raw().or(warp::any().map(|| String::new())).unify())
+            .and(
+                warp::query::raw()
+                    .or(warp::any().map(|| String::new()))
+                    .unify(),
+            )
             .and(warp::header::headers_cloned())
             .and(warp::body::bytes())
-            .and_then(move |method: warp::http::Method, path: warp::path::FullPath, query: String, headers: warp::http::HeaderMap, body: bytes::Bytes| {
-                let client = client.clone();
-                async move {
-                    let url = if query.is_empty() {
-                        format!("http://localhost:3002{}", path.as_str())
-                    } else {
-                        format!("http://localhost:3002{}?{}", path.as_str(), query)
-                    };
-                    let method_str = method.as_str().to_string();
-                    let req_method = reqwest::Method::from_bytes(method_str.as_bytes()).unwrap_or(reqwest::Method::GET);
-                    let mut req = client.request(req_method, &url).body(body);
-                    for (key, value) in headers.iter() {
-                        let name = key.as_str();
-                        if name != "host" {
-                            req = req.header(key.as_str(), value.as_bytes());
-                        }
-                    }
-                    match req.send().await {
-                        Ok(resp) => {
-                            let status = resp.status();
-                            let resp_headers = resp.headers().clone();
-                            let resp_body = resp.bytes().await.unwrap_or_default();
-                            let mut reply = warp::http::Response::builder().status(status.as_u16());
-                            for (key, value) in resp_headers.iter() {
-                                let name = key.as_str();
-                                if name != "transfer-encoding" {
-                                    reply = reply.header(key.as_str(), value.as_bytes());
-                                }
+            .and_then(
+                move |method: warp::http::Method,
+                      path: warp::path::FullPath,
+                      query: String,
+                      headers: warp::http::HeaderMap,
+                      body: bytes::Bytes| {
+                    let client = client.clone();
+                    async move {
+                        let url = if query.is_empty() {
+                            format!("http://localhost:3002{}", path.as_str())
+                        } else {
+                            format!("http://localhost:3002{}?{}", path.as_str(), query)
+                        };
+                        let method_str = method.as_str().to_string();
+                        let req_method = reqwest::Method::from_bytes(method_str.as_bytes())
+                            .unwrap_or(reqwest::Method::GET);
+                        let mut req = client.request(req_method, &url).body(body);
+                        for (key, value) in headers.iter() {
+                            let name = key.as_str();
+                            if name != "host" {
+                                req = req.header(key.as_str(), value.as_bytes());
                             }
-                            Ok::<_, warp::Rejection>(reply.body(resp_body.to_vec()).unwrap())
                         }
-                        Err(_) => {
-                            Ok::<_, warp::Rejection>(warp::http::Response::builder()
-                                .status(502)
-                                .body(b"vite dev server not running on port 3002".to_vec())
-                                .unwrap())
+                        match req.send().await {
+                            Ok(resp) => {
+                                let status = resp.status();
+                                let resp_headers = resp.headers().clone();
+                                let resp_body = resp.bytes().await.unwrap_or_default();
+                                let mut reply =
+                                    warp::http::Response::builder().status(status.as_u16());
+                                for (key, value) in resp_headers.iter() {
+                                    let name = key.as_str();
+                                    if name != "transfer-encoding" {
+                                        reply = reply.header(key.as_str(), value.as_bytes());
+                                    }
+                                }
+                                Ok::<_, warp::Rejection>(reply.body(resp_body.to_vec()).unwrap())
+                            }
+                            Err(_) => Ok::<_, warp::Rejection>(
+                                warp::http::Response::builder()
+                                    .status(502)
+                                    .body(b"vite dev server not running on port 3002".to_vec())
+                                    .unwrap(),
+                            ),
                         }
                     }
-                }
-            });
+                },
+            );
         return tokio::spawn(async move {
             warp::serve(proxy_route.with(cors))
                 .run((bind_ip, web_port))
@@ -128,7 +294,11 @@ async fn start_web_server(web_port: u16, bind_ip: [u8; 4]) -> JoinHandle<()> {
         .and(warp::post())
         .and(warp::body::json())
         .and_then(|body: serde_json::Value| async move {
-            let token = body.get("token").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let token = body
+                .get("token")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
             if token.is_empty() {
                 let resp = serde_json::json!({"success": false, "message": "token不能为空"});
                 return Ok::<_, warp::Rejection>(warp::reply::json(&resp));
@@ -142,33 +312,45 @@ async fn start_web_server(web_port: u16, bind_ip: [u8; 4]) -> JoinHandle<()> {
                 .ok()
                 .and_then(|s| serde_json::from_str(&s).ok())
                 .unwrap_or_default();
-            let admin_token = config.get("adminToken").and_then(|v| v.as_str()).unwrap_or("");
+            let admin_token = config
+                .get("adminToken")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             if !admin_token.is_empty() && token == admin_token {
                 return Ok::<_, warp::Rejection>(warp::reply::json(
-                    &serde_json::json!({"success": true, "role": "admin", "name": "管理员"})
+                    &serde_json::json!({"success": true, "role": "admin", "name": "管理员"}),
                 ));
             }
-            if let Some(users) = config.get("multiUser").and_then(|m| m.get("users")).and_then(|u| u.as_array()) {
+            if let Some(users) = config
+                .get("multiUser")
+                .and_then(|m| m.get("users"))
+                .and_then(|u| u.as_array())
+            {
                 for user in users {
                     let ut = user.get("token").and_then(|v| v.as_str()).unwrap_or("");
                     if !ut.is_empty() && token == ut {
-                        let name = user.get("name").and_then(|v| v.as_str()).unwrap_or("用户").to_string();
+                        let name = user
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("用户")
+                            .to_string();
                         return Ok::<_, warp::Rejection>(warp::reply::json(
-                            &serde_json::json!({"success": true, "role": "user", "name": name})
+                            &serde_json::json!({"success": true, "role": "user", "name": name}),
                         ));
                     }
                 }
             }
             Ok::<_, warp::Rejection>(warp::reply::json(
-                &serde_json::json!({"success": false, "message": "Token 无效"})
+                &serde_json::json!({"success": false, "message": "Token 无效"}),
             ))
         });
 
-    let routes = web_login_route.or(static_files).or(index_fallback).with(cors);
+    let routes = web_login_route
+        .or(static_files)
+        .or(index_fallback)
+        .with(cors);
     tokio::spawn(async move {
-        warp::serve(routes)
-            .run((bind_ip, web_port))
-            .await;
+        warp::serve(routes).run((bind_ip, web_port)).await;
     })
 }
 
@@ -202,15 +384,17 @@ pub async fn start_server(
         let path = info.path().to_string();
         let status = info.status().as_u16();
         let response_time = info.elapsed().as_millis() as u64;
-        
-        println!("🔍 Logging middleware triggered: {} {} - Status: {}, Time: {}ms", 
-                method, path, status, response_time);
-        
+
+        println!(
+            "🔍 Logging middleware triggered: {} {} - Status: {}, Time: {}ms",
+            method, path, status, response_time
+        );
+
         // 对于非query路由，使用简化的日志记录
         logger.log_request(
-            method, 
-            path, 
-            status, 
+            method,
+            path,
+            status,
             response_time,
             None, // request_body
             None, // response_body
@@ -218,7 +402,7 @@ pub async fn start_server(
             None, // ip
             None, // user_agent
         );
-        
+
         println!("✅ Request logged successfully");
     });
 
@@ -262,11 +446,7 @@ pub async fn start_server(
 
     // 数据库查询路由 - 带有详细日志记录
     let logger_for_query = state.logger.clone();
-    // 克隆分析开关的Arc，避免在闭包中捕获不可克隆的State导致FnOnce
-    let analysis_flag_for_post = state.analysis_enabled.clone();
-    // 克隆思考模型标志，便于在闭包中使用
-    let thinking_flag_for_post = state.is_thinking_model.clone();
-    
+
     // POST 请求处理
     let query_post_route = warp::path("query")
         .and(warp::post())
@@ -274,8 +454,6 @@ pub async fn start_server(
         .and(warp::body::json())
         .and_then(move |headers: HeaderMap, request: QueryRequest| {
             let logger = logger_for_query.clone();
-            let analysis_flag = analysis_flag_for_post.clone();
-            let thinking_flag = thinking_flag_for_post.clone();
             async move {
                 let start_time = std::time::Instant::now();
                 let request_body = serde_json::to_string(&request).unwrap_or_default();
@@ -320,32 +498,30 @@ pub async fn start_server(
                     }
                 }
 
+                let request_origin = resolve_request_origin(&headers);
+
                 // 先进行数据库查询（无论是否包含URL）
-                let result = match query_database(&request.title).await {
+                let result = match query_database(&request.title, request.options.as_deref()).await {
                     Ok(results) => {
                         if !results.is_empty() {
                             println!("✅ 在数据库中找到匹配结果: {} 条记录", results.len());
-                            let data_list: Vec<QueryData> = results.into_iter().map(|(question, answer, is_ai)| {
-                                QueryData {
-                                    question,
-                                    answer,
-                                    is_ai,
-                                }
-                            }).collect();
+                            let data_list: Vec<QueryData> = results
+                                .into_iter()
+                                .map(|(id, question, answer, is_ai, is_pending_correction)| {
+                                    build_query_data(
+                                        &request_origin,
+                                        id,
+                                        &question,
+                                        answer,
+                                        is_ai,
+                                        is_pending_correction,
+                                    )
+                                })
+                                .collect();
                             let response = QueryResponse::success(data_list);
                             (200, response)
                         } else {
                             println!("🔍 数据库中未找到匹配结果: {}", request.title);
-
-                            // 判断当前模型是否为思考模型
-                            let is_thinking_model = {
-                                let flag = thinking_flag.lock();
-                                *flag
-                            };
-                            let detailed_analysis_enabled = {
-                                let flag = analysis_flag.lock();
-                                *flag
-                            };
 
                             // 如果检测到URL，发送视觉分析请求（带 __URL_QUESTION__: 前缀）
                             let formatted_query = if has_url {
@@ -358,91 +534,77 @@ pub async fn start_server(
                                 }
                                 q
                             } else {
-                                // 普通题目：构建文本模型提示词
+                                // 普通题目：统一使用带分析的文本模型提示词
                                 println!("🤖 Database query returned no results, requesting model call for: {}", request.title);
-                                let mut q = if is_thinking_model {
-                                    format!(
-                                        "请分析我给出的问题，将答案用JSON的格式回答我，格式{{\"answer\":\"答案\"}}。如果是选择题，请回答内容而非选项。题目：{}",
-                                        request.title
-                                    )
-                                } else if detailed_analysis_enabled {
-                                    format!(
-                                        "请先分析我给出的问题，给出简要的思考过程，如果问题比较复杂，给出详细思考过程。最后将答案用JSON的格式回答我，格式{{\"answer\":\"答案\"}}。如果是选择题，请回答内容而非选项。题目：{}",
-                                        request.title
-                                    )
-                                } else {
-                                    format!(
-                                        "请分析我给出的问题，将答案用JSON的格式回答我，格式{{\"answer\":\"答案\"}}。如果是选择题，请回答内容而非选项。题目：{}",
-                                        request.title
-                                    )
-                                };
-                                if let Some(options) = &request.options {
-                                    if !options.is_empty() {
-                                        q.push_str(&format!("，选项：{}", options));
-                                    }
-                                }
-                                if let Some(query_type) = &request.query_type {
-                                    if !query_type.is_empty() {
-                                        let chinese_type = match query_type.as_str() {
-                                            "single" => "单选",
-                                            "multiple" => "多选",
-                                            "judgement" => "判断",
-                                            "completion" => "填空",
-                                            _ => query_type,
-                                        };
-                                        q.push_str(&format!("，题目类型：{}", chinese_type));
-                                        match query_type.as_str() {
-                                            "multiple" => q.push_str("。这是多选题，请你将答案用###连接"),
-                                            "completion" => q.push_str("。这是填空题，如果有多个空，使用###连接"),
-                                            "judgement" => q.push_str("。这是判断题，请你只回答\\\"正确\\\"或\\\"错误\\\"，不要添加任何其他内容"),
-                                            _ => {}
-                                        }
-                                    }
-                                }
-                                q
+                                build_model_query_prompt(
+                                    &request.title,
+                                    request.options.as_deref(),
+                                    request.query_type.as_deref(),
+                                )
                             };
 
                             logger.send_model_call_request(request_id.clone(), formatted_query);
 
                             // 等待模型调用完成（URL题目等待更长时间：120秒）
                             let wait_secs = if has_url { 120 } else { 30 };
-                        match logger.wait_for_model_response(request_id.clone(), wait_secs).await {
-                            Ok(model_content) => {
-                                println!("✅ Received model response: {}", model_content);
-                                if let Some(err_msg) = is_model_error(&model_content) {
-                                    let response = QueryResponse::error(err_msg);
-                                    (500, response)
-                                } else {
-                                    let mut extracted_answer = extract_answer_from_json(&model_content);
-                                    
-                                    // Check for incomplete question response
-                                    if model_content.contains("题目不完整，无法确定具体问题。") {
-                                        extracted_answer = String::new();
-                                        println!("⚠️ 检测到题目不完整，将答案留空");
-                                    }
-
-                                    // Store to database
-                                    if let Err(e) = insert_ai_response(&request.title, &extracted_answer, request.options.clone(), request.query_type.clone(), true) {
-                                        println!("❌ Failed to store AI response: {}", e);
+                            match logger.wait_for_model_response(request_id.clone(), wait_secs).await {
+                                Ok(model_content) => {
+                                    println!("✅ Received model response: {}", model_content);
+                                    if let Some(err_msg) = is_model_error(&model_content) {
+                                        let response = QueryResponse::error(err_msg);
+                                        (500, response)
                                     } else {
-                                        println!("✅ AI response stored to database");
-                                    }
+                                        let mut extracted_answer = extract_answer_from_json(&model_content);
 
-                                    let data = QueryData {
-                                        question: request.title.clone(),
-                                        answer: extracted_answer,
-                                        is_ai: true,
-                                    };
-                                    let response = QueryResponse::success(vec![data]);
-                                    (200, response)
+                                        // Check for incomplete question response
+                                        if model_content.contains("题目不完整，无法确定具体问题。") {
+                                            extracted_answer = String::new();
+                                            println!("⚠️ 检测到题目不完整，将答案留空");
+                                        }
+
+                                        extracted_answer = extracted_answer.trim().to_string();
+
+                                        // Store to database
+                                        let inserted_id = if extracted_answer.is_empty() {
+                                            println!("⚠️ AI最终处理结果答案为空，跳过保存题目");
+                                            0
+                                        } else {
+                                            match insert_ai_response(
+                                                &request.title,
+                                                &extracted_answer,
+                                                request.options.clone(),
+                                                request.query_type.clone(),
+                                                true,
+                                            ) {
+                                                Ok(id) => {
+                                                    println!("✅ AI response stored to database");
+                                                    id
+                                                }
+                                                Err(e) => {
+                                                    println!("❌ Failed to store AI response: {}", e);
+                                                    0
+                                                }
+                                            }
+                                        };
+
+                                        let data = build_query_data(
+                                            &request_origin,
+                                            inserted_id,
+                                            &request.title,
+                                            extracted_answer,
+                                            true,
+                                            false,
+                                        );
+                                        let response = QueryResponse::success(vec![data]);
+                                        (200, response)
+                                    }
+                                }
+                                Err(e) => {
+                                    println!("❌ Model call timeout or error: {}", e);
+                                    let response = QueryResponse::error(format!("Model call failed: {}", e));
+                                    (408, response)
                                 }
                             }
-                            Err(e) => {
-                                println!("❌ Model call timeout or error: {}", e);
-                                let response = QueryResponse::error(format!("Model call failed: {}", e));
-                                (408, response) // Request Timeout
-                            }
-                        }
                         }
                     }
                     Err(e) => {
@@ -471,16 +633,12 @@ pub async fn start_server(
 
     // GET 请求处理
     let logger_for_query_get = state.logger.clone();
-    let analysis_flag_for_get = state.analysis_enabled.clone();
-    let thinking_flag_for_get = state.is_thinking_model.clone();
     let query_get_route = warp::path("query")
         .and(warp::get())
         .and(warp::header::headers_cloned())
         .and(warp::query::<HashMap<String, String>>())
         .and_then(move |headers: HeaderMap, params: HashMap<String, String>| {
             let logger = logger_for_query_get.clone();
-            let analysis_flag = analysis_flag_for_get.clone();
-            let thinking_flag = thinking_flag_for_get.clone();
             async move {
                 let start_time = std::time::Instant::now();
                 
@@ -537,32 +695,30 @@ pub async fn start_server(
                     }
                 }
 
+                let request_origin = resolve_request_origin(&headers);
+
                 // 先进行数据库查询（无论是否包含URL）
-                let result = match query_database(&request.title).await {
+                let result = match query_database(&request.title, request.options.as_deref()).await {
                     Ok(results) => {
                         if !results.is_empty() {
                             println!("✅ 在数据库中找到匹配结果: {} 条记录", results.len());
-                            let data_list: Vec<QueryData> = results.into_iter().map(|(question, answer, is_ai)| {
-                                QueryData {
-                                    question,
-                                    answer,
-                                    is_ai,
-                                }
-                            }).collect();
+                            let data_list: Vec<QueryData> = results
+                                .into_iter()
+                                .map(|(id, question, answer, is_ai, is_pending_correction)| {
+                                    build_query_data(
+                                        &request_origin,
+                                        id,
+                                        &question,
+                                        answer,
+                                        is_ai,
+                                        is_pending_correction,
+                                    )
+                                })
+                                .collect();
                             let response = QueryResponse::success(data_list);
                             (200, response)
                         } else {
                             println!("🔍 数据库中未找到匹配结果: {}", request.title);
-
-                            // 判断当前模型是否为思考模型
-                            let is_thinking_model = {
-                                let flag = thinking_flag.lock();
-                                *flag
-                            };
-                            let detailed_analysis_enabled = {
-                                let flag = analysis_flag.lock();
-                                *flag
-                            };
 
                             // 如果检测到URL，发送视觉分析请求（带 __URL_QUESTION__: 前缀）
                             let formatted_query = if has_url {
@@ -576,46 +732,11 @@ pub async fn start_server(
                                 q
                             } else {
                                 println!("🤖 Database query returned no results, requesting model call for: {}", request.title);
-                                let mut q = if is_thinking_model {
-                                    format!(
-                                        "请分析我给出的问题，将答案用JSON的格式回答我，格式{{\"answer\":\"答案\"}}。如果是选择题，请回答内容而非选项。题目：{}",
-                                        request.title
-                                    )
-                                } else if detailed_analysis_enabled {
-                                    format!(
-                                        "请先分析我给出的问题，给出简要的思考过程，如果问题比较复杂，给出详细思考过程。最后将答案用JSON的格式回答我，格式{{\"answer\":\"答案\"}}。如果是选择题，请回答内容而非选项。题目：{}",
-                                        request.title
-                                    )
-                                } else {
-                                    format!(
-                                        "请分析我给出的问题，将答案用JSON的格式回答我，格式{{\"answer\":\"答案\"}}。如果是选择题，请回答内容而非选项。题目：{}",
-                                        request.title
-                                    )
-                                };
-                                if let Some(options) = &request.options {
-                                    if !options.is_empty() {
-                                        q.push_str(&format!("，选项：{}", options));
-                                    }
-                                }
-                                if let Some(query_type) = &request.query_type {
-                                    if !query_type.is_empty() {
-                                        let chinese_type = match query_type.as_str() {
-                                            "single" => "单选",
-                                            "multiple" => "多选",
-                                            "judgement" => "判断",
-                                            "completion" => "填空",
-                                            _ => query_type,
-                                        };
-                                        q.push_str(&format!("，题目类型：{}", chinese_type));
-                                        match query_type.as_str() {
-                                            "multiple" => q.push_str("。这是多选题，请你将答案用###连接"),
-                                            "completion" => q.push_str("。这是填空题，如果有多个空，使用###连接"),
-                                            "judgement" => q.push_str("。这是判断题，请你只回答\\\"正确\\\"或\\\"错误\\\"，不要添加任何其他内容"),
-                                            _ => {}
-                                        }
-                                    }
-                                }
-                                q
+                                build_model_query_prompt(
+                                    &request.title,
+                                    request.options.as_deref(),
+                                    request.query_type.as_deref(),
+                                )
                             };
 
                             logger.send_model_call_request(request_id.clone(), formatted_query);
@@ -623,42 +744,63 @@ pub async fn start_server(
                             // 等待模型调用完成（URL题目等待更长时间：120秒）
                             let wait_secs = if has_url { 120 } else { 30 };
                             match logger.wait_for_model_response(request_id.clone(), wait_secs).await {
-                            Ok(model_content) => {
-                                println!("✅ Received model response: {}", model_content);
-                                if let Some(err_msg) = is_model_error(&model_content) {
-                                    let response = QueryResponse::error(err_msg);
-                                    (500, response)
-                                } else {
-                                    let mut extracted_answer = extract_answer_from_json(&model_content);
-                                    
-                                    // Check for incomplete question response
-                                    if model_content.contains("题目不完整，无法确定具体问题。") {
-                                        extracted_answer = String::new();
-                                        println!("⚠️ 检测到题目不完整，将答案留空");
-                                    }
-
-                                    // Store to database
-                                    if let Err(e) = insert_ai_response(&request.title, &extracted_answer, request.options.clone(), request.query_type.clone(), true) {
-                                        println!("❌ Failed to store AI response: {}", e);
+                                Ok(model_content) => {
+                                    println!("✅ Received model response: {}", model_content);
+                                    if let Some(err_msg) = is_model_error(&model_content) {
+                                        let response = QueryResponse::error(err_msg);
+                                        (500, response)
                                     } else {
-                                        println!("✅ AI response stored to database");
-                                    }
+                                        let mut extracted_answer = extract_answer_from_json(&model_content);
 
-                                    let data = QueryData {
-                                        question: request.title.clone(),
-                                        answer: extracted_answer,
-                                        is_ai: true,
-                                    };
-                                    let response = QueryResponse::success(vec![data]);
-                                    (200, response)
+                                        // Check for incomplete question response
+                                        if model_content.contains("题目不完整，无法确定具体问题。") {
+                                            extracted_answer = String::new();
+                                            println!("⚠️ 检测到题目不完整，将答案留空");
+                                        }
+
+                                        extracted_answer = extracted_answer.trim().to_string();
+
+                                        // Store to database
+                                        let inserted_id = if extracted_answer.is_empty() {
+                                            println!("⚠️ AI最终处理结果答案为空，跳过保存题目");
+                                            0
+                                        } else {
+                                            match insert_ai_response(
+                                                &request.title,
+                                                &extracted_answer,
+                                                request.options.clone(),
+                                                request.query_type.clone(),
+                                                true,
+                                            ) {
+                                                Ok(id) => {
+                                                    println!("✅ AI response stored to database");
+                                                    id
+                                                }
+                                                Err(e) => {
+                                                    println!("❌ Failed to store AI response: {}", e);
+                                                    0
+                                                }
+                                            }
+                                        };
+
+                                        let data = build_query_data(
+                                            &request_origin,
+                                            inserted_id,
+                                            &request.title,
+                                            extracted_answer,
+                                            true,
+                                            false,
+                                        );
+                                        let response = QueryResponse::success(vec![data]);
+                                        (200, response)
+                                    }
+                                }
+                                Err(e) => {
+                                    println!("❌ Model call timeout or error: {}", e);
+                                    let response = QueryResponse::error(format!("Model call failed: {}", e));
+                                    (408, response)
                                 }
                             }
-                            Err(e) => {
-                                println!("❌ Model call timeout or error: {}", e);
-                                let response = QueryResponse::error(format!("Model call failed: {}", e));
-                                (408, response) // Request Timeout
-                            }
-                        }
                         }
                     }
                     Err(e) => {
@@ -688,6 +830,31 @@ pub async fn start_server(
     // 合并 GET 和 POST 路由
     let query_route = query_post_route.or(query_get_route);
 
+    let mark_pending_correction_route = warp::path("api")
+        .and(warp::path("questions"))
+        .and(warp::path::param::<i64>())
+        .and(warp::path("pending-correction"))
+        .and(warp::post())
+        .and_then(|question_id: i64| async move {
+            match set_question_pending_correction(question_id, true).await {
+                Ok(_) => Ok::<_, warp::Rejection>(warp::reply::with_status(
+                    warp::reply::json(&serde_json::json!({
+                        "success": true,
+                        "message": "题目已标记为待修正",
+                        "id": question_id,
+                    })),
+                    warp::http::StatusCode::OK,
+                )),
+                Err(error) => Ok::<_, warp::Rejection>(warp::reply::with_status(
+                    warp::reply::json(&serde_json::json!({
+                        "success": false,
+                        "message": error,
+                    })),
+                    warp::http::StatusCode::INTERNAL_SERVER_ERROR,
+                )),
+            }
+        });
+
     // 模型调用响应路由
     let logger_for_model_response = state.logger.clone();
     let model_response_route = warp::path("api")
@@ -698,28 +865,40 @@ pub async fn start_server(
         .and_then(move |request: ModelCallResponseRequest| {
             let logger = logger_for_model_response.clone();
             async move {
-                println!("🤖 Received model call response for request_id: {}", request.request_id);
-                
+                println!(
+                    "🤖 Received model call response for request_id: {}",
+                    request.request_id
+                );
+
+                let is_success = request
+                    .is_success
+                    .unwrap_or_else(|| is_model_error(&request.content).is_none());
+
                 // 发送模型调用响应事件
-                logger.send_model_call_response(request.request_id.clone(), request.content.clone());
-                
-                let should_store = is_model_error(&request.content).is_none();
-                if should_store {
-                    match store_ai_response_to_database(&request.request_id, &request.content).await {
+                logger.send_model_call_response(
+                    request.request_id.clone(),
+                    request.content.clone(),
+                    request.reasoning_content.clone(),
+                    is_success,
+                );
+
+                if is_success {
+                    match store_ai_response_to_database(&request.request_id, &request.content).await
+                    {
                         Ok(_) => println!("✅ AI响应已成功存储到数据库"),
                         Err(e) => println!("❌ 存储AI响应到数据库失败: {}", e),
                     }
                 } else {
                     println!("⚠️ 检测到模型错误响应，跳过存储到数据库");
                 }
-                
+
                 // 返回成功响应
                 let response = serde_json::json!({
                     "success": true,
                     "message": "Model response received successfully"
                 });
-                
-                Ok::<_ , warp::Rejection>(warp::reply::json(&response))
+
+                Ok::<_, warp::Rejection>(warp::reply::json(&response))
             }
         });
 
@@ -732,206 +911,49 @@ pub async fn start_server(
         .map(move || {
             println!("🔌 New SSE connection established");
             let receiver = logger_for_sse.subscribe();
-            println!("📻 SSE receiver created, current subscriber count: {}", logger_for_sse.subscriber_count());
-            
-                            let stream = BroadcastStream::new(receiver)
-                                .filter_map(|result| async move {
-                                    match result {
-                                        Ok(event) => {
-                                            println!("📤 Sending SSE event: {:?}", event);
-                                            let json_data = serde_json::to_string(&event).ok()?;
-                                            
-                                            // 根据事件类型设置不同的event名称
-                                            let event_name = match &event {
-                                                crate::logger::SSEEvent::RequestLog(_) => "log",
-                                                crate::logger::SSEEvent::ModelCallRequest(_) => "model_call_request",
-                                                crate::logger::SSEEvent::ModelCallProgress(_) => "model_call_progress",
-                                                crate::logger::SSEEvent::ModelCallResponse(_) => "model_call_response",
-                                            };
-                                            
-                                            Some(Ok::<_, warp::Error>(warp::sse::Event::default()
-                                                .event(event_name)
-                                                .data(json_data)))
-                                        }
-                                        Err(e) => {
-                                            println!("❌ SSE stream error: {:?}", e);
-                                            None
-                                        }
-                                    }
-                                });
-            
+            println!(
+                "📻 SSE receiver created, current subscriber count: {}",
+                logger_for_sse.subscriber_count()
+            );
+
+            let stream = BroadcastStream::new(receiver).filter_map(|result| async move {
+                match result {
+                    Ok(event) => {
+                        println!("📤 Sending SSE event: {:?}", event);
+                        let json_data = serde_json::to_string(&event).ok()?;
+
+                        // 根据事件类型设置不同的event名称
+                        let event_name = match &event {
+                            crate::logger::SSEEvent::RequestLog(_) => "log",
+                            crate::logger::SSEEvent::ModelCallRequest(_) => "model_call_request",
+                            crate::logger::SSEEvent::ModelCallProgress(_) => "model_call_progress",
+                            crate::logger::SSEEvent::ModelCallResponse(_) => "model_call_response",
+                        };
+
+                        Some(Ok::<_, warp::Error>(
+                            warp::sse::Event::default()
+                                .event(event_name)
+                                .data(json_data),
+                        ))
+                    }
+                    Err(e) => {
+                        println!("❌ SSE stream error: {:?}", e);
+                        None
+                    }
+                }
+            });
+
             warp::sse::reply(stream)
         });
 
     let root_route = warp::path::end()
         .and(warp::get())
-        .map(|| {
-            let html_content = r#"
-                <!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>测试查询端点</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            max-width: 800px;
-            margin: 0 auto;
-            padding: 20px;
-            background-color: #f5f5f5;
-        }
-        .container {
-            background: white;
-            padding: 30px;
-            border-radius: 8px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-        }
-        .form-group {
-            margin-bottom: 20px;
-        }
-        label {
-            display: block;
-            margin-bottom: 5px;
-            font-weight: bold;
-        }
-        input, textarea {
-            width: 100%;
-            padding: 10px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            font-size: 14px;
-        }
-        button {
-            background-color: #007bff;
-            color: white;
-            padding: 12px 24px;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 16px;
-        }
-        button:hover {
-            background-color: #0056b3;
-        }
-        .result {
-            margin-top: 20px;
-            padding: 15px;
-            border-radius: 4px;
-            background-color: #f8f9fa;
-            border-left: 4px solid #007bff;
-        }
-        .error {
-            border-left-color: #dc3545;
-            background-color: #f8d7da;
-        }
-        .success {
-            border-left-color: #28a745;
-            background-color: #d4edda;
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>🔍 测试查询端点</h1>
-        <p>测试 /query 端点的功能</p>
-        
-        <form id="queryForm">
-            <div class="form-group">
-                <label for="title">标题 (title):</label>
-                <input type="text" id="title" name="title" placeholder="输入要查询的标题" required>
-            </div>
-            
-            <div class="form-group">
-                <label for="options">选项 (options):</label>
-                <input type="text" id="options" name="options" placeholder="可选参数">
-            </div>
-            
-            <div class="form-group">
-                <label for="type">类型 (type):</label>
-                <input type="text" id="type" name="type" placeholder="可选参数">
-            </div>
-            
-            <button type="submit">发送查询</button>
-        </form>
-        
-        <div id="result"></div>
-    </div>
-
-    <script>
-        document.getElementById('queryForm').addEventListener('submit', async function(e) {
-            e.preventDefault();
-            
-            const title = document.getElementById('title').value;
-            const options = document.getElementById('options').value;
-            const type = document.getElementById('type').value;
-            
-            const requestData = {
-                title: title,
-                options: options || null,
-                type: type || null
-            };
-            
-            const resultDiv = document.getElementById('result');
-            resultDiv.innerHTML = '<p>正在查询...</p>';
-            
-            try {
-                // 首先检查服务器状态
-                const statusResponse = await fetch('http://localhost:3000/api/status');
-                if (!statusResponse.ok) {
-                    throw new Error('本地服务器未运行，请先启动服务器');
-                }
-                
-                // 发送查询请求
-                const response = await fetch('http://localhost:3000/query', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify(requestData)
-                });
-                
-                if (!response.ok) {
-                    throw new Error(`HTTP错误: ${response.status}`);
-                }
-                
-                const result = await response.json();
-                
-                let resultHtml = '<div class="result success">';
-                resultHtml += '<h3>查询结果:</h3>';
-                resultHtml += '<pre>' + JSON.stringify(result, null, 2) + '</pre>';
-                
-                if (result.code === 1 && result.data) {
-                    resultHtml += '<h4>解析结果:</h4>';
-                    resultHtml += '<p><strong>问题:</strong> ' + result.data.question + '</p>';
-                    resultHtml += '<p><strong>答案:</strong> ' + result.data.answer + '</p>';
-                    resultHtml += '<p><strong>AI生成:</strong> ' + (result.data.ai ? '是' : '否') + '</p>';
-                } else if (result.code === 0) {
-                    resultHtml += '<p><strong>未找到匹配的结果</strong></p>';
-                } else {
-                    resultHtml += '<p><strong>查询出错</strong></p>';
-                }
-                
-                resultHtml += '</div>';
-                resultDiv.innerHTML = resultHtml;
-                
-            } catch (error) {
-                resultDiv.innerHTML = '<div class="result error"><h3>错误:</h3><p>' + error.message + '</p></div>';
-            }
-        });
-    </script>
-</body>
-</html>
-            "#.to_string();
-            warp::reply::html(html_content)
-        });
+        .map(|| warp::reply::html(QUERY_TEST_PAGE_HTML));
 
     // 根路由的HEAD方法
     let root_head_route = warp::path::end()
         .and(warp::head())
-        .map(|| {
-            warp::reply::with_header("Hello,OCS", "content-type", "text/plain")
-        });
+        .map(|| warp::reply::with_header("Hello,OCS", "content-type", "text/plain"));
 
     let cors = warp::cors()
         .allow_any_origin()
@@ -954,8 +976,12 @@ pub async fn start_server(
         .and_then(move |request: ModelCallProgressRequest| {
             let logger = logger_for_model_progress.clone();
             async move {
-                println!("📶 Received model call progress for request_id: {}", request.request_id);
-                logger.send_model_call_progress(request.request_id.clone(), request.content.clone());
+                println!(
+                    "📶 Received model call progress for request_id: {}",
+                    request.request_id
+                );
+                logger
+                    .send_model_call_progress(request.request_id.clone(), request.content.clone());
                 let response = serde_json::json!({
                     "success": true,
                     "message": "Model progress received successfully"
@@ -970,7 +996,11 @@ pub async fn start_server(
         .and(warp::post())
         .and(warp::body::json())
         .and_then(move |body: serde_json::Value| async move {
-            let token = body.get("token").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let token = body
+                .get("token")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
             if token.is_empty() {
                 let resp = serde_json::json!({"success": false, "message": "token不能为空"});
                 return Ok::<_, warp::Rejection>(warp::reply::json(&resp));
@@ -986,18 +1016,26 @@ pub async fn start_server(
             let config_str = std::fs::read_to_string(&config_path).unwrap_or_default();
             let config: serde_json::Value = serde_json::from_str(&config_str).unwrap_or_default();
             // 验证管理员token
-            let admin_token = config.get("adminToken").and_then(|v| v.as_str()).unwrap_or("");
+            let admin_token = config
+                .get("adminToken")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             if !admin_token.is_empty() && token == admin_token {
                 let resp = serde_json::json!({"success": true, "role": "admin", "name": "管理员"});
                 return Ok::<_, warp::Rejection>(warp::reply::json(&resp));
             }
             // 验证普通用户token
-            if let Some(users) = config.get("multiUser").and_then(|m| m.get("users")).and_then(|u| u.as_array()) {
+            if let Some(users) = config
+                .get("multiUser")
+                .and_then(|m| m.get("users"))
+                .and_then(|u| u.as_array())
+            {
                 for user in users {
                     let user_token = user.get("token").and_then(|v| v.as_str()).unwrap_or("");
                     if !user_token.is_empty() && token == user_token {
                         let name = user.get("name").and_then(|v| v.as_str()).unwrap_or("用户");
-                        let resp = serde_json::json!({"success": true, "role": "user", "name": name});
+                        let resp =
+                            serde_json::json!({"success": true, "role": "user", "name": name});
                         return Ok::<_, warp::Rejection>(warp::reply::json(&resp));
                     }
                 }
@@ -1019,11 +1057,13 @@ pub async fn start_server(
                 ));
             }
             let path = std::env::current_exe()
-                .ok().and_then(|p| p.parent().map(|d| d.to_path_buf()))
+                .ok()
+                .and_then(|p| p.parent().map(|d| d.to_path_buf()))
                 .unwrap_or_else(|| std::path::PathBuf::from("."))
                 .join("model_config.json");
             let data: serde_json::Value = std::fs::read_to_string(&path)
-                .ok().and_then(|s| serde_json::from_str(&s).ok())
+                .ok()
+                .and_then(|s| serde_json::from_str(&s).ok())
                 .unwrap_or(serde_json::json!({}));
             Ok::<_, warp::Rejection>(warp::reply::with_status(
                 warp::reply::json(&serde_json::json!({"success": true, "data": data})),
@@ -1045,7 +1085,8 @@ pub async fn start_server(
                 ));
             }
             let path = std::env::current_exe()
-                .ok().and_then(|p| p.parent().map(|d| d.to_path_buf()))
+                .ok()
+                .and_then(|p| p.parent().map(|d| d.to_path_buf()))
                 .unwrap_or_else(|| std::path::PathBuf::from("."))
                 .join("model_config.json");
             match std::fs::write(&path, body.to_string()) {
@@ -1054,7 +1095,9 @@ pub async fn start_server(
                     warp::http::StatusCode::OK,
                 )),
                 Err(e) => Ok::<_, warp::Rejection>(warp::reply::with_status(
-                    warp::reply::json(&serde_json::json!({"success": false, "message": e.to_string()})),
+                    warp::reply::json(
+                        &serde_json::json!({"success": false, "message": e.to_string()}),
+                    ),
                     warp::http::StatusCode::INTERNAL_SERVER_ERROR,
                 )),
             }
@@ -1065,6 +1108,7 @@ pub async fn start_server(
         .or(root_head_route)
         .or(logged_routes)
         .or(query_route)
+        .or(mark_pending_correction_route)
         .or(model_response_route)
         .or(model_progress_route)
         .or(sse_logs_route)
@@ -1096,9 +1140,7 @@ pub async fn start_server(
 
     // 在后台启动服务器
     let server_handle = tokio::spawn(async move {
-        warp::serve(routes)
-            .run((bind_ip, port))
-            .await;
+        warp::serve(routes).run((bind_ip, port)).await;
     });
 
     // 更新状态
@@ -1130,10 +1172,10 @@ pub async fn start_server(
 }
 
 /// 停止HTTP服务器
-/// 
+///
 /// # 参数
 /// * `state` - 服务器状态管理
-/// 
+///
 /// # 返回值
 /// * `Ok(ServerInfo)` - 服务器停止成功，返回服务器信息
 /// * `Err(String)` - 服务器停止失败，返回错误信息
@@ -1164,15 +1206,15 @@ pub async fn stop_server(state: State<'_, ServerState>) -> Result<ServerInfo, St
         info.url = None;
         info.clone()
     };
-    
+
     Ok(result)
 }
 
 /// 获取服务器状态
-/// 
+///
 /// # 参数
 /// * `state` - 服务器状态管理
-/// 
+///
 /// # 返回值
 /// * `Ok(ServerInfo)` - 返回当前服务器状态信息
 #[tauri::command]
@@ -1182,17 +1224,21 @@ pub async fn get_server_status(state: State<'_, ServerState>) -> Result<ServerIn
 }
 
 /// 存储AI响应到数据库
-/// 
+///
 /// # Arguments
 /// * `request_id` - 请求ID
 /// * `content` - AI响应内容
-/// 
+///
 /// # Returns
 /// * `Result<(), String>` - 成功返回Ok(())，失败返回错误信息
 async fn store_ai_response_to_database(request_id: &str, content: &str) -> Result<(), String> {
     // 记录AI响应信息，准备存储到数据库
-    println!("📝 准备存储AI响应到数据库: request_id={}, content_length={}", request_id, content.len());
-    
+    println!(
+        "📝 准备存储AI响应到数据库: request_id={}, content_length={}",
+        request_id,
+        content.len()
+    );
+
     // 如果回答是"题目不完整，无法确定具体问题。"，则记录日志
     if content.contains("题目不完整，无法确定具体问题。") {
         println!("⚠️ 检测到题目不完整 (in callback)");
@@ -1201,15 +1247,15 @@ async fn store_ai_response_to_database(request_id: &str, content: &str) -> Resul
     // TODO: 目前无法在此处存储，因为缺少原始问题的标题 (Title)。
     // 完整的存储逻辑已在 query_post_route 中实现，那里有完整的上下文。
     // 如果将来需要支持异步回调存储，需要实现通过 request_id 查找原始 title 的机制。
-    
+
     Ok(())
 }
 
 /// 从JSON响应中提取answer字段
-/// 
+///
 /// # Arguments
 /// * `json_content` - AI返回的JSON字符串
-/// 
+///
 /// # Returns
 /// * `String` - 提取的答案内容，如果解析失败则返回原始内容
 fn extract_answer_from_json(json_content: &str) -> String {
@@ -1339,10 +1385,22 @@ fn is_model_error(text: &str) -> Option<String> {
                 i -= 1;
                 let b = bytes[i];
                 if end.is_none() {
-                    if b == b'}' { end = Some(i); depth = 1; continue; }
+                    if b == b'}' {
+                        end = Some(i);
+                        depth = 1;
+                        continue;
+                    }
                 } else {
-                    if b == b'}' { depth += 1; }
-                    else if b == b'{' { depth -= 1; if depth == 0 { let start = i; let slice = &text[start..=end.unwrap()]; return Some(slice.to_string()); } }
+                    if b == b'}' {
+                        depth += 1;
+                    } else if b == b'{' {
+                        depth -= 1;
+                        if depth == 0 {
+                            let start = i;
+                            let slice = &text[start..=end.unwrap()];
+                            return Some(slice.to_string());
+                        }
+                    }
                 }
             }
             None

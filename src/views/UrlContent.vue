@@ -98,7 +98,6 @@
               </div>
               <div v-else-if="analysisError" class="error-box">
                 <span>{{ analysisError }}</span>
-                <button class="retry-btn" @click="retryAnalysis">重试</button>
               </div>
             </div>
           </div>
@@ -106,22 +105,22 @@
           <!-- 空状态提示 -->
           <div class="chat-placeholder" v-if="!analyzing && !analysisResult && !analysisError">
             <p v-if="!hasRenderedImage">等待题目渲染完成...</p>
-            <p v-else>选择模型后点击「开始分析」</p>
+            <p v-else>该窗口的模型分析已停用，请在主窗口查看 URL 题目的分析结果</p>
           </div>
         </div>
 
         <!-- 底部工具栏 -->
         <div class="toolbar">
-          <button class="toolbar-btn model-btn" @click="showModelSelector = true" :disabled="analyzing">
+          <button class="toolbar-btn model-btn" disabled>
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/></svg>
-            {{ selectedVisionModel ? selectedVisionModel.displayName : '选择模型' }}
+            主窗口处理 URL 分析
           </button>
           <div class="toolbar-right">
             <button class="toolbar-btn bank-btn" @click="openAddToQuestionBank" :disabled="!currentQuestion">
               添加到题库
             </button>
-            <button class="toolbar-btn analyze-btn" @click="analyzeWithAI" :disabled="!selectedVisionModel || analyzing || !hasRenderedImage">
-              {{ analyzing ? '分析中...' : '开始分析' }}
+            <button class="toolbar-btn analyze-btn" disabled>
+              分析已停用
             </button>
           </div>
         </div>
@@ -191,7 +190,6 @@ import { ref, onMounted, onUnmounted, computed, watch, nextTick } from 'vue'
 import ImageGenerator from '../components/ImageGenerator.vue'
 import MarkdownRender from 'markstream-vue'
 import 'markstream-vue/index.css'
-import { invoke } from '@tauri-apps/api/core'
 import { useModelConfig } from '../services/modelConfig'
 import { useTheme } from '../composables/useTheme'
 import { databaseService } from '../services/database'
@@ -486,116 +484,15 @@ const getRenderedImageData = async (): Promise<string | null> => {
 }
 
 const analyzeWithAI = async () => {
-  if (!selectedVisionModel.value) { analysisError.value = '请选择一个视觉模型'; return }
-  const imageData = await getRenderedImageData()
-  if (!imageData) { analysisError.value = '无法获取渲染后的图片数据'; return }
-
-  analysisAbortController.value = new AbortController()
-  analyzing.value = true
+  analyzing.value = false
   analysisResult.value = null
-  analysisError.value = ''
   streamingResponse.value = ''
-
-  try {
-    const platform = modelConfig.platforms.find(p => p.models.some(m => m.id === selectedVisionModel.value!.id))
-    if (!platform) throw new Error('找不到模型对应的平台')
-
-    // 构建题目文本（标题 + 编号化选项）
-    const questionTitle = currentQuestion.value?.title || ''
-    const questionOptions = currentQuestion.value?.options || ''
-    const parsedOptions = parseOptions(questionOptions)
-    
-    // 构建编号映射表 { '1' -> '原始文本', '2' -> ... }
-    const optionMap = new Map<string, string>()
-    parsedOptions.forEach((opt, i) => {
-      optionMap.set(String(i + 1), opt.text)
-    })
-
-    let questionText = questionTitle
-    if (parsedOptions.length > 0) {
-      const numberedOptions = parsedOptions.map((opt, i) => `${i + 1}. ${opt.text}`).join('\n')
-      questionText += '\n\n选项：\n' + numberedOptions
-    }
-
-    const hasOptions = parsedOptions.length > 0
-    const promptText = `以下是题目的原始文本内容（图片中也包含相同题目）：
-
-${questionText}
-
-请仔细分析图片和文本中的题目，给出详细的解题过程和答案。
-
-在回答末尾，严格按照以下格式单独一行给出答案编号：
-ANSWER: <编号>
-
-其中编号规则：
-${hasOptions
-  ? `- 单选题：写正确选项的编号，如 ANSWER: 2
-- 多选题：多个编号用空格分隔，如 ANSWER: 1 3
-- 判断题：写 正确 或 错误，如 ANSWER: 正确`
-  : `- 填空题/解答题：写完整答案内容，如 ANSWER: 42`
-}`
-
-    const analysisInput = {
-      messages: [{ role: 'user', content: [
-        { type: 'image_url', image_url: { url: imageData, detail: 'high' } },
-        { type: 'text', text: promptText }
-      ]}],
-      model: selectedVisionModel.value.id,
-      stream: true
-    }
-    const config = { apiKey: platform.apiKey, baseUrl: platform.baseUrl, model: selectedVisionModel.value.id, ...selectedVisionModel.value }
-
-    let tauriFetch
-    try { const h = await import('@tauri-apps/plugin-http'); tauriFetch = h.fetch } catch { tauriFetch = fetch }
-
-    if (selectedVisionModel.value.jsCode) {
-      try {
-        let executableCode = selectedVisionModel.value.jsCode.trim()
-        let processModel
-        if (executableCode.startsWith('async function') || executableCode.startsWith('function')) {
-          processModel = new Function('input', 'config', 'fetch', 'abortSignal', `${executableCode}\nreturn processModel;`)(analysisInput, config, tauriFetch, analysisAbortController.value?.signal)
-        } else {
-          processModel = new Function('input', 'config', 'fetch', 'abortSignal', `return (async function processModel(input, config) { ${executableCode} });`)(analysisInput, config, tauriFetch, analysisAbortController.value?.signal)
-        }
-        const result = await processModel(analysisInput, config)
-        if (result) {
-          if (result[Symbol.asyncIterator]) {
-            let fullResponse = ''
-            for await (const chunk of result) {
-              if (chunk.content) { fullResponse += chunk.content; streamingResponse.value = fullResponse }
-            }
-            const answer = resolveAnswerText(parseAnswer(fullResponse), optionMap)
-            analysisResult.value = { response: fullResponse, answer, timestamp: new Date().toLocaleString(), modelName: selectedVisionModel.value.displayName }
-            // 自动回填答案到原始挂起请求
-            if (answer && currentQuestion.value?.requestId) {
-              await sendAnswerToRequest(currentQuestion.value.requestId, answer)
-            }
-          } else {
-            const answer = resolveAnswerText(parseAnswer(String(result)), optionMap)
-            analysisResult.value = { response: result, answer, timestamp: new Date().toLocaleString(), modelName: selectedVisionModel.value.displayName }
-            if (answer && currentQuestion.value?.requestId) {
-              await sendAnswerToRequest(currentQuestion.value.requestId, answer)
-            }
-          }
-        } else {
-          analysisError.value = '模型配置代码未返回有效结果'
-        }
-      } catch (codeError: any) {
-        analysisError.value = `代码执行错误: ${codeError.message}`
-      }
-    } else {
-      analysisError.value = '模型未配置JavaScript代码'
-    }
-  } catch (error: any) {
-    analysisError.value = `分析失败: ${error.message}`
-  } finally {
-    analyzing.value = false
+  if (analysisAbortController.value) {
+    analysisAbortController.value.abort()
     analysisAbortController.value = null
-    if (analysisError.value) streamingResponse.value = ''
   }
+  analysisError.value = 'UrlContent 窗口的模型分析与结果回填已停用，请在主窗口完成 URL 题目的视觉分析，避免重复回调同一个 requestId。'
 }
-
-const retryAnalysis = () => analyzeWithAI()
 
 // 解析选项字符串为数组，返回 [{label, text}, ...]
 // 支持 "A.xxx" / "A、xxx" / 换行分隔等格式
@@ -622,26 +519,17 @@ const resolveAnswerText = (answerNums: string[], optionMap: Map<string, string>)
 }
 
 // 将 AI 答案回填给原始挂起的请求
-const sendAnswerToRequest = async (requestId: string, answer: string) => {
-  if (!requestId || !answer) return
-  try {
-    let baseUrl = ''
-    try { const status = await invoke<any>('get_server_status'); baseUrl = status?.url || '' } catch (e) {}
-    if (!baseUrl) return
-    await fetch(`${baseUrl}/api/model/response`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ request_id: requestId, content: JSON.stringify({ answer }) })
-    })
-    console.log('✅ 答案已回填到原始请求:', requestId)
-  } catch (e) {
-    console.warn('回填答案失败:', e)
-  }
+const sendAnswerToRequest = async (_requestId: string, _answer: string) => {
+  console.warn('UrlContent 窗口的结果回填已停用，忽略本次请求')
 }
 
 // 一键添加：用 AI 解析出的答案直接入库
 const quickAddToBank = async () => {
-  if (!currentQuestion.value || !analysisResult.value?.answer) return
+  const answer = analysisResult.value?.answer?.trim() || ''
+  if (!currentQuestion.value || !answer) {
+    alert('答案为空，未保存题目')
+    return
+  }
   addingToBank.value = true
   try {
     let combined = combinedContent.value
@@ -658,7 +546,7 @@ const quickAddToBank = async () => {
         })
       })
     }
-    await databaseService.addQuestion({ content: combined, answer: analysisResult.value.answer, folderId: 0 })
+    await databaseService.addQuestion({ content: combined, answer, folderId: 0 })
     alert('已成功添加到题库！')
   } catch (error: any) {
     alert(`添加失败: ${error.message}`)

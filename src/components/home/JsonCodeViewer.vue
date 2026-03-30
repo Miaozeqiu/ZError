@@ -30,7 +30,17 @@ const baseExtensions = [
   json(),
   EditorState.readOnly.of(true),
   EditorView.theme({
-    '&': { borderRadius: '8px', border: '1px solid var(--request-details-code-border)' },
+    '&': {
+      borderRadius: '8px',
+      border: '1px solid var(--request-details-code-border)',
+      backgroundColor: 'var(--request-details-code-bg)',
+      color: 'var(--request-details-code-text)',
+    },
+    '&.cm-editor': {
+      height: '100%',
+      backgroundColor: 'var(--request-details-code-bg)',
+      color: 'var(--request-details-code-text)',
+    },
     '.cm-content': {
       fontFamily: "'Consolas','Monaco','Courier New',monospace",
       fontSize: '13px',
@@ -39,8 +49,10 @@ const baseExtensions = [
       whiteSpace: 'pre-wrap',
       wordBreak: 'break-all',
     },
-    '&.cm-editor': { height: '100%' },
-    '.cm-scroller': { overflow: 'auto' },
+    '.cm-scroller': {
+      overflow: 'auto',
+      backgroundColor: 'transparent',
+    },
   }),
 ]
 
@@ -50,7 +62,7 @@ const buildView = () => {
   const themeExt = isDark ? [oneDark] : [syntaxHighlighting(lightHighlightStyle)]
   const state = EditorState.create({
     doc: props.content,
-    extensions: [...baseExtensions, ...themeExt],
+    extensions: [...themeExt, ...baseExtensions],
   })
   cmView = new EditorView({ state, parent: containerRef.value })
 }

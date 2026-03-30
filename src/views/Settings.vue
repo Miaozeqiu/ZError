@@ -15,6 +15,12 @@
               <svg v-if="category.id === 'models'" width="20" height="20" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
                 <path d="M469.333333 42.666667v42.666666H298.666667a128 128 0 0 0-128 128v128a213.333333 213.333333 0 0 0 213.333333 213.333334h256a213.333333 213.333333 0 0 0 213.333333-213.333334V213.333333a128 128 0 0 0-128-128h-170.666666V42.666667h-85.333334zM256 213.333333a42.666667 42.666667 0 0 1 42.666667-42.666666h426.666666a42.666667 42.666667 0 0 1 42.666667 42.666666v128a128 128 0 0 1-128 128H384a128 128 0 0 1-128-128V213.333333z m149.333333 170.666667a64 64 0 1 0 0-128 64 64 0 0 0 0 128z m213.333334 0a64 64 0 1 0 0-128 64 64 0 0 0 0 128zM256 938.666667a256 256 0 0 1 512 0h85.333333a341.333333 341.333333 0 1 0-682.666666 0h85.333333z" fill="currentColor"/>
               </svg>
+              <svg v-else-if="category.id === 'general'" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M14 17H5"/><path d="M19 7h-9"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/>
+              </svg>
+              <svg v-else-if="category.id === 'about'" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>
+              </svg>
               <svg v-else width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <path :d="category.icon" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
               </svg>
@@ -28,23 +34,17 @@
       <div class="settings-content">
         <!-- 常规设置 -->
         <div v-if="activeCategory === 'general'" class="settings-section">
-          <div class="settings-inner-wrapper">
-            <div class="settings-content-wrapper">
-              <GeneralSettings />
+          <div class="settings-inner-wrapper general-scroll-wrap">
+            <div class="settings-content-wrapper general-scroll-content" ref="generalScrollContent" @scroll="onGeneralScroll">
+              <GeneralSettings @open-question-folder="handleOpenQuestionFolder" />
+            </div>
+            <div class="custom-scrollbar" :class="{ 'is-visible': generalScrollbarVisible }" ref="generalScrollbar" @mousedown="onGeneralScrollbarMousedown">
+              <div class="custom-scrollbar-thumb" ref="generalScrollbarThumb"></div>
             </div>
           </div>
         </div>
 
-        <!-- 网络设置 -->
-        <div v-if="activeCategory === 'network'" class="settings-section">
-          <div class="settings-inner-wrapper">
-            <div class="settings-content-wrapper">
-              <NetworkSettings />
-            </div>
-          </div>
-        </div>
-
-        <!-- 模型设置 -->
+<!-- 模型设置 -->
         <!-- 模型设置 -->
         <div v-if="activeCategory === 'models'" class="settings-section model-settings-layout">
           <div class="settings-inner-wrapper">
@@ -52,21 +52,16 @@
           </div>
         </div>
 
-        <!-- 题库设置 -->
-        <div v-if="activeCategory === 'question'" class="settings-section">
-          <div class="settings-inner-wrapper">
-            <div class="settings-content-wrapper">
-              <QuestionBankSettings />
-            </div>
-          </div>
-        </div>
 
 
         <!-- 关于应用 -->
         <div v-if="activeCategory === 'about'" class="settings-section">
-          <div class="settings-inner-wrapper">
-            <div class="settings-content-wrapper">
+          <div class="settings-inner-wrapper about-scroll-wrap">
+            <div class="settings-content-wrapper about-scroll-content" ref="aboutScrollContent" @scroll="onAboutScroll">
               <AboutApp />
+            </div>
+            <div class="custom-scrollbar" :class="{ 'is-visible': aboutScrollbarVisible }" ref="aboutScrollbar" @mousedown="onAboutScrollbarMousedown">
+              <div class="custom-scrollbar-thumb" ref="aboutScrollbarThumb"></div>
             </div>
           </div>
         </div>
@@ -84,10 +79,12 @@ import { ref, onMounted, onUnmounted, nextTick } from 'vue'
 import { useSettingsManager } from '../composables/useSettingsManager'
 import { useTheme } from '../composables/useTheme'
 import GeneralSettings from '../components/settings/GeneralSettings.vue'
-import NetworkSettings from '../components/settings/NetworkSettings.vue'
 import ModelSettings from '../components/settings/ModelSettings.vue'
-import QuestionBankSettings from '../components/settings/QuestionBankSettings.vue'
 import AboutApp from '../components/settings/AboutApp.vue'
+
+const emit = defineEmits<{
+  'open-question-folder': [folderId: number]
+}>()
 
 // 设置管理
 const { settings, saveSettings, resetSettings, addSettingsListener, setSetting } = useSettingsManager()
@@ -132,22 +129,12 @@ const categories = [
   {
     id: 'general',
     name: '常规设置',
-    icon: 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z'
-  },
-  {
-    id: 'network',
-    name: '网络设置',
-    icon: 'M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.141 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0'
-  },
-  {
-    id: 'question',
-    name: '题库设置',
-    icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z'
+    icon: ''
   },
   {
     id: 'about',
     name: '关于应用',
-    icon: 'M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z'
+    icon: ''
   }
 ]
 
@@ -156,6 +143,10 @@ const categories = [
 const handleSettingChange = async (key: string, value: any) => {
   setSetting(key as any, value)
   await saveSettings()
+}
+
+const handleOpenQuestionFolder = (folderId: number) => {
+  emit('open-question-folder', folderId)
 }
 
 // 设置变更监听器
@@ -174,6 +165,104 @@ onUnmounted(() => {
     unsubscribe()
   }
 })
+
+// 常规设置自定义滚动条
+const generalScrollContent = ref<HTMLElement | null>(null)
+const generalScrollbar = ref<HTMLElement | null>(null)
+const generalScrollbarThumb = ref<HTMLElement | null>(null)
+const generalScrollbarVisible = ref(false)
+let generalScrollHideTimer: ReturnType<typeof setTimeout> | null = null
+let generalIsDragging = false
+let generalDragStartY = 0
+let generalDragStartScrollTop = 0
+
+const updateGeneralScrollbarThumb = () => {
+  const content = generalScrollContent.value
+  const thumb = generalScrollbarThumb.value
+  const bar = generalScrollbar.value
+  if (!content || !thumb || !bar) return
+  const ratio = content.clientHeight / content.scrollHeight
+  const barHeight = bar.clientHeight
+  thumb.style.height = Math.max(ratio * barHeight, 24) + 'px'
+  thumb.style.top = (content.scrollTop / content.scrollHeight) * barHeight + 'px'
+}
+
+const onGeneralScroll = () => {
+  generalScrollbarVisible.value = true
+  if (generalScrollHideTimer) clearTimeout(generalScrollHideTimer)
+  generalScrollHideTimer = setTimeout(() => { generalScrollbarVisible.value = false }, 1500)
+  updateGeneralScrollbarThumb()
+}
+
+const onGeneralScrollbarMousedown = (e: MouseEvent) => {
+  generalIsDragging = true
+  generalDragStartY = e.clientY
+  generalDragStartScrollTop = generalScrollContent.value?.scrollTop || 0
+  document.addEventListener('mousemove', onGeneralScrollbarMousemove)
+  document.addEventListener('mouseup', onGeneralScrollbarMouseup)
+}
+
+const onGeneralScrollbarMousemove = (e: MouseEvent) => {
+  if (!generalIsDragging || !generalScrollContent.value || !generalScrollbar.value) return
+  const dy = e.clientY - generalDragStartY
+  const ratio = generalScrollContent.value.scrollHeight / generalScrollbar.value.clientHeight
+  generalScrollContent.value.scrollTop = generalDragStartScrollTop + dy * ratio
+}
+
+const onGeneralScrollbarMouseup = () => {
+  generalIsDragging = false
+  document.removeEventListener('mousemove', onGeneralScrollbarMousemove)
+  document.removeEventListener('mouseup', onGeneralScrollbarMouseup)
+}
+
+// 关于应用自定义滚动条
+const aboutScrollContent = ref<HTMLElement | null>(null)
+const aboutScrollbar = ref<HTMLElement | null>(null)
+const aboutScrollbarThumb = ref<HTMLElement | null>(null)
+const aboutScrollbarVisible = ref(false)
+let aboutScrollHideTimer: ReturnType<typeof setTimeout> | null = null
+let aboutIsDragging = false
+let aboutDragStartY = 0
+let aboutDragStartScrollTop = 0
+
+const updateAboutScrollbarThumb = () => {
+  const content = aboutScrollContent.value
+  const thumb = aboutScrollbarThumb.value
+  const bar = aboutScrollbar.value
+  if (!content || !thumb || !bar) return
+  const ratio = content.clientHeight / content.scrollHeight
+  const barHeight = bar.clientHeight
+  thumb.style.height = Math.max(ratio * barHeight, 24) + 'px'
+  thumb.style.top = (content.scrollTop / content.scrollHeight) * barHeight + 'px'
+}
+
+const onAboutScroll = () => {
+  aboutScrollbarVisible.value = true
+  if (aboutScrollHideTimer) clearTimeout(aboutScrollHideTimer)
+  aboutScrollHideTimer = setTimeout(() => { aboutScrollbarVisible.value = false }, 1500)
+  updateAboutScrollbarThumb()
+}
+
+const onAboutScrollbarMousedown = (e: MouseEvent) => {
+  aboutIsDragging = true
+  aboutDragStartY = e.clientY
+  aboutDragStartScrollTop = aboutScrollContent.value?.scrollTop || 0
+  document.addEventListener('mousemove', onAboutScrollbarMousemove)
+  document.addEventListener('mouseup', onAboutScrollbarMouseup)
+}
+
+const onAboutScrollbarMousemove = (e: MouseEvent) => {
+  if (!aboutIsDragging || !aboutScrollContent.value || !aboutScrollbar.value) return
+  const dy = e.clientY - aboutDragStartY
+  const ratio = aboutScrollContent.value.scrollHeight / aboutScrollbar.value.clientHeight
+  aboutScrollContent.value.scrollTop = aboutDragStartScrollTop + dy * ratio
+}
+
+const onAboutScrollbarMouseup = () => {
+  aboutIsDragging = false
+  document.removeEventListener('mousemove', onAboutScrollbarMousemove)
+  document.removeEventListener('mouseup', onAboutScrollbarMouseup)
+}
 </script>
 
 <style scoped>
@@ -364,168 +453,6 @@ onUnmounted(() => {
   box-sizing: border-box;
 }
 
-/* 平台列表样式 */
-.platform-list {
-  flex: 1;
-  overflow-y: auto;
-  padding: 8px;
-}
-
-.platform-item {
-  padding: 12px;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: all 0.2s;
-  margin-bottom: 4px;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  border: 1px solid var(--platform-item-border);
-  background-color: var(--platform-item-bg);
-  color: var(--platform-item-text);
-}
-
-.platform-item:hover {
-  background-color: var(--platform-item-hover-bg);
-  border-color: var(--platform-item-hover-border);
-  color: var(--platform-item-hover-text);
-}
-
-.platform-item.active {
-  background-color: var(--platform-item-active-bg);
-  border-color: var(--platform-item-active-border);
-  color: var(--platform-item-active-text);
-}
-
-.platform-item.active .platform-name,
-.platform-item.active .platform-status,
-.platform-item.active .model-count {
-  color: var(--platform-item-active-text);
-}
-
-.platform-name {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-primary, #2d3748);
-  margin: 0 0 4px 0;
-}
-
-/* 平台图标样式 */
-.platform-icon {
-  width: 32px;
-  height: 32px;
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 6px;
-  overflow: hidden;
-}
-
-.icon-image {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  border-radius: 6px;
-}
-
-.icon-emoji {
-  width: 100%;
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 18px;
-  background: var(--bg-secondary, #f7fafc);
-  border-radius: 6px;
-}
-
-.icon-fallback {
-  width: 100%;
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--color-primary, #667eea);
-  color: white;
-  font-size: 12px;
-  font-weight: 600;
-  border-radius: 6px;
-}
-
-.platform-info {
-  flex: 1;
-  min-width: 0;
-}
-
-/* 模型列表样式 */
-.model-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.model-item {
-  background-color: var(--model-item-bg);
-  padding: 12px;
-  border: 1px solid var(--model-item-border);
-  border-radius: 12px;
-  cursor: pointer;
-  transition: all 0.2s;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  color: var(--model-item-text);
-}
-
-.model-item:hover {
-  background: var(--model-item-hover-bg);
-  border-color: var(--model-item-hover-border);
-  color: var(--model-item-hover-text);
-}
-
-.model-item.active {
-  background: var(--model-item-active-bg);
-  border-color: var(--model-item-active-border);
-  color: var(--model-item-active-text);
-}
-
-.model-info {
-  flex: 1;
-}
-
-.model-name {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--model-item-name-text);
-  margin: 0px;
-}
-
-.model-description {
-  display: none;
-  font-size: 12px;
-  color: var(--text-secondary, #718096);
-  margin: 0;
-}
-
-.model-actions {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  justify-content: flex-end;
-}
-
-.model-selected {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  background: none;
-  color: var(--model-selected-color);
-}
-
 /* 空状态样式 */
 .empty-state {
   display: flex;
@@ -604,7 +531,7 @@ onUnmounted(() => {
 .settings-content {
   box-sizing: border-box;
   flex: 1;
-  background: var(--bg-secondary);
+  background: var(--bg-primary);
   border-radius: 4px;
   margin-bottom: 5px;
   margin-right: 5px;
@@ -619,11 +546,64 @@ onUnmounted(() => {
   height: 100%;
 }
 
+.general-scroll-wrap,
+.about-scroll-wrap {
+  position: relative;
+  overflow: hidden;
+}
+
+.general-scroll-content,
+.about-scroll-content {
+  height: 100%;
+  overflow-y: scroll;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.general-scroll-content::-webkit-scrollbar,
+.about-scroll-content::-webkit-scrollbar {
+  display: none;
+}
+
 .settings-content-wrapper {
+  background: var(--bg-secondary);
   padding: 24px;
+  padding-top: 0px;
   height: 100%;
   box-sizing: border-box;
   overflow: auto;
+  border-radius: 4px;
+}
+
+.custom-scrollbar {
+  position: absolute;
+  right: 3px;
+  top: 4px;
+  bottom: 4px;
+  width: 4px;
+  border-radius: 4px;
+  opacity: 0;
+  transition: opacity 0.2s;
+  cursor: pointer;
+}
+
+.custom-scrollbar.is-visible {
+  opacity: 1;
+}
+
+.custom-scrollbar-thumb {
+  width: 4px;
+  border-radius: 4px;
+  background: var(--custom-scrollbar-thumb);
+  transition: background 0.15s;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+}
+
+.custom-scrollbar-thumb:hover {
+  background: var(--custom-scrollbar-thumb-hover);
 }
 
 

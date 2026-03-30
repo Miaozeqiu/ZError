@@ -18,6 +18,7 @@ export interface AIResponse {
   folder_name?: string;
   create_time: string;
   is_ai?: boolean;
+  is_pending_correction?: boolean;
 }
 
 // 检测是否在 Tauri 环境中
@@ -165,6 +166,48 @@ class DatabaseService {
     } catch (error) {
       console.error('获取文件夹及子文件夹题目失败:', error);
       return [];
+    }
+  }
+
+  async getPendingCorrectionQuestions(): Promise<AIResponse[]> {
+    if (!this.isTauri) {
+      return mockAIResponses.filter(response => !!response.is_pending_correction);
+    }
+
+    try {
+      const responses = await invoke<any[]>('get_pending_correction_questions');
+      return responses;
+    } catch (error) {
+      console.error('获取待修正题目失败:', error);
+      return [];
+    }
+  }
+
+  async getPendingCorrectionQuestionCount(): Promise<number> {
+    if (!this.isTauri) {
+      return mockAIResponses.filter(response => !!response.is_pending_correction).length;
+    }
+
+    try {
+      return await invoke<number>('get_pending_correction_question_count');
+    } catch (error) {
+      console.error('获取待修正题目数量失败:', error);
+      return 0;
+    }
+  }
+
+  async setQuestionPendingCorrection(questionId: number, pending: boolean): Promise<void> {
+    if (!this.isTauri) {
+      const question = mockAIResponses.find(q => q.id === questionId);
+      if (question) question.is_pending_correction = pending;
+      return;
+    }
+
+    try {
+      await invoke('set_question_pending_correction', { id: questionId, pending });
+    } catch (error) {
+      console.error('更新待修正状态失败:', error);
+      throw error;
     }
   }
 
@@ -362,6 +405,7 @@ class DatabaseService {
       if (updateData.options) question.options = updateData.options;
       if (updateData.answer) question.answer = updateData.answer;
       if (updateData.question_type) question.question_type = updateData.question_type;
+      question.is_pending_correction = false;
       return;
     }
     

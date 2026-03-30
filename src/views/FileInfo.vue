@@ -248,19 +248,6 @@ onMounted(async () => {
   } catch { }
 })
 
-const resizeAndCenterWindow = async () => {
-  try {
-    const { getCurrentWindow, LogicalSize } = await import('@tauri-apps/api/window')
-    const win = getCurrentWindow()
-    try { await win.unmaximize() } catch { }
-    await win.setSize(new LogicalSize(1280, 900))
-    try { await win.center() } catch { }
-  } catch { }
-}
-
-onMounted(() => {
-  resizeAndCenterWindow()
-})
 
 const minimizeWindow = async () => {
   try {

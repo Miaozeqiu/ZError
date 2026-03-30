@@ -218,7 +218,7 @@ const menuStyle = computed(() => {
   position: fixed;
   background: var(--context-menu-bg, #ffffff);
   border: 1px solid var(--context-menu-border, #e2e8f0);
-  border-radius: 8px;
+  border-radius: 12px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
   z-index: 1000;
   min-width: 160px;
@@ -230,20 +230,20 @@ const menuStyle = computed(() => {
 /* 菜单标题样式 */
 .menu-header {
   padding: 8px 12px 4px;
-  font-size: 11px;
-  font-weight: 600;
+  margin-left: 20px;
+  font-size: 12px;
+  font-weight: 500;
   color: #6b7280;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  border-bottom: 1px solid #e5e7eb;
   margin-bottom: 4px;
-  background: #f9fafb;
+  background: none;
 }
 
 /* 菜单项样式 */
 
 .menu-item {
-  border-radius: 4px;
+  border-radius: 8px;
   display: flex;
   align-items: center;
   padding: 4px 8px;
@@ -265,11 +265,11 @@ const menuStyle = computed(() => {
 }
 
 .menu-item.danger {
-  color: var(--danger-color, #e53e3e);
+  color: var(--context-menu-danger-text, #dc2626);
 }
 
 .menu-item.danger:hover:not(.disabled) {
-  background-color: var(--danger-bg, #fed7d7);
+  background-color: var(--context-menu-danger-hover-bg, #fee2e2);
 }
 
 .menu-icon {
@@ -320,9 +320,7 @@ const menuStyle = computed(() => {
   color: var(--context-menu-item-disabled-text, #718096);
 }
 
-[data-theme="dark"] .menu-item.danger:hover:not(.disabled) {
-  background-color: var(--danger-bg, #742a2a);
-}
+
 
 [data-theme="dark"] .menu-shortcut {
   color: var(--context-menu-shortcut-text, #718096);

@@ -11,8 +11,10 @@
         'drag-over': isDragOver,
         'drag-over-top': dragPosition === 'top',
         'drag-over-bottom': dragPosition === 'bottom',
-        'drag-over-center': dragPosition === 'center'
+        'drag-over-center': dragPosition === 'center',
+        'leaf-select-only': props.selectionMode === 'leaf-only' && !isLeafFolder
       }"
+
       :style="{ paddingLeft: (level * 16) + 'px' }"
       :draggable="false"
       :data-node-id="node.id"
@@ -48,9 +50,18 @@
           <path d="M4.7 10c-.2 0-.4-.1-.5-.2-.3-.3-.3-.8 0-1.1L6.9 6 4.2 3.3c-.3-.3-.3-.8 0-1.1.3-.3.8-.3 1.1 0l3.3 3.2c.3.3.3.8 0 1.1L5.3 9.7c-.2.2-.4.3-.6.3Z"></path>
         </svg>
         <!-- 没有子文件夹时显示圆点 -->
-        <svg v-else width="12" height="12" viewBox="0 0 12 12" fill="currentColor" style="vertical-align: text-bottom;">
+        <svg
+          v-else
+          width="12"
+          height="12"
+          viewBox="0 0 12 12"
+          fill="currentColor"
+          style="vertical-align: text-bottom;"
+          :class="{ 'current-save-dot': isCurrentSaveFolder }"
+        >
           <circle cx="6" cy="6" r="2" />
         </svg>
+
       </span>
       <span v-else class="expand-arrow-placeholder"></span>
       
@@ -123,7 +134,10 @@
         @expand-folder="(id) => emit('expand-folder', id)"
         :hover-target-id="propsHoverTargetId"
         :hover-position="propsHoverPosition"
+        :selection-mode="props.selectionMode"
+        :highlight-folder-id="props.highlightFolderId"
         @move-folder="(data) => emit('move-folder', data)"
+
         @drag-start="(nodeId) => emit('drag-start', nodeId)"
         @drag-end="() => emit('drag-end')"
         @drag-hover="(data) => emit('drag-hover', data)"
@@ -156,7 +170,10 @@ interface Props {
   renameValue?: string;
   hoverTargetId?: string | null;
   hoverPosition?: 'top' | 'center' | 'bottom' | null;
+  selectionMode?: 'all' | 'leaf-only';
+  highlightFolderId?: string | null;
 }
+
 
 const props = defineProps<Props>();
 
@@ -204,8 +221,11 @@ watch([propsHoverTargetId, propsHoverPosition], ([id, pos]) => {
 });
 
 const isSelected = computed(() => props.selectedId === props.node.id);
+const isLeafFolder = computed(() => props.node.type === 'folder' && !hasChildren.value);
+const isCurrentSaveFolder = computed(() => isLeafFolder.value && props.highlightFolderId === props.node.id);
 
 // 重命名相关
+
 const isRenaming = computed(() => props.renamingNodeId === props.node.id);
 const renameInput = ref<HTMLInputElement | null>(null);
 const renameValue = ref(props.renameValue || props.node.name);
@@ -251,12 +271,14 @@ const hasChildren = computed(() => {
 
 
 const handleClick = () => {
-  emit('select', props.node.id);
-  // 点击文件夹时自动展开并触发展开事件
   if (props.node.type === 'folder' && hasChildren.value && !isExpanded.value) {
     emit('expand-folder', props.node.id);
   }
+
+  emit('select', props.node.id);
 };
+
+
 
 const handleArrowClick = (event: MouseEvent) => {
   event.stopPropagation(); // 阻止事件冒泡
@@ -707,6 +729,11 @@ const findNodeByIdInProps = (id: string): TreeNode | null => {
   cursor: pointer;
 }
 
+.node-content.leaf-select-only .node-name {
+  opacity: 0.9;
+}
+
+
 .node-content.selected {
   background-color: var(--filetree-node-selected-bg);
   color: var(--filetree-node-text);
@@ -767,8 +794,13 @@ const findNodeByIdInProps = (id: string): TreeNode | null => {
   color: var(--filetree-expand-arrow-color);
 }
 
+.current-save-dot {
+  color: #f8bd40;
+}
+
 .arrow-icon,
 .octicon-chevron-right {
+
   transition: transform 0.2s ease;
 }
 

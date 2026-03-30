@@ -1,13 +1,13 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "ZError",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "identifier": "com.zerror.app",
   "build": {
-    "beforeDevCommand": "(cd web-app && bun run dev) & bun run dev",
+    "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
     "frontendDist": "../dist",
-    "beforeBuildCommand": "cd web-app && bun install && bun run build && cd ..  && npx vite build"
+    "beforeBuildCommand": "npm run build"
   },
   "app": {
     "windows": [],
@@ -20,17 +20,10 @@
     "active": true,
     "targets": ["msi"],
     "icon": [
-      "icons/favicon_128x128.ico",
-      "icons/favicon_128x128.ico",
-      "icons/favicon_128x128.ico",
-      "icons/favicon_256x256.ico",
-      "icons/favicon_256x256.ico",
-      "icons/icon.icns",
-      "icons/icon.ico"
+      "icons/icon.ico",
+      "icons/icon.png"
     ],
     "resources": [
-      "icons/**/*",
-      "../public/assets/images/**/*",
       "web/**/*"
     ],
     "windows": {

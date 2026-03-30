@@ -25,6 +25,9 @@
               </button>
             </div>
           </div>
+          <div v-if="isSearchMode" class="search-info">
+            搜索结果：{{ questions.length }} 条
+          </div>
         </div>
         <div class="search-box">
           <!-- 刷新按钮 -->
@@ -110,17 +113,19 @@
             </svg>
           </button>
         </div>
-        <div v-if="isSearchMode" class="search-info">
-          搜索结果：{{ questions.length }} 条
-        </div>
       </div>
     </div>
 
-    <div class="list-content" v-if="!loading" @contextmenu.prevent="handleListRightClick">
-      <div v-if="questions.length === 0" class="empty-state" @contextmenu.prevent="handleListRightClick">
+    <div class="list-content" @contextmenu.prevent="handleListRightClick">
+      <div v-if="loading" class="loading-state">
+        <div class="loading-spinner"></div>
+        <div class="loading-text">加载中...</div>
+      </div>
+
+      <div v-else-if="questions.length === 0" class="empty-state" @contextmenu.prevent="handleListRightClick">
         <div class="empty-icon">📝</div>
         <div class="empty-text">暂无题目</div>
-        <div class="empty-subtext">选择一个文件夹查看题目</div>
+        <div class="empty-subtext">{{ isPendingCorrectionFolder ? '当前没有待修正题目' : '选择一个文件夹查看题目' }}</div>
       </div>
 
       <div v-else class="question-table-container" @contextmenu.prevent="handleListRightClick">
@@ -223,8 +228,19 @@
                 </div>
               </td>
               <td class="col-answer">
-                <span v-if="isSearchMode && searchTerm" v-html="highlightSearchTerm(question.answer || '')"></span>
-                <span v-else>{{ question.answer || '暂无答案' }}</span>
+                <span v-if="!question.answer">暂无答案</span>
+                <div v-else class="cell-answer">
+                  <template v-for="(part, i) in getContentParts(question.answer)" :key="'ans-' + question.id + '-' + i">
+                    <span
+                      v-if="part.type === 'text' && isSearchMode && searchTerm"
+                      v-html="highlightSearchTerm(part.text || '')"
+                    ></span>
+                    <span v-else-if="part.type === 'text'">{{ part.text }}</span>
+                    <img v-else-if="imgSrc(part.url as string)" :src="imgSrc(part.url as string)"
+                      :class="['list-image', invertClass(part.url as string)]" />
+                    <span v-else class="image-loading">[图片加载中]</span>
+                  </template>
+                </div>
               </td>
               <td class="col-type">
                 <span v-if="question.question_type" class="type-tag">{{ question.question_type }}</span>
@@ -237,15 +253,10 @@
       </div>
     </div>
 
-    <div v-else class="loading-state">
-      <div class="loading-spinner"></div>
-      <div class="loading-text">加载中...</div>
-    </div>
-
     <QuestionDetail v-if="selectedQuestionDetails" :question="selectedQuestionDetails" :show="showDetailOverlay"
       :width="overlayWidth" :is-edit-mode="isEditMode" :edit-question="editFormData.question"
       :edit-options="editFormData.options" :edit-answer="editFormData.answer" :edit-type="editFormData.question_type"
-      :is-edit-form-valid="isEditFormValid" :is-resizing="isResizing" :format-time="formatTime" @close="closeDetail"
+      :is-edit-form-valid="isEditFormValid" :is-saving-edit="isSavingEdit" :is-resizing="isResizing" :format-time="formatTime" @close="closeDetail"
       @toggle-edit="toggleEditMode" @cancel-edit="cancelEdit" @save-edit="saveEdit"
       @update:editQuestion="(v) => editFormData.question = v" @update:editOptions="(v) => editFormData.options = v"
       @update:editAnswer="(v) => editFormData.answer = v" @update:editType="(v) => editFormData.question_type = v"
@@ -285,11 +296,13 @@ interface Props {
 }
 
 const props = defineProps<Props>();
+const PENDING_CORRECTION_FOLDER_ID = '-1';
 
 const emit = defineEmits<{
   'question-select': [question: AIResponse],
   'question-pasted': [],
   'question-added': [],
+  'question-updated': [],
   'open-import-dialog': [items: any],
   'refresh': [],
   'folder-path-change': [path: { id: number, name: string }[]]
@@ -466,12 +479,31 @@ const selectedQuestion = ref<AIResponse | null>(null);
 
 // 编辑模式相关状态
 const isEditMode = ref(false);
+const isSavingEdit = ref(false);
 const editFormData = ref({
   question: '',
   options: '',
   answer: '',
   question_type: ''
 });
+
+const fillEditForm = (question: AIResponse) => {
+  editFormData.value = {
+    question: question.question || '',
+    options: question.options || '',
+    answer: question.answer || '',
+    question_type: question.question_type || ''
+  };
+};
+
+const resetEditForm = () => {
+  editFormData.value = {
+    question: '',
+    options: '',
+    answer: '',
+    question_type: ''
+  };
+};
 
 interface Part { type: 'text' | 'image'; text?: string; url?: string }
 
@@ -507,6 +539,8 @@ const visibleImageUrls = computed(() => {
     for (const p of partsQ) if (p.type === 'image' && p.url) urls.push(p.url)
     const partsO = getContentParts(q.options || '')
     for (const p of partsO) if (p.type === 'image' && p.url) urls.push(p.url)
+    const partsA = getContentParts(q.answer || '')
+    for (const p of partsA) if (p.type === 'image' && p.url) urls.push(p.url)
   }
   return Array.from(new Set(urls))
 })
@@ -589,6 +623,8 @@ const canPaste = computed(() => {
   return !!(clipboard.value.question !== null || (clipboard.value.questions && clipboard.value.questions.length > 0));
 });
 
+const isPendingCorrectionFolder = computed(() => props.selectedFolderId === PENDING_CORRECTION_FOLDER_ID);
+
 // 分页相关计算属性
 const totalQuestions = computed(() => allQuestions.value.length);
 const totalPages = computed(() => Math.ceil(totalQuestions.value / pageSize.value));
@@ -648,7 +684,11 @@ const loadQuestions = async (folderId?: string | null) => {
     selectedQuestions.value.clear();
     updateSelectAllState();
 
-    if (folderId && folderId !== 'error') {
+    if (folderId === PENDING_CORRECTION_FOLDER_ID) {
+      console.log('QuestionList: 加载待修正题目');
+      folderPath.value = [{ id: -1, name: '待修正' }];
+      allQuestions.value = await databaseService.getPendingCorrectionQuestions();
+    } else if (folderId && folderId !== 'error') {
       const folderIdNum = parseInt(folderId);
       console.log('QuestionList: 解析文件夹ID', { original: folderId, parsed: folderIdNum });
 
@@ -693,7 +733,10 @@ const refreshData = async () => {
 
     const savedPage = currentPage.value;
 
-    if (props.selectedFolderId && props.selectedFolderId !== 'error') {
+    if (props.selectedFolderId === PENDING_CORRECTION_FOLDER_ID) {
+      folderPath.value = [{ id: -1, name: '待修正' }];
+      allQuestions.value = await databaseService.getPendingCorrectionQuestions();
+    } else if (props.selectedFolderId && props.selectedFolderId !== 'error') {
       const folderIdNum = parseInt(props.selectedFolderId);
       try {
         folderPath.value = await databaseService.getFolderPath(folderIdNum);
@@ -721,17 +764,37 @@ defineExpose({
   refreshData
 });
 
+const questionHasImages = (question: AIResponse) => {
+  return [question.question, question.options, question.answer].some(text =>
+    getContentParts(text || '').some(part => part.type === 'image')
+  );
+};
+
+const applyQuestionSelection = (question: AIResponse, startInEditMode = false) => {
+  selectedQuestionId.value = question.id;
+  selectedQuestionDetails.value = question;
+
+  if (startInEditMode) {
+    fillEditForm(question);
+    isEditMode.value = true;
+    return;
+  }
+
+  isEditMode.value = false;
+  resetEditForm();
+};
+
 const handleQuestionClick = (question: AIResponse) => {
   console.log('点击题目，开始动画');
 
+  const startInEditMode = !questionHasImages(question);
+
   // 如果已经有详情面板显示，直接更新内容，不触发动画
   if (selectedQuestionDetails.value) {
-    selectedQuestionId.value = question.id;
-    selectedQuestionDetails.value = question;
+    applyQuestionSelection(question, startInEditMode);
   } else {
     // 如果没有详情面板，显示面板并触发动画
-    selectedQuestionId.value = question.id;
-    selectedQuestionDetails.value = question;
+    applyQuestionSelection(question, startInEditMode);
     showDetailOverlay.value = false; // 先设置为 false
     // 使用 nextTick 确保 DOM 元素创建后再触发动画
     nextTick(() => {
@@ -761,47 +824,72 @@ const toggleEditMode = () => {
   if (!selectedQuestionDetails.value) return;
 
   if (!isEditMode.value) {
-    // 进入编辑模式，初始化表单数据
-    editFormData.value = {
-      question: selectedQuestionDetails.value.question || '',
-      options: selectedQuestionDetails.value.options || '',
-      answer: selectedQuestionDetails.value.answer || '',
-      question_type: selectedQuestionDetails.value.question_type || ''
-    };
+    fillEditForm(selectedQuestionDetails.value);
     isEditMode.value = true;
   } else {
-    // 退出编辑模式
     isEditMode.value = false;
   }
 };
 
 const cancelEdit = () => {
   isEditMode.value = false;
-  // 清空表单数据
-  editFormData.value = {
-    question: '',
-    options: '',
-    answer: '',
-    question_type: ''
+  resetEditForm();
+};
+
+const replaceQuestionInList = (list: AIResponse[], updatedQuestion: AIResponse) => {
+  const questionIndex = list.findIndex(q => q.id === updatedQuestion.id);
+  if (questionIndex !== -1) {
+    list.splice(questionIndex, 1, updatedQuestion);
+  }
+};
+
+const updateQuestionLocally = (updatedQuestion: AIResponse) => {
+  replaceQuestionInList(questions.value, updatedQuestion);
+  replaceQuestionInList(allQuestions.value, updatedQuestion);
+  replaceQuestionInList(originalQuestions.value, updatedQuestion);
+
+  if (selectedQuestion.value?.id === updatedQuestion.id) {
+    selectedQuestion.value = updatedQuestion;
+  }
+
+  selectedQuestionDetails.value = updatedQuestion;
+};
+
+const removeQuestionLocally = (questionId: number) => {
+  const removeFromList = (list: AIResponse[]) => {
+    const questionIndex = list.findIndex(q => q.id === questionId);
+    if (questionIndex !== -1) {
+      list.splice(questionIndex, 1);
+    }
   };
+
+  removeFromList(questions.value);
+  removeFromList(allQuestions.value);
+  removeFromList(originalQuestions.value);
+  selectedQuestions.value.delete(questionId);
+  updateSelectAllState();
+
+  if (selectedQuestionId.value === questionId) {
+    closeDetail();
+  }
 };
 
 const saveEdit = async () => {
-  if (!selectedQuestionDetails.value || !isEditFormValid.value) return;
+  if (!selectedQuestionDetails.value || !isEditFormValid.value || isSavingEdit.value) return;
 
   try {
-    loading.value = true;
+    isSavingEdit.value = true;
 
-    // 更新题目数据
+    const wasPendingCorrection = !!selectedQuestionDetails.value.is_pending_correction;
     const updatedQuestion = {
       ...selectedQuestionDetails.value,
       question: editFormData.value.question.trim(),
       options: editFormData.value.options.trim(),
       answer: editFormData.value.answer.trim(),
-      question_type: editFormData.value.question_type.trim()
+      question_type: editFormData.value.question_type.trim(),
+      is_pending_correction: false
     };
 
-    // 调用数据库服务更新题目
     await databaseService.updateQuestion(updatedQuestion.id, {
       question: updatedQuestion.question,
       options: updatedQuestion.options || null,
@@ -809,23 +897,23 @@ const saveEdit = async () => {
       question_type: updatedQuestion.question_type
     });
 
-    // 更新本地数据
-    selectedQuestionDetails.value = updatedQuestion;
-
-    // 更新题目列表中的对应项
-    const questionIndex = questions.value.findIndex(q => q.id === updatedQuestion.id);
-    if (questionIndex !== -1) {
-      questions.value[questionIndex] = updatedQuestion;
+    if (isPendingCorrectionFolder.value) {
+      removeQuestionLocally(updatedQuestion.id);
+      isEditMode.value = false;
+    } else {
+      updateQuestionLocally(updatedQuestion);
+      isEditMode.value = false;
     }
 
-    // 退出编辑模式
-    isEditMode.value = false;
+    if (wasPendingCorrection) {
+      emit('question-updated');
+    }
 
     console.log('题目更新成功');
   } catch (error) {
     console.error('更新题目失败:', error);
   } finally {
-    loading.value = false;
+    isSavingEdit.value = false;
   }
 };
 
@@ -1005,7 +1093,10 @@ const performSearch = async () => {
     }
 
     // 获取当前选中的文件夹ID
-    const currentFolderId = props.selectedFolderId ? parseInt(props.selectedFolderId) : undefined;
+    const currentFolderId =
+      props.selectedFolderId && props.selectedFolderId !== PENDING_CORRECTION_FOLDER_ID
+        ? parseInt(props.selectedFolderId)
+        : undefined;
 
     // 获取用于高亮的关键词（进行分词）
     try {
@@ -1022,7 +1113,14 @@ const performSearch = async () => {
     }
 
     // 执行搜索
-    questions.value = await databaseService.searchQuestionsByTitle(searchTerm.value.trim(), currentFolderId);
+    if (props.selectedFolderId === PENDING_CORRECTION_FOLDER_ID) {
+      const keyword = searchTerm.value.trim().toLowerCase();
+      questions.value = allQuestions.value.filter(question =>
+        question.question.toLowerCase().includes(keyword)
+      );
+    } else {
+      questions.value = await databaseService.searchQuestionsByTitle(searchTerm.value.trim(), currentFolderId);
+    }
 
     console.log(`搜索"${searchTerm.value}"找到 ${questions.value.length} 条结果`);
   } catch (error) {
@@ -1247,6 +1345,12 @@ const pasteQuestion = async () => {
     return;
   }
 
+  if (props.selectedFolderId === PENDING_CORRECTION_FOLDER_ID) {
+    alert('待修正文件夹仅用于查看已标记题目，不能直接粘贴到这里');
+    hideContextMenu();
+    return;
+  }
+
   try {
     const targetFolderId = parseInt(props.selectedFolderId);
 
@@ -1336,6 +1440,11 @@ const handleClickOutside = (event: MouseEvent) => {
 
 // 显示添加题目对话框
 const showAddQuestionDialog = () => {
+  if (props.selectedFolderId === PENDING_CORRECTION_FOLDER_ID) {
+    alert('待修正文件夹仅用于查看已标记题目，不能直接新增题目');
+    return;
+  }
+
   showAddQuestionModal.value = true;
 };
 
@@ -1447,7 +1556,7 @@ onUnmounted(() => {
 
 .question-count-info {
   font-size: 12px;
-  color: #666666;
+  color: var(--ql-count-info-text);
   white-space: nowrap;
   /* margin-left: 16px; */
 }
@@ -1512,24 +1621,6 @@ onUnmounted(() => {
 .search-expand-leave-from {
   width: var(--search-input-width, 180px);
   opacity: 1;
-}
-
-/* 组件级变量（浅色默认） */
-.question-list {
-  --ql-th-text: #868686;
-  --ql-th-icon: var(--text-secondary);
-  --ql-th-bg: var(--bg-secondary);
-  --ql-divider: var(--table-header-divider);
-  --ql-row-hover-bg: var(--hover-bg);
-}
-
-/* 深色主题下的独立颜色设置 */
-[data-theme="dark"] .question-list {
-  --ql-th-text: #e2e8f0;
-  --ql-th-icon: #cbd5e0;
-  --ql-th-bg: #2d3748;
-  --ql-divider: #4a5568;
-  --ql-row-hover-bg: #2d3748;
 }
 
 .clear-button {
@@ -1778,10 +1869,11 @@ onUnmounted(() => {
 }
 
 .search-info {
-  margin-top: 8px;
+  margin-top: 0;
   font-size: 12px;
   color: var(--question-detail-search-info-text);
   font-style: italic;
+  white-space: nowrap;
 }
 
 /* 搜索高亮样式 */
@@ -1817,13 +1909,13 @@ onUnmounted(() => {
 .empty-text {
   font-size: 16px;
   font-weight: 500;
-  color: #666666;
+  color: var(--ql-empty-text);
   margin-bottom: 8px;
 }
 
 .empty-subtext {
   font-size: 14px;
-  color: #999999;
+  color: var(--ql-empty-subtext);
 }
 
 .question-table-container {
@@ -1905,12 +1997,12 @@ onUnmounted(() => {
 }
 
 .question-table tbody tr.active {
-  background-color: var(--active-bg);
-  border-color: var(--active-border);
+  background-color: var(--ql-row-active-bg);
+  border-color: var(--ql-row-active-border);
 }
 
 .question-table tbody tr.selected {
-  background-color: var(--selected-bg);
+  background-color: var(--ql-row-selected-bg);
 }
 
 .question-table td {
@@ -1928,32 +2020,32 @@ onUnmounted(() => {
   top: 0;
   bottom: 0;
   width: 1px;
-  background: var(--table-divider);
+  background: var(--ql-table-divider);
   opacity: 0.6;
 }
 
 /* 悬停时的分割线效果 */
 .question-table tbody tr:hover td:not(:last-child)::after {
-  background: var(--table-divider-hover);
+  background: var(--ql-table-divider-hover);
   opacity: 0.8;
 }
 
 /* 选中行的分割线效果 */
 .question-table tbody tr.active td:not(:last-child)::after {
-  background: var(--table-divider-active);
+  background: var(--ql-table-divider-active);
   opacity: 1;
 }
 
 /* 多选行的分割线效果 */
 .question-table tbody tr.selected td:not(:last-child)::after {
-  background: var(--table-divider-selected);
+  background: var(--ql-table-divider-selected);
   opacity: 0.9;
 }
 
 .col-id {
   width: 80px;
   font-weight: 600;
-  color: #007acc;
+  color: var(--ql-id-text);
 }
 
 .col-question {
@@ -1983,7 +2075,7 @@ onUnmounted(() => {
   max-width: 400px;
 }
 
-.col-answer span {
+.col-answer > span {
   display: block;
   white-space: nowrap;
   overflow: hidden;
@@ -1991,11 +2083,13 @@ onUnmounted(() => {
   max-width: 100%;
 }
 
-.cell-question {
+.cell-question,
+.cell-answer {
   white-space: pre-wrap;
 }
 
-.cell-question span {
+.cell-question span,
+.cell-answer span {
   display: inline;
   white-space: pre-wrap;
   overflow: visible;
@@ -2036,20 +2130,32 @@ onUnmounted(() => {
 .col-time {
   width: 140px;
   font-size: 12px;
-  color: #666666;
+  color: var(--ql-time-text);
 }
 
 .type-tag {
-  padding: 2px 6px;
-  background-color: var(--question-detail-type-tag-bg);
-  color: var(--question-detail-type-tag-text);
-  border-radius: 3px;
+  padding: 3px 8px;
+  background-color: var(--ql-type-tag-bg);
+  color: var(--ql-type-tag-text);
+  border: 1px solid var(--ql-type-tag-border);
+  border-radius: 999px;
   font-size: 11px;
-  font-weight: 500;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1.2;
+  box-sizing: border-box;
+}
+
+.col-type .type-tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: auto;
+  max-width: 100%;
 }
 
 .no-type {
-  color: #999999;
+  color: var(--ql-no-type-text);
   font-style: italic;
 }
 
@@ -2064,8 +2170,8 @@ onUnmounted(() => {
 .loading-spinner {
   width: 32px;
   height: 32px;
-  border: 3px solid #e5e5e5;
-  border-top: 3px solid #007acc;
+  border: 3px solid var(--ql-loading-spinner-track);
+  border-top: 3px solid var(--ql-loading-spinner-head);
   border-radius: 50%;
   animation: spin 1s linear infinite;
   margin-bottom: 16px;
@@ -2073,7 +2179,7 @@ onUnmounted(() => {
 
 .loading-text {
   font-size: 14px;
-  color: #666666;
+  color: var(--ql-loading-text);
 }
 
 @keyframes spin {
@@ -2105,15 +2211,15 @@ onUnmounted(() => {
   min-height: 16px !important;
   max-width: 16px !important;
   max-height: 16px !important;
-  background-color: var(--checkbox-bg);
-  border: 1px solid var(--checkbox-border);
-  border-radius: 3px;
+  background-color: var(--ql-checkbox-bg);
+  border: 1px solid var(--ql-checkbox-border);
+  border-radius: 4px;
   cursor: pointer;
   appearance: none;
   -webkit-appearance: none;
   -moz-appearance: none;
   position: relative;
-  transition: all 0.2s ease;
+  transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, transform 0.15s ease;
   box-sizing: border-box;
   flex-shrink: 0;
   display: inline-block;
@@ -2123,13 +2229,19 @@ onUnmounted(() => {
 }
 
 .col-checkbox input[type="checkbox"]:hover {
-  background-color: var(--checkbox-hover-bg);
-  border-color: var(--checkbox-hover-border);
+  background-color: var(--ql-checkbox-hover-bg);
+  border-color: var(--ql-checkbox-hover-border);
 }
 
-.col-checkbox input[type="checkbox"]:checked {
-  background-color: var(--checkbox-checked-bg);
-  border-color: var(--checkbox-checked-border);
+.col-checkbox input[type="checkbox"]:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--ql-checkbox-focus-ring);
+}
+
+.col-checkbox input[type="checkbox"]:checked,
+.col-checkbox input[type="checkbox"]:indeterminate {
+  background-color: var(--ql-checkbox-checked-bg);
+  border-color: var(--ql-checkbox-checked-border);
 }
 
 .col-checkbox input[type="checkbox"]:checked::after {
@@ -2137,10 +2249,22 @@ onUnmounted(() => {
   position: absolute;
   top: 50%;
   left: 50%;
+  transform: translate(-50%, -56%);
+  color: var(--ql-checkbox-checkmark);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.col-checkbox input[type="checkbox"]:indeterminate::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 8px;
+  height: 2px;
   transform: translate(-50%, -50%);
-  color: white;
-  font-size: 12px;
-  font-weight: bold;
+  border-radius: 999px;
+  background-color: var(--ql-checkbox-checkmark);
 }
 
 /* 使表头 SVG 颜色与文字一致 */

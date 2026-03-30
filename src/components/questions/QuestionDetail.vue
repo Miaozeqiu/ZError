@@ -25,21 +25,23 @@
         </svg>
       </button>
     </div>
-    <div class="detail-content">
+    <div class="detail-scroll-wrap">
+      <div class="detail-content" ref="detailContentRef">
       <div v-if="!isEditMode">
         <div class="detail-item">
           <label>题目ID:</label>
-          <span>{{ question?.id }}</span>
+          <div class="detail-value">{{ question?.id }}</div>
         </div>
         <div class="detail-item">
           <label>题目内容:</label>
-          <div class="question-content">
+          <div class="detail-value question-content">
             <template v-for="(part, i) in contentParts" :key="i">
               <span v-if="part.type === 'text'">{{ part.text }}</span>
               <img 
                 v-else-if="imgSrc(part.url as string)" 
                 :src="imgSrc(part.url as string)" 
-                :class="['question-image', invertClass(part.url as string)]" 
+                :class="['question-image', invertClass(part.url as string)]"
+                @load="handleContentLayoutChange"
               />
               <span v-else class="image-loading">[图片加载中]</span>
             </template>
@@ -47,13 +49,14 @@
         </div>
         <div class="detail-item">
           <label>选项:</label>
-          <div class="options-content">
+          <div class="detail-value options-content">
             <template v-for="(part, i) in optionsParts" :key="'opt-' + i">
               <span v-if="part.type === 'text'">{{ part.text }}</span>
               <img 
                 v-else-if="imgSrc(part.url as string)" 
                 :src="imgSrc(part.url as string)" 
-                :class="['question-image', invertClass(part.url as string)]" 
+                :class="['question-image', invertClass(part.url as string)]"
+                @load="handleContentLayoutChange"
               />
               <span v-else class="image-loading">[图片加载中]</span>
             </template>
@@ -61,19 +64,35 @@
         </div>
         <div class="detail-item">
           <label>答案:</label>
-          <div class="answer-content">{{ question?.answer }}</div>
+          <div class="detail-value answer-content">
+            <template v-for="(part, i) in answerParts" :key="'ans-' + i">
+              <span v-if="part.type === 'text'">{{ part.text }}</span>
+              <img 
+                v-else-if="imgSrc(part.url as string)" 
+                :src="imgSrc(part.url as string)" 
+                :class="['question-image', invertClass(part.url as string)]"
+                @load="handleContentLayoutChange"
+              />
+              <span v-else class="image-loading">[图片加载中]</span>
+            </template>
+          </div>
         </div>
-        <div class="detail-item">
-          <label>题目类型:</label>
-          <span class="type-tag">{{ question?.question_type || '未分类' }}</span>
-        </div>
-        <div class="detail-item">
-          <label>所属文件夹:</label>
-          <span>{{ question?.folder_name || '未分类' }}</span>
-        </div>
-        <div class="detail-item">
-          <label>创建时间:</label>
-          <span>{{ formatTime(question?.create_time) }}</span>
+        <div class="detail-item detail-meta-item">
+          <label>题目信息:</label>
+          <div class="detail-meta-strip">
+            <div class="meta-pill">
+              <span class="meta-pill-label">类型</span>
+              <span class="meta-pill-value meta-type-value">{{ question?.question_type || '未分类' }}</span>
+            </div>
+            <div class="meta-pill meta-pill-folder" :title="question?.folder_name || '未分类'">
+              <span class="meta-pill-label">文件夹</span>
+              <span class="meta-pill-value">{{ question?.folder_name || '未分类' }}</span>
+            </div>
+            <div class="meta-pill" :title="formatTime(question?.create_time)">
+              <span class="meta-pill-label">创建</span>
+              <span class="meta-pill-value">{{ formatCompactTime(question?.create_time) }}</span>
+            </div>
+          </div>
         </div>
       </div>
       <div v-else class="edit-form">
@@ -120,16 +139,22 @@
           />
         </div>
         <div class="edit-actions">
-          <button @click="$emit('cancel-edit')" class="cancel-btn">取消</button>
-          <button @click="$emit('save-edit')" class="save-btn" :disabled="!isEditFormValid">保存</button>
+          <button @click="$emit('cancel-edit')" class="cancel-btn" :disabled="isSavingEdit">取消</button>
+          <button @click="$emit('save-edit')" class="save-btn" :disabled="!isEditFormValid || isSavingEdit">
+            {{ isSavingEdit ? '保存中...' : '保存' }}
+          </button>
         </div>
+      </div>
+      </div>
+      <div class="custom-scrollbar" :class="{ 'is-visible': scrollbarVisible }" ref="customScrollbarRef" @mousedown="onScrollbarMousedown">
+        <div class="custom-scrollbar-thumb" ref="customScrollbarThumbRef"></div>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch, nextTick, onMounted } from 'vue'
+import { computed, ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import type { AIResponse } from '../../services/database'
 import { invoke } from '@tauri-apps/api/core'
 
@@ -143,6 +168,7 @@ interface Props {
   editAnswer: string
   editType: string
   isEditFormValid: boolean
+  isSavingEdit: boolean
   isResizing: boolean
   formatTime: (t?: string) => string
 }
@@ -167,8 +193,7 @@ const imageSrcMap = ref<Record<string, string>>({})
 const blackOnlyMap = ref<Record<string, boolean>>({})
 const urlRegex = /(https?:\/\/[^\s]+?\.(?:png|jpg|jpeg|webp|gif))(?:\b|(?=\s)|$)/gi
 
-const contentParts = computed<Part[]>(() => {
-  const text = props.question?.question || ''
+const splitContentParts = (text: string): Part[] => {
   const parts: Part[] = []
   let lastIndex = 0
   const regex = new RegExp(urlRegex.source, 'gi')
@@ -181,28 +206,30 @@ const contentParts = computed<Part[]>(() => {
   }
   if (lastIndex < text.length) parts.push({ type: 'text', text: text.slice(lastIndex) })
   return parts.length ? parts : [{ type: 'text', text }]
-})
+}
 
-const optionsParts = computed<Part[]>(() => {
-  const text = props.question?.options || ''
-  const parts: Part[] = []
-  let lastIndex = 0
-  const regex = new RegExp(urlRegex.source, 'gi')
-  let m: RegExpExecArray | null
-  while ((m = regex.exec(text)) !== null) {
-    const off = m.index
-    if (off > lastIndex) parts.push({ type: 'text', text: text.slice(lastIndex, off) })
-    parts.push({ type: 'image', url: m[0] })
-    lastIndex = off + m[0].length
+const contentParts = computed<Part[]>(() => splitContentParts(props.question?.question || ''))
+const optionsParts = computed<Part[]>(() => splitContentParts(props.question?.options || ''))
+const answerParts = computed<Part[]>(() => splitContentParts(props.question?.answer || ''))
+
+const formatCompactTime = (timeStr?: string) => {
+  if (!timeStr) return '未知'
+
+  const date = new Date(timeStr)
+  if (Number.isNaN(date.getTime())) {
+    const formatted = props.formatTime(timeStr)
+    return formatted ? formatted.replace(/:\d{2}(?=\s*$)/, '') : '未知'
   }
-  if (lastIndex < text.length) parts.push({ type: 'text', text: text.slice(lastIndex) })
-  return parts.length ? parts : [{ type: 'text', text }]
-})
+
+  const pad = (value: number) => String(value).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
 
 const imageUrls = computed(() => {
   const qUrls = contentParts.value.filter(p => p.type === 'image').map(p => p.url as string)
   const oUrls = optionsParts.value.filter(p => p.type === 'image').map(p => p.url as string)
-  return Array.from(new Set([...qUrls, ...oUrls]))
+  const aUrls = answerParts.value.filter(p => p.type === 'image').map(p => p.url as string)
+  return Array.from(new Set([...qUrls, ...oUrls, ...aUrls]))
 })
 
 const imgSrc = (u: string) => imageSrcMap.value[u]
@@ -211,10 +238,160 @@ const invertClass = (u: string) => blackOnlyMap.value[u] ? 'invert-on-dark' : ''
 const questionTextarea = ref<HTMLTextAreaElement | null>(null)
 const optionsTextarea = ref<HTMLTextAreaElement | null>(null)
 const answerTextarea = ref<HTMLTextAreaElement | null>(null)
+const detailContentRef = ref<HTMLElement | null>(null)
+const customScrollbarRef = ref<HTMLElement | null>(null)
+const customScrollbarThumbRef = ref<HTMLElement | null>(null)
+const scrollbarVisible = ref(false)
+
+let scrollbarHideTimer: ReturnType<typeof setTimeout> | null = null
+let scrollbarResizeObserver: ResizeObserver | null = null
+let scrollbarMutationObserver: MutationObserver | null = null
+let cleanupScrollbarListeners: (() => void) | null = null
+
+const clearScrollbarHideTimer = () => {
+  if (scrollbarHideTimer) {
+    clearTimeout(scrollbarHideTimer)
+    scrollbarHideTimer = null
+  }
+}
+
+const hideScrollbar = () => {
+  scrollbarVisible.value = false
+  clearScrollbarHideTimer()
+}
+
+const showScrollbar = () => {
+  const content = detailContentRef.value
+  if (!content || content.scrollHeight <= content.clientHeight + 1) {
+    hideScrollbar()
+    return
+  }
+
+  scrollbarVisible.value = true
+  clearScrollbarHideTimer()
+  scrollbarHideTimer = setTimeout(() => {
+    scrollbarVisible.value = false
+  }, 1500)
+}
+
+const updateScrollbarThumb = () => {
+  const content = detailContentRef.value
+  const thumb = customScrollbarThumbRef.value
+  const bar = customScrollbarRef.value
+  if (!content || !thumb || !bar) return
+
+  const ratio = content.clientHeight / content.scrollHeight
+  if (!Number.isFinite(ratio) || ratio >= 1) {
+    thumb.style.height = '0px'
+    thumb.style.transform = 'translateY(0)'
+    hideScrollbar()
+    return
+  }
+
+  const thumbHeight = Math.max(ratio * bar.clientHeight, 32)
+  const maxThumbTop = Math.max(bar.clientHeight - thumbHeight, 0)
+  const maxScrollTop = Math.max(content.scrollHeight - content.clientHeight, 1)
+  const thumbTop = (content.scrollTop / maxScrollTop) * maxThumbTop
+
+  thumb.style.height = `${thumbHeight}px`
+  thumb.style.transform = `translateY(${thumbTop}px)`
+}
+
+const handleContentLayoutChange = () => {
+  requestAnimationFrame(() => {
+    updateScrollbarThumb()
+    showScrollbar()
+  })
+}
+
+const onScrollbarMousedown = (event: MouseEvent) => {
+  const thumb = customScrollbarThumbRef.value
+  const content = detailContentRef.value
+  const bar = customScrollbarRef.value
+  if (!thumb || !content || !bar) return
+
+  const dragStartY = event.clientY
+  const dragStartScrollTop = content.scrollTop
+
+  const onMouseMove = (moveEvent: MouseEvent) => {
+    const thumbHeight = thumb.clientHeight
+    const barHeight = bar.clientHeight
+    const maxThumbTravel = Math.max(barHeight - thumbHeight, 1)
+    const delta = moveEvent.clientY - dragStartY
+    const scrollRatio = delta / maxThumbTravel
+    content.scrollTop = dragStartScrollTop + scrollRatio * (content.scrollHeight - content.clientHeight)
+  }
+
+  const onMouseUp = () => {
+    document.removeEventListener('mousemove', onMouseMove)
+    document.removeEventListener('mouseup', onMouseUp)
+  }
+
+  document.addEventListener('mousemove', onMouseMove)
+  document.addEventListener('mouseup', onMouseUp)
+  event.preventDefault()
+  showScrollbar()
+}
+
+const cleanupCustomScrollbar = () => {
+  cleanupScrollbarListeners?.()
+  cleanupScrollbarListeners = null
+  scrollbarResizeObserver?.disconnect()
+  scrollbarResizeObserver = null
+  scrollbarMutationObserver?.disconnect()
+  scrollbarMutationObserver = null
+  clearScrollbarHideTimer()
+}
+
+const bindCustomScrollbar = () => {
+  cleanupCustomScrollbar()
+
+  const content = detailContentRef.value
+  if (!content) return
+
+  const onScroll = () => {
+    updateScrollbarThumb()
+    showScrollbar()
+  }
+  const onPointerEnter = () => {
+    updateScrollbarThumb()
+    showScrollbar()
+  }
+  const onPointerLeave = () => {
+    updateScrollbarThumb()
+  }
+
+  content.addEventListener('scroll', onScroll, { passive: true })
+  content.addEventListener('mouseenter', onPointerEnter)
+  content.addEventListener('mouseleave', onPointerLeave)
+
+  scrollbarResizeObserver = new ResizeObserver(() => updateScrollbarThumb())
+  scrollbarResizeObserver.observe(content)
+
+  scrollbarMutationObserver = new MutationObserver(() => {
+    requestAnimationFrame(() => updateScrollbarThumb())
+  })
+  scrollbarMutationObserver.observe(content, { childList: true, subtree: true, characterData: true })
+
+  cleanupScrollbarListeners = () => {
+    content.removeEventListener('scroll', onScroll)
+    content.removeEventListener('mouseenter', onPointerEnter)
+    content.removeEventListener('mouseleave', onPointerLeave)
+  }
+
+  requestAnimationFrame(() => updateScrollbarThumb())
+}
+
+const initCustomScrollbar = async () => {
+  await nextTick()
+  bindCustomScrollbar()
+  requestAnimationFrame(() => updateScrollbarThumb())
+}
 
 const autoResize = (el: HTMLTextAreaElement) => {
   el.style.height = 'auto'
   el.style.height = el.scrollHeight + 'px'
+  requestAnimationFrame(() => updateScrollbarThumb())
 }
 
 const onQuestionInput = (e: Event) => {
@@ -300,9 +477,10 @@ const analyzeImage = (url: string, src: string) => {
   } catch {}
 }
 
-watch(() => [props.question?.question, props.question?.options], async () => {
+watch(() => [props.question?.question, props.question?.options, props.question?.answer], async () => {
   imageSrcMap.value = {}
   await fetchImages(imageUrls.value)
+  requestAnimationFrame(() => updateScrollbarThumb())
 }, { immediate: true })
 
 watch(() => props.editQuestion, async () => {
@@ -330,13 +508,29 @@ watch(() => props.isEditMode, async (v) => {
     if (optionsTextarea.value) autoResize(optionsTextarea.value)
     if (answerTextarea.value) autoResize(answerTextarea.value)
   }
+  if (props.show) {
+    await initCustomScrollbar()
+  }
 })
+
+watch(() => [props.show, props.question?.id, props.width] as const, async ([show]) => {
+  if (!show) {
+    hideScrollbar()
+    return
+  }
+  await initCustomScrollbar()
+}, { immediate: true })
 
 onMounted(async () => {
   await nextTick()
   if (questionTextarea.value) autoResize(questionTextarea.value)
   if (optionsTextarea.value) autoResize(optionsTextarea.value)
   if (answerTextarea.value) autoResize(answerTextarea.value)
+  await initCustomScrollbar()
+})
+
+onUnmounted(() => {
+  cleanupCustomScrollbar()
 })
 </script>
 
@@ -347,7 +541,7 @@ onMounted(async () => {
   right: 0;
   width: 50%;
   height: 100vh;
-  background-color: var(--bg-primary);
+  background-color: var(--bg-secondary);
   border-left: 1px solid var(--border-color);
   box-shadow: -2px 0 8px rgba(0, 0, 0, 0.1);
   z-index: 1000;
@@ -386,8 +580,7 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   padding: 16px 20px;
-  border-bottom: 1px solid var(--request-details-border);
-  background-color: var(--bg-primary);
+  border-bottom: 1px solid var(--bg-primary);
   gap: 12px;
 }
 
@@ -427,10 +620,65 @@ onMounted(async () => {
   color: var(--question-detail-edit-btn-hover-text);
 }
 
-.detail-content {
-  overflow: auto;
+.detail-scroll-wrap {
+  position: relative;
   flex: 1;
-  padding: 20px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.detail-content {
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 20px 20px 28px;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.detail-content::-webkit-scrollbar,
+.detail-content::-webkit-scrollbar-button {
+  display: none;
+}
+
+.custom-scrollbar {
+  position: absolute;
+  right: 3px;
+  top: 4px;
+  bottom: 4px;
+  width: 4px;
+  border-radius: 4px;
+  opacity: 0;
+  transition: opacity 0.2s;
+  cursor: pointer;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.custom-scrollbar.is-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.custom-scrollbar-thumb {
+  width: 4px;
+  border-radius: 4px;
+  background: var(--custom-scrollbar-thumb);
+  transition: background 0.15s;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+}
+
+.custom-scrollbar-thumb:hover {
+  background: var(--custom-scrollbar-thumb-hover);
+}
+
+.custom-scrollbar:hover .custom-scrollbar-thumb {
+  background: var(--text-tertiary);
 }
 
 .detail-item {
@@ -439,49 +687,86 @@ onMounted(async () => {
 
 .detail-item label {
   display: block;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--platform-config-form-label-text);
+  margin-bottom: 6px;
+}
+
+.detail-value {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 42px;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font-size: 14px;
+  color: var(--text-primary);
+  background-color: var(--form-input-bg, #F7F7F7);
+  transition: border-color 0.2s ease, background-color 0.2s ease;
+}
+
+.detail-item:hover .detail-value {
+  background-color: var(--form-input-hover-bg, #f0f0f0);
+  border-color: var(--form-input-hover-border, transparent);
+}
+
+.detail-meta-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+}
+
+.meta-pill {
+  min-width: 0;
+  max-width: 100%;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: none;
+  background: transparent;
+}
+
+.meta-pill-folder {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.meta-pill-label {
+  flex-shrink: 0;
   font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.meta-pill-value {
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.meta-type-value {
+  color: var(--question-detail-type-tag-text);
   font-weight: 600;
-  color: var(--text-primary);
-  margin-bottom: 4px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
 }
 
-.detail-item span {
-  font-size: 14px;
-  color: var(--text-primary);
-}
-
-.question-content {
+.question-content,
+.options-content,
+.answer-content {
   overflow-x: auto;
-  font-size: 14px;
-  color: var(--text-primary);
   line-height: 1.5;
-  padding: 12px;
-  background-color: var(--bg-tertiary);
-  border-radius: 6px;
-  white-space: pre-wrap;
-}
-
-.options-content {
-  overflow-x: auto;
-  font-size: 14px;
-  color: var(--text-primary);
-  line-height: 1.5;
-  padding: 12px;
-  background-color: var(--bg-tertiary);
-  border-radius: 6px;
   white-space: pre-wrap;
 }
 
 .answer-content {
-  font-size: 14px;
-  color: var(--text-primary);
-  line-height: 1.5;
-  padding: 12px;
-  background-color: var(--bg-tertiary);
-  border-radius: 6px;
+  word-break: break-word;
 }
+
 
 .question-image {
   display: inline;
@@ -502,15 +787,6 @@ onMounted(async () => {
   filter: invert(1) brightness(1.8) contrast(1.05);
 }
 
-.detail-item .type-tag {
-  display: inline-block;
-  padding: 4px 8px;
-  background-color: var(--question-detail-type-tag-bg);
-  color: var(--question-detail-type-tag-text);
-  border-radius: 12px;
-  font-size: 12px;
-  font-weight: 500;
-}
 
 .edit-form {
   padding: 20px 0;
@@ -522,76 +798,74 @@ onMounted(async () => {
 
 .form-group label {
   display: block;
-  font-size: 12px;
-  font-weight: 600;
-  color: #666666;
-  margin-bottom: 8px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--platform-config-form-label-text);
+  margin-bottom: 6px;
+}
+
+.edit-input,
+.edit-textarea {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font-size: 14px;
+  color: var(--text-primary);
+  background-color: var(--form-input-bg, #F7F7F7);
+  font-family: inherit;
+  transition: border-color 0.2s ease, background-color 0.2s ease;
 }
 
 .edit-textarea {
   min-height: 96px;
   height: auto;
   overflow-y: hidden;
-  color: var(--text-primary);
-  background-color: var(--bg-secondary);
-  width: 100%;
-  padding: 12px;
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  font-size: 14px;
-  font-family: inherit;
   resize: none;
-  transition: border-color 0.2s;
-  box-sizing: border-box;
 }
 
+.edit-input:hover,
+.edit-textarea:hover {
+  background-color: var(--form-input-hover-bg, #f0f0f0);
+  border-color: var(--form-input-hover-border, transparent);
+}
+
+.edit-input:focus,
 .edit-textarea:focus {
   outline: none;
-  border-color: rgb(236, 236, 236);
-  box-shadow: 0 0 0 2px var(--shadow-input);
-}
-
-.edit-input {
-  color: var(--text-primary);
-  background-color: var(--bg-secondary);
-  width: 100%;
-  padding: 12px;
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  font-size: 14px;
-  font-family: inherit;
-  transition: border-color 0.2s;
-  box-sizing: border-box;
-}
-
-.edit-input:focus {
-  outline: none;
-  border-color: var(--border-color);
-  box-shadow: 0 0 0 2px var(--shadow-input);
+  background-color: var(--form-input-bg, #F7F7F7);
+  border-color: var(--form-input-focus-border, #3182ce);
+  box-shadow: none;
 }
 
 .edit-actions {
   display: flex;
-  gap: 12px;
+  align-items: center;
   justify-content: flex-end;
-  margin-top: 24px;
-  padding-top: 20px;
+  gap: 10px;
+  margin-top: 28px;
+  padding-top: 18px;
   border-top: 1px solid var(--border-primary);
 }
 
 .cancel-btn, .save-btn {
-  padding: 10px 20px;
-  border: none;
-  border-radius: 6px;
-  font-size: 14px;
-  font-weight: 500;
+  min-width: 88px;
+  height: 38px;
+  padding: 0 18px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
   cursor: pointer;
-  transition: all 0.2s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, background-color 0.18s ease, color 0.18s ease, border-color 0.18s ease, opacity 0.18s ease;
 }
 
 .cancel-btn {
+  border-radius: 999px;
   background-color: var(--question-detail-cancel-btn-bg);
   color: var(--question-detail-cancel-btn-text);
   border: 1px solid var(--question-detail-cancel-btn-border);
@@ -600,19 +874,41 @@ onMounted(async () => {
 .cancel-btn:hover {
   background-color: var(--question-detail-cancel-btn-hover-bg);
   color: var(--question-detail-cancel-btn-hover-text);
+  transform: translateY(-1px);
 }
 
 .save-btn {
-  background-color: var(--question-detail-save-btn-bg);
-  color: var(--question-detail-save-btn-text);
+  border: none;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #f9cd52 0%, #f2b733 100%);
+  color: #ffffff;
 }
 
 .save-btn:hover:not(:disabled) {
-  background-color: var(--question-detail-save-btn-hover-bg);
+  background: linear-gradient(180deg, #fad664 0%, #f4bd3e 100%);
+  transform: translateY(-1px);
+  box-shadow: 0 10px 22px rgba(242, 183, 51, 0.34);
+}
+
+.cancel-btn:active,
+.save-btn:active:not(:disabled) {
+  transform: translateY(0) scale(0.98);
+}
+
+.cancel-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--text-primary) 12%, transparent);
+}
+
+.save-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(242, 183, 51, 0.24), 0 8px 18px rgba(242, 183, 51, 0.3);
 }
 
 .save-btn:disabled {
-  background-color: var(--question-detail-save-btn-disabled-bg);
+  background: linear-gradient(180deg, #e9e0be 0%, #d8c78f 100%);
+  box-shadow: none;
   cursor: not-allowed;
+  opacity: 0.78;
 }
 </style>

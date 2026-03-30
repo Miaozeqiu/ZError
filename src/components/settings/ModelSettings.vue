@@ -31,28 +31,30 @@
           @click="selectPlatform(platform)"
           @contextmenu="showPlatformMenu($event, platform)"
         >
-          <div class="platform-icon" :class="{ 'platform-icon--bg': needsIconBg(platform.icon) }">
-            <!-- 如果是emoji，直接显示 -->
-            <div
-              v-if="platform.icon && isEmoji(platform.icon)"
-              class="icon-emoji"
-            >
-              {{ platform.icon }}
-            </div>
-            <!-- 如果是图片URL，使用img标签 -->
-            <img
-              v-else-if="platform.icon && !isEmoji(platform.icon) && !iconLoadErrors[platform.id]"
-              :src="platformIconUrls[platform.id]"
-              :alt="platform.displayName"
-              @error="handleIconError(platform.id)"
-              class="icon-image"
-            />
-            <!-- 否则显示文字回退 -->
-            <div
-              v-else
-              class="icon-fallback"
-            >
-              {{ getPlatformInitials(platform.displayName) }}
+          <div class="platform-icon">
+            <div class="platform-icon-inner" :class="{ 'platform-icon--bg': needsIconBg(platform.icon) }">
+              <!-- 如果是emoji，直接显示 -->
+              <div
+                v-if="platform.icon && isEmoji(platform.icon)"
+                class="icon-emoji"
+              >
+                {{ platform.icon }}
+              </div>
+              <!-- 如果是图片URL，使用img标签 -->
+              <img
+                v-else-if="platform.icon && !isEmoji(platform.icon) && !iconLoadErrors[platform.id]"
+                :src="platformIconUrls[platform.id]"
+                :alt="platform.displayName"
+                @error="handleIconError(platform.id)"
+                class="icon-image"
+              />
+              <!-- 否则显示文字回退 -->
+              <div
+                v-else
+                class="icon-fallback"
+              >
+                {{ getPlatformInitials(platform.displayName) }}
+              </div>
             </div>
             <!-- 选中模型数量 badge -->
             <span
@@ -96,28 +98,32 @@
                   <path d="M359.86136 0.00382a51.199909 51.199909 0 0 1 0 102.399818H153.599727a51.199909 51.199909 0 0 0-51.199909 51.199909V870.400273a51.199909 51.199909 0 0 0 51.199909 51.199909h716.796726a51.199909 51.199909 0 0 0 51.199909-51.199909V665.600637a51.199909 51.199909 0 0 1 102.399818 0v204.799636a153.599727 153.599727 0 0 1-153.599727 153.599727H153.599727A153.599727 153.599727 0 0 1 0 870.400273V153.603547A153.599727 153.599727 0 0 1 153.599727 0.00382h206.261633z m620.980897 0.584999h2.193996a29.256948 29.256948 0 0 1 5.119991 1.243998h0.730998a24.209957 24.209957 0 0 1 5.85199 2.559995 56.2469 56.2469 0 0 1 5.85099 3.071995l2.193996 1.315997a27.793951 27.793951 0 0 1 5.851989 5.412991l-0.731998-1.243998 0.731998 0.731999v0.511999l4.387993 4.168992 1.462997 2.193996a84.113851 84.113851 0 0 1 7.314987 13.969976v0.512999c0.730999 2.193996 0.730999 4.460992 1.461997 6.728988v2.119996a25.892954 25.892954 0 0 1 0.731999 7.314987v332.799408a51.199909 51.199909 0 0 1-102.399818 0V174.813509l-373.759336 373.393337a51.199909 51.199909 0 0 1-70.215875 1.900996l-2.193996-1.900996a52.149907 52.149907 0 0 1 0-72.411872l373.758336-373.392336H639.997863a51.199909 51.199909 0 0 1-51.199909-48.639914v-2.559995a51.199909 51.199909 0 0 1 51.199909-51.199909h332.798408a41.105927 41.105927 0 0 1 7.313987 0.584999h0.731999z m0 0" fill="currentColor"/>
                 </svg>
               </button>
-              <button
-                v-if="selectedPlatform.inviteUrl"
-                class="platform-link-btn platform-invite-btn"
-                @click="openPlatformUrl(selectedPlatform.inviteUrl)"
-                :title="selectedPlatform.inviteText || '邀请链接'"
+              <OlTip
+                v-if="selectedPlatform.inviteUrl || selectedPlatform.inviteCode || selectedPlatform.inviteText"
+                :text="selectedPlatform.inviteCode?.trim() ? '复制并跳转' : ''"
               >
-                <span class="invite-gift-wrap">
-                  <!-- 盒身（下半部分） -->
-                  <svg class="invite-gift-icon gift-body" t="1774416753013" viewBox="0 0 1132 1024" xmlns="http://www.w3.org/2000/svg" width="20" height="20">
-                    <path d="M142.335165 475.823312h848.049308c6.557851 0 11.923365 5.365514 11.923365 11.923365V1012.076635c0 6.557851-5.365514 11.923365-11.923365 11.923365h-848.049308c-6.557851 0-11.923365-5.365514-11.923365-11.923365V487.746677c0-6.557851 5.365514-11.923365 11.923365-11.923365z" fill="#FF6174"/>
-                    <path d="M491.83879 479.99649h149.042058v544.00351H491.83879z" fill="#FFB82C"/>
-                    <path d="M491.83879 141.521977h149.042058V1024H491.83879z" fill="#FFCA3E"/>
-                  </svg>
-                  <!-- 盖子（上半部分） -->
-                  <svg class="invite-gift-icon gift-lid" t="1774416753013" viewBox="0 0 1132 1024" xmlns="http://www.w3.org/2000/svg" width="20" height="20">
-                    <path d="M17.885047 226.624992h1096.949544c9.836776 0 17.885047 8.048271 17.885047 17.885047v213.428226c0 9.836776-8.048271 17.885047-17.885047 17.885047H17.885047c-9.836776 0-17.885047-8.048271-17.885047-17.885047V244.510039c0-9.836776 8.048271-17.885047 17.885047-17.885047z" fill="#FF505D"/>
-                    <path d="M258.438928 160.59936S128.474254 135.560294 102.540936 126.617771l45.904953 66.025631L65.578505 225.581697s193.903717 35.919136 402.860682 4.918388L367.835798 184.893215l-109.39687-24.293855zM351.888298 3.359989c-66.025632-11.774323-97.473506 11.178154-97.473506 11.178155l-18.034089 114.017174s46.650164-31.745958 101.944768-18.034089c71.987314 18.034089 162.008717 119.978856 162.008717 119.978856v-77.948996S441.313533 19.307489 351.888298 3.359989zM989.639263 192.643402l46.053996-66.025631c-25.933318 8.942523-155.897992 33.981589-155.897993 33.981589L770.398396 184.893215l-100.603389 45.755912c208.956965 31.000748 402.860682-5.06743 402.860682-5.06743L989.639263 192.643402zM901.704449 128.555318L883.819402 14.687186s-31.447874-22.952477-97.473506-11.178155C696.920662 19.456531 637.900007 152.700131 637.900007 152.700131v77.948996s89.872361-101.944767 161.859674-119.978856c55.145561-13.860911 101.944767 17.885047 101.944768 17.885047z" fill="#FFCA3E"/>
-                    <path d="M387.211266 127.959149c-64.982337-37.558599-142.186123-24.890024-150.681521 0.745211-9.38965 28.168949 36.664346 58.126402 103.286146 93.002244 43.818365 22.952477 160.667338 8.942523 160.667339 8.942523s-48.289627-65.280421-113.271964-102.689978zM901.704449 128.555318c-8.495397-25.635234-85.699183-38.303809-150.681521-0.745211s-113.271964 102.689978-113.271963 102.689978 116.998015 14.009953 160.667338-8.942523c66.6218-34.726799 112.675796-64.833295 103.286146-93.002244z" fill="#FFB82C"/>
-                  </svg>
-                </span>
-                <span v-if="selectedPlatform.inviteText" class="invite-text">{{ selectedPlatform.inviteText }}</span>
-              </button>
+                <button
+                  class="platform-link-btn platform-invite-btn"
+                  @click="handleInviteButtonClick(selectedPlatform)"
+                  :aria-label="selectedPlatform.inviteCode?.trim() ? '复制并跳转' : (selectedPlatform.inviteText || '邀请链接')"
+                >
+                  <span class="invite-gift-wrap">
+                    <!-- 盒身（下半部分） -->
+                    <svg class="invite-gift-icon gift-body" t="1774416753013" viewBox="0 0 1132 1024" xmlns="http://www.w3.org/2000/svg" width="20" height="20">
+                      <path d="M142.335165 475.823312h848.049308c6.557851 0 11.923365 5.365514 11.923365 11.923365V1012.076635c0 6.557851-5.365514 11.923365-11.923365 11.923365h-848.049308c-6.557851 0-11.923365-5.365514-11.923365-11.923365V487.746677c0-6.557851 5.365514-11.923365 11.923365-11.923365z" fill="#FF6174"/>
+                      <path d="M491.83879 479.99649h149.042058v544.00351H491.83879z" fill="#FFB82C"/>
+                      <path d="M491.83879 141.521977h149.042058V1024H491.83879z" fill="#FFCA3E"/>
+                    </svg>
+                    <!-- 盖子（上半部分） -->
+                    <svg class="invite-gift-icon gift-lid" t="1774416753013" viewBox="0 0 1132 1024" xmlns="http://www.w3.org/2000/svg" width="20" height="20">
+                      <path d="M17.885047 226.624992h1096.949544c9.836776 0 17.885047 8.048271 17.885047 17.885047v213.428226c0 9.836776-8.048271 17.885047-17.885047 17.885047H17.885047c-9.836776 0-17.885047-8.048271-17.885047-17.885047V244.510039c0-9.836776 8.048271-17.885047 17.885047-17.885047z" fill="#FF505D"/>
+                      <path d="M258.438928 160.59936S128.474254 135.560294 102.540936 126.617771l45.904953 66.025631L65.578505 225.581697s193.903717 35.919136 402.860682 4.918388L367.835798 184.893215l-109.39687-24.293855zM351.888298 3.359989c-66.025632-11.774323-97.473506 11.178154-97.473506 11.178155l-18.034089 114.017174s46.650164-31.745958 101.944768-18.034089c71.987314 18.034089 162.008717 119.978856 162.008717 119.978856v-77.948996S441.313533 19.307489 351.888298 3.359989zM989.639263 192.643402l46.053996-66.025631c-25.933318 8.942523-155.897992 33.981589-155.897993 33.981589L770.398396 184.893215l-100.603389 45.755912c208.956965 31.000748 402.860682-5.06743 402.860682-5.06743L989.639263 192.643402zM901.704449 128.555318L883.819402 14.687186s-31.447874-22.952477-97.473506-11.178155C696.920662 19.456531 637.900007 152.700131 637.900007 152.700131v77.948996s89.872361-101.944767 161.859674-119.978856c55.145561-13.860911 101.944767 17.885047 101.944768 17.885047z" fill="#FFCA3E"/>
+                      <path d="M387.211266 127.959149c-64.982337-37.558599-142.186123-24.890024-150.681521 0.745211-9.38965 28.168949 36.664346 58.126402 103.286146 93.002244 43.818365 22.952477 160.667338 8.942523 160.667339 8.942523s-48.289627-65.280421-113.271964-102.689978zM901.704449 128.555318c-8.495397-25.635234-85.699183-38.303809-150.681521-0.745211s-113.271964 102.689978-113.271963 102.689978 116.998015 14.009953 160.667338-8.942523c66.6218-34.726799 112.675796-64.833295 103.286146-93.002244z" fill="#FFB82C"/>
+                    </svg>
+                  </span>
+                  <span v-if="selectedPlatform.inviteText" class="invite-text">{{ selectedPlatform.inviteText }}</span>
+                </button>
+              </OlTip>
             </div>
             <Toggle
               v-model="selectedPlatform.enabled"
@@ -223,11 +229,13 @@
             <div 
               v-for="model in filteredModels" 
               :key="model.id"
+              :data-model-id="model.id"
               class="model-item"
               :class="{ 
                 active: selectedCategory === 'vision' 
                   ? (currentVisionModel?.id === model.id)
-                  : (selectedCategory === 'summary' ? isSummaryModelSelected(model.id) : isTextModelSelected(model.id))
+                  : (selectedCategory === 'summary' ? isSummaryModelSelected(model.id) : isTextModelSelected(model.id)),
+                'model-item--disabled': isSelectedPlatformDisabled
               }"
               @click="selectModel(model)"
               @contextmenu.prevent="showModelContextMenuHandler($event, model)"
@@ -309,7 +317,6 @@
       :y="modelContextMenuY"
       :model="contextMenuModel"
       @edit-model="handleEditModel"
-      @duplicate-model="handleDuplicateModel"
       @test-model="handleTestModel"
       @delete-model="handleDeleteModel"
     />
@@ -360,9 +367,10 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, computed, nextTick } from 'vue'
-import { useModelConfig } from '../../services/modelConfig'
-import type { AIPlatform, AIModel } from '../../services/modelConfig'
+import { useModelConfig, fetchRemoteModelsCatalog } from '../../services/modelConfig'
+import type { AIPlatform, AIModel, RemoteModelIconMapping } from '../../services/modelConfig'
 import { environmentDetector } from '../../services/environmentDetector'
+import { getPlatformIconDisplayUrl, resolvePlatformIconUrl } from '../../services/iconCache'
 import PlatformConfigDialog from '../PlatformConfigDialog.vue'
 import ModelConfigDialog from '../ModelConfigDialog.vue'
 import PlatformContextMenu from '../PlatformContextMenu.vue'
@@ -374,6 +382,7 @@ import PlatformDeleteConfirmDialog from '../PlatformDeleteConfirmDialog.vue'
 import Toggle from '../Toggle.vue'
 import ModelCategorySwitch from '../ModelCategorySwitch.vue'
 import ModelQuickAddDialog from '../ModelQuickAddDialog.vue'
+import OlTip from './OlTip.vue'
 
 const detailScrollWrap = ref<HTMLElement | null>(null)
 const detailContent = ref<HTMLElement | null>(null)
@@ -464,7 +473,6 @@ const {
   selectedSummaryModel: globalSelectedSummaryModel,
   selectedSummaryModels: globalSelectedSummaryModels,
   selectedVisionModel: globalSelectedVisionModel,
-  syncRemotePlatforms
 } = useModelConfig()
 
 // 对话框状态
@@ -529,6 +537,8 @@ const filteredModels = computed(() => {
   return models.filter(model => model.category === 'vision')
 })
 
+const isSelectedPlatformDisabled = computed(() => selectedPlatform.value?.enabled === false)
+
 // 计算属性：当前选中的模型（根据分类，文本分类返回第一个选中模型用于兼容）
 const currentModel = computed(() => {
   if (selectedCategory.value === 'text') {
@@ -554,6 +564,101 @@ const streamingReasoning = ref('')
 
 const showMarkdownDemo = ref(false)
 
+const extractNumericTokenValue = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string') {
+    const parsed = Number(value)
+    if (Number.isFinite(parsed)) return parsed
+  }
+  return null
+}
+
+const readTokenRateFromPayload = (payload: any): number | null => {
+  if (!payload || typeof payload !== 'object') return null
+  const candidates = [
+    payload.tokenRate,
+    payload.token_rate,
+    payload.tokensPerSecond,
+    payload.tokens_per_second,
+    payload.averageTokensPerSecond,
+    payload.average_tokens_per_second,
+    payload.generationSpeed,
+    payload.generation_speed,
+    payload.usage?.tokenRate,
+    payload.usage?.token_rate,
+    payload.usage?.tokensPerSecond,
+    payload.usage?.tokens_per_second,
+    payload.usage?.averageTokensPerSecond,
+    payload.usage?.average_tokens_per_second
+  ]
+
+  for (const candidate of candidates) {
+    const normalized = extractNumericTokenValue(candidate)
+    if (normalized !== null) return normalized
+  }
+
+  return null
+}
+
+const readOutputTokenCountFromPayload = (payload: any): number | null => {
+  if (!payload || typeof payload !== 'object') return null
+  const candidates = [
+    payload.outputTokens,
+    payload.output_tokens,
+    payload.completionTokens,
+    payload.completion_tokens,
+    payload.generatedTokens,
+    payload.generated_tokens,
+    payload.usage?.outputTokens,
+    payload.usage?.output_tokens,
+    payload.usage?.completionTokens,
+    payload.usage?.completion_tokens,
+    payload.usage?.generatedTokens,
+    payload.usage?.generated_tokens,
+    payload.usage?.totalTokens,
+    payload.usage?.total_tokens
+  ]
+
+  for (const candidate of candidates) {
+    const normalized = extractNumericTokenValue(candidate)
+    if (normalized !== null) return normalized
+  }
+
+  return null
+}
+
+const estimateTextTokens = (text: string): number => {
+  const normalized = text.trim()
+  if (!normalized) return 0
+
+  const cjkCount = (normalized.match(/[\u3400-\u9fff]/g) || []).length
+  const wordCount = (normalized.match(/[A-Za-z]+(?:['’-][A-Za-z]+)*/g) || []).length
+  const numberCount = (normalized.match(/\d+(?:\.\d+)?/g) || []).length
+  const symbolCount = (normalized.match(/[^\sA-Za-z0-9\u3400-\u9fff]/g) || []).length
+
+  return Math.max(1, Math.round(cjkCount + wordCount * 1.3 + numberCount + symbolCount * 0.3))
+}
+
+const resolveTokenRate = (payload: any, response: string, reasoning = '', durationMs = 0): number | null => {
+  const explicitRate = readTokenRateFromPayload(payload)
+  if (explicitRate !== null) return Number(explicitRate.toFixed(1))
+
+  const elapsedSeconds = durationMs > 0 ? durationMs / 1000 : 0
+  if (elapsedSeconds <= 0) return null
+
+  const explicitOutputTokens = readOutputTokenCountFromPayload(payload)
+  const estimatedOutputTokens = estimateTextTokens(`${reasoning}\n${response}`.trim())
+  const outputTokens = explicitOutputTokens ?? estimatedOutputTokens
+
+  if (!outputTokens) return null
+  return Number((outputTokens / elapsedSeconds).toFixed(1))
+}
+
+const hasVisibleOutputContent = (value: unknown): boolean => {
+  if (typeof value !== 'string') return false
+  return value.replace(/```[\s\S]*?```/g, '').trim().length > 0
+}
+
 // 删除模型弹窗状态
 const showDeleteModelDialog = ref(false)
 const deleteModelName = ref('')
@@ -567,6 +672,39 @@ const deletePlatformId = ref('')
 // 图标加载错误状态
 const iconLoadErrors = ref<{[key: string]: boolean}>({})
 const platformIconUrls = ref<Record<string, string>>({})
+const remoteModelIconMappings = ref<RemoteModelIconMapping[]>([])
+const PROD_REMOTE_MODEL_ICON_BASE_URL = 'https://app.zerror.cc/models/'
+const DEV_REMOTE_MODEL_ICON_BASE_URL = 'http://localhost:5175/models/'
+
+const getRemoteModelIconBaseUrl = (): string => {
+  const isTauriDev = import.meta.env.DEV && typeof window !== 'undefined' && (window.__TAURI__ || window.__TAURI_INTERNALS__)
+  return isTauriDev ? DEV_REMOTE_MODEL_ICON_BASE_URL : PROD_REMOTE_MODEL_ICON_BASE_URL
+}
+
+const resolveModelIconUrl = (icon?: string): string => {
+  if (!icon) return ''
+  if (/^data:/i.test(icon)) return icon
+  if (/^https?:\/\//i.test(icon)) return icon
+
+  const normalizedIcon = icon
+    .trim()
+    .replace(/^\/+/, '')
+    .replace(/^assets\/images\/models\//i, '')
+    .replace(/^models\//i, '')
+
+  if (!normalizedIcon) return ''
+  return new URL(normalizedIcon, getRemoteModelIconBaseUrl()).toString()
+}
+
+const loadRemoteModelIconMappings = async () => {
+  try {
+    const catalog = await fetchRemoteModelsCatalog()
+    remoteModelIconMappings.value = catalog.modelIconMappings || []
+  } catch (error) {
+    console.warn('加载远程模型图标映射失败:', error)
+    remoteModelIconMappings.value = []
+  }
+}
 
 // 预加载平台图标
 const loadPlatformIcons = async () => {
@@ -675,7 +813,28 @@ const selectPlatform = (platform: AIPlatform) => {
   selectedModel.value = null
 }
 
+const revealModelInList = async (platformId: string, modelId: string, category: AIModel['category']) => {
+  const latestPlatform = modelConfig.platforms.find(platform => platform.id === platformId)
+  if (latestPlatform) {
+    selectedPlatform.value = latestPlatform
+    selectedModel.value = latestPlatform.models.find(model => model.id === modelId) || null
+  }
+
+  selectedCategory.value = category === 'vision' ? 'vision' : (category === 'summary' ? 'summary' : 'text')
+
+  await nextTick()
+  updateScrollbarThumb()
+
+  const modelElements = Array.from(detailContent.value?.querySelectorAll('.model-item[data-model-id]') || []) as HTMLElement[]
+  const targetElement = modelElements.find(element => element.dataset.modelId === modelId)
+  targetElement?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+}
+
 const selectModel = (model: AIModel) => {
+  if (isSelectedPlatformDisabled.value) {
+    return
+  }
+
   if (selectedCategory.value === 'text') {
     toggleSelectedTextModel(model.id)
   } else if (selectedCategory.value === 'summary') {
@@ -689,24 +848,21 @@ const selectModel = (model: AIModel) => {
 // 图标相关方法
 const getPlatformIconUrl = async (icon: string) => {
   console.log('🔍 [DEBUG] getPlatformIconUrl called with icon:', icon)
-  
-  // 如果是网络URL，直接返回
-  if (icon.startsWith('http://') || icon.startsWith('https://')) {
-    console.log('✅ [DEBUG] Using network URL:', icon)
-    return icon
+
+  const displayUrl = getPlatformIconDisplayUrl(icon)
+  if (!displayUrl) {
+    console.log('📝 [DEBUG] Icon is not a file, returning empty string for:', icon)
+    return ''
   }
-  
-  // 如果是文件名，使用 public 目录路径
-  if (icon.includes('.')) {
-    // 无论是开发环境还是生产环境，public 目录下的资源都可以通过 /assets/... 访问
-    const iconPath = `/assets/images/providers/${icon}`
-    console.log('✅ [DEBUG] Using public path:', iconPath)
-    return iconPath
+
+  console.log('✅ [DEBUG] Using provider path:', displayUrl)
+
+  try {
+    return await resolvePlatformIconUrl(icon)
+  } catch (error) {
+    console.warn('⚠️ [DEBUG] Resolve provider icon failed, fallback to display URL:', icon, error)
+    return displayUrl
   }
-  
-  // 如果是emoji或其他字符，返回空字符串让其使用文字回退
-  console.log('📝 [DEBUG] Icon is not a file, returning empty string for:', icon)
-  return ''
 }
 
 const getPlatformInitials = (name: string) => {
@@ -742,48 +898,17 @@ const needsIconBg = (icon?: string): boolean => {
   return lower.endsWith('.svg') || lower.endsWith('.png')
 }
 
-// 模型图标关键字映射表
-const MODEL_ICON_RULES: { keywords: string[]; icon: string }[] = [
-  { keywords: ['deepseek'],                         icon: 'deepseek.png' },
-  { keywords: ['claude', 'anthropic'],              icon: 'claude.png' },
-  { keywords: ['qwen', 'qwq'],                      icon: 'qwen.png' },
-  { keywords: ['gpt', 'chatgpt', 'openai', 'o1', 'o3', 'o4'], icon: 'chatgpt.jpeg' },
-  { keywords: ['gemini'],                           icon: 'gemini.png' },
-  { keywords: ['gemma'],                            icon: 'gemma.png' },
-  { keywords: ['llama'],                            icon: 'llama.png' },
-  { keywords: ['kimi', 'moonshot', 'moonshotai'],   icon: 'moonshot.png' },
-  { keywords: ['doubao'],                           icon: 'doubao.png' },
-  { keywords: ['grok'],                             icon: 'grok.png' },
-  { keywords: ['glm', 'chatglm', 'zhipu'],          icon: 'zhipu.png' },
-  { keywords: ['mistral', 'mixtral', 'codestral', 'pixtral'], icon: 'mixtral.png' },
-  { keywords: ['llava'],                            icon: 'llava.png' },
-  { keywords: ['internlm', 'internvl'],             icon: 'internlm.png' },
-  { keywords: ['yi-'],                              icon: 'yi.png' },
-  { keywords: ['baichuan'],                         icon: 'baichuan.png' },
-  { keywords: ['hunyuan'],                          icon: 'hunyuan.png' },
-  { keywords: ['spark', 'xinghuo'],                 icon: 'sparkdesk.png' },
-  { keywords: ['wenxin', 'ernie'],                  icon: 'wenxin.png' },
-  { keywords: ['minimax', 'abab'],                  icon: 'minimax.png' },
-  { keywords: ['hailuo'],                           icon: 'hailuo.png' },
-  { keywords: ['nvidia'],                           icon: 'nvidia.png' },
-  { keywords: ['cohere', 'command-r'],              icon: 'cohere.png' },
-  { keywords: ['perplexity'],                       icon: 'perplexity.png' },
-  { keywords: ['step-'],                            icon: 'step.png' },
-  { keywords: ['flux'],                             icon: 'flux.png' },
-  { keywords: ['dall-e', 'dalle'],                  icon: 'dalle.png' },
-  { keywords: ['copilot'],                          icon: 'copilot.png' },
-  { keywords: ['midjourney'],                       icon: 'midjourney.png' },
-  { keywords: ['huggingface'],                      icon: 'huggingface.png' },
-]
-
 const getModelIcon = (model: AIModel): string => {
-  const searchStr = `${model.displayName} ${model.name}`.toLowerCase()
-  for (const rule of MODEL_ICON_RULES) {
-    if (rule.keywords.some(kw => searchStr.includes(kw.toLowerCase()))) {
-      return `/assets/images/models/${rule.icon}`
-    }
+  if (model.icon) {
+    return resolveModelIconUrl(model.icon)
   }
-  return ''
+
+  const searchStr = `${model.displayName || ''} ${model.name || ''}`.toLowerCase()
+  const matchedMapping = remoteModelIconMappings.value.find(mapping =>
+    mapping.models.some(keyword => searchStr.includes(keyword.toLowerCase()))
+  )
+
+  return resolveModelIconUrl(matchedMapping?.icon)
 }
 
 
@@ -856,23 +981,6 @@ const handleDeletePlatform = async () => {
 const handleEditModel = () => {
   if (contextMenuModel.value && !contextMenuModel.value.isRemote) {
     editModel(contextMenuModel.value)
-  }
-  hideModelMenu()
-}
-
-const handleDuplicateModel = async () => {
-  if (contextMenuModel.value && selectedPlatform.value) {
-    const duplicatedModel = {
-      ...contextMenuModel.value,
-      displayName: `${contextMenuModel.value.displayName} (副本)`,
-      isRemote: false,
-    }
-    // @ts-ignore
-    delete duplicatedModel.id
-    // @ts-ignore
-    delete duplicatedModel.platformId
-    
-    await addModelToPlatform(selectedPlatform.value.id, duplicatedModel)
   }
   hideModelMenu()
 }
@@ -960,8 +1068,12 @@ const openQuickAdd = () => {
 
 const handleQuickAddSave = async (newModel: any) => {
   if (!selectedPlatform.value) return
-  await addModelToPlatform(selectedPlatform.value.id, newModel)
+
+  const platformId = selectedPlatform.value.id
+  const modelId = await addModelToPlatform(platformId, newModel)
+
   showQuickAddDialog.value = false
+  await revealModelInList(platformId, modelId, newModel.category || 'text')
 }
 
 
@@ -993,6 +1105,10 @@ const saveModel = async (modelData: Partial<AIModel>) => {
   if (!selectedPlatform.value) return
 
   try {
+    const platformId = selectedPlatform.value.id
+    let newModelId: string | null = null
+    let newModelCategory: AIModel['category'] | null = null
+
     if (editingModel.value) {
       // 使用 ModelConfigManager 的 updateModel 以确保正确保存
       await updateModel(editingModel.value.id, {
@@ -1012,10 +1128,15 @@ const saveModel = async (modelData: Partial<AIModel>) => {
         jsCode: modelData.jsCode || '',
         category: modelData.category || 'text' as const
       }
-      await addModelToPlatform(selectedPlatform.value.id, newModelData)
+      newModelCategory = newModelData.category
+      newModelId = await addModelToPlatform(platformId, newModelData)
     }
     
     closeModelDialog()
+
+    if (newModelId && newModelCategory) {
+      await revealModelInList(platformId, newModelId, newModelCategory)
+    }
   } catch (error) {
     console.error('保存模型失败:', error)
     alert('保存失败，请检查模型配置')
@@ -1067,6 +1188,35 @@ const openPlatformUrl = async (url: string) => {
   }
 }
 
+const copyTextToClipboard = async (text: string) => {
+  try {
+    await navigator.clipboard.writeText(text)
+  } catch {
+    const textarea = document.createElement('textarea')
+    textarea.value = text
+    textarea.setAttribute('readonly', 'true')
+    textarea.style.position = 'fixed'
+    textarea.style.opacity = '0'
+    document.body.appendChild(textarea)
+    textarea.select()
+    document.execCommand('copy')
+    document.body.removeChild(textarea)
+  }
+}
+
+const handleInviteButtonClick = async (platform: AIPlatform) => {
+  const inviteCode = platform.inviteCode?.trim()
+  const inviteUrl = platform.inviteUrl?.trim()
+
+  if (inviteCode) {
+    await copyTextToClipboard(inviteCode)
+  }
+
+  if (inviteUrl) {
+    await openPlatformUrl(inviteUrl)
+  }
+}
+
 const addModel = async (platformId: string, model: AIModel) => {
   if (selectedPlatform.value && selectedPlatform.value.id === platformId) {
     selectedPlatform.value.models.push(model)
@@ -1112,7 +1262,7 @@ const testModel = async (model: AIModel) => {
           
           if (isDev) {
             // 开发环境：使用 Vite 开发服务器路径
-            imageUrl = '/assets/images/vlm_text/vlm_test.png'
+            imageUrl = '/assets/images/vlm_test/vlm_test.png'
             console.log('✅ [DEBUG] Using development path for test image:', imageUrl)
           } else {
             // 生产环境：使用 frontendDist 管理的静态资源路径
@@ -1120,7 +1270,7 @@ const testModel = async (model: AIModel) => {
             
             try {
               // 方法1：使用 public 目录中的资源（通过 frontendDist 管理）
-              imageUrl = '/assets/images/vlm_text/vlm_test.png'
+              imageUrl = '/assets/images/vlm_test/vlm_test.png'
               console.log('✅ [DEBUG] Using frontendDist managed path for test image:', imageUrl)
             } catch (error) {
               console.error('❌ [DEBUG] frontendDist path failed for test image:', error)
@@ -1129,21 +1279,21 @@ const testModel = async (model: AIModel) => {
               try {
                 console.log('🔍 [DEBUG] Attempting Tauri resource resolution for test image')
                 const { convertFileSrc } = await import('@tauri-apps/api/core')
-                const resourcePath = 'assets/images/vlm_text/vlm_test.png'
+                const resourcePath = 'assets/images/vlm_test/vlm_test.png'
                 imageUrl = convertFileSrc(resourcePath)
                 console.log('✅ [DEBUG] Tauri converted URL for test image:', imageUrl)
               } catch (tauriError) {
                 console.error('❌ [DEBUG] Tauri resource resolution failed for test image:', tauriError)
                 
                 // 方法3：回退到相对路径
-                imageUrl = '/assets/images/vlm_text/vlm_test.png'
+                imageUrl = '/assets/images/vlm_test/vlm_test.png'
                 console.log('⚠️ [DEBUG] Using fallback path for test image:', imageUrl)
               }
             }
           }
         } else {
           // 在浏览器环境中使用 public 目录路径
-          imageUrl = '/assets/images/vlm_text/vlm_test.png'
+          imageUrl = '/assets/images/vlm_test/vlm_test.png'
           console.log('🌐 [DEBUG] Using browser path for test image:', imageUrl)
         }
         
@@ -1251,6 +1401,7 @@ const testModel = async (model: AIModel) => {
         }
         
         // 执行测试
+        const testStartedAt = performance.now()
         const result = await processModel(testInput, config)
         
         if (result) {
@@ -1258,6 +1409,7 @@ const testModel = async (model: AIModel) => {
           if (result[Symbol.asyncIterator]) {
             let fullResponse = ''
             let fullReasoning = ''
+            let lastUsagePayload: any = null
             streamingResponse.value = '' // 重置流式响应
             streamingReasoning.value = '' // 重置流式思考过程
 
@@ -1271,35 +1423,56 @@ const testModel = async (model: AIModel) => {
                 fullReasoning += chunk.reasoning_content
                 streamingReasoning.value = fullReasoning // 实时更新流式思考过程
               }
+              if (readTokenRateFromPayload(chunk) !== null || readOutputTokenCountFromPayload(chunk) !== null) {
+                lastUsagePayload = chunk
+              }
             }
 
-            currentTestResult.value = {
-              success: true,
-              response: fullResponse,
-              reasoning_content: fullReasoning,
-              timestamp: new Date().toLocaleString(),
-              modelType: model.category,
-              testType: model.category === 'vision' ? '图像理解测试' : '文本对话测试'
+            if (!hasVisibleOutputContent(fullResponse)) {
+              currentTestResult.value = null
+              currentTestError.value = '测试失败：模型未返回任何输出内容'
+            } else {
+              const tokenRate = resolveTokenRate(lastUsagePayload, fullResponse, fullReasoning, performance.now() - testStartedAt)
+
+              currentTestResult.value = {
+                success: true,
+                response: fullResponse,
+                reasoning_content: fullReasoning,
+                tokenRate: tokenRate ?? undefined,
+                timestamp: new Date().toLocaleString(),
+                modelType: model.category,
+                testType: model.category === 'vision' ? '图像理解测试' : '文本对话测试'
+              }
             }
           } else {
             // 非流式返回：兼容对象格式与字符串格式
             let finalResponse = ''
             let finalReasoning = ''
+            let usagePayload: any = null
             if (typeof result === 'string') {
               finalResponse = result
             } else if (result && typeof result === 'object') {
               finalResponse = (result.content ?? result.response ?? '')
               // 兼容新的思考过程字段
               finalReasoning = (result.reasoning_content ?? '')
+              usagePayload = result
             }
 
-            currentTestResult.value = {
-              success: true,
-              response: finalResponse,
-              reasoning_content: finalReasoning,
-              timestamp: new Date().toLocaleString(),
-              modelType: model.category,
-              testType: model.category === 'vision' ? '图像理解测试' : '文本对话测试'
+            if (!hasVisibleOutputContent(finalResponse)) {
+              currentTestResult.value = null
+              currentTestError.value = '测试失败：模型未返回任何输出内容'
+            } else {
+              const tokenRate = resolveTokenRate(usagePayload, finalResponse, finalReasoning, performance.now() - testStartedAt)
+
+              currentTestResult.value = {
+                success: true,
+                response: finalResponse,
+                reasoning_content: finalReasoning,
+                tokenRate: tokenRate ?? undefined,
+                timestamp: new Date().toLocaleString(),
+                modelType: model.category,
+                testType: model.category === 'vision' ? '图像理解测试' : '文本对话测试'
+              }
             }
           }
         } else {
@@ -1348,16 +1521,8 @@ onMounted(() => {
   
   // 预加载平台图标
   loadPlatformIcons()
+  loadRemoteModelIconMappings()
 
-  // 同步远程平台和模型
-  syncRemotePlatforms().then(() => {
-    // 同步完成后默认选中第一个平台
-    if (!selectedPlatform.value && modelConfig.platforms.length > 0) {
-      selectedPlatform.value = modelConfig.platforms[0]
-    }
-  })
-
-  // 默认选中第一个平台（同步前先选）
   if (modelConfig.platforms.length > 0) {
     selectedPlatform.value = modelConfig.platforms[0]
   }
@@ -1394,6 +1559,19 @@ onMounted(() => {
 
 // 监听平台数据变化，重新加载图标
 watch(() => modelConfig.platforms, (newPlatforms, oldPlatforms) => {
+  if (!selectedPlatform.value && newPlatforms.length > 0) {
+    selectedPlatform.value = newPlatforms[0]
+  } else if (selectedPlatform.value) {
+    const latestSelectedPlatform = newPlatforms.find(platform => platform.id === selectedPlatform.value?.id)
+    if (latestSelectedPlatform) {
+      selectedPlatform.value = latestSelectedPlatform
+    }
+  }
+
+  if (!oldPlatforms || newPlatforms.length !== oldPlatforms.length) {
+    loadPlatformIcons()
+  }
+
   // 检查是否有平台的图标发生了变化
   if (oldPlatforms) {
     for (const newPlatform of newPlatforms) {
@@ -1497,6 +1675,7 @@ onUnmounted(() => {
   background-color: var(--platform-item-active-bg);
   border-color: var(--platform-item-active-border);
   color: var(--platform-item-active-text);
+  box-shadow: var(--model-item-active-shadow);
 }
 
 .platform-icon {
@@ -1506,36 +1685,49 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 6px;
-  background-color: transparent;
-  border: 1px solid var(--platform-config-dialog-header-border);
   flex-shrink: 0;
-  transition: background-color 0.2s ease;
   position: relative;
+}
+
+.platform-icon-inner {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background-color: transparent;
+  border: 1px solid transparent;
+  box-sizing: border-box;
+  overflow: hidden;
+  transition: background-color 0.2s ease, border-color 0.2s ease;
 }
 
 .platform-icon--bg {
   background-color: var(--platform-item-icon-bg);
+  border-color: var(--platform-config-dialog-header-border);
 }
 
-.platform-item:hover .platform-icon--bg {
-  background-color: var(--platform-item-icon-hover-bg);
-}
-
-.platform-item.active .platform-icon--bg {
-  background-color: var(--platform-item-icon-active-bg);
-}
 
 .platform-selected-badge {
   position: absolute;
-  top: -3px;
-  right: -3px;
+  top: -4px;
+  right: -4px;
   width: 8px;
   height: 8px;
-  background-color: #3b82f6;
-  border-radius: 50%;
+  background-color: #f8bd40;
+  border-radius: 999px;
   pointer-events: none;
+  box-shadow: 0 0 0 2px var(--platform-item-bg);
   animation: dot-pop 0.2s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+.platform-item:hover .platform-selected-badge {
+  box-shadow: 0 0 0 2px var(--platform-item-hover-bg);
+}
+
+.platform-item.active .platform-selected-badge {
+  box-shadow: 0 0 0 2px var(--platform-item-active-bg);
 }
 
 .platform-selected-badge--count {
@@ -1543,33 +1735,27 @@ onUnmounted(() => {
   height: 14px;
   min-width: 14px;
   padding: 0 3px;
-  border-radius: 7px;
+  border-radius: 999px;
   font-size: 9px;
   font-weight: 700;
   color: #fff;
   line-height: 14px;
   text-align: center;
-  top: -5px;
-  right: -5px;
+  top: -6px;
+  right: -6px;
 }
 
-.platform-item:hover .platform-icon {
-  background-color: var(--platform-item-icon-hover-bg);
-}
-
-.platform-item.active .platform-icon {
-  background-color: var(--platform-item-icon-active-bg);
-}
 
 .icon-emoji {
   font-size: 18px;
 }
 
 .icon-image {
-  border-radius: 6px;
-  width: 32px;
-  height: 32px;
+  display: block;
+  width: 100%;
+  height: 100%;
   object-fit: cover;
+  border-radius: inherit;
 }
 
 .icon-fallback {
@@ -1670,12 +1856,16 @@ onUnmounted(() => {
 .custom-scrollbar-thumb {
   width: 4px;
   border-radius: 4px;
-  background: var(--border-secondary);
+  background: var(--custom-scrollbar-thumb);
   transition: background 0.15s;
   position: absolute;
   top: 0;
   left: 0;
   right: 0;
+}
+
+.custom-scrollbar-thumb:hover {
+  background: var(--custom-scrollbar-thumb-hover);
 }
 
 .custom-scrollbar:hover .custom-scrollbar-thumb {
@@ -1827,7 +2017,7 @@ onUnmounted(() => {
 .form-input:focus {
   outline: none;
   background-color: var(--form-input-bg, #F7F7F7);
-  border-color: #e3e3e3;
+  border-color: var(--form-input-focus-border, #e3e3e3);
   box-shadow: none;
 }
 
@@ -1912,6 +2102,17 @@ input[type="password"].api-key-input::-ms-reveal {
   color: var(--model-item-hover-text);
 }
 
+.model-item--disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.model-item--disabled:hover {
+  background: var(--model-item-bg);
+  border-color: var(--model-item-border);
+  color: var(--model-item-text);
+}
+
 .model-item.active {
   background-color: var(--model-item-active-bg);
   border-color: var(--model-item-active-border);
@@ -1946,7 +2147,7 @@ input[type="password"].api-key-input::-ms-reveal {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #3b82f6;
+  background: #f8bd40;
   display: block;
   animation: dot-pop 0.2s cubic-bezier(0.34, 1.56, 0.64, 1) both;
 }

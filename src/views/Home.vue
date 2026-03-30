@@ -18,18 +18,18 @@
               <button class="config-btn ocs-config" @click="openOCSConfig">
                 <svg width="800" height="800" viewBox="0 0 800 800" shape-rendering="geometricPrecision"
                   xmlns="http://www.w3.org/2000/svg" fill="currentColor">
+                  <g stroke="null">
                     <g stroke="null">
-                      <g stroke="null">
-                        <path stroke="null" opacity="1"
-                          d="m382.29066,36c12.1533,0 24.30713,0 36.46043,0c90.68231,5.71443 168.8118,39.84485 234.3885,102.39137c6.51079,6.54676 13.02158,13.09353 19.53237,19.64029c0.3021,0.7479 0.21355,1.44657 -0.26043,2.09496c-43.79419,43.2521 -87.37482,86.81007 -130.7367,130.67338c34.98118,48.09304 44.96613,101.07835 29.94964,158.9554c-2.51056,8.36991 -5.46386,16.57483 -8.85468,24.61583c-11.80641,-11.87164 -23.6123,-23.74275 -35.41871,-35.61439c13.18878,-52.67211 0.77504,-98.15064 -37.24173,-136.43453c-36.96359,-31.76751 -79.15352,-41.71859 -126.56979,-29.85324c-41.61073,13.20927 -70.51864,40.18193 -86.72374,80.91799c-6.98269,18.77193 -9.58701,38.15034 -7.81295,58.13525c1.00631,9.21627 2.5689,18.29427 4.68777,27.23453c-11.63973,11.79151 -23.35916,23.48821 -35.15827,35.09065c-21.92522,-50.63109 -21.49134,-101.08463 1.30216,-151.36115c20.91423,-42.50368 53.29421,-72.44438 97.14101,-89.82158c50.90345,-17.98841 100.38547,-14.67103 148.44605,9.95108c8.21037,4.69377 16.1103,9.84371 23.69928,15.45036c32.46697,-32.64635 64.93603,-65.29322 97.40144,-97.93957c0.34898,-0.34934 0.34898,-0.69815 0,-1.04748c-57.13558,-48.60893 -123.37221,-74.18514 -198.70936,-76.72806c-93.66529,-0.69134 -172.9235,32.56622 -237.77411,99.77266c-68.72219,76.44733 -95.98068,166.00705 -81.77554,268.67914c16.97441,95.0548 65.67514,168.46653 146.10216,220.2331c79.79209,47.47712 164.51937,58.99942 254.1813,34.56691c44.38224,-13.2297 83.96838,-34.87591 118.75684,-64.94389c-10.32872,-10.38578 -20.66265,-20.77681 -30.99137,-31.16259c-59.52895,49.04311 -127.84903,70.08178 -204.95972,63.11079c-60.75662,-6.95528 -113.36382,-31.2202 -157.82159,-72.8c-7.38636,-7.33761 -14.67845,-14.75902 -21.87626,-22.25899c32.81439,-33.34502 65.80223,-66.51511 98.96403,-99.51079c8.08119,8.03838 16.24104,15.98196 24.48058,23.83022c36.73076,29.45415 77.87896,38.00893 123.44461,25.66331c28.33497,-8.68886 51.16649,-25.0123 68.49353,-48.96978c0.55316,-0.73271 1.24747,-1.25645 2.08345,-1.57122c11.09803,10.54814 21.94918,21.37178 32.55396,32.47194c-39.25226,48.79171 -90.29687,71.92535 -153.13382,69.39568c-35.57705,-2.66584 -67.52316,-14.71189 -95.83885,-36.13813c-0.52086,-0.34934 -1.04173,-0.34934 -1.56259,0c-11.28555,11.3479 -22.57057,22.6937 -33.85612,34.04317c57.26267,45.04173 121.67576,60.23022 193.24029,45.56547c35.89634,-8.22797 67.84245,-24.11304 95.83885,-47.66043c10.48029,-9.57922 20.72515,-19.44127 30.73094,-29.59137c31.50702,31.41922 62.93071,62.92748 94.27626,94.53525c0.30731,0.24092 0.65629,0.32996 1.04173,0.26187c0.47399,0.64944 0.56253,1.34601 0.26043,2.09496c-66.483,73.18233 -149.03775,113.8613 -247.67051,122.03166c-16.32021,0 -32.64094,0 -48.96115,0c-106.75354,-9.01358 -193.65074,-55.10279 -260.6921,-138.26763c-48.46769,-63.12127 -74.25041,-134.70095 -77.3482,-214.73381c0,-7.15797 0,-14.31541 0,-21.47338c3.87934,-92.60789 36.95416,-172.74026 99.22446,-240.39712c66.97677,-69.32278 148.66585,-107.03213 245.0662,-113.12806z"
-                          fill="currentColor" />
-                      </g>
-                      <g stroke="null">
-                        <path stroke="null" opacity="1"
-                          d="m696.37125,191.02734c0.79171,0.00576 1.39591,0.35457 1.82302,1.04748c38.54909,56.84056 59.81594,119.68949 63.80576,188.54676c0,12.91912 0,25.83772 0,38.75683c-4.00544,69.127 -25.44417,132.15086 -64.32662,189.07051c-0.43753,0.78561 -0.86984,0.95845 -1.30216,0.52374c-10.92771,-11.16092 -21.86584,-22.33755 -32.81439,-33.51942c25.06915,-38.32999 41.29925,-80.22927 48.70072,-125.69784c11.92777,-81.28827 -4.30754,-156.27018 -48.70072,-224.94676c11.24544,-11.04308 22.18357,-22.30351 32.81439,-33.7813z"
-                          fill="currentColor" />
-                      </g>
+                      <path stroke="null" opacity="1"
+                        d="m382.29066,36c12.1533,0 24.30713,0 36.46043,0c90.68231,5.71443 168.8118,39.84485 234.3885,102.39137c6.51079,6.54676 13.02158,13.09353 19.53237,19.64029c0.3021,0.7479 0.21355,1.44657 -0.26043,2.09496c-43.79419,43.2521 -87.37482,86.81007 -130.7367,130.67338c34.98118,48.09304 44.96613,101.07835 29.94964,158.9554c-2.51056,8.36991 -5.46386,16.57483 -8.85468,24.61583c-11.80641,-11.87164 -23.6123,-23.74275 -35.41871,-35.61439c13.18878,-52.67211 0.77504,-98.15064 -37.24173,-136.43453c-36.96359,-31.76751 -79.15352,-41.71859 -126.56979,-29.85324c-41.61073,13.20927 -70.51864,40.18193 -86.72374,80.91799c-6.98269,18.77193 -9.58701,38.15034 -7.81295,58.13525c1.00631,9.21627 2.5689,18.29427 4.68777,27.23453c-11.63973,11.79151 -23.35916,23.48821 -35.15827,35.09065c-21.92522,-50.63109 -21.49134,-101.08463 1.30216,-151.36115c20.91423,-42.50368 53.29421,-72.44438 97.14101,-89.82158c50.90345,-17.98841 100.38547,-14.67103 148.44605,9.95108c8.21037,4.69377 16.1103,9.84371 23.69928,15.45036c32.46697,-32.64635 64.93603,-65.29322 97.40144,-97.93957c0.34898,-0.34934 0.34898,-0.69815 0,-1.04748c-57.13558,-48.60893 -123.37221,-74.18514 -198.70936,-76.72806c-93.66529,-0.69134 -172.9235,32.56622 -237.77411,99.77266c-68.72219,76.44733 -95.98068,166.00705 -81.77554,268.67914c16.97441,95.0548 65.67514,168.46653 146.10216,220.2331c79.79209,47.47712 164.51937,58.99942 254.1813,34.56691c44.38224,-13.2297 83.96838,-34.87591 118.75684,-64.94389c-10.32872,-10.38578 -20.66265,-20.77681 -30.99137,-31.16259c-59.52895,49.04311 -127.84903,70.08178 -204.95972,63.11079c-60.75662,-6.95528 -113.36382,-31.2202 -157.82159,-72.8c-7.38636,-7.33761 -14.67845,-14.75902 -21.87626,-22.25899c32.81439,-33.34502 65.80223,-66.51511 98.96403,-99.51079c8.08119,8.03838 16.24104,15.98196 24.48058,23.83022c36.73076,29.45415 77.87896,38.00893 123.44461,25.66331c28.33497,-8.68886 51.16649,-25.0123 68.49353,-48.96978c0.55316,-0.73271 1.24747,-1.25645 2.08345,-1.57122c11.09803,10.54814 21.94918,21.37178 32.55396,32.47194c-39.25226,48.79171 -90.29687,71.92535 -153.13382,69.39568c-35.57705,-2.66584 -67.52316,-14.71189 -95.83885,-36.13813c-0.52086,-0.34934 -1.04173,-0.34934 -1.56259,0c-11.28555,11.3479 -22.57057,22.6937 -33.85612,34.04317c57.26267,45.04173 121.67576,60.23022 193.24029,45.56547c35.89634,-8.22797 67.84245,-24.11304 95.83885,-47.66043c10.48029,-9.57922 20.72515,-19.44127 30.73094,-29.59137c31.50702,31.41922 62.93071,62.92748 94.27626,94.53525c0.30731,0.24092 0.65629,0.32996 1.04173,0.26187c0.47399,0.64944 0.56253,1.34601 0.26043,2.09496c-66.483,73.18233 -149.03775,113.8613 -247.67051,122.03166c-16.32021,0 -32.64094,0 -48.96115,0c-106.75354,-9.01358 -193.65074,-55.10279 -260.6921,-138.26763c-48.46769,-63.12127 -74.25041,-134.70095 -77.3482,-214.73381c0,-7.15797 0,-14.31541 0,-21.47338c3.87934,-92.60789 36.95416,-172.74026 99.22446,-240.39712c66.97677,-69.32278 148.66585,-107.03213 245.0662,-113.12806z"
+                        fill="currentColor" />
                     </g>
+                    <g stroke="null">
+                      <path stroke="null" opacity="1"
+                        d="m696.37125,191.02734c0.79171,0.00576 1.39591,0.35457 1.82302,1.04748c38.54909,56.84056 59.81594,119.68949 63.80576,188.54676c0,12.91912 0,25.83772 0,38.75683c-4.00544,69.127 -25.44417,132.15086 -64.32662,189.07051c-0.43753,0.78561 -0.86984,0.95845 -1.30216,0.52374c-10.92771,-11.16092 -21.86584,-22.33755 -32.81439,-33.51942c25.06915,-38.32999 41.29925,-80.22927 48.70072,-125.69784c11.92777,-81.28827 -4.30754,-156.27018 -48.70072,-224.94676c11.24544,-11.04308 22.18357,-22.30351 32.81439,-33.7813z"
+                        fill="currentColor" />
+                    </g>
+                  </g>
                 </svg>
               </button>
               <span class="tooltip">OCS题库配置</span>
@@ -67,6 +67,17 @@
               </button>
               <span class="tooltip">局域网访问</span>
             </div>
+            <div class="tooltip-container">
+              <button class="config-btn folder-config" @click="openFolderPicker">
+                <svg width="20" height="20" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+                  <path
+                    d="M418.688 133.333333a122.666667 122.666667 0 0 1 93.013333 42.666667H785.066667a186.666667 186.666667 0 0 1 186.581333 181.162667l0.085333 5.504v17.92h-0.256c0.170667 1.429333 0.256 2.88 0.256 4.373333V789.333333a186.666667 186.666667 0 0 1-186.666666 186.666667H238.933333A186.666667 186.666667 0 0 1 52.266667 789.333333V320a186.666667 186.666667 0 0 1 186.666666-186.666667z m0 74.666667H238.933333A112 112 0 0 0 126.933333 320v469.333333c0 61.866667 50.133333 112 112 112h546.133334c61.866667 0 112-50.133333 112-112V422.272H615.04a122.666667 122.666667 0 0 1-113.834667-76.992l-1.834666-4.842667-35.413334-100.416a48 48 0 0 0-45.269333-32.021333zM448 688a37.333333 37.333333 0 0 1 3.072 74.538667L448 762.666667h-170.666667a37.333333 37.333333 0 0 1-3.072-74.538667L277.333333 688h170.666667z m337.066667-437.333333H546.88l22.912 64.917333a48 48 0 0 0 41.685333 31.914667l3.562667 0.128 281.024-0.021334a112.021333 112.021333 0 0 0-106.389333-96.853333l-4.608-0.085333z"
+                    fill="currentColor" />
+                </svg>
+              </button>
+              <span class="tooltip">选择保存文件夹</span>
+            </div>
+
           </div>
         </div>
         <div class="server-action">
@@ -86,7 +97,8 @@
           <div class="request-logs-header">
             <div class="request-logs-info">
               <div class="request-logs-details">
-                <h3 class="request-logs-title">请求记录 <span class="request-logs-count">{{ filteredRequestLogs.length }}</span>
+                <h3 class="request-logs-title">请求记录 <span class="request-logs-count">{{ filteredRequestLogs.length
+                    }}</span>
                 </h3>
               </div>
             </div>
@@ -175,13 +187,16 @@
       <div class="request-details-content">
         <!-- 标签页导航 -->
         <div class="detail-tabs">
-          <button class="tab-button" :class="{ active: activeTab === 'modelResponse' }" @click="activeTab = 'modelResponse'">
+          <button class="tab-button" :class="{ active: activeTab === 'modelResponse' }"
+            @click="activeTab = 'modelResponse'">
             AI 模型响应
           </button>
-          <button class="tab-button" :class="{ active: activeTab === 'requestBody' }" @click="activeTab = 'requestBody'">
+          <button class="tab-button" :class="{ active: activeTab === 'requestBody' }"
+            @click="activeTab = 'requestBody'">
             请求体
           </button>
-          <button class="tab-button" :class="{ active: activeTab === 'responseBody' }" @click="activeTab = 'responseBody'">
+          <button class="tab-button" :class="{ active: activeTab === 'responseBody' }"
+            @click="activeTab = 'responseBody'">
             响应体
           </button>
           <button class="tab-button" :class="{ active: activeTab === 'basic' }" @click="activeTab = 'basic'">
@@ -193,7 +208,9 @@
         </div>
 
         <!-- 标签页内容 -->
-        <div class="tab-content">
+        <div class="detail-scroll-wrap">
+          <div class="tab-content" ref="detailContent" @scroll="onDetailScroll">
+
           <!-- 基本信息 -->
           <div v-if="activeTab === 'basic'" class="detail-section">
             <div class="detail-grid">
@@ -242,7 +259,7 @@
           </div>
 
           <!-- 请求体 -->
-          <div v-if="activeTab === 'requestBody'" class="detail-section">
+          <div v-show="activeTab === 'requestBody'" class="detail-section">
             <div v-if="selectedLog && selectedLog.requestBody">
               <JsonCodeViewer :content="formatJSON(selectedLog.requestBody)" />
             </div>
@@ -252,7 +269,7 @@
           </div>
 
           <!-- 响应体 -->
-          <div v-if="activeTab === 'responseBody'" class="detail-section">
+          <div v-show="activeTab === 'responseBody'" class="detail-section">
             <div v-if="selectedLog && selectedLog.responseBody">
               <JsonCodeViewer :content="formatJSON(selectedLog.responseBody)" />
             </div>
@@ -272,7 +289,8 @@
               <div class="url-analysis-panel">
                 <!-- 题目图片区域：URL 转 base64 后渲染 -->
                 <div class="url-image-box">
-                  <div v-if="selectedLog.urlQuestion.renderedHtml" class="url-image-ready" v-html="selectedLog.urlQuestion.renderedHtml"></div>
+                  <div v-if="selectedLog.urlQuestion.renderedHtml" class="url-image-ready"
+                    v-html="selectedLog.urlQuestion.renderedHtml"></div>
                   <div v-else class="loading-indicator">
                     <div class="loading-spinner"></div>
                     <span>图片加载中...</span>
@@ -282,17 +300,45 @@
                 <!-- 分析结果区域 -->
                 <div class="url-analysis-result">
                   <div v-if="selectedLog.urlQuestion.analyzing">
-                    <div v-if="!selectedLog.urlQuestion.streamingResponse" class="loading-indicator">
+                    <div v-if="!selectedLog.urlQuestion.streamingResponse && !selectedLog.urlQuestion.streamingReasoning" class="loading-indicator">
                       <div class="loading-spinner"></div>
                       <span>视觉模型分析中...</span>
                     </div>
-                    <div v-if="selectedLog.urlQuestion.streamingResponse" class="streaming-response">
-                      <MarkdownRender :content="selectedLog.urlQuestion.streamingResponse" />
-                      <div class="streaming-cursor">▋</div>
+                    <div v-if="selectedLog.urlQuestion.streamingResponse || selectedLog.urlQuestion.streamingReasoning" class="content-stack">
+                      <div v-if="selectedLog.urlQuestion.streamingReasoning" class="reasoning-section">
+                        <p class="section-title reasoning-title">
+                          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="reasoning-icon" aria-hidden="true"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"></path><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"></path><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"></path><path d="M17.599 6.5a3 3 0 0 0 .399-1.375"></path><path d="M6.003 5.125A3 3 0 0 0 6.401 6.5"></path><path d="M3.477 10.896a4 4 0 0 1 .585-.396"></path><path d="M19.938 10.5a4 4 0 0 1 .585.396"></path><path d="M6 18a4 4 0 0 1-1.967-.516"></path><path d="M19.967 17.484A4 4 0 0 1 18 18"></path></svg>
+                          <strong>实时思考过程</strong>
+                        </p>
+                        <div class="reasoning-content streaming">
+                          <MarkdownRender :content="selectedLog.urlQuestion.streamingReasoning" />
+                        </div>
+                      </div>
+                      <div v-if="selectedLog.urlQuestion.streamingResponse" class="response-section">
+                        <p class="section-title"><strong>实时响应结果</strong></p>
+                        <div class="response-content streaming">
+                          <MarkdownRender :content="selectedLog.urlQuestion.streamingResponse" />
+                        </div>
+                      </div>
                     </div>
                   </div>
-                  <div v-else-if="selectedLog.urlQuestion.analysisResult">
-                    <MarkdownRender :content="selectedLog.urlQuestion.analysisResult" />
+                  <div v-else-if="selectedLog.urlQuestion.analysisResult || selectedLog.urlQuestion.reasoningContent">
+                    <div class="content-stack">
+                      <div v-if="selectedLog.urlQuestion.reasoningContent" class="reasoning-section">
+                        <p class="section-title reasoning-title">
+                          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="reasoning-icon" aria-hidden="true"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"></path><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"></path><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"></path><path d="M17.599 6.5a3 3 0 0 0 .399-1.375"></path><path d="M6.003 5.125A3 3 0 0 0 6.401 6.5"></path><path d="M3.477 10.896a4 4 0 0 1 .585-.396"></path><path d="M19.938 10.5a4 4 0 0 1 .585.396"></path><path d="M6 18a4 4 0 0 1-1.967-.516"></path><path d="M19.967 17.484A4 4 0 0 1 18 18"></path></svg>
+                          <strong>思考过程</strong>
+                        </p>
+                        <div class="reasoning-content">
+                          <MarkdownRender :content="selectedLog.urlQuestion.reasoningContent" />
+                        </div>
+                      </div>
+                      <div v-if="selectedLog.urlQuestion.analysisResult" class="response-section">
+                        <div class="response-content">
+                          <MarkdownRender :content="selectedLog.urlQuestion.analysisResult" />
+                        </div>
+                      </div>
+                    </div>
                   </div>
                   <div v-else-if="selectedLog.urlQuestion.analysisError" class="url-analysis-error">
                     <span>{{ selectedLog.urlQuestion.analysisError }}</span>
@@ -302,46 +348,55 @@
                     <span class="no-data-text">暂无分析结果</span>
                   </div>
                 </div>
+
               </div>
             </template>
 
             <!-- ===== 多模型切换视图 ===== -->
-            <template v-if="selectedLog && selectedLog.multiModelResponses && selectedLog.multiModelResponses.length > 0 && !selectedLog.urlQuestion">
+            <template
+              v-if="selectedLog && selectedLog.multiModelResponses && selectedLog.multiModelResponses.length > 0 && !selectedLog.urlQuestion">
               <!-- 横向模型选择器 -->
               <div class="multi-model-tabs">
-                <button
-                  v-for="mr in selectedLog.multiModelResponses"
-                  :key="mr.modelId"
-                  class="multi-model-tab"
-                  :class="{
-                    active: activeModelTab === mr.modelId,
-                    loading: mr.isLoading,
-                    summary: mr.modelName.startsWith('总结:')
-                  }"
-                  @click="activeModelTab = mr.modelId"
-                >
+                <button v-for="mr in selectedLog.multiModelResponses" :key="mr.modelId" class="multi-model-tab" :class="{
+                  active: activeModelTab === mr.modelId,
+                  loading: mr.isLoading,
+                  summary: mr.modelName.startsWith('总结:'),
+                  failed: !mr.isLoading && !!mr.response && mr.response.startsWith('错误:')
+                }" @click="activeModelTab = mr.modelId">
                   <div v-if="mr.isLoading" class="loading-spinner-sm"></div>
-                  <svg v-else-if="mr.modelName.startsWith('总结:')" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-                    <path d="M9 11l3 3L22 4" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+                  <svg v-else-if="mr.modelName.startsWith('总结:')" width="12" height="12" viewBox="0 0 1024 1024"
+                    xmlns="http://www.w3.org/2000/svg">
+                    <path
+                      d="M303.146667 375.04A128.042667 128.042667 0 0 0 426.666667 469.333333h170.666666a213.418667 213.418667 0 0 1 210.218667 176.896A128.042667 128.042667 0 0 1 768 896a128 128 0 0 1-47.146667-247.04A128.042667 128.042667 0 0 0 597.333333 554.666667h-170.666666a212.394667 212.394667 0 0 1-128-42.666667v135.253333a128.042667 128.042667 0 1 1-85.333334 0V376.746667a128.042667 128.042667 0 1 1 89.813334-1.706667zM256 298.666667a42.666667 42.666667 0 1 0 0-85.333334 42.666667 42.666667 0 0 0 0 85.333334z m0 512a42.666667 42.666667 0 1 0 0-85.333334 42.666667 42.666667 0 0 0 0 85.333334z m512 0a42.666667 42.666667 0 1 0 0-85.333334 42.666667 42.666667 0 0 0 0 85.333334z"
+                      fill="currentColor"></path>
                   </svg>
+
+
                   <span>{{ mr.modelName }}</span>
                 </button>
               </div>
 
               <!-- 当前选中模型的响应内容 -->
               <template v-for="mr in selectedLog.multiModelResponses" :key="mr.modelId">
-                <div v-if="activeModelTab === mr.modelId || (!activeModelTab && selectedLog.multiModelResponses[0].modelId === mr.modelId)" class="model-response-card" :class="{ 'is-loading': mr.isLoading, 'is-summary': mr.modelName.startsWith('总结:') }">
+                <div
+                  v-if="activeModelTab === mr.modelId || (!activeModelTab && selectedLog.multiModelResponses[0].modelId === mr.modelId)"
+                  class="model-response-card"
+                  :class="{ 'is-loading': mr.isLoading, 'is-summary': mr.modelName.startsWith('总结:') }">
                   <div class="model-response-card-header">
                     <div class="model-response-card-title">
                       <div v-if="mr.modelName.startsWith('总结:')" class="summary-result-icon" title="最终总结答案">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-                          <path d="M9 11l3 3L22 4" />
-                          <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+                        <svg width="14" height="14" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+                          <path
+                            d="M303.146667 375.04A128.042667 128.042667 0 0 0 426.666667 469.333333h170.666666a213.418667 213.418667 0 0 1 210.218667 176.896A128.042667 128.042667 0 0 1 768 896a128 128 0 0 1-47.146667-247.04A128.042667 128.042667 0 0 0 597.333333 554.666667h-170.666666a212.394667 212.394667 0 0 1-128-42.666667v135.253333a128.042667 128.042667 0 1 1-85.333334 0V376.746667a128.042667 128.042667 0 1 1 89.813334-1.706667zM256 298.666667a42.666667 42.666667 0 1 0 0-85.333334 42.666667 42.666667 0 0 0 0 85.333334z m0 512a42.666667 42.666667 0 1 0 0-85.333334 42.666667 42.666667 0 0 0 0 85.333334z m512 0a42.666667 42.666667 0 1 0 0-85.333334 42.666667 42.666667 0 0 0 0 85.333334z"
+                            fill="currentColor"></path>
                         </svg>
+
                       </div>
+
                       <span class="card-model-name">{{ mr.modelName }}</span>
-                      <span v-if="mr.modelName.startsWith('总结:')" class="summary-tag">最终答案</span>
+
                       <span class="card-platform-name">{{ mr.platformName }}</span>
+                      <span v-if="mr.modelName.startsWith('总结:')" class="summary-tag">最终答案</span>
                     </div>
                     <div v-if="mr.isLoading" class="card-loading-badge">
                       <div class="loading-spinner-sm"></div>
@@ -350,72 +405,94 @@
                     <div v-else class="card-done-badge">✓ 完成</div>
                   </div>
                   <div class="model-response-card-body">
-                    <div v-if="mr.response" class="streaming-response">
-                      <MarkdownRender :content="mr.response" />
-                      <div v-if="mr.isLoading" class="streaming-cursor">▋</div>
+                    <div v-if="mr.reasoningContent || mr.streamingReasoning || mr.response" class="content-stack">
+                      <div v-if="mr.reasoningContent || mr.streamingReasoning" class="reasoning-section">
+                        <p class="section-title reasoning-title">
+                          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="reasoning-icon" aria-hidden="true"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"></path><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"></path><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4 4 0 0 1-3 4"></path><path d="M17.599 6.5a3 3 0 0 0 .399-1.375"></path><path d="M6.003 5.125A3 3 0 0 0 6.401 6.5"></path><path d="M3.477 10.896a4 4 0 0 1 .585-.396"></path><path d="M19.938 10.5a4 4 0 0 1 .585.396"></path><path d="M6 18a4 4 0 0 1-1.967-.516"></path><path d="M19.967 17.484A4 4 0 0 1 18 18"></path></svg>
+                          <strong>{{ mr.isLoading ? '实时思考过程' : '思考过程' }}</strong>
+                        </p>
+                        <div class="reasoning-content" :class="{ streaming: mr.isLoading }">
+                          <MarkdownRender :content="mr.reasoningContent || mr.streamingReasoning || ''" />
+                        </div>
+                      </div>
+                      <div v-if="mr.response" class="response-section">
+                        <p v-if="mr.isLoading" class="section-title"><strong>实时响应结果</strong></p>
+                        <div class="response-content" :class="{ streaming: mr.isLoading }">
+                          <MarkdownRender :content="mr.response" />
+                        </div>
+                      </div>
+
                     </div>
                     <div v-else-if="mr.isLoading" class="card-waiting">
                       <div class="loading-dots"><span></span><span></span><span></span></div>
                     </div>
                     <div v-else class="no-data"><span class="no-data-text">暂无响应</span></div>
-                    <details v-if="mr.streamingReasoning || mr.reasoningContent" class="reasoning-details">
-                      <summary class="reasoning-summary">思考过程</summary>
-                      <MarkdownRender :content="mr.streamingReasoning || mr.reasoningContent || ''" />
-                    </details>
                   </div>
+
                 </div>
               </template>
             </template>
 
-            <!-- ===== 单模型视图（原有逻辑） ===== -->
+            <!-- ===== 单模型视图（卡片化显示） ===== -->
             <template v-else-if="!selectedLog?.urlQuestion">
-              <!-- 模型信息显示 -->
-              <div v-if="selectedLog && selectedLog.modelInfo" class="model-info">
-                <div class="model-info-header">
-                  <h4>使用的AI模型</h4>
-                </div>
-                <div class="model-info-content">
-                  <div class="model-info-item">
-                    <label>平台:</label>
-                    <span>{{ selectedLog.modelInfo.platformName }}</span>
-                  </div>
-                  <div class="model-info-item">
-                    <label>模型:</label>
-                    <span>{{ selectedLog.modelInfo.modelName }}</span>
-                  </div>
-                  <div class="model-info-item">
-                    <label>模型ID:</label>
-                    <span>{{ selectedLog.modelInfo.modelId }}</span>
-                  </div>
-                </div>
-              </div>
+              <div
+                v-if="selectedLog && (selectedLog.isModelCalling || selectedLog.modelResponse || selectedLog.reasoningContent || selectedLog.streamingReasoning)"
+                class="model-response-card"
+                :class="{
+                  'is-loading': !!selectedLog.isModelCalling,
+                  'is-summary': !!(selectedLog.modelInfo && selectedLog.modelInfo.modelName.startsWith('总结:'))
+                }">
+                <div class="model-response-card-header">
+                  <div class="model-response-card-title">
+                    <div
+                      v-if="selectedLog.modelInfo && selectedLog.modelInfo.modelName.startsWith('总结:')"
+                      class="summary-result-icon"
+                      title="最终总结答案">
+                      <svg width="14" height="14" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+                        <path
+                          d="M303.146667 375.04A128.042667 128.042667 0 0 0 426.666667 469.333333h170.666666a213.418667 213.418667 0 0 1 210.218667 176.896A128.042667 128.042667 0 0 1 768 896a128 128 0 0 1-47.146667-247.04A128.042667 128.042667 0 0 0 597.333333 554.666667h-170.666666a212.394667 212.394667 0 0 1-128-42.666667v135.253333a128.042667 128.042667 0 1 1-85.333334 0V376.746667a128.042667 128.042667 0 1 1 89.813334-1.706667zM256 298.666667a42.666667 42.666667 0 1 0 0-85.333334 42.666667 42.666667 0 0 0 0 85.333334z m0 512a42.666667 42.666667 0 1 0 0-85.333334 42.666667 42.666667 0 0 0 0 85.333334z m512 0a42.666667 42.666667 0 1 0 0-85.333334 42.666667 42.666667 0 0 0 0 85.333334z"
+                          fill="currentColor"></path>
+                      </svg>
+                    </div>
 
-              <!-- 模型响应内容 -->
-              <div v-if="selectedLog && selectedLog.isModelCalling" class="model-calling">
-                <div class="loading-indicator">
-                  <div class="loading-spinner"></div>
-                  <span>正在调用模型...</span>
+                    <span class="card-model-name">{{ selectedLog.modelInfo?.modelName || 'AI 模型响应' }}</span>
+                    <span v-if="selectedLog.modelInfo?.platformName" class="card-platform-name">{{ selectedLog.modelInfo.platformName }}</span>
+                    <span
+                      v-if="selectedLog.modelInfo && selectedLog.modelInfo.modelName.startsWith('总结:')"
+                      class="summary-tag">最终答案</span>
+                  </div>
+                  <div v-if="selectedLog.isModelCalling" class="card-loading-badge">
+                    <div class="loading-spinner-sm"></div>
+                    <span>响应中</span>
+                  </div>
+                  <div v-else class="card-done-badge">✓ 完成</div>
                 </div>
-                <!-- 流式显示正在生成的内容 -->
-                <div v-if="selectedLog.modelResponse" class="streaming-response">
-                  <MarkdownRender :content="selectedLog.modelResponse" />
-                  <div class="streaming-cursor">▋</div>
+                <div class="model-response-card-body">
+                  <div v-if="selectedLog.reasoningContent || selectedLog.streamingReasoning || selectedLog.modelResponse" class="content-stack">
+                    <div v-if="selectedLog.reasoningContent || selectedLog.streamingReasoning" class="reasoning-section">
+                      <p class="section-title reasoning-title">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="reasoning-icon" aria-hidden="true"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"></path><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"></path><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"></path><path d="M17.599 6.5a3 3 0 0 0 .399-1.375"></path><path d="M6.003 5.125A3 3 0 0 0 6.401 6.5"></path><path d="M3.477 10.896a4 4 0 0 1 .585-.396"></path><path d="M19.938 10.5a4 4 0 0 1 .585.396"></path><path d="M6 18a4 4 0 0 1-1.967-.516"></path><path d="M19.967 17.484A4 4 0 0 1 18 18"></path></svg>
+                        <strong>{{ selectedLog.isModelCalling ? '实时思考过程' : '思考过程' }}</strong>
+                      </p>
+                      <div class="reasoning-content" :class="{ streaming: selectedLog.isModelCalling }">
+                        <MarkdownRender :content="selectedLog.reasoningContent || selectedLog.streamingReasoning || ''" />
+                      </div>
+                    </div>
+
+                    <div v-if="selectedLog.modelResponse" class="response-section">
+                      <p v-if="selectedLog.isModelCalling" class="section-title"><strong>实时响应结果</strong></p>
+                      <div class="response-content" :class="{ streaming: selectedLog.isModelCalling }">
+                        <MarkdownRender :content="selectedLog.modelResponse" />
+                      </div>
+                    </div>
+
+                  </div>
+                  <div v-else-if="selectedLog.isModelCalling" class="card-waiting">
+                    <div class="loading-dots"><span></span><span></span><span></span></div>
+                  </div>
+                  <div v-else class="no-data"><span class="no-data-text">暂无响应</span></div>
                 </div>
-                <!-- 流式显示正在生成的思考过程 -->
-                <div v-if="selectedLog.streamingReasoning" class="streaming-reasoning">
-                  <div class="reasoning-title">实时思考过程</div>
-                  <MarkdownRender :content="selectedLog.streamingReasoning" />
-                  <div class="streaming-cursor">▋</div>
-                </div>
-              </div>
-              <div v-else-if="selectedLog && (selectedLog.modelResponse || selectedLog.reasoningContent)" class="model-response">
-                <div v-if="selectedLog.modelResponse" class="response-section">
-                  <MarkdownRender :content="selectedLog.modelResponse" />
-                </div>
-                <div v-if="selectedLog.reasoningContent" class="reasoning-section">
-                  <div class="reasoning-title">思考过程</div>
-                  <MarkdownRender :content="selectedLog.reasoningContent" />
-                </div>
+
               </div>
               <div v-else class="no-data">
                 <span class="no-data-text">
@@ -426,47 +503,46 @@
             </template>
 
           </div>
+          </div>
+          <div class="custom-scrollbar" :class="{ 'is-visible': scrollbarVisible, 'has-overflow': scrollbarEnabled }"
+
+            ref="customScrollbar" @mousedown="onScrollbarMousedown">
+            <div class="custom-scrollbar-thumb" ref="customScrollbarThumb"></div>
+          </div>
         </div>
       </div>
     </div>
+
 
     <!-- 端口配置对话框 -->
     <PortConfigDialog :show="showPortDialog" :current-port="configuredPort" @close="showPortDialog = false"
       @confirm="handlePortConfirm" />
 
     <!-- 模型选择对话框 -->
-    <ModelSelectorDialog 
-      :show="showModelSelector" 
-      :selected-text-model-ids="globalSelectedTextModels.map(m => m.id)" 
+    <ModelSelectorDialog :show="showModelSelector" :selected-text-model-ids="globalSelectedTextModels.map(m => m.id)"
       :selected-vision-model-id="globalSelectedVisionModel?.id || null"
-      :selected-summary-model-ids="globalSelectedSummaryModels.map(m => m.id)"
-      :available-models="availableModels"
-      :platforms="platforms" 
-      @close="showModelSelector = false" 
-      @model-selected="selectModel" 
-    />
+      :selected-summary-model-ids="globalSelectedSummaryModels.map(m => m.id)" :available-models="availableModels"
+      :platforms="platforms" @close="showModelSelector = false" @model-selected="selectModel" />
+
+    <FolderPickerDialog :visible="showFolderPicker" :initial-folder-id="settings.questionSaveFolderId"
+      @cancel="showFolderPicker = false" @confirm="handleFolderConfirm" />
 
   </div>
-  
-  <!-- OCS配置对话框 -->
-  <OCSConfigDialog :visible="showOCSConfig" :current-port="configuredPort" @close="showOCSConfig = false" @test="testOCSConnection" />
-  
-  <!-- URL内容处理弹窗 -->
-  <UrlContentDialog 
-    :visible="showUrlContentDialog"
-    :original-question="urlContentData.originalQuestion"
-    :original-options="urlContentData.originalOptions"
-    :server-response="urlContentData.serverResponse"
-    @close="showUrlContentDialog = false"
-  />
-  <ModelWarningDialog 
-    :visible="showNoModelDialog"
-    @close="showNoModelDialog = false"
-    @still-open="handleNoModelStillOpen"
-    @select-model="handleNoModelSelect"
-  />
 
-  <!-- 后台自动渲染 URL 题目图片已移除，现直接使用原始 URL 渲染 img 标签 --></template>
+  <!-- OCS配置对话框 -->
+
+  <OCSConfigDialog :visible="showOCSConfig" :current-port="configuredPort" @close="showOCSConfig = false"
+    @test="testOCSConnection" />
+
+  <!-- URL内容处理弹窗 -->
+  <UrlContentDialog :visible="showUrlContentDialog" :original-question="urlContentData.originalQuestion"
+    :original-options="urlContentData.originalOptions" :server-response="urlContentData.serverResponse"
+    @close="showUrlContentDialog = false" />
+  <ModelWarningDialog :visible="showNoModelDialog" @close="showNoModelDialog = false"
+    @still-open="handleNoModelStillOpen" @select-model="handleNoModelSelect" />
+
+  <!-- 后台自动渲染 URL 题目图片已移除，现直接使用原始 URL 渲染 img 标签 -->
+</template>
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed, nextTick, watch } from 'vue'
@@ -479,7 +555,9 @@ import PortConfigDialog from '../components/home/PortConfigDialog.vue'
 import ModelSelectorDialog from '../components/home/ModelSelectorDialog.vue'
 import OCSConfigDialog from '../components/home/OCSConfigDialog.vue'
 import UrlContentDialog from '../components/home/UrlContentDialog.vue'
+import FolderPickerDialog from '../components/FolderPickerDialog.vue'
 import MarkdownRender from 'markstream-vue'
+
 import 'markstream-vue/index.css'
 import ModelWarningDialog from '../components/home/ModelWarningDialog.vue'
 import JsonCodeViewer from '../components/home/JsonCodeViewer.vue'
@@ -535,7 +613,9 @@ const showOCSConfig = ref(false)
 
 // URL内容处理弹窗状态
 const showUrlContentDialog = ref(false)
+const showFolderPicker = ref(false)
 const urlContentData = ref({
+
   originalQuestion: '',
   originalOptions: '',
   serverResponse: ''
@@ -585,8 +665,11 @@ interface RequestLog {
     analysisResult: string | null
     analysisError: string
     streamingResponse: string
+    streamingReasoning: string
+    reasoningContent: string
     renderedHtml?: string // 将 URL 替换为 base64 后的展示 HTML
   }
+
 }
 
 const requestLogs = ref<RequestLog[]>([])
@@ -597,6 +680,106 @@ const slideInActive = ref(false)
 // 标签页相关状态
 const activeTab = ref('basic')
 const activeModelTab = ref('')
+const detailContent = ref<HTMLElement | null>(null)
+const customScrollbar = ref<HTMLElement | null>(null)
+const customScrollbarThumb = ref<HTMLElement | null>(null)
+const scrollbarVisible = ref(false)
+const scrollbarEnabled = ref(false)
+
+let isDraggingScrollbar = false
+let dragStartY = 0
+let dragStartScrollTop = 0
+let scrollHideTimer: ReturnType<typeof setTimeout> | null = null
+let detailContentObserver: MutationObserver | null = null
+
+const showScrollbar = () => {
+  if (!scrollbarEnabled.value) return
+  scrollbarVisible.value = true
+  if (scrollHideTimer) clearTimeout(scrollHideTimer)
+  scrollHideTimer = setTimeout(() => {
+    scrollbarVisible.value = false
+  }, 1500)
+}
+
+const updateScrollbarThumb = () => {
+  const content = detailContent.value
+  const thumb = customScrollbarThumb.value
+  const bar = customScrollbar.value
+  if (!content || !thumb || !bar) return
+
+  const maxScroll = content.scrollHeight - content.clientHeight
+  const hasOverflow = maxScroll > 0
+  scrollbarEnabled.value = hasOverflow
+
+  if (!hasOverflow) {
+    thumb.style.height = '0px'
+    thumb.style.transform = 'translateY(0)'
+    scrollbarVisible.value = false
+    return
+  }
+
+  const barHeight = bar.clientHeight || content.clientHeight
+  const ratio = content.clientHeight / content.scrollHeight
+  const thumbHeight = Math.max(barHeight * ratio, 36)
+  const maxThumbTop = Math.max(barHeight - thumbHeight, 0)
+  const thumbTop = maxScroll > 0 ? (content.scrollTop / maxScroll) * maxThumbTop : 0
+
+  thumb.style.height = `${thumbHeight}px`
+  thumb.style.transform = `translateY(${thumbTop}px)`
+}
+
+const onDetailScroll = () => {
+  updateScrollbarThumb()
+  showScrollbar()
+}
+
+const onScrollbarMousedown = (e: MouseEvent) => {
+  const thumb = customScrollbarThumb.value
+  const content = detailContent.value
+  const bar = customScrollbar.value
+  if (!thumb || !content || !bar || !scrollbarEnabled.value) return
+
+  isDraggingScrollbar = true
+  dragStartY = e.clientY
+  dragStartScrollTop = content.scrollTop
+  showScrollbar()
+
+  const onMousemove = (event: MouseEvent) => {
+    if (!isDraggingScrollbar) return
+    const thumbHeight = thumb.clientHeight
+    const barHeight = bar.clientHeight
+    const delta = event.clientY - dragStartY
+    const maxScroll = content.scrollHeight - content.clientHeight
+    const maxThumbTop = Math.max(barHeight - thumbHeight, 1)
+    content.scrollTop = dragStartScrollTop + (delta / maxThumbTop) * maxScroll
+  }
+
+  const onMouseup = () => {
+    isDraggingScrollbar = false
+    document.removeEventListener('mousemove', onMousemove)
+    document.removeEventListener('mouseup', onMouseup)
+  }
+
+  document.addEventListener('mousemove', onMousemove)
+  document.addEventListener('mouseup', onMouseup)
+  e.preventDefault()
+}
+
+const bindDetailContentObserver = async () => {
+  await nextTick()
+  detailContentObserver?.disconnect()
+  updateScrollbarThumb()
+
+  if (!detailContent.value) return
+  detailContentObserver = new MutationObserver(() => {
+    updateScrollbarThumb()
+  })
+  detailContentObserver.observe(detailContent.value, {
+    childList: true,
+    subtree: true,
+    characterData: true
+  })
+}
 
 // 接收来自顶层 App 的折叠触发器，并在切换顶层 tab 时收起详情面板
 const props = defineProps<{ collapseTrigger?: number }>()
@@ -605,6 +788,9 @@ watch(() => props.collapseTrigger, () => {
     closeRequestDetails()
   }
 })
+
+
+
 
 // 过滤后的请求日志（排除无请求头内容的记录）
 const filteredRequestLogs = computed(() => {
@@ -626,7 +812,30 @@ const filteredRequestLogs = computed(() => {
 const overlayWidth = ref(600) // 默认宽度
 const isResizing = ref(false)
 
+watch(showLogDetails, async (visible) => {
+  if (visible) {
+    await bindDetailContentObserver()
+    showScrollbar()
+    return
+  }
+
+  detailContentObserver?.disconnect()
+  detailContentObserver = null
+  scrollbarVisible.value = false
+  scrollbarEnabled.value = false
+  if (scrollHideTimer) {
+    clearTimeout(scrollHideTimer)
+    scrollHideTimer = null
+  }
+})
+
+watch([activeTab, activeModelTab, overlayWidth, () => selectedLog.value?.id], async () => {
+  if (!showLogDetails.value) return
+  await bindDetailContentObserver()
+})
+
 // 拖拽功能
+
 const startResize = (event: MouseEvent) => {
   isResizing.value = true
   document.addEventListener('mousemove', handleResize)
@@ -819,7 +1028,7 @@ const startSSEConnection = () => {
               existingLog.responseBody = logData.response_body || ''
               existingLog.stage = 'completed'
               console.log('更新的请求完成日志:', existingLog)
-              
+
               // 检查是否是URL检测响应，如果是则显示URL处理弹窗
               checkAndShowUrlDialog(existingLog)
             } else {
@@ -840,7 +1049,7 @@ const startSSEConnection = () => {
               }
               console.log('创建的请求完成日志（无开始记录）:', newLog)
               requestLogs.value.unshift(newLog)
-              
+
               // 检查是否是URL检测响应，如果是则显示URL处理弹窗
               checkAndShowUrlDialog(newLog)
             }
@@ -889,13 +1098,13 @@ const startSSEConnection = () => {
 
         console.log('模型调用响应数据:', responseData)
 
-    // 在请求详情中显示模型返回的内容
-    updateRequestDetailsWithModelResponse(responseData.request_id, responseData.content)
-    // 如果后端携带思考过程，一并更新
-    const reasoning = responseData.reasoning_content || responseData.reasoning || responseData.reasoningContent
-    if (reasoning) {
-      updateRequestDetailsWithModelReasoning(responseData.request_id, reasoning)
-    }
+        // 如果后端携带 reasoning_content，先更新思考过程，再更新最终结果
+        const reasoning = getReasoningContentValue(responseData)
+        if (reasoning) {
+          updateRequestDetailsWithModelReasoning(responseData.request_id, reasoning)
+        }
+        updateRequestDetailsWithModelResponse(responseData.request_id, responseData.content)
+
 
       } catch (error) {
         console.error('解析模型调用响应数据失败:', error, '原始数据:', event.data)
@@ -1283,14 +1492,14 @@ const testOCSConnection = async () => {
   try {
     const testUrl = `http://localhost:${serverPort.value}/query`
     console.log('测试OCS连接:', testUrl)
-    
+
     const response = await fetch(testUrl, {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json'
       }
     })
-    
+
     if (response.ok) {
       console.log('OCS连接测试成功')
       // 这里可以添加成功提示
@@ -1308,7 +1517,19 @@ const openModelSelector = () => {
   showModelSelector.value = true
 }
 
+const openFolderPicker = () => {
+  showFolderPicker.value = true
+}
+
+const handleFolderConfirm = async (folderId: number, folderName: string, folderPath: string) => {
+  showFolderPicker.value = false
+  set('questionSaveDir', folderPath || folderName)
+  set('questionSaveFolderId', folderId)
+  await save()
+}
+
 // 辅助方法：根据模型jsCode判断是否为思考模型，并通知后端
+
 async function updateThinkingModelFlag(model: AIModel | null): Promise<void> {
   try {
     if (!isTauri.value) return
@@ -1361,7 +1582,7 @@ const toggleNetworkAccess = async () => {
 // 模型选择相关方法
 const selectModel = (model: any) => {
   const category = model.category || 'text'
-  
+
   if (category === 'summary') {
     toggleSelectedSummaryModel(model.id)
   } else if (category === 'vision') {
@@ -1382,8 +1603,32 @@ const stripMarkdownCodeBlock = (content: string): string => {
   return content.replace(/^```[\w]*\n?/, '').replace(/\n?```$/, '')
 }
 
+const getReasoningContentValue = (payload: any): string => {
+  const candidates = [
+    payload?.reasoning_content,
+    payload?.reasoningContent,
+    payload?.reasoning,
+    payload?.delta?.reasoning_content,
+    payload?.delta?.reasoningContent,
+    payload?.delta?.reasoning,
+    payload?.message?.reasoning_content,
+    payload?.message?.reasoningContent,
+    payload?.message?.reasoning,
+    payload?.choices?.[0]?.delta?.reasoning_content,
+    payload?.choices?.[0]?.delta?.reasoningContent,
+    payload?.choices?.[0]?.delta?.reasoning,
+    payload?.choices?.[0]?.message?.reasoning_content,
+    payload?.choices?.[0]?.message?.reasoningContent,
+    payload?.choices?.[0]?.message?.reasoning
+  ]
+
+  const reasoning = candidates.find(value => typeof value === 'string' && value.length > 0)
+  return typeof reasoning === 'string' ? reasoning : ''
+}
+
 // 调用模型函数 - 支持流式显示
 const callModelWithStreaming = async (
+
   model: AIModel,
   query: string,
   requestId: string,
@@ -1392,7 +1637,7 @@ const callModelWithStreaming = async (
 ) => {
   // 获取模型所属的平台
   const platform = platforms.value.find(p => p.models.some(m => m.id === model.id))
-  
+
   if (!platform) {
     console.error('未找到模型所属平台 - 详细信息:')
     console.error('- 模型ID:', model.id)
@@ -1493,7 +1738,7 @@ const callModelWithStreaming = async (
                 lastProgressSentAt = now
               }
             }
-            const rc = chunk.reasoning_content ?? chunk.reasoning ?? chunk.reasoningContent
+            const rc = getReasoningContentValue(chunk)
             if (rc) {
               fullReasoning += rc
               if (onReasoning) {
@@ -1513,7 +1758,20 @@ const callModelWithStreaming = async (
           return fullResponse
         } else {
           // 非流式响应，直接返回
-          const response = typeof result === 'string' ? result : JSON.stringify(result)
+          const response = typeof result === 'string'
+            ? result
+            : typeof result?.content === 'string'
+              ? result.content
+              : JSON.stringify(result)
+          const reasoning = typeof result === 'string' ? '' : getReasoningContentValue(result)
+
+          if (reasoning) {
+            if (onReasoning) {
+              onReasoning(reasoning)
+            } else {
+              updateStreamingReasoning(requestId, reasoning)
+            }
+          }
           if (onChunk) {
             onChunk(response)
           } else {
@@ -1521,6 +1779,7 @@ const callModelWithStreaming = async (
           }
           return response
         }
+
       } else {
         throw new Error('模型配置代码未返回有效结果')
       }
@@ -1562,8 +1821,23 @@ const updateMultiModelStreamingReasoning = (requestId: string, modelId: string, 
   const log = requestLogs.value.find(l => l.id === requestId)
   if (!log || !log.multiModelResponses) return
   const entry = log.multiModelResponses.find(r => r.modelId === modelId)
-  if (entry) entry.streamingReasoning = reasoning
+  if (entry) {
+    entry.streamingReasoning = reasoning
+  }
 }
+
+const finalizeMultiModelReasoning = (requestId: string, modelId: string) => {
+  const log = requestLogs.value.find(l => l.id === requestId)
+  if (!log || !log.multiModelResponses) return
+  const entry = log.multiModelResponses.find(r => r.modelId === modelId)
+  if (!entry) return
+
+  const finalReasoning = (entry.reasoningContent || entry.streamingReasoning || '').trim()
+  entry.reasoningContent = finalReasoning
+  entry.streamingReasoning = ''
+}
+
+
 
 // 调用模型函数
 const callModel = async (model: AIModel, query: string) => {
@@ -1654,7 +1928,7 @@ const callModel = async (model: AIModel, query: string) => {
 onMounted(async () => {
   // 初始化服务器端口为配置端口
   serverPort.value = configuredPort.value
-  
+
   // 首先检测 Tauri 环境
   await checkTauriEnvironment()
 
@@ -1758,7 +2032,7 @@ const callModelAPI = async (requestId: string, query: string) => {
   }
 
   const logIndex = requestLogs.value.findIndex(l => l.id === requestId)
-  
+
   // --- 阶段 1: 基础模型调用 (Base Model Phase) ---
   if (logIndex !== -1) {
     requestLogs.value[logIndex].isModelCalling = true
@@ -1766,7 +2040,7 @@ const callModelAPI = async (requestId: string, query: string) => {
     requestLogs.value[logIndex].streamingReasoning = undefined
     requestLogs.value[logIndex].reasoningContent = undefined
     requestLogs.value[logIndex].modelInfo = undefined
-    
+
     // 初始化多模型响应数组
     requestLogs.value[logIndex].multiModelResponses = selectedModels.map(model => {
       const platform = platforms.value.find(p => p.models.some(m => m.id === model.id))
@@ -1814,7 +2088,9 @@ const callModelAPI = async (requestId: string, query: string) => {
           const entry = log.multiModelResponses.find(r => r.modelId === model.id)
           if (entry) { entry.isLoading = false; entry.response = strippedResponse }
         }
+        finalizeMultiModelReasoning(requestId, model.id)
         return strippedResponse
+
       } catch (error) {
         const errText = `错误: ${error instanceof Error ? error.message : '模型调用失败'}`
         const log = requestLogs.value.find(l => l.id === requestId)
@@ -1840,14 +2116,14 @@ const callModelAPI = async (requestId: string, query: string) => {
 
   if (summaryModels.length > 0 && successfulResults.length > 0) {
     console.log('开始总结阶段:', summaryModels.map(m => m.displayName))
-    
+
     // 在日志中添加总结模型的占位项（如果尚未在多模型数组中）
     const log = requestLogs.value.find(l => l.id === requestId)
     if (log) {
       if (!log.multiModelResponses) {
         log.multiModelResponses = []
       }
-      
+
       // 避免重复添加（针对可能的并发重试）
       const existingIds = new Set(log.multiModelResponses.map(r => r.modelId))
       summaryModels.forEach(model => {
@@ -1885,15 +2161,18 @@ ${baseCombinedResponse}
             model,
             summaryQuery,
             requestId,
-            (content) => updateMultiModelStreamingResponse(requestId, summaryKey, content),
+            (content) => updateMultiModelStreamingResponse(requestId, summaryKey, stripMarkdownCodeBlock(content)),
             (reasoning) => updateMultiModelStreamingReasoning(requestId, summaryKey, reasoning)
           )
+          const strippedResponse = stripMarkdownCodeBlock(response)
           const l = requestLogs.value.find(l => l.id === requestId)
           if (l?.multiModelResponses) {
             const entry = l.multiModelResponses.find(r => r.modelId === summaryKey)
-            if (entry) { entry.isLoading = false; entry.response = response }
+            if (entry) { entry.isLoading = false; entry.response = strippedResponse }
           }
-          return response
+          finalizeMultiModelReasoning(requestId, summaryKey)
+          return strippedResponse
+
         } catch (error) {
           const errText = `错误: ${error instanceof Error ? error.message : '总结失败'}`
           const l = requestLogs.value.find(l => l.id === requestId)
@@ -1905,20 +2184,27 @@ ${baseCombinedResponse}
         }
       })
     )
-    
-    finalOutput = summaryModels.length === 1 
-      ? summaryResults[0] 
+
+    finalOutput = summaryModels.length === 1
+      ? summaryResults[0]
       : summaryModels.map((m, i) => `[${m.displayName} 总结]\n${summaryResults[i]}`).join('\n\n')
-    
-    await sendModelResponseToBackend(requestId, finalOutput, !finalOutput.startsWith('错误:'))
+
+    const finalReasoning = summaryModels.length === 1
+      ? getRequestReasoningForBackend(requestId, `summary:${summaryModels[0].id}`)
+      : ''
+    await sendModelResponseToBackend(requestId, finalOutput, !finalOutput.startsWith('错误:'), finalReasoning)
   } else {
     // 无总结模型或全部基础模型失败，直接发送基础结果
     const fallbackResponse = selectedModels.length === 1
       ? results[0]
       : selectedModels.map((model, i) => `[${model.displayName}]\n${results[i]}`).join('\n\n')
     finalOutput = fallbackResponse
-    await sendModelResponseToBackend(requestId, finalOutput, successfulResults.length > 0)
+    const finalReasoning = selectedModels.length === 1
+      ? getRequestReasoningForBackend(requestId, selectedModels[0].id)
+      : ''
+    await sendModelResponseToBackend(requestId, finalOutput, successfulResults.length > 0, finalReasoning)
   }
+
 
   // --- 结束 ---
   const finalLogIdx = requestLogs.value.findIndex(l => l.id === requestId)
@@ -1960,8 +2246,41 @@ watch(globalSelectedTextModels, (newModels) => {
   }
 })
 
+const finalModelResponseState = new Map<string, 'success' | 'error'>()
+
+const getRequestReasoningForBackend = (requestId: string, modelId?: string): string => {
+  const log = requestLogs.value.find(entry => entry.id === requestId)
+  if (!log) return ''
+
+  if (modelId && log.multiModelResponses) {
+    const target = log.multiModelResponses.find(entry => entry.modelId === modelId)
+    return (target?.reasoningContent || target?.streamingReasoning || '').trim()
+  }
+
+  if (log.reasoningContent || log.streamingReasoning) {
+    return (log.reasoningContent || log.streamingReasoning || '').trim()
+  }
+
+  if (log.multiModelResponses?.length === 1) {
+    const onlyEntry = log.multiModelResponses[0]
+    return (onlyEntry.reasoningContent || onlyEntry.streamingReasoning || '').trim()
+  }
+
+  return ''
+}
+
 // 发送模型响应到后端
-const sendModelResponseToBackend = async (requestId: string, content: string, isSuccess: boolean = true) => {
+const sendModelResponseToBackend = async (requestId: string, content: string, isSuccess: boolean = true, reasoningContent = '') => {
+  const existingState = finalModelResponseState.get(requestId)
+  if (existingState === 'success') {
+    console.warn('忽略重复的模型最终响应（已成功发送）:', { requestId, isSuccess })
+    return
+  }
+  if (existingState === 'error' && !isSuccess) {
+    console.warn('忽略重复的模型错误响应:', { requestId })
+    return
+  }
+
   try {
     const response = await fetch(`${serverUrl.value}/api/model/response`, {
       method: 'POST',
@@ -1970,15 +2289,19 @@ const sendModelResponseToBackend = async (requestId: string, content: string, is
       },
       body: JSON.stringify({
         request_id: requestId,
-        content: content
+        content: content,
+        reasoning_content: reasoningContent || undefined,
+        is_success: isSuccess
       })
     })
+
 
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`)
     }
 
-    console.log('模型响应已发送到后端:', { requestId, content })
+    finalModelResponseState.set(requestId, isSuccess ? 'success' : 'error')
+    console.log('模型响应已发送到后端:', { requestId, content, reasoningContent, isSuccess })
 
     // 只有在成功调用模型时才存储AI响应到数据库
     if (isSuccess) {
@@ -1994,6 +2317,7 @@ const sendModelResponseToBackend = async (requestId: string, content: string, is
     console.error('发送模型响应到后端失败:', error)
   }
 }
+
 
 // 发送模型进度到后端（用于流式输出期间的活跃心跳）
 const sendModelProgressToBackend = async (requestId: string, content: string) => {
@@ -2066,7 +2390,7 @@ const storeAIResponseToDatabase = async (requestId: string, content: string) => 
             return obj.anwser
           }
         }
-      } catch {}
+      } catch { }
 
       // 从末尾提取最后一个平衡的JSON对象
       const extractLastBalancedJson = (s: string): string | null => {
@@ -2125,7 +2449,12 @@ const storeAIResponseToDatabase = async (requestId: string, content: string) => 
       return text
     }
 
-    extractedAnswer = extractAnswerFromMixedContent(cleanedContent)
+    extractedAnswer = extractAnswerFromMixedContent(cleanedContent).trim()
+
+    if (!extractedAnswer) {
+      console.warn('⚠️ AI最终处理结果答案为空，跳过保存题目', { requestId, title })
+      return
+    }
 
     // 使用数据库服务存储AI响应
     await databaseService.addQuestion({
@@ -2138,6 +2467,7 @@ const storeAIResponseToDatabase = async (requestId: string, content: string) => 
     })
 
     console.log('✅ AI响应已成功存储到数据库:', { requestId, title, extractedAnswer, contentLength: extractedAnswer.length })
+
   } catch (error) {
     console.error('❌ 存储AI响应到数据库失败:', error)
   }
@@ -2150,9 +2480,16 @@ const updateRequestDetailsWithModelResponse = (requestId: string, content: strin
   // 找到对应的请求记录并更新模型响应
   const logIndex = requestLogs.value.findIndex(log => log.id === requestId)
   if (logIndex !== -1) {
-    requestLogs.value[logIndex].modelResponse = content
-    requestLogs.value[logIndex].isModelCalling = false
-    console.log('请求记录已更新:', requestLogs.value[logIndex])
+    const log = requestLogs.value[logIndex]
+    log.modelResponse = content
+    log.isModelCalling = false
+
+    if (log.multiModelResponses?.length === 1) {
+      log.multiModelResponses[0].response = content
+      log.multiModelResponses[0].isLoading = false
+    }
+
+    console.log('请求记录已更新:', log)
   }
 }
 
@@ -2161,13 +2498,24 @@ const updateRequestDetailsWithModelReasoning = (requestId: string, reasoning: st
   console.log('更新请求详情中的模型思考过程:', { requestId, reasoning })
   const logIndex = requestLogs.value.findIndex(log => log.id === requestId)
   if (logIndex !== -1) {
-    requestLogs.value[logIndex].reasoningContent = reasoning
-    console.log('请求记录思考过程已更新:', requestLogs.value[logIndex])
+    const log = requestLogs.value[logIndex]
+    log.reasoningContent = reasoning
+    log.streamingReasoning = ''
+
+    if (log.multiModelResponses?.length === 1) {
+      log.multiModelResponses[0].reasoningContent = reasoning
+      log.multiModelResponses[0].streamingReasoning = ''
+      log.multiModelResponses[0].isLoading = false
+    }
+
+    console.log('请求记录思考过程已更新:', log)
   }
 }
 
+
 // 已处理的请求ID集合，用于避免重复处理
 const processedRequestIds = new Set<string>()
+const activeUrlAnalysisRequestIds = new Set<string>()
 
 // 处理 URL 题目请求（由 SSE model_call_request 事件触发）
 const handleUrlQuestionRequest = async (requestId: string, rawTitle: string) => {
@@ -2191,13 +2539,14 @@ const handleUrlQuestionRequest = async (requestId: string, rawTitle: string) => 
       try {
         const rb = JSON.parse(matchedLog.requestBody)
         originalOptions = rb.options || ''
-      } catch (e) {}
+      } catch (e) { }
     }
   }
 
   // 在对应 log 上标记为 URL 题目，在详情面板内处理
   // SSE model_call_request 可能比 started 日志事件更早到达，需要重试等待 log 出现
-  const urlQuestionData = {
+  const urlQuestionData: NonNullable<RequestLog['urlQuestion']> = {
+
     title,
     options: originalOptions,
     imageUrl: null as string | null,
@@ -2205,8 +2554,11 @@ const handleUrlQuestionRequest = async (requestId: string, rawTitle: string) => 
     analysisResult: null as string | null,
     analysisError: '',
     streamingResponse: '',
+    streamingReasoning: '',
+    reasoningContent: '',
     renderedHtml: undefined as string | undefined
   }
+
 
   const applyAndAnalyze = () => {
     const logIndex = requestLogs.value.findIndex(l => l.id === requestId)
@@ -2247,10 +2599,12 @@ const handleUrlQuestionRequest = async (requestId: string, rawTitle: string) => 
         } else if (retries >= 30) {
           clearInterval(timer)
           console.warn('handleUrlQuestionRequest: log 未在 3 秒内出现，放弃:', requestId)
+          void sendModelResponseToBackend(requestId, '错误: 未找到对应请求日志，无法处理 URL 题目', false)
         }
       }, 100)
     }
   }
+
 
   applyAndAnalyze()
 }
@@ -2263,28 +2617,28 @@ const checkAndShowUrlDialog = async (log: RequestLog) => {
       console.log('⚠️ 请求已处理过，跳过:', log.id)
       return
     }
-    
+
     // 解析响应体
     if (log.responseBody) {
       const responseData = JSON.parse(log.responseBody)
-      
+
       // 检查是否是URL检测响应
-      if (responseData.code === 1 && 
-          responseData.data && 
-          (
-            // data 是对象的情况
-            (responseData.data.answer === '题目中含有URL，无法直接展示') ||
-            // data 是数组的情况
-            (Array.isArray(responseData.data) && responseData.data[0]?.answer === '题目中含有URL，无法直接展示')
-          )) {
-        
+      if (responseData.code === 1 &&
+        responseData.data &&
+        (
+          // data 是对象的情况
+          (responseData.data.answer === '题目中含有URL，无法直接展示') ||
+          // data 是数组的情况
+          (Array.isArray(responseData.data) && responseData.data[0]?.answer === '题目中含有URL，无法直接展示')
+        )) {
+
         // 标记请求为已处理
         processedRequestIds.add(log.id)
-        
+
         // 从请求体中提取原始问题和选项
         let originalQuestion = ''
         let originalOptions = ''
-        
+
         if (log.requestBody) {
           try {
             const requestData = JSON.parse(log.requestBody)
@@ -2294,7 +2648,7 @@ const checkAndShowUrlDialog = async (log: RequestLog) => {
             console.error('解析请求体失败:', e)
           }
         }
-        
+
         // 构建题目数据结构
         const questionData = {
           id: `question_${Date.now()}_${log.id}`, // 包含请求ID确保唯一性
@@ -2305,162 +2659,162 @@ const checkAndShowUrlDialog = async (log: RequestLog) => {
           requestId: log.id, // 保存原始请求ID
           isNew: true // 标记为新题目
         }
-        
+
         // 检查是否已有URL内容窗口打开
         const existingQuestions = getExistingQuestions()
-        
+
         // 将新题目添加到列表开头，让最新题目显示在最上方
         existingQuestions.unshift(questionData)
-        
+
         console.log('✅ 添加新题目到列表顶部:', {
           questionData,
           totalQuestions: existingQuestions.length
         })
-        
+
         // 保存题目数据到本地存储（先保存，确保数据不丢失）
         saveQuestionsToStorage(existingQuestions)
-        
+
         // 尝试检查窗口是否已存在
         let windowExists = false
         try {
           const { invoke } = await import('@tauri-apps/api/core')
-          
+
           // 先尝试检查窗口是否存在
-           try {
-             const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow')
-             
-             // 方法1: 尝试直接获取窗口实例
-              let existingWindow = null
-              try {
-                // getByLabel 可能返回 Promise，需要正确处理
-                const windowResult = WebviewWindow.getByLabel('url-content')
-                console.log('🔍 getByLabel结果:', windowResult)
-                console.log('🔍 窗口对象类型:', typeof windowResult)
-                
-                // 检查是否是 Promise
-                if (windowResult && typeof windowResult.then === 'function') {
-                  console.log('🔍 getByLabel返回Promise，等待解析...')
-                  existingWindow = await windowResult
-                } else {
-                  existingWindow = windowResult
-                }
-                
-                console.log('🔍 解析后的窗口对象:', existingWindow)
-                console.log('🔍 窗口对象属性:', Object.keys(existingWindow || {}))
-              } catch (getLabelError) {
-                console.log('🔍 getByLabel失败:', getLabelError)
+          try {
+            const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow')
+
+            // 方法1: 尝试直接获取窗口实例
+            let existingWindow = null
+            try {
+              // getByLabel 可能返回 Promise，需要正确处理
+              const windowResult = WebviewWindow.getByLabel('url-content')
+              console.log('🔍 getByLabel结果:', windowResult)
+              console.log('🔍 窗口对象类型:', typeof windowResult)
+
+              // 检查是否是 Promise
+              if (windowResult && typeof windowResult.then === 'function') {
+                console.log('🔍 getByLabel返回Promise，等待解析...')
+                existingWindow = await windowResult
+              } else {
+                existingWindow = windowResult
               }
-             
-             if (existingWindow) {
-               console.log('✅ 检测到已存在的URL内容窗口')
-               
-               // 检查窗口是否真的可用 - 使用更全面的方法
-                 let windowIsUsable = false
-                 try {
-                   console.log('🔍 开始检查窗口可用性')
-                   console.log('🔍 existingWindow.label:', existingWindow.label)
-                   console.log('🔍 existingWindow.label类型:', typeof existingWindow.label)
-                   
-                   // 方法1: 检查基本属性
-                   if (typeof existingWindow.label === 'string') {
-                     console.log('✅ 窗口基本属性可用，标签:', existingWindow.label)
-                     
-                     // 方法2: 尝试检查窗口状态（如果方法存在）
-                     let statusChecked = false
-                     try {
-                       console.log('🔍 检查isVisible方法:', typeof existingWindow.isVisible)
-                       if (existingWindow.isVisible) {
-                         const isVisible = await existingWindow.isVisible()
-                         console.log('✅ 窗口可见状态:', isVisible)
-                         statusChecked = true
-                       }
-                     } catch (visibilityError) {
-                       console.log('⚠️ 无法检查窗口可见性，但窗口可能仍然可用:', visibilityError)
-                     }
-                     
-                     // 方法3: 尝试检查窗口是否最小化（如果方法存在）
-                     try {
-                       console.log('🔍 检查isMinimized方法:', typeof existingWindow.isMinimized)
-                       if (existingWindow.isMinimized) {
-                         const isMinimized = await existingWindow.isMinimized()
-                         console.log('✅ 窗口最小化状态:', isMinimized)
-                         statusChecked = true
-                       }
-                     } catch (minimizedError) {
-                       console.log('⚠️ 无法检查窗口最小化状态:', minimizedError)
-                     }
-                     
-                     // 如果基本属性可用，就认为窗口可用
-                     windowIsUsable = true
-                     console.log('✅ 窗口被认定为可用')
-                   } else {
-                     console.log('❌ 窗口基本属性不可用，label:', existingWindow.label, '类型:', typeof existingWindow.label)
-                   }
-                 } catch (testError) {
-                   console.log('🔍 窗口可用性检查异常:', testError)
-                 }
-               
-               if (windowIsUsable) {
-                 windowExists = true
-                 
-                 // 窗口已存在，通过事件通信来更新数据
-                 try {
-                   // 方法1: 通过事件发送新题目数据
-                   const { emit } = await import('@tauri-apps/api/event')
-                   await emit('new-question-added', {
-                     windowId: currentUrlWindowId.value,
-                     questions: existingQuestions,
-                     latestQuestion: questionData
-                   })
-                   
-                   // 尝试聚焦到窗口
-                   try {
-                     if (existingWindow.setFocus) {
-                       await existingWindow.setFocus()
-                     } else {
-                       console.log('⚠️ setFocus方法不可用，跳过聚焦')
-                     }
-                   } catch (focusError) {
-                     console.log('⚠️ 聚焦窗口失败:', focusError)
-                   }
-                   
-                   console.log('✅ 已通过事件更新现有窗口的题目数据:', {
-                     totalQuestions: existingQuestions.length,
-                     latestQuestion: questionData
-                   })
-                   
-                   return // 成功更新，直接返回
-                 } catch (eventError) {
-                   console.error('❌ 事件通信失败，尝试关闭并重新创建窗口:', eventError)
-                   
-                   // 方法2: 关闭现有窗口并重新创建
-                   try {
-                     if (existingWindow.close) {
-                       await existingWindow.close()
-                     } else {
-                       console.log('⚠️ close方法不可用，无法关闭窗口')
-                     }
-                     windowExists = false // 标记为不存在，后续会创建新窗口
-                     
-                     // 等待一小段时间确保窗口完全关闭
-                     await new Promise(resolve => setTimeout(resolve, 1000))
-                     
-                     console.log('✅ 已关闭现有窗口，准备创建新窗口')
-                   } catch (closeError) {
-                     console.error('❌ 关闭窗口也失败:', closeError)
-                     windowExists = false
-                   }
-                 }
-               } else {
-                 console.log('🔍 窗口存在但不可用，标记为需要重建')
-                 windowExists = false
-               }
-             }
-           } catch (checkError) {
-             console.log('🔍 窗口检查失败，可能窗口不存在:', checkError)
-             windowExists = false
-           }
-          
+
+              console.log('🔍 解析后的窗口对象:', existingWindow)
+              console.log('🔍 窗口对象属性:', Object.keys(existingWindow || {}))
+            } catch (getLabelError) {
+              console.log('🔍 getByLabel失败:', getLabelError)
+            }
+
+            if (existingWindow) {
+              console.log('✅ 检测到已存在的URL内容窗口')
+
+              // 检查窗口是否真的可用 - 使用更全面的方法
+              let windowIsUsable = false
+              try {
+                console.log('🔍 开始检查窗口可用性')
+                console.log('🔍 existingWindow.label:', existingWindow.label)
+                console.log('🔍 existingWindow.label类型:', typeof existingWindow.label)
+
+                // 方法1: 检查基本属性
+                if (typeof existingWindow.label === 'string') {
+                  console.log('✅ 窗口基本属性可用，标签:', existingWindow.label)
+
+                  // 方法2: 尝试检查窗口状态（如果方法存在）
+                  let statusChecked = false
+                  try {
+                    console.log('🔍 检查isVisible方法:', typeof existingWindow.isVisible)
+                    if (existingWindow.isVisible) {
+                      const isVisible = await existingWindow.isVisible()
+                      console.log('✅ 窗口可见状态:', isVisible)
+                      statusChecked = true
+                    }
+                  } catch (visibilityError) {
+                    console.log('⚠️ 无法检查窗口可见性，但窗口可能仍然可用:', visibilityError)
+                  }
+
+                  // 方法3: 尝试检查窗口是否最小化（如果方法存在）
+                  try {
+                    console.log('🔍 检查isMinimized方法:', typeof existingWindow.isMinimized)
+                    if (existingWindow.isMinimized) {
+                      const isMinimized = await existingWindow.isMinimized()
+                      console.log('✅ 窗口最小化状态:', isMinimized)
+                      statusChecked = true
+                    }
+                  } catch (minimizedError) {
+                    console.log('⚠️ 无法检查窗口最小化状态:', minimizedError)
+                  }
+
+                  // 如果基本属性可用，就认为窗口可用
+                  windowIsUsable = true
+                  console.log('✅ 窗口被认定为可用')
+                } else {
+                  console.log('❌ 窗口基本属性不可用，label:', existingWindow.label, '类型:', typeof existingWindow.label)
+                }
+              } catch (testError) {
+                console.log('🔍 窗口可用性检查异常:', testError)
+              }
+
+              if (windowIsUsable) {
+                windowExists = true
+
+                // 窗口已存在，通过事件通信来更新数据
+                try {
+                  // 方法1: 通过事件发送新题目数据
+                  const { emit } = await import('@tauri-apps/api/event')
+                  await emit('new-question-added', {
+                    windowId: currentUrlWindowId.value,
+                    questions: existingQuestions,
+                    latestQuestion: questionData
+                  })
+
+                  // 尝试聚焦到窗口
+                  try {
+                    if (existingWindow.setFocus) {
+                      await existingWindow.setFocus()
+                    } else {
+                      console.log('⚠️ setFocus方法不可用，跳过聚焦')
+                    }
+                  } catch (focusError) {
+                    console.log('⚠️ 聚焦窗口失败:', focusError)
+                  }
+
+                  console.log('✅ 已通过事件更新现有窗口的题目数据:', {
+                    totalQuestions: existingQuestions.length,
+                    latestQuestion: questionData
+                  })
+
+                  return // 成功更新，直接返回
+                } catch (eventError) {
+                  console.error('❌ 事件通信失败，尝试关闭并重新创建窗口:', eventError)
+
+                  // 方法2: 关闭现有窗口并重新创建
+                  try {
+                    if (existingWindow.close) {
+                      await existingWindow.close()
+                    } else {
+                      console.log('⚠️ close方法不可用，无法关闭窗口')
+                    }
+                    windowExists = false // 标记为不存在，后续会创建新窗口
+
+                    // 等待一小段时间确保窗口完全关闭
+                    await new Promise(resolve => setTimeout(resolve, 1000))
+
+                    console.log('✅ 已关闭现有窗口，准备创建新窗口')
+                  } catch (closeError) {
+                    console.error('❌ 关闭窗口也失败:', closeError)
+                    windowExists = false
+                  }
+                }
+              } else {
+                console.log('🔍 窗口存在但不可用，标记为需要重建')
+                windowExists = false
+              }
+            }
+          } catch (checkError) {
+            console.log('🔍 窗口检查失败，可能窗口不存在:', checkError)
+            windowExists = false
+          }
+
           // 如果窗口不存在，创建新窗口
           if (!windowExists) {
             currentUrlWindowId.value = `w${Date.now()}`
@@ -2468,16 +2822,16 @@ const checkAndShowUrlDialog = async (log: RequestLog) => {
               questions: JSON.stringify(existingQuestions),
               windowId: currentUrlWindowId.value
             })
-            
+
             console.log('✅ URL内容处理窗口创建成功:', {
               totalQuestions: existingQuestions.length,
               latestQuestion: questionData
             })
           }
-          
+
         } catch (error) {
           console.error('❌ 处理URL内容窗口失败:', error)
-          
+
           // 如果所有方法都失败，回退到原来的弹窗方式
           urlContentData.value = {
             originalQuestion,
@@ -2485,7 +2839,7 @@ const checkAndShowUrlDialog = async (log: RequestLog) => {
             serverResponse: responseData.data.answer
           }
           showUrlContentDialog.value = true
-          
+
           console.log('⚠️ 回退到弹窗模式显示URL内容')
         }
       }
@@ -2544,29 +2898,217 @@ const resolveUrlAnswer = (response: string, optionMap: Map<string, string>): str
 
 // 将题目文本按 URL 拆分，组装成交错的多模态 content 数组
 // 例："题目文字 http://xxx.gif 更多文字" →
-// 将文本中所有 URL 通过后端转为 base64，返回替换后的 HTML 字符串
-const buildRenderedHtml = async (title: string, options: string): Promise<string> => {
-  const text = title + (options ? '\n\n选项：\n' + options : '')
-  const urlRegex = /https?:\/\/[^\s\u4e00-\u9fff\uff00-\uffef，。；：！？""''（）【】《》]+/g
-  const urls = Array.from(new Set(Array.from(text.matchAll(urlRegex)).map(m => m[0].replace(/[.,;!?]*$/, ''))))
+const createUrlQuestionRegex = () => /https?:\/\/[^\s\u4e00-\u9fff\uff00-\uffef，。；：！？""''（）【】《》]+/g
 
-  // 并发获取所有图片 base64
-  const base64Map = new Map<string, string>()
-  await Promise.all(urls.map(async (url) => {
-    try {
-      const { invoke: tauriInvoke } = await import('@tauri-apps/api/core')
-      const b64 = await tauriInvoke('fetch_image_as_base64', { url }) as string
-      base64Map.set(url, b64)
-    } catch {
-      base64Map.set(url, '') // 失败时留空，降级为文字
+const normalizeQuestionUrl = (rawUrl: string): string => {
+  return rawUrl
+    .trim()
+    .replace(/[.,;!?]*$/, '')
+    .replace(/(\.(?:png|jpe?g|gif|webp|bmp|svg))(=+)$/i, '$1')
+}
+
+const fetchQuestionImageBase64 = async (url: string): Promise<string> => {
+  try {
+    const { invoke: tauriInvoke } = await import('@tauri-apps/api/core')
+    return await tauriInvoke('fetch_image_as_base64', { url }) as string
+  } catch {
+    return ''
+  }
+}
+
+const DEFAULT_VISION_IMAGE_MIN_SIZE = 32
+
+const applyWhiteBackgroundToDataUrl = async (dataUrl: string): Promise<string> => {
+  if (!dataUrl.startsWith('data:image/')) return dataUrl
+
+  return await new Promise((resolve) => {
+
+    const img = new Image()
+    img.onload = () => {
+      try {
+        const width = img.naturalWidth || img.width
+        const height = img.naturalHeight || img.height
+        if (!width || !height) {
+          resolve(dataUrl)
+          return
+        }
+
+        const canvas = document.createElement('canvas')
+        canvas.width = width
+        canvas.height = height
+        const ctx = canvas.getContext('2d')
+        if (!ctx) {
+          resolve(dataUrl)
+          return
+        }
+
+        ctx.fillStyle = '#ffffff'
+        ctx.fillRect(0, 0, width, height)
+        ctx.drawImage(img, 0, 0, width, height)
+        resolve(canvas.toDataURL('image/png'))
+      } catch {
+        resolve(dataUrl)
+      }
+    }
+    img.onerror = () => resolve(dataUrl)
+    img.src = dataUrl
+  })
+}
+
+const ensureDataUrlMinimumSize = async (dataUrl: string, minimumSize = 32): Promise<string> => {
+  if (!dataUrl.startsWith('data:image/')) return dataUrl
+
+  return await new Promise((resolve) => {
+    const img = new Image()
+    img.onload = () => {
+      try {
+        const width = img.naturalWidth || img.width
+        const height = img.naturalHeight || img.height
+        if (!width || !height || (width >= minimumSize && height >= minimumSize)) {
+          resolve(dataUrl)
+          return
+        }
+
+        const scale = Math.max(minimumSize / width, minimumSize / height, 1)
+        const targetWidth = Math.max(Math.ceil(width * scale), minimumSize)
+        const targetHeight = Math.max(Math.ceil(height * scale), minimumSize)
+
+        const canvas = document.createElement('canvas')
+        canvas.width = targetWidth
+        canvas.height = targetHeight
+        const ctx = canvas.getContext('2d')
+        if (!ctx) {
+          resolve(dataUrl)
+          return
+        }
+
+        ctx.fillStyle = '#ffffff'
+        ctx.fillRect(0, 0, targetWidth, targetHeight)
+        ctx.imageSmoothingEnabled = true
+        ctx.drawImage(img, 0, 0, targetWidth, targetHeight)
+        resolve(canvas.toDataURL('image/png'))
+      } catch {
+        resolve(dataUrl)
+      }
+    }
+    img.onerror = () => resolve(dataUrl)
+    img.src = dataUrl
+  })
+}
+
+const extractVisionImageSizeError = (error: unknown): number | null => {
+  const message = error instanceof Error ? error.message : String(error || '')
+  if (!/(code"?\s*:\s*20015|height\(\d+\)\s*or\s*width\(\d+\))/i.test(message)) {
+    return null
+  }
+
+  const match = message.match(/height\((\d+)\)\s*or\s*width\((\d+)\)/i)
+  if (!match) return 32
+
+  const height = Number(match[1])
+  const width = Number(match[2])
+  if (!Number.isFinite(height) || !Number.isFinite(width)) return 32
+
+  return Math.max(DEFAULT_VISION_IMAGE_MIN_SIZE, Math.min(Math.max(height, width) + 16, 96))
+}
+
+
+const upscaleMultimodalContentImages = async (content: any[], minimumSize: number): Promise<{ content: any[], changed: boolean }> => {
+  let changed = false
+  const nextContent = await Promise.all(content.map(async (part) => {
+    if (part?.type !== 'image_url') return part
+
+    const originalUrl = part?.image_url?.url
+    if (typeof originalUrl !== 'string' || !originalUrl.startsWith('data:image/')) return part
+
+    const resizedUrl = await ensureDataUrlMinimumSize(originalUrl, minimumSize)
+    if (resizedUrl === originalUrl) return part
+
+    changed = true
+    return {
+      ...part,
+      image_url: {
+        ...part.image_url,
+        url: resizedUrl
+      }
     }
   }))
 
+  return { content: nextContent, changed }
+}
+
+const prepareVisionRequestContent = async (content: any[], minimumSize = DEFAULT_VISION_IMAGE_MIN_SIZE): Promise<any[]> => {
+  if (!Array.isArray(content) || content.length === 0) return content
+
+  const { content: normalizedContent, changed } = await upscaleMultimodalContentImages(content, minimumSize)
+  if (changed) {
+    console.warn(`发送视觉请求前检测到图片尺寸不足，已自动放大到至少 ${minimumSize}px`)
+  }
+
+  return normalizedContent
+}
+
+
+const executeVisionModelWithAutoUpscale = async (processModel: any, input: any, config: any) => {
+
+
+  try {
+    return await processModel(input, config)
+  } catch (error) {
+    const minimumSize = extractVisionImageSizeError(error)
+    const originalContent = input?.messages?.[0]?.content
+    if (!minimumSize || !Array.isArray(originalContent)) {
+      throw error
+    }
+
+    const { content, changed } = await upscaleMultimodalContentImages(originalContent, minimumSize)
+    if (!changed) {
+      throw error
+    }
+
+    console.warn(`视觉模型图片尺寸不足，已自动放大到至少 ${minimumSize}px 后重试一次`)
+    return await processModel({
+      ...input,
+      messages: [{
+        ...input.messages[0],
+        content
+      }]
+    }, config)
+  }
+}
+
+const buildQuestionImageMap = async (text: string): Promise<Map<string, string>> => {
+
+  const urlRegex = createUrlQuestionRegex()
+  const urls = Array.from(new Set(Array.from(text.matchAll(urlRegex)).map(m => normalizeQuestionUrl(m[0]))))
+  const base64Map = new Map<string, string>()
+
+  await Promise.all(urls.map(async (url) => {
+    const b64 = await fetchQuestionImageBase64(url)
+    if (!b64) {
+      base64Map.set(url, '')
+      return
+    }
+
+    const normalizedImage = await applyWhiteBackgroundToDataUrl(b64)
+    base64Map.set(url, await ensureDataUrlMinimumSize(normalizedImage, 32))
+  }))
+
+
+  return base64Map
+}
+
+// 将文本中所有 URL 通过后端转为 base64，返回替换后的 HTML 字符串
+const buildRenderedHtml = async (title: string, options: string): Promise<string> => {
+  const text = title + (options ? '\n\n选项：\n' + options : '')
+  const urlRegex = createUrlQuestionRegex()
+  const base64Map = await buildQuestionImageMap(text)
+
   // 替换文本中的 URL 为 img 标签或文字占位
   return text.replace(urlRegex, (raw) => {
-    const url = raw.replace(/[.,;!?]*$/, '')
+    const url = normalizeQuestionUrl(raw)
     const b64 = base64Map.get(url)
-    if (b64) return `<img src="${b64}" style="max-width:100%;vertical-align:middle;" />`
+    if (b64) return `<img src="${b64}" style="max-width:100%;vertical-align:middle;background:#fff;display:inline-block;" />`
     return `[图片: ${url}]`
   }).replace(/\n/g, '<br/>')
 }
@@ -2588,8 +3130,11 @@ const injectUrlQuestionIfNeeded = (log: RequestLog) => {
         analysisResult: null,
         analysisError: '',
         streamingResponse: '',
+        streamingReasoning: '',
+        reasoningContent: '',
         renderedHtml: undefined
       }
+
       // 异步生成 base64 渲染 HTML
       buildRenderedHtml(title, options).then(html => {
         if (log.urlQuestion) log.urlQuestion.renderedHtml = html
@@ -2600,30 +3145,42 @@ const injectUrlQuestionIfNeeded = (log: RequestLog) => {
 
 // 将文本中的 URL 替换为 <img> 标签，返回 HTML 字符串（用于展示）
 const renderUrlsAsHtml = (text: string): string => {
-  const urlRegex = /https?:\/\/[^\s\u4e00-\u9fff\uff00-\uffef，。；：！？""''（）【】《》]+/g
-  return text.replace(urlRegex, (url) => {
-    const cleanUrl = url.replace(/[.,;!?]*$/, '')
+  return text.replace(createUrlQuestionRegex(), (url) => {
+    const cleanUrl = normalizeQuestionUrl(url)
     return `<img src="${cleanUrl}" style="max-width:100%;vertical-align:middle;" />`
   })
 }
 
-// 将文本按 URL 拆分为多模态内容数组，直接使用原始 URL（无需下载 base64）
-const buildMultimodalContent = (text: string): any[] => {
-  const urlRegex = /https?:\/\/[^\s\u4e00-\u9fff\uff00-\uffef，。；：！？""''（）【】《》]+/g
+// 将文本按 URL 拆分为多模态内容数组，并先在本地拉取图片转成 base64
+const buildMultimodalContent = async (text: string): Promise<any[]> => {
+  const urlRegex = createUrlQuestionRegex()
+  const base64Map = await buildQuestionImageMap(text)
+  const failedUrls: string[] = []
   const parts: any[] = []
   let lastIndex = 0
   let match: RegExpExecArray | null
 
   while ((match = urlRegex.exec(text)) !== null) {
-    const url = match[0].replace(/[.,;!?]*$/, '')
+    const url = normalizeQuestionUrl(match[0])
     const before = text.slice(lastIndex, match.index)
     if (before) parts.push({ type: 'text', text: before })
-    parts.push({ type: 'image_url', image_url: { url, detail: 'high' } })
+
+    const imageBase64 = base64Map.get(url)
+    if (imageBase64) {
+      parts.push({ type: 'image_url', image_url: { url: imageBase64, detail: 'high' } })
+    } else {
+      failedUrls.push(url)
+    }
+
     lastIndex = match.index + match[0].length
   }
 
   const tail = text.slice(lastIndex)
   if (tail) parts.push({ type: 'text', text: tail })
+
+  if (failedUrls.length > 0) {
+    throw new Error(`以下图片本地下载失败，无法转为 base64：${failedUrls.join('，')}`)
+  }
 
   return parts
 }
@@ -2633,18 +3190,31 @@ const analyzeUrlQuestion = async (requestId: string) => {
   const log = requestLogs.value.find(l => l.id === requestId)
   if (!log?.urlQuestion) return
   // 防止重复分析
-  if (log.urlQuestion.analyzing || log.urlQuestion.analysisResult) return
+  if (log.urlQuestion.analyzing || log.urlQuestion.analysisResult || activeUrlAnalysisRequestIds.has(requestId)) return
 
   const visionModel = globalSelectedVisionModel.value
   if (!visionModel) {
-    log.urlQuestion.analysisError = '请先在模型选择中配置视觉模型'
+    const errorMessage = '请先在模型选择中配置视觉模型'
+    log.urlQuestion.analysisError = errorMessage
+    log.urlQuestion.analyzing = false
+    log.urlQuestion.streamingResponse = ''
+    log.urlQuestion.streamingReasoning = ''
+    log.urlQuestion.reasoningContent = ''
+    log.modelResponse = `错误: ${errorMessage}`
+    log.isModelCalling = false
+    await sendModelResponseToBackend(requestId, `错误: ${errorMessage}`, false)
     return
   }
 
+
+  activeUrlAnalysisRequestIds.add(requestId)
   log.urlQuestion.analyzing = true
   log.urlQuestion.analysisResult = null
   log.urlQuestion.analysisError = ''
   log.urlQuestion.streamingResponse = ''
+  log.urlQuestion.streamingReasoning = ''
+  log.urlQuestion.reasoningContent = ''
+
 
   try {
     const platform = platforms.value.find(p => p.models.some(m => m.id === visionModel.id))
@@ -2665,11 +3235,14 @@ const analyzeUrlQuestion = async (requestId: string) => {
       : `- 填空/解答题：写完整答案内容，如 ANSWER: 42`}`
 
     // 将 title + options + instruction 拼成完整文本，按 URL 拆分为交错多模态内容
+    // 图片会先在本地拉取并转为 base64，再发送给视觉模型
     const fullText = title + optionsText + instruction
-    const multimodalContent = buildMultimodalContent(fullText)
+    const multimodalContent = await buildMultimodalContent(fullText)
+    const preparedMultimodalContent = await prepareVisionRequestContent(multimodalContent)
 
     const analysisInput = {
-      messages: [{ role: 'user', content: multimodalContent }],
+      messages: [{ role: 'user', content: preparedMultimodalContent }],
+
       model: visionModel.id,
       stream: true
     }
@@ -2688,7 +3261,8 @@ const analyzeUrlQuestion = async (requestId: string) => {
       processModel = new Function('input', 'config', 'fetch', 'abortSignal', `return (async function processModel(input, config) { ${executableCode} });`)(analysisInput, config, tauriFetch, null)
     }
 
-    const result = await processModel(analysisInput, config)
+    const result = await executeVisionModelWithAutoUpscale(processModel, analysisInput, config)
+
     if (!result) throw new Error('模型未返回有效结果')
 
     // 启动心跳，防止后端 inactivity 超时
@@ -2702,6 +3276,7 @@ const analyzeUrlQuestion = async (requestId: string) => {
     }
 
     let fullResponse = ''
+    let fullReasoning = ''
     if (result[Symbol.asyncIterator]) {
       for await (const chunk of result) {
         if (chunk.content) {
@@ -2709,10 +3284,22 @@ const analyzeUrlQuestion = async (requestId: string) => {
           const l = requestLogs.value.find(x => x.id === requestId)
           if (l?.urlQuestion) l.urlQuestion.streamingResponse = fullResponse
         }
+        const reasoning = getReasoningContentValue(chunk)
+        if (reasoning) {
+          fullReasoning += reasoning
+          const l = requestLogs.value.find(x => x.id === requestId)
+          if (l?.urlQuestion) l.urlQuestion.streamingReasoning = fullReasoning
+        }
       }
     } else {
-      fullResponse = typeof result === 'string' ? result : JSON.stringify(result)
+      fullResponse = typeof result === 'string'
+        ? result
+        : typeof result?.content === 'string'
+          ? result.content
+          : JSON.stringify(result)
+      fullReasoning = typeof result === 'string' ? '' : getReasoningContentValue(result)
     }
+
 
     // 停止心跳
     const timerId = heartbeatIntervals.get(requestId)
@@ -2722,15 +3309,18 @@ const analyzeUrlQuestion = async (requestId: string) => {
     const l = requestLogs.value.find(x => x.id === requestId)
     if (l?.urlQuestion) {
       l.urlQuestion.analysisResult = fullResponse
+      l.urlQuestion.reasoningContent = fullReasoning
+      l.urlQuestion.streamingReasoning = ''
       l.urlQuestion.analyzing = false
     }
     if (l) l.isModelCalling = false
 
     if (answer) {
-      await sendModelResponseToBackend(requestId, JSON.stringify({ answer }), true)
+      await sendModelResponseToBackend(requestId, JSON.stringify({ answer }), true, fullReasoning)
     } else {
-      await sendModelResponseToBackend(requestId, fullResponse, true)
+      await sendModelResponseToBackend(requestId, fullResponse, true, fullReasoning)
     }
+
   } catch (err: any) {
     // 停止心跳
     const timerId = heartbeatIntervals.get(requestId)
@@ -2738,11 +3328,15 @@ const analyzeUrlQuestion = async (requestId: string) => {
     const l = requestLogs.value.find(x => x.id === requestId)
     if (l?.urlQuestion) {
       l.urlQuestion.analysisError = err.message || '分析失败'
+      l.urlQuestion.streamingReasoning = ''
       l.urlQuestion.analyzing = false
     }
+
     if (l) l.isModelCalling = false
     // 通知后端分析失败，让 wait_for_model_response 尽快返回错误
     await sendModelResponseToBackend(requestId, `错误: ${err.message || '分析失败'}`, false)
+  } finally {
+    activeUrlAnalysisRequestIds.delete(requestId)
   }
 }
 
@@ -2757,25 +3351,35 @@ onUnmounted(() => {
   // 清理SSE连接和轮询定时器
   stopSSEConnection()
   stopLogPolling()
+  detailContentObserver?.disconnect()
+  if (scrollHideTimer) clearTimeout(scrollHideTimer)
 })
+
 </script>
 
 <style scoped>
 .home-page {
   background-color: var(--bg-secondary);
   border-radius: 4px;
-  height: 100%;
-  width: 100%;
-  margin: 0 auto;
+  height: calc(100% - 5px);
+  width: calc(100% - 5px);
+  margin: 0 2px 2px 0;
+  padding: 20px;
   box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .server-control {
-  margin-bottom: 30px;
+  flex-shrink: 0;
+  margin-bottom: 0;
 }
 
 .server-card {
-  margin: 20px;
+  margin: 0;
   border-radius: 16px;
   display: flex;
   align-items: center;
@@ -2785,8 +3389,8 @@ onUnmounted(() => {
 }
 
 .server-main-content {
-  border-radius: 8px;
-  padding: 10px;
+  border-radius: 12px;
+  padding: 6px 10px;
   border: 1px solid var(--bg-tertiary);
   display: flex;
   align-items: center;
@@ -2875,7 +3479,7 @@ onUnmounted(() => {
 }
 
 .url-link {
-  color: #667eea;
+  color: var(--color-primary);
   text-decoration: none;
   font-weight: 500;
 }
@@ -2995,23 +3599,25 @@ onUnmounted(() => {
 
 @media (max-width: 768px) {
   .home-page {
-    padding: 20px;
+    padding: 16px;
+    gap: 16px;
   }
 }
 
 /* 请求记录布局样式 */
 .request-logs-layout {
-  padding: 20px;
   display: flex;
+  flex: 1;
+  min-height: 0;
   gap: 4px;
-  margin-top: 40px;
   overflow: hidden;
 }
 
 .request-logs-main {
   flex: 1;
   min-width: 0;
-  height: 100%;
+  min-height: 0;
+  display: flex;
   overflow: hidden;
   transition: width 0.3s ease;
 }
@@ -3036,6 +3642,10 @@ onUnmounted(() => {
 
 .request-logs-card {
   background: var(--bg-secondary);
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
   overflow: hidden;
 }
 
@@ -3088,6 +3698,7 @@ onUnmounted(() => {
 
 .request-table-container {
   flex: 1;
+  min-height: 0;
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -3095,6 +3706,7 @@ onUnmounted(() => {
 
 .request-table-wrapper {
   flex: 1;
+  min-height: 0;
   overflow: auto;
   width: 100%;
 }
@@ -3102,19 +3714,35 @@ onUnmounted(() => {
 .request-table {
   width: 100%;
   min-width: 100%;
-  border-collapse: collapse;
-  font-size: 14px;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 13px;
   table-layout: fixed;
   color: var(--text-primary);
 }
 
+.request-table thead {
+  border-bottom: 2px solid var(--border-primary);
+}
+
 .request-table th {
-  padding: 16px 12px;
+  padding: 12px 8px;
   text-align: left;
   font-weight: 500;
-  color: var(--request-table-header-text);
-  border-bottom: 1px solid var(--request-table-border);
+  color: var(--ql-th-text);
+  border-bottom: 1px solid var(--border-primary);
   white-space: nowrap;
+  position: relative;
+}
+
+.request-table th:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  top: 20%;
+  bottom: 20%;
+  width: 1px;
+  background: var(--ql-divider);
 }
 
 .request-table th:nth-child(1) {
@@ -3143,29 +3771,46 @@ onUnmounted(() => {
 
 /* 响应时间 */
 
+.request-table tbody tr {
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+  position: relative;
+}
+
+.request-table tbody tr:hover {
+  background-color: var(--ql-row-hover-bg);
+}
+
 .request-table td {
-  padding: 12px;
-  border-bottom: 1px solid var(--request-table-border);
-  border-right: 1px solid var(--request-table-border);
+  padding: 12px 8px;
+  border-bottom: 1px solid var(--border-primary);
   vertical-align: middle;
   word-wrap: break-word;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  position: relative;
 }
 
-.request-table td:last-child {
-  border-right: none;
+.request-table tbody tr td:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  top: 20%;
+  bottom: 20%;
+  width: 1px;
+  background: var(--ql-table-divider);
+  opacity: 0.6;
 }
 
-.request-table tbody tr:hover {
-  background: var(--request-table-hover-bg);
-  cursor: pointer;
+.request-table tbody tr:hover td:not(:last-child)::after {
+  background: var(--ql-table-divider-hover);
+  opacity: 0.8;
 }
 
-/* .request-table tbody tr:last-child td {
+.request-table tbody tr:last-child td {
   border-bottom: none;
-} */
+}
 
 .no-requests {
   flex: 1;
@@ -3311,8 +3956,8 @@ onUnmounted(() => {
   right: 0;
   width: 50%;
   height: 100vh;
-  background-color: var(--request-details-bg);
-  border-left: 1px solid var(--request-details-border);
+  background-color: var(--bg-secondary);
+  border-left: 1px solid var(--bg-primary);
   box-shadow: -2px 0 8px var(--request-details-shadow);
   z-index: 1000;
   display: flex;
@@ -3356,11 +4001,9 @@ body.resizing {
 }
 
 .request-details-header {
-  background-color: var(--bg-primary);
   display: flex;
   align-items: center;
   padding: 16px 20px;
-  border-bottom: 1px solid var(--request-details-border);
   gap: 12px;
   flex-shrink: 0;
 }
@@ -3394,20 +4037,22 @@ body.resizing {
   height: 100%;
   display: flex;
   flex-direction: column;
-  background-color: var(--bg-primary);
   flex: 1;
-  overflow-y: hidden; /* 仅让下方内容区滚动，标签固定 */
-  padding: 0; /* 将内边距下移到 tab-content，避免滚动裁剪 */
+  overflow-y: hidden;
+  /* 仅让下方内容区滚动，标签固定 */
+  padding: 0;
+  /* 将内边距下移到 tab-content，避免滚动裁剪 */
 }
 
 /* 标签页导航样式 */
 .detail-tabs {
   display: flex;
-  border-bottom: 1px solid var(--request-details-border);
-  margin-bottom: 0; /* 下方内容区自身有内边距 */
+  border-bottom: 1px solid var(--bg-primary);
+  margin-bottom: 0;
+  /* 下方内容区自身有内边距 */
   gap: 4px;
-  padding: 0 24px; /* 与内容区内边距对齐 */
-  background-color: var(--bg-primary);
+  padding: 0 24px;
+  /* 与内容区内边距对齐 */
 }
 
 .tab-button {
@@ -3448,20 +4093,80 @@ body.resizing {
 
 
 /* 标签页内容样式 */
-.tab-content {
-  min-height: 200px;
+.detail-scroll-wrap {
+  position: relative;
   flex: 1;
-  overflow-y: auto;
-  padding: 24px; /* 将内边距应用到滚动容器 */
+  min-height: 0;
+  overflow: hidden;
 }
+
+.tab-content {
+  min-height: 0;
+  height: 100%;
+  box-sizing: border-box;
+  overflow-y: auto;
+  padding: 24px;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.tab-content::-webkit-scrollbar,
+.tab-content::-webkit-scrollbar-button {
+  display: none;
+}
+
+.custom-scrollbar {
+  position: absolute;
+  top: 8px;
+  right: 6px;
+  bottom: 8px;
+  width: 6px;
+  border-radius: 999px;
+  opacity: 0;
+  transition: opacity 0.18s ease;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.custom-scrollbar.has-overflow {
+  pointer-events: auto;
+}
+
+.custom-scrollbar.is-visible.has-overflow {
+  opacity: 1;
+}
+
+.custom-scrollbar-thumb {
+  position: absolute;
+  top: 0;
+  right: 1px;
+  width: 4px;
+  border-radius: 4px;
+  background: var(--custom-scrollbar-thumb);
+  transition: background 0.15s ease;
+}
+
+.custom-scrollbar-thumb:hover {
+  background: var(--custom-scrollbar-thumb-hover);
+}
+
+.custom-scrollbar:hover .custom-scrollbar-thumb {
+  background: var(--text-tertiary);
+}
+
 
 /* 选中行样式 */
 .request-row.selected {
-  background: var(--request-details-selected-bg) !important;
+  background: var(--ql-row-active-bg) !important;
+}
+
+.request-row.selected td:not(:last-child)::after {
+  background: var(--ql-table-divider-active);
+  opacity: 1;
 }
 
 .request-row.selected:hover {
-  background: var(--request-details-selected-bg) !important;
+  background: var(--ql-row-active-bg) !important;
 }
 
 .detail-section {
@@ -3632,130 +4337,9 @@ body.resizing {
   padding-right: 20px;
 }
 
-.streaming-cursor {
-  position: absolute;
-  right: 8px;
-  bottom: 8px;
-  color: var(--request-details-streaming-cursor);
-  font-weight: bold;
-  animation: blink 1s infinite;
-}
 
-@keyframes blink {
 
-  0%,
-  50% {
-    opacity: 1;
-  }
 
-  51%,
-  100% {
-    opacity: 0;
-  }
-}
-
-.model-response {
-  display: flex;
-  flex-direction: column;
-  margin-top: 8px;
-}
-
-.model-response .code-content {
-  background: var(--request-details-streaming-bg);
-  border-color: var(--request-details-streaming-border);
-  color: var(--request-details-streaming-text);
-}
-
-/* Markdown 渲染容器样式（适配深色主题） */
-.model-response :deep(.markdown-content),
-.reasoning-section :deep(.markdown-content) {
-  background: var(--request-details-headers-bg);
-  border: 1px solid var(--request-details-headers-border);
-  border-radius: 8px;
-  padding: 12px 14px;
-  color: var(--request-details-value-text);
-  line-height: 1.7;
-}
-
-/* Markdown 文本元素 */
-.model-response :deep(.markdown-content p),
-.reasoning-section :deep(.markdown-content p) {
-  margin: 0 0 10px 0;
-}
-
-/* Markdown 代码与预格式文本 */
-.model-response :deep(.markdown-content pre),
-.reasoning-section :deep(.markdown-content pre) {
-  background: var(--request-details-code-bg);
-  color: var(--request-details-code-text);
-  border: 1px solid var(--request-details-code-border);
-  border-radius: 6px;
-  padding: 12px;
-  overflow: auto;
-}
-
-.model-response :deep(.markdown-content code),
-.reasoning-section :deep(.markdown-content code) {
-  background: var(--request-details-code-bg);
-  color: var(--request-details-code-text);
-  border: 1px solid var(--request-details-code-border);
-  border-radius: 4px;
-  padding: 2px 6px;
-}
-
-/* 链接样式 */
-.model-response :deep(.markdown-content a),
-.reasoning-section :deep(.markdown-content a) {
-  color: var(--primary-color);
-  text-decoration: none;
-}
-
-.model-response :deep(.markdown-content a:hover),
-.reasoning-section :deep(.markdown-content a:hover) {
-  text-decoration: underline;
-}
-
-/* 列表与引用样式 */
-.model-response :deep(.markdown-content ul),
-.model-response :deep(.markdown-content ol),
-.reasoning-section :deep(.markdown-content ul),
-.reasoning-section :deep(.markdown-content ol) {
-  margin: 8px 0;
-  padding-left: 22px;
-}
-
-.model-response :deep(.markdown-content blockquote),
-.reasoning-section :deep(.markdown-content blockquote) {
-  margin: 8px 0;
-  padding-left: 12px;
-  border-left: 4px solid var(--border-primary);
-  color: var(--text-secondary);
-}
-
-/* 思考过程显示样式 */
-.reasoning-section {
-
-  margin-top: 12px;
-}
-
-.reasoning-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--request-details-label-text);
-  margin-bottom: 6px;
-}
-
-.streaming-reasoning {
-  position: relative;
-  margin-top: 12px;
-}
-
-.streaming-reasoning .code-content.streaming {
-  background: var(--request-details-streaming-bg);
-  border-color: var(--request-details-streaming-border);
-  color: var(--request-details-streaming-text);
-  padding-right: 20px;
-}
 
 /* 无数据提示样式 */
 .no-data {
@@ -3868,6 +4452,7 @@ body.resizing {
     font-size: 11px;
   }
 }
+
 /* 多模型对比视图 */
 .multi-model-header {
   margin-bottom: 16px;
@@ -3893,74 +4478,110 @@ body.resizing {
   gap: 5px;
   padding: 5px 12px;
   border-radius: 20px;
-  border: 1px solid var(--request-details-headers-border);
-  background: var(--bg-primary);
-  color: var(--request-details-label-text);
+  background: var(--multi-model-tab-bg);
+  color: var(--multi-model-tab-text);
+  box-shadow: var(--multi-model-tab-shadow);
   font-size: 12px;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: background 0.18s ease, color 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
   white-space: nowrap;
 }
 
 .multi-model-tab:hover {
-  border-color: #6366f1;
-  color: #6366f1;
+  background: var(--multi-model-tab-hover-bg);
+  border-color: var(--multi-model-tab-hover-border);
+  color: var(--multi-model-tab-hover-text);
+  box-shadow: var(--multi-model-tab-hover-shadow);
+  transform: translateY(-1px);
 }
 
 .multi-model-tab.active {
-  background: #6366f1;
-  border-color: #6366f1;
-  color: #fff;
+  background: var(--multi-model-tab-active-bg);
+  border-color: var(--multi-model-tab-active-border);
+  color: var(--multi-model-tab-active-text);
+  box-shadow: var(--multi-model-tab-active-shadow);
 }
 
-.multi-model-tab.summary.active {
-  background: #f59e0b;
-  border-color: #f59e0b;
+.multi-model-tab.summary {
+  background: var(--multi-model-tab-summary-bg);
+  color: var(--multi-model-tab-summary-text);
+  box-shadow: none;
 }
 
 .multi-model-tab.summary:hover {
-  border-color: #f59e0b;
-  color: #f59e0b;
+  background: var(--multi-model-tab-summary-hover-bg);
+  border-color: var(--multi-model-tab-summary-hover-border);
+  color: var(--multi-model-tab-summary-hover-text);
+  box-shadow: none;
 }
+
+.multi-model-tab.summary.active {
+  background: var(--multi-model-tab-summary-active-bg);
+  border-color: var(--multi-model-tab-summary-active-border);
+  color: var(--multi-model-tab-summary-active-text);
+  box-shadow: var(--multi-model-tab-active-shadow), var(--multi-model-tab-summary-active-glow);
+}
+
 
 .multi-model-tab.loading {
   opacity: 0.75;
 }
 
+.multi-model-tab.failed {
+  background: var(--multi-model-tab-failed-bg);
+  color: var(--multi-model-tab-failed-text);
+  box-shadow: none;
+}
+
+
+
+.multi-model-tab.failed:hover {
+  background: var(--multi-model-tab-failed-hover-bg);
+  color: var(--multi-model-tab-failed-hover-text);
+  box-shadow: inset 0 0 0 1px var(--multi-model-tab-failed-hover-border), var(--multi-model-tab-failed-shadow);
+}
+
+.multi-model-tab.failed.active {
+  background: var(--multi-model-tab-failed-active-bg);
+  color: var(--multi-model-tab-failed-active-text);
+  box-shadow: inset 0 0 0 1px var(--multi-model-tab-failed-active-border), var(--multi-model-tab-failed-active-shadow);
+}
+
 .model-response-card {
-  border: 1px solid var(--request-details-headers-border);
   border-radius: 10px;
   overflow: hidden;
-  background: var(--bg-primary);
-  transition: box-shadow 0.2s;
+  border: 1px solid transparent;
+  background: var(--model-response-card-bg);
+  transition: border-color 0.2s, box-shadow 0.2s, background-color 0.2s;
 }
 
 .model-response-card.is-loading {
-  border-color: var(--request-details-streaming-border, #6366f1);
-  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.08);
+  border-color: transparent;
+  box-shadow: none;
 }
 
 .model-response-card.is-summary {
-  border-color: var(--warning-color, #f59e0b);
-  background: var(--request-details-headers-bg);
-  box-shadow: 0 2px 10px rgba(245, 158, 11, 0.1);
+  background: var(--model-response-card-summary-bg);
 }
 
 .model-response-card.is-summary .model-response-card-header {
-  background: rgba(245, 158, 11, 0.05);
-  border-bottom-color: var(--warning-color, #f59e0b);
+  background: var(--model-response-card-summary-header-bg);
+}
+
+.model-response-card.is-summary .model-response-card-header::after {
+  background: var(--model-response-card-summary-divider);
 }
 
 .summary-result-icon {
-  color: var(--warning-color, #f59e0b);
+  color: var(--model-response-card-summary-accent);
   display: flex;
   align-items: center;
   flex-shrink: 0;
 }
 
 .summary-tag {
-  background: var(--warning-color, #f59e0b);
-  color: white;
+  background: var(--model-response-card-summary-tag-bg);
+  color: var(--model-response-card-summary-tag-text);
   font-size: 10px;
   padding: 1px 6px;
   border-radius: 4px;
@@ -3973,9 +4594,18 @@ body.resizing {
   align-items: center;
   justify-content: space-between;
   padding: 10px 16px;
-  background: var(--request-details-headers-bg);
-  border-bottom: 1px solid var(--request-details-headers-border);
   gap: 12px;
+  position: relative;
+}
+
+.model-response-card-header::after {
+  content: '';
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 0;
+  height: 1px;
+  background: var(--model-response-card-divider);
 }
 
 .model-response-card-title {
@@ -3988,7 +4618,7 @@ body.resizing {
 .card-model-name {
   font-size: 14px;
   font-weight: 600;
-  color: var(--request-details-value-text);
+  color: var(--model-response-card-title);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3996,7 +4626,7 @@ body.resizing {
 
 .card-platform-name {
   font-size: 11px;
-  color: var(--request-details-label-text);
+  color: var(--model-response-card-muted-text);
   opacity: 0.7;
   white-space: nowrap;
 }
@@ -4006,13 +4636,13 @@ body.resizing {
   align-items: center;
   gap: 5px;
   font-size: 12px;
-  color: var(--request-details-label-text);
+  color: var(--model-response-card-muted-text);
   flex-shrink: 0;
 }
 
 .card-done-badge {
   font-size: 12px;
-  color: #22c55e;
+  color: var(--model-response-card-success-text);
   font-weight: 500;
   flex-shrink: 0;
 }
@@ -4021,12 +4651,14 @@ body.resizing {
   padding: 14px 16px;
 }
 
+
+
 /* Small spinner for card header */
 .loading-spinner-sm {
   width: 12px;
   height: 12px;
-  border: 2px solid var(--request-details-headers-border);
-  border-top-color: #6366f1;
+  border: 2px solid var(--model-response-card-spinner-track);
+  border-top-color: var(--model-response-card-spinner-accent);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
   flex-shrink: 0;
@@ -4049,42 +4681,104 @@ body.resizing {
 .loading-dots span {
   width: 7px;
   height: 7px;
-  background: var(--request-details-label-text);
+  background: var(--model-response-card-muted-text);
   border-radius: 50%;
   opacity: 0.4;
   animation: dot-pulse 1.2s ease-in-out infinite;
 }
 
-.loading-dots span:nth-child(2) { animation-delay: 0.2s; }
-.loading-dots span:nth-child(3) { animation-delay: 0.4s; }
+.loading-dots span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.loading-dots span:nth-child(3) {
+  animation-delay: 0.4s;
+}
 
 @keyframes dot-pulse {
-  0%, 80%, 100% { opacity: 0.4; transform: scale(0.8); }
-  40% { opacity: 1; transform: scale(1.1); }
+
+  0%,
+  80%,
+  100% {
+    opacity: 0.4;
+    transform: scale(0.8);
+  }
+
+  40% {
+    opacity: 1;
+    transform: scale(1.1);
+  }
 }
 
-/* Reasoning collapsible inside card */
-.reasoning-details {
-  margin-top: 12px;
-  border-top: 1px solid var(--request-details-headers-border);
-  padding-top: 10px;
+/* 思考过程展示参考 ModelTestDialog */
+.content-stack {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
 }
 
-.reasoning-summary {
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--request-details-label-text);
-  user-select: none;
-  list-style: none;
+.response-section,
+.reasoning-section {
+  width: 100%;
+  margin-top: 0;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  overflow: visible;
+  background: transparent;
+  box-shadow: none;
+}
+
+.response-section {
+  padding-top: 2px;
+}
+
+.response-content,
+.reasoning-content {
+  margin-top: 0;
+  line-height: 1.85;
+}
+
+.response-content {
+  color: var(--text-primary);
+  font-size: 17px;
+  font-weight: 500;
+}
+
+.response-content.streaming {
+  animation: none;
+}
+
+.reasoning-section {
+  padding: 8px 0 8px 16px;
+  border-left: 1px solid var(--model-response-card-divider);
+}
+
+.section-title {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 8px;
+  margin: 0 0 12px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--model-response-card-muted-text);
 }
 
-.reasoning-summary::-webkit-details-marker { display: none; }
-.reasoning-summary::before { content: '▶'; font-size: 10px; transition: transform 0.2s; }
-details[open] .reasoning-summary::before { transform: rotate(90deg); }
+.reasoning-title {
+  color: var(--text-secondary);
+}
+
+.reasoning-content {
+  color: var(--text-secondary);
+  font-size: 15px;
+}
+
+.reasoning-content.streaming {
+  min-height: 40px;
+}
+
 
 /* URL 题目视觉分析面板 */
 .url-analysis-panel {
@@ -4131,6 +4825,8 @@ details[open] .reasoning-summary::before { transform: rotate(90deg); }
   transition: all 0.15s;
 }
 
-.retry-btn-sm:hover { background: var(--color-primary, #007acc); color: white; }
-
+.retry-btn-sm:hover {
+  background: var(--color-primary, #007acc);
+  color: white;
+}
 </style>

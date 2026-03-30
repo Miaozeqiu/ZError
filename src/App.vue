@@ -34,11 +34,15 @@ const isFileInfoPage = computed(() => {
 const activeTab = ref('home');
 // 顶层 tab 切换时用于触发各视图折叠的触发器
 const collapseTrigger = ref(0);
+const questionBankFocusFolderId = ref<number | null>(null);
+const questionBankFocusRequestKey = ref(0);
+
 
 // 版本更新相关状态
 const showUpdateDialog = ref(false);
 const updateInfo = ref<VersionInfo | null>(null);
-const currentVersion = ref('2.1.0'); // 当前版本，可以从package.json或其他配置文件读取
+const currentVersion = ref(VersionCheckService.getCurrentVersion());
+
 
 // 导航处理函数
 const handleNavigate = (tab: string) => {
@@ -51,6 +55,13 @@ const handleNavigate = (tab: string) => {
     activeTab.value = tab;
   }
 };
+
+const handleOpenQuestionFolder = (folderId: number) => {
+  handleNavigate('questions');
+  questionBankFocusFolderId.value = folderId;
+  questionBankFocusRequestKey.value++;
+};
+
 
 // 版本检查
 const checkForUpdates = async () => {
@@ -94,13 +105,16 @@ const handleDownload = (downloadUrl: string) => {
   // 在Tauri环境中打开下载链接
   if (window.__TAURI_INTERNALS__) {
     import('@tauri-apps/plugin-opener').then((mod: any) => {
-      mod.open(downloadUrl);
+      mod.openUrl(downloadUrl);
+    }).catch(() => {
+      window.open(downloadUrl, '_blank');
     });
   } else {
     // 在浏览器环境中打开链接
     window.open(downloadUrl, '_blank');
   }
   showUpdateDialog.value = false;
+
 };
 
 const handleLater = () => {
@@ -207,7 +221,8 @@ onMounted(async () => {
 
 // 应用初始化
 onMounted(async () => {
-  if (isFileInfoPage.value) return;
+  const isMainWindow = !isFileInfoPage.value && !isUrlContentPage.value;
+  if (!isMainWindow) return;
   try {
     console.log('开始应用初始化...');
     await initGlobalTheme();
@@ -220,16 +235,8 @@ onMounted(async () => {
   }
 });
 
-onMounted(async () => {
-  if (!isFileInfoPage.value) return;
-  try {
-    const { getCurrentWindow, LogicalSize } = await import('@tauri-apps/api/window')
-    const win = getCurrentWindow()
-    try { await win.unmaximize() } catch {}
-    await win.setSize(new LogicalSize(1280, 900))
-    try { await win.center() } catch {}
-  } catch {}
-});
+
+
 </script>
 
 <template>
@@ -240,7 +247,8 @@ onMounted(async () => {
   <!-- 主应用界面 -->
   <div v-else class="app-container">
     <!-- 自定义Header -->
-    <AppHeader />
+    <AppHeader :active-tab="activeTab" />
+
     
     <!-- 主要内容区域 -->
     <div class="main-content">
@@ -250,13 +258,23 @@ onMounted(async () => {
       <!-- 内容区域 -->
       <div class="content-area">
         <!-- 首页 -->
-        <Home v-show="activeTab === 'home'" :collapse-trigger="collapseTrigger" @navigate="handleNavigate" />
+        <div v-show="activeTab === 'home'" class="content-view">
+          <Home :collapse-trigger="collapseTrigger" @navigate="handleNavigate" />
+        </div>
         
         <!-- 题库页面 -->
-        <QuestionBank v-show="activeTab === 'questions'" :collapse-trigger="collapseTrigger" />
+        <div v-show="activeTab === 'questions'" class="content-view">
+          <QuestionBank
+            :collapse-trigger="collapseTrigger"
+            :focus-folder-id="questionBankFocusFolderId"
+            :focus-folder-request-key="questionBankFocusRequestKey"
+          />
+        </div>
         
         <!-- 设置页面 -->
-        <Settings v-show="activeTab === 'settings'" />
+        <div v-show="activeTab === 'settings'" class="content-view">
+          <Settings @open-question-folder="handleOpenQuestionFolder" />
+        </div>
       </div>
     </div>
     
@@ -352,7 +370,7 @@ body {
 }
 
 /* 确保所有页面组件占满容器并正确定位 */
-.content-area > * {
+.content-view {
   position: absolute;
   top: 0;
   left: 0;
@@ -360,6 +378,12 @@ body {
   height: 100%;
   overflow: auto;
 }
+
+.content-view > * {
+  width: 100%;
+  height: 100%;
+}
+
 
 :root {
   font-family: Inter, Avenir, Helvetica, Arial, sans-serif;

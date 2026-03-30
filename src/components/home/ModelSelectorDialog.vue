@@ -39,9 +39,9 @@
                 @click="selectModel(model)"
               >
                 <span class="model-name">{{ model.displayName }}</span>
-                <svg v-if="isModelSelected(model)" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="check-icon">
-                  <path d="M20 6L9 17l-5-5" stroke-linecap="round" stroke-linejoin="round"/>
-                </svg>
+                <div v-if="isModelSelected(model)" class="model-selected">
+                  <span class="model-dot"></span>
+                </div>
               </div>
             </div>
           </div>
@@ -178,34 +178,56 @@ watch(() => props.show, (v) => { if (v) searchQuery.value = '' })
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 12px;
-  border-radius: 8px;
+  padding: 12px;
+  border: 1px solid var(--model-item-border);
+  border-radius: 16px;
   cursor: pointer;
   background: var(--model-item-bg);
-  transition: background 0.15s;
+  color: var(--model-item-text);
+  transition: all 0.2s ease;
 }
 
 .model-item:hover {
   background: var(--model-item-hover-bg);
+  border-color: var(--model-item-hover-border);
+  color: var(--model-item-hover-text);
 }
 
 .model-item.active {
   background: var(--model-item-active-bg);
+  border-color: var(--model-item-active-border);
+  color: var(--model-item-active-text);
+  box-shadow: var(--model-item-active-shadow);
 }
 
 .model-name {
   font-size: 14px;
-  font-weight: 400;
-  color: var(--text-primary);
+  font-weight: 500;
+  color: inherit;
 }
 
 .dialog-title-placeholder {
   flex: 1;
 }
 
-.check-icon {
-  color: var(--color-success);
-  flex-shrink: 0;
+.model-selected {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.model-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #f8bd40;
+  display: block;
+  animation: dot-pop 0.2s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+@keyframes dot-pop {
+  from { transform: scale(0); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
 }
 
 .empty-tip {

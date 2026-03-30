@@ -181,7 +181,7 @@
 .form-textarea:focus {
   outline: none;
   background-color: var(--form-input-bg, #F7F7F7);
-  border-color: #e3e3e3;
+  border-color: var(--form-input-focus-border, #3182ce);
 }
 
 /* ============================================================

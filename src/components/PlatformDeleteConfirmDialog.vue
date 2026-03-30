@@ -1,22 +1,24 @@
 <template>
   <div v-if="visible" class="dialog-overlay" @click="handleOverlayClick">
-    <div class="dialog-container" @click.stop>
+    <div class="dialog-panel delete-confirm-panel" @click.stop>
       <div class="dialog-header">
-        <h3>确认删除平台</h3>
-        <button class="close-button" @click="$emit('cancel')">×</button>
+        <button class="btn-back" type="button" @click="$emit('cancel')" title="取消">
+          <svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" width="18" height="18">
+            <path d="M768 96c19.2-19.2 19.2-51.2 0-70.4-19.2-19.2-51.2-19.2-70.4 0l-448 448c-19.2 19.2-19.2 51.2 0 70.4l448 448c19.2 19.2 51.2 19.2 70.4 0 19.2-19.2 19.2-51.2 0-70.4L358.4 512l409.6-416z" fill="currentColor"/>
+          </svg>
+        </button>
+        <h3 class="dialog-title">确认删除平台</h3>
+        <button class="btn-danger-confirm" type="button" @click="$emit('confirm')">删除</button>
       </div>
-      
-      <div class="dialog-content">
-        <div class="warning-icon">⚠️</div>
-        <div class="message">
-          <p>确定要删除平台 <strong>"{{ platformName }}"</strong> 吗？</p>
-          <p class="sub-message">此操作将同时删除该平台下的所有模型配置，且不可撤销</p>
+
+      <div class="dialog-body">
+        <div class="confirm-content">
+          <div class="warning-icon">⚠️</div>
+          <div class="message">
+            <p>确定要删除平台 <strong>"{{ platformName }}"</strong> 吗？</p>
+            <p class="sub-message">此操作将同时删除该平台下的所有模型配置，且不可撤销</p>
+          </div>
         </div>
-      </div>
-      
-      <div class="dialog-actions">
-        <button class="cancel-button" @click="$emit('cancel')">取消</button>
-        <button class="delete-button" @click="$emit('confirm')">删除</button>
       </div>
     </div>
   </div>
@@ -61,135 +63,61 @@ const handleOverlayClick = (event: MouseEvent) => {
 };
 </script>
 
+<style>
+@import '../styles/dialog.css';
+</style>
+
 <style scoped>
 .dialog-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  background: var(--platform-config-overlay-bg);
   z-index: 2000;
 }
 
-.dialog-container {
-  background: var(--bg-primary);
-  border-radius: 8px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-  min-width: 450px;
-  max-width: 550px;
-  overflow: hidden;
-}
-
-.dialog-header {
+.delete-confirm-panel {
+  max-width: 460px;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--border-color);
-  background: var(--bg-secondary);
+  flex-direction: column;
 }
 
-.dialog-header h3 {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.close-button {
-  background: var(--dialog-button-close-bg);
+.btn-danger-confirm {
+  background: var(--dialog-button-danger-bg);
   border: none;
-  font-size: 20px;
   cursor: pointer;
-  color: var(--dialog-button-close-text);
-  padding: 0;
-  width: 24px;
-  height: 24px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 4px;
-  transition: all 0.2s ease;
-}
-
-.close-button:hover {
-  background: var(--dialog-button-close-hover-bg);
-  color: var(--dialog-button-close-hover-text);
-}
-
-.dialog-content {
-  padding: 20px;
-  display: flex;
-  align-items: flex-start;
-  gap: 16px;
-}
-
-.warning-icon {
-  font-size: 24px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--dialog-button-danger-text);
+  padding: 6px 14px;
+  border-radius: 999px;
+  transition: opacity 0.15s ease;
   flex-shrink: 0;
 }
 
-.message {
-  flex: 1;
+.btn-danger-confirm:hover {
+  opacity: 0.85;
+}
+
+.confirm-content {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.warning-icon {
+  font-size: 22px;
+  flex-shrink: 0;
+  line-height: 1.4;
 }
 
 .message p {
-  margin: 0 0 8px 0;
-  color: var(--text-primary);
+  margin: 0 0 4px 0;
   font-size: 14px;
   line-height: 1.5;
+  color: var(--platform-config-dialog-title-text);
 }
 
 .sub-message {
+  font-size: 12px !important;
   color: var(--text-secondary) !important;
-  font-size: 13px !important;
-}
-
-.dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  padding: 16px 20px;
-  border-top: 1px solid var(--border-color);
-  background: var(--bg-secondary);
-}
-
-.cancel-button, .delete-button {
-  padding: 8px 16px;
-  border-radius: 6px;
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  border: 1px solid;
-  transition: all 0.2s ease;
-}
-
-.cancel-button {
-  background: var(--dialog-button-secondary-bg);
-  color: var(--dialog-button-secondary-text);
-  border-color: var(--dialog-button-secondary-border);
-}
-
-.cancel-button:hover {
-  background: var(--dialog-button-secondary-hover-bg);
-  color: var(--dialog-button-secondary-hover-text);
-  border-color: var(--dialog-button-secondary-hover-border);
-}
-
-.delete-button {
-  background: #dc3545;
-  color: white;
-  border-color: #dc3545;
-}
-
-.delete-button:hover {
-  background: #c82333;
-  border-color: #bd2130;
-  transform: translateY(-1px);
-  box-shadow: 0 2px 8px rgba(220, 53, 69, 0.3);
+  margin: 0 !important;
 }
 </style>

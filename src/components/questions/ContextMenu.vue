@@ -18,12 +18,15 @@ interface Props {
   y: number;
   isDefaultFolder?: boolean;
   isBlankArea?: boolean; // 新增：标识是否为空白区域右键
+  canSetAsSaveFolder?: boolean;
+  isCurrentSaveFolder?: boolean;
 }
 
 const props = defineProps<Props>();
 
 const emit = defineEmits<{
   'new-folder': [];
+  'set-save-folder': [];
   'rename': [];
   'delete': [];
 }>();
@@ -39,35 +42,56 @@ const menuItems = computed(() => {
         action: 'new-folder',
         icon: {
           type: 'emoji' as const,
-          content: '📁'
+          content: ''
         }
       }
     ];
   }
-  
-  // 原有的完整菜单
-  return [
+
+  const items: any[] = [
     {
       id: 'new-folder',
       label: '新建文件夹',
       action: 'new-folder',
       icon: {
         type: 'emoji' as const,
-        content: '📁'
+        content: ''
+      }
+    }
+  ];
+
+  if (props.canSetAsSaveFolder) {
+    items.push(
+      {
+        id: 'set-save-folder',
+        label: '设为保存文件夹',
+        action: 'set-save-folder',
+        icon: {
+          type: 'emoji' as const,
+          content: ''
+        },
+        disabled: props.isCurrentSaveFolder
       },
-      disabled: props.isDefaultFolder
-    },
-    {
+      {
+        id: 'divider-1',
+        type: 'divider' as const
+      }
+    );
+  } else {
+    items.push({
       id: 'divider-1',
       type: 'divider' as const
-    },
+    });
+  }
+
+  items.push(
     {
       id: 'rename',
       label: '重命名',
       action: 'rename',
       icon: {
         type: 'emoji' as const,
-        content: '✏️'
+        content: ''
       },
       disabled: props.isDefaultFolder
     },
@@ -77,12 +101,14 @@ const menuItems = computed(() => {
       action: 'delete',
       icon: {
         type: 'emoji' as const,
-        content: '🗑️'
+        content: ''
       },
       disabled: props.isDefaultFolder,
       danger: true
     }
-  ];
+  );
+
+  return items;
 });
 
 // 处理菜单项点击
@@ -92,6 +118,9 @@ const handleItemClick = (item: any) => {
   switch (item.action) {
     case 'new-folder':
       emit('new-folder');
+      break;
+    case 'set-save-folder':
+      emit('set-save-folder');
       break;
     case 'rename':
       emit('rename');

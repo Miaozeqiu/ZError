@@ -135,7 +135,8 @@ import { defaultHighlightStyle, syntaxHighlighting } from '@codemirror/language'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { linter, lintGutter } from '@codemirror/lint'
 import * as acorn from 'acorn'
-import type { AIModel } from '../services/modelConfig'
+import { fetchRemoteModelsCatalog, type AIModel } from '../services/modelConfig'
+import { getPlatformIconDisplayUrl, isImageIconValue, resolvePlatformIconUrl } from '../services/iconCache'
 import ModelCategorySwitch from './ModelCategorySwitch.vue'
 
 interface Props {
@@ -251,7 +252,7 @@ watch(() => props.show, async (visible) => {
     }
 
     // 如果存在旧的 EditorView（可能因 v-if 被移除父容器），先销毁后重建
-    rebuildEditorWithDoc(formData.value.jsCode || DEFAULT_JS_CODE)
+    await rebuildEditorWithDoc(formData.value.jsCode || DEFAULT_JS_CODE)
   } else {
     // 隐藏时销毁实例，防止持有已移除的 DOM 引用导致下次无法显示
     if (cmView) {
@@ -266,18 +267,28 @@ const cmContainerRef = ref<HTMLElement | null>(null)
 let cmView: EditorView | null = null
 let themeObserver: MutationObserver | null = null
 
-// 统一的编辑器重建方法：确保容器就绪后重建并同步文档
-const rebuildEditorWithDoc = (text: string) => {
-  nextTick(() => {
+// 统一的编辑器重建方法：在容器真正挂载后再初始化，避免弹窗复用时出现空白编辑器
+const rebuildEditorWithDoc = async (text: string, retries = 6): Promise<void> => {
+  for (let i = 0; i < retries; i++) {
+    await nextTick()
+
+    if (!cmContainerRef.value) {
+      continue
+    }
+
     if (cmView) {
       cmView.destroy()
       cmView = null
     }
+
     initCodeMirror()
     if (cmView) {
       setEditorDoc(text ?? '')
+      return
     }
-  })
+  }
+
+  console.warn('ModelConfigDialog: CodeMirror 初始化失败，cmContainerRef 未就绪')
 }
 
 // 轻量语法检查：仅捕获语法错误（不做风格检查）
@@ -352,12 +363,7 @@ onMounted(() => {
             cmView.destroy()
             cmView = null
           }
-          nextTick(() => {
-            initCodeMirror()
-            if (currentText != null) {
-              setEditorDoc(currentText)
-            }
-          })
+          void rebuildEditorWithDoc(currentText ?? '')
         }
       }
     }
@@ -439,12 +445,25 @@ const isLoadingMarket = ref(false)
 const marketError = ref<string | null>(null)
 const selectedPlatformId = ref<string | null>(null)
 const selectedModelId = ref<string | null>(null)
+const resolvedIconUrls = ref<Record<string, string>>({})
 const selectedPlatform = computed(() => marketPlatforms.value.find(p => p.id === selectedPlatformId.value) || null)
 const selectedModel = computed<MarketplaceModel | null>(() => {
   const p = selectedPlatform.value
   if (!p || !p.models) return null
   return p.models.find(m => (m.id || m.name) === selectedModelId.value) || null
 })
+
+const primeIconUrlCache = async (icon?: string) => {
+  if (!icon || !isImageIconValue(icon)) return
+
+  resolvedIconUrls.value[icon] = getPlatformIconDisplayUrl(icon)
+
+  try {
+    resolvedIconUrls.value[icon] = await resolvePlatformIconUrl(icon)
+  } catch (error) {
+    console.warn('缓存平台图标失败，回退到原始地址:', icon, error)
+  }
+}
 
 const openMarketplace = async () => {
   marketplaceOpen.value = true
@@ -463,7 +482,7 @@ const closeMarketplace = () => {
   marketplaceOpen.value = false
 }
 
-const handleMarketplaceOverlay = (e: MouseEvent) => {
+const handleMarketplaceOverlay = () => {
   // 点击遮罩关闭（保留与主对话框一致的体验）
   closeMarketplace()
 }
@@ -472,26 +491,12 @@ const loadMarketplace = async () => {
   isLoadingMarket.value = true
   marketError.value = null
   try {
-    // 远程优先：直接使用 Tauri HTTP 插件进行请求（不做环境检测）
-    const remoteUrl = 'https://app.zerror.cc/models.json'
-    const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http')
-    const r = await tauriFetch(remoteUrl, { method: 'GET' })
-    if (!r.ok) throw new Error(`远程拉取失败 ${r.status}`)
-    const json = await r.json()
-    if (!Array.isArray(json)) throw new Error('数据格式错误：期望数组')
-    marketPlatforms.value = json as MarketplacePlatform[]
+    const catalog = await fetchRemoteModelsCatalog()
+    marketPlatforms.value = catalog.platforms as MarketplacePlatform[]
+    await Promise.all(marketPlatforms.value.map(platform => primeIconUrlCache(platform.icon)))
   } catch (err: any) {
-    console.warn('使用 Tauri HTTP 插件加载模型广场失败，回退到本地 models.json：', err)
-    try {
-      const localUrl = '/models.json'
-      const lr = await fetch(localUrl, { method: 'GET' })
-      if (!lr.ok) throw new Error(`本地拉取失败 ${lr.status}`)
-      const json = await lr.json()
-      if (!Array.isArray(json)) throw new Error('本地数据格式错误：期望数组')
-      marketPlatforms.value = json as MarketplacePlatform[]
-    } catch (err2: any) {
-      marketError.value = err2?.message || '无法加载模型广场数据'
-    }
+    console.warn('加载模型广场失败：', err)
+    marketError.value = err?.message || '无法加载模型广场数据'
   } finally {
     isLoadingMarket.value = false
   }
@@ -522,18 +527,14 @@ const confirmMarketplaceSelection = () => {
 
   // 关闭市场面板
   marketplaceOpen.value = false
-  rebuildEditorWithDoc(formData.value.jsCode || DEFAULT_JS_CODE)
+  void rebuildEditorWithDoc(formData.value.jsCode || DEFAULT_JS_CODE)
 }
 
-const isImageIcon = (icon: string) => icon?.includes('.')
+const isImageIcon = (icon: string) => isImageIconValue(icon)
 
 const getIconUrl = (icon: string) => {
   if (!icon) return ''
-  if (icon.startsWith('http://') || icon.startsWith('https://')) return icon
-  if (icon.includes('.')) {
-    return `/assets/images/providers/${icon}`
-  }
-  return icon
+  return resolvedIconUrls.value[icon] || getPlatformIconDisplayUrl(icon) || icon
 }
 
 // 自定义模型入口：不依赖远程数据，打开编辑并填充默认值
@@ -545,7 +546,7 @@ const chooseCustomModel = () => {
 
   // 关闭市场面板，回到编辑界面
   marketplaceOpen.value = false
-  rebuildEditorWithDoc(formData.value.jsCode || DEFAULT_JS_CODE)
+  void rebuildEditorWithDoc(formData.value.jsCode || DEFAULT_JS_CODE)
 }
 
 const handleSubmit = () => {
@@ -584,8 +585,7 @@ const handleSubmit = () => {
   border-radius: 12px;
   box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
   width: 92vw;           /* 随主窗口变化的宽度 */
-  max-width: 1400px;     /* 合理的最大宽度限制 */
-  height: 88vh;          /* 随主窗口变化的高度 */
+  max-width: 1400px;     /* 合理的最大宽度限制 */      /* 随主窗口变化的高度 */
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -755,44 +755,6 @@ const handleSubmit = () => {
   margin-bottom: 6px;
 }
 
-.form-input {
-  box-sizing: border-box;
-  width: 100%;
-  padding: 10px 12px;
-  border: 1px solid var(--border-color, #e2e8f0);
-  border-radius: 6px;
-  font-size: 14px;
-  background: var(--bg-primary, #ffffff);
-  color: var(--text-primary, #2d3748);
-  transition: border-color 0.2s;
-}
-
-.form-input:focus {
-  outline: none;
-  border-color: var(--primary-color, #667eea);
-  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
-}
-
-.form-textarea {
-  box-sizing: border-box;
-  width: 100%;
-  padding: 12px;
-  border: 1px solid var(--border-color, #e2e8f0);
-  border-radius: 6px;
-  font-size: 14px;
-  background: var(--bg-primary, #ffffff);
-  color: var(--text-primary, #2d3748);
-  resize: none;
-  transition: border-color 0.2s;
-  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
-  line-height: 1.4;
-}
-
-.form-textarea:focus {
-  outline: none;
-  border-color: var(--primary-color, #667eea);
-  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
-}
 
 .form-actions {
   display: flex;

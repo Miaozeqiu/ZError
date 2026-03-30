@@ -1,4 +1,4 @@
-﻿﻿import { reactive, watch, computed } from 'vue'
+﻿import { reactive, watch, computed } from 'vue'
 
 // AI 平台配置接口
 export interface AIPlatform {
@@ -16,6 +16,7 @@ export interface AIPlatform {
   url?: string         // 平台官网/控制台地址
   inviteUrl?: string   // 邀请链接
   inviteText?: string  // 邀请文字
+  inviteCode?: string  // 邀请码
 }
 
 // AI 模型配置接口
@@ -58,7 +59,248 @@ export interface ModelSettings {
 }
 
 // 远程模型数据 URL
-const REMOTE_MODELS_URL = 'https://app.zerror.cc/models.json'
+const PROD_REMOTE_MODELS_URL = 'https://app.zerror.cc/models.json'
+const TAURI_DEV_REMOTE_MODELS_URL = 'http://localhost:5175/models.json'
+const REMOTE_MODELS_REQUEST_COOLDOWN_MS = 30 * 1000
+const USER_CREATED_PLATFORM_ID_PREFIX = 'custom_'
+const LEGACY_USER_CREATED_MODEL_ID_PREFIX = 'model_'
+
+const getRemoteModelsUrl = () => {
+  const isTauriDev = import.meta.env.DEV && typeof window !== 'undefined' && (window.__TAURI__ || window.__TAURI_INTERNALS__)
+  return isTauriDev ? TAURI_DEV_REMOTE_MODELS_URL : PROD_REMOTE_MODELS_URL
+}
+
+export interface RemoteModelIconMapping {
+  icon: string
+  models: string[]
+}
+
+export interface RemoteModelsCatalog {
+  providersList: string[]
+  modelIconMappings: RemoteModelIconMapping[]
+  platforms: AIPlatform[]
+}
+
+
+const normalizeRemoteModelsCatalog = (json: unknown): RemoteModelsCatalog => {
+  const toStringList = (value: unknown): string[] => {
+    if (!Array.isArray(value)) return []
+    return [...new Set(value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0))]
+  }
+
+  const normalizeModelIconMappings = (value: unknown): RemoteModelIconMapping[] => {
+    if (Array.isArray(value)) {
+      return value
+        .map((item) => {
+          if (!item || typeof item !== 'object') return null
+          const record = item as Record<string, unknown>
+          const icon = typeof record.icon === 'string' ? record.icon.trim() : ''
+          const models = toStringList(record.models ?? record.keywords ?? record.aliases)
+          if (!icon || !models.length) return null
+          return { icon, models }
+        })
+        .filter((item): item is RemoteModelIconMapping => item !== null)
+    }
+
+    if (value && typeof value === 'object') {
+      return Object.entries(value)
+        .map(([icon, modelsValue]) => {
+          const normalizedIcon = icon.trim()
+          const models = Array.isArray(modelsValue)
+            ? toStringList(modelsValue)
+            : typeof modelsValue === 'string'
+              ? [modelsValue.trim()].filter(Boolean)
+              : []
+
+          if (!normalizedIcon || !models.length) return null
+          return { icon: normalizedIcon, models }
+        })
+        .filter((item): item is RemoteModelIconMapping => item !== null)
+    }
+
+    return []
+  }
+
+  if (Array.isArray(json)) {
+    const platforms = json as AIPlatform[]
+    const fallbackProvidersList = toStringList(platforms.map(platform => platform.icon))
+    return {
+      providersList: fallbackProvidersList,
+      modelIconMappings: [],
+      platforms,
+    }
+  }
+
+  if (json && typeof json === 'object') {
+    const record = json as Record<string, unknown>
+    const platforms = Array.isArray(record.platforms) ? record.platforms as AIPlatform[] : []
+    const providersList = toStringList(record.providers_list)
+    const fallbackProvidersList = toStringList(platforms.map(platform => platform.icon))
+    const modelIconMappings = normalizeModelIconMappings(record.model_icon_mappings)
+
+    return {
+      providersList: providersList.length ? providersList : fallbackProvidersList,
+      modelIconMappings,
+      platforms,
+    }
+  }
+
+  return {
+    providersList: [],
+    modelIconMappings: [],
+    platforms: [],
+  }
+}
+
+const dedupeRemotePlatforms = (platforms: AIPlatform[]): AIPlatform[] => {
+  const seenPlatformIds = new Set<string>()
+
+  return platforms.reduce<AIPlatform[]>((acc, platform) => {
+    if (!platform?.id || seenPlatformIds.has(platform.id)) {
+      return acc
+    }
+
+    seenPlatformIds.add(platform.id)
+
+    const seenModelIds = new Set<string>()
+    const models = (platform.models || []).reduce<AIModel[]>((modelAcc, model) => {
+      if (!model?.id || seenModelIds.has(model.id)) {
+        return modelAcc
+      }
+
+      seenModelIds.add(model.id)
+      modelAcc.push(model)
+      return modelAcc
+    }, [])
+
+    acc.push({
+      ...platform,
+      models,
+    })
+
+    return acc
+  }, [])
+}
+
+const isLikelyUserCreatedPlatform = (platform: Pick<AIPlatform, 'id'>): boolean => {
+  return typeof platform.id === 'string' && platform.id.startsWith(USER_CREATED_PLATFORM_ID_PREFIX)
+}
+
+const isLikelyUserCreatedModel = (model: Pick<AIModel, 'id' | 'platformId'>, platformId?: string): boolean => {
+  if (!model?.id) return false
+  if (model.id.startsWith(LEGACY_USER_CREATED_MODEL_ID_PREFIX)) return true
+
+  const resolvedPlatformId = platformId || model.platformId
+  return !!resolvedPlatformId && model.id.startsWith(`${resolvedPlatformId}_`) && /_\d+$/.test(model.id)
+}
+
+const dedupeModelsById = (models: AIModel[]): AIModel[] => {
+  const modelMap = new Map<string, AIModel>()
+
+  for (const model of models) {
+    if (!model?.id) continue
+
+    const existing = modelMap.get(model.id)
+    if (!existing || (!!model.isRemote && !existing.isRemote)) {
+      modelMap.set(model.id, model)
+    }
+  }
+
+  return [...modelMap.values()]
+}
+
+const getPlatformApiKey = (platforms: AIPlatform[], preferredPlatform?: AIPlatform): string => {
+  if (preferredPlatform?.apiKey?.trim()) {
+    return preferredPlatform.apiKey
+  }
+
+  return platforms.find(platform => platform.apiKey?.trim())?.apiKey || ''
+}
+
+const sanitizeStoredPlatforms = (platforms: AIPlatform[]): AIPlatform[] => {
+  const groupedPlatforms = new Map<string, AIPlatform[]>()
+
+  for (const platform of platforms) {
+    if (!platform?.id || !platform.name?.trim()) continue
+
+    const existingPlatforms = groupedPlatforms.get(platform.id)
+    if (existingPlatforms) {
+      existingPlatforms.push(platform)
+    } else {
+      groupedPlatforms.set(platform.id, [platform])
+    }
+  }
+
+  return [...groupedPlatforms.values()].map((sameIdPlatforms) => {
+    const hasRemoteDuplicate = sameIdPlatforms.some(platform => platform.isRemote)
+    const preferredPlatform = sameIdPlatforms.find(platform => platform.isRemote)
+      ?? sameIdPlatforms.find(platform => isLikelyUserCreatedPlatform(platform))
+      ?? sameIdPlatforms[0]
+
+    const models = dedupeModelsById(
+      sameIdPlatforms.flatMap(platform => (platform.models || [])
+        .filter((model): model is AIModel => !!model?.id)
+        .filter((model) => {
+          if (!hasRemoteDuplicate) return true
+          if (model.isRemote) return true
+          return isLikelyUserCreatedModel(model, platform.id)
+        })
+        .map(model => ({
+          ...model,
+          platformId: preferredPlatform.id,
+          isRemote: model.isRemote === true,
+        })))
+    )
+
+    return {
+      ...preferredPlatform,
+      displayName: preferredPlatform.displayName || preferredPlatform.name || preferredPlatform.id,
+      apiKey: getPlatformApiKey(sameIdPlatforms, preferredPlatform),
+      models,
+    }
+  })
+}
+
+let cachedRemoteModelsCatalog: RemoteModelsCatalog | null = null
+let cachedRemoteModelsCatalogAt = 0
+let pendingRemoteModelsCatalogRequest: Promise<RemoteModelsCatalog> | null = null
+
+const requestRemoteModelsCatalog = async (): Promise<RemoteModelsCatalog> => {
+  try {
+    const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http')
+    const r = await tauriFetch(getRemoteModelsUrl(), { method: 'GET' })
+    if (!r.ok) throw new Error(`HTTP ${r.status}`)
+    return normalizeRemoteModelsCatalog(await r.json())
+  } catch {
+    const r = await fetch('/models.json')
+    if (!r.ok) throw new Error(`HTTP ${r.status}`)
+    return normalizeRemoteModelsCatalog(await r.json())
+  }
+}
+
+export const fetchRemoteModelsCatalog = async (): Promise<RemoteModelsCatalog> => {
+  const now = Date.now()
+
+  if (cachedRemoteModelsCatalog && now - cachedRemoteModelsCatalogAt < REMOTE_MODELS_REQUEST_COOLDOWN_MS) {
+    return cachedRemoteModelsCatalog
+  }
+
+  if (pendingRemoteModelsCatalogRequest) {
+    return pendingRemoteModelsCatalogRequest
+  }
+
+  pendingRemoteModelsCatalogRequest = requestRemoteModelsCatalog()
+    .then((catalog) => {
+      cachedRemoteModelsCatalog = catalog
+      cachedRemoteModelsCatalogAt = Date.now()
+      return catalog
+    })
+    .finally(() => {
+      pendingRemoteModelsCatalogRequest = null
+    })
+
+  return pendingRemoteModelsCatalogRequest
+}
 
 // 默认模型配置（无预定义平台，全部来自远程同步）
 const DEFAULT_MODEL_SETTINGS: ModelSettings = {
@@ -86,10 +328,18 @@ const MODEL_SETTINGS_STORAGE_KEY = 'model_settings'
 class ModelConfigManager {
   private settings: ModelSettings
   private listeners: Set<(settings: ModelSettings) => void> = new Set()
+  private remotePlatformsSyncAt = 0
+  private pendingRemotePlatformsSync: Promise<void> | null = null
+  private shouldPersistLoadedSettings = false
 
   constructor() {
     this.settings = reactive(this.loadSettings())
+    this.normalizeSelectedModels()
     this.setupAutoSave()
+
+    if (this.shouldPersistLoadedSettings) {
+      this.saveSettings()
+    }
   }
 
   /**
@@ -100,17 +350,145 @@ class ModelConfigManager {
       const stored = localStorage.getItem(MODEL_SETTINGS_STORAGE_KEY)
       if (stored) {
         const parsedSettings = JSON.parse(stored)
-        return {
+        const loadedSettings: ModelSettings = {
           ...DEFAULT_MODEL_SETTINGS,
           ...parsedSettings,
-          // 过滤掉 name 为空的无效平台
           platforms: (parsedSettings.platforms || []).filter((p: AIPlatform) => p.name?.trim()),
         }
+        const sanitizedSettings: ModelSettings = {
+          ...loadedSettings,
+          platforms: sanitizeStoredPlatforms(loadedSettings.platforms || []),
+        }
+
+        this.shouldPersistLoadedSettings = JSON.stringify(loadedSettings) !== JSON.stringify(sanitizedSettings)
+        return sanitizedSettings
       }
     } catch (error) {
       console.warn('加载模型配置失败，使用默认配置:', error)
     }
     return { ...DEFAULT_MODEL_SETTINGS }
+  }
+
+  private dedupeAndFilterModelIds(modelIds: Array<string | null | undefined>, validIds: Set<string>, maxCount: number): string[] {
+    const uniqueIds: string[] = []
+
+    for (const modelId of modelIds) {
+      if (!modelId || !validIds.has(modelId) || uniqueIds.includes(modelId)) {
+        continue
+      }
+
+      uniqueIds.push(modelId)
+      if (uniqueIds.length >= maxCount) {
+        break
+      }
+    }
+
+    return uniqueIds
+  }
+
+  private normalizeSelectedModels(): void {
+    const enabledPlatforms = this.settings.platforms.filter(platform => platform.enabled !== false)
+    const allModels = enabledPlatforms.flatMap(platform => platform.models || [])
+    const enabledModels = allModels.filter(model => model.enabled !== false)
+    const textModelIds = new Set(enabledModels.filter(model => model.category === 'text').map(model => model.id))
+    const summaryModelIds = new Set(enabledModels.map(model => model.id))
+    const visionModelIds = new Set(enabledModels.filter(model => model.category === 'vision').map(model => model.id))
+
+    const normalizedTextModels = this.dedupeAndFilterModelIds(
+      [
+        ...(this.settings.selectedTextModels || []),
+        ...(this.settings.selectedTextModel ? [this.settings.selectedTextModel] : [])
+      ],
+      textModelIds,
+      5
+    )
+
+    const normalizedSummaryModels = this.dedupeAndFilterModelIds(
+      [
+        ...(this.settings.selectedSummaryModels || []),
+        ...(this.settings.selectedSummaryModel ? [this.settings.selectedSummaryModel] : [])
+      ],
+      summaryModelIds,
+      1
+    )
+
+    this.settings.selectedTextModels = normalizedTextModels
+    this.settings.selectedTextModel = normalizedTextModels[0] || null
+    this.settings.selectedSummaryModels = normalizedSummaryModels
+    this.settings.selectedSummaryModel = normalizedSummaryModels[0] || null
+    this.settings.selectedVisionModel = this.settings.selectedVisionModel && visionModelIds.has(this.settings.selectedVisionModel)
+      ? this.settings.selectedVisionModel
+      : null
+  }
+
+  private clearSelectedModelsForPlatform(platformId: string): void {
+    const platform = this.settings.platforms.find(item => item.id === platformId)
+    if (!platform) return
+
+    const platformModelIds = new Set((platform.models || []).map(model => model.id))
+
+    if (this.settings.selectedTextModels) {
+      this.settings.selectedTextModels = this.settings.selectedTextModels.filter(id => !platformModelIds.has(id))
+      this.settings.selectedTextModel = this.settings.selectedTextModels[0] || null
+    }
+
+    if (this.settings.selectedSummaryModels) {
+      this.settings.selectedSummaryModels = this.settings.selectedSummaryModels.filter(id => !platformModelIds.has(id))
+      this.settings.selectedSummaryModel = this.settings.selectedSummaryModels[0] || null
+    }
+
+    if (this.settings.selectedVisionModel && platformModelIds.has(this.settings.selectedVisionModel)) {
+      this.settings.selectedVisionModel = null
+    }
+  }
+
+  private sortPlatformsByRemoteOrder(platforms: AIPlatform[], remotePlatforms: AIPlatform[]): AIPlatform[] {
+    const remoteOrder = new Map(remotePlatforms.map((platform, index) => [platform.id, index]))
+
+    return [...platforms].sort((a, b) => {
+      const aIndex = remoteOrder.get(a.id)
+      const bIndex = remoteOrder.get(b.id)
+      const aIsRemote = aIndex !== undefined
+      const bIsRemote = bIndex !== undefined
+
+      if (aIsRemote && bIsRemote) return aIndex - bIndex
+      if (aIsRemote) return -1
+      if (bIsRemote) return 1
+      return 0
+    })
+  }
+
+  private sortModelsByRemoteOrder(models: AIModel[], remoteModels: AIModel[]): AIModel[] {
+    const remoteOrder = new Map(remoteModels.map((model, index) => [model.id, index]))
+
+    return [...models].sort((a, b) => {
+      const aIndex = remoteOrder.get(a.id)
+      const bIndex = remoteOrder.get(b.id)
+      const aIsRemote = aIndex !== undefined
+      const bIsRemote = bIndex !== undefined
+
+      if (aIsRemote && bIsRemote) return aIndex - bIndex
+      if (aIsRemote) return -1
+      if (bIsRemote) return 1
+      return 0
+    })
+  }
+
+  private findLocalPlatformWithSameRemoteModelId(remotePlatform: AIPlatform): AIPlatform | undefined {
+    const remoteModelIds = new Set((remotePlatform.models || []).map(model => model.id).filter(Boolean))
+    if (!remoteModelIds.size) return undefined
+
+    return this.settings.platforms
+      .filter(platform => !platform.isRemote && platform.apiKey?.trim())
+      .map(platform => ({
+        platform,
+        matchedModelCount: (platform.models || []).reduce(
+          (count, model) => count + (remoteModelIds.has(model.id) ? 1 : 0),
+          0
+        ),
+      }))
+      .filter(item => item.matchedModelCount > 0)
+      .sort((a, b) => b.matchedModelCount - a.matchedModelCount)[0]?.platform
   }
 
   /**
@@ -119,65 +497,59 @@ class ModelConfigManager {
    * - 保留用户的 apiKey、enabled 状态
    * - 远程已删除的平台/模型：若其模型被选中，自动替换为同平台同类型的另一个模型
    */
-  async syncRemotePlatforms(): Promise<void> {
+  private async performRemotePlatformsSync(): Promise<boolean> {
     let remotePlatforms: AIPlatform[] = []
     try {
-      // 优先使用 Tauri HTTP 插件
-      try {
-        const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http')
-        const r = await tauriFetch(REMOTE_MODELS_URL, { method: 'GET' })
-        if (!r.ok) throw new Error(`HTTP ${r.status}`)
-        const json = await r.json()
-        if (Array.isArray(json)) remotePlatforms = json as AIPlatform[]
-      } catch {
-        // 回退到浏览器 fetch（本地 models.json）
-        const r = await fetch('/models.json')
-        if (!r.ok) throw new Error(`HTTP ${r.status}`)
-        const json = await r.json()
-        if (Array.isArray(json)) remotePlatforms = json as AIPlatform[]
-      }
+      const catalog = await fetchRemoteModelsCatalog()
+      remotePlatforms = dedupeRemotePlatforms(catalog.platforms)
     } catch (err) {
       console.warn('远程模型同步失败，跳过同步:', err)
-      return
+      return false
     }
 
-    // 构建远程平台 id 集合
     const remotePlatformIds = new Set(remotePlatforms.map(p => p.id))
+    const existingPlatformsById = this.settings.platforms.reduce<Map<string, AIPlatform[]>>((map, platform) => {
+      const existingPlatforms = map.get(platform.id)
+      if (existingPlatforms) {
+        existingPlatforms.push(platform)
+      } else {
+        map.set(platform.id, [platform])
+      }
+      return map
+    }, new Map<string, AIPlatform[]>())
 
-    // 处理远程平台已消失的情况
     for (const localPlatform of this.settings.platforms) {
       if (!localPlatform.isRemote) continue
       if (remotePlatformIds.has(localPlatform.id)) continue
-      // 该远程平台已从远程消失
-      const userModels = localPlatform.models.filter(m => !m.isRemote)
+
+      const userModels = localPlatform.models.filter(model => !model.isRemote && isLikelyUserCreatedModel(model, localPlatform.id))
       if (userModels.length > 0) {
-        // 有用户创建的模型，转为本地平台保留，只清理远程模型的选中状态
-        for (const model of localPlatform.models.filter(m => m.isRemote)) {
+        for (const model of localPlatform.models.filter(model => model.isRemote)) {
           this._replaceSelectedModel(model.id, model.category, localPlatform.id)
         }
         localPlatform.isRemote = false
         localPlatform.models = userModels
       } else {
-        // 无用户模型，清理所有选中状态
         for (const model of localPlatform.models) {
           this._replaceSelectedModel(model.id, model.category, localPlatform.id)
         }
       }
     }
 
-    // 移除所有旧的远程平台（包括旧版本未标记 isRemote 的同 id 平台）
-    // 已转为本地（isRemote=false）的平台不会被过滤掉
-    const remotePlatformIdSet = new Set(remotePlatforms.map(p => p.id))
-    const userPlatformMap = new Map(this.settings.platforms.map(p => [p.id, p]))
     this.settings.platforms = this.settings.platforms.filter(
-      p => !p.isRemote && p.name?.trim()
+      platform => !platform.isRemote && platform.name?.trim() && !remotePlatformIds.has(platform.id)
     )
 
-    // 将远程平台插入到列表最前面，保留用户的 apiKey/enabled
-
     const newRemotePlatforms: AIPlatform[] = remotePlatforms.map(rp => {
-      const existing = userPlatformMap.get(rp.id)
-      const models: AIModel[] = (rp.models || []).map(rm => ({
+      const existingPlatforms = existingPlatformsById.get(rp.id) || []
+      const existing = existingPlatforms.find(platform => platform.isRemote)
+        ?? existingPlatforms.find(platform => platform.apiKey?.trim())
+        ?? existingPlatforms[0]
+      const preservedApiKey = getPlatformApiKey(existingPlatforms, existing)
+        || this.findLocalPlatformWithSameRemoteModelId(rp)?.apiKey
+        || ''
+
+      const remoteModels: AIModel[] = (rp.models || []).map(rm => ({
         ...rm,
         platformId: rp.id,
         isRemote: true,
@@ -186,11 +558,20 @@ class ModelConfigManager {
         temperature: rm.temperature ?? 0.7,
         topP: rm.topP ?? 0.9,
       }))
+      const localModels = dedupeModelsById(
+        existingPlatforms.flatMap(platform => (platform.models || [])
+          .filter(model => !model.isRemote && isLikelyUserCreatedModel(model, rp.id))
+          .map(model => ({
+            ...model,
+            platformId: rp.id,
+            isRemote: false,
+          })))
+      )
+      const models = this.sortModelsByRemoteOrder(dedupeModelsById([...remoteModels, ...localModels]), remoteModels)
 
-      // 检查远程平台中已消失的模型，替换选中状态
-      if (existing) {
-        const remoteModelIds = new Set(models.map(m => m.id))
-        for (const oldModel of existing.models.filter(m => m.isRemote)) {
+      if (existingPlatforms.length > 0) {
+        const remoteModelIds = new Set(remoteModels.map(m => m.id))
+        for (const oldModel of existingPlatforms.flatMap(platform => (platform.models || []).filter(model => model.isRemote))) {
           if (!remoteModelIds.has(oldModel.id)) {
             this._replaceSelectedModel(oldModel.id, oldModel.category, rp.id, models)
           }
@@ -207,15 +588,45 @@ class ModelConfigManager {
         url: rp.url,
         inviteUrl: rp.inviteUrl,
         inviteText: rp.inviteText,
+        inviteCode: rp.inviteCode || existing?.inviteCode,
         isRemote: true,
-        apiKey: existing?.apiKey || '',
+        apiKey: preservedApiKey,
         enabled: existing?.enabled ?? true,
+        customHeaders: existing?.customHeaders,
         models,
       }
     })
 
-    // 远程平台放前面，用户自定义平台放后面
-    this.settings.platforms = [...newRemotePlatforms, ...this.settings.platforms]
+    this.settings.platforms = this.sortPlatformsByRemoteOrder(
+      [...newRemotePlatforms, ...this.settings.platforms],
+      remotePlatforms
+    )
+    this.normalizeSelectedModels()
+    return true
+  }
+
+  async syncRemotePlatforms(): Promise<void> {
+    const now = Date.now()
+
+    if (this.remotePlatformsSyncAt && now - this.remotePlatformsSyncAt < REMOTE_MODELS_REQUEST_COOLDOWN_MS) {
+      return
+    }
+
+    if (this.pendingRemotePlatformsSync) {
+      return this.pendingRemotePlatformsSync
+    }
+
+    this.pendingRemotePlatformsSync = this.performRemotePlatformsSync()
+      .then((didSync) => {
+        if (didSync) {
+          this.remotePlatformsSyncAt = Date.now()
+        }
+      })
+      .finally(() => {
+        this.pendingRemotePlatformsSync = null
+      })
+
+    return this.pendingRemotePlatformsSync
   }
 
   /**
@@ -384,6 +795,7 @@ class ModelConfigManager {
    * 切换文本模型选中状态（最多5个）
    */
   toggleSelectedTextModel(modelId: string): void {
+    this.normalizeSelectedModels()
     if (!this.settings.selectedTextModels) this.settings.selectedTextModels = []
     const idx = this.settings.selectedTextModels.indexOf(modelId)
     if (idx !== -1) {
@@ -528,10 +940,12 @@ class ModelConfigManager {
     const newPlatform: AIPlatform = {
       ...platform,
       id,
-      displayName: platform.name, // 确保设置 displayName 字段
-      models: platform.models || [] // 使用传入的模型数组，如果为空则使用空数组
+      displayName: platform.name,
+      enabled: platform.enabled ?? true,
+      isRemote: false,
+      models: platform.models || []
     }
-    
+
     this.settings.platforms.push(newPlatform)
     return id
   }
@@ -542,11 +956,15 @@ class ModelConfigManager {
   updatePlatform(platformId: string, updates: Partial<AIPlatform>): void {
     const platform = this.settings.platforms.find(p => p.id === platformId)
     if (platform) {
+      const wasEnabled = platform.enabled !== false
       Object.assign(platform, updates)
-      // 如果更新了name字段，同时更新displayName
       if (updates.name) {
         platform.displayName = updates.name
       }
+      if (wasEnabled && platform.enabled === false) {
+        this.clearSelectedModelsForPlatform(platformId)
+      }
+      this.normalizeSelectedModels()
     }
   }
 
@@ -554,25 +972,26 @@ class ModelConfigManager {
    * 删除平台
    */
   removePlatform(platformId: string): void {
-    const index = this.settings.platforms.findIndex(p => p.id === platformId)
-    if (index !== -1) {
-      const platform = this.settings.platforms[index]
-      // 清理该平台下所有模型的选中状态
-      if (this.settings.selectedTextModels) {
-        const platformModelIds = new Set(platform.models.map(m => m.id))
-        this.settings.selectedTextModels = this.settings.selectedTextModels.filter(id => !platformModelIds.has(id))
-        this.settings.selectedTextModel = this.settings.selectedTextModels[0] || null
-      }
-      if (this.settings.selectedSummaryModels) {
-        const platformModelIds = new Set(platform.models.map(m => m.id))
-        this.settings.selectedSummaryModels = this.settings.selectedSummaryModels.filter(id => !platformModelIds.has(id))
-        this.settings.selectedSummaryModel = this.settings.selectedSummaryModels[0] || null
-      }
-      if (this.settings.selectedVisionModel && platform.models.some(m => m.id === this.settings.selectedVisionModel)) {
-        this.settings.selectedVisionModel = null
-      }
-      this.settings.platforms.splice(index, 1)
+    const duplicatedPlatforms = this.settings.platforms.filter(platform => platform.id === platformId)
+    if (!duplicatedPlatforms.length) return
+
+    const duplicatedModelIds = new Set(duplicatedPlatforms.flatMap(platform => (platform.models || []).map(model => model.id)))
+
+    this.settings.platforms = this.settings.platforms.filter(platform => platform.id !== platformId)
+    this.settings.selectedTextModels = (this.settings.selectedTextModels || []).filter(id => !duplicatedModelIds.has(id))
+    this.settings.selectedSummaryModels = (this.settings.selectedSummaryModels || []).filter(id => !duplicatedModelIds.has(id))
+
+    if (this.settings.selectedTextModel && duplicatedModelIds.has(this.settings.selectedTextModel)) {
+      this.settings.selectedTextModel = null
     }
+    if (this.settings.selectedSummaryModel && duplicatedModelIds.has(this.settings.selectedSummaryModel)) {
+      this.settings.selectedSummaryModel = null
+    }
+    if (this.settings.selectedVisionModel && duplicatedModelIds.has(this.settings.selectedVisionModel)) {
+      this.settings.selectedVisionModel = null
+    }
+
+    this.normalizeSelectedModels()
   }
 
   /**
@@ -588,7 +1007,8 @@ class ModelConfigManager {
     const newModel: AIModel = {
       ...model,
       id: modelId,
-      platformId
+      platformId,
+      isRemote: false,
     }
 
     platform.models.push(newModel)
@@ -652,7 +1072,12 @@ class ModelConfigManager {
     try {
       const importedSettings = JSON.parse(jsonString)
       if (this.validateSettings(importedSettings)) {
-        Object.assign(this.settings, importedSettings)
+        Object.assign(this.settings, {
+          ...DEFAULT_MODEL_SETTINGS,
+          ...importedSettings,
+          platforms: sanitizeStoredPlatforms(importedSettings.platforms || []),
+        })
+        this.normalizeSelectedModels()
       } else {
         throw new Error('配置格式无效')
       }

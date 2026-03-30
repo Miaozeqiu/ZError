@@ -1,9 +1,9 @@
-use std::sync::Arc;
+use crate::logger::RequestLogger;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use serde_json;
+use std::sync::Arc;
 use tokio::task::JoinHandle;
-use crate::logger::RequestLogger;
 
 /// 服务器信息结构体
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -27,6 +27,10 @@ pub struct QueryRequest {
 pub struct ModelCallResponseRequest {
     pub request_id: String,
     pub content: String,
+    #[serde(default)]
+    pub reasoning_content: Option<String>,
+    #[serde(default)]
+    pub is_success: Option<bool>,
 }
 
 /// 模型调用进度请求结构体（用于流式输出心跳）
@@ -87,16 +91,22 @@ impl<'de> Deserialize<'de> for QueryResponse {
                             if v.is_array() {
                                 data = serde_json::from_value(v).ok();
                             } else if v.is_object() {
-                                let item: QueryData = serde_json::from_value(v)
-                                    .map_err(serde::de::Error::custom)?;
+                                let item: QueryData =
+                                    serde_json::from_value(v).map_err(serde::de::Error::custom)?;
                                 data = Some(vec![item]);
                             }
                         }
                         "message" => message = map.next_value()?,
-                        _ => { let _: serde_json::Value = map.next_value()?; }
+                        _ => {
+                            let _: serde_json::Value = map.next_value()?;
+                        }
                     }
                 }
-                Ok(QueryResponse { code, data, message })
+                Ok(QueryResponse {
+                    code,
+                    data,
+                    message,
+                })
             }
         }
         deserializer.deserialize_map(Visitor)
@@ -106,9 +116,11 @@ impl<'de> Deserialize<'de> for QueryResponse {
 /// 查询数据结构体
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueryData {
+    pub id: i64,
     pub question: String,
     pub answer: String,
     pub is_ai: bool,
+    pub is_pending_correction: bool,
 }
 
 /// 请求日志结构体
@@ -133,7 +145,7 @@ impl QueryResponse {
             message: None,
         }
     }
-    
+
     /// 创建未找到响应
     pub fn not_found() -> Self {
         Self {
@@ -142,7 +154,7 @@ impl QueryResponse {
             message: Some("No matching records found".to_string()),
         }
     }
-    
+
     /// 创建错误响应
     pub fn error(message: String) -> Self {
         Self {
@@ -160,8 +172,6 @@ pub struct ServerState {
     pub handle: Arc<Mutex<Option<JoinHandle<()>>>>,
     pub web_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
     pub logger: RequestLogger,
-    pub analysis_enabled: Arc<Mutex<bool>>, // 非思考模型分析开关
-    pub is_thinking_model: Arc<Mutex<bool>>, // 当前选中模型是否为思考模型
 }
 
 impl Default for ServerState {
@@ -175,8 +185,6 @@ impl Default for ServerState {
             handle: Arc::new(Mutex::new(None)),
             web_handle: Arc::new(Mutex::new(None)),
             logger: RequestLogger::default(),
-            analysis_enabled: Arc::new(Mutex::new(false)),
-            is_thinking_model: Arc::new(Mutex::new(false)),
         }
     }
 }

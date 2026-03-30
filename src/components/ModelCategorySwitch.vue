@@ -1,6 +1,6 @@
 <template>
-  <div class="radio-inputs" :data-selected-index="selectedIndex">
-    <div class="slider"></div>
+  <div class="radio-inputs" :style="{ '--n': options.length }">
+    <div class="slider" :style="{ transform: `translateX(${Math.max(selectedIndex, 0) * 100}%)` }"></div>
     <label class="radio" v-for="(option, index) in options" :key="index">
       <input type="radio" :name="name" :value="option.value" v-model="selectedOption" @change="updateValue"/>
       <span class="name">{{ option.label }}</span>
@@ -16,19 +16,27 @@ export default {
       type: String,
       default: 'text',
     },
+    showSummary: {
+      type: Boolean,
+      default: true,
+    },
   },
   data() {
     return {
       selectedOption: this.modelValue,
-      options: [
-        { value: 'text', label: '文本' },
-        { value: 'vision', label: '视觉' },
-        { value: 'summary', label: '总结' }
-      ],
       name: 'model-category-radio',
     };
   },
   computed: {
+    options() {
+      const baseOptions = [
+        { value: 'text', label: '文本' },
+        { value: 'vision', label: '视觉' }
+      ];
+      return this.showSummary
+        ? [...baseOptions, { value: 'summary', label: '总结' }]
+        : baseOptions;
+    },
     selectedIndex() {
       return this.options.findIndex(o => o.value === this.selectedOption);
     },
@@ -41,6 +49,12 @@ export default {
   watch: {
     modelValue(newValue) {
       this.selectedOption = newValue;
+    },
+    showSummary() {
+      if (!this.showSummary && this.selectedOption === 'summary') {
+        this.selectedOption = 'text';
+        this.updateValue();
+      }
     }
   }
 };
@@ -48,8 +62,8 @@ export default {
 
 <style scoped>
 .radio-inputs {
-  --n: 3;          /* 选项总数 */
-  --pad: 3px;      /* 内边距 */
+  --n: 3;
+  --pad: 3px;
 
   position: relative;
   display: flex;
@@ -105,11 +119,6 @@ export default {
 [data-theme="dark"] .slider {
   background-color: #383838;
 }
-
-/* 根据 data-selected-index 平移滑块 */
-.radio-inputs[data-selected-index="0"] .slider { transform: translateX(0); }
-.radio-inputs[data-selected-index="1"] .slider { transform: translateX(100%); }
-.radio-inputs[data-selected-index="2"] .slider { transform: translateX(200%); }
 
 span {
   -webkit-tap-highlight-color: transparent;

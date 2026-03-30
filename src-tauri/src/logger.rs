@@ -1,7 +1,8 @@
-use std::sync::{Arc, Mutex};
-use std::collections::{VecDeque, HashMap};
+use crate::database::insert_request_log;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, VecDeque};
+use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;
 use tokio::time::Duration;
 use uuid;
@@ -12,7 +13,7 @@ pub struct RequestLog {
     pub timestamp: DateTime<Utc>,
     pub method: String,
     pub path: String,
-    pub status: Option<u16>, // 开始时为None，完成时有值
+    pub status: Option<u16>,        // 开始时为None，完成时有值
     pub response_time: Option<u64>, // 开始时为None，完成时有值
     pub request_body: Option<String>,
     pub response_body: Option<String>,
@@ -26,7 +27,7 @@ pub struct RequestLog {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelCallRequest {
     pub request_id: String, // 关联的请求ID
-    pub query: String, // 需要查询的内容
+    pub query: String,      // 需要查询的内容
     pub timestamp: DateTime<Utc>,
 }
 
@@ -34,7 +35,7 @@ pub struct ModelCallRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelCallProgress {
     pub request_id: String, // 关联的请求ID
-    pub content: String, // 当前累计或增量内容
+    pub content: String,    // 当前累计或增量内容
     pub timestamp: DateTime<Utc>,
 }
 
@@ -42,7 +43,10 @@ pub struct ModelCallProgress {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelCallResponse {
     pub request_id: String, // 关联的请求ID
-    pub content: String, // 模型返回的内容
+    pub content: String,    // 模型返回的内容
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_content: Option<String>,
+    pub is_success: bool,
     pub timestamp: DateTime<Utc>,
 }
 
@@ -66,6 +70,7 @@ pub struct RequestLogger {
     max_logs: usize,
     broadcaster: broadcast::Sender<SSEEvent>, // 修改为SSEEvent类型
     pending_responses: Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<String>>>>, // 等待模型响应的通道
+    pending_error_responses: Arc<Mutex<HashMap<String, (String, std::time::Instant)>>>, // 暂存错误响应，给成功回调留一个兜底窗口
 }
 
 impl RequestLogger {
@@ -76,7 +81,18 @@ impl RequestLogger {
             max_logs,
             broadcaster,
             pending_responses: Arc::new(Mutex::new(HashMap::new())),
+            pending_error_responses: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    fn persist_request_log(&self, log: &RequestLog) {
+        if let Err(error) = insert_request_log(log, self.max_logs) {
+            println!("❌ 持久化请求日志失败: {}", error);
+        }
+    }
+
+    pub fn max_logs(&self) -> usize {
+        self.max_logs
     }
 
     // 记录请求开始
@@ -113,8 +129,14 @@ impl RequestLogger {
             logs.pop_front();
         }
 
+        drop(logs);
+        self.persist_request_log(&log);
+
         // Broadcast the new log to SSE subscribers
-        println!("📡 Broadcasting request start to {} subscribers", self.subscriber_count());
+        println!(
+            "📡 Broadcasting request start to {} subscribers",
+            self.subscriber_count()
+        );
         match self.broadcaster.send(SSEEvent::RequestLog(log.clone())) {
             Ok(_) => println!("✅ Request start broadcast successful"),
             Err(e) => println!("❌ Request start broadcast failed: {:?}", e),
@@ -154,8 +176,14 @@ impl RequestLogger {
             logs.pop_front();
         }
 
+        drop(logs);
+        self.persist_request_log(&log);
+
         // Broadcast the new log to SSE subscribers
-        println!("📡 Broadcasting request complete to {} subscribers", self.subscriber_count());
+        println!(
+            "📡 Broadcasting request complete to {} subscribers",
+            self.subscriber_count()
+        );
         match self.broadcaster.send(SSEEvent::RequestLog(log.clone())) {
             Ok(_) => println!("✅ Request complete broadcast successful"),
             Err(e) => println!("❌ Request complete broadcast failed: {:?}", e),
@@ -164,10 +192,10 @@ impl RequestLogger {
 
     // 保留原有方法以兼容其他路由
     pub fn log_request(
-        &self, 
-        method: String, 
-        path: String, 
-        status: u16, 
+        &self,
+        method: String,
+        path: String,
+        status: u16,
         response_time: u64,
         request_body: Option<String>,
         response_body: Option<String>,
@@ -198,8 +226,14 @@ impl RequestLogger {
             logs.pop_front();
         }
 
+        drop(logs);
+        self.persist_request_log(&log);
+
         // Broadcast the new log to SSE subscribers
-        println!("📡 Broadcasting log to {} subscribers", self.subscriber_count());
+        println!(
+            "📡 Broadcasting log to {} subscribers",
+            self.subscriber_count()
+        );
         match self.broadcaster.send(SSEEvent::RequestLog(log.clone())) {
             Ok(_) => println!("✅ Log broadcast successful"),
             Err(e) => println!("❌ Log broadcast failed: {:?}", e),
@@ -214,7 +248,10 @@ impl RequestLogger {
             timestamp: Utc::now(),
         };
 
-        println!("📡 Broadcasting model call request to {} subscribers", self.subscriber_count());
+        println!(
+            "📡 Broadcasting model call request to {} subscribers",
+            self.subscriber_count()
+        );
         match self.broadcaster.send(SSEEvent::ModelCallRequest(event)) {
             Ok(_) => println!("✅ Model call request broadcast successful"),
             Err(e) => println!("❌ Model call request broadcast failed: {:?}", e),
@@ -229,7 +266,10 @@ impl RequestLogger {
             timestamp: Utc::now(),
         };
 
-        println!("📡 Broadcasting model call progress to {} subscribers", self.subscriber_count());
+        println!(
+            "📡 Broadcasting model call progress to {} subscribers",
+            self.subscriber_count()
+        );
         match self.broadcaster.send(SSEEvent::ModelCallProgress(event)) {
             Ok(_) => println!("✅ Model call progress broadcast successful"),
             Err(e) => println!("❌ Model call progress broadcast failed: {:?}", e),
@@ -237,23 +277,46 @@ impl RequestLogger {
     }
 
     // 新增：发送模型调用响应事件
-    pub fn send_model_call_response(&self, request_id: String, content: String) {
-        // 首先检查是否有等待这个响应的请求
-        if let Some(sender) = {
-            let mut pending = self.pending_responses.lock().unwrap();
-            pending.remove(&request_id)
-        } {
-            // 发送响应到等待的请求
-            let _ = sender.send(content.clone());
+    pub fn send_model_call_response(
+        &self,
+        request_id: String,
+        content: String,
+        reasoning_content: Option<String>,
+        is_success: bool,
+    ) {
+        if is_success {
+            self.pending_error_responses
+                .lock()
+                .unwrap()
+                .remove(&request_id);
+
+            // 成功响应优先完成等待通道
+            if let Some(sender) = {
+                let mut pending = self.pending_responses.lock().unwrap();
+                pending.remove(&request_id)
+            } {
+                let _ = sender.send(content.clone());
+            }
+        } else {
+            // 错误响应先暂存，给其他可能成功的消费者留出覆盖窗口
+            self.pending_error_responses.lock().unwrap().insert(
+                request_id.clone(),
+                (content.clone(), std::time::Instant::now()),
+            );
         }
 
         let event = ModelCallResponse {
             request_id,
             content,
+            reasoning_content,
+            is_success,
             timestamp: Utc::now(),
         };
 
-        println!("📡 Broadcasting model call response to {} subscribers", self.subscriber_count());
+        println!(
+            "📡 Broadcasting model call response to {} subscribers",
+            self.subscriber_count()
+        );
         match self.broadcaster.send(SSEEvent::ModelCallResponse(event)) {
             Ok(_) => println!("✅ Model call response broadcast successful"),
             Err(e) => println!("❌ Model call response broadcast failed: {:?}", e),
@@ -279,7 +342,11 @@ impl RequestLogger {
     }
 
     // 新增：等待模型响应的方法（基于无新token的静默超时）
-    pub async fn wait_for_model_response(&self, request_id: String, inactivity_seconds: u64) -> Result<String, String> {
+    pub async fn wait_for_model_response(
+        &self,
+        request_id: String,
+        inactivity_seconds: u64,
+    ) -> Result<String, String> {
         let (sender, mut final_receiver) = tokio::sync::oneshot::channel();
 
         // 注册等待最终响应的通道
@@ -291,17 +358,23 @@ impl RequestLogger {
         // 订阅SSE事件，用于检测进度心跳
         let mut sse_receiver = self.broadcaster.subscribe();
         let inactivity = Duration::from_secs(inactivity_seconds);
+        let error_grace = Duration::from_secs(2);
+        let check_interval = Duration::from_millis(300);
         let mut last_activity = std::time::Instant::now();
 
         loop {
             tokio::select! {
-                // 最终响应到达
+                // 最终成功响应到达
                 res = &mut final_receiver => {
                     match res {
-                        Ok(content) => return Ok(content),
+                        Ok(content) => {
+                            self.pending_error_responses.lock().unwrap().remove(&request_id);
+                            return Ok(content)
+                        },
                         Err(_) => {
                             let mut pending = self.pending_responses.lock().unwrap();
                             pending.remove(&request_id);
+                            self.pending_error_responses.lock().unwrap().remove(&request_id);
                             return Err("Response channel closed".to_string());
                         }
                     }
@@ -314,7 +387,6 @@ impl RequestLogger {
                         }
                         Ok(SSEEvent::ModelCallResponse(resp)) if resp.request_id == request_id => {
                             last_activity = std::time::Instant::now();
-                            // 最终响应通常会触发上面的oneshot，这里仅更新活动时间
                         }
                         Ok(_) => {}
                         Err(_e) => {
@@ -322,11 +394,23 @@ impl RequestLogger {
                         }
                     }
                 }
-                // 静默计时器触发，检查是否超过不活跃阈值
-                _ = tokio::time::sleep(inactivity) => {
+                _ = tokio::time::sleep(check_interval) => {
+                    let pending_error = {
+                        let errors = self.pending_error_responses.lock().unwrap();
+                        errors.get(&request_id).cloned()
+                    };
+
+                    if let Some((error_content, error_at)) = pending_error {
+                        if error_at.elapsed() >= error_grace && last_activity.elapsed() >= error_grace {
+                            self.pending_error_responses.lock().unwrap().remove(&request_id);
+                            self.pending_responses.lock().unwrap().remove(&request_id);
+                            return Ok(error_content);
+                        }
+                    }
+
                     if last_activity.elapsed() >= inactivity {
-                        let mut pending = self.pending_responses.lock().unwrap();
-                        pending.remove(&request_id);
+                        self.pending_responses.lock().unwrap().remove(&request_id);
+                        self.pending_error_responses.lock().unwrap().remove(&request_id);
                         return Err("Timeout waiting for model response (no new tokens)".to_string());
                     }
                 }

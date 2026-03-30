@@ -1,85 +1,94 @@
 <template>
   <div v-if="visible" class="dialog-overlay" @click="handleOverlayClick">
-    <div class="dialog-content test-dialog" @click.stop>
-      <!-- <div class="dialog-header">
-        <h3 class="dialog-title">测试模型: {{ modelName }}</h3>
-        <button class="dialog-close" @click="closeDialog">×</button>
-      </div> -->
-      <div class="dialog-body">
+    <div class="dialog-panel test-dialog-panel" @click.stop>
+      <div class="dialog-header">
+        <button class="btn-back" @click="closeDialog" title="关闭">
+          <svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" width="18" height="18">
+            <path d="M768 96c19.2-19.2 19.2-51.2 0-70.4-19.2-19.2-51.2-19.2-70.4 0l-448 448c-19.2 19.2-19.2 51.2 0 70.4l448 448c19.2 19.2 51.2 19.2 70.4 0 19.2-19.2 19.2-51.2 0-70.4L358.4 512l409.6-416z" fill="currentColor"/>
+          </svg>
+        </button>
+        <h3 class="dialog-title">测试模型：{{ modelName }}</h3>
+        <button class="btn-confirm" @click="closeDialog">{{ testing ? '停止' : '关闭' }}</button>
+      </div>
+      <div class="dialog-body test-dialog-body">
         <!-- 测试进行中 -->
         <div v-if="testing" class="test-status testing">
           <div class="loading-spinner"></div>
-          <p>正在测试模型，请稍候...</p>
-          <!-- 流式响应显示区域 -->
-          <div v-if="streamingResponse" class="streaming-response">
-            <div class="response-section">
-              <p><strong>实时响应:</strong></p>
+          <p class="testing-tip">正在测试模型，请稍候...</p>
+          <div v-if="streamingReasoning || streamingResponse" class="content-stack">
+            <!-- 流式思考过程显示区域 -->
+            <div v-if="streamingReasoning" class="reasoning-section streaming-card">
+              <p class="section-title reasoning-title">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="reasoning-icon" aria-hidden="true"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"></path><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"></path><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"></path><path d="M17.599 6.5a3 3 0 0 0 .399-1.375"></path><path d="M6.003 5.125A3 3 0 0 0 6.401 6.5"></path><path d="M3.477 10.896a4 4 0 0 1 .585-.396"></path><path d="M19.938 10.5a4 4 0 0 1 .585.396"></path><path d="M6 18a4 4 0 0 1-1.967-.516"></path><path d="M19.967 17.484A4 4 0 0 1 18 18"></path></svg>
+                <strong>实时思考过程</strong>
+              </p>
+              <div class="reasoning-content streaming">
+                <MarkdownRender :content="streamingReasoning" />
+              </div>
+            </div>
+            <!-- 流式响应显示区域 -->
+            <div v-if="streamingResponse" class="response-section streaming-response">
+              <p class="section-title"><strong>实时响应结果</strong></p>
               <div class="response-content streaming">
                 <MarkdownRender :content="streamingResponse" />
               </div>
-            </div>
-            <!-- 原始输出内容 -->
-            <!-- <div class="raw-response-section">
-              <p><strong>原始输出:</strong></p>
-              <div class="raw-response-content">{{ streamingResponse }}</div>
-            </div> -->
-          </div>
-          <!-- 流式思考过程显示区域 -->
-          <div v-if="streamingReasoning" class="reasoning-section">
-            <p class="reasoning-title"><strong>实时思考过程:</strong></p>
-            <div class="reasoning-content streaming">
-              <MarkdownRender :content="streamingReasoning" />
             </div>
           </div>
         </div>
         
         <!-- 测试成功 -->
         <div v-else-if="testResult && testResult.success" class="test-status success">
-          <div class="status-icon">✅</div>
+          <div class="status-icon" aria-hidden="true">
+            <svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+              <path d="M512 981.333333C252.8 981.333333 42.666667 771.2 42.666667 512S252.8 42.666667 512 42.666667s469.333333 210.133333 469.333333 469.333333-210.133333 469.333333-469.333333 469.333333z m-50.432-326.101333L310.613333 504.32a32 32 0 0 0-45.226666 45.226667l174.72 174.762666a32.341333 32.341333 0 0 0 0.341333 0.341334l0.256 0.213333a32 32 0 0 0 50.048-6.144l337.450667-379.605333a32 32 0 1 0-47.872-42.496l-318.762667 358.613333z" fill="#52C41A" />
+            </svg>
+          </div>
           <h4>测试成功</h4>
           <div class="test-details">
-            <p><strong>测试时间:</strong> {{ testResult.timestamp }}</p>
-            <p v-if="testResult.testType"><strong>测试类型:</strong> {{ testResult.testType }}</p>
-            <p v-if="testResult.modelType"><strong>模型类型:</strong> {{ testResult.modelType === 'vision' ? '视觉模型' : '文本模型' }}</p>
-            <div class="response-section">
-              <p><strong>模型响应:</strong></p>
-              <div class="response-content">
-                <MarkdownRender :content="testResult.response" />
+            <div class="test-meta">
+              <p><strong>测试时间:</strong> {{ testResult.timestamp }}</p>
+              <p v-if="testResult.testType"><strong>测试类型:</strong> {{ testResult.testType }}</p>
+              <p v-if="testResult.modelType"><strong>模型类型:</strong> {{ testResult.modelType === 'vision' ? '视觉模型' : '文本模型' }}</p>
+              <p v-if="testResult.tokenRate !== undefined"><strong>平均速度:</strong> {{ formatTokenRate(testResult.tokenRate) }}</p>
+            </div>
+            <div class="content-stack">
+              <!-- 思考过程（reasoning_content）显示 -->
+              <div v-if="testResult.reasoning_content" class="reasoning-section">
+                <p class="section-title reasoning-title">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="reasoning-icon" aria-hidden="true"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"></path><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"></path><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"></path><path d="M17.599 6.5a3 3 0 0 0 .399-1.375"></path><path d="M6.003 5.125A3 3 0 0 0 6.401 6.5"></path><path d="M3.477 10.896a4 4 0 0 1 .585-.396"></path><path d="M19.938 10.5a4 4 0 0 1 .585.396"></path><path d="M6 18a4 4 0 0 1-1.967-.516"></path><path d="M19.967 17.484A4 4 0 0 1 18 18"></path></svg>
+                  <strong>思考过程</strong>
+                </p>
+                <div class="reasoning-content">
+                  <MarkdownRender :content="testResult.reasoning_content" />
+                </div>
+              </div>
+              <div class="response-section">
+                <div class="response-content">
+                  <MarkdownRender :content="testResult.response" />
+                </div>
               </div>
             </div>
-            <!-- 思考过程（reasoning_content）显示 -->
-            <div v-if="testResult.reasoning_content" class="reasoning-section">
-              <p class="reasoning-title">🧠 思考过程</p>
-              <div class="reasoning-content">
-                <MarkdownRender :content="testResult.reasoning_content" />
-              </div>
-            </div>
-            <!-- 原始输出内容 -->
-            <!-- <div class="raw-response-section">
-              <p><strong>原始输出:</strong></p>
-              <div class="raw-response-content">{{ testResult.response }}</div>
-            </div> -->
           </div>
         </div>
         
         <!-- 测试失败 -->
         <div v-else-if="testError" class="test-status error">
-          <div class="status-icon">❌</div>
+          <div class="status-icon" aria-hidden="true">
+            <svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+              <path d="M512 981.333333C252.8 981.333333 42.666667 771.2 42.666667 512S252.8 42.666667 512 42.666667s469.333333 210.133333 469.333333 469.333333-210.133333 469.333333-469.333333 469.333333z m44.245333-469.333333l159.914667-159.914667a31.274667 31.274667 0 1 0-44.245333-44.245333L512 467.754667 352.085333 307.84a31.274667 31.274667 0 1 0-44.245333 44.245333L467.754667 512l-159.914667 159.914667a31.274667 31.274667 0 1 0 44.245333 44.245333L512 556.245333l159.914667 159.914667a31.274667 31.274667 0 1 0 44.245333-44.245333L556.245333 512z" fill="#F5222D" />
+            </svg>
+          </div>
           <h4>测试失败</h4>
           <div class="error-details">
             <p class="error-message">{{ testError }}</p>
           </div>
         </div>
       </div>
-      <div class="dialog-footer">
-        <button class="btn btn-primary" @click="closeDialog">关闭</button>
-      </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, watch, computed, nextTick } from 'vue'
 import MarkdownRender from 'markstream-vue'
 import 'markstream-vue/index.css'
 
@@ -90,6 +99,7 @@ interface TestResult {
   testType?: string
   modelType?: 'text' | 'vision'
   reasoning_content?: string
+  tokenRate?: number
 }
 
 interface Props {
@@ -103,46 +113,13 @@ interface Props {
 }
 
 const props = defineProps<Props>()
+
+const formatTokenRate = (value: number) => `${value.toFixed(1)} tokens/s`
+
 const emit = defineEmits<{
   close: []
   cancelTest: []
 }>()
-
-// 打字动画状态
-const typingText = ref('')
-const isTyping = ref(false)
-const typingSpeed = 50 // 毫秒
-
-// 打字动画函数
-const typeText = async (text: string, targetRef: any) => {
-  if (!text) return
-  
-  isTyping.value = true
-  typingText.value = ''
-  
-  for (let i = 0; i <= text.length; i++) {
-    typingText.value = text.slice(0, i)
-    await new Promise(resolve => setTimeout(resolve, typingSpeed))
-  }
-  
-  isTyping.value = false
-}
-
-// 流式响应的打字动画
-const streamingTypingText = ref('')
-watch(() => props.streamingResponse, (newValue) => {
-  if (newValue && props.testing) {
-    streamingTypingText.value = newValue
-  }
-}, { immediate: true })
-
-// 测试完成后的打字动画
-const finalTypingText = ref('')
-watch(() => props.testResult?.response, (newValue) => {
-  if (newValue && !props.testing) {
-    typeText(newValue, finalTypingText)
-  }
-}, { immediate: true })
 
 const handleOverlayClick = (event: MouseEvent) => {
   // 检查点击是否来自输入框或其相关操作
@@ -176,91 +153,25 @@ const closeDialog = () => {
   emit('close')
 }
 
-// 监听测试状态变化
-watch(() => props.visible, (newVisible) => {
-  if (newVisible) {
-    // 弹窗打开时的逻辑
-  }
-})
 </script>
 
 <style scoped>
-.dialog-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
+@import '../styles/dialog.css';
+
+.test-dialog-panel {
+  width: min(760px, 92vw);
 }
 
-.test-dialog {
-  width: 500px;
-  max-width: 90vw;
-  max-height: 80vh;
-  display: flex;
-  flex-direction: column;
-}
-
-.dialog-content {
-  background: var(--bg-primary);
-  border-radius: 8px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
-  border: 1px solid var(--border-color);
-  overflow: hidden;
-}
-
-.dialog-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 20px;
-  border-bottom: 1px solid var(--border-color);
-}
-
-.dialog-title {
-  margin: 0;
-  color: var(--text-primary);
-  font-size: 18px;
-  font-weight: 600;
-}
-
-.dialog-close {
-  background: none;
-  border: none;
-  font-size: 24px;
-  cursor: pointer;
-  color: var(--text-secondary);
-  padding: 0;
-  width: 30px;
-  height: 30px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 4px;
-  transition: all 0.2s ease;
-}
-
-.dialog-close:hover {
-  background: var(--bg-secondary);
-  color: var(--text-primary);
-}
-
-.dialog-body {
-  padding: 20px;
-  flex: 1;
+.test-dialog-body {
+  max-height: calc(90vh - 96px);
   overflow-y: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
 
-.dialog-footer {
-  padding: 20px;
-  border-top: 1px solid var(--border-color);
-  display: flex;
-  justify-content: flex-end;
+.test-dialog-body::-webkit-scrollbar {
+  width: 0 !important;
+  display: none !important;
 }
 
 .test-status {
@@ -271,8 +182,9 @@ watch(() => props.visible, (newVisible) => {
 .test-status.testing {
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: stretch;
   gap: 15px;
+  text-align: left;
 }
 
 .test-status.success,
@@ -290,6 +202,7 @@ watch(() => props.visible, (newVisible) => {
   border-top: 3px solid var(--primary-color);
   border-radius: 50%;
   animation: spin 1s linear infinite;
+  align-self: center;
 }
 
 @keyframes spin {
@@ -298,8 +211,18 @@ watch(() => props.visible, (newVisible) => {
 }
 
 .status-icon {
-  font-size: 48px;
+  width: 52px;
+  height: 52px;
   margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.status-icon svg {
+  width: 100%;
+  height: 100%;
+  display: block;
 }
 
 .test-status h4 {
@@ -316,62 +239,155 @@ watch(() => props.visible, (newVisible) => {
   margin-top: 20px;
 }
 
+.testing-tip {
+  margin: 0;
+  color: var(--text-secondary);
+  align-self: center;
+  text-align: center;
+}
+
+.test-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
 .test-details p,
 .error-details p {
-  margin: 10px 0;
+  margin: 0;
   color: var(--text-secondary);
+}
+
+.test-meta p {
+  padding: 12px 14px;
+  border: none;
+  border-radius: 10px;
+}
+
+.test-meta p strong {
+  color: var(--text-primary);
+}
+
+.content-stack {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  margin-top: 12px;
+}
+
+.response-section,
+.reasoning-section {
+  width: 100%;
+  margin-top: 0;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  overflow: visible;
+  background: transparent;
+  box-shadow: none;
 }
 
 .response-section {
-  margin-top: 15px;
+  padding-top: 2px;
+}
+
+.response-content,
+.reasoning-content {
+  margin-top: 0;
+  line-height: 1.85;
 }
 
 .response-content {
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  padding: 12px;
-  margin-top: 8px;
   color: var(--text-primary);
-  font-size: 14px;
-  line-height: 1.5;
-  max-height: 300px;
-  overflow-y: auto;
+  font-size: 17px;
+  font-weight: 500;
 }
 
 .response-content.streaming {
-  border-color: var(--primary-color);
-  background: var(--bg-primary);
-  animation: pulse 2s infinite;
+  animation: none;
 }
 
-/* 思考过程样式 */
 .reasoning-section {
-  margin-top: 16px;
-  padding: 12px;
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
+  padding: 8px 0 8px 16px;
+  background: transparent;
+  border-left: 1px solid var(--border-color);
+  border-radius: 0;
+}
+
+.streaming-card {
+  box-shadow: none;
+}
+
+.section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary, var(--text-secondary));
 }
 
 .reasoning-title {
-  margin: 0 0 8px 0;
   color: var(--text-secondary);
-  font-weight: 600;
 }
 
 .reasoning-content {
-  color: var(--text-primary);
+  color: var(--text-secondary);
+  font-size: 15px;
 }
 
 .reasoning-content.streaming {
   min-height: 40px;
 }
 
+.reasoning-content :deep(p),
+.response-content :deep(p) {
+  margin: 0 0 14px;
+}
+
+.reasoning-content :deep(p:last-child),
+.response-content :deep(p:last-child),
+.reasoning-content :deep(ul:last-child),
+.response-content :deep(ul:last-child),
+.reasoning-content :deep(ol:last-child),
+.response-content :deep(ol:last-child),
+.reasoning-content :deep(blockquote:last-child),
+.response-content :deep(blockquote:last-child) {
+  margin-bottom: 0;
+}
+
+.reasoning-content :deep(ul),
+.response-content :deep(ul),
+.reasoning-content :deep(ol),
+.response-content :deep(ol) {
+  margin: 0 0 14px;
+  padding-left: 24px;
+}
+
+.reasoning-content :deep(li),
+.response-content :deep(li) {
+  margin: 6px 0;
+}
+
+.reasoning-content :deep(strong),
+.response-content :deep(strong) {
+  color: inherit;
+  font-weight: 700;
+}
+
+.reasoning-content :deep(blockquote),
+.response-content :deep(blockquote) {
+  margin: 0 0 14px;
+  padding-left: 14px;
+  border-left: 3px solid var(--border-color);
+}
+
 .streaming-response {
-  margin-top: 16px;
-  padding-top: 16px;
-  border-top: 1px solid var(--border-color);
+  box-shadow: none;
 }
 
 .raw-response-section {
@@ -414,22 +430,5 @@ watch(() => props.visible, (newVisible) => {
   word-break: break-word;
 }
 
-.btn {
-  padding: 8px 16px;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 14px;
-  font-weight: 500;
-  transition: all 0.2s ease;
-}
 
-.btn-primary {
-  background: var(--dialog-button-primary-bg);
-  color: var(--dialog-button-primary-text);
-}
-
-.btn-primary:hover {
-  background: var(--dialog-button-primary-hover);
-}
 </style>

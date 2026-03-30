@@ -26,17 +26,10 @@
         </div>
         <div class="form-group qa-form-row">
           <label class="form-label">模型类型</label>
-          <div class="qa-type-group">
-            <button
-              v-for="t in [{ value: 'text', label: '文本' }, { value: 'vision', label: '视觉' }]"
-              :key="t.value"
-              class="qa-type-btn"
-              :class="{ active: quickAdd.category === t.value }"
-              @click="quickAdd.category = t.value as any"
-            >{{ t.label }}</button>
+          <div class="qa-category-switch">
+            <ModelCategorySwitch v-model="quickAdd.category" :show-summary="false" />
           </div>
         </div>
-        <p class="qa-desc">点击完成后将自动生成标准 OpenAI 兼容的 jsCode 配置。</p>
       </div>
 
     </div>
@@ -45,6 +38,7 @@
 
 <script setup lang="ts">
 import { ref, watch } from 'vue'
+import ModelCategorySwitch from './ModelCategorySwitch.vue'
 
 const props = defineProps<{
   show: boolean
@@ -55,7 +49,7 @@ const emit = defineEmits<{
   (e: 'save', model: any): void
 }>()
 
-const quickAdd = ref({ displayName: '', modelId: '', category: 'text' as 'text' | 'vision' })
+const quickAdd = ref({ displayName: '', modelId: '', category: 'text' as 'text' | 'vision' | 'summary' })
 
 watch(() => props.show, (newVal) => {
   if (newVal) {
@@ -63,7 +57,7 @@ watch(() => props.show, (newVal) => {
   }
 })
 
-const generateJsCode = (modelId: string, isThinking: boolean, category: 'text' | 'vision' | 'summary' = 'text'): string => {
+const generateJsCode = (modelId: string, category: 'text' | 'vision' | 'summary' = 'text'): string => {
   if (category === 'vision') {
     return `async function processModel(input, config, abortSignal) {
   const requestData = {
@@ -98,9 +92,11 @@ const generateJsCode = (modelId: string, isThinking: boolean, category: 'text' |
               try {
                 const data = JSON.parse(t.slice(6));
                 if (data.choices?.[0]?.delta) {
-                  const content = data.choices[0].delta.content || '';
+                  const delta = data.choices[0].delta;
+                  const content = delta.content ?? '';
+                  const reasoning_content = delta.reasoning_content ?? delta.reasoning ?? '';
                   const finished = data.choices[0].finish_reason === 'stop';
-                  if (content || finished) yield { content, finished };
+                  if (content || reasoning_content || finished) yield { content, reasoning_content, finished };
                 }
               } catch (e) { console.warn('解析失败:', e); }
             }
@@ -111,7 +107,7 @@ const generateJsCode = (modelId: string, isThinking: boolean, category: 'text' |
   } catch (error) { console.error('API 调用失败:', error); throw error; }
 }`
   }
-  if (isThinking) {
+  else  {
     return `async function processModel(input, config, abortSignal) {
   const requestData = {
     messages: input.messages,
@@ -161,61 +157,13 @@ const generateJsCode = (modelId: string, isThinking: boolean, category: 'text' |
     })();
   } catch (error) { console.error('API 调用失败:', error); throw error; }
 }`
-  } else {
-    return `async function processModel(input, config, abortSignal) {
-  const requestData = {
-    messages: input.messages,
-    model: '${modelId}',
-    stream: true,
-    max_tokens: 4096,
-    temperature: 0.7,
-    top_p: 0.9
-  };
-  try {
-    const response = await fetch(\`\${config.baseUrl}/v1/chat/completions\`, {
-      method: 'POST',
-      headers: { 'Authorization': \`Bearer \${config.apiKey}\`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(requestData),
-      signal: abortSignal
-    });
-    if (!response.ok) { const e = await response.text(); throw new Error(\`API 错误 \${response.status}: \${e}\`); }
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    return (async function* () {
-      let buffer = '';
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\\n');
-          buffer = lines.pop() || '';
-          for (const line of lines) {
-            const t = line.trim();
-            if (!t || t === 'data: [DONE]') continue;
-            if (t.startsWith('data: ')) {
-              try {
-                const data = JSON.parse(t.slice(6));
-                if (data.choices?.[0]?.delta) {
-                  const content = data.choices[0].delta.content || '';
-                  const finished = data.choices[0].finish_reason === 'stop';
-                  if (content || finished) yield { content, finished };
-                }
-              } catch (e) { console.warn('解析失败:', e); }
-            }
-          }
-        }
-      } finally { reader.releaseLock(); }
-    })();
-  } catch (error) { console.error('API 调用失败:', error); throw error; }
-}`
-  }
+  } 
 }
 
 const submitQuickAdd = () => {
   if (!quickAdd.value.displayName.trim() || !quickAdd.value.modelId.trim()) return
   const modelId = quickAdd.value.modelId.trim()
-  const jsCode = generateJsCode(modelId, true, quickAdd.value.category)
+  const jsCode = generateJsCode(modelId, quickAdd.value.category)
   const newModel = {
     name: modelId,
     displayName: quickAdd.value.displayName.trim(),
@@ -223,7 +171,7 @@ const submitQuickAdd = () => {
     temperature: 0.7,
     topP: 0.9,
     enabled: true,
-    category: quickAdd.value.category as 'text' | 'vision',
+    category: quickAdd.value.category as 'text' | 'vision' | 'summary',
     jsCode
   }
   emit('save', newModel)
@@ -257,6 +205,13 @@ const submitQuickAdd = () => {
   flex-direction: row;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
+}
+
+.qa-category-switch {
+  flex: 1;
+  display: flex;
+  justify-content: flex-start;
 }
 
 .qa-required {
@@ -268,40 +223,5 @@ const submitQuickAdd = () => {
   color: var(--text-secondary);
 }
 
-.qa-desc {
-  font-size: 12px;
-  color: var(--text-secondary);
-  margin: 0;
-  padding: 8px 12px;
-  background: var(--bg-primary);
-  border-radius: 6px;
-}
-
-.qa-type-group {
-  display: flex;
-  gap: 6px;
-}
-
-.qa-type-btn {
-  padding: 4px 12px;
-  border: 1px solid var(--border-color, #e2e8f0);
-  border-radius: 6px;
-  background: var(--bg-primary);
-  color: var(--text-secondary);
-  font-size: 12px;
-  cursor: pointer;
-  transition: all 0.15s;
-}
-
-.qa-type-btn:hover {
-  border-color: var(--btn-primary, #3182ce);
-  color: var(--btn-primary, #3182ce);
-}
-
-.qa-type-btn.active {
-  background: var(--btn-primary, #3182ce);
-  border-color: var(--btn-primary, #3182ce);
-  color: #fff;
-}
 
 </style>

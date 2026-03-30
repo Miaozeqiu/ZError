@@ -4,7 +4,7 @@
       <div class="dialog-overlay" @click="handleOverlayClick">
         <div class="dialog-panel ocs-config-panel" @click.stop>
           <div class="dialog-header">
-            <button class="btn-back" @click="closeDialog" title="关闭">
+            <button class="btn-back" @click="closeDialog" title="关闭" >
               <svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" width="18" height="18">
                 <path d="M768 96c19.2-19.2 19.2-51.2 0-70.4-19.2-19.2-51.2-19.2-70.4 0l-448 448c-19.2 19.2-19.2 51.2 0 70.4l448 448c19.2 19.2 51.2 19.2 70.4 0 19.2-19.2 19.2-51.2 0-70.4L358.4 512l409.6-416z" fill="currentColor"/>
               </svg>

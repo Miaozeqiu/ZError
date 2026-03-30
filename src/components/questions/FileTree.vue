@@ -28,6 +28,8 @@
         :rename-value="renameInputValue"
         :hover-target-id="dragHoverTargetId"
         :hover-position="dragHoverPosition"
+        :selection-mode="props.selectionMode"
+        :highlight-folder-id="props.highlightFolderId"
         @select="handleSelect"
         @context-menu="handleContextMenu"
         @expand-folder="handleExpandFolder"
@@ -51,7 +53,10 @@
       :y="contextMenu.y"
       :is-default-folder="contextMenu.node?.id === '0'"
       :is-blank-area="contextMenu.node?.id === '0' && contextMenu.node?.name === '根目录'"
+      :can-set-as-save-folder="Boolean(props.showSetSaveFolderAction && contextMenu.node && isLeafFolder(contextMenu.node) && contextMenu.node.id !== '0')"
+      :is-current-save-folder="Boolean(contextMenu.node && props.highlightFolderId === contextMenu.node.id)"
       @new-folder="handleNewFolder"
+      @set-save-folder="handleSetSaveFolder"
       @rename="handleRename"
       @delete="handleDelete"
     />
@@ -69,15 +74,20 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, onUnmounted, nextTick } from 'vue';
+import { ref, reactive, onMounted, onUnmounted, nextTick, watch } from 'vue';
 import FileTreeNode from './FileTreeNode.vue';
 
 const props = defineProps<{
   currentFolderPath?: { id: number, name: string }[] | null
+  initialSelectedId?: string | null
+  highlightFolderId?: string | null
+  selectionMode?: 'all' | 'leaf-only'
+  showSetSaveFolderAction?: boolean
 }>();
 import ContextMenu from './ContextMenu.vue';
 import DeleteConfirmDialog from './DeleteConfirmDialog.vue';
 import { databaseService, type Folder } from '../../services/database';
+import { settingsManager } from '../../services/settings';
 
 interface TreeNode {
   id: string;
@@ -86,9 +96,20 @@ interface TreeNode {
   children?: TreeNode[];
   questionCount?: number;
   totalQuestionCount?: number;
+  isVirtual?: boolean;
 }
 
-const selectedId = ref<string | null>(null);
+const PENDING_CORRECTION_NODE_ID = '-1';
+
+const emit = defineEmits<{
+  'folder-select': [folderId: number, folderName: string];
+  select: [id: string];
+  'context-menu': [{ node: TreeNode; x: number; y: number }];
+  'expand-folder': [id: string]
+  'set-save-folder': [folderId: number, folderName: string, folderPath: string]
+}>();
+
+const selectedId = ref<string | null>(props.initialSelectedId ?? null);
 const contextMenu = reactive({
   visible: false,
   x: 0,
@@ -120,6 +141,59 @@ const expandedFolders = ref<Set<string>>(new Set());
 const treeData = ref<TreeNode[]>([]);
 const loading = ref(true);
 
+const findNodeById = (nodes: TreeNode[], targetId: string): TreeNode | null => {
+  for (const node of nodes) {
+    if (node.id === targetId) return node;
+    if (node.children?.length) {
+      const found = findNodeById(node.children, targetId);
+      if (found) return found;
+    }
+  }
+  return null;
+};
+
+const findNodeAncestorIds = (nodes: TreeNode[], targetId: string, path: string[] = []): string[] | null => {
+  for (const node of nodes) {
+    if (node.id === targetId) {
+      return path;
+    }
+    if (node.children?.length) {
+      const found = findNodeAncestorIds(node.children, targetId, [...path, node.id]);
+      if (found) return found;
+    }
+  }
+  return null;
+};
+
+const isLeafFolder = (node: TreeNode) => !node.children?.length;
+
+const expandFolderAncestors = (nodes: TreeNode[], targetId: string) => {
+  const ancestorIds = findNodeAncestorIds(nodes, targetId);
+  ancestorIds?.forEach(id => expandedFolders.value.add(id));
+};
+
+const collectNodeIds = (node: TreeNode): number[] => {
+  const ids = [parseInt(node.id, 10)];
+  node.children?.forEach(child => {
+    ids.push(...collectNodeIds(child));
+  });
+  return ids;
+};
+
+const shouldResetQuestionSaveFolder = (folderId: number): boolean => {
+  const savedFolderId = settingsManager.get('questionSaveFolderId');
+  if (savedFolderId === null || savedFolderId === undefined) {
+    return false;
+  }
+
+  const deletedNode = findNodeById(treeData.value, String(folderId));
+  if (!deletedNode) {
+    return false;
+  }
+
+  return collectNodeIds(deletedNode).includes(savedFolderId);
+};
+
 // 递归计算文件夹及其所有子文件夹的题目总数
 const calculateTotalQuestionCount = (node: TreeNode): number => {
   let totalCount = node.questionCount || 0;
@@ -134,7 +208,11 @@ const calculateTotalQuestionCount = (node: TreeNode): number => {
 };
 
 // 构建文件夹树结构
-const buildFolderTree = (folders: Folder[], folderStats: {folderId: number, folderName: string, questionCount: number}[]): TreeNode[] => {
+const buildFolderTree = (
+  folders: Folder[],
+  folderStats: {folderId: number, folderName: string, questionCount: number}[],
+  pendingCorrectionCount: number,
+): TreeNode[] => {
   const folderMap = new Map<number, TreeNode>();
   const statsMap = new Map<number, number>();
   
@@ -209,6 +287,16 @@ const buildFolderTree = (folders: Folder[], folderStats: {folderId: number, fold
   
   // 更新所有节点的总题目数量
   rootNodes.forEach(updateTotalQuestionCount);
+
+  rootNodes.unshift({
+    id: PENDING_CORRECTION_NODE_ID,
+    name: '待修正',
+    type: 'folder',
+    children: [],
+    questionCount: pendingCorrectionCount,
+    totalQuestionCount: pendingCorrectionCount,
+    isVirtual: true,
+  });
   
   return rootNodes;
 };
@@ -219,20 +307,37 @@ const loadData = async () => {
     loading.value = true;
     await databaseService.connect();
     
-    const [folders, folderStats] = await Promise.all([
+    const [folders, folderStats, pendingCorrectionCount] = await Promise.all([
       databaseService.getFolders(),
-      databaseService.getFolderStats()
+      databaseService.getFolderStats(),
+      databaseService.getPendingCorrectionQuestionCount(),
     ]);
     
     console.log('Debug: 获取到的文件夹数据:', folders);
     console.log('Debug: 获取到的统计数据:', folderStats);
     
-    const newTreeData = buildFolderTree(folders, folderStats);
+    const newTreeData = buildFolderTree(folders, folderStats, pendingCorrectionCount);
     console.log('文件夹数据加载成功:', newTreeData);
     
     // 使用 nextTick 确保响应式更新正确执行
     await nextTick();
     treeData.value = newTreeData;
+
+    const highlightedFolderId = props.highlightFolderId ?? props.initialSelectedId ?? null;
+    if (highlightedFolderId) {
+      expandFolderAncestors(newTreeData, highlightedFolderId);
+    }
+
+    // 如果有初始选中 ID，自动选中并展开父节点
+    if (props.initialSelectedId) {
+      const node = findNodeById(newTreeData, props.initialSelectedId)
+      if (node && (props.selectionMode !== 'leaf-only' || isLeafFolder(node))) {
+        selectedId.value = props.initialSelectedId
+        emit('folder-select', parseInt(props.initialSelectedId), node.name)
+      } else {
+        selectedId.value = null
+      }
+    }
   } catch (error) {
     console.error('加载数据失败:', error);
     // 如果数据库连接失败，显示错误信息
@@ -248,49 +353,83 @@ const loadData = async () => {
   }
 };
 
-const emit = defineEmits<{
-  'folder-select': [folderId: number, folderName: string];
-  select: [id: string];
-  'context-menu': [{ node: TreeNode; x: number; y: number }];
-  'expand-folder': [id: string]
-}>();
-
 const handleSelect = (id: string) => {
   try {
+    const node = findNodeById(treeData.value, id);
+    if (!node || node.type !== 'folder') {
+      return;
+    }
+
+    if (props.selectionMode === 'leaf-only' && !isLeafFolder(node)) {
+      selectedId.value = null;
+      return;
+    }
+
     selectedId.value = id;
     emit('select', id);
-    
-    // 如果选中的是文件夹，触发文件夹选择事件
-    // 查找节点
-    const findNodeById = (nodes: TreeNode[], targetId: string): TreeNode | null => {
-      for (const node of nodes) {
-        if (node.id === targetId) return node;
-        if (node.children) {
-          const found = findNodeById(node.children, targetId);
-          if (found) return found;
-        }
-      }
-      return null;
-    };
 
-    const node = findNodeById(treeData.value, id);
-    if (node && node.type === 'folder') {
-      console.log('FileTree: 选择文件夹', { id, name: node.name, parsedId: parseInt(id) });
-      // 使用 nextTick 确保组件更新完成后再触发事件
-      nextTick(() => {
-        emit('folder-select', parseInt(id), node.name);
-      });
-    }
+    console.log('FileTree: 选择文件夹', { id, name: node.name, parsedId: parseInt(id) });
+    nextTick(() => {
+      emit('folder-select', parseInt(id), node.name);
+    });
   } catch (error) {
     console.error('FileTree handleSelect error:', error);
   }
 };
 
+const focusFolder = async (folderId: number | string) => {
+  const targetId = String(folderId);
+
+  if (!treeData.value.length) {
+    await loadData();
+  }
+
+  const node = findNodeById(treeData.value, targetId);
+  if (!node) {
+    return;
+  }
+
+  expandFolderAncestors(treeData.value, targetId);
+  await nextTick();
+  handleSelect(targetId);
+};
+
+const buildFolderPath = async (folderId: number, fallbackName: string): Promise<string> => {
+  try {
+    const path = await databaseService.getFolderPath(folderId);
+    return path
+      .filter(item => item.id !== 0)
+      .map(item => item.name)
+      .join(' / ') || fallbackName;
+  } catch (error) {
+    console.error('构建保存文件夹路径失败:', error);
+    return fallbackName;
+  }
+};
+
 const handleContextMenu = (data: { node: TreeNode; x: number; y: number }) => {
+  if (data.node.isVirtual) {
+    hideContextMenu();
+    return;
+  }
+
   contextMenu.node = data.node;
   contextMenu.x = data.x;
   contextMenu.y = data.y;
   contextMenu.visible = true;
+};
+
+const handleSetSaveFolder = async () => {
+  if (!contextMenu.node || contextMenu.node.id === '0' || !isLeafFolder(contextMenu.node)) {
+    hideContextMenu();
+    return;
+  }
+
+  const folderId = parseInt(contextMenu.node.id, 10);
+  const folderName = contextMenu.node.name;
+  const folderPath = await buildFolderPath(folderId, folderName);
+  emit('set-save-folder', folderId, folderName, folderPath);
+  hideContextMenu();
 };
 
 const handleExpandFolder = (id: string) => {
@@ -315,8 +454,8 @@ const handleMoveFolder = async (data: { sourceId: string; targetId: string; posi
     // 保存当前展开状态
     const currentExpandedState = new Set(expandedFolders.value);
     
-    // 调用数据库服务移动文件夹，传递正确的参数
-    await databaseService.moveFolder(sourceIdNum, targetIdNum, data.position);
+    // 调用数据库服务移动文件夹
+    await databaseService.moveFolder(sourceIdNum, targetIdNum);
     
     // 重新加载数据以更新UI
     await loadData();
@@ -432,7 +571,7 @@ const handleRename = () => {
 };
 
 const handleDelete = () => {
-  if (!contextMenu.node) return;
+  if (!contextMenu.node || contextMenu.node.isVirtual) return;
   
   // 检查是否为默认文件夹（ID为0），如果是则不允许删除
   if (contextMenu.node.id === '0') {
@@ -477,10 +616,22 @@ const handleDelete = () => {
 // 删除确认弹窗事件处理
 const handleDeleteConfirm = async () => {
   if (!deleteDialog.folderId) return;
+
+  const shouldResetSavedFolder = shouldResetQuestionSaveFolder(deleteDialog.folderId);
   
   try {
     // 调用数据库服务删除文件夹
     await databaseService.deleteFolder(deleteDialog.folderId, deleteDialog.deleteQuestions);
+
+    if (shouldResetSavedFolder) {
+      try {
+        settingsManager.set('questionSaveDir', '');
+        settingsManager.set('questionSaveFolderId', 0);
+        await settingsManager.save();
+      } catch (settingsError) {
+        console.warn('重置题目保存文件夹失败:', settingsError);
+      }
+    }
     
     // 重新加载数据
     await loadData();
@@ -499,6 +650,14 @@ const handleDeleteConfirm = async () => {
 const handleDeleteCancel = () => {
   deleteDialog.visible = false;
 };
+
+watch(() => props.highlightFolderId, (highlightedFolderId) => {
+  if (!highlightedFolderId || !treeData.value.length) {
+    return;
+  }
+
+  expandFolderAncestors(treeData.value, highlightedFolderId);
+});
 
 // 点击其他地方隐藏右键菜单
 const handleGlobalClick = () => {
@@ -584,7 +743,8 @@ const handleRenameSave = async (nodeId: string, newName: string) => {
 
 // 使用 defineExpose 暴露方法给父组件
 defineExpose({
-  refreshData
+  refreshData,
+  focusFolder
 });
 </script>
 

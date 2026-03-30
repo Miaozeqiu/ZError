@@ -7,7 +7,7 @@
 /* 浅色主题（默认） */
 :root {
   /* 基础颜色 */
-  --color-primary: #667eea;
+  --color-primary: #ff8928;
   --color-primary-hover: #5a67d8;
   --color-secondary: #764ba2;
   --color-accent: #ff8928;
@@ -18,6 +18,16 @@
   --btn-primary-bg: #e1e1e1;
   --btn-primary-hover: #d1d1d1;
   --btn-primary-text: #6d6d6d;
+  --general-settings-open-folder-btn-bg: var(--network-group-bg);
+  --general-settings-open-folder-btn-text: var(--color-primary);
+  --general-settings-open-folder-btn-border: color-mix(in srgb, var(--color-primary) 24%, var(--border-color));
+  --general-settings-open-folder-btn-hover-bg: color-mix(in srgb, var(--color-primary) 10%, var(--network-group-bg));
+  --general-settings-open-folder-btn-hover-border: color-mix(in srgb, var(--color-primary) 40%, var(--border-color));
+  --general-settings-select-folder-btn-bg: var(--bg-secondary);
+  --general-settings-select-folder-btn-text: var(--text-primary);
+  --general-settings-select-folder-btn-border: var(--border-color);
+  --general-settings-select-folder-btn-hover-bg: var(--hover-bg);
+  --general-settings-select-folder-btn-hover-border: var(--border-secondary);
 
   /* 平台开关颜色 */
   --platform-toggle-bg: #e2e8f0;
@@ -75,12 +85,6 @@
   --question-detail-save-btn-hover-bg: #0056b3;
   --question-detail-save-btn-disabled-bg: #ccc;
 
-  /* UrlContent页面颜色 */
-  --bg-primary: #ffffff;
-  --bg-secondary: #f5f5f5;
-  --bg-tertiary: #e9e9e9;
-  --border-color: #dddddd;
-  --danger-color: #e74c3c;
 
   /* 复选框颜色 */
   --checkbox-bg: #ffffff;
@@ -102,6 +106,40 @@
   --request-table-border: #f1f5f9;
   --request-table-hover-bg: #f8fafc;
 
+  /* 题库列表颜色 */
+  --ql-th-text: #4f4f4f;
+  --ql-th-icon: #6f6f6f;
+  --ql-th-bg: #fafafa;
+  --ql-divider: #d6d6d6;
+  --ql-row-hover-bg: #f3f3f3;
+  --ql-row-active-bg: #e9e9e9;
+  --ql-row-active-border: #c6c6c6;
+  --ql-row-selected-bg: #efefef;
+  --ql-table-divider: #e1e1e1;
+  --ql-table-divider-hover: #cccccc;
+  --ql-table-divider-active: #b8b8b8;
+  --ql-table-divider-selected: #c4c4c4;
+  --ql-count-info-text: #6b6b6b;
+  --ql-id-text: #404040;
+  --ql-time-text: #757575;
+  --ql-type-tag-bg: #f2f2f2;
+  --ql-type-tag-text: #3d3d3d;
+  --ql-type-tag-border: #d2d2d2;
+  --ql-no-type-text: #9a9a9a;
+  --ql-empty-text: #4d4d4d;
+  --ql-empty-subtext: #8a8a8a;
+  --ql-loading-spinner-track: #e0e0e0;
+  --ql-loading-spinner-head: #4a4a4a;
+  --ql-loading-text: #686868;
+  --ql-checkbox-bg: #ffffff;
+  --ql-checkbox-border: #bcbcbc;
+  --ql-checkbox-hover-bg: #f2f2f2;
+  --ql-checkbox-hover-border: #8f8f8f;
+  --ql-checkbox-checked-bg: #2f2f2f;
+  --ql-checkbox-checked-border: #2f2f2f;
+  --ql-checkbox-checkmark: #ffffff;
+  --ql-checkbox-focus-ring: rgba(0, 0, 0, 0.14);
+
   /* 请求详情面板颜色 */
   --request-details-bg: #ffffff;
   --request-details-border: #e2e8f0;
@@ -119,9 +157,9 @@
   --request-details-headers-border: #e2e8f0;
   --request-details-headers-text: #4a5568;
   --request-details-headers-strong: #2d3748;
-  --request-details-code-bg: #1a202c;
-  --request-details-code-text: #e2e8f0;
-  --request-details-code-border: #2d3748;
+  --request-details-code-bg: #f8fafc;
+  --request-details-code-text: #1e293b;
+  --request-details-code-border: #dbe4f0;
   --request-details-model-calling-bg: #f7fafc;
   --request-details-model-calling-text: #4a5568;
   --request-details-streaming-bg: #f0fff4;
@@ -131,6 +169,59 @@
   --request-details-selected-bg: #ebf4ff;
   --request-details-resizer-hover: #e2e8f0;
   --request-details-resizer-active: #667eea;
+  --multi-model-tab-bg: #f4f4f4;
+  --multi-model-tab-text: #475569;
+  --multi-model-tab-border: #dbe3f0;
+  --multi-model-tab-shadow: none;
+  --multi-model-tab-hover-bg: #ffffff;
+  --multi-model-tab-hover-border: #cbd5e1;
+  --multi-model-tab-hover-text: #334155;
+  --multi-model-tab-hover-shadow: 0 4px 14px rgba(15, 23, 42, 0.08);
+  --multi-model-tab-active-bg: #e2e8f0;
+  --multi-model-tab-active-border: #cbd5e1;
+  --multi-model-tab-active-text: #1e293b;
+  --multi-model-tab-active-shadow: 0 8px 18px rgba(15, 23, 42, 0.12);
+  --multi-model-tab-summary-bg: rgba(245, 158, 11, 0.1);
+  --multi-model-tab-summary-text: #b45309;
+  --multi-model-tab-summary-border: rgba(245, 158, 11, 0.28);
+  --multi-model-tab-summary-hover-bg: rgba(245, 158, 11, 0.16);
+  --multi-model-tab-summary-hover-border: #f59e0b;
+  --multi-model-tab-summary-hover-text: #d97706;
+  --multi-model-tab-summary-active-bg: linear-gradient(135deg, #d97706 0%, #c2410c 100%);
+  --multi-model-tab-summary-active-border: #d97706;
+  --multi-model-tab-summary-active-text: #ffffff;
+  --multi-model-tab-summary-glow: 0 0 0 1px rgba(217, 119, 6, 0.12), 0 0 14px rgba(194, 65, 12, 0.12);
+  --multi-model-tab-summary-active-glow: 0 0 0 1px rgba(217, 119, 6, 0.12), 0 6px 16px rgba(194, 65, 12, 0.16);
+  --multi-model-tab-failed-bg: rgba(239, 68, 68, 0.1);
+  --multi-model-tab-failed-text: #b91c1c;
+  --multi-model-tab-failed-border: rgba(239, 68, 68, 0.28);
+  --multi-model-tab-failed-shadow: 0 4px 14px rgba(185, 28, 28, 0.08);
+  --multi-model-tab-failed-hover-bg: rgba(239, 68, 68, 0.16);
+  --multi-model-tab-failed-hover-text: #991b1b;
+  --multi-model-tab-failed-hover-border: rgba(220, 38, 38, 0.36);
+  --multi-model-tab-failed-active-bg: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
+  --multi-model-tab-failed-active-text: #ffffff;
+  --multi-model-tab-failed-active-border: rgba(185, 28, 28, 0.72);
+  --multi-model-tab-failed-active-shadow: 0 8px 18px rgba(185, 28, 28, 0.18);
+
+  /* 模型响应卡片颜色 */
+  --model-response-card-bg: #f4f4f4;
+  --model-response-card-divider: #e2e8f0;
+  --model-response-card-title: #2d3748;
+  --model-response-card-muted-text: #4a5568;
+  --model-response-card-success-text: #22c55e;
+  --model-response-card-loading-border: #9ae6b4;
+  --model-response-card-loading-shadow: 0 0 0 2px rgba(99, 102, 241, 0.08);
+  --model-response-card-spinner-track: #e2e8f0;
+  --model-response-card-spinner-accent: #6366f1;
+  --model-response-card-summary-bg: #f4f4f4;
+  --model-response-card-summary-header-bg: #f4f4f4;
+  --model-response-card-summary-divider: #e2e8f0;
+  --model-response-card-summary-shadow: 0 4px 14px rgba(15, 23, 42, 0.05);
+  --model-response-card-summary-border: rgba(217, 119, 6, 0.18);
+  --model-response-card-summary-accent: #b45309;
+  --model-response-card-summary-tag-bg: rgba(217, 119, 6, 0.12);
+  --model-response-card-summary-tag-text: #b45309;
 
   /* 背景颜色 */
   --bg-primary: #f4f4f4;
@@ -151,7 +242,7 @@
   --border-primary: #e2e8f0;
   --border-secondary: #cbd5e0;
   --border-focus: #667eea;
-  --border-color: #e2e8f0;
+  --border-color: #e3e3e3;
 
   /* 阴影 */
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1);
@@ -191,6 +282,9 @@
   --context-menu-item-hover-bg: #eaeaea;
   --context-menu-item-disabled-text: #a0aec0;
   --context-menu-divider-bg: #e2e8f0;
+  --context-menu-danger-text: #dc2626;
+  --context-menu-danger-hover-bg: #fee2e2;
+
 
   /* 侧边栏导航项颜色 */
   --nav-item-text: #636363;
@@ -206,17 +300,15 @@
 
   /* 平台列表项颜色 */
   --platform-item-bg: transparent;
-  --platform-item-hover-bg: #f0f0f0;
-  --platform-item-active-bg: #ebebeb;
+  --platform-item-hover-bg: #f4f4f4;
+  --platform-item-active-bg: #ffffff;
   --platform-item-border: transparent;
   --platform-item-hover-border: transparent;
-  --platform-item-active-border: #d0d0d0;
+  --platform-item-active-border: #e6e6e6;
   --platform-item-text: #2d3748;
   --platform-item-hover-text: #2d3748;
   --platform-item-active-text: #2d3748;
-  --platform-item-icon-bg: #f7fafc;
-  --platform-item-icon-hover-bg: #edf2f7;
-  --platform-item-icon-active-bg: #bee3f8;
+  --platform-item-icon-bg: #ffffff;
 
   /* 平台详情面板相关颜色 */
   --platform-detail-bg: #ffffff;
@@ -229,16 +321,17 @@
   --platform-detail-form-input-bg: #ffffff;
   --platform-detail-form-input-border: #e2e8f0;
   --platform-detail-form-input-focus-border: #3182ce;
+  --form-input-focus-border: #e3e3e3;
   --platform-detail-form-input-text: #2d3748;
 
   /* 模型项相关颜色 */
-  --model-item-bg: var(--form-input-bg, #f7f7f7);
+  --model-item-bg: #ffffff;
   --model-item-border: transparent;
-  --model-item-hover-bg: #f7fafc;
-  --model-item-hover-border: #cbd5e0;
+  --model-item-hover-bg: #efefef;
+  --model-item-hover-border: transparent;
   --model-item-active-bg: var(--platform-item-active-bg, #ebebeb);
   --model-item-active-border: var(--platform-item-active-border, #d0d0d0);
-  --model-item-active-shadow: 8px 8px 20px 0 rgba(0, 0, 0, 0.02);
+  --model-item-active-shadow: 0 2px 12px rgba(0,0,0,.05);
   --model-item-text: #2d3748;
   --model-item-hover-text: #2d3748;
   --model-item-active-text: #2d3748;
@@ -263,6 +356,29 @@
   --dialog-button-close-text: #586069;
   --dialog-button-close-hover-bg: #e1e4e8;
   --dialog-button-close-hover-text: #24292e;
+
+  /* UpdateDialog 颜色变量 */
+  --update-dialog-header-icon-bg: #fafafa;
+  --update-dialog-header-icon-border: #e5e7eb;
+  --update-dialog-header-icon-color: #f59e0b;
+  --update-dialog-close-btn-bg: transparent;
+  --update-dialog-close-btn-text: #6b7280;
+  --update-dialog-close-btn-hover-bg: #f3f4f6;
+  --update-dialog-close-btn-hover-text: #1f2937;
+  --update-dialog-neutral-btn-bg: #e6e6e6;
+  --update-dialog-neutral-btn-text: #4b5563;
+  --update-dialog-neutral-btn-border: transparent;
+  --update-dialog-neutral-btn-hover-bg: #ebebeb;
+  --update-dialog-neutral-btn-hover-text: #1f2937;
+  --update-dialog-neutral-btn-hover-border: #c7c7c7;
+  --update-dialog-neutral-btn-focus-border: #9ca3af;
+  --update-dialog-secondary-btn-bg: rgba(245, 158, 11, 0.1);
+  --update-dialog-secondary-btn-text: #c2410c;
+  --update-dialog-secondary-btn-border: rgba(245, 158, 11, 0.22);
+  --update-dialog-secondary-btn-hover-bg: rgba(245, 158, 11, 0.16);
+  --update-dialog-secondary-btn-hover-text: #9a3412;
+  --update-dialog-secondary-btn-hover-border: rgba(245, 158, 11, 0.34);
+  --update-dialog-secondary-btn-focus-border: rgba(245, 158, 11, 0.4);
 
   /* 平台配置对话框相关颜色 */
   --platform-config-dialog-bg: #ffffff;
@@ -323,6 +439,8 @@
   --about-debug-button-hover-bg: #f4f4f4;
   --about-debug-button-hover-border: #667eea;
   --about-debug-button-hover-color: #667eea;
+  --custom-scrollbar-thumb: rgba(0, 0, 0, 0.2);
+  --custom-scrollbar-thumb-hover: rgba(0, 0, 0, 0.4);
 
   /* QuestionEditor 专用颜色变量（浅色模式） */
   --question-editor-overlay-bg: rgba(0, 0, 0, 0.5);
@@ -356,12 +474,21 @@
   --fileinfo-content-bg: var(--bg-primary);
   --fileinfo-content-border: var(--border-color);
   --fileinfo-algo-gap: 8px;
+
+  /* 网络设置组背景 */
+  --network-group-bg:#ffffff;
 }
 
 /* 深色主题 */
 [data-theme="dark"] {
+  /* 边框颜色 */
+  --border-primary: #3c3c3c;
+  --border-secondary: #2d3748;
+  --border-focus: #667eea;
+  --border-color: #3a3a3a;
+
   /* 基础颜色 */
-  --color-primary: #667eea;
+  --color-primary: #f8b62b;
   --color-primary-hover: #5a67d8;
   --color-secondary: #764ba2;
   --color-accent: #ffffff;
@@ -372,6 +499,16 @@
   --btn-primary-bg: #4b4b4b;
   --btn-primary-hover: #3e3e3e;
   --btn-primary-text: #ffffff;
+  --general-settings-open-folder-btn-bg: var(--network-group-bg);
+  --general-settings-open-folder-btn-text: var(--color-primary);
+  --general-settings-open-folder-btn-border: color-mix(in srgb, var(--color-primary) 28%, var(--border-color));
+  --general-settings-open-folder-btn-hover-bg: color-mix(in srgb, var(--color-primary) 12%, var(--network-group-bg));
+  --general-settings-open-folder-btn-hover-border: color-mix(in srgb, var(--color-primary) 45%, var(--border-color));
+  --general-settings-select-folder-btn-bg: #3a3a3a;
+  --general-settings-select-folder-btn-text: #e5e7eb;
+  --general-settings-select-folder-btn-border: #4a4a4a;
+  --general-settings-select-folder-btn-hover-bg: #454545;
+  --general-settings-select-folder-btn-hover-border: #5a5a5a;
 
   /* 平台开关颜色 */
   --platform-toggle-bg: #4a5568;
@@ -429,12 +566,6 @@
   --question-detail-save-btn-hover-bg: #1e40af;
   --question-detail-save-btn-disabled-bg: #6b7280;
 
-  /* UrlContent页面颜色 */
-  --bg-primary: #1f2937;
-  --bg-secondary: #374151;
-  --bg-tertiary: #4b5563;
-  --border-color: #4b5563;
-  --danger-color: #ef4444;
 
   /* 复选框颜色 */
   --checkbox-bg: #2d3748;
@@ -455,6 +586,40 @@
   --request-table-header-text: #a0aec0;
   --request-table-border: #4a5568;
   --request-table-hover-bg: #374151;
+
+  /* 题库列表颜色 */
+  --ql-th-text: #d8d8d8;
+  --ql-th-icon: #bcbcbc;
+  --ql-th-bg: #1f1f1f;
+  --ql-divider: #3b3b3b;
+  --ql-row-hover-bg: #292929;
+  --ql-row-active-bg: #333333;
+  --ql-row-active-border: #585858;
+  --ql-row-selected-bg: #3c3c3c;
+  --ql-table-divider: #404040;
+  --ql-table-divider-hover: #575757;
+  --ql-table-divider-active: #6c6c6c;
+  --ql-table-divider-selected: #5d5d5d;
+  --ql-count-info-text: #b0b0b0;
+  --ql-id-text: #e5e5e5;
+  --ql-time-text: #a6a6a6;
+  --ql-type-tag-bg: #2b2b2b;
+  --ql-type-tag-text: #dddddd;
+  --ql-type-tag-border: #555555;
+  --ql-no-type-text: #8e8e8e;
+  --ql-empty-text: #d2d2d2;
+  --ql-empty-subtext: #9b9b9b;
+  --ql-loading-spinner-track: #474747;
+  --ql-loading-spinner-head: #dadada;
+  --ql-loading-text: #b5b5b5;
+  --ql-checkbox-bg: #242424;
+  --ql-checkbox-border: #707070;
+  --ql-checkbox-hover-bg: #2d2d2d;
+  --ql-checkbox-hover-border: #949494;
+  --ql-checkbox-checked-bg: #dddddd;
+  --ql-checkbox-checked-border: #dddddd;
+  --ql-checkbox-checkmark: #111111;
+  --ql-checkbox-focus-ring: rgba(255, 255, 255, 0.14);
 
   /* 请求详情面板颜色 */
   --request-details-bg: #2d3748;
@@ -485,6 +650,59 @@
   --request-details-selected-bg: #2c5282;
   --request-details-resizer-hover: #4a5568;
   --request-details-resizer-active: #667eea;
+  --multi-model-tab-bg: #313845;
+  --multi-model-tab-text: #d5deea;
+  --multi-model-tab-border: #4b5563;
+  --multi-model-tab-shadow: 0 1px 2px rgba(0, 0, 0, 0.24);
+  --multi-model-tab-hover-bg: #394150;
+  --multi-model-tab-hover-border: #667085;
+  --multi-model-tab-hover-text: #f1f5f9;
+  --multi-model-tab-hover-shadow: 0 6px 18px rgba(0, 0, 0, 0.2);
+  --multi-model-tab-active-bg: #495466;
+  --multi-model-tab-active-border: #758195;
+  --multi-model-tab-active-text: #ffffff;
+  --multi-model-tab-active-shadow: 0 10px 24px rgba(0, 0, 0, 0.28);
+  --multi-model-tab-summary-bg: rgba(245, 158, 11, 0.12);
+  --multi-model-tab-summary-text: #fcd34d;
+  --multi-model-tab-summary-border: rgba(245, 158, 11, 0.32);
+  --multi-model-tab-summary-hover-bg: rgba(245, 158, 11, 0.18);
+  --multi-model-tab-summary-hover-border: #fbbf24;
+  --multi-model-tab-summary-hover-text: #fde68a;
+  --multi-model-tab-summary-active-bg: linear-gradient(135deg, #a16207 0%, #9a3412 100%);
+  --multi-model-tab-summary-active-border: #d97706;
+  --multi-model-tab-summary-active-text: #fff7ed;
+  --multi-model-tab-summary-glow: 0 0 0 1px rgba(217, 119, 6, 0.14), 0 0 14px rgba(154, 52, 18, 0.18);
+  --multi-model-tab-summary-active-glow: 0 0 0 1px rgba(217, 119, 6, 0.14), 0 6px 18px rgba(154, 52, 18, 0.24);
+  --multi-model-tab-failed-bg: rgba(248, 113, 113, 0.12);
+  --multi-model-tab-failed-text: #fca5a5;
+  --multi-model-tab-failed-border: rgba(248, 113, 113, 0.3);
+  --multi-model-tab-failed-shadow: 0 6px 18px rgba(127, 29, 29, 0.18);
+  --multi-model-tab-failed-hover-bg: rgba(248, 113, 113, 0.18);
+  --multi-model-tab-failed-hover-text: #fecaca;
+  --multi-model-tab-failed-hover-border: rgba(252, 165, 165, 0.42);
+  --multi-model-tab-failed-active-bg: linear-gradient(135deg, #b91c1c 0%, #991b1b 100%);
+  --multi-model-tab-failed-active-text: #fff1f2;
+  --multi-model-tab-failed-active-border: rgba(252, 165, 165, 0.42);
+  --multi-model-tab-failed-active-shadow: 0 10px 24px rgba(127, 29, 29, 0.28);
+
+  /* 模型响应卡片颜色 */
+  --model-response-card-bg: #313131;
+  --model-response-card-divider: #474747;
+  --model-response-card-title: #e2e8f0;
+  --model-response-card-muted-text: #cbd5e0;
+  --model-response-card-success-text: #4ade80;
+  --model-response-card-loading-border: #38a169;
+  --model-response-card-loading-shadow: 0 0 0 2px rgba(99, 102, 241, 0.14);
+  --model-response-card-spinner-track: #4a5568;
+  --model-response-card-spinner-accent: #818cf8;
+  --model-response-card-summary-bg: #34322f;
+  --model-response-card-summary-header-bg: #34322f;
+  --model-response-card-summary-divider: rgba(251, 191, 36, 0.42);
+  --model-response-card-summary-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+  --model-response-card-summary-border: rgba(245, 158, 11, 0.22);
+  --model-response-card-summary-accent: #fbbf24;
+  --model-response-card-summary-tag-bg: rgba(251, 191, 36, 0.14);
+  --model-response-card-summary-tag-text: #fcd34d;
 
   /* 背景颜色 */
   --bg-primary: #3c3c3c;
@@ -501,11 +719,6 @@
   --text-white: #ffffff;
   --text-accent: #ffa256;
 
-  /* 边框颜色 */
-  --border-primary: #3c3c3c;
-  --border-secondary: #2d3748;
-  --border-focus: #667eea;
-  --border-color: #4a5568;
 
   /* 阴影 */
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
@@ -520,8 +733,8 @@
   --color-info: #63b3ed;
 
   /* 交互状态 */
-  --hover-bg: #2d3748;
-  --active-bg: #4a5568;
+  --hover-bg: #353535;
+  --active-bg: #484848;
   --selected-bg: #90949c;
   --disabled-bg: #2d3748;
   --disabled-text: #718096;
@@ -531,28 +744,30 @@
   --primary-hover: var(--color-primary-hover);
 
   /* 表格分割线 */
-  --table-divider: #4a5568;
-  --table-divider-hover: #8f969f;
-  --table-divider-active: #667eea;
+  --table-divider: #434343;
+  --table-divider-hover: #4b4b4b;
+  --table-divider-active: #3d3d3d;
   --table-divider-selected: #5a67d8;
   --table-header-divider: #718096;
 
   /* 右键菜单相关颜色 */
-  --context-menu-bg: #2d3748;
-  --context-menu-border: #4a5568;
+  --context-menu-bg: #515151;
+  --context-menu-border: #4a4a4a;
   --context-menu-shadow: rgba(0, 0, 0, 0.3);
   --context-menu-item-text: #e2e8f0;
-  --context-menu-item-hover-bg: #4a5568;
+  --context-menu-item-hover-bg: #696969;
   --context-menu-item-disabled-text: #718096;
-  --context-menu-divider-bg: #4a5568;
+  --context-menu-divider-bg: #747474;
+  --context-menu-danger-text: #fca5a5;
+  --context-menu-danger-hover-bg: #6b2a2a;
 
   /* 侧边栏导航项颜色 */
   --nav-item-text: #a0aec0;
   --nav-item-text-hover: #e2e8f0;
   --nav-item-text-active: #ffa256;
   --nav-item-bg: transparent;
-  --nav-item-bg-hover: #4a5568;
-  --nav-item-bg-active: #3a3a3a;
+  --nav-item-bg-hover: #5c5c5c;
+  --nav-item-bg-active: #5c5c5c;
   --nav-item-border: transparent;
   --nav-item-border-hover: transparent;
   --nav-item-border-active: #606060;
@@ -567,9 +782,8 @@
   --platform-item-text: #e2e8f0;
   --platform-item-hover-text: #e2e8f0;
   --platform-item-active-text: #ffffff;
-  --platform-item-icon-bg: #4a5568;
-  --platform-item-icon-hover-bg: #374151;
-  --platform-item-icon-active-bg: #3182ce;
+  --platform-item-icon-bg: #ffffff;
+
 
   /* 平台详情面板相关颜色 */
   --platform-detail-bg: #252526;
@@ -580,12 +794,13 @@
   --platform-detail-description-text: #a0aec0;
   --platform-detail-form-label-text: #e2e8f0;
   --platform-detail-form-input-bg: #374151;
-  --platform-detail-form-input-border: #4a5568;
-  --platform-detail-form-input-focus-border: #667eea;
+  --platform-detail-form-input-border: #555555;
+  --platform-detail-form-input-focus-border: #575757;
+  --form-input-focus-border: #575757;
   --platform-detail-form-input-text: #e2e8f0;
 
   /* 模型项相关颜色 */
-  --model-item-bg: var(--form-input-bg, #3a3a3a);
+  --model-item-bg: transparent;
   --model-item-border: transparent;
   --model-item-hover-bg: #3b3b3b;
   --model-item-hover-border: transparent;
@@ -616,6 +831,29 @@
   --dialog-button-close-text: #a0aec0;
   --dialog-button-close-hover-bg: #4a5568;
   --dialog-button-close-hover-text: #e2e8f0;
+
+  /* UpdateDialog 颜色变量（深色模式） */
+  --update-dialog-header-icon-bg: #4a4a4a;
+  --update-dialog-header-icon-border: #52525b;
+  --update-dialog-header-icon-color: #fbbf24;
+  --update-dialog-close-btn-bg: transparent;
+  --update-dialog-close-btn-text: #9ca3af;
+  --update-dialog-close-btn-hover-bg: #374151;
+  --update-dialog-close-btn-hover-text: #f3f4f6;
+  --update-dialog-neutral-btn-bg: #4a4a4a;
+  --update-dialog-neutral-btn-text: #d4d4d8;
+  --update-dialog-neutral-btn-border: transparent;
+  --update-dialog-neutral-btn-hover-bg: #525252;
+  --update-dialog-neutral-btn-hover-text: #fafafa;
+  --update-dialog-neutral-btn-hover-border: #71717a;
+  --update-dialog-neutral-btn-focus-border: #71717a;
+  --update-dialog-secondary-btn-bg: rgba(245, 158, 11, 0.14);
+  --update-dialog-secondary-btn-text: #fbbf24;
+  --update-dialog-secondary-btn-border: rgba(245, 158, 11, 0.28);
+  --update-dialog-secondary-btn-hover-bg: rgba(245, 158, 11, 0.22);
+  --update-dialog-secondary-btn-hover-text: #fde68a;
+  --update-dialog-secondary-btn-hover-border: rgba(251, 191, 36, 0.44);
+  --update-dialog-secondary-btn-focus-border: rgba(251, 191, 36, 0.5);
 
   /* QuestionEditor 专用颜色变量（深色模式） */
   --question-editor-overlay-bg: rgba(0, 0, 0, 0.7);
@@ -659,7 +897,7 @@
   --platform-config-dialog-close-hover-bg: #303030;
   --platform-config-dialog-close-hover-text: #e2e8f0;
   --platform-config-form-label-text: #e2e8f0;
-  --platform-config-form-input-border: #4a5568;
+  --platform-config-form-input-border: #555555;
   --platform-config-form-input-focus-border: #667eea;
   --platform-config-btn-secondary-bg: #4a5568;
   --platform-config-btn-secondary-text: #e2e8f0;
@@ -701,9 +939,10 @@
   --about-section-title-border: #4a5568;
   --about-text: #e2e8f0;
   --about-text-secondary: #d1d5db;
-  --about-card-bg: #374151;
-  --about-card-border: #4a5568;
-  --about-card-hover-bg: #4b5563;
+  --about-card-bg: #444444;
+  --about-card-border: #606060;
+  --about-card-hover-bg: #444444;
+  --about-card-hover-border: #606060;
   --about-accent: #667eea;
   --about-accent-hover: #5a67d8;
   --about-link-icon-bg: #667eea;
@@ -713,6 +952,11 @@
   --about-debug-button-hover-bg: #4b5563;
   --about-debug-button-hover-border: #667eea;
   --about-debug-button-hover-color: #667eea;
+  --custom-scrollbar-thumb: rgba(100, 100, 100, 0.5);
+  --custom-scrollbar-thumb-hover: rgba(100, 100, 100, 0.8);
+
+  /* 网络设置组背景 */
+  --network-group-bg: #343434;
 }
 
 /* 主题切换动画 */

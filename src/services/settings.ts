@@ -10,10 +10,9 @@ export interface AppSettings {
   
   // 题库设置
   autoAddToQuestionBank: boolean
-  // 非思考模型分析开关（影响后端提示词）
-  enableNonThinkingModelAnalysis: boolean
   // 文本模型最长响应时间（秒）
   modelResponseTimeout: number
+
   
   // 题目显示设置
   defaultDifficulty: 'easy' | 'medium' | 'hard'
@@ -40,6 +39,8 @@ export interface AppSettings {
   autoUpdate: boolean
   enableNotifications: boolean
   suppressNoModelWarning: boolean
+  questionSaveDir: string
+  questionSaveFolderId: number | null
   algorithms: AlgorithmConfig[]
   adminToken: string
   multiUser: {
@@ -68,8 +69,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   language: 'zh-CN',
   autoSave: true,
   autoAddToQuestionBank: false,
-  enableNonThinkingModelAnalysis: false,
   modelResponseTimeout: 40,
+
   defaultDifficulty: 'medium',
   itemsPerPage: 20,
   showExplanation: true,
@@ -90,6 +91,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   autoUpdate: true,
   enableNotifications: true
   , suppressNoModelWarning: false
+  , questionSaveDir: ''
+  , questionSaveFolderId: null
   , algorithms: []
   , adminToken: ''
   , multiUser: {
@@ -123,9 +126,12 @@ class SettingsManager {
     try {
       const stored = localStorage.getItem(SETTINGS_STORAGE_KEY)
       if (stored) {
-        const parsedSettings = JSON.parse(stored)
+        const parsedSettings = { ...(JSON.parse(stored) || {}) }
+        delete parsedSettings.enableNonThinkingModelAnalysis
         return { ...DEFAULT_SETTINGS, ...parsedSettings, network: { ...DEFAULT_SETTINGS.network, ...(parsedSettings.network || {}) } }
       }
+
+
     } catch (error) {
       console.warn('加载设置失败，使用默认设置:', error)
     }
@@ -141,10 +147,12 @@ class SettingsManager {
       const { invoke } = await import('@tauri-apps/api/core')
       const content = await invoke<string>('read_config')
       if (content) {
-        const parsed = JSON.parse(content)
+        const parsed = { ...(JSON.parse(content) || {}) }
+        delete parsed.enableNonThinkingModelAnalysis
         Object.assign(this.settings, { ...DEFAULT_SETTINGS, ...parsed, network: { ...DEFAULT_SETTINGS.network, ...(parsed.network || {}) } })
         console.log('已从配置文件加载设置')
       }
+
     } catch (error) {
       console.warn('从配置文件加载设置失败:', error)
     }
@@ -311,8 +319,8 @@ class SettingsManager {
       () => !settings.language || ['zh-CN', 'en-US'].includes(settings.language),
       () => !settings.autoSave || typeof settings.autoSave === 'boolean',
       () => !settings.autoAddToQuestionBank || typeof settings.autoAddToQuestionBank === 'boolean',
-      () => !settings.enableNonThinkingModelAnalysis || typeof settings.enableNonThinkingModelAnalysis === 'boolean',
       () => !settings.algorithms || (
+
         Array.isArray(settings.algorithms) && settings.algorithms.every((a: any) => (
           a && typeof a === 'object' && typeof a.id === 'string' && typeof a.name === 'string' && typeof a.applicableType === 'string' && typeof a.code === 'string'
         ))
@@ -331,19 +339,24 @@ class SettingsManager {
       language: '应用界面语言',
       autoSave: '自动保存设置',
       autoAddToQuestionBank: '自动将AI返回的题目添加到本地题库',
-      enableNonThinkingModelAnalysis: '非思考模型分析开关',
       modelResponseTimeout: '文本模型最长响应时间（秒）',
+
       network: '网络配置设置',
       windowSize: '窗口大小',
       windowPosition: '窗口位置',
       autoUpdate: '自动更新应用',
-      enableNotifications: '启用通知'
-      , suppressNoModelWarning: '未选择模型提醒'
-      , algorithms: '算法配置列表'
-      , defaultDifficulty: '默认题目难度'
-      , itemsPerPage: '每页显示题目数'
-      , showExplanation: '显示题目解析'
+      enableNotifications: '启用通知',
+      suppressNoModelWarning: '未选择模型提醒',
+      questionSaveDir: '题目保存目录',
+      questionSaveFolderId: '题目默认保存文件夹 ID',
+      algorithms: '算法配置列表',
+      adminToken: '管理员令牌',
+      multiUser: '多用户配置',
+      defaultDifficulty: '默认题目难度',
+      itemsPerPage: '每页显示题目数',
+      showExplanation: '显示题目解析'
     }
+
   }
 }
 
