@@ -1,7 +1,7 @@
 
 
 <div align="center">
-  <img src="https://free.picui.cn/free/2026/03/30/69ca3e6fe4eca.png" alt="ZError Logo" width="128">
+  <img src="https://free.picui.cn/free/2026/03/30/69ca3ec05ae5f.ico" alt="ZError Logo" width="128">
   <br>
   <h2>ZError</h3>
   <span>支持OCS网课助手的AI题库管理软件</span>
