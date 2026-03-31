@@ -285,6 +285,8 @@ import { save, open } from '@tauri-apps/plugin-dialog';
 import { writeFile } from '@tauri-apps/plugin-fs';
 import { generateExportData, type ExportFormat } from '../../utils/exporter';
 import { parseSoftwareExportedFile } from '../../utils/importer';
+import { splitQuestionImageParts, fetchQuestionImageBase64 } from '../../utils/questionImage';
+import type { QuestionImagePart as Part } from '../../utils/questionImage';
 import { emit as tauriEmit } from '@tauri-apps/api/event';
 import QuestionContextMenu from './QuestionContextMenu.vue';
 import QuestionEditor from './QuestionEditor.vue';
@@ -505,29 +507,13 @@ const resetEditForm = () => {
   };
 };
 
-interface Part { type: 'text' | 'image'; text?: string; url?: string }
-
 // 模块级持久缓存，组件销毁后仍保留，避免重复请求
 const _imageCache = new Map<string, string>()
 
 const imageSrcMap = ref<Record<string, string>>({})
 const blackOnlyMap = ref<Record<string, boolean>>({})
-const urlRegex = /(https?:\/\/[^\s]+?\.(?:png|jpg|jpeg|webp|gif))(?:\b|(?=\s)|$)/gi
 
-const getContentParts = (text: string): Part[] => {
-  const parts: Part[] = []
-  let lastIndex = 0
-  const regex = new RegExp(urlRegex.source, 'gi')
-  let m: RegExpExecArray | null
-  while ((m = regex.exec(text)) !== null) {
-    const off = m.index
-    if (off > lastIndex) parts.push({ type: 'text', text: text.slice(lastIndex, off) })
-    parts.push({ type: 'image', url: m[0] })
-    lastIndex = off + m[0].length
-  }
-  if (lastIndex < text.length) parts.push({ type: 'text', text: text.slice(lastIndex) })
-  return parts.length ? parts : [{ type: 'text', text }]
-}
+const getContentParts = (text: string): Part[] => splitQuestionImageParts(text || '')
 
 const imgSrc = (u: string) => imageSrcMap.value[u]
 const invertClass = (u: string) => blackOnlyMap.value[u] ? 'invert-on-dark' : ''
@@ -556,7 +542,8 @@ const fetchImages = async (urls: string[]) => {
       continue
     }
     try {
-      const dataUrl = await invoke<string>('fetch_image_as_base64', { url })
+      const dataUrl = await fetchQuestionImageBase64(url)
+      if (!dataUrl) continue
       _imageCache.set(url, dataUrl)
       imageSrcMap.value = { ...imageSrcMap.value, [url]: dataUrl }
       analyzeImage(url, dataUrl)

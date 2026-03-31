@@ -156,7 +156,8 @@
 <script setup lang="ts">
 import { computed, ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import type { AIResponse } from '../../services/database'
-import { invoke } from '@tauri-apps/api/core'
+import { splitQuestionImageParts, fetchQuestionImageBase64 } from '../../utils/questionImage'
+import type { QuestionImagePart as Part } from '../../utils/questionImage'
 
 interface Props {
   question: AIResponse | null
@@ -188,29 +189,12 @@ const emit = defineEmits<{
   (e: 'update:editAnswer', v: string): void
   (e: 'update:editType', v: string): void
 }>()
-interface Part { type: 'text' | 'image'; text?: string; url?: string }
 const imageSrcMap = ref<Record<string, string>>({})
 const blackOnlyMap = ref<Record<string, boolean>>({})
-const urlRegex = /(https?:\/\/[^\s]+?\.(?:png|jpg|jpeg|webp|gif))(?:\b|(?=\s)|$)/gi
 
-const splitContentParts = (text: string): Part[] => {
-  const parts: Part[] = []
-  let lastIndex = 0
-  const regex = new RegExp(urlRegex.source, 'gi')
-  let m: RegExpExecArray | null
-  while ((m = regex.exec(text)) !== null) {
-    const off = m.index
-    if (off > lastIndex) parts.push({ type: 'text', text: text.slice(lastIndex, off) })
-    parts.push({ type: 'image', url: m[0] })
-    lastIndex = off + m[0].length
-  }
-  if (lastIndex < text.length) parts.push({ type: 'text', text: text.slice(lastIndex) })
-  return parts.length ? parts : [{ type: 'text', text }]
-}
-
-const contentParts = computed<Part[]>(() => splitContentParts(props.question?.question || ''))
-const optionsParts = computed<Part[]>(() => splitContentParts(props.question?.options || ''))
-const answerParts = computed<Part[]>(() => splitContentParts(props.question?.answer || ''))
+const contentParts = computed<Part[]>(() => splitQuestionImageParts(props.question?.question || ''))
+const optionsParts = computed<Part[]>(() => splitQuestionImageParts(props.question?.options || ''))
+const answerParts = computed<Part[]>(() => splitQuestionImageParts(props.question?.answer || ''))
 
 const formatCompactTime = (timeStr?: string) => {
   if (!timeStr) return '未知'
@@ -439,7 +423,7 @@ const fetchImages = async (urls: string[]) => {
   const unique = Array.from(new Set(urls))
   for (const url of unique) {
     try {
-      const dataUrl = await invoke<string>('fetch_image_as_base64', { url })
+      const dataUrl = await fetchQuestionImageBase64(url)
       imageSrcMap.value = { ...imageSrcMap.value, [url]: dataUrl }
       analyzeImage(url, dataUrl)
     } catch {}

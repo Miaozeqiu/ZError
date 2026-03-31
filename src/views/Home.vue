@@ -562,6 +562,8 @@ import 'markstream-vue/index.css'
 import ModelWarningDialog from '../components/home/ModelWarningDialog.vue'
 import JsonCodeViewer from '../components/home/JsonCodeViewer.vue'
 import ImageGenerator from '../components/ImageGenerator.vue'
+import { createUrlQuestionRegex, normalizeQuestionUrl, fetchQuestionImageBase64, extractQuestionImageUrls } from '../utils/questionImage'
+
 
 const emit = defineEmits(['navigate'])
 
@@ -2896,27 +2898,8 @@ const resolveUrlAnswer = (response: string, optionMap: Map<string, string>): str
   return nums.map(n => optionMap.get(n) || n).join('###')
 }
 
-// 将题目文本按 URL 拆分，组装成交错的多模态 content 数组
-// 例："题目文字 http://xxx.gif 更多文字" →
-const createUrlQuestionRegex = () => /https?:\/\/[^\s\u4e00-\u9fff\uff00-\uffef，。；：！？""''（）【】《》]+/g
-
-const normalizeQuestionUrl = (rawUrl: string): string => {
-  return rawUrl
-    .trim()
-    .replace(/[.,;!?]*$/, '')
-    .replace(/(\.(?:png|jpe?g|gif|webp|bmp|svg))(=+)$/i, '$1')
-}
-
-const fetchQuestionImageBase64 = async (url: string): Promise<string> => {
-  try {
-    const { invoke: tauriInvoke } = await import('@tauri-apps/api/core')
-    return await tauriInvoke('fetch_image_as_base64', { url }) as string
-  } catch {
-    return ''
-  }
-}
-
 const DEFAULT_VISION_IMAGE_MIN_SIZE = 32
+
 
 const applyWhiteBackgroundToDataUrl = async (dataUrl: string): Promise<string> => {
   if (!dataUrl.startsWith('data:image/')) return dataUrl
@@ -3079,9 +3062,9 @@ const executeVisionModelWithAutoUpscale = async (processModel: any, input: any, 
 
 const buildQuestionImageMap = async (text: string): Promise<Map<string, string>> => {
 
-  const urlRegex = createUrlQuestionRegex()
-  const urls = Array.from(new Set(Array.from(text.matchAll(urlRegex)).map(m => normalizeQuestionUrl(m[0]))))
+  const urls = extractQuestionImageUrls(text)
   const base64Map = new Map<string, string>()
+
 
   await Promise.all(urls.map(async (url) => {
     const b64 = await fetchQuestionImageBase64(url)
@@ -3107,11 +3090,13 @@ const buildRenderedHtml = async (title: string, options: string): Promise<string
   // 替换文本中的 URL 为 img 标签或文字占位
   return text.replace(urlRegex, (raw) => {
     const url = normalizeQuestionUrl(raw)
+    const trailingText = raw.slice(url.length)
     const b64 = base64Map.get(url)
-    if (b64) return `<img src="${b64}" style="max-width:100%;vertical-align:middle;background:#fff;display:inline-block;" />`
-    return `[图片: ${url}]`
+    if (b64) return `<img src="${b64}" style="max-width:100%;vertical-align:middle;background:#fff;display:inline-block;" />${trailingText}`
+    return `[图片: ${url}]${trailingText}`
   }).replace(/\n/g, '<br/>')
 }
+
 
 // 如果请求体中的 title 含有 URL，为 log 设置 urlQuestion 展示字段（不触发分析）
 const injectUrlQuestionIfNeeded = (log: RequestLog) => {
@@ -3145,11 +3130,13 @@ const injectUrlQuestionIfNeeded = (log: RequestLog) => {
 
 // 将文本中的 URL 替换为 <img> 标签，返回 HTML 字符串（用于展示）
 const renderUrlsAsHtml = (text: string): string => {
-  return text.replace(createUrlQuestionRegex(), (url) => {
-    const cleanUrl = normalizeQuestionUrl(url)
-    return `<img src="${cleanUrl}" style="max-width:100%;vertical-align:middle;" />`
+  return text.replace(createUrlQuestionRegex(), (rawUrl) => {
+    const cleanUrl = normalizeQuestionUrl(rawUrl)
+    const trailingText = rawUrl.slice(cleanUrl.length)
+    return `<img src="${cleanUrl}" style="max-width:100%;vertical-align:middle;" />${trailingText}`
   })
 }
+
 
 // 将文本按 URL 拆分为多模态内容数组，并先在本地拉取图片转成 base64
 const buildMultimodalContent = async (text: string): Promise<any[]> => {
@@ -3161,7 +3148,9 @@ const buildMultimodalContent = async (text: string): Promise<any[]> => {
   let match: RegExpExecArray | null
 
   while ((match = urlRegex.exec(text)) !== null) {
-    const url = normalizeQuestionUrl(match[0])
+    const rawUrl = match[0]
+    const url = normalizeQuestionUrl(rawUrl)
+    const trailingText = rawUrl.slice(url.length)
     const before = text.slice(lastIndex, match.index)
     if (before) parts.push({ type: 'text', text: before })
 
@@ -3172,8 +3161,10 @@ const buildMultimodalContent = async (text: string): Promise<any[]> => {
       failedUrls.push(url)
     }
 
-    lastIndex = match.index + match[0].length
+    if (trailingText) parts.push({ type: 'text', text: trailingText })
+    lastIndex = match.index + rawUrl.length
   }
+
 
   const tail = text.slice(lastIndex)
   if (tail) parts.push({ type: 'text', text: tail })

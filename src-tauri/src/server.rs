@@ -200,7 +200,7 @@ fn build_model_query_prompt(
     q
 }
 
-/// 启动Web静态文件服务器
+/// 启动 Web 辅助服务器
 async fn start_web_server(web_port: u16, bind_ip: [u8; 4]) -> JoinHandle<()> {
     use warp::Filter;
 
@@ -278,16 +278,6 @@ async fn start_web_server(web_port: u16, bind_ip: [u8; 4]) -> JoinHandle<()> {
         });
     }
 
-    // release 模式：提供静态文件
-    let exe_dir = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-        .unwrap_or_else(|| std::path::PathBuf::from("."));
-    let web_dir = exe_dir.join("web");
-    println!("🌐 Web server serving from: {:?}", web_dir);
-    let static_files = warp::fs::dir(web_dir.clone());
-    let index_fallback = warp::fs::file(web_dir.join("index.html"));
-
     // /api/login 路由，避免跨端口 CORS 问题
     let web_login_route = warp::path("api")
         .and(warp::path("login"))
@@ -345,10 +335,18 @@ async fn start_web_server(web_port: u16, bind_ip: [u8; 4]) -> JoinHandle<()> {
             ))
         });
 
-    let routes = web_login_route
-        .or(static_files)
-        .or(index_fallback)
-        .with(cors);
+    let fallback_route = warp::any().map(|| {
+        warp::reply::with_status(
+            warp::reply::json(&serde_json::json!({
+                "success": false,
+                "message": "Web 静态资源已移除"
+            })),
+            warp::http::StatusCode::NOT_FOUND,
+        )
+    });
+
+    println!("🌐 Web static assets disabled; only auxiliary API routes are served");
+    let routes = web_login_route.or(fallback_route).with(cors);
     tokio::spawn(async move {
         warp::serve(routes).run((bind_ip, web_port)).await;
     })
