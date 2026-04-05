@@ -23,28 +23,6 @@
     <div class="network-group request-group">
       <div class="group-title">请求记录</div>
 
-      <div v-if="false" class="request-summary-grid">
-        <div class="summary-card">
-          <span class="summary-label">总请求数</span>
-          <strong class="summary-value">{{ totalRequestCount }}</strong>
-          <span class="summary-hint">当前已记录的 /query 请求</span>
-        </div>
-        <div class="summary-card">
-          <span class="summary-label">AI 命中</span>
-          <strong class="summary-value ai">{{ aiHitCount }}</strong>
-          <span class="summary-hint">AI 返回并写入题库的次数</span>
-        </div>
-        <div class="summary-card">
-          <span class="summary-label">数据库命中</span>
-          <strong class="summary-value database">{{ databaseHitCount }}</strong>
-          <span class="summary-hint">直接命中本地题库的次数</span>
-        </div>
-        <div class="summary-card">
-          <span class="summary-label">最近一次请求</span>
-          <strong class="summary-value latest">{{ latestRequestTimeText }}</strong>
-          <span class="summary-hint">近 7 天 {{ weeklyRequestCount }} 次请求</span>
-        </div>
-      </div>
 
       <div class="request-chart-layout">
         <div class="request-chart-card heatmap-card">
@@ -130,65 +108,8 @@
           </div>
         </div>
 
-        <div v-if="false" class="request-chart-card donut-card">
-          <div class="request-card-header compact">
-            <div>
-              <h3 class="request-card-title">命中占比</h3>
-              <p class="request-card-subtitle">AI 与数据库命中次数统计</p>
-            </div>
-            <div class="request-chart-footnote">
-              <span>未命中/异常：{{ unmatchedRequestCount }}</span>
-              <span>命中率：{{ requestHitRateText }}</span>
-            </div>
-          </div>
-
-          <div v-if="hitRequestCount === 0" class="request-empty-state">
-            暂无可统计的命中数据
-          </div>
-          <VChart
-            v-else
-            class="request-donut-chart"
-            :option="requestSourceDonutOption"
-            autoresize
-          />
-        </div>
       </div>
 
-      <div v-if="false" class="request-records-card">
-        <div class="request-card-header compact">
-          <div>
-            <h3 class="request-card-title">最近请求</h3>
-            <p class="request-card-subtitle">展示最近 {{ recentRequestLogs.length }} 条请求记录</p>
-          </div>
-        </div>
-
-        <div v-if="recentRequestLogs.length === 0" class="request-empty-state">
-          暂无请求记录
-        </div>
-        <div v-else class="request-record-list">
-          <div v-for="log in recentRequestLogs" :key="log.id" class="request-record-item">
-            <div class="request-record-main">
-              <div class="request-record-title-row">
-                <span class="request-method-badge" :class="log.method.toLowerCase()">{{ log.method }}</span>
-                <span class="request-title" :title="log.title">{{ log.title }}</span>
-              </div>
-              <div class="request-record-meta">
-                <span>{{ formatDateTime(log.timestamp) }}</span>
-                <span>{{ log.path }}</span>
-                <span v-if="log.responseTime !== undefined">{{ log.responseTime }}ms</span>
-              </div>
-            </div>
-            <div class="request-record-side">
-              <span class="request-source-badge" :class="log.sourceType">
-                {{ getRequestSourceLabel(log.sourceType) }}
-              </span>
-              <span class="request-status-badge" :class="getStatusClass(log.status)">
-                {{ log.status ?? '处理中' }}
-              </span>
-            </div>
-          </div>
-        </div>
-      </div>
     </div>
 
     <div class="network-group">
@@ -285,65 +206,12 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
-import VChart from 'vue-echarts'
 
 type CSSProperties = Record<string, string>
-import { use } from 'echarts/core'
-import { PieChart } from 'echarts/charts'
-import { CanvasRenderer } from 'echarts/renderers'
-import { LegendComponent, TitleComponent, TooltipComponent } from 'echarts/components'
-import type { ECBasicOption } from 'echarts/types/dist/shared'
-import UpdateDialog from '../UpdateDialog.vue'
-import { useSettingsManager } from '../../composables/useSettingsManager'
-import { useModelConfig } from '../../services/modelConfig'
+import UpdateDialog from '../../components/UpdateDialog.vue'
 import { environmentDetector } from '../../services/environmentDetector'
 import { VersionCheckService, type VersionInfo } from '../../services/versionCheck'
 
-use([
-  CanvasRenderer,
-  PieChart,
-  LegendComponent,
-  TitleComponent,
-  TooltipComponent,
-])
-
-interface RawRequestLog {
-  id: string
-  timestamp: string
-  method: string
-  path: string
-  status?: number
-  response_time?: number
-  request_body?: string
-  response_body?: string
-  headers?: Record<string, string>
-  ip?: string
-  user_agent?: string
-  stage?: string
-}
-
-type RequestSourceType = 'ai' | 'database' | 'unknown'
-
-interface QueryResponseData {
-  question?: string
-  answer?: string
-  is_ai?: boolean
-}
-
-interface RequestOverviewLog {
-  id: string
-  timestamp: number
-  method: string
-  path: string
-  status?: number
-  responseTime?: number
-  requestBody: string
-  responseBody: string
-  headers: Record<string, string>
-  sourceType: RequestSourceType
-  title: string
-  stage: string
-}
 
 interface HeatmapRenderCell {
   key: string
@@ -363,8 +231,6 @@ interface HeatmapMonthMarker {
   style: CSSProperties
 }
 
-const { settings } = useSettingsManager()
-const { settings: modelSettings } = useModelConfig()
 
 const debugInfo = ref({
   tauriEnv: false,
@@ -383,7 +249,8 @@ const updateStatusType = ref<'success' | 'error' | ''>('')
 
 const isLoadingRequestStats = ref(false)
 const requestStatsError = ref('')
-const requestLogs = ref<RequestOverviewLog[]>([])
+// 只记录每天的请求数量：date string -> count
+const dailyCounts = ref<Map<string, number>>(new Map())
 const heatmapContainerRef = ref<HTMLElement | null>(null)
 const heatmapTooltipRef = ref<HTMLElement | null>(null)
 const heatmapContainerWidth = ref(0)
@@ -447,128 +314,11 @@ const parseDateKey = (dateKey: string) => {
   return new Date(year, month - 1, day)
 }
 
-const parseQueryResponseData = (responseBody: string): QueryResponseData | null => {
-  if (!responseBody) {
-    return null
-  }
-
-  try {
-    const parsed = JSON.parse(responseBody) as {
-      code?: number
-      data?: QueryResponseData | QueryResponseData[] | null
-    }
-
-    if (parsed.code !== 1 || !parsed.data) {
-      return null
-    }
-
-    if (Array.isArray(parsed.data)) {
-      return parsed.data[0] ?? null
-    }
-
-    return parsed.data
-  } catch {
-    return null
-  }
-}
-
-const getRequestSourceType = (responseBody: string): RequestSourceType => {
-  const responseData = parseQueryResponseData(responseBody)
-  if (!responseData) {
-    return 'unknown'
-  }
-
-  return responseData.is_ai ? 'ai' : 'database'
-}
-
-const extractRequestTitle = (requestBody: string) => {
-  if (!requestBody) {
-    return '未解析题目'
-  }
-
-  try {
-    const parsed = JSON.parse(requestBody) as { title?: string }
-    return parsed.title?.trim() || '未解析题目'
-  } catch {
-    return '未解析题目'
-  }
-}
-
-const isMeaningfulRequestLog = (log: RequestOverviewLog) => {
-  return log.requestBody.trim().length > 0 && log.title !== '未解析题目'
-}
-
-const normalizeRequestLogs = (logs: RawRequestLog[]) => {
-  const mergedLogs = new Map<string, RequestOverviewLog>()
-
-  logs.forEach((log) => {
-    if (log.path !== '/query' || (log.method !== 'GET' && log.method !== 'POST')) {
-      return
-    }
-
-    const timestamp = new Date(log.timestamp).getTime()
-    const existing = mergedLogs.get(log.id)
-
-    const mergedLog: RequestOverviewLog = existing ?? {
-      id: log.id,
-      timestamp: Number.isFinite(timestamp) ? timestamp : Date.now(),
-      method: log.method,
-      path: log.path,
-      status: undefined,
-      responseTime: undefined,
-      requestBody: '',
-      responseBody: '',
-      headers: {},
-      sourceType: 'unknown',
-      title: '未解析题目',
-      stage: log.stage || 'started'
-    }
-
-    if (Number.isFinite(timestamp)) {
-      mergedLog.timestamp = existing ? Math.min(existing.timestamp, timestamp) : timestamp
-    }
-
-    mergedLog.method = log.method || mergedLog.method
-    mergedLog.path = log.path || mergedLog.path
-    mergedLog.stage = log.stage === 'completed' || mergedLog.stage === 'completed'
-      ? 'completed'
-      : (log.stage || mergedLog.stage)
-
-    if (log.request_body) {
-      mergedLog.requestBody = log.request_body
-      mergedLog.title = extractRequestTitle(log.request_body)
-    }
-
-    if (log.response_body) {
-      mergedLog.responseBody = log.response_body
-      mergedLog.sourceType = getRequestSourceType(log.response_body)
-    }
-
-    if (log.status !== undefined && log.status !== null) {
-      mergedLog.status = log.status
-    }
-
-    if (log.response_time !== undefined && log.response_time !== null) {
-      mergedLog.responseTime = log.response_time
-    }
-
-    if (log.headers) {
-      mergedLog.headers = log.headers
-    }
-
-    mergedLogs.set(log.id, mergedLog)
-  })
-
-  return Array.from(mergedLogs.values())
-    .filter(isMeaningfulRequestLog)
-    .sort((a, b) => b.timestamp - a.timestamp)
-}
-
 const loadRequestLogs = async () => {
   activeHeatmapCell.value = null
 
   if (!environmentDetector.isTauriEnvironment()) {
-    requestLogs.value = []
+    dailyCounts.value = new Map()
     requestStatsError.value = '仅 Tauri 桌面端可查看请求记录'
     return
   }
@@ -578,8 +328,13 @@ const loadRequestLogs = async () => {
 
   try {
     const { invoke } = await import('@tauri-apps/api/core')
-    const logs = await invoke<RawRequestLog[]>('get_request_logs')
-    requestLogs.value = normalizeRequestLogs(logs)
+    // 后端返回 [["2026-03-31", 5], ["2026-04-01", 3], ...]
+    const rows = await invoke<[string, number][]>('get_daily_request_counts')
+    const map = new Map<string, number>()
+    for (const [date, count] of rows) {
+      map.set(date, count)
+    }
+    dailyCounts.value = map
   } catch (error) {
     console.error('获取请求记录失败:', error)
     requestStatsError.value = '获取请求记录失败，请稍后重试'
@@ -588,30 +343,12 @@ const loadRequestLogs = async () => {
   }
 }
 
-const totalRequestCount = computed(() => requestLogs.value.length)
-const aiHitCount = computed(() => requestLogs.value.filter(log => log.sourceType === 'ai').length)
-const databaseHitCount = computed(() => requestLogs.value.filter(log => log.sourceType === 'database').length)
-const hitRequestCount = computed(() => aiHitCount.value + databaseHitCount.value)
-const unmatchedRequestCount = computed(() => Math.max(totalRequestCount.value - hitRequestCount.value, 0))
-const recentRequestLogs = computed(() => requestLogs.value.slice(0, 10))
-
-const weeklyRequestCount = computed(() => {
-  const now = Date.now()
-  const sevenDaysAgo = now - 7 * 24 * 60 * 60 * 1000
-  return requestLogs.value.filter(log => log.timestamp >= sevenDaysAgo).length
-})
-
-const latestRequestTimeText = computed(() => {
-  const latestLog = requestLogs.value[0]
-  return latestLog ? formatDateTime(latestLog.timestamp) : '暂无记录'
-})
-
-const requestHitRateText = computed(() => {
-  if (totalRequestCount.value === 0) {
-    return '0%'
+const totalRequestCount = computed(() => {
+  let total = 0
+  for (const count of dailyCounts.value.values()) {
+    total += count
   }
-
-  return `${((hitRequestCount.value / totalRequestCount.value) * 100).toFixed(1)}%`
+  return total
 })
 
 const heatmapDateRange = computed(() => {
@@ -621,17 +358,11 @@ const heatmapDateRange = computed(() => {
   const start = new Date(end)
   start.setDate(start.getDate() - 364)
 
-  const counts = new Map<string, number>()
-  requestLogs.value.forEach((log) => {
-    const key = createDateKey(new Date(log.timestamp))
-    counts.set(key, (counts.get(key) || 0) + 1)
-  })
-
   const data: Array<[string, number]> = []
   const cursor = new Date(start)
   while (cursor <= end) {
     const key = createDateKey(cursor)
-    data.push([key, counts.get(key) || 0])
+    data.push([key, dailyCounts.value.get(key) || 0])
     cursor.setDate(cursor.getDate() + 1)
   }
 
@@ -907,102 +638,6 @@ const heatmapMonthMarkers = computed<HeatmapMonthMarker[]>(() => {
   return markers
 })
 
-const requestSourceDonutOption = computed<ECBasicOption>(() => {
-  const palette = chartPalette.value
-  const total = hitRequestCount.value
-  const donutData = [
-    {
-      value: aiHitCount.value,
-      name: 'AI命中',
-      itemStyle: {
-        color: '#22c55e',
-        borderColor: palette.donutDivider,
-        borderWidth: 2
-      }
-    },
-    {
-      value: databaseHitCount.value,
-      name: '数据库命中',
-      itemStyle: {
-        color: '#3b82f6',
-        borderColor: palette.donutDivider,
-        borderWidth: 2
-      }
-    }
-  ]
-  const donutValueMap = new Map(donutData.map(item => [item.name, item.value]))
-
-  return {
-    tooltip: {
-      trigger: 'item',
-      confine: true,
-      backgroundColor: palette.tooltipBackground,
-      borderColor: palette.tooltipBorder,
-      borderWidth: 1,
-      textStyle: {
-        color: palette.tooltipText
-      },
-      formatter: '{b}<br />{c} 次（{d}%）'
-    },
-    title: {
-      text: `${total}`,
-      subtext: '命中总次数',
-      left: '31%',
-      top: '37%',
-      textAlign: 'center',
-      textStyle: {
-        color: palette.primaryText,
-        fontSize: 28,
-        fontWeight: 700
-      },
-      subtextStyle: {
-        color: palette.secondaryText,
-        fontSize: 12,
-        lineHeight: 18
-      }
-    },
-    legend: {
-      orient: 'vertical',
-      right: 8,
-      top: 'center',
-      icon: 'circle',
-      itemWidth: 10,
-      itemHeight: 10,
-      itemGap: 18,
-      selectedMode: false,
-      formatter: (name: string) => {
-        const value = donutValueMap.get(name) ?? 0
-        const percent = total > 0 ? ((value / total) * 100).toFixed(1) : '0.0'
-        return `${name}\n${value} 次 · ${percent}%`
-      },
-      textStyle: {
-        color: palette.legendText,
-        width: 116,
-        lineHeight: 18,
-        overflow: 'break'
-      }
-    },
-    series: [
-      {
-        type: 'pie',
-        radius: ['58%', '74%'],
-        center: ['31%', '48%'],
-        avoidLabelOverlap: true,
-        label: {
-          show: false
-        },
-        labelLine: {
-          show: false
-        },
-        emphasis: {
-          scale: true,
-          scaleSize: 4
-        },
-        data: donutData
-      }
-    ]
-  }
-})
 
 onMounted(() => {
   checkEnvironment()
@@ -1063,20 +698,6 @@ const formatDateLabel = (dateKey: string) => {
   })
 }
 
-const getStatusClass = (status?: number) => {
-  if (status === undefined) return 'pending'
-  if (status >= 200 && status < 300) return 'success'
-  if (status >= 300 && status < 400) return 'redirect'
-  if (status >= 400 && status < 500) return 'client-error'
-  if (status >= 500) return 'server-error'
-  return 'unknown'
-}
-
-const getRequestSourceLabel = (sourceType: RequestSourceType) => {
-  if (sourceType === 'ai') return 'AI 命中'
-  if (sourceType === 'database') return '数据库命中'
-  return '未命中'
-}
 
 const checkForUpdatesManually = async () => {
   if (isCheckingUpdate.value) {
@@ -1135,8 +756,7 @@ const openDebugPanel = async () => {
       console.log('当前环境:', debugInfo.value.environmentType)
       console.log('Tauri 环境:', debugInfo.value.tauriEnv)
       console.log('可用 API:', debugInfo.value.availableApis)
-      console.log('设置信息:', settings.value)
-      console.log('模型配置:', modelSettings)
+      console.log('设置信息: (已移除详情追踪)')
 
       if (typeof window !== 'undefined') {
         const event = new KeyboardEvent('keydown', {

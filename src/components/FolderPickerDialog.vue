@@ -28,7 +28,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
-import FileTree from './questions/FileTree.vue'
+import FileTree from '../views/questions/FileTree.vue'
 import { databaseService } from '../services/database'
 
 const props = defineProps<{

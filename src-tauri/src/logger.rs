@@ -1,4 +1,4 @@
-use crate::database::insert_request_log;
+use crate::database::{increment_daily_request_count};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
@@ -85,9 +85,15 @@ impl RequestLogger {
         }
     }
 
-    fn persist_request_log(&self, log: &RequestLog) {
-        if let Err(error) = insert_request_log(log, self.max_logs) {
-            println!("❌ 持久化请求日志失败: {}", error);
+    fn persist_query_count(&self, log: &RequestLog) {
+        // 只对 /query 路由的 started 阶段计数，不记录请求详情
+        if log.path == "/query"
+            && (log.method == "GET" || log.method == "POST")
+            && log.stage == "started"
+        {
+            if let Err(error) = increment_daily_request_count() {
+                println!("❌ 更新每日请求计数失败: {}", error);
+            }
         }
     }
 
@@ -130,7 +136,7 @@ impl RequestLogger {
         }
 
         drop(logs);
-        self.persist_request_log(&log);
+        self.persist_query_count(&log);
 
         // Broadcast the new log to SSE subscribers
         println!(
@@ -177,7 +183,7 @@ impl RequestLogger {
         }
 
         drop(logs);
-        self.persist_request_log(&log);
+        self.persist_query_count(&log);
 
         // Broadcast the new log to SSE subscribers
         println!(
@@ -227,7 +233,7 @@ impl RequestLogger {
         }
 
         drop(logs);
-        self.persist_request_log(&log);
+        self.persist_query_count(&log);
 
         // Broadcast the new log to SSE subscribers
         println!(

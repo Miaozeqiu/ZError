@@ -156,7 +156,7 @@
 <script setup lang="ts">
 import { computed, ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import type { AIResponse } from '../../services/database'
-import { splitQuestionImageParts, fetchQuestionImageBase64 } from '../../utils/questionImage'
+import { splitQuestionImageParts, fetchQuestionImageBase64, shouldInvertTransparentDarkImage } from '../../utils/questionImage'
 import type { QuestionImagePart as Part } from '../../utils/questionImage'
 
 interface Props {
@@ -430,34 +430,12 @@ const fetchImages = async (urls: string[]) => {
   }
 }
 
-const analyzeImage = (url: string, src: string) => {
+const analyzeImage = async (url: string, src: string) => {
   try {
-    const img = new Image()
-    img.onload = () => {
-      const w = 32
-      const h = 32
-      const canvas = document.createElement('canvas')
-      canvas.width = w
-      canvas.height = h
-      const ctx = canvas.getContext('2d')
-      if (!ctx) return
-      ctx.drawImage(img, 0, 0, w, h)
-      const data = ctx.getImageData(0, 0, w, h).data
-      let nonTransparent = 0
-      let hasNonBlack = false
-      for (let i = 0; i < data.length; i += 4) {
-        const a = data[i + 3]
-        if (a < 10) continue
-        nonTransparent++
-        const r = data[i]
-        const g = data[i + 1]
-        const b = data[i + 2]
-        const bright = 0.2126 * r + 0.7152 * g + 0.0722 * b
-        if (bright > 30) { hasNonBlack = true; break }
-      }
-      blackOnlyMap.value = { ...blackOnlyMap.value, [url]: nonTransparent > 0 && !hasNonBlack }
+    blackOnlyMap.value = {
+      ...blackOnlyMap.value,
+      [url]: await shouldInvertTransparentDarkImage(src)
     }
-    img.src = src
   } catch {}
 }
 

@@ -534,10 +534,6 @@
   <OCSConfigDialog :visible="showOCSConfig" :current-port="configuredPort" @close="showOCSConfig = false"
     @test="testOCSConnection" />
 
-  <!-- URL内容处理弹窗 -->
-  <UrlContentDialog :visible="showUrlContentDialog" :original-question="urlContentData.originalQuestion"
-    :original-options="urlContentData.originalOptions" :server-response="urlContentData.serverResponse"
-    @close="showUrlContentDialog = false" />
   <ModelWarningDialog :visible="showNoModelDialog" @close="showNoModelDialog = false"
     @still-open="handleNoModelStillOpen" @select-model="handleNoModelSelect" />
 
@@ -550,19 +546,18 @@ import { useSettings } from '../services/settings'
 import { useModelConfig } from '../services/modelConfig'
 import type { AIModel } from '../services/modelConfig'
 import { databaseService } from '../services/database'
-import LayeredModelSelector from '../components/home/LayeredModelSelector.vue'
-import PortConfigDialog from '../components/home/PortConfigDialog.vue'
-import ModelSelectorDialog from '../components/home/ModelSelectorDialog.vue'
-import OCSConfigDialog from '../components/home/OCSConfigDialog.vue'
-import UrlContentDialog from '../components/home/UrlContentDialog.vue'
+
+import PortConfigDialog from './home/PortConfigDialog.vue'
+import ModelSelectorDialog from './home/ModelSelectorDialog.vue'
+import OCSConfigDialog from './home/OCSConfigDialog.vue'
 import FolderPickerDialog from '../components/FolderPickerDialog.vue'
 import MarkdownRender from 'markstream-vue'
 
 import 'markstream-vue/index.css'
-import ModelWarningDialog from '../components/home/ModelWarningDialog.vue'
-import JsonCodeViewer from '../components/home/JsonCodeViewer.vue'
-import ImageGenerator from '../components/ImageGenerator.vue'
-import { createUrlQuestionRegex, normalizeQuestionUrl, fetchQuestionImageBase64, extractQuestionImageUrls } from '../utils/questionImage'
+import ModelWarningDialog from './home/ModelWarningDialog.vue'
+import JsonCodeViewer from './home/JsonCodeViewer.vue'
+import { findQuestionImageMatches, fetchQuestionImageBase64, extractQuestionImageUrls } from '../utils/questionImage'
+
 
 
 const emit = defineEmits(['navigate'])
@@ -613,15 +608,7 @@ const pendingStart = ref(false)
 // OCS题库配置对话框状态
 const showOCSConfig = ref(false)
 
-// URL内容处理弹窗状态
-const showUrlContentDialog = ref(false)
 const showFolderPicker = ref(false)
-const urlContentData = ref({
-
-  originalQuestion: '',
-  originalOptions: '',
-  serverResponse: ''
-})
 // 当前 URL 内容窗口的唯一 ID，用于隔离多窗口数据
 const currentUrlWindowId = ref('')
 
@@ -868,6 +855,110 @@ let logUpdateInterval: NodeJS.Timeout | null = null
 let sseEventSource: EventSource | null = null
 // 维护每个请求的心跳定时器，确保在没有内容流入时也能向后端发送进度心跳
 const heartbeatIntervals = new Map<string, number>()
+const activeModelAbortControllers = new Map<string, Set<AbortController>>()
+const cancelledRequestIds = new Set<string>()
+const MODEL_REQUEST_CANCELLED_MESSAGE = '服务已停止，已取消所有模型请求'
+
+const createCancelledRequestError = (message = MODEL_REQUEST_CANCELLED_MESSAGE) => {
+  const error = new Error(message)
+  error.name = 'AbortError'
+  return error
+}
+
+const isAbortLikeError = (error: unknown) => {
+  if (!(error instanceof Error)) return false
+  return error.name === 'AbortError' || /aborted|abort|cancelled|canceled|取消/i.test(error.message)
+}
+
+const registerAbortController = (requestId: string, abortController: AbortController) => {
+  const controllers = activeModelAbortControllers.get(requestId) ?? new Set<AbortController>()
+  controllers.add(abortController)
+  activeModelAbortControllers.set(requestId, controllers)
+}
+
+const unregisterAbortController = (requestId: string, abortController: AbortController) => {
+  const controllers = activeModelAbortControllers.get(requestId)
+  if (!controllers) return
+  controllers.delete(abortController)
+  if (controllers.size === 0) {
+    activeModelAbortControllers.delete(requestId)
+  }
+}
+
+const clearRequestHeartbeat = (requestId: string) => {
+  const timerId = heartbeatIntervals.get(requestId)
+  if (typeof timerId === 'number') {
+    window.clearInterval(timerId)
+    heartbeatIntervals.delete(requestId)
+  }
+}
+
+const isRequestCancelled = (requestId: string) => cancelledRequestIds.has(requestId)
+
+const markRequestAsCancelled = (requestId: string, message = MODEL_REQUEST_CANCELLED_MESSAGE) => {
+  const log = requestLogs.value.find(entry => entry.id === requestId)
+  if (!log) return
+
+  log.isModelCalling = false
+  log.streamingReasoning = ''
+  log.stage = 'completed'
+  log.status = log.status ?? 499
+  log.responseTime = log.responseTime ?? Math.max(Date.now() - log.timestamp, 0)
+
+  if (!log.responseBody) {
+    log.responseBody = message
+  }
+
+  if (!log.modelResponse || log.modelResponse.startsWith('错误:')) {
+    log.modelResponse = message
+  }
+
+  if (log.multiModelResponses?.length) {
+    log.multiModelResponses.forEach((entry) => {
+      entry.isLoading = false
+      entry.streamingReasoning = ''
+      if (!entry.response || entry.response.startsWith('错误:')) {
+        entry.response = message
+      }
+    })
+  }
+
+  if (log.urlQuestion) {
+    const partialAnalysisResult = (log.urlQuestion.analysisResult || log.urlQuestion.streamingResponse || '').trim()
+    const partialReasoning = (log.urlQuestion.reasoningContent || log.urlQuestion.streamingReasoning || '').trim()
+
+    log.urlQuestion.analyzing = false
+    log.urlQuestion.streamingResponse = ''
+    log.urlQuestion.streamingReasoning = ''
+
+    if (partialAnalysisResult || partialReasoning) {
+      log.urlQuestion.analysisResult = partialAnalysisResult || log.urlQuestion.analysisResult
+      log.urlQuestion.reasoningContent = partialReasoning
+      log.urlQuestion.analysisError = ''
+    } else {
+      log.urlQuestion.analysisError = message
+    }
+  }
+}
+
+const cancelAllInFlightModelRequests = (message = MODEL_REQUEST_CANCELLED_MESSAGE) => {
+  const requestIds = new Set<string>([
+    ...activeModelAbortControllers.keys(),
+    ...heartbeatIntervals.keys(),
+    ...activeUrlAnalysisRequestIds,
+  ])
+
+  requestIds.forEach((requestId) => {
+    cancelledRequestIds.add(requestId)
+    clearRequestHeartbeat(requestId)
+    markRequestAsCancelled(requestId, message)
+  })
+
+  activeModelAbortControllers.forEach((controllers) => {
+    controllers.forEach((controller) => controller.abort())
+  })
+  activeModelAbortControllers.clear()
+}
 
 // 请求记录管理方法
 const addRequestLog = (log: Omit<RequestLog, 'id'>) => {
@@ -1441,16 +1532,15 @@ const stopServer = async () => {
 
   try {
     isToggling.value = true
+    cancelAllInFlightModelRequests()
+    stopSSEConnection()
+    stopLogPolling()
     const { invoke } = await import('@tauri-apps/api/core')
     const result = await invoke('stop_server')
 
     serverRunning.value = (result as any).running
     serverUrl.value = (result as any).url || ''
     serverPort.value = (result as any).port
-
-    // 服务器停止后，停止SSE连接和轮询机制
-    stopSSEConnection()
-    stopLogPolling()
 
     console.log('Server stopped successfully:', result)
   } catch (error) {
@@ -1637,6 +1727,10 @@ const callModelWithStreaming = async (
   onChunk?: (content: string) => void,
   onReasoning?: (text: string) => void
 ) => {
+  if (isRequestCancelled(requestId)) {
+    throw createCancelledRequestError()
+  }
+
   // 获取模型所属的平台
   const platform = platforms.value.find(p => p.models.some(m => m.id === model.id))
 
@@ -1678,20 +1772,16 @@ const callModelWithStreaming = async (
 
   // AbortController 用于超时中断 fetch
   const abortController = new AbortController()
+  registerAbortController(requestId, abortController)
   const timeoutHandle = setTimeout(() => abortController.abort(), timeoutMs)
 
-  // 动态导入Tauri HTTP插件，将 signal 注入 fetch
-  let tauriFetch
-  try {
-    const tauriHttp = await import('@tauri-apps/plugin-http')
-    // 包装 fetch，自动附加 abort signal
-    tauriFetch = (input: RequestInfo | URL, init?: RequestInit) =>
-      tauriHttp.fetch(input as any, { ...init, signal: abortController.signal } as any)
-  } catch (importError) {
-    console.warn('Tauri HTTP插件不可用，使用浏览器fetch:', importError)
-    tauriFetch = (input: RequestInfo | URL, init?: RequestInit) =>
-      fetch(input, { ...init, signal: abortController.signal })
-  }
+  const tauriHttp = await import('@tauri-apps/plugin-http')
+  const tauriFetch = (input: RequestInfo | URL, init: RequestInit = {}) =>
+    tauriHttp.fetch(input as any, {
+      ...init,
+      credentials: init.credentials ?? 'include',
+      signal: init.signal ?? abortController.signal
+    } as any)
 
   // 执行JavaScript配置代码
   if (model.jsCode) {
@@ -1787,9 +1877,11 @@ const callModelWithStreaming = async (
       }
     } finally {
       clearTimeout(timeoutHandle)
+      unregisterAbortController(requestId, abortController)
     }
   } else {
     clearTimeout(timeoutHandle)
+    unregisterAbortController(requestId, abortController)
     throw new Error('模型未配置JavaScript代码')
   }
 }
@@ -1869,15 +1961,12 @@ const callModel = async (model: AIModel, query: string) => {
     ...model
   }
 
-  // 动态导入Tauri HTTP插件
-  let tauriFetch
-  try {
-    const tauriHttp = await import('@tauri-apps/plugin-http')
-    tauriFetch = tauriHttp.fetch
-  } catch (importError) {
-    console.warn('Tauri HTTP插件不可用，使用浏览器fetch:', importError)
-    tauriFetch = fetch
-  }
+  const tauriHttp = await import('@tauri-apps/plugin-http')
+  const tauriFetch = (input: RequestInfo | URL, init: RequestInit = {}) =>
+    tauriHttp.fetch(input as any, {
+      ...init,
+      credentials: init.credentials ?? 'include'
+    } as any)
 
   // 执行JavaScript配置代码
   if (model.jsCode) {
@@ -1996,10 +2085,13 @@ const callSingleModelAPI = async (model: AIModel, query: string, logId: string):
     const response = await callModelWithStreaming(model, query, logId)
     const idx = requestLogs.value.findIndex(l => l.id === logId)
     if (idx !== -1) requestLogs.value[idx].isModelCalling = false
-    const timerId = heartbeatIntervals.get(logId)
-    if (typeof timerId === 'number') { window.clearInterval(timerId); heartbeatIntervals.delete(logId) }
+    clearRequestHeartbeat(logId)
     return response
   } catch (error) {
+    if (isAbortLikeError(error) || isRequestCancelled(logId)) {
+      clearRequestHeartbeat(logId)
+      return MODEL_REQUEST_CANCELLED_MESSAGE
+    }
     const errorMessage = error instanceof Error ? error.message : '模型调用失败'
     const errText = `错误: ${errorMessage}`
     const idx = requestLogs.value.findIndex(l => l.id === logId)
@@ -2007,8 +2099,7 @@ const callSingleModelAPI = async (model: AIModel, query: string, logId: string):
       requestLogs.value[idx].modelResponse = errText
       requestLogs.value[idx].isModelCalling = false
     }
-    const timerId = heartbeatIntervals.get(logId)
-    if (typeof timerId === 'number') { window.clearInterval(timerId); heartbeatIntervals.delete(logId) }
+    clearRequestHeartbeat(logId)
     return errText
   }
 }
@@ -2018,134 +2109,140 @@ const callModelAPI = async (requestId: string, query: string) => {
   let finalOutput = ''
   console.log('开始调用模型API:', { requestId, query })
 
-  // 只有文本模型参与基础输出；视觉模型仅在 query 包含图片时才加入
-  const hasImage = /https?:\/\/\S+\.(png|jpg|jpeg|gif|webp)/i.test(query) || query.includes('base64')
-  const selectedModels = [...globalSelectedTextModels.value]
-  if (hasImage && globalSelectedVisionModel.value) {
-    selectedModels.push(globalSelectedVisionModel.value)
-  }
+  try {
+    // 只有文本模型参与基础输出；视觉模型仅在 query 包含图片时才加入
+    const hasImage = /https?:\/\/\S+\.(png|jpg|jpeg|gif|webp)/i.test(query) || query.includes('base64')
+    const selectedModels = [...globalSelectedTextModels.value]
+    if (hasImage && globalSelectedVisionModel.value) {
+      selectedModels.push(globalSelectedVisionModel.value)
+    }
 
-  if (selectedModels.length === 0) {
-    const logIndex = requestLogs.value.findIndex(log => log.id === requestId)
-    const errorText = '错误: 未选择模型'
-    if (logIndex !== -1) requestLogs.value[logIndex].modelResponse = errorText
-    await sendModelResponseToBackend(requestId, errorText, false)
-    return
-  }
+    if (selectedModels.length === 0) {
+      const logIndex = requestLogs.value.findIndex(log => log.id === requestId)
+      const errorText = '错误: 未选择模型'
+      if (logIndex !== -1) requestLogs.value[logIndex].modelResponse = errorText
+      await sendModelResponseToBackend(requestId, errorText, false)
+      return
+    }
 
-  const logIndex = requestLogs.value.findIndex(l => l.id === requestId)
+    const logIndex = requestLogs.value.findIndex(l => l.id === requestId)
 
-  // --- 阶段 1: 基础模型调用 (Base Model Phase) ---
-  if (logIndex !== -1) {
-    requestLogs.value[logIndex].isModelCalling = true
-    requestLogs.value[logIndex].modelResponse = undefined
-    requestLogs.value[logIndex].streamingReasoning = undefined
-    requestLogs.value[logIndex].reasoningContent = undefined
-    requestLogs.value[logIndex].modelInfo = undefined
+    // --- 阶段 1: 基础模型调用 (Base Model Phase) ---
+    if (logIndex !== -1) {
+      requestLogs.value[logIndex].isModelCalling = true
+      requestLogs.value[logIndex].modelResponse = undefined
+      requestLogs.value[logIndex].streamingReasoning = undefined
+      requestLogs.value[logIndex].reasoningContent = undefined
+      requestLogs.value[logIndex].modelInfo = undefined
 
-    // 初始化多模型响应数组
-    requestLogs.value[logIndex].multiModelResponses = selectedModels.map(model => {
-      const platform = platforms.value.find(p => p.models.some(m => m.id === model.id))
-      return {
-        modelId: model.id,
-        modelName: model.displayName,
-        platformName: platform?.displayName || '未知平台',
-        response: '',
-        streamingReasoning: '',
-        reasoningContent: '',
-        isLoading: true
-      } as MultiModelResponse
-    })
-  }
-
-  // 启动心跳
-  if (serverRunning.value && serverUrl.value && !heartbeatIntervals.has(requestId)) {
-    const timerId = window.setInterval(() => {
-      try {
-        const log = requestLogs.value.find(l => l.id === requestId)
-        if (log?.multiModelResponses) {
-          const currentContent = log.multiModelResponses
-            .map(r => `[${r.modelName}]\n${r.response}`).join('\n\n')
-          sendModelProgressToBackend(requestId, currentContent)
-        }
-      } catch (e) { /* ignore */ }
-    }, 1000)
-    heartbeatIntervals.set(requestId, timerId)
-  }
-
-  // 并发调用基础模型
-  const results = await Promise.all(
-    selectedModels.map(async (model) => {
-      try {
-        const response = await callModelWithStreaming(
-          model,
-          query,
-          requestId,
-          (content) => updateMultiModelStreamingResponse(requestId, model.id, stripMarkdownCodeBlock(content)),
-          (reasoning) => updateMultiModelStreamingReasoning(requestId, model.id, reasoning)
-        )
-        const strippedResponse = stripMarkdownCodeBlock(response)
-        const log = requestLogs.value.find(l => l.id === requestId)
-        if (log?.multiModelResponses) {
-          const entry = log.multiModelResponses.find(r => r.modelId === model.id)
-          if (entry) { entry.isLoading = false; entry.response = strippedResponse }
-        }
-        finalizeMultiModelReasoning(requestId, model.id)
-        return strippedResponse
-
-      } catch (error) {
-        const errText = `错误: ${error instanceof Error ? error.message : '模型调用失败'}`
-        const log = requestLogs.value.find(l => l.id === requestId)
-        if (log?.multiModelResponses) {
-          const entry = log.multiModelResponses.find(r => r.modelId === model.id)
-          if (entry) { entry.isLoading = false; entry.response = errText }
-        }
-        return errText
-      }
-    })
-  )
-
-  // --- 阶段 2: 汇总与总结 (Summary Phase) ---
-  const summaryModels = globalSelectedSummaryModels.value
-
-  // 过滤掉失败的基础模型结果，只用成功的部分做总结
-  const successfulResults = results.filter(r => !r.startsWith('错误:'))
-  const successfulModels = selectedModels.filter((_, i) => !results[i].startsWith('错误:'))
-
-  const baseCombinedResponse = successfulModels.length === 1
-    ? successfulResults[0]
-    : successfulModels.map((model, i) => `[${model.displayName}]\n${successfulResults[i]}`).join('\n\n')
-
-  if (summaryModels.length > 0 && successfulResults.length > 0) {
-    console.log('开始总结阶段:', summaryModels.map(m => m.displayName))
-
-    // 在日志中添加总结模型的占位项（如果尚未在多模型数组中）
-    const log = requestLogs.value.find(l => l.id === requestId)
-    if (log) {
-      if (!log.multiModelResponses) {
-        log.multiModelResponses = []
-      }
-
-      // 避免重复添加（针对可能的并发重试）
-      const existingIds = new Set(log.multiModelResponses.map(r => r.modelId))
-      summaryModels.forEach(model => {
-        const summaryKey = `summary:${model.id}`
-        if (!existingIds.has(summaryKey)) {
-          const platform = platforms.value.find(p => p.models.some(m => m.id === model.id))
-          log.multiModelResponses!.push({
-            modelId: summaryKey,
-            modelName: `总结: ${model.displayName}`,
-            platformName: platform?.displayName || '未知平台',
-            response: '',
-            streamingReasoning: '',
-            reasoningContent: '',
-            isLoading: true
-          })
-        }
+      // 初始化多模型响应数组
+      requestLogs.value[logIndex].multiModelResponses = selectedModels.map(model => {
+        const platform = platforms.value.find(p => p.models.some(m => m.id === model.id))
+        return {
+          modelId: model.id,
+          modelName: model.displayName,
+          platformName: platform?.displayName || '未知平台',
+          response: '',
+          streamingReasoning: '',
+          reasoningContent: '',
+          isLoading: true
+        } as MultiModelResponse
       })
     }
 
-    const summaryQuery = `你是一个总结专家。下面是用户的问题以及AI模型的回答。请根据回答内容，整理并总结出一个最准确、最全面的最终答案。
+    // 启动心跳
+    if (serverRunning.value && serverUrl.value && !heartbeatIntervals.has(requestId)) {
+      const timerId = window.setInterval(() => {
+        try {
+          const log = requestLogs.value.find(l => l.id === requestId)
+          if (log?.multiModelResponses) {
+            const currentContent = log.multiModelResponses
+              .map(r => `[${r.modelName}]\n${r.response}`).join('\n\n')
+            sendModelProgressToBackend(requestId, currentContent)
+          }
+        } catch (e) { /* ignore */ }
+      }, 1000)
+      heartbeatIntervals.set(requestId, timerId)
+    }
+
+    // 并发调用基础模型
+    const results = await Promise.all(
+      selectedModels.map(async (model) => {
+        try {
+          const response = await callModelWithStreaming(
+            model,
+            query,
+            requestId,
+            (content) => updateMultiModelStreamingResponse(requestId, model.id, stripMarkdownCodeBlock(content)),
+            (reasoning) => updateMultiModelStreamingReasoning(requestId, model.id, reasoning)
+          )
+          const strippedResponse = stripMarkdownCodeBlock(response)
+          const log = requestLogs.value.find(l => l.id === requestId)
+          if (log?.multiModelResponses) {
+            const entry = log.multiModelResponses.find(r => r.modelId === model.id)
+            if (entry) { entry.isLoading = false; entry.response = strippedResponse }
+          }
+          finalizeMultiModelReasoning(requestId, model.id)
+          return strippedResponse
+
+        } catch (error) {
+          if (isAbortLikeError(error) || isRequestCancelled(requestId)) {
+            throw createCancelledRequestError()
+          }
+          const errText = `错误: ${error instanceof Error ? error.message : '模型调用失败'}`
+          const log = requestLogs.value.find(l => l.id === requestId)
+          if (log?.multiModelResponses) {
+            const entry = log.multiModelResponses.find(r => r.modelId === model.id)
+            if (entry) { entry.isLoading = false; entry.response = errText }
+          }
+          return errText
+        }
+      })
+    )
+
+    if (isRequestCancelled(requestId)) return
+
+    // --- 阶段 2: 汇总与总结 (Summary Phase) ---
+    const summaryModels = globalSelectedSummaryModels.value
+
+    // 过滤掉失败的基础模型结果，只用成功的部分做总结
+    const successfulResults = results.filter(r => !r.startsWith('错误:'))
+    const successfulModels = selectedModels.filter((_, i) => !results[i].startsWith('错误:'))
+
+    const baseCombinedResponse = successfulModels.length === 1
+      ? successfulResults[0]
+      : successfulModels.map((model, i) => `[${model.displayName}]\n${successfulResults[i]}`).join('\n\n')
+
+    if (summaryModels.length > 0 && successfulResults.length > 0) {
+      console.log('开始总结阶段:', summaryModels.map(m => m.displayName))
+
+      // 在日志中添加总结模型的占位项（如果尚未在多模型数组中）
+      const log = requestLogs.value.find(l => l.id === requestId)
+      if (log) {
+        if (!log.multiModelResponses) {
+          log.multiModelResponses = []
+        }
+
+        // 避免重复添加（针对可能的并发重试）
+        const existingIds = new Set(log.multiModelResponses.map(r => r.modelId))
+        summaryModels.forEach(model => {
+          const summaryKey = `summary:${model.id}`
+          if (!existingIds.has(summaryKey)) {
+            const platform = platforms.value.find(p => p.models.some(m => m.id === model.id))
+            log.multiModelResponses!.push({
+              modelId: summaryKey,
+              modelName: `总结: ${model.displayName}`,
+              platformName: platform?.displayName || '未知平台',
+              response: '',
+              streamingReasoning: '',
+              reasoningContent: '',
+              isLoading: true
+            })
+          }
+        })
+      }
+
+      const summaryQuery = `你是一个总结专家。下面是用户的问题以及AI模型的回答。请根据回答内容，整理并总结出一个最准确、最全面的最终答案。
 
 用户原始问题：
 ${query}
@@ -2155,70 +2252,93 @@ ${baseCombinedResponse}
 
 请直接给出最终总结答案：`
 
-    const summaryResults = await Promise.all(
-      summaryModels.map(async (model) => {
-        const summaryKey = `summary:${model.id}`
-        try {
-          const response = await callModelWithStreaming(
-            model,
-            summaryQuery,
-            requestId,
-            (content) => updateMultiModelStreamingResponse(requestId, summaryKey, stripMarkdownCodeBlock(content)),
-            (reasoning) => updateMultiModelStreamingReasoning(requestId, summaryKey, reasoning)
-          )
-          const strippedResponse = stripMarkdownCodeBlock(response)
-          const l = requestLogs.value.find(l => l.id === requestId)
-          if (l?.multiModelResponses) {
-            const entry = l.multiModelResponses.find(r => r.modelId === summaryKey)
-            if (entry) { entry.isLoading = false; entry.response = strippedResponse }
+      const summaryResults = await Promise.all(
+        summaryModels.map(async (model) => {
+          const summaryKey = `summary:${model.id}`
+          try {
+            const response = await callModelWithStreaming(
+              model,
+              summaryQuery,
+              requestId,
+              (content) => updateMultiModelStreamingResponse(requestId, summaryKey, stripMarkdownCodeBlock(content)),
+              (reasoning) => updateMultiModelStreamingReasoning(requestId, summaryKey, reasoning)
+            )
+            const strippedResponse = stripMarkdownCodeBlock(response)
+            const l = requestLogs.value.find(l => l.id === requestId)
+            if (l?.multiModelResponses) {
+              const entry = l.multiModelResponses.find(r => r.modelId === summaryKey)
+              if (entry) { entry.isLoading = false; entry.response = strippedResponse }
+            }
+            finalizeMultiModelReasoning(requestId, summaryKey)
+            return strippedResponse
+
+          } catch (error) {
+            if (isAbortLikeError(error) || isRequestCancelled(requestId)) {
+              throw createCancelledRequestError()
+            }
+            const errText = `错误: ${error instanceof Error ? error.message : '总结失败'}`
+            const l = requestLogs.value.find(l => l.id === requestId)
+            if (l?.multiModelResponses) {
+              const entry = l.multiModelResponses.find(r => r.modelId === summaryKey)
+              if (entry) { entry.isLoading = false; entry.response = errText }
+            }
+            return errText
           }
-          finalizeMultiModelReasoning(requestId, summaryKey)
-          return strippedResponse
+        })
+      )
 
-        } catch (error) {
-          const errText = `错误: ${error instanceof Error ? error.message : '总结失败'}`
-          const l = requestLogs.value.find(l => l.id === requestId)
-          if (l?.multiModelResponses) {
-            const entry = l.multiModelResponses.find(r => r.modelId === summaryKey)
-            if (entry) { entry.isLoading = false; entry.response = errText }
-          }
-          return errText
-        }
-      })
-    )
+      if (isRequestCancelled(requestId)) return
 
-    finalOutput = summaryModels.length === 1
-      ? summaryResults[0]
-      : summaryModels.map((m, i) => `[${m.displayName} 总结]\n${summaryResults[i]}`).join('\n\n')
+      finalOutput = summaryModels.length === 1
+        ? summaryResults[0]
+        : summaryModels.map((m, i) => `[${m.displayName} 总结]\n${summaryResults[i]}`).join('\n\n')
 
-    const finalReasoning = summaryModels.length === 1
-      ? getRequestReasoningForBackend(requestId, `summary:${summaryModels[0].id}`)
-      : ''
-    await sendModelResponseToBackend(requestId, finalOutput, !finalOutput.startsWith('错误:'), finalReasoning)
-  } else {
-    // 无总结模型或全部基础模型失败，直接发送基础结果
-    const fallbackResponse = selectedModels.length === 1
-      ? results[0]
-      : selectedModels.map((model, i) => `[${model.displayName}]\n${results[i]}`).join('\n\n')
-    finalOutput = fallbackResponse
-    const finalReasoning = selectedModels.length === 1
-      ? getRequestReasoningForBackend(requestId, selectedModels[0].id)
-      : ''
-    await sendModelResponseToBackend(requestId, finalOutput, successfulResults.length > 0, finalReasoning)
-  }
-
-
-  // --- 结束 ---
-  const finalLogIdx = requestLogs.value.findIndex(l => l.id === requestId)
-  if (finalLogIdx !== -1) {
-    requestLogs.value[finalLogIdx].isModelCalling = false
-    // 将最终结果也设为主要 modelResponse，方便单视图查看
-    if (finalOutput) {
-      requestLogs.value[finalLogIdx].modelResponse = finalOutput
+      const finalReasoning = summaryModels.length === 1
+        ? getRequestReasoningForBackend(requestId, `summary:${summaryModels[0].id}`)
+        : ''
+      if (!isRequestCancelled(requestId)) {
+        await sendModelResponseToBackend(requestId, finalOutput, !finalOutput.startsWith('错误:'), finalReasoning)
+      }
+    } else {
+      // 无总结模型或全部基础模型失败，直接发送基础结果
+      const fallbackResponse = selectedModels.length === 1
+        ? results[0]
+        : selectedModels.map((model, i) => `[${model.displayName}]\n${results[i]}`).join('\n\n')
+      finalOutput = fallbackResponse
+      const finalReasoning = selectedModels.length === 1
+        ? getRequestReasoningForBackend(requestId, selectedModels[0].id)
+        : ''
+      if (!isRequestCancelled(requestId)) {
+        await sendModelResponseToBackend(requestId, finalOutput, successfulResults.length > 0, finalReasoning)
+      }
     }
+  } catch (error) {
+    if (isAbortLikeError(error) || isRequestCancelled(requestId)) {
+      return
+    }
+
+    const errorMessage = error instanceof Error ? error.message : '模型调用失败'
+    const errorText = `错误: ${errorMessage}`
+    const log = requestLogs.value.find(l => l.id === requestId)
+    if (log) {
+      log.modelResponse = errorText
+      log.isModelCalling = false
+    }
+
+    if (serverRunning.value && serverUrl.value) {
+      await sendModelResponseToBackend(requestId, errorText, false)
+    }
+  } finally {
+    const finalLogIdx = requestLogs.value.findIndex(l => l.id === requestId)
+    if (finalLogIdx !== -1) {
+      requestLogs.value[finalLogIdx].isModelCalling = false
+      if (finalOutput && !isRequestCancelled(requestId)) {
+        requestLogs.value[finalLogIdx].modelResponse = finalOutput
+      }
+    }
+    clearRequestHeartbeat(requestId)
+    cancelledRequestIds.delete(requestId)
   }
-  const timerId = heartbeatIntervals.get(requestId)
-  if (typeof timerId === 'number') { window.clearInterval(timerId); heartbeatIntervals.delete(requestId) }
 }
 
 const handleNoModelStillOpen = (dontRemind: boolean) => {
@@ -2833,16 +2953,6 @@ const checkAndShowUrlDialog = async (log: RequestLog) => {
 
         } catch (error) {
           console.error('❌ 处理URL内容窗口失败:', error)
-
-          // 如果所有方法都失败，回退到原来的弹窗方式
-          urlContentData.value = {
-            originalQuestion,
-            originalOptions,
-            serverResponse: responseData.data.answer
-          }
-          showUrlContentDialog.value = true
-
-          console.log('⚠️ 回退到弹窗模式显示URL内容')
         }
       }
     }
@@ -3032,11 +3142,11 @@ const prepareVisionRequestContent = async (content: any[], minimumSize = DEFAULT
 }
 
 
-const executeVisionModelWithAutoUpscale = async (processModel: any, input: any, config: any) => {
+const executeVisionModelWithAutoUpscale = async (processModel: any, input: any, config: any, abortSignal?: AbortSignal) => {
 
 
   try {
-    return await processModel(input, config)
+    return await processModel(input, config, abortSignal)
   } catch (error) {
     const minimumSize = extractVisionImageSizeError(error)
     const originalContent = input?.messages?.[0]?.content
@@ -3056,7 +3166,7 @@ const executeVisionModelWithAutoUpscale = async (processModel: any, input: any, 
         ...input.messages[0],
         content
       }]
-    }, config)
+    }, config, abortSignal)
   }
 }
 
@@ -3084,18 +3194,25 @@ const buildQuestionImageMap = async (text: string): Promise<Map<string, string>>
 // 将文本中所有 URL 通过后端转为 base64，返回替换后的 HTML 字符串
 const buildRenderedHtml = async (title: string, options: string): Promise<string> => {
   const text = title + (options ? '\n\n选项：\n' + options : '')
-  const urlRegex = createUrlQuestionRegex()
+  const matches = findQuestionImageMatches(text)
   const base64Map = await buildQuestionImageMap(text)
 
-  // 替换文本中的 URL 为 img 标签或文字占位
-  return text.replace(urlRegex, (raw) => {
-    const url = normalizeQuestionUrl(raw)
-    const trailingText = raw.slice(url.length)
-    const b64 = base64Map.get(url)
-    if (b64) return `<img src="${b64}" style="max-width:100%;vertical-align:middle;background:#fff;display:inline-block;" />${trailingText}`
-    return `[图片: ${url}]${trailingText}`
-  }).replace(/\n/g, '<br/>')
+  let html = ''
+  let lastIndex = 0
+
+  for (const match of matches) {
+    html += text.slice(lastIndex, match.start)
+    const b64 = base64Map.get(match.normalizedUrl)
+    html += b64
+      ? `<img src="${b64}" style="max-width:100%;vertical-align:middle;background:#fff;display:inline-block;" />${match.trailingText}`
+      : `[图片: ${match.normalizedUrl}]${match.trailingText}`
+    lastIndex = match.end
+  }
+
+  html += text.slice(lastIndex)
+  return html.replace(/\n/g, '<br/>')
 }
+
 
 
 // 如果请求体中的 title 含有 URL，为 log 设置 urlQuestion 展示字段（不触发分析）
@@ -3130,41 +3247,43 @@ const injectUrlQuestionIfNeeded = (log: RequestLog) => {
 
 // 将文本中的 URL 替换为 <img> 标签，返回 HTML 字符串（用于展示）
 const renderUrlsAsHtml = (text: string): string => {
-  return text.replace(createUrlQuestionRegex(), (rawUrl) => {
-    const cleanUrl = normalizeQuestionUrl(rawUrl)
-    const trailingText = rawUrl.slice(cleanUrl.length)
-    return `<img src="${cleanUrl}" style="max-width:100%;vertical-align:middle;" />${trailingText}`
-  })
+  const matches = findQuestionImageMatches(text)
+  let html = ''
+  let lastIndex = 0
+
+  for (const match of matches) {
+    html += text.slice(lastIndex, match.start)
+    html += `<img src="${match.normalizedUrl}" style="max-width:100%;vertical-align:middle;" />${match.trailingText}`
+    lastIndex = match.end
+  }
+
+  return html + text.slice(lastIndex)
 }
+
 
 
 // 将文本按 URL 拆分为多模态内容数组，并先在本地拉取图片转成 base64
 const buildMultimodalContent = async (text: string): Promise<any[]> => {
-  const urlRegex = createUrlQuestionRegex()
+  const matches = findQuestionImageMatches(text)
   const base64Map = await buildQuestionImageMap(text)
   const failedUrls: string[] = []
   const parts: any[] = []
   let lastIndex = 0
-  let match: RegExpExecArray | null
 
-  while ((match = urlRegex.exec(text)) !== null) {
-    const rawUrl = match[0]
-    const url = normalizeQuestionUrl(rawUrl)
-    const trailingText = rawUrl.slice(url.length)
-    const before = text.slice(lastIndex, match.index)
+  for (const match of matches) {
+    const before = text.slice(lastIndex, match.start)
     if (before) parts.push({ type: 'text', text: before })
 
-    const imageBase64 = base64Map.get(url)
+    const imageBase64 = base64Map.get(match.normalizedUrl)
     if (imageBase64) {
       parts.push({ type: 'image_url', image_url: { url: imageBase64, detail: 'high' } })
     } else {
-      failedUrls.push(url)
+      failedUrls.push(match.normalizedUrl)
     }
 
-    if (trailingText) parts.push({ type: 'text', text: trailingText })
-    lastIndex = match.index + rawUrl.length
+    if (match.trailingText) parts.push({ type: 'text', text: match.trailingText })
+    lastIndex = match.end
   }
-
 
   const tail = text.slice(lastIndex)
   if (tail) parts.push({ type: 'text', text: tail })
@@ -3176,12 +3295,14 @@ const buildMultimodalContent = async (text: string): Promise<any[]> => {
   return parts
 }
 
+
 // 对指定 requestId 的 URL 题目执行视觉分析
 const analyzeUrlQuestion = async (requestId: string) => {
   const log = requestLogs.value.find(l => l.id === requestId)
   if (!log?.urlQuestion) return
   // 防止重复分析
   if (log.urlQuestion.analyzing || log.urlQuestion.analysisResult || activeUrlAnalysisRequestIds.has(requestId)) return
+  if (isRequestCancelled(requestId)) return
 
   const visionModel = globalSelectedVisionModel.value
   if (!visionModel) {
@@ -3199,6 +3320,8 @@ const analyzeUrlQuestion = async (requestId: string) => {
 
 
   activeUrlAnalysisRequestIds.add(requestId)
+  const abortController = new AbortController()
+  registerAbortController(requestId, abortController)
   log.urlQuestion.analyzing = true
   log.urlQuestion.analysisResult = null
   log.urlQuestion.analysisError = ''
@@ -3239,20 +3362,25 @@ const analyzeUrlQuestion = async (requestId: string) => {
     }
     const config = { apiKey: platform.apiKey, baseUrl: platform.baseUrl, model: visionModel.id, ...visionModel }
 
-    let tauriFetch: typeof fetch
-    try { const h = await import('@tauri-apps/plugin-http'); tauriFetch = h.fetch as any } catch { tauriFetch = fetch }
+    const tauriHttp = await import('@tauri-apps/plugin-http')
+    const tauriFetch: typeof fetch = ((input: RequestInfo | URL, init: RequestInit = {}) =>
+      tauriHttp.fetch(input as any, {
+        ...init,
+        credentials: init.credentials ?? 'include',
+        signal: init.signal ?? abortController.signal
+      } as any)) as typeof fetch
 
     if (!visionModel.jsCode) throw new Error('视觉模型未配置 JavaScript 代码')
 
     const executableCode = visionModel.jsCode.trim()
     let processModel: any
     if (executableCode.startsWith('async function') || executableCode.startsWith('function')) {
-      processModel = new Function('input', 'config', 'fetch', 'abortSignal', `${executableCode}\nreturn processModel;`)(analysisInput, config, tauriFetch, null)
+      processModel = new Function('input', 'config', 'fetch', 'abortSignal', `${executableCode}\nreturn processModel;`)(analysisInput, config, tauriFetch, abortController.signal)
     } else {
-      processModel = new Function('input', 'config', 'fetch', 'abortSignal', `return (async function processModel(input, config) { ${executableCode} });`)(analysisInput, config, tauriFetch, null)
+      processModel = new Function('input', 'config', 'fetch', 'abortSignal', `return (async function processModel(input, config) { ${executableCode} });`)(analysisInput, config, tauriFetch, abortController.signal)
     }
 
-    const result = await executeVisionModelWithAutoUpscale(processModel, analysisInput, config)
+    const result = await executeVisionModelWithAutoUpscale(processModel, analysisInput, config, abortController.signal)
 
     if (!result) throw new Error('模型未返回有效结果')
 
@@ -3306,6 +3434,8 @@ const analyzeUrlQuestion = async (requestId: string) => {
     }
     if (l) l.isModelCalling = false
 
+    if (isRequestCancelled(requestId)) return
+
     if (answer) {
       await sendModelResponseToBackend(requestId, JSON.stringify({ answer }), true, fullReasoning)
     } else {
@@ -3313,9 +3443,11 @@ const analyzeUrlQuestion = async (requestId: string) => {
     }
 
   } catch (err: any) {
+    if (isAbortLikeError(err) || isRequestCancelled(requestId)) {
+      return
+    }
     // 停止心跳
-    const timerId = heartbeatIntervals.get(requestId)
-    if (typeof timerId === 'number') { window.clearInterval(timerId); heartbeatIntervals.delete(requestId) }
+    clearRequestHeartbeat(requestId)
     const l = requestLogs.value.find(x => x.id === requestId)
     if (l?.urlQuestion) {
       l.urlQuestion.analysisError = err.message || '分析失败'
@@ -3327,16 +3459,14 @@ const analyzeUrlQuestion = async (requestId: string) => {
     // 通知后端分析失败，让 wait_for_model_response 尽快返回错误
     await sendModelResponseToBackend(requestId, `错误: ${err.message || '分析失败'}`, false)
   } finally {
+    clearRequestHeartbeat(requestId)
+    unregisterAbortController(requestId, abortController)
+    cancelledRequestIds.delete(requestId)
     activeUrlAnalysisRequestIds.delete(requestId)
   }
 }
 
-// 当详情面板中的 ImageGenerator 渲染完成时，仅更新展示用的 imageUrl
-const onUrlImageReady = (requestId: string, imageUrl: string) => {
-  const log = requestLogs.value.find(l => l.id === requestId)
-  if (!log?.urlQuestion) return
-  log.urlQuestion.imageUrl = imageUrl
-}
+
 
 onUnmounted(() => {
   // 清理SSE连接和轮询定时器

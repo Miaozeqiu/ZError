@@ -10,36 +10,34 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import UnifiedContextMenu, { type MenuItem } from './UnifiedContextMenu.vue'
-import type { AIPlatform } from '../services/modelConfig'
+import UnifiedContextMenu, { type MenuItem } from '../../../components/UnifiedContextMenu.vue'
+import type { AIModel } from '../../../services/modelConfig'
 
 interface Props {
   visible: boolean
   x: number
   y: number
-  platform?: AIPlatform | null
+  model?: AIModel | null
 }
 
 const props = defineProps<Props>()
 
 const emit = defineEmits<{
-  'edit-platform': []
-  'duplicate-platform': []
-  'add-model': []
-  'delete-platform': []
+  'edit-model': []
+  'test-model': []
+  'delete-model': []
 }>()
 
 // 定义菜单项
 const menuItems = computed<MenuItem[]>(() => {
-  const isRemote = props.platform?.isRemote
-
+  const isRemote = props.model?.isRemote
   const items: MenuItem[] = []
 
   if (!isRemote) {
     items.push({
-      id: 'edit-platform',
-      label: '编辑平台',
-      action: 'edit-platform',
+      id: 'edit-model',
+      label: '编辑模型',
+      action: 'edit-model',
       icon: {
         type: 'svg',
         paths: [
@@ -48,28 +46,18 @@ const menuItems = computed<MenuItem[]>(() => {
         ]
       }
     })
-    items.push({
-      id: 'duplicate-platform',
-      label: '复制平台',
-      action: 'duplicate-platform',
-      icon: {
-        type: 'svg',
-        rects: [{ x: 9, y: 9, width: 13, height: 13, rx: 2, ry: 2 }],
-        paths: [{ d: 'M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1' }]
-      }
-    })
     items.push({ type: 'divider' })
   }
 
   items.push({
-    id: 'add-model',
-    label: '添加模型',
-    action: 'add-model',
+    id: 'test-model',
+    label: '测试模型',
+    action: 'test-model',
     icon: {
       type: 'svg',
       paths: [
-        { d: 'M12 5v14' },
-        { d: 'M5 12h14' }
+        { d: 'M9 12l2 2 4-4' },
+        { d: 'M21 12c0 4.97-4.03 9-9 9s-9-4.03-9-9 4.03-9 9-9 9 4.03 9 9z' }
       ]
     }
   })
@@ -78,9 +66,9 @@ const menuItems = computed<MenuItem[]>(() => {
     items.push(
       { type: 'divider' },
       {
-        id: 'delete-platform',
-        label: '删除平台',
-        action: 'delete-platform',
+        id: 'delete-model',
+        label: '删除模型',
+        action: 'delete-model',
         danger: true,
         icon: {
           type: 'svg',
@@ -97,17 +85,14 @@ const menuItems = computed<MenuItem[]>(() => {
 // 处理菜单项点击
 const handleItemClick = (item: MenuItem) => {
   switch (item.action) {
-    case 'edit-platform':
-      emit('edit-platform')
+    case 'edit-model':
+      emit('edit-model')
       break
-    case 'duplicate-platform':
-      emit('duplicate-platform')
+    case 'test-model':
+      emit('test-model')
       break
-    case 'add-model':
-      emit('add-model')
-      break
-    case 'delete-platform':
-      emit('delete-platform')
+    case 'delete-model':
+      emit('delete-model')
       break
   }
 }

@@ -1,0 +1,7 @@
+--- 图像分析结果 ---
+文件路径: c:\Users\Administrator\project\program\tauri\ZError\异常图片.png
+包含透明像素 (alpha < 255): True
+有效非透明像素: 250
+符合黑色条件的像素 (亮度 <= 50): 219
+有效像素中的黑色占比: 87.60%
+是否满足反转条件 (透明 且 黑色占比 >= 85%): True

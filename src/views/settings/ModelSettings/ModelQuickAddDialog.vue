@@ -179,7 +179,7 @@ const submitQuickAdd = () => {
 </script>
 
 <style>
-@import '../styles/dialog.css';
+@import '../../../styles/dialog.css';
 </style>
 
 <style scoped>

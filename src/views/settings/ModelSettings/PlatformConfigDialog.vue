@@ -1,4 +1,4 @@
-﻿<template>
+﻿﻿﻿﻿<template>
   <!-- 当平台广场打开时，独立显示市场弹窗，不渲染底层编辑弹窗阴影 -->
   <div v-if="show && marketplaceOpen" class="marketplace-overlay" @click="handleMarketplaceOverlay">
     <div class="marketplace-panel" @click.stop>
@@ -201,8 +201,8 @@
 
 <script setup lang="ts">
 import { ref, watch, computed, nextTick } from 'vue'
-import { fetchRemoteModelsCatalog, type AIPlatform, type AIModel } from '../services/modelConfig'
-import { getPlatformIconDisplayUrl, isImageIconValue, resolvePlatformIconUrl } from '../services/iconCache'
+import { fetchRemoteModelsCatalog, type AIPlatform, type AIModel } from '../../../services/modelConfig'
+import { getPlatformIconDisplayUrl, isImageIconValue, resolvePlatformIconUrl } from '../../../services/iconCache'
 
 interface Props {
   show: boolean
@@ -500,8 +500,7 @@ const chooseCustomPlatform = () => {
 </script>
 
 <style>
-/* 引入通用弹窗样式 */
-@import '../styles/dialog.css';
+@import '../../../styles/dialog.css';
 </style>
 
 <style scoped>

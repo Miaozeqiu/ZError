@@ -174,9 +174,9 @@ import { useSettingsManager } from '../../composables/useSettingsManager'
 
 import { useTheme } from '../../composables/useTheme'
 import { environmentDetector } from '../../services/environmentDetector'
-import ThemeSwitch from '../ThemeSwitch.vue'
-import Toggle from '../Toggle.vue'
-import FolderPickerDialog from '../FolderPickerDialog.vue'
+import ThemeSwitch from './GeneralSettings/ThemeSwitch.vue'
+import Toggle from '../../components/Toggle.vue'
+import FolderPickerDialog from '../../components/FolderPickerDialog.vue'
 
 const emit = defineEmits<{
   'open-question-folder': [folderId: number]

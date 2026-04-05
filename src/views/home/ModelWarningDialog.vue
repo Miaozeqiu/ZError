@@ -46,7 +46,7 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import Checkbox from '../checkbox.vue'
+import Checkbox from '../../components/checkbox.vue'
 
 interface Props {
   visible: boolean

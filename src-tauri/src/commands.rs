@@ -918,6 +918,12 @@ pub async fn get_request_logs(state: State<'_, ServerState>) -> Result<Vec<Reque
 }
 
 #[tauri::command]
+pub async fn get_daily_request_counts() -> Result<Vec<(String, i64)>, String> {
+    crate::database::get_daily_request_counts()
+}
+
+
+#[tauri::command]
 pub async fn clear_request_logs(state: State<'_, ServerState>) -> Result<String, String> {
     db_clear_request_logs()?;
     state.logger.clear_logs();

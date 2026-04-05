@@ -22,59 +22,70 @@
         </div>
       </div>
       
-      <div class="platform-list">
-        <div 
-          v-for="platform in modelConfig.platforms" 
-          :key="platform.id"
-          class="platform-item"
-          :class="{ active: selectedPlatform?.id === platform.id }"
-          @click="selectPlatform(platform)"
-          @contextmenu="showPlatformMenu($event, platform)"
-        >
-          <div class="platform-icon">
-            <div class="platform-icon-inner" :class="{ 'platform-icon--bg': needsIconBg(platform.icon) }">
-              <!-- 如果是emoji，直接显示 -->
-              <div
-                v-if="platform.icon && isEmoji(platform.icon)"
-                class="icon-emoji"
-              >
-                {{ platform.icon }}
+      <div class="platform-list-scroll-wrap" ref="platformListScrollWrap">
+        <div class="platform-list-scroll" ref="platformListScroll" @scroll="onPlatformListScroll">
+          <div class="platform-list">
+            <div 
+              v-for="platform in modelConfig.platforms" 
+              :key="platform.id"
+              class="platform-item"
+              :class="{ active: selectedPlatform?.id === platform.id }"
+              @click="selectPlatform(platform)"
+              @contextmenu="showPlatformMenu($event, platform)"
+            >
+              <div class="platform-icon">
+                <div class="platform-icon-inner" :class="{ 'platform-icon-inner--with-bg': shouldUsePlatformIconBackground(platform) }">
+                  <!-- 如果是emoji，直接显示 -->
+                  <div
+                    v-if="platform.icon && isEmoji(platform.icon)"
+                    class="icon-emoji"
+                  >
+                    {{ platform.icon }}
+                  </div>
+                  <!-- 如果是图片URL，使用img标签 -->
+                  <img
+                    v-else-if="platform.icon && !isEmoji(platform.icon) && !iconLoadErrors[platform.id]"
+                    :src="platformIconUrls[platform.id]"
+                    :alt="platform.displayName"
+                    @load="handlePlatformIconLoad(platform, $event)"
+                    @error="handleIconError(platform.id)"
+                    class="icon-image"
+                  />
+                  <!-- 否则显示文字回退 -->
+                  <div
+                    v-else
+                    class="icon-fallback"
+                  >
+                    {{ getPlatformInitials(platform.displayName) }}
+                  </div>
+                </div>
+                <!-- 选中模型数量 badge -->
+                <span
+                  v-if="getPlatformSelectedCount(platform) > 0 && selectedCategory === 'text'"
+                  class="platform-selected-badge platform-selected-badge--count"
+                >{{ getPlatformSelectedCount(platform) }}</span>
+                <span
+                  v-else-if="getPlatformSelectedCount(platform) > 0"
+                  class="platform-selected-badge"
+                ></span>
               </div>
-              <!-- 如果是图片URL，使用img标签 -->
-              <img
-                v-else-if="platform.icon && !isEmoji(platform.icon) && !iconLoadErrors[platform.id]"
-                :src="platformIconUrls[platform.id]"
-                :alt="platform.displayName"
-                @error="handleIconError(platform.id)"
-                class="icon-image"
-              />
-              <!-- 否则显示文字回退 -->
-              <div
-                v-else
-                class="icon-fallback"
-              >
-                {{ getPlatformInitials(platform.displayName) }}
+              <div class="platform-info">
+                <h4 class="platform-name">{{ platform.displayName }}</h4>
               </div>
+              <div class="platform-tags">
+                <span v-if="isPlatformSelectedForCategory(platform, 'text')" class="platform-tag">文本</span>
+                <span v-if="isPlatformSelectedForCategory(platform, 'vision')" class="platform-tag">视觉</span>
+                <span v-if="isPlatformSelectedForCategory(platform, 'summary')" class="platform-tag">总结</span>
+              </div>
+              <!-- 启用开关已移至详情面板 -->
             </div>
-            <!-- 选中模型数量 badge -->
-            <span
-              v-if="getPlatformSelectedCount(platform) > 0 && selectedCategory === 'text'"
-              class="platform-selected-badge platform-selected-badge--count"
-            >{{ getPlatformSelectedCount(platform) }}</span>
-            <span
-              v-else-if="getPlatformSelectedCount(platform) > 0"
-              class="platform-selected-badge"
-            ></span>
           </div>
-          <div class="platform-info">
-            <h4 class="platform-name">{{ platform.displayName }}</h4>
-          </div>
-          <div class="platform-tags">
-            <span v-if="isPlatformSelectedForCategory(platform, 'text')" class="platform-tag">文本</span>
-            <span v-if="isPlatformSelectedForCategory(platform, 'vision')" class="platform-tag">视觉</span>
-            <span v-if="isPlatformSelectedForCategory(platform, 'summary')" class="platform-tag">总结</span>
-          </div>
-          <!-- 启用开关已移至详情面板 -->
+        </div>
+        <div class="custom-scrollbar" :class="{ 'is-visible': platformScrollbarVisible }" ref="platformScrollbar" @mousedown="onPlatformScrollbarMousedown">
+          <div 
+            class="custom-scrollbar-thumb"
+            ref="platformScrollbarThumb"
+          ></div>
         </div>
       </div>
     </div>
@@ -220,10 +231,8 @@
             </div>
           </div>
           
-          <div v-if="selectedCategory !== 'vision'" class="model-list-hint">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4m0 4h.01"/></svg>
+          <div v-if="selectedCategory === 'text'" class="model-list-hint">
             <template v-if="selectedCategory === 'text'">可多选，最多 5 个（已选 {{ currentMultiModels.length }}/5）</template>
-            <template v-else-if="selectedCategory === 'summary'">只能选择 1 个（已选 {{ currentMultiModels.length }}/1）</template>
           </div>
           <div class="model-list">
             <div 
@@ -282,21 +291,12 @@
       </div>
     </div>
 
-    <!-- 平台配置对话框 -->
-    <PlatformConfigDialog 
+
+    <PlatformConfigDialog
       :show="showAddPlatformDialog || showEditPlatformDialog"
       :platform="editingPlatform"
       @close="closePlatformDialog"
       @save="savePlatform"
-    />
-
-    <!-- 模型配置对话框 -->
-    <ModelConfigDialog 
-      :show="showModelConfigDialog"
-      :model="editingModel"
-      :start-in-marketplace="!editingModel"
-      @close="closeModelDialog"
-      @save="saveModel"
     />
 
     <!-- 平台右键菜单 -->
@@ -306,7 +306,6 @@
       :y="contextMenuY"
       :platform="contextMenuPlatform"
       @edit-platform="handleEditPlatform"
-      @duplicate-platform="handleDuplicatePlatform"
       @delete-platform="handleDeletePlatform"
     />
 
@@ -334,11 +333,6 @@
       @cancel-test="handleCancelTest"
     />
 
-    <!-- Markdown 演示弹窗 -->
-    <MarkdownDemoDialog
-      :visible="showMarkdownDemo"
-      @close="showMarkdownDemo = false"
-    />
 
     <!-- 删除模型确认弹窗 -->
     <ModelDeleteConfirmDialog
@@ -371,29 +365,36 @@ import { useModelConfig, fetchRemoteModelsCatalog } from '../../services/modelCo
 import type { AIPlatform, AIModel, RemoteModelIconMapping } from '../../services/modelConfig'
 import { environmentDetector } from '../../services/environmentDetector'
 import { getPlatformIconDisplayUrl, resolvePlatformIconUrl } from '../../services/iconCache'
-import PlatformConfigDialog from '../PlatformConfigDialog.vue'
-import ModelConfigDialog from '../ModelConfigDialog.vue'
-import PlatformContextMenu from '../PlatformContextMenu.vue'
-import ModelContextMenu from '../ModelContextMenu.vue'
-import ModelTestDialog from '../ModelTestDialog.vue'
-import MarkdownDemoDialog from '../MarkdownDemoDialog.vue'
-import ModelDeleteConfirmDialog from '../ModelDeleteConfirmDialog.vue'
-import PlatformDeleteConfirmDialog from '../PlatformDeleteConfirmDialog.vue'
-import Toggle from '../Toggle.vue'
-import ModelCategorySwitch from '../ModelCategorySwitch.vue'
-import ModelQuickAddDialog from '../ModelQuickAddDialog.vue'
+import PlatformConfigDialog from './ModelSettings/PlatformConfigDialog.vue'
+import PlatformContextMenu from './ModelSettings/PlatformContextMenu.vue'
+import ModelContextMenu from './ModelSettings/ModelContextMenu.vue'
+import ModelTestDialog from './ModelSettings/ModelTestDialog.vue'
+import ModelDeleteConfirmDialog from './ModelSettings/ModelDeleteConfirmDialog.vue'
+import PlatformDeleteConfirmDialog from './ModelSettings/PlatformDeleteConfirmDialog.vue'
+import Toggle from '../../components/Toggle.vue'
+import ModelCategorySwitch from './ModelSettings/ModelCategorySwitch.vue'
+import ModelQuickAddDialog from './ModelSettings/ModelQuickAddDialog.vue'
 import OlTip from './OlTip.vue'
 
 const detailScrollWrap = ref<HTMLElement | null>(null)
 const detailContent = ref<HTMLElement | null>(null)
 const customScrollbar = ref<HTMLElement | null>(null)
 const customScrollbarThumb = ref<HTMLElement | null>(null)
+const platformListScrollWrap = ref<HTMLElement | null>(null)
+const platformListScroll = ref<HTMLElement | null>(null)
+const platformScrollbar = ref<HTMLElement | null>(null)
+const platformScrollbarThumb = ref<HTMLElement | null>(null)
 
 let isDraggingScrollbar = false
 let dragStartY = 0
 let dragStartScrollTop = 0
 let scrollHideTimer: ReturnType<typeof setTimeout> | null = null
 const scrollbarVisible = ref(false)
+let isDraggingPlatformScrollbar = false
+let platformDragStartY = 0
+let platformDragStartScrollTop = 0
+let platformScrollHideTimer: ReturnType<typeof setTimeout> | null = null
+const platformScrollbarVisible = ref(false)
 
 const showScrollbar = () => {
   scrollbarVisible.value = true
@@ -444,6 +445,69 @@ const onScrollbarMousedown = (e: MouseEvent) => {
 
   const onMouseup = () => {
     isDraggingScrollbar = false
+    document.removeEventListener('mousemove', onMousemove)
+    document.removeEventListener('mouseup', onMouseup)
+  }
+
+  document.addEventListener('mousemove', onMousemove)
+  document.addEventListener('mouseup', onMouseup)
+  e.preventDefault()
+}
+
+const showPlatformScrollbar = () => {
+  platformScrollbarVisible.value = true
+  if (platformScrollHideTimer) clearTimeout(platformScrollHideTimer)
+  platformScrollHideTimer = setTimeout(() => {
+    platformScrollbarVisible.value = false
+  }, 1500)
+}
+
+const updatePlatformScrollbarThumb = () => {
+  const content = platformListScroll.value
+  const thumb = platformScrollbarThumb.value
+  const bar = platformScrollbar.value
+  if (!content || !thumb || !bar) return
+
+  const ratio = content.clientHeight / content.scrollHeight
+  if (ratio >= 1) {
+    thumb.style.height = '0px'
+    thumb.style.transform = 'translateY(0)'
+    platformScrollbarVisible.value = false
+    return
+  }
+
+  const thumbHeight = Math.max(ratio * bar.clientHeight, 32)
+  const thumbTop = (content.scrollTop / (content.scrollHeight - content.clientHeight)) * (bar.clientHeight - thumbHeight)
+  thumb.style.height = `${thumbHeight}px`
+  thumb.style.transform = `translateY(${thumbTop}px)`
+}
+
+const onPlatformListScroll = () => {
+  updatePlatformScrollbarThumb()
+  showPlatformScrollbar()
+}
+
+const onPlatformScrollbarMousedown = (e: MouseEvent) => {
+  const thumb = platformScrollbarThumb.value
+  const content = platformListScroll.value
+  const bar = platformScrollbar.value
+  if (!thumb || !content || !bar) return
+
+  isDraggingPlatformScrollbar = true
+  platformDragStartY = e.clientY
+  platformDragStartScrollTop = content.scrollTop
+
+  const onMousemove = (event: MouseEvent) => {
+    if (!isDraggingPlatformScrollbar) return
+    const thumbHeight = thumb.clientHeight
+    const barHeight = bar.clientHeight
+    const delta = event.clientY - platformDragStartY
+    const scrollRatio = delta / (barHeight - thumbHeight)
+    content.scrollTop = platformDragStartScrollTop + scrollRatio * (content.scrollHeight - content.clientHeight)
+  }
+
+  const onMouseup = () => {
+    isDraggingPlatformScrollbar = false
     document.removeEventListener('mousemove', onMousemove)
     document.removeEventListener('mouseup', onMouseup)
   }
@@ -562,6 +626,18 @@ const currentTestError = ref('')
 const streamingResponse = ref('')
 const streamingReasoning = ref('')
 
+const isAbortedTestError = (error: unknown) => {
+  if (!(error instanceof Error)) return false
+  return error.name === 'AbortError' || /aborted|abort|cancelled|canceled|取消/i.test(error.message)
+}
+
+const cancelCurrentTest = () => {
+  const controller = testAbortController.value
+  if (!controller || controller.signal.aborted) return
+  controller.abort()
+  currentTestError.value = '测试已被用户取消'
+}
+
 const showMarkdownDemo = ref(false)
 
 const extractNumericTokenValue = (value: unknown): number | null => {
@@ -672,6 +748,7 @@ const deletePlatformId = ref('')
 // 图标加载错误状态
 const iconLoadErrors = ref<{[key: string]: boolean}>({})
 const platformIconUrls = ref<Record<string, string>>({})
+const platformIconBackgrounds = ref<Record<string, boolean>>({})
 const remoteModelIconMappings = ref<RemoteModelIconMapping[]>([])
 const PROD_REMOTE_MODEL_ICON_BASE_URL = 'https://app.zerror.cc/models/'
 const DEV_REMOTE_MODEL_ICON_BASE_URL = 'http://localhost:5175/models/'
@@ -709,6 +786,7 @@ const loadRemoteModelIconMappings = async () => {
 // 预加载平台图标
 const loadPlatformIcons = async () => {
   for (const platform of modelConfig.platforms) {
+    platformIconBackgrounds.value[platform.id] = isSvgIcon(platform.icon)
     if (platform.icon && platform.icon.includes('.')) {
       try {
         platformIconUrls.value[platform.id] = await getPlatformIconUrl(platform.icon)
@@ -886,16 +964,56 @@ const isEmoji = (str: string) => {
   return emojiRegex.test(str) || isSingleChar
 }
 
-const handleIconError = (platformId: string) => {
-  iconLoadErrors.value[platformId] = true
+const isSvgIcon = (icon?: string) => {
+  if (!icon) return false
+  return /^data:image\/svg\+xml/i.test(icon) || /\.svg(?:$|[?#])/i.test(icon)
 }
 
-// 判断图标是否需要背景（svg/png/emoji 需要，jpg/webp 等不需要）
-const needsIconBg = (icon?: string): boolean => {
-  if (!icon) return true  // 无图标（文字回退）加背景
-  if (isEmoji(icon)) return true
-  const lower = icon.toLowerCase()
-  return lower.endsWith('.svg') || lower.endsWith('.png')
+const shouldUsePlatformIconBackground = (platform: AIPlatform) => {
+  if (!platform.icon) return false
+  if (isEmoji(platform.icon)) return true
+  if (isSvgIcon(platform.icon) || isSvgIcon(platformIconUrls.value[platform.id])) return true
+  return !!platformIconBackgrounds.value[platform.id]
+}
+
+const detectTransparentChannel = (img: HTMLImageElement) => {
+  try {
+    const sampleSize = 24
+    const canvas = document.createElement('canvas')
+    canvas.width = sampleSize
+    canvas.height = sampleSize
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return false
+
+    ctx.clearRect(0, 0, sampleSize, sampleSize)
+    ctx.drawImage(img, 0, 0, sampleSize, sampleSize)
+
+    const { data } = ctx.getImageData(0, 0, sampleSize, sampleSize)
+    for (let i = 3; i < data.length; i += 4) {
+      if (data[i] < 250) return true
+    }
+  } catch {
+    return false
+  }
+
+  return false
+}
+
+const handlePlatformIconLoad = (platform: AIPlatform, event: Event) => {
+  const img = event.target as HTMLImageElement | null
+  if (!img) return
+
+  if (isSvgIcon(platform.icon) || isSvgIcon(img.currentSrc || img.src)) {
+    platformIconBackgrounds.value[platform.id] = true
+    return
+  }
+
+  platformIconBackgrounds.value[platform.id] = detectTransparentChannel(img)
+}
+
+const handleIconError = (platformId: string) => {
+  iconLoadErrors.value[platformId] = true
+  platformIconBackgrounds.value[platformId] = false
 }
 
 const getModelIcon = (model: AIModel): string => {
@@ -941,30 +1059,6 @@ const hideModelMenu = () => {
 const handleEditPlatform = () => {
   if (contextMenuPlatform.value && !contextMenuPlatform.value.isRemote) {
     editPlatform(contextMenuPlatform.value)
-  }
-  hidePlatformMenu()
-}
-
-const handleDuplicatePlatform = async () => {
-  if (contextMenuPlatform.value) {
-    // 复制模型列表并生成新 ID
-    const newModels = (contextMenuPlatform.value.models || []).map(m => ({
-      ...m,
-      id: `${m.name}_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
-      isRemote: false
-    }))
-
-    const duplicatedPlatform = {
-      ...contextMenuPlatform.value,
-      displayName: `${contextMenuPlatform.value.displayName} (副本)`,
-      id: undefined,
-      isBuiltIn: false,
-      isRemote: false,
-      models: newModels
-    }
-    // @ts-ignore
-    delete duplicatedPlatform.id
-    await addPlatform(duplicatedPlatform)
   }
   hidePlatformMenu()
 }
@@ -1217,6 +1311,24 @@ const handleInviteButtonClick = async (platform: AIPlatform) => {
   }
 }
 
+const createCookieEnabledFetch = (
+  baseFetch: typeof fetch,
+  defaultSignal?: AbortSignal | null
+) => {
+  return (input: RequestInfo | URL, init: RequestInit = {}) => {
+    const requestInit: RequestInit = {
+      ...init,
+      credentials: init.credentials ?? 'include'
+    }
+
+    if (defaultSignal && !requestInit.signal) {
+      requestInit.signal = defaultSignal
+    }
+
+    return baseFetch(input, requestInit)
+  }
+}
+
 const addModel = async (platformId: string, model: AIModel) => {
   if (selectedPlatform.value && selectedPlatform.value.id === platformId) {
     selectedPlatform.value.models.push(model)
@@ -1366,15 +1478,11 @@ const testModel = async (model: AIModel) => {
       ...model
     }
     
-    // 动态导入Tauri HTTP插件
-    let tauriFetch
-    try {
-      const tauriHttp = await import('@tauri-apps/plugin-http')
-      tauriFetch = tauriHttp.fetch
-    } catch (importError) {
-      console.warn('Tauri HTTP插件不可用，使用浏览器fetch:', importError)
-      tauriFetch = fetch
-    }
+    const tauriHttp = await import('@tauri-apps/plugin-http')
+    const tauriFetch = createCookieEnabledFetch(
+      (input, init) => tauriHttp.fetch(input as any, init as any),
+      testAbortController.value?.signal
+    )
     
     // 执行JavaScript配置代码
     if (model.jsCode) {
@@ -1479,15 +1587,23 @@ const testModel = async (model: AIModel) => {
           currentTestError.value = '模型配置代码未返回有效结果'
         }
       } catch (codeError) {
+        if (isAbortedTestError(codeError)) {
+          if (!currentTestError.value) currentTestError.value = '测试已被用户取消'
+          return
+        }
         console.error('执行模型配置代码失败:', codeError)
-        currentTestError.value = `代码执行错误: ${codeError.message}`
+        currentTestError.value = `代码执行错误: ${(codeError as Error).message}`
       }
     } else {
       currentTestError.value = '模型未配置JavaScript代码'
     }
   } catch (error) {
+    if (isAbortedTestError(error)) {
+      if (!currentTestError.value) currentTestError.value = '测试已被用户取消'
+      return
+    }
     console.error('测试模型失败:', error)
-    currentTestError.value = `测试失败: ${error.message}`
+    currentTestError.value = `测试失败: ${(error as Error).message}`
   } finally {
     testingModelId.value = null
     testAbortController.value = null
@@ -1501,16 +1617,13 @@ const testModel = async (model: AIModel) => {
 
 // 处理测试弹窗关闭
 const handleCloseTestDialog = () => {
+  cancelCurrentTest()
   showTestDialog.value = false
 }
 
 // 处理取消测试
 const handleCancelTest = () => {
-  if (testAbortController.value) {
-    testAbortController.value.abort()
-    currentTestError.value = '测试已被用户取消'
-    streamingResponse.value = ''
-  }
+  cancelCurrentTest()
 }
 
 onMounted(() => {
@@ -1526,12 +1639,19 @@ onMounted(() => {
   if (modelConfig.platforms.length > 0) {
     selectedPlatform.value = modelConfig.platforms[0]
   }
+
+  nextTick(() => {
+    updatePlatformScrollbarThumb()
+  })
 })
 
 onUnmounted(() => {
+  cancelCurrentTest()
   document.removeEventListener('click', hidePlatformMenu)
   document.removeEventListener('click', hideModelMenu)
   document.removeEventListener('click', handleAddModelOutsideClick)
+  if (scrollHideTimer) clearTimeout(scrollHideTimer)
+  if (platformScrollHideTimer) clearTimeout(platformScrollHideTimer)
 })
 
 // 视觉模型：监听全局变化同步本地状态
@@ -1540,11 +1660,17 @@ onUnmounted(() => {
 watch(selectedPlatform, async () => {
   await nextTick()
   updateScrollbarThumb()
+  updatePlatformScrollbarThumb()
   // 重新注册 ResizeObserver
   if (detailContent.value) {
     const ro = new ResizeObserver(updateScrollbarThumb)
     ro.observe(detailContent.value)
   }
+})
+
+watch(() => modelConfig.platforms.length, async () => {
+  await nextTick()
+  updatePlatformScrollbarThumb()
 })
 
 watch(globalSelectedVisionModel, (newModel) => {
@@ -1580,6 +1706,7 @@ watch(() => modelConfig.platforms, (newPlatforms, oldPlatforms) => {
         // 图标发生了变化，清除缓存并重新加载
         delete platformIconUrls.value[newPlatform.id]
         delete iconLoadErrors.value[newPlatform.id]
+        platformIconBackgrounds.value[newPlatform.id] = isSvgIcon(newPlatform.icon)
         
         if (newPlatform.icon && newPlatform.icon.includes('.')) {
           getPlatformIconUrl(newPlatform.icon).then(url => {
@@ -1640,15 +1767,39 @@ onUnmounted(() => {
   gap: 4px;
 }
 
-.platform-list {
-  display: flex;
-  align-items: center;
-  width: 100%;
+.platform-list-scroll-wrap {
+  position: relative;
   flex: 1;
-  padding: 12px;
-  overflow-y: none;
+  display: flex;
+  overflow: hidden;
+}
+
+.platform-list-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: scroll;
+  width: 100%;
   box-sizing: border-box;
   scrollbar-gutter: stable;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.platform-list-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.platform-list-scroll::-webkit-scrollbar-button {
+  display: none;
+}
+
+.platform-list {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  padding: 12px;
+  gap: 8px;
+  box-sizing: border-box;
 }
 
 .platform-item {
@@ -1695,17 +1846,16 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
+  position: relative;
   border-radius: 8px;
-  background-color: transparent;
-  border: 1px solid transparent;
+  border: 1px solid var(--platform-config-dialog-header-border);
   box-sizing: border-box;
   overflow: hidden;
   transition: background-color 0.2s ease, border-color 0.2s ease;
 }
 
-.platform-icon--bg {
+.platform-icon-inner--with-bg {
   background-color: var(--platform-item-icon-bg);
-  border-color: var(--platform-config-dialog-header-border);
 }
 
 

@@ -1,4 +1,4 @@
-﻿import { reactive, watch, computed } from 'vue'
+﻿﻿import { reactive, watch, computed } from 'vue'
 
 // AI 平台配置接口
 export interface AIPlatform {
@@ -79,6 +79,7 @@ export interface RemoteModelsCatalog {
   providersList: string[]
   modelIconMappings: RemoteModelIconMapping[]
   platforms: AIPlatform[]
+  questionImageAlgorithm: string | null
 }
 
 
@@ -128,6 +129,7 @@ const normalizeRemoteModelsCatalog = (json: unknown): RemoteModelsCatalog => {
       providersList: fallbackProvidersList,
       modelIconMappings: [],
       platforms,
+      questionImageAlgorithm: null,
     }
   }
 
@@ -137,11 +139,19 @@ const normalizeRemoteModelsCatalog = (json: unknown): RemoteModelsCatalog => {
     const providersList = toStringList(record.providers_list)
     const fallbackProvidersList = toStringList(platforms.map(platform => platform.icon))
     const modelIconMappings = normalizeModelIconMappings(record.model_icon_mappings)
+    const questionImageAlgorithm = typeof record.question_image_algorithm === 'string'
+      ? record.question_image_algorithm.trim()
+      : typeof record.questionImageAlgorithm === 'string'
+        ? record.questionImageAlgorithm.trim()
+        : record.question_image && typeof record.question_image === 'object' && typeof (record.question_image as Record<string, unknown>).algorithm === 'string'
+          ? ((record.question_image as Record<string, unknown>).algorithm as string).trim()
+          : null
 
     return {
       providersList: providersList.length ? providersList : fallbackProvidersList,
       modelIconMappings,
       platforms,
+      questionImageAlgorithm: questionImageAlgorithm || null,
     }
   }
 
@@ -149,6 +159,7 @@ const normalizeRemoteModelsCatalog = (json: unknown): RemoteModelsCatalog => {
     providersList: [],
     modelIconMappings: [],
     platforms: [],
+    questionImageAlgorithm: null,
   }
 }
 

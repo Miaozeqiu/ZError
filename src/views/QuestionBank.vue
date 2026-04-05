@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
-import FileTree from "../components/questions/FileTree.vue";
-import QuestionList from "../components/questions/QuestionList.vue";
+import FileTree from "./questions/FileTree.vue";
+import QuestionList from "./questions/QuestionList.vue";
 import type { AIResponse } from "../services/database";
 import { useSettingsManager } from "../composables/useSettingsManager";
 

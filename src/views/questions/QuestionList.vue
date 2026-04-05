@@ -128,7 +128,7 @@
         <div class="empty-subtext">{{ isPendingCorrectionFolder ? '当前没有待修正题目' : '选择一个文件夹查看题目' }}</div>
       </div>
 
-      <div v-else class="question-table-container" @contextmenu.prevent="handleListRightClick">
+      <div v-else ref="questionTableContainerRef" class="question-table-container" @contextmenu.prevent="handleListRightClick">
         <table class="question-table">
           <thead>
             <tr>
@@ -210,6 +210,7 @@
                     <template v-for="(part, i) in getContentParts(question.question)" :key="question.id + '-' + i">
                       <span v-if="part.type === 'text'">{{ part.text }}</span>
                       <img v-else-if="imgSrc(part.url as string)" :src="imgSrc(part.url as string)"
+                        @load="scheduleScrollableCellUpdate"
                         :class="['list-image', invertClass(part.url as string)]" />
                       <span v-else class="image-loading">[图片加载中]</span>
                     </template>
@@ -222,6 +223,7 @@
                     :key="'opt-' + question.id + '-' + i">
                     <span v-if="part.type === 'text'">{{ part.text }}</span>
                     <img v-else-if="imgSrc(part.url as string)" :src="imgSrc(part.url as string)"
+                      @load="scheduleScrollableCellUpdate"
                       :class="['list-image', invertClass(part.url as string)]" />
                     <span v-else class="image-loading">[图片加载中]</span>
                   </template>
@@ -237,6 +239,7 @@
                     ></span>
                     <span v-else-if="part.type === 'text'">{{ part.text }}</span>
                     <img v-else-if="imgSrc(part.url as string)" :src="imgSrc(part.url as string)"
+                      @load="scheduleScrollableCellUpdate"
                       :class="['list-image', invertClass(part.url as string)]" />
                     <span v-else class="image-loading">[图片加载中]</span>
                   </template>
@@ -285,7 +288,7 @@ import { save, open } from '@tauri-apps/plugin-dialog';
 import { writeFile } from '@tauri-apps/plugin-fs';
 import { generateExportData, type ExportFormat } from '../../utils/exporter';
 import { parseSoftwareExportedFile } from '../../utils/importer';
-import { splitQuestionImageParts, fetchQuestionImageBase64 } from '../../utils/questionImage';
+import { splitQuestionImageParts, fetchQuestionImageBase64, shouldInvertTransparentDarkImage } from '../../utils/questionImage';
 import type { QuestionImagePart as Part } from '../../utils/questionImage';
 import { emit as tauriEmit } from '@tauri-apps/api/event';
 import QuestionContextMenu from './QuestionContextMenu.vue';
@@ -316,6 +319,7 @@ const selectedQuestionId = ref<number | null>(null);
 const selectedQuestionDetails = ref<AIResponse | null>(null);
 const showDetailOverlay = ref(false);
 const folderPath = ref<{ id: number, name: string }[]>([]);
+const questionTableContainerRef = ref<HTMLElement | null>(null);
 
 // folderPath 变化时通知父组件
 watch(folderPath, (path) => {
@@ -536,9 +540,11 @@ const fetchImages = async (urls: string[]) => {
   for (const url of urls) {
     // 先查模块级缓存
     if (_imageCache.has(url)) {
+      const cachedDataUrl = _imageCache.get(url)!
       if (!imageSrcMap.value[url]) {
-        imageSrcMap.value = { ...imageSrcMap.value, [url]: _imageCache.get(url)! }
+        imageSrcMap.value = { ...imageSrcMap.value, [url]: cachedDataUrl }
       }
+      await analyzeImage(url, cachedDataUrl)
       continue
     }
     try {
@@ -551,40 +557,38 @@ const fetchImages = async (urls: string[]) => {
   }
 }
 
-const analyzeImage = (url: string, src: string) => {
+const analyzeImage = async (url: string, src: string) => {
   try {
-    const img = new Image()
-    img.onload = () => {
-      const w = 32
-      const h = 32
-      const canvas = document.createElement('canvas')
-      canvas.width = w
-      canvas.height = h
-      const ctx = canvas.getContext('2d')
-      if (!ctx) return
-      ctx.drawImage(img, 0, 0, w, h)
-      const data = ctx.getImageData(0, 0, w, h).data
-      let nonTransparent = 0
-      let hasNonBlack = false
-      for (let i = 0; i < data.length; i += 4) {
-        const a = data[i + 3]
-        if (a < 10) continue
-        nonTransparent++
-        const r = data[i]
-        const g = data[i + 1]
-        const b = data[i + 2]
-        const bright = 0.2126 * r + 0.7152 * g + 0.0722 * b
-        if (bright > 30) { hasNonBlack = true; break }
-      }
-      blackOnlyMap.value = { ...blackOnlyMap.value, [url]: nonTransparent > 0 && !hasNonBlack }
+    blackOnlyMap.value = {
+      ...blackOnlyMap.value,
+      [url]: await shouldInvertTransparentDarkImage(src)
     }
-    img.src = src
   } catch { }
+}
+
+const updateScrollableCells = () => {
+  const container = questionTableContainerRef.value
+  if (!container) return
+
+  const cells = container.querySelectorAll<HTMLElement>('.cell-question, .cell-answer')
+  cells.forEach((cell) => {
+    const canScroll = cell.scrollHeight > cell.clientHeight + 1
+    cell.classList.toggle('is-scrollable', canScroll)
+  })
+}
+
+const scheduleScrollableCellUpdate = () => {
+  nextTick(() => {
+    requestAnimationFrame(() => {
+      updateScrollableCells()
+    })
+  })
 }
 
 watch(questions, async () => {
   imageSrcMap.value = {}
   await fetchImages(visibleImageUrls.value)
+  scheduleScrollableCellUpdate()
 }, { immediate: true })
 
 // 计算属性
@@ -1466,10 +1470,13 @@ const handleQuestionSubmit = async (questionData: any) => {
 // 生命周期钩子
 onMounted(() => {
   document.addEventListener('click', handleClickOutside);
+  window.addEventListener('resize', scheduleScrollableCellUpdate);
+  scheduleScrollableCellUpdate();
 });
 
 onUnmounted(() => {
   document.removeEventListener('click', handleClickOutside);
+  window.removeEventListener('resize', scheduleScrollableCellUpdate);
 });
 </script>
 
@@ -1961,15 +1968,8 @@ onUnmounted(() => {
   vertical-align: middle;
 }
 
-/* 表头的树形分割线 */
-.question-table th:not(:last-child)::after {
-  content: '';
-  position: absolute;
-  right: 0;
-  top: 20%;
-  bottom: 20%;
-  width: 1px;
-  background: var(--ql-divider);
+.question-table th:not(:last-child) {
+  box-shadow: inset -1px 0 0 var(--ql-divider);
 }
 
 .question-table tbody tr {
@@ -1994,39 +1994,28 @@ onUnmounted(() => {
 
 .question-table td {
   padding: 12px 8px;
-  vertical-align: middle;
+  vertical-align: top;
   border-bottom: 1px solid var(--border-primary);
   position: relative;
 }
 
-/* 表格数据行的树形分割线 */
-.question-table tbody tr td:not(:last-child)::after {
-  content: '';
-  position: absolute;
-  right: 0;
-  top: 0;
-  bottom: 0;
-  width: 1px;
-  background: var(--ql-table-divider);
-  opacity: 0.6;
+.question-table tbody tr td:not(:last-child) {
+  box-shadow: inset -1px 0 0 color-mix(in srgb, var(--ql-table-divider) 60%, transparent);
 }
 
 /* 悬停时的分割线效果 */
-.question-table tbody tr:hover td:not(:last-child)::after {
-  background: var(--ql-table-divider-hover);
-  opacity: 0.8;
+.question-table tbody tr:hover td:not(:last-child) {
+  box-shadow: inset -1px 0 0 color-mix(in srgb, var(--ql-table-divider-hover) 80%, transparent);
 }
 
 /* 选中行的分割线效果 */
-.question-table tbody tr.active td:not(:last-child)::after {
-  background: var(--ql-table-divider-active);
-  opacity: 1;
+.question-table tbody tr.active td:not(:last-child) {
+  box-shadow: inset -1px 0 0 var(--ql-table-divider-active);
 }
 
 /* 多选行的分割线效果 */
-.question-table tbody tr.selected td:not(:last-child)::after {
-  background: var(--ql-table-divider-selected);
-  opacity: 0.9;
+.question-table tbody tr.selected td:not(:last-child) {
+  box-shadow: inset -1px 0 0 color-mix(in srgb, var(--ql-table-divider-selected) 90%, transparent);
 }
 
 .col-id {
@@ -2072,7 +2061,35 @@ onUnmounted(() => {
 
 .cell-question,
 .cell-answer {
+  max-height: 120px;
+  overflow-y: auto;
+  overflow-x: hidden;
   white-space: pre-wrap;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.cell-question::-webkit-scrollbar,
+.cell-answer::-webkit-scrollbar {
+  display: none;
+}
+
+.question-table td.col-question:has(.cell-question.is-scrollable),
+.question-table td.col-options:has(.cell-question.is-scrollable),
+.question-table td.col-answer:has(.cell-answer.is-scrollable) {
+  transition: background-color 0.18s ease;
+}
+
+.question-table tbody tr:hover td.col-question:has(.cell-question.is-scrollable),
+.question-table tbody tr:hover td.col-options:has(.cell-question.is-scrollable),
+.question-table tbody tr:hover td.col-answer:has(.cell-answer.is-scrollable),
+.question-table tbody tr.active td.col-question:has(.cell-question.is-scrollable),
+.question-table tbody tr.active td.col-options:has(.cell-question.is-scrollable),
+.question-table tbody tr.active td.col-answer:has(.cell-answer.is-scrollable),
+.question-table tbody tr.selected td.col-question:has(.cell-question.is-scrollable),
+.question-table tbody tr.selected td.col-options:has(.cell-question.is-scrollable),
+.question-table tbody tr.selected td.col-answer:has(.cell-answer.is-scrollable) {
+  background-color: color-mix(in srgb, var(--ql-row-active-bg) 58%, transparent);
 }
 
 .cell-question span,

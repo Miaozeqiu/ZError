@@ -16,7 +16,7 @@ export class VersionCheckService {
   private static readonly API_URL = import.meta.env.DEV
     ? 'http://localhost:5175/latest_version.json'
     : 'https://app.zerror.cc/latest_version.json';
-  private static readonly CURRENT_VERSION = '2.2.0'; // 当前软件版本
+  private static readonly CURRENT_VERSION = '2.2.3'; // 当前软件版本
 
   /**
    * 获取最新版本信息
@@ -24,7 +24,7 @@ export class VersionCheckService {
   public static async getLatestVersion(): Promise<VersionInfo | null> {
     try {
       let response: Response;
-      
+
       if (environmentDetector.isTauriEnvironment()) {
         // 在 Tauri 环境中使用 HTTP 插件
         const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http');
@@ -33,11 +33,11 @@ export class VersionCheckService {
         // 在浏览器环境中使用 fetch
         response = await fetch(VersionCheckService.API_URL);
       }
-      
+
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
-      
+
       const data = await response.json();
       return data as VersionInfo;
     } catch (error) {
@@ -57,24 +57,24 @@ export class VersionCheckService {
       // 移除版本号中的非数字字符（如 "bata", "beta" 等）
       const cleanCurrent = currentVersion.replace(/[^\d.]/g, '');
       const cleanLatest = latestVersion.replace(/[^\d.]/g, '');
-      
+
       const currentParts = cleanCurrent.split('.').map(Number);
       const latestParts = cleanLatest.split('.').map(Number);
-      
+
       // 确保两个版本号长度一致
       const maxLength = Math.max(currentParts.length, latestParts.length);
-      
+
       for (let i = 0; i < maxLength; i++) {
         const current = currentParts[i] || 0;
         const latest = latestParts[i] || 0;
-        
+
         if (latest > current) {
           return true; // 需要更新
         } else if (latest < current) {
           return false; // 当前版本更高
         }
       }
-      
+
       return false; // 版本相同
     } catch (error) {
       console.error('版本比较失败:', error);
@@ -92,7 +92,7 @@ export class VersionCheckService {
   }> {
     try {
       const latestVersionInfo = await this.getLatestVersion();
-      
+
       if (!latestVersionInfo) {
         return {
           needsUpdate: false,
@@ -101,9 +101,9 @@ export class VersionCheckService {
       }
 
       const needsUpdate = this.compareVersions(this.CURRENT_VERSION, latestVersionInfo.version);
-      
+
       console.log(`版本检查结果: 当前版本 ${this.CURRENT_VERSION}, 最新版本 ${latestVersionInfo.version}, 需要更新: ${needsUpdate}`);
-      
+
       return {
         needsUpdate,
         versionInfo: latestVersionInfo,

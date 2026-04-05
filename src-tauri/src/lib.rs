@@ -13,10 +13,10 @@ use crate::window_size::{resolve_window_size, MAIN_WINDOW_PRESET};
 pub use commands::open_text_window;
 pub use commands::{
     clear_request_logs, convert_doc_to_docx, create_directory, fetch_image_as_base64, file_exists,
-    get_request_logs, get_username, greet, open_cache_dir, open_devtools, open_url_content_window,
-    read_config, read_doc_range, read_docx_range, read_excel_headers, read_excel_range,
-    read_file_bytes, read_file_range, read_file_text, read_model_config, request_admin_elevation,
-    segment_text, write_config, write_model_config,
+    get_daily_request_counts, get_request_logs, get_username, greet, open_cache_dir, open_devtools,
+    open_url_content_window, read_config, read_doc_range, read_docx_range, read_excel_headers,
+    read_excel_range, read_file_bytes, read_file_range, read_file_text, read_model_config,
+    request_admin_elevation, segment_text, write_config, write_model_config,
 };
 pub use database::*;
 pub use database::{delete_folder, delete_question, delete_questions, move_folder, rename_folder};
@@ -50,6 +50,7 @@ pub fn run() {
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .manage(ServerState::default())
         .invoke_handler(tauri::generate_handler![
             greet,
@@ -60,6 +61,7 @@ pub fn run() {
             stop_server,
             get_server_status,
             get_request_logs,
+            get_daily_request_counts,
             clear_request_logs,
             open_devtools,
             fetch_image_as_base64,

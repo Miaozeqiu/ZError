@@ -156,7 +156,7 @@ const closeDialog = () => {
 </script>
 
 <style scoped>
-@import '../styles/dialog.css';
+@import '../../../styles/dialog.css';
 
 .test-dialog-panel {
   width: min(760px, 92vw);

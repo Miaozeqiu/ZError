@@ -406,6 +406,46 @@ pub fn clear_persisted_request_logs() -> Result<(), String> {
     Ok(())
 }
 
+/// 将今天的 /query 请求数 +1。如果当天记录不存在则创建。
+pub fn increment_daily_request_count() -> Result<(), String> {
+    let conn = get_conn()?;
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+    conn.execute(
+        "INSERT INTO DailyRequestCounts (Day, Count) VALUES (?, 1)
+         ON CONFLICT(Day) DO UPDATE SET Count = Count + 1",
+        [&today],
+    )
+    .map_err(|e| format!("{}", e))?;
+    Ok(())
+}
+
+/// 按天返回最近 365 天内的请求计数，格式为 [("YYYY-MM-DD", count)]
+pub fn get_daily_request_counts() -> Result<Vec<(String, i64)>, String> {
+    let conn = get_conn()?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT Day, Count
+             FROM DailyRequestCounts
+             WHERE Day >= DATE('now', '-364 days')
+             ORDER BY Day ASC",
+        )
+        .map_err(|e| format!("{}", e))?;
+
+    let rows = stmt
+        .query_map([], |row| {
+            let day: String = row.get(0)?;
+            let cnt: i64 = row.get(1)?;
+            Ok((day, cnt))
+        })
+        .map_err(|e| format!("{}", e))?;
+
+    let mut result = Vec::new();
+    for row in rows {
+        result.push(row.map_err(|e| format!("{}", e))?);
+    }
+    Ok(result)
+}
+
 #[tauri::command]
 pub async fn get_folders() -> Result<Vec<Folder>, String> {
     let conn = get_conn()?;
@@ -1355,6 +1395,16 @@ pub fn init_database_schema(db_path: &str) -> Result<(), String> {
 
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_request_logs_request_id ON RequestLogs(RequestId)",
+        [],
+    )
+    .map_err(|e| format!("{}", e))?;
+
+    // 每天请求计数表：仅展存 date + 计数，不保存请求详情
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS DailyRequestCounts (
+          Day TEXT PRIMARY KEY,
+          Count INTEGER NOT NULL DEFAULT 0
+        )",
         [],
     )
     .map_err(|e| format!("{}", e))?;

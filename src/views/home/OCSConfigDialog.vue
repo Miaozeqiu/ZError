@@ -1,44 +1,40 @@
 <template>
-  <div v-if="visible">
-    <Teleport to="body">
-      <div class="dialog-overlay" @click="handleOverlayClick">
-        <div class="dialog-panel ocs-config-panel" @click.stop>
-          <div class="dialog-header">
-            <button class="btn-back" @click="closeDialog" title="关闭" >
-              <svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" width="18" height="18">
-                <path d="M768 96c19.2-19.2 19.2-51.2 0-70.4-19.2-19.2-51.2-19.2-70.4 0l-448 448c-19.2 19.2-19.2 51.2 0 70.4l448 448c19.2 19.2 51.2 19.2 70.4 0 19.2-19.2 19.2-51.2 0-70.4L358.4 512l409.6-416z" fill="currentColor"/>
-              </svg>
-            </button>
-            <h3 class="dialog-title" style="visibility:hidden">OCS配置</h3>
-            <button class="copy-btn" @click="copyConfig" :class="{ copied: copySuccess }">
-              <svg v-if="!copySuccess" width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <rect x="9" y="9" width="13" height="13" rx="2" ry="2" stroke="currentColor" stroke-width="2" fill="none"/>
-                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke="currentColor" stroke-width="2" fill="none"/>
-              </svg>
-              <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-              </svg>
-              {{ copySuccess ? '已复制' : '复制配置' }}
-            </button>
-          </div>
+  <div v-if="visible" class="dialog-overlay" @click="handleOverlayClick">
+    <div class="dialog-panel ocs-config-panel" @click.stop>
+      <div class="dialog-header">
+        <button class="btn-back" @click="closeDialog" title="关闭" >
+            <svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" width="18" height="18">
+              <path d="M768 96c19.2-19.2 19.2-51.2 0-70.4-19.2-19.2-51.2-19.2-70.4 0l-448 448c-19.2 19.2-19.2 51.2 0 70.4l448 448c19.2 19.2 51.2 19.2 70.4 0 19.2-19.2 19.2-51.2 0-70.4L358.4 512l409.6-416z" fill="currentColor"/>
+            </svg>
+        </button>
+        <div class="dialog-title-placeholder" aria-hidden="true"></div>
+        <button class="copy-btn" @click="copyConfig" :class="{ copied: copySuccess }">
+          <svg v-if="!copySuccess" width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect x="9" y="9" width="13" height="13" rx="2" ry="2" stroke="currentColor" stroke-width="2" fill="none"/>
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke="currentColor" stroke-width="2" fill="none"/>
+          </svg>
+          <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          {{ copySuccess ? '已复制' : '复制配置' }}
+        </button>
+      </div>
 
-          <div class="dialog-body">
-            <div class="json-container">
-              <div class="code-editor">
-                <div ref="cmContainerRef" class="cm-container"></div>
-              </div>
-            </div>
-
-            <div class="config-info">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01" stroke-linecap="round" stroke-linejoin="round"/>
-              </svg>
-              <span>当前端口号: <strong>{{ currentPort || '未设置' }}</strong></span>
-            </div>
+      <div class="dialog-body">
+        <div class="json-container">
+          <div class="code-editor">
+            <div ref="cmContainerRef" class="cm-container"></div>
           </div>
         </div>
+
+        <div class="config-info">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span>当前端口号: <strong>{{ currentPort || '未设置' }}</strong></span>
+        </div>
       </div>
-    </Teleport>
+    </div>
   </div>
 </template>
 
@@ -199,6 +195,10 @@ const handleOverlayClick = (event: MouseEvent) => {
   max-width: 680px;
   display: flex;
   flex-direction: column;
+}
+
+.dialog-title-placeholder {
+  flex: 1;
 }
 
 .copy-btn {

@@ -1,34 +1,18 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from "vue";
-import AppHeader from "./components/AppHeader.vue";
-import Sidebar from "./components/Sidebar.vue";
+import { ref, onMounted, onUnmounted, computed } from "vue";
+import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
+import AppHeader from "./views/AppHeader.vue";
+import Sidebar from "./views/Sidebar.vue";
 import UpdateDialog from "./components/UpdateDialog.vue";
 import Home from "./views/Home.vue";
 import Settings from "./views/Settings.vue";
 import QuestionBank from "./views/QuestionBank.vue";
-import UrlContent from "./views/UrlContent.vue";
-import FileInfo from "./views/FileInfo.vue";
-import FileTree from "./components/questions/FileTree.vue";
+import FileTree from "./views/questions/FileTree.vue";
 import { databaseService } from "./services/database";
 import { initializationService } from "./services/initialization";
 import { initGlobalTheme } from "./composables/useTheme";
 import { VersionCheckService } from "./services/versionCheck";
 import type { VersionInfo } from "./services/versionCheck";
-
-// 检查是否是URL内容页面
-const isUrlContentPage = computed(() => {
-  return window.location.pathname === '/url-content' || 
-         window.location.search.includes('question=') ||
-         window.location.hash === '#/url-content' ||
-          window.location.hash.startsWith('#/url-content')
-})
-
-const isFileInfoPage = computed(() => {
-  return window.location.pathname === '/file-info' ||
-         window.location.search.includes('name=') ||
-         window.location.hash === '#/file-info' ||
-         window.location.hash.startsWith('#/file-info')
-})
 
 // 当前活跃的页面
 const activeTab = ref('home');
@@ -142,6 +126,185 @@ const importTreeRef = ref<any>(null);
 const selectedImportFolderId = ref<number | null>(null);
 const selectedImportFolderName = ref("");
 const importing = ref(false);
+type EditableTarget = HTMLInputElement | HTMLTextAreaElement
+
+const inputContextMenuVisible = ref(false)
+const inputContextMenuX = ref(0)
+const inputContextMenuY = ref(0)
+const inputContextMenuTarget = ref<EditableTarget | null>(null)
+
+const supportedInputTypes = new Set(['', 'text', 'search', 'url', 'tel', 'password', 'email', 'number'])
+
+const isEditableTarget = (target: EventTarget | null): target is EditableTarget => {
+  if (target instanceof HTMLTextAreaElement) return true
+  if (target instanceof HTMLInputElement) return supportedInputTypes.has(target.type)
+  return false
+}
+
+const findEditableTarget = (target: EventTarget | null): EditableTarget | null => {
+  let current = target instanceof HTMLElement ? target : null
+  while (current) {
+    if (isEditableTarget(current)) return current
+    current = current.parentElement
+  }
+  return null
+}
+
+const getSelectionRange = (target: EditableTarget) => {
+  try {
+    const start = target.selectionStart ?? 0
+    const end = target.selectionEnd ?? start
+    return { start, end }
+  } catch {
+    return { start: 0, end: 0 }
+  }
+}
+
+const getSelectedText = (target: EditableTarget | null) => {
+  if (!target) return ''
+  const { start, end } = getSelectionRange(target)
+  return target.value.slice(start, end)
+}
+
+const focusTarget = (target: EditableTarget | null) => {
+  if (!target) return
+  target.focus()
+}
+
+const emitInputEvent = (target: EditableTarget) => {
+  target.dispatchEvent(new Event('input', { bubbles: true }))
+  target.dispatchEvent(new Event('change', { bubbles: true }))
+}
+
+const writeClipboardText = async (text: string) => {
+  await writeText(text)
+  return true
+}
+
+const readClipboardText = async () => {
+  try {
+    return await readText()
+  } catch {
+    return null
+  }
+}
+
+const replaceSelectedText = (target: EditableTarget, text: string) => {
+  focusTarget(target)
+  try {
+    const { start, end } = getSelectionRange(target)
+    target.setRangeText(text, start, end, 'end')
+  } catch {
+    target.value = text
+  }
+  emitInputEvent(target)
+}
+
+const hideInputContextMenu = () => {
+  inputContextMenuVisible.value = false
+  inputContextMenuTarget.value = null
+}
+
+const updateInputContextMenuPosition = (x: number, y: number) => {
+  const menuWidth = 150
+  const menuHeight = 164
+  inputContextMenuX.value = Math.min(x, window.innerWidth - menuWidth - 8)
+  inputContextMenuY.value = Math.min(y, window.innerHeight - menuHeight - 8)
+}
+
+const handleGlobalContextMenu = (event: MouseEvent) => {
+  const menuElement = event.target instanceof HTMLElement ? event.target.closest('.global-input-context-menu') : null
+  if (menuElement) return
+
+  const target = findEditableTarget(event.target)
+  if (!target || target.disabled) {
+    hideInputContextMenu()
+    return
+  }
+
+  event.preventDefault()
+  focusTarget(target)
+  inputContextMenuTarget.value = target
+  updateInputContextMenuPosition(event.clientX, event.clientY)
+  inputContextMenuVisible.value = true
+}
+
+const handleGlobalPointerDown = (event: MouseEvent) => {
+  const menuElement = event.target instanceof HTMLElement ? event.target.closest('.global-input-context-menu') : null
+  if (!menuElement) {
+    hideInputContextMenu()
+  }
+}
+
+const handleGlobalKeydown = (event: KeyboardEvent) => {
+  if (event.key === 'Escape') {
+    hideInputContextMenu()
+  }
+}
+
+const canCutInput = computed(() => {
+  const target = inputContextMenuTarget.value
+  return !!target && !target.readOnly && getSelectedText(target).length > 0
+})
+
+const canCopyInput = computed(() => getSelectedText(inputContextMenuTarget.value).length > 0)
+
+const canPasteInput = computed(() => {
+  const target = inputContextMenuTarget.value
+  return !!target && !target.readOnly && !target.disabled
+})
+
+const canSelectAllInput = computed(() => {
+  const target = inputContextMenuTarget.value
+  return !!target && target.value.length > 0
+})
+
+const handleInputCopy = async () => {
+  const target = inputContextMenuTarget.value
+  const text = getSelectedText(target)
+  if (!target || !text) return
+  focusTarget(target)
+  await writeClipboardText(text)
+  hideInputContextMenu()
+}
+
+const handleInputCut = async () => {
+  const target = inputContextMenuTarget.value
+  const text = getSelectedText(target)
+  if (!target || target.readOnly || !text) return
+  focusTarget(target)
+
+  try {
+    await writeText(text)
+  } catch {
+    return
+  }
+
+  const { start } = getSelectionRange(target)
+  replaceSelectedText(target, '')
+  try {
+    target.setSelectionRange(start, start)
+  } catch {}
+  hideInputContextMenu()
+}
+
+const handleInputPaste = async () => {
+  const target = inputContextMenuTarget.value
+  if (!target || target.readOnly || target.disabled) return
+  focusTarget(target)
+  const text = await readClipboardText()
+  if (text === null) return
+  replaceSelectedText(target, text)
+  hideInputContextMenu()
+}
+
+const handleInputSelectAll = () => {
+  const target = inputContextMenuTarget.value
+  if (!target) return
+  focusTarget(target)
+  target.select()
+  hideInputContextMenu()
+}
 
 const normalizeImportItems = (items: any): any[] => {
   const arr = Array.isArray(items) ? items : [];
@@ -193,36 +356,36 @@ const handleFolderSelect = (folderId: number, folderName: string) => {
   };
 
 onMounted(async () => {
-  const isMainWindow = !isFileInfoPage.value && !isUrlContentPage.value;
-  if (isMainWindow) {
-    try {
-      const { listen } = await import('@tauri-apps/api/event')
-      const { getCurrentWindow } = await import('@tauri-apps/api/window')
-      await listen('open-import-dialog', async (event: any) => {
-        console.log('收到导入事件:', event);
-        const payload = event?.payload || {};
-        importItems.value = normalizeImportItems(payload.items);
-        showImportDialog.value = true;
-        
-        // 聚焦当前窗口（主窗口）
-        try {
-          const win = getCurrentWindow()
-          await win.setFocus()
-        } catch (e) {
-          console.error('聚焦窗口失败:', e)
-        }
-      })
-    } catch (error) {
-      console.error('监听事件失败:', error);
-    }
+  try {
+    const { listen } = await import('@tauri-apps/api/event')
+    const { getCurrentWindow } = await import('@tauri-apps/api/window')
+    await listen('open-import-dialog', async (event: any) => {
+      console.log('收到导入事件:', event);
+      const payload = event?.payload || {};
+      importItems.value = normalizeImportItems(payload.items);
+      showImportDialog.value = true;
+      
+      // 聚焦当前窗口（主窗口）
+      try {
+        const win = getCurrentWindow()
+        await win.setFocus()
+      } catch (e) {
+        console.error('聚焦窗口失败:', e)
+      }
+    })
+  } catch (error) {
+    console.error('监听事件失败:', error);
   }
-  (window as any).__appImportDialogReady = isMainWindow;
+  (window as any).__appImportDialogReady = true;
+  document.addEventListener('contextmenu', handleGlobalContextMenu, true)
+  document.addEventListener('mousedown', handleGlobalPointerDown, true)
+  document.addEventListener('keydown', handleGlobalKeydown, true)
+  window.addEventListener('resize', hideInputContextMenu)
+  window.addEventListener('blur', hideInputContextMenu)
 });
 
 // 应用初始化
 onMounted(async () => {
-  const isMainWindow = !isFileInfoPage.value && !isUrlContentPage.value;
-  if (!isMainWindow) return;
   try {
     console.log('开始应用初始化...');
     await initGlobalTheme();
@@ -235,17 +398,20 @@ onMounted(async () => {
   }
 });
 
+onUnmounted(() => {
+  document.removeEventListener('contextmenu', handleGlobalContextMenu, true)
+  document.removeEventListener('mousedown', handleGlobalPointerDown, true)
+  document.removeEventListener('keydown', handleGlobalKeydown, true)
+  window.removeEventListener('resize', hideInputContextMenu)
+  window.removeEventListener('blur', hideInputContextMenu)
+})
+
 
 
 </script>
 
 <template>
-  <!-- URL内容处理页面 -->
-  <UrlContent v-if="isUrlContentPage" />
-  <FileInfo v-else-if="isFileInfoPage" />
-  
-  <!-- 主应用界面 -->
-  <div v-else class="app-container">
+  <div class="app-container">
     <!-- 自定义Header -->
     <AppHeader :active-tab="activeTab" />
 
@@ -290,7 +456,7 @@ onMounted(async () => {
     />
   </div>
 
-  <div v-if="!isUrlContentPage && !isFileInfoPage && showImportDialog" class="modal" @click="closeImportDialog">
+  <div v-if="showImportDialog" class="modal" @click="closeImportDialog">
     <div class="modal-content" @click.stop>
       <div class="modal-header">
         <span>导入</span>
@@ -310,6 +476,17 @@ onMounted(async () => {
         </div>
       </div>
     </div>
+  </div>
+
+  <div
+    v-if="inputContextMenuVisible"
+    class="global-input-context-menu"
+    :style="{ left: `${inputContextMenuX}px`, top: `${inputContextMenuY}px` }"
+  >
+    <button class="global-input-context-menu-item" :disabled="!canCutInput" @click="handleInputCut">剪切</button>
+    <button class="global-input-context-menu-item" :disabled="!canCopyInput" @click="handleInputCopy">复制</button>
+    <button class="global-input-context-menu-item" :disabled="!canPasteInput" @click="handleInputPaste">粘贴</button>
+    <button class="global-input-context-menu-item" :disabled="!canSelectAllInput" @click="handleInputSelectAll">全选</button>
   </div>
 </template>
 
@@ -434,6 +611,40 @@ a {
 
 a:hover {
   color: #535bf2;
+}
+
+.global-input-context-menu {
+  position: fixed;
+  z-index: 100000;
+  min-width: 150px;
+  padding: 6px;
+  border-radius: 10px;
+  border: 1px solid var(--border-primary, #e2e8f0);
+  background: var(--bg-secondary, #ffffff);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.16);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.global-input-context-menu-item {
+  border: none;
+  background: transparent;
+  color: var(--text-primary, #2d3748);
+  text-align: left;
+  padding: 9px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.global-input-context-menu-item:hover:not(:disabled) {
+  background: var(--hover-bg, rgba(0, 0, 0, 0.06));
+}
+
+.global-input-context-menu-item:disabled {
+  color: var(--text-disabled, #a0aec0);
+  cursor: not-allowed;
 }
 
 h1 {

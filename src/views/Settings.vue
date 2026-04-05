@@ -78,9 +78,9 @@
 import { ref, onMounted, onUnmounted, nextTick } from 'vue'
 import { useSettingsManager } from '../composables/useSettingsManager'
 import { useTheme } from '../composables/useTheme'
-import GeneralSettings from '../components/settings/GeneralSettings.vue'
-import ModelSettings from '../components/settings/ModelSettings.vue'
-import AboutApp from '../components/settings/AboutApp.vue'
+import GeneralSettings from './settings/GeneralSettings.vue'
+import ModelSettings from './settings/ModelSettings.vue'
+import AboutApp from './settings/AboutApp.vue'
 
 const emit = defineEmits<{
   'open-question-folder': [folderId: number]
