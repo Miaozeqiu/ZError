@@ -15,24 +15,12 @@
         <div v-if="testing" class="test-status testing">
           <div class="loading-spinner"></div>
           <p class="testing-tip">正在测试模型，请稍候...</p>
-          <div v-if="streamingReasoning || streamingResponse" class="content-stack">
-            <!-- 流式思考过程显示区域 -->
-            <div v-if="streamingReasoning" class="reasoning-section streaming-card">
-              <p class="section-title reasoning-title">
-                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="reasoning-icon" aria-hidden="true"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"></path><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"></path><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"></path><path d="M17.599 6.5a3 3 0 0 0 .399-1.375"></path><path d="M6.003 5.125A3 3 0 0 0 6.401 6.5"></path><path d="M3.477 10.896a4 4 0 0 1 .585-.396"></path><path d="M19.938 10.5a4 4 0 0 1 .585.396"></path><path d="M6 18a4 4 0 0 1-1.967-.516"></path><path d="M19.967 17.484A4 4 0 0 1 18 18"></path></svg>
-                <strong>实时思考过程</strong>
-              </p>
-              <div class="reasoning-content streaming">
-                <MarkdownRender :content="streamingReasoning" />
-              </div>
-            </div>
-            <!-- 流式响应显示区域 -->
-            <div v-if="streamingResponse" class="response-section streaming-response">
-              <p class="section-title"><strong>实时响应结果</strong></p>
-              <div class="response-content streaming">
-                <MarkdownRender :content="streamingResponse" />
-              </div>
-            </div>
+          <div v-if="streamingReasoning || streamingResponse" class="content-stack-wrapper">
+            <AIOutputRender
+              :streaming-reasoning="streamingReasoning"
+              :response="streamingResponse"
+              :is-loading="true"
+            />
           </div>
         </div>
         
@@ -51,22 +39,11 @@
               <p v-if="testResult.modelType"><strong>模型类型:</strong> {{ testResult.modelType === 'vision' ? '视觉模型' : '文本模型' }}</p>
               <p v-if="testResult.tokenRate !== undefined"><strong>平均速度:</strong> {{ formatTokenRate(testResult.tokenRate) }}</p>
             </div>
-            <div class="content-stack">
-              <!-- 思考过程（reasoning_content）显示 -->
-              <div v-if="testResult.reasoning_content" class="reasoning-section">
-                <p class="section-title reasoning-title">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="reasoning-icon" aria-hidden="true"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"></path><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"></path><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"></path><path d="M17.599 6.5a3 3 0 0 0 .399-1.375"></path><path d="M6.003 5.125A3 3 0 0 0 6.401 6.5"></path><path d="M3.477 10.896a4 4 0 0 1 .585-.396"></path><path d="M19.938 10.5a4 4 0 0 1 .585.396"></path><path d="M6 18a4 4 0 0 1-1.967-.516"></path><path d="M19.967 17.484A4 4 0 0 1 18 18"></path></svg>
-                  <strong>思考过程</strong>
-                </p>
-                <div class="reasoning-content">
-                  <MarkdownRender :content="testResult.reasoning_content" />
-                </div>
-              </div>
-              <div class="response-section">
-                <div class="response-content">
-                  <MarkdownRender :content="testResult.response" />
-                </div>
-              </div>
+            <div class="content-stack-wrapper">
+              <AIOutputRender
+                :reasoning-content="testResult.reasoning_content"
+                :response="testResult.response"
+              />
             </div>
           </div>
         </div>
@@ -89,6 +66,7 @@
 </template>
 
 <script setup lang="ts">
+import AIOutputRender from '../../../components/AIOutputRender.vue'
 import MarkdownRender from 'markstream-vue'
 import 'markstream-vue/index.css'
 

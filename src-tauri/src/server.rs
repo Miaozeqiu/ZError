@@ -7,7 +7,7 @@ use futures_util::StreamExt;
 use regex::Regex;
 use serde_json::Value;
 use std::collections::HashMap;
-use tauri::State;
+use tauri::{Emitter, State};
 use tokio::task::JoinHandle;
 use tokio_stream::wrappers::BroadcastStream;
 use uuid;
@@ -949,9 +949,15 @@ pub async fn start_server(
         .map(|| warp::reply::html(QUERY_TEST_PAGE_HTML));
 
     // 根路由的HEAD方法
+    let app_handle_clone = state.app_handle.clone();
     let root_head_route = warp::path::end()
         .and(warp::head())
-        .map(|| warp::reply::with_header("Hello,OCS", "content-type", "text/plain"));
+        .map(move || {
+            if let Some(app) = &app_handle_clone {
+                let _ = app.emit("ocs-head-received", ());
+            }
+            warp::reply::with_header("Hello,OCS", "content-type", "text/plain")
+        });
 
     let cors = warp::cors()
         .allow_any_origin()

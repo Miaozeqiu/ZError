@@ -121,41 +121,47 @@
               <p>暂无请求记录</p>
               <p class="hint">启动服务器后，收到的请求将显示在这里</p>
             </div>
-            <div v-else class="request-table-wrapper">
-              <table class="request-table">
-                <thead>
-                  <tr>
-                    <th>时间</th>
-                    <th>状态</th>
-                    <th>IP地址</th>
-                    <th>问题</th>
-                    <th>响应时间</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="log in filteredRequestLogs" :key="log.id"
-                    :class="['request-row', getStatusClass(log.status), { 'selected': selectedLog?.id === log.id }]"
-                    @click="showRequestDetails(log)">
-                    <td class="timestamp">{{ formatTime(log.timestamp) }}</td>
-                    <td class="status">
-                      <span v-if="log.status" :class="['status-text', getStatusClass(log.status)]">
-                        {{ log.status }}
-                      </span>
-                      <span v-else class="status-text pending">
-                        处理中...
-                      </span>
-                    </td>
-                    <td class="ip">{{ log.ip }}</td>
-                    <td class="title" :title="getTitleFromRequestBody(log.requestBody)">
-                      {{ truncateTitle(getTitleFromRequestBody(log.requestBody)) }}
-                    </td>
-                    <td class="response-time">
-                      <span v-if="log.responseTime">{{ log.responseTime }}ms</span>
-                      <span v-else class="pending">-</span>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
+            <div v-else class="request-table-scroll-wrap" ref="requestTableScrollWrap">
+              <div class="request-table-content" ref="requestTableContent" @scroll="onRequestTableScroll">
+                <table class="request-table">
+                  <thead>
+                    <tr>
+                      <th>时间</th>
+                      <th>状态</th>
+                      <th>IP地址</th>
+                      <th>问题</th>
+                      <th>响应时间</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="log in filteredRequestLogs" :key="log.id"
+                      :class="['request-row', getStatusClass(log.status), { 'selected': selectedLog?.id === log.id }]"
+                      @click="showRequestDetails(log)">
+                      <td class="timestamp">{{ formatTime(log.timestamp) }}</td>
+                      <td class="status">
+                        <span v-if="log.status" :class="['status-text', getStatusClass(log.status)]">
+                          {{ log.status }}
+                        </span>
+                        <span v-else class="status-text pending">
+                          处理中...
+                        </span>
+                      </td>
+                      <td class="ip">{{ log.ip }}</td>
+                      <td class="title" :title="getTitleFromRequestBody(log.requestBody)">
+                        {{ truncateTitle(getTitleFromRequestBody(log.requestBody)) }}
+                      </td>
+                      <td class="response-time">
+                        <span v-if="log.responseTime">{{ log.responseTime }}ms</span>
+                        <span v-else class="pending">-</span>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <!-- 自定义滚动条 -->
+              <div class="custom-scrollbar" :class="{ 'is-visible': requestTableScrollbarVisible }" ref="requestTableScrollbar" @mousedown="onRequestTableScrollbarMousedown">
+                <div class="custom-scrollbar-thumb" ref="requestTableScrollbarThumb"></div>
+              </div>
             </div>
           </div>
         </div>
@@ -304,40 +310,20 @@
                       <div class="loading-spinner"></div>
                       <span>视觉模型分析中...</span>
                     </div>
-                    <div v-if="selectedLog.urlQuestion.streamingResponse || selectedLog.urlQuestion.streamingReasoning" class="content-stack">
-                      <div v-if="selectedLog.urlQuestion.streamingReasoning" class="reasoning-section">
-                        <p class="section-title reasoning-title">
-                          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="reasoning-icon" aria-hidden="true"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"></path><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"></path><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"></path><path d="M17.599 6.5a3 3 0 0 0 .399-1.375"></path><path d="M6.003 5.125A3 3 0 0 0 6.401 6.5"></path><path d="M3.477 10.896a4 4 0 0 1 .585-.396"></path><path d="M19.938 10.5a4 4 0 0 1 .585.396"></path><path d="M6 18a4 4 0 0 1-1.967-.516"></path><path d="M19.967 17.484A4 4 0 0 1 18 18"></path></svg>
-                          <strong>实时思考过程</strong>
-                        </p>
-                        <div class="reasoning-content streaming">
-                          <MarkdownRender :content="selectedLog.urlQuestion.streamingReasoning" />
-                        </div>
-                      </div>
-                      <div v-if="selectedLog.urlQuestion.streamingResponse" class="response-section">
-                        <p class="section-title"><strong>实时响应结果</strong></p>
-                        <div class="response-content streaming">
-                          <MarkdownRender :content="selectedLog.urlQuestion.streamingResponse" />
-                        </div>
-                      </div>
+                    <div v-if="selectedLog.urlQuestion.streamingResponse || selectedLog.urlQuestion.streamingReasoning" class="content-stack-wrapper">
+                      <AIOutputRender 
+                        :streaming-reasoning="selectedLog.urlQuestion.streamingReasoning" 
+                        :response="selectedLog.urlQuestion.streamingResponse" 
+                        :is-loading="true" 
+                      />
                     </div>
                   </div>
                   <div v-else-if="selectedLog.urlQuestion.analysisResult || selectedLog.urlQuestion.reasoningContent">
-                    <div class="content-stack">
-                      <div v-if="selectedLog.urlQuestion.reasoningContent" class="reasoning-section">
-                        <p class="section-title reasoning-title">
-                          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="reasoning-icon" aria-hidden="true"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"></path><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"></path><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"></path><path d="M17.599 6.5a3 3 0 0 0 .399-1.375"></path><path d="M6.003 5.125A3 3 0 0 0 6.401 6.5"></path><path d="M3.477 10.896a4 4 0 0 1 .585-.396"></path><path d="M19.938 10.5a4 4 0 0 1 .585.396"></path><path d="M6 18a4 4 0 0 1-1.967-.516"></path><path d="M19.967 17.484A4 4 0 0 1 18 18"></path></svg>
-                          <strong>思考过程</strong>
-                        </p>
-                        <div class="reasoning-content">
-                          <MarkdownRender :content="selectedLog.urlQuestion.reasoningContent" />
-                        </div>
-                      </div>
-                      <div v-if="selectedLog.urlQuestion.analysisResult" class="response-section">
-                        <div class="response-content">
-                          <MarkdownRender :content="selectedLog.urlQuestion.analysisResult" />
-                        </div>
-                      </div>
+                    <div class="content-stack-wrapper">
+                      <AIOutputRender 
+                        :reasoning-content="selectedLog.urlQuestion.reasoningContent" 
+                        :response="selectedLog.urlQuestion.analysisResult || ''" 
+                      />
                     </div>
                   </div>
                   <div v-else-if="selectedLog.urlQuestion.analysisError" class="url-analysis-error">
@@ -405,23 +391,13 @@
                     <div v-else class="card-done-badge">✓ 完成</div>
                   </div>
                   <div class="model-response-card-body">
-                    <div v-if="mr.reasoningContent || mr.streamingReasoning || mr.response" class="content-stack">
-                      <div v-if="mr.reasoningContent || mr.streamingReasoning" class="reasoning-section">
-                        <p class="section-title reasoning-title">
-                          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="reasoning-icon" aria-hidden="true"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"></path><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"></path><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4 4 0 0 1-3 4"></path><path d="M17.599 6.5a3 3 0 0 0 .399-1.375"></path><path d="M6.003 5.125A3 3 0 0 0 6.401 6.5"></path><path d="M3.477 10.896a4 4 0 0 1 .585-.396"></path><path d="M19.938 10.5a4 4 0 0 1 .585.396"></path><path d="M6 18a4 4 0 0 1-1.967-.516"></path><path d="M19.967 17.484A4 4 0 0 1 18 18"></path></svg>
-                          <strong>{{ mr.isLoading ? '实时思考过程' : '思考过程' }}</strong>
-                        </p>
-                        <div class="reasoning-content" :class="{ streaming: mr.isLoading }">
-                          <MarkdownRender :content="mr.reasoningContent || mr.streamingReasoning || ''" />
-                        </div>
-                      </div>
-                      <div v-if="mr.response" class="response-section">
-                        <p v-if="mr.isLoading" class="section-title"><strong>实时响应结果</strong></p>
-                        <div class="response-content" :class="{ streaming: mr.isLoading }">
-                          <MarkdownRender :content="mr.response" />
-                        </div>
-                      </div>
-
+                    <div v-if="mr.reasoningContent || mr.streamingReasoning || mr.response" class="content-stack-wrapper">
+                      <AIOutputRender 
+                        :reasoning-content="mr.reasoningContent" 
+                        :streaming-reasoning="mr.streamingReasoning" 
+                        :response="mr.response" 
+                        :is-loading="mr.isLoading" 
+                      />
                     </div>
                     <div v-else-if="mr.isLoading" class="card-waiting">
                       <div class="loading-dots"><span></span><span></span><span></span></div>
@@ -468,24 +444,13 @@
                   <div v-else class="card-done-badge">✓ 完成</div>
                 </div>
                 <div class="model-response-card-body">
-                  <div v-if="selectedLog.reasoningContent || selectedLog.streamingReasoning || selectedLog.modelResponse" class="content-stack">
-                    <div v-if="selectedLog.reasoningContent || selectedLog.streamingReasoning" class="reasoning-section">
-                      <p class="section-title reasoning-title">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="reasoning-icon" aria-hidden="true"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"></path><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"></path><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"></path><path d="M17.599 6.5a3 3 0 0 0 .399-1.375"></path><path d="M6.003 5.125A3 3 0 0 0 6.401 6.5"></path><path d="M3.477 10.896a4 4 0 0 1 .585-.396"></path><path d="M19.938 10.5a4 4 0 0 1 .585.396"></path><path d="M6 18a4 4 0 0 1-1.967-.516"></path><path d="M19.967 17.484A4 4 0 0 1 18 18"></path></svg>
-                        <strong>{{ selectedLog.isModelCalling ? '实时思考过程' : '思考过程' }}</strong>
-                      </p>
-                      <div class="reasoning-content" :class="{ streaming: selectedLog.isModelCalling }">
-                        <MarkdownRender :content="selectedLog.reasoningContent || selectedLog.streamingReasoning || ''" />
-                      </div>
-                    </div>
-
-                    <div v-if="selectedLog.modelResponse" class="response-section">
-                      <p v-if="selectedLog.isModelCalling" class="section-title"><strong>实时响应结果</strong></p>
-                      <div class="response-content" :class="{ streaming: selectedLog.isModelCalling }">
-                        <MarkdownRender :content="selectedLog.modelResponse" />
-                      </div>
-                    </div>
-
+                  <div v-if="selectedLog.reasoningContent || selectedLog.streamingReasoning || selectedLog.modelResponse" class="content-stack-wrapper">
+                    <AIOutputRender 
+                      :reasoning-content="selectedLog.reasoningContent" 
+                      :streaming-reasoning="selectedLog.streamingReasoning" 
+                      :response="selectedLog.modelResponse" 
+                      :is-loading="selectedLog.isModelCalling" 
+                    />
                   </div>
                   <div v-else-if="selectedLog.isModelCalling" class="card-waiting">
                     <div class="loading-dots"><span></span><span></span><span></span></div>
@@ -551,6 +516,7 @@ import PortConfigDialog from './home/PortConfigDialog.vue'
 import ModelSelectorDialog from './home/ModelSelectorDialog.vue'
 import OCSConfigDialog from './home/OCSConfigDialog.vue'
 import FolderPickerDialog from '../components/FolderPickerDialog.vue'
+import AIOutputRender from '../components/AIOutputRender.vue'
 import MarkdownRender from 'markstream-vue'
 
 import 'markstream-vue/index.css'
@@ -1339,6 +1305,96 @@ const getStatusClass = (status: number) => {
   return 'unknown'
 }
 
+// 请求表格自定义滚动条
+const requestTableScrollWrap = ref<HTMLElement | null>(null)
+const requestTableContent = ref<HTMLElement | null>(null)
+const requestTableScrollbar = ref<HTMLElement | null>(null)
+const requestTableScrollbarThumb = ref<HTMLElement | null>(null)
+const requestTableScrollbarVisible = ref(false)
+let requestTableDragStartY = 0
+let requestTableDragStartScrollTop = 0
+let requestTableDragging = false
+let requestTableHideTimer: ReturnType<typeof setTimeout> | null = null
+
+const showRequestTableScrollbar = () => {
+  requestTableScrollbarVisible.value = true
+  if (requestTableHideTimer) clearTimeout(requestTableHideTimer)
+  requestTableHideTimer = setTimeout(() => {
+    requestTableScrollbarVisible.value = false
+  }, 1500)
+}
+
+const updateRequestTableScrollbarThumb = () => {
+  const content = requestTableContent.value
+  const thumb = requestTableScrollbarThumb.value
+  const bar = requestTableScrollbar.value
+  if (!content || !thumb || !bar) return
+
+  const scrollRatio = content.scrollTop / (content.scrollHeight - content.clientHeight || 1)
+  const thumbHeight = Math.max((content.clientHeight / content.scrollHeight) * bar.clientHeight, 20)
+  const maxTop = bar.clientHeight - thumbHeight
+  thumb.style.height = `${thumbHeight}px`
+  thumb.style.top = `${scrollRatio * maxTop}px`
+}
+
+const onRequestTableScroll = () => {
+  showRequestTableScrollbar()
+  updateRequestTableScrollbarThumb()
+}
+
+const onRequestTableScrollbarMousedown = (e: MouseEvent) => {
+  e.preventDefault() // 阻止默认的文本选择行为
+  const thumb = requestTableScrollbarThumb.value
+  const content = requestTableContent.value
+  const wrap = requestTableScrollWrap.value
+  if (!thumb || !content) return
+
+  requestTableDragging = true
+  requestTableDragStartY = e.clientY
+  requestTableDragStartScrollTop = content.scrollTop
+  
+  if (wrap) wrap.classList.add('is-dragging')
+  document.body.style.userSelect = 'none' // 拖拽时全局禁用文本选择
+
+  const onMouseMove = (e: MouseEvent) => {
+    if (!requestTableDragging) return
+    const deltaY = e.clientY - requestTableDragStartY
+    
+    // 计算滚动条的实际可拖动范围
+    const bar = requestTableScrollbar.value
+    const thumbHeight = thumb.clientHeight
+    const maxTop = (bar?.clientHeight || content.clientHeight) - thumbHeight
+    
+    // 将鼠标移动距离转换为内容滚动的比例
+    const scrollRatio = deltaY / (maxTop || 1)
+    
+    // 按照比例更新内容的 scrollTop
+    content.scrollTop = requestTableDragStartScrollTop + scrollRatio * (content.scrollHeight - content.clientHeight)
+    showRequestTableScrollbar()
+    updateRequestTableScrollbarThumb()
+  }
+
+  const onMouseUp = () => {
+    requestTableDragging = false
+    if (wrap) wrap.classList.remove('is-dragging')
+    document.body.style.userSelect = '' // 恢复文本选择
+    document.removeEventListener('mousemove', onMouseMove)
+    document.removeEventListener('mouseup', onMouseUp)
+  }
+
+  document.addEventListener('mousemove', onMouseMove)
+  document.addEventListener('mouseup', onMouseUp)
+}
+
+// 监听请求日志变化，更新滚动条
+watch(filteredRequestLogs, async () => {
+  await nextTick()
+  updateRequestTableScrollbarThumb()
+  if (requestTableContent.value) {
+    showRequestTableScrollbar()
+  }
+}, { deep: true })
+
 // 从请求体中提取title参数
 const getTitleFromRequestBody = (requestBody: string) => {
   if (!requestBody) return 'Unknown'
@@ -1580,6 +1636,15 @@ const openOCSConfig = () => {
   showOCSConfig.value = true
 }
 
+// 暴露到全局，允许其他组件(如步骤条)打开 OCS 弹窗
+onMounted(() => {
+  window.addEventListener('open-ocs-config', openOCSConfig)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('open-ocs-config', openOCSConfig)
+})
+
 const testOCSConnection = async () => {
   try {
     const testUrl = `http://localhost:${serverPort.value}/query`
@@ -1681,12 +1746,6 @@ const selectModel = (model: any) => {
     setSelectedVisionModel(model.id)
   } else {
     toggleSelectedTextModel(model.id)
-  }
-
-  // 同步更新思考模型状态（如果是 text 或 summary 类别，模型通常就是 text 类型的 AIModel）
-  // vision 模型暂不参与此逻辑，但为了安全可以加判断
-  if (category !== 'vision') {
-    updateThinkingModelFlag(model)
   }
 }
 
@@ -3492,6 +3551,7 @@ onUnmounted(() => {
   gap: 20px;
   min-height: 0;
   overflow: hidden;
+  padding-bottom: 0px;
 }
 
 .server-control {
@@ -3825,11 +3885,63 @@ onUnmounted(() => {
   flex-direction: column;
 }
 
-.request-table-wrapper {
+.request-table-scroll-wrap {
+  position: relative;
   flex: 1;
-  min-height: 0;
-  overflow: auto;
-  width: 100%;
+  display: flex;
+  overflow: hidden;
+}
+
+.request-table-scroll-wrap.is-dragging .request-table {
+  pointer-events: none; /* 拖拽时禁用表格事件，防止和hover冲突 */
+}
+
+.request-table-content {
+  overflow-y: auto;
+  flex: 1;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  padding-right: 10px; /* 给右侧滚动条留出空间，防止和表格横线内容重叠 */
+}
+
+.request-table-content::-webkit-scrollbar { display: none; }
+.request-table-content::-webkit-scrollbar-button { display: none; }
+
+.custom-scrollbar {
+  position: absolute;
+  right: 3px;
+  top: 4px;
+  bottom: 4px;
+  width: 4px;
+  border-radius: 4px;
+  opacity: 0;
+  transition: opacity 0.2s;
+  cursor: pointer;
+  pointer-events: none;
+}
+
+.custom-scrollbar.is-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.custom-scrollbar-thumb {
+  width: 4px;
+  border-radius: 4px;
+  background: var(--custom-scrollbar-thumb);
+  transition: background 0.15s;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+}
+
+.custom-scrollbar-thumb:hover {
+  background: var(--custom-scrollbar-thumb-hover);
+}
+
+.custom-scrollbar:hover .custom-scrollbar-thumb {
+  background: var(--text-tertiary);
 }
 
 .request-table {

@@ -194,7 +194,7 @@
             </div>
             <div class="form-tip">
               <a 
-                href="https://docs.zerror.cc/docs/get-apiKey" 
+                href="https://docs.zerror.cc/get-apiKey" 
                 target="_blank" 
                 rel="noopener noreferrer" 
                 class="api-doc-link"
@@ -320,6 +320,13 @@
       @delete-model="handleDeleteModel"
     />
 
+    <ModelConfigDialog
+      :show="showModelConfigDialog"
+      :model="editingModel"
+      @close="closeModelDialog"
+      @save="saveModel"
+    />
+
     <!-- 测试弹窗 -->
     <ModelTestDialog
       :visible="showTestDialog"
@@ -368,6 +375,7 @@ import { getPlatformIconDisplayUrl, resolvePlatformIconUrl } from '../../service
 import PlatformConfigDialog from './ModelSettings/PlatformConfigDialog.vue'
 import PlatformContextMenu from './ModelSettings/PlatformContextMenu.vue'
 import ModelContextMenu from './ModelSettings/ModelContextMenu.vue'
+import ModelConfigDialog from './ModelSettings/ModelConfigDialog.vue'
 import ModelTestDialog from './ModelSettings/ModelTestDialog.vue'
 import ModelDeleteConfirmDialog from './ModelSettings/ModelDeleteConfirmDialog.vue'
 import PlatformDeleteConfirmDialog from './ModelSettings/PlatformDeleteConfirmDialog.vue'

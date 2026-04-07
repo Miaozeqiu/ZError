@@ -27,6 +27,14 @@ const showUpdateDialog = ref(false);
 const updateInfo = ref<VersionInfo | null>(null);
 const currentVersion = ref(VersionCheckService.getCurrentVersion());
 
+// 暴露到全局 window，供开发者控制台调试
+onMounted(() => {
+  ;(window as any).startTutorial = () => {
+    localStorage.removeItem('tutorial_stepper_finished');
+    window.dispatchEvent(new Event('start-tutorial'));
+    console.log('新手引导已重置并启动！');
+  };
+});
 
 // 导航处理函数
 const handleNavigate = (tab: string) => {
@@ -39,6 +47,25 @@ const handleNavigate = (tab: string) => {
     activeTab.value = tab;
   }
 };
+
+// 步骤条跳转引导
+const handleGuideAction = (target: string) => {
+  if (target === 'model-settings') {
+    handleNavigate('settings')
+    setTimeout(() => {
+      // 触发模型设置内部事件（如果是通过 router 可能不同，这里触发一个自定义事件以便 Settings.vue 切换到模型设置）
+      window.dispatchEvent(new Event('open-model-settings'))
+    }, 100)
+  } else if (target === 'home') {
+    handleNavigate('home')
+  } else if (target === 'ocs-config') {
+    handleNavigate('home')
+    setTimeout(() => {
+      // 通知 Home 组件打开 OCS 配置窗口
+      window.dispatchEvent(new Event('open-ocs-config'))
+    }, 100)
+  }
+}
 
 const handleOpenQuestionFolder = (folderId: number) => {
   handleNavigate('questions');
@@ -392,6 +419,7 @@ onMounted(async () => {
     console.log('主题系统初始化完成');
     await initializationService.initialize();
     console.log('应用初始化完成');
+    
     await checkForUpdates();
   } catch (error) {
     console.error('应用初始化失败:', error);
@@ -413,7 +441,7 @@ onUnmounted(() => {
 <template>
   <div class="app-container">
     <!-- 自定义Header -->
-    <AppHeader :active-tab="activeTab" />
+    <AppHeader :active-tab="activeTab" @guide-to="handleGuideAction" />
 
     
     <!-- 主要内容区域 -->

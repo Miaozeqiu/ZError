@@ -172,6 +172,7 @@ pub struct ServerState {
     pub handle: Arc<Mutex<Option<JoinHandle<()>>>>,
     pub web_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
     pub logger: RequestLogger,
+    pub app_handle: Option<tauri::AppHandle>,
 }
 
 impl Default for ServerState {
@@ -185,6 +186,7 @@ impl Default for ServerState {
             handle: Arc::new(Mutex::new(None)),
             web_handle: Arc::new(Mutex::new(None)),
             logger: RequestLogger::default(),
+            app_handle: None,
         }
     }
 }

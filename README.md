@@ -27,7 +27,7 @@ ZError是一款专为OCS网课助手设计的AI题库软件，可以方便地为
 
 ## 使用教程
 
-https://www.bilibili.com/video/BV1TPoFY8E4V
+https://www.bilibili.com/video/BV12PSQBLE5G
 
 ## 系统要求
 

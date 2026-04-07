@@ -95,6 +95,11 @@ const { setTheme, getThemeDisplayName, getThemeIcon } = useTheme()
 // 当前活跃的设置分类
 const activeCategory = ref('models')
 
+// 监听来自步骤条等外部组件的跳转指令
+const handleOpenModelSettings = () => {
+  activeCategory.value = 'models'
+}
+
 // 创建响应式的本地设置变量
 const localSettings = ref({
   theme: settings.value.theme,
@@ -153,6 +158,7 @@ const handleOpenQuestionFolder = (folderId: number) => {
 let unsubscribe: (() => void) | null = null
 
 onMounted(() => {
+  window.addEventListener('open-model-settings', handleOpenModelSettings)
   syncLocalSettings()
   unsubscribe = addSettingsListener((newSettings) => {
     console.log('Settings updated:', newSettings)
@@ -161,6 +167,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  window.removeEventListener('open-model-settings', handleOpenModelSettings)
   if (unsubscribe) {
     unsubscribe()
   }

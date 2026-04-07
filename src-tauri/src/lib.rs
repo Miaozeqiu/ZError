@@ -51,7 +51,6 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
-        .manage(ServerState::default())
         .invoke_handler(tauri::generate_handler![
             greet,
             create_directory,
@@ -104,6 +103,11 @@ pub fn run() {
             move_folder
         ])
         .setup(|app| {
+            // 初始化 ServerState 并注入 app_handle
+            let mut state = ServerState::default();
+            state.app_handle = Some(app.handle().clone());
+            app.manage(state);
+
             // Windows-specific single instance check and elevation logic
             #[cfg(target_os = "windows")]
             {
