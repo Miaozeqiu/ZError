@@ -8,7 +8,8 @@
           </svg>
         </button>
         <div class="dialog-title-placeholder"></div>
-        <ModelCategorySwitch v-model="selectedCategory" />
+        <ModelCategorySwitch v-if="!forceCategory" v-model="selectedCategory" />
+        <div v-else class="dialog-title-center">{{ forceCategory === 'vision' ? '选择视觉模型' : (forceCategory === 'summary' ? '选择总结模型' : '选择文本模型') }}</div>
       </div>
 
       <div class="dialog-body">
@@ -64,6 +65,7 @@ interface Props {
   selectedSummaryModelIds: string[]
   availableModels: AIModel[]
   platforms: AIPlatform[]
+  forceCategory?: 'text' | 'vision' | 'summary' // Optional prop to force a specific category
 }
 
 const props = defineProps<Props>()
@@ -73,7 +75,13 @@ const emit = defineEmits<{
 }>()
 
 const searchQuery = ref('')
-const selectedCategory = ref<'text' | 'vision' | 'summary'>('text')
+const selectedCategory = ref<'text' | 'vision' | 'summary'>(props.forceCategory || 'text')
+
+watch(() => props.forceCategory, (newVal) => {
+  if (newVal) {
+    selectedCategory.value = newVal
+  }
+})
 
 const isModelSelected = (model: AIModel) => {
   if (selectedCategory.value === 'text') return props.selectedTextModelIds.includes(model.id)
@@ -210,10 +218,19 @@ watch(() => props.show, (v) => { if (v) searchQuery.value = '' })
   flex: 1;
 }
 
-.model-selected {
+.dialog-title-center {
+  flex: 1;
+  text-align: center;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-right: 32px; /* 抵消左侧按钮的宽度以保持居中 */
+}
+
+.model-selector-panel {
+  max-width: 520px;
   display: flex;
-  align-items: center;
-  justify-content: center;
+  flex-direction: column;
 }
 
 .model-dot {

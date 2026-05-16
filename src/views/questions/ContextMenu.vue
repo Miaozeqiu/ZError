@@ -20,6 +20,7 @@ interface Props {
   isBlankArea?: boolean; // 新增：标识是否为空白区域右键
   canSetAsSaveFolder?: boolean;
   isCurrentSaveFolder?: boolean;
+  isVirtualNode?: boolean;
 }
 
 const props = defineProps<Props>();
@@ -29,6 +30,7 @@ const emit = defineEmits<{
   'set-save-folder': [];
   'rename': [];
   'delete': [];
+  'clear-questions': [];
 }>();
 
 // 定义菜单项
@@ -96,6 +98,17 @@ const menuItems = computed(() => {
       disabled: props.isDefaultFolder
     },
     {
+      id: 'clear-questions',
+      label: '清除所有题目',
+      action: 'clear-questions',
+      icon: {
+        type: 'emoji' as const,
+        content: ''
+      },
+      disabled: props.isVirtualNode,
+      danger: true
+    },
+    {
       id: 'delete',
       label: '删除',
       action: 'delete',
@@ -127,6 +140,9 @@ const handleItemClick = (item: any) => {
       break;
     case 'delete':
       emit('delete');
+      break;
+    case 'clear-questions':
+      emit('clear-questions');
       break;
   }
 };

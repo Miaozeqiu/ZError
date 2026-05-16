@@ -55,9 +55,11 @@
       :is-blank-area="contextMenu.node?.id === '0' && contextMenu.node?.name === '根目录'"
       :can-set-as-save-folder="Boolean(props.showSetSaveFolderAction && contextMenu.node && isLeafFolder(contextMenu.node) && contextMenu.node.id !== '0')"
       :is-current-save-folder="Boolean(contextMenu.node && props.highlightFolderId === contextMenu.node.id)"
+      :is-virtual-node="Boolean(contextMenu.node?.isVirtual)"
       @new-folder="handleNewFolder"
       @set-save-folder="handleSetSaveFolder"
       @rename="handleRename"
+      @clear-questions="handleClearQuestions"
       @delete="handleDelete"
     />
     
@@ -69,6 +71,14 @@
       v-model:delete-questions="deleteDialog.deleteQuestions"
       @confirm="handleDeleteConfirm"
       @cancel="handleDeleteCancel"
+    />
+
+    <ClearFolderQuestionsConfirmDialog
+      :visible="clearQuestionsDialog.visible"
+      :folder-name="clearQuestionsDialog.folderName"
+      :loading="clearQuestionsDialog.loading"
+      @confirm="handleClearQuestionsConfirm"
+      @cancel="handleClearQuestionsCancel"
     />
   </div>
 </template>
@@ -85,6 +95,7 @@ const props = defineProps<{
   showSetSaveFolderAction?: boolean
 }>();
 import ContextMenu from './ContextMenu.vue';
+import ClearFolderQuestionsConfirmDialog from './ClearFolderQuestionsConfirmDialog.vue';
 import DeleteConfirmDialog from './DeleteConfirmDialog.vue';
 import { databaseService, type Folder } from '../../services/database';
 import { settingsManager } from '../../services/settings';
@@ -107,6 +118,7 @@ const emit = defineEmits<{
   'context-menu': [{ node: TreeNode; x: number; y: number }];
   'expand-folder': [id: string]
   'set-save-folder': [folderId: number, folderName: string, folderPath: string]
+  'questions-cleared': [folderId: number]
 }>();
 
 const selectedId = ref<string | null>(props.initialSelectedId ?? null);
@@ -128,6 +140,13 @@ const deleteDialog = reactive({
   folderId: null as number | null,
   hasParent: false,
   deleteQuestions: false
+});
+
+const clearQuestionsDialog = reactive({
+  visible: false,
+  folderName: '',
+  folderId: null as number | null,
+  loading: false
 });
 
 // 全局拖拽状态管理
@@ -613,6 +632,17 @@ const handleDelete = () => {
   hideContextMenu();
 };
 
+const handleClearQuestions = () => {
+  if (!contextMenu.node || contextMenu.node.isVirtual) return;
+
+  clearQuestionsDialog.visible = true;
+  clearQuestionsDialog.folderName = contextMenu.node.name;
+  clearQuestionsDialog.folderId = parseInt(contextMenu.node.id, 10);
+  clearQuestionsDialog.loading = false;
+
+  hideContextMenu();
+};
+
 // 删除确认弹窗事件处理
 const handleDeleteConfirm = async () => {
   if (!deleteDialog.folderId) return;
@@ -649,6 +679,33 @@ const handleDeleteConfirm = async () => {
 
 const handleDeleteCancel = () => {
   deleteDialog.visible = false;
+};
+
+const handleClearQuestionsConfirm = async () => {
+  if (!clearQuestionsDialog.folderId || clearQuestionsDialog.loading) return;
+
+  clearQuestionsDialog.loading = true;
+
+  try {
+    await databaseService.clearFolderQuestions(clearQuestionsDialog.folderId);
+    await loadData();
+    emit('questions-cleared', clearQuestionsDialog.folderId);
+  } catch (error: any) {
+    console.error('清除文件夹题目失败:', error);
+    alert(error?.message || '清除文件夹题目失败，请重试');
+  } finally {
+    clearQuestionsDialog.visible = false;
+    clearQuestionsDialog.folderName = '';
+    clearQuestionsDialog.folderId = null;
+    clearQuestionsDialog.loading = false;
+  }
+};
+
+const handleClearQuestionsCancel = () => {
+  if (clearQuestionsDialog.loading) return;
+  clearQuestionsDialog.visible = false;
+  clearQuestionsDialog.folderName = '';
+  clearQuestionsDialog.folderId = null;
 };
 
 watch(() => props.highlightFolderId, (highlightedFolderId) => {

@@ -180,7 +180,7 @@
                   类型
                 </span>
               </th>
-              <th class="col-time">
+              <th class="col-time sortable" @click="toggleCreateTimeSort">
                 <span class="th-header">
                   <svg class="th-icon" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" width="14"
                     height="14">
@@ -189,6 +189,14 @@
                       fill="currentColor"></path>
                   </svg>
                   创建时间
+                  <span class="sort-indicator" :class="`sort-indicator--${createTimeSortOrder}`" aria-hidden="true">
+                    <svg class="sort-indicator-icon" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+                      <path
+                        d="M512 330.666667c14.933333 0 29.866667 4.266667 40.533333 14.933333l277.33333399 234.666667c27.733333 23.466667 29.866667 64 8.53333301 89.6-23.466667 27.733333-64 29.866667-89.6 8.53333299L512 477.866667l-236.8 200.53333299c-27.733333 23.466667-68.266667 19.19999999-89.6-8.53333299-23.466667-27.733333-19.19999999-68.266667 8.53333301-89.6l277.33333399-234.666667c10.666667-10.666667 25.6-14.933333 40.533333-14.933333z"
+                        fill="currentColor"
+                      />
+                    </svg>
+                  </span>
                 </span>
               </th>
             </tr>
@@ -274,6 +282,14 @@
     @batch-copy="batchCopyQuestions" @batch-cut="batchCutQuestions" @delete="deleteQuestion"
     @batch-delete="batchDeleteQuestions" />
 
+  <QuestionBatchDeleteConfirmDialog
+    :visible="batchDeleteDialog.visible"
+    :count="batchDeleteDialog.count"
+    :loading="batchDeleteDialog.loading"
+    @confirm="confirmBatchDeleteQuestions"
+    @cancel="cancelBatchDeleteQuestions"
+  />
+
   <!-- 题目编辑器 -->
   <QuestionEditor :visible="showAddQuestionModal" :selected-folder-id="selectedFolderId" @close="hideAddQuestionDialog"
     @submit="handleQuestionSubmit" />
@@ -292,6 +308,7 @@ import { splitQuestionImageParts, fetchQuestionImageBase64, shouldInvertTranspar
 import type { QuestionImagePart as Part } from '../../utils/questionImage';
 import { emit as tauriEmit } from '@tauri-apps/api/event';
 import QuestionContextMenu from './QuestionContextMenu.vue';
+import QuestionBatchDeleteConfirmDialog from './QuestionBatchDeleteConfirmDialog.vue';
 import QuestionEditor from './QuestionEditor.vue';
 import QuestionDetail from './QuestionDetail.vue';
 
@@ -344,6 +361,7 @@ const isSearchMode = ref(false);
 const searchDebounceTimer = ref<number | null>(null);
 const originalQuestions = ref<AIResponse[]>([]); // 保存原始题目列表
 const highlightTerms = ref<string[]>([]); // 用于高亮的关键词
+const createTimeSortOrder = ref<'desc' | 'asc'>('desc');
 
 // 拖拽相关状态
 const isResizing = ref(false);
@@ -471,6 +489,12 @@ const collapseSearch = () => {
 };
 // 批量选择相关状态
 const selectedQuestions = ref<Set<number>>(new Set());
+const batchDeleteDialog = ref({
+  visible: false,
+  count: 0,
+  questionIds: [] as number[],
+  loading: false
+});
 const isAllSelected = ref(false);
 const isIndeterminate = ref(false);
 
@@ -620,6 +644,29 @@ const isPendingCorrectionFolder = computed(() => props.selectedFolderId === PEND
 const totalQuestions = computed(() => allQuestions.value.length);
 const totalPages = computed(() => Math.ceil(totalQuestions.value / pageSize.value));
 
+const getQuestionCreateTime = (question: AIResponse) => {
+  const timestamp = new Date(question.create_time || '').getTime();
+  return Number.isNaN(timestamp) ? 0 : timestamp;
+};
+
+const sortQuestionListByCreateTime = (list: AIResponse[]) => {
+  return [...list].sort((a, b) => {
+    const diff = getQuestionCreateTime(a) - getQuestionCreateTime(b);
+    return createTimeSortOrder.value === 'asc' ? diff : -diff;
+  });
+};
+
+const applyCreateTimeSort = () => {
+  allQuestions.value = sortQuestionListByCreateTime(allQuestions.value);
+
+  if (isSearchMode.value) {
+    questions.value = sortQuestionListByCreateTime(questions.value);
+    if (originalQuestions.value.length > 0) {
+      originalQuestions.value = sortQuestionListByCreateTime(originalQuestions.value);
+    }
+  }
+};
+
 // 当前页显示的题目
 const paginatedQuestions = computed(() => {
   const start = (currentPage.value - 1) * pageSize.value;
@@ -649,6 +696,11 @@ const goToPage = (page: number) => {
   if (page >= 1 && page <= totalPages.value) {
     currentPage.value = page;
   }
+};
+
+const toggleCreateTimeSort = () => {
+  createTimeSortOrder.value = createTimeSortOrder.value === 'desc' ? 'asc' : 'desc';
+  applyCreateTimeSort();
 };
 
 
@@ -701,6 +753,8 @@ const loadQuestions = async (folderId?: string | null) => {
       allQuestions.value = await databaseService.getAIResponses();
     }
 
+    applyCreateTimeSort();
+
     console.log('题目加载成功:', allQuestions.value.length);
   } catch (error) {
     console.error('加载题目失败:', error);
@@ -740,6 +794,8 @@ const refreshData = async () => {
       folderPath.value = [];
       allQuestions.value = await databaseService.getAIResponses();
     }
+
+    applyCreateTimeSort();
 
     // 恢复到刷新前的页码（若超出范围则回退到最后一页）
     const pages = Math.max(1, Math.ceil(allQuestions.value.length / pageSize.value));
@@ -1106,11 +1162,13 @@ const performSearch = async () => {
     // 执行搜索
     if (props.selectedFolderId === PENDING_CORRECTION_FOLDER_ID) {
       const keyword = searchTerm.value.trim().toLowerCase();
-      questions.value = allQuestions.value.filter(question =>
+      questions.value = sortQuestionListByCreateTime(allQuestions.value.filter(question =>
         question.question.toLowerCase().includes(keyword)
-      );
+      ));
     } else {
-      questions.value = await databaseService.searchQuestionsByTitle(searchTerm.value.trim(), currentFolderId);
+      questions.value = sortQuestionListByCreateTime(
+        await databaseService.searchQuestionsByTitle(searchTerm.value.trim(), currentFolderId)
+      );
     }
 
     console.log(`搜索"${searchTerm.value}"找到 ${questions.value.length} 条结果`);
@@ -1288,21 +1346,42 @@ const batchDeleteQuestions = async () => {
 
   const selectedQuestionsList = questions.value.filter(q => selectedQuestions.value.has(q.id));
   const questionIds = selectedQuestionsList.map(q => q.id);
-
-  if (confirm(`确定要删除选中的 ${questionIds.length} 个题目吗？此操作不可撤销。`)) {
-    try {
-      await databaseService.deleteQuestions(questionIds);
-      console.log(`成功删除 ${questionIds.length} 个题目`);
-      // 清空选中状态
-      selectedQuestions.value.clear();
-      // 重新加载题目列表
-      await loadQuestions();
-    } catch (error) {
-      console.error('批量删除题目失败:', error);
-      alert('批量删除题目失败: ' + (error as Error).message);
-    }
-  }
   hideContextMenu();
+  batchDeleteDialog.value = {
+    visible: true,
+    count: questionIds.length,
+    questionIds,
+    loading: false
+  };
+};
+
+const confirmBatchDeleteQuestions = async () => {
+  if (batchDeleteDialog.value.questionIds.length === 0 || batchDeleteDialog.value.loading) {
+    return;
+  }
+
+  batchDeleteDialog.value.loading = true;
+
+  try {
+    await databaseService.deleteQuestions(batchDeleteDialog.value.questionIds);
+    console.log(`成功删除 ${batchDeleteDialog.value.questionIds.length} 个题目`);
+    selectedQuestions.value.clear();
+    await loadQuestions();
+    cancelBatchDeleteQuestions();
+  } catch (error) {
+    console.error('批量删除题目失败:', error);
+    alert('批量删除题目失败: ' + (error as Error).message);
+    batchDeleteDialog.value.loading = false;
+  }
+};
+
+const cancelBatchDeleteQuestions = () => {
+  batchDeleteDialog.value = {
+    visible: false,
+    count: 0,
+    questionIds: [],
+    loading: false
+  };
 };
 
 // 复制题目（用于粘贴到其他文件夹）
@@ -1490,6 +1569,41 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   /* border-left: 1px solid #e5e5e5; */
+}
+
+.sortable {
+  cursor: pointer;
+  user-select: none;
+}
+
+.sortable .th-header {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.sort-indicator {
+  color: var(--text-secondary);
+  width: 14px;
+  height: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.2s ease, color 0.2s ease;
+}
+
+.sort-indicator-icon {
+  width: 14px;
+  height: 14px;
+  display: block;
+}
+
+.sort-indicator--desc {
+  transform: rotate(180deg);
+}
+
+.sortable:hover .sort-indicator {
+  color: var(--text-primary);
 }
 
 .list-header {

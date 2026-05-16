@@ -180,18 +180,7 @@ fn extract_query_keywords(text: &str) -> HashSet<String> {
             .then_with(|| a.cmp(b))
     });
 
-    let mut compact_keywords: Vec<String> = Vec::new();
-    for token in keywords {
-        if compact_keywords
-            .iter()
-            .any(|existing| existing == &token || existing.contains(&token))
-        {
-            continue;
-        }
-        compact_keywords.push(token);
-    }
-
-    compact_keywords.into_iter().collect()
+    keywords.into_iter().collect()
 }
 
 fn keyword_coverage(query_keywords: &HashSet<String>, candidate_keywords: &HashSet<String>) -> f64 {
@@ -205,6 +194,28 @@ fn keyword_coverage(query_keywords: &HashSet<String>, candidate_keywords: &HashS
         .count();
 
     matched as f64 / query_keywords.len() as f64
+}
+
+fn min_keyword_coverage(query_keywords_len: usize, char_similarity: f64) -> f64 {
+    if query_keywords_len <= 2 {
+        return 1.0;
+    }
+
+    // 高字符相似但关键词数量不多时，要求所有关键词都命中，
+    // 避免“题干几乎一致但核心词不同”的题目误匹配。
+    if char_similarity >= 0.88 && query_keywords_len <= 8 {
+        return 1.0;
+    }
+
+    if query_keywords_len <= 4 {
+        return 1.0;
+    }
+
+    if query_keywords_len <= 8 {
+        return 0.9;
+    }
+
+    0.75
 }
 
 fn compute_query_match_score(query: &str, candidate: &str) -> Option<f64> {
@@ -230,7 +241,7 @@ fn compute_query_match_score(query: &str, candidate: &str) -> Option<f64> {
 
     let candidate_keywords = extract_query_keywords(&normalized_candidate);
     let coverage = keyword_coverage(&query_keywords, &candidate_keywords);
-    let min_coverage = if query_keywords.len() <= 2 { 1.0 } else { 0.75 };
+    let min_coverage = min_keyword_coverage(query_keywords.len(), char_similarity);
     if coverage + f64::EPSILON < min_coverage {
         return None;
     }
@@ -933,6 +944,39 @@ pub async fn delete_questions(ids: Vec<i64>) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub async fn clear_folder_questions(id: i64) -> Result<(), String> {
+    let conn = get_conn()?;
+
+    let mut stmt = conn
+        .prepare(
+            "WITH RECURSIVE folder_tree AS (
+          SELECT Id FROM Folders WHERE Id = ?
+          UNION ALL
+          SELECT f.Id FROM Folders f
+          INNER JOIN folder_tree ft ON f.ParentId = ft.Id
+        )
+        SELECT Id FROM folder_tree",
+        )
+        .map_err(|e| format!("{}", e))?;
+
+    let folder_ids_iter = stmt
+        .query_map([id], |row| row.get::<_, i64>(0))
+        .map_err(|e| format!("{}", e))?;
+
+    let mut folder_ids = Vec::new();
+    for fid in folder_ids_iter {
+        folder_ids.push(fid.map_err(|e| format!("{}", e))?);
+    }
+
+    for fid in &folder_ids {
+        conn.execute("DELETE FROM AIResponses WHERE FolderId = ?", [fid])
+            .map_err(|e| format!("{}", e))?;
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn delete_folder(id: i64, delete_questions: bool) -> Result<(), String> {
     let conn = get_conn()?;
 
@@ -1199,26 +1243,27 @@ pub async fn query_database(
                             continue;
                         };
 
-                        if require_option_match {
-                            let Some(query_options) = query_options.as_deref() else {
-                                continue;
-                            };
-                            let Some(db_options) =
-                                normalize_optional_query_text(db_options.as_deref())
-                            else {
-                                continue;
-                            };
-                            let Some(option_similarity) =
+                        let has_query_options = query_options.is_some();
+                        let option_similarity = match (
+                            query_options.as_deref(),
+                            normalize_optional_query_text(db_options.as_deref()),
+                        ) {
+                            (Some(query_options), Some(db_options)) => {
                                 compute_query_match_score(query_options, &db_options)
-                            else {
-                                continue;
-                            };
+                            }
+                            _ => None,
+                        };
 
-                            let combined_similarity = title_similarity * 0.7 + option_similarity * 0.3;
-                            results.push(((id, question, answer, is_ai, is_pending_correction), combined_similarity));
-                        } else {
-                            results.push(((id, question, answer, is_ai, is_pending_correction), title_similarity));
+                        if (require_option_match || has_query_options) && option_similarity.is_none() {
+                            continue;
                         }
+
+                        let final_similarity = match option_similarity {
+                            Some(option_similarity) => title_similarity * 0.7 + option_similarity * 0.3,
+                            None => title_similarity,
+                        };
+
+                        results.push(((id, question, answer, is_ai, is_pending_correction), final_similarity));
                     }
                     Err(e) => return Err(Box::new(e) as Box<dyn std::error::Error + Send + Sync>),
                 }

@@ -24,7 +24,7 @@ const props = defineProps<Props>()
 
 const emit = defineEmits<{
   'edit-model': []
-  'test-model': []
+  'test-model': [{ testFunctionCalling: boolean }]
   'delete-model': []
 }>()
 
@@ -49,18 +49,47 @@ const menuItems = computed<MenuItem[]>(() => {
     items.push({ type: 'divider' })
   }
 
-  items.push({
-    id: 'test-model',
-    label: '测试模型',
-    action: 'test-model',
-    icon: {
-      type: 'svg',
-      paths: [
-        { d: 'M9 12l2 2 4-4' },
-        { d: 'M21 12c0 4.97-4.03 9-9 9s-9-4.03-9-9 4.03-9 9-9 9 4.03 9 9z' }
-      ]
-    }
-  })
+  const isVision = props.model?.category === 'vision'
+
+  if (isVision) {
+    items.push({
+      id: 'test-model-vision',
+      label: '测试视觉能力',
+      action: 'test-model-vision',
+      icon: {
+        type: 'svg',
+        paths: [
+          { d: 'M9 12l2 2 4-4' },
+          { d: 'M21 12c0 4.97-4.03 9-9 9s-9-4.03-9-9 4.03-9 9-9 9 4.03 9 9z' }
+        ]
+      }
+    })
+    items.push({
+      id: 'test-model-fc',
+      label: '测试 Function Calling',
+      action: 'test-model-fc',
+      icon: {
+        type: 'svg',
+        paths: [
+          { d: 'M14 2H6a2 2 0 0 0-2 2v16c0 1.1.9 2 2 2h12a2 2 0 0 0 2-2V8l-6-6z' },
+          { d: 'M14 3v5h5M16 13H8M16 17H8M10 9H8' }
+        ]
+      }
+    })
+  } else {
+    items.push({
+      id: 'test-model',
+      label: '测试模型',
+      action: 'test-model',
+      icon: {
+        type: 'svg',
+        paths: [
+          { d: 'M9 12l2 2 4-4' },
+          { d: 'M21 12c0 4.97-4.03 9-9 9s-9-4.03-9-9 4.03-9 9-9 9 4.03 9 9z' }
+        ]
+      }
+    })
+  }
 
   if (!isRemote) {
     items.push(
@@ -89,7 +118,13 @@ const handleItemClick = (item: MenuItem) => {
       emit('edit-model')
       break
     case 'test-model':
-      emit('test-model')
+      emit('test-model', { testFunctionCalling: false })
+      break
+    case 'test-model-vision':
+      emit('test-model', { testFunctionCalling: false })
+      break
+    case 'test-model-fc':
+      emit('test-model', { testFunctionCalling: true })
       break
     case 'delete-model':
       emit('delete-model')

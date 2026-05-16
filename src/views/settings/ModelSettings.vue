@@ -338,6 +338,7 @@
       :streaming-reasoning="streamingReasoning"
       @close="handleCloseTestDialog"
       @cancel-test="handleCancelTest"
+      @start-test="handleStartTest"
     />
 
 
@@ -816,6 +817,7 @@ const showModelContextMenu = ref(false)
 const modelContextMenuX = ref(0)
 const modelContextMenuY = ref(0)
 const contextMenuModel = ref<AIModel | null>(null)
+const modelToTest = ref<AIModel | null>(null)
 
 // 平台管理方法
 const editPlatform = (platform: AIPlatform) => {
@@ -1087,11 +1089,27 @@ const handleEditModel = () => {
   hideModelMenu()
 }
 
-const handleTestModel = async () => {
+const handleTestModel = async (payload?: { testFunctionCalling: boolean }) => {
   if (contextMenuModel.value) {
-    await testModel(contextMenuModel.value)
+    modelToTest.value = contextMenuModel.value
+    testDialogModelName.value = contextMenuModel.value.name
+    showTestDialog.value = true
+    testingModelId.value = null // 不自动开始测试，等待用户点击
+    currentTestResult.value = null
+    currentTestError.value = ''
+    streamingResponse.value = ''
+    streamingReasoning.value = ''
+    // 延迟执行以确保弹窗打开后再触发自动测试
+    await nextTick()
+    testModel(contextMenuModel.value, payload?.testFunctionCalling ?? false)
   }
   hideModelMenu()
+}
+
+const handleStartTest = async ({ testFunctionCalling }: { testFunctionCalling: boolean }) => {
+  if (modelToTest.value) {
+    await testModel(modelToTest.value, testFunctionCalling)
+  }
 }
 
 const handleDeleteModel = async () => {
@@ -1345,15 +1363,13 @@ const addModel = async (platformId: string, model: AIModel) => {
 }
 
 // 测试模型功能
-const testModel = async (model: AIModel) => {
+const testModel = async (model: AIModel, testFunctionCalling: boolean = false) => {
   if (!selectedPlatform.value) return
   
   // 创建AbortController用于取消请求
   testAbortController.value = new AbortController()
   
-  // 显示测试弹窗
-  testDialogModelName.value = model.name
-  showTestDialog.value = true
+  // 显示测试状态
   testingModelId.value = model.id
   currentTestResult.value = null
   currentTestError.value = ''
@@ -1362,9 +1378,9 @@ const testModel = async (model: AIModel) => {
   
   try {
     // 根据模型类型构建不同的测试输入数据
-    let testInput
+    let testInput: any
     
-    if (model.category === 'vision') {
+    if (model.category === 'vision' && !testFunctionCalling) {
       // 视觉模型测试：使用图片输入
       // 将图片转换为base64格式
       let imageBase64 = ''
@@ -1465,16 +1481,42 @@ const testModel = async (model: AIModel) => {
         stream: true
       }
     } else {
-      // 文本模型测试：使用纯文本输入
+      // 文本模型或测试 Function Calling 时：使用纯文本输入
+      let messageContent = '你好，这是一个测试消息，请简单回复确认收到。'
+      if (testFunctionCalling) {
+        messageContent = '请调用名称为 encrypt_string 的函数，将字符串 "HelloZError" 进行 base64 加密，不要做多余的解释。'
+      }
       testInput = {
         messages: [
           {
             role: 'user',
-            content: '你好，这是一个测试消息，请简单回复确认收到。'
+            content: messageContent
           }
         ],
         model: model.id,
         stream: true
+      }
+      
+      if (testFunctionCalling) {
+        testInput.tools = [
+          {
+            type: 'function',
+            function: {
+              name: 'encrypt_string',
+              description: '将输入的字符串进行 Base64 加密编码',
+              parameters: {
+                type: 'object',
+                properties: {
+                  text: {
+                    type: 'string',
+                    description: '需要加密的原始字符串'
+                  }
+                },
+                required: ['text']
+              }
+            }
+          }
+        ]
       }
     }
     
@@ -1518,81 +1560,140 @@ const testModel = async (model: AIModel) => {
         
         // 执行测试
         const testStartedAt = performance.now()
-        const result = await processModel(testInput, config)
+        let fullResponse = ''
+        let fullReasoning = ''
+        let lastUsagePayload: any = null
+        streamingResponse.value = '' // 重置流式响应
+        streamingReasoning.value = '' // 重置流式思考过程
         
-        if (result) {
-          // 如果返回的是生成器或异步迭代器，收集结果
-          if (result[Symbol.asyncIterator]) {
-            let fullResponse = ''
-            let fullReasoning = ''
-            let lastUsagePayload: any = null
-            streamingResponse.value = '' // 重置流式响应
-            streamingReasoning.value = '' // 重置流式思考过程
+        while (true) {
+          const result = await processModel(testInput, config)
+          
+          if (result) {
+            // 如果返回的是生成器或异步迭代器，收集结果
+            if (result[Symbol.asyncIterator]) {
+              let toolCalls: any[] = []
 
-            for await (const chunk of result) {
-              if (chunk.content) {
-                fullResponse += chunk.content
-                streamingResponse.value = fullResponse // 实时更新流式响应
+              for await (const chunk of result) {
+                if (chunk.tool_calls) {
+                  for (const tc of chunk.tool_calls) {
+                    const existing = toolCalls.find(t => t.id === tc.id)
+                    if (existing) {
+                      existing.function.arguments += (tc.function?.arguments || '')
+                    } else {
+                      toolCalls.push(tc)
+                    }
+                  }
+                }
+                if (chunk.content) {
+                  fullResponse += chunk.content
+                  streamingResponse.value = fullResponse // 实时更新流式响应
+                }
+                // 兼容新的思考过程字段
+                if (chunk.reasoning_content) {
+                  fullReasoning += chunk.reasoning_content
+                  streamingReasoning.value = fullReasoning // 实时更新流式思考过程
+                }
+                if (readTokenRateFromPayload(chunk) !== null || readOutputTokenCountFromPayload(chunk) !== null) {
+                  lastUsagePayload = chunk
+                }
               }
-              // 兼容新的思考过程字段
-              if (chunk.reasoning_content) {
-                fullReasoning += chunk.reasoning_content
-                streamingReasoning.value = fullReasoning // 实时更新流式思考过程
-              }
-              if (readTokenRateFromPayload(chunk) !== null || readOutputTokenCountFromPayload(chunk) !== null) {
-                lastUsagePayload = chunk
-              }
-            }
 
-            if (!hasVisibleOutputContent(fullResponse)) {
-              currentTestResult.value = null
-              currentTestError.value = '测试失败：模型未返回任何输出内容'
+              if (toolCalls.length > 0) {
+                testInput.messages.push({ role: 'assistant', content: '', tool_calls: toolCalls })
+
+                for (const tc of toolCalls) {
+                  try {
+                    fullResponse += `\n\n[测试：模型请求调用函数 ${tc.function.name}...]\n`
+                    streamingResponse.value = fullResponse
+
+                    let toolResult = ''
+                    if (tc.function.name === 'test_function') {
+                      const args = tc.function.arguments || '{}'
+                      toolResult = `{"success": true, "message": "函数 test_function 执行成功，收到的参数: ${args}"}`
+                    } else if (tc.function.name === 'encrypt_string') {
+                      try {
+                        const args = JSON.parse(tc.function.arguments || '{}')
+                        if (args.text) {
+                          const base64Str = btoa(unescape(encodeURIComponent(args.text)))
+                          toolResult = `{"success": true, "result": "${base64Str}"}`
+                        } else {
+                          toolResult = `{"success": false, "error": "Missing required parameter 'text'"}`
+                        }
+                      } catch (e) {
+                        toolResult = `{"success": false, "error": "Invalid JSON arguments"}`
+                      }
+                    } else {
+                      toolResult = `Error: Unknown function ${tc.function.name}`
+                    }
+
+                    fullResponse += `[测试：向模型返回模拟结果: ${toolResult}]\n\n`
+                    streamingResponse.value = fullResponse
+
+                    testInput.messages.push({ role: 'tool', tool_call_id: tc.id, name: tc.function.name, content: toolResult })
+                  } catch (e: any) {
+                    const errStr = `Error: ${e.message || String(e)}`
+                    fullResponse += `[测试：工具执行失败: ${errStr}]\n\n`
+                    streamingResponse.value = fullResponse
+                    testInput.messages.push({ role: 'tool', tool_call_id: tc.id, name: tc.function.name, content: errStr })
+                  }
+                }
+                continue; // tool calls processed, loop again
+              }
+
+              if (!hasVisibleOutputContent(fullResponse)) {
+                currentTestResult.value = null
+                currentTestError.value = '测试失败：模型未返回任何输出内容'
+              } else {
+                const tokenRate = resolveTokenRate(lastUsagePayload, fullResponse, fullReasoning, performance.now() - testStartedAt)
+
+                currentTestResult.value = {
+                  success: true,
+                  response: fullResponse,
+                  reasoning_content: fullReasoning,
+                  tokenRate: tokenRate ?? undefined,
+                  timestamp: new Date().toLocaleString(),
+                  modelType: model.category,
+                  testType: model.category === 'vision' ? '图像理解测试' : '文本对话测试'
+                }
+              }
+              break;
             } else {
-              const tokenRate = resolveTokenRate(lastUsagePayload, fullResponse, fullReasoning, performance.now() - testStartedAt)
-
-              currentTestResult.value = {
-                success: true,
-                response: fullResponse,
-                reasoning_content: fullReasoning,
-                tokenRate: tokenRate ?? undefined,
-                timestamp: new Date().toLocaleString(),
-                modelType: model.category,
-                testType: model.category === 'vision' ? '图像理解测试' : '文本对话测试'
+              // 非流式返回：兼容对象格式与字符串格式
+              let finalResponse = ''
+              let finalReasoning = ''
+              let usagePayload: any = null
+              if (typeof result === 'string') {
+                finalResponse = result
+              } else if (result && typeof result === 'object') {
+                finalResponse = (result.content ?? result.response ?? '')
+                // 兼容新的思考过程字段
+                finalReasoning = (result.reasoning_content ?? '')
+                usagePayload = result
               }
+
+              if (!hasVisibleOutputContent(finalResponse)) {
+                currentTestResult.value = null
+                currentTestError.value = '测试失败：模型未返回任何输出内容'
+              } else {
+                const tokenRate = resolveTokenRate(usagePayload, finalResponse, finalReasoning, performance.now() - testStartedAt)
+
+                currentTestResult.value = {
+                  success: true,
+                  response: finalResponse,
+                  reasoning_content: finalReasoning,
+                  tokenRate: tokenRate ?? undefined,
+                  timestamp: new Date().toLocaleString(),
+                  modelType: model.category,
+                  testType: model.category === 'vision' ? '图像理解测试' : '文本对话测试'
+                }
+              }
+              break;
             }
           } else {
-            // 非流式返回：兼容对象格式与字符串格式
-            let finalResponse = ''
-            let finalReasoning = ''
-            let usagePayload: any = null
-            if (typeof result === 'string') {
-              finalResponse = result
-            } else if (result && typeof result === 'object') {
-              finalResponse = (result.content ?? result.response ?? '')
-              // 兼容新的思考过程字段
-              finalReasoning = (result.reasoning_content ?? '')
-              usagePayload = result
-            }
-
-            if (!hasVisibleOutputContent(finalResponse)) {
-              currentTestResult.value = null
-              currentTestError.value = '测试失败：模型未返回任何输出内容'
-            } else {
-              const tokenRate = resolveTokenRate(usagePayload, finalResponse, finalReasoning, performance.now() - testStartedAt)
-
-              currentTestResult.value = {
-                success: true,
-                response: finalResponse,
-                reasoning_content: finalReasoning,
-                tokenRate: tokenRate ?? undefined,
-                timestamp: new Date().toLocaleString(),
-                modelType: model.category,
-                testType: model.category === 'vision' ? '图像理解测试' : '文本对话测试'
-              }
-            }
+            currentTestError.value = '模型配置代码未返回有效结果'
+            break;
           }
-        } else {
-          currentTestError.value = '模型配置代码未返回有效结果'
         }
       } catch (codeError) {
         if (isAbortedTestError(codeError)) {
@@ -1616,11 +1717,11 @@ const testModel = async (model: AIModel) => {
     testingModelId.value = null
     testAbortController.value = null
     // 测试完成后，如果有错误则清空流式响应
-  if (currentTestError.value) {
-    streamingResponse.value = ''
-    streamingReasoning.value = ''
+    if (currentTestError.value) {
+      streamingResponse.value = ''
+      streamingReasoning.value = ''
+    }
   }
-}
 }
 
 // 处理测试弹窗关闭

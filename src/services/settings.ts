@@ -22,7 +22,6 @@ export interface AppSettings {
   // 网络设置
   network: {
     serverPort: number
-    webPort: number
     enableLanAccess: boolean
     bindAddress: string
   }
@@ -76,7 +75,6 @@ const DEFAULT_SETTINGS: AppSettings = {
   showExplanation: true,
   network: {
     serverPort: 3000,
-    webPort: 8080,
     enableLanAccess: false,
     bindAddress: '127.0.0.1'
   },

@@ -351,6 +351,31 @@ onMounted(() => {
   flex-shrink: 0;
 }
 
+.prompt-editor-control {
+  width: min(520px, 100%);
+}
+
+.system-prompt-textarea {
+  width: 100%;
+  min-height: 140px;
+  padding: 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.6;
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.prompt-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+}
+
 .folder-action-btn {
   --folder-btn-bg: var(--bg-secondary);
   --folder-btn-text: var(--text-primary);

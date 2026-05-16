@@ -16,10 +16,13 @@ pub use commands::{
     get_daily_request_counts, get_request_logs, get_username, greet, open_cache_dir, open_devtools,
     open_url_content_window, read_config, read_doc_range, read_docx_range, read_excel_headers,
     read_excel_range, read_file_bytes, read_file_range, read_file_text, read_model_config,
-    request_admin_elevation, segment_text, write_config, write_model_config,
+    request_admin_elevation, segment_text, write_config, write_model_config
 };
 pub use database::*;
-pub use database::{delete_folder, delete_question, delete_questions, move_folder, rename_folder};
+pub use database::{
+    clear_folder_questions, delete_folder, delete_question, delete_questions, move_folder,
+    rename_folder,
+};
 pub use server::{get_server_status, start_server, stop_server};
 use tauri::Manager;
 pub use types::*;
@@ -98,6 +101,7 @@ pub fn run() {
             add_folder,
             delete_question,
             delete_questions,
+            clear_folder_questions,
             delete_folder,
             rename_folder,
             move_folder

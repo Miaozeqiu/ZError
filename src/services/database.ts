@@ -527,6 +527,29 @@ class DatabaseService {
     }
   }
 
+  async clearFolderQuestions(id: number): Promise<void> {
+    if (!this.isTauri) {
+      const getSubtree = (fid: number): number[] => {
+        let subs = [fid];
+        mockFolders.filter(f => f.parent_id === fid).forEach(sf => {
+          subs = [...subs, ...getSubtree(sf.id)];
+        });
+        return subs;
+      };
+
+      const idsToClear = getSubtree(id);
+      mockAIResponses = mockAIResponses.filter(q => !idsToClear.includes(q.folder_id));
+      return;
+    }
+
+    try {
+      await invoke('clear_folder_questions', { id });
+    } catch (error) {
+      console.error('清除文件夹题目失败:', error);
+      throw error;
+    }
+  }
+
   // 移动文件夹
   async moveFolder(id: number, parentId: number, _position?: number): Promise<void> {
     if (!this.isTauri) {

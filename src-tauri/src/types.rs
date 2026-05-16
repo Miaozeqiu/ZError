@@ -166,13 +166,22 @@ impl QueryResponse {
 }
 
 /// 服务器状态管理结构体
-#[derive(Debug)]
 pub struct ServerState {
     pub info: Arc<Mutex<ServerInfo>>,
     pub handle: Arc<Mutex<Option<JoinHandle<()>>>>,
-    pub web_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
     pub logger: RequestLogger,
     pub app_handle: Option<tauri::AppHandle>,
+}
+
+impl std::fmt::Debug for ServerState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ServerState")
+            .field("info", &self.info)
+            .field("handle", &self.handle)
+            .field("logger", &self.logger)
+            .field("app_handle", &self.app_handle)
+            .finish()
+    }
 }
 
 impl Default for ServerState {
@@ -184,7 +193,6 @@ impl Default for ServerState {
                 url: None,
             })),
             handle: Arc::new(Mutex::new(None)),
-            web_handle: Arc::new(Mutex::new(None)),
             logger: RequestLogger::default(),
             app_handle: None,
         }

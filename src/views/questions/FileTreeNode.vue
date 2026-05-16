@@ -42,7 +42,7 @@
       <span 
         v-if="node.type === 'folder'" 
         class="expand-arrow"
-        :class="{ 'expanded': isExpanded }"
+        :class="{ 'expanded': isExpanded, 'highlighted': isSaveFolderBranch }"
         @click="handleArrowClick"
       >
         <!-- 有子文件夹时显示箭头 -->
@@ -223,6 +223,16 @@ watch([propsHoverTargetId, propsHoverPosition], ([id, pos]) => {
 const isSelected = computed(() => props.selectedId === props.node.id);
 const isLeafFolder = computed(() => props.node.type === 'folder' && !hasChildren.value);
 const isCurrentSaveFolder = computed(() => isLeafFolder.value && props.highlightFolderId === props.node.id);
+
+const containsHighlightedFolder = (node: TreeNode | undefined, targetId: string | null | undefined): boolean => {
+  if (!node || !targetId || node.type !== 'folder' || !node.children?.length) return false;
+  return node.children.some((child) => child.id === targetId || containsHighlightedFolder(child, targetId));
+};
+
+const isSaveFolderBranch = computed(() => {
+  if (props.node.type !== 'folder' || !hasChildren.value) return false;
+  return containsHighlightedFolder(props.node, props.highlightFolderId);
+});
 
 // 重命名相关
 
@@ -792,6 +802,14 @@ const findNodeByIdInProps = (id: string): TreeNode | null => {
 
 .expand-arrow:hover {
   color: var(--filetree-expand-arrow-color);
+}
+
+.expand-arrow.highlighted {
+  color: #f8bd40;
+}
+
+.expand-arrow.highlighted:hover {
+  color: #f8bd40;
 }
 
 .current-save-dot {

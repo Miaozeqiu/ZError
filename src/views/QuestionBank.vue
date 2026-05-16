@@ -262,6 +262,12 @@ const handleSetSaveFolder = async (folderId: number, folderName: string, folderP
   }
 };
 
+const handleQuestionsCleared = () => {
+  if (questionListRef.value) {
+    questionListRef.value.refreshData();
+  }
+};
+
 watch(
   () => [props.focusFolderId, props.focusFolderRequestKey] as const,
   async ([folderId]) => {
@@ -344,6 +350,7 @@ onUnmounted(() => {
         @folder-select="handleFolderSelect" 
         @expand-folder="handleExpandFolder"
         @set-save-folder="handleSetSaveFolder"
+        @questions-cleared="handleQuestionsCleared"
       />
       <div
         class="custom-scrollbar"

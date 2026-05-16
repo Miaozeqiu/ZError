@@ -66,6 +66,14 @@ const generateJsCode = (modelId: string, category: 'text' | 'vision' | 'summary'
     stream: true,
     max_tokens: 4096,
   };
+  
+  if (input.tools && input.tools.length > 0) {
+    requestData.tools = input.tools;
+    if (input.tool_choice) {
+      requestData.tool_choice = input.tool_choice;
+    }
+  }
+  
   try {
     const response = await fetch(\`\${config.baseUrl}/v1/chat/completions\`, {
       method: 'POST',
@@ -78,6 +86,7 @@ const generateJsCode = (modelId: string, category: 'text' | 'vision' | 'summary'
     const decoder = new TextDecoder();
     return (async function* () {
       let buffer = '';
+      let currentToolCall = null;
       try {
         while (true) {
           const { done, value } = await reader.read();
@@ -95,13 +104,30 @@ const generateJsCode = (modelId: string, category: 'text' | 'vision' | 'summary'
                   const delta = data.choices[0].delta;
                   const content = delta.content ?? '';
                   const reasoning_content = delta.reasoning_content ?? delta.reasoning ?? '';
-                  const finished = data.choices[0].finish_reason === 'stop';
-                  if (content || reasoning_content || finished) yield { content, reasoning_content, finished };
+                  const finished = data.choices[0].finish_reason === 'stop' || data.choices[0].finish_reason === 'tool_calls';
+                  
+                  if (delta.tool_calls && delta.tool_calls.length > 0) {
+                    const tc = delta.tool_calls[0];
+                    if (tc.id) {
+                      if (currentToolCall) yield { tool_calls: [currentToolCall] };
+                      currentToolCall = { id: tc.id, type: 'function', function: { name: tc.function?.name || '', arguments: tc.function?.arguments || '' } };
+                    } else if (currentToolCall && tc.function?.arguments) {
+                      currentToolCall.function.arguments += tc.function.arguments;
+                    }
+                  }
+                  
+                  if (finished && currentToolCall) {
+                    yield { tool_calls: [currentToolCall], finished: true };
+                    currentToolCall = null;
+                  } else if (content || reasoning_content || finished) {
+                    yield { content, reasoning_content, finished };
+                  }
                 }
               } catch (e) { console.warn('解析失败:', e); }
             }
           }
         }
+        if (currentToolCall) yield { tool_calls: [currentToolCall], finished: true };
       } finally { reader.releaseLock(); }
     })();
   } catch (error) { console.error('API 调用失败:', error); throw error; }
@@ -117,6 +143,14 @@ const generateJsCode = (modelId: string, category: 'text' | 'vision' | 'summary'
     temperature: 0.7,
     top_p: 0.9
   };
+  
+  if (input.tools && input.tools.length > 0) {
+    requestData.tools = input.tools;
+    if (input.tool_choice) {
+      requestData.tool_choice = input.tool_choice;
+    }
+  }
+
   try {
     const response = await fetch(\`\${config.baseUrl}/v1/chat/completions\`, {
       method: 'POST',
@@ -129,6 +163,7 @@ const generateJsCode = (modelId: string, category: 'text' | 'vision' | 'summary'
     const decoder = new TextDecoder();
     return (async function* () {
       let buffer = '';
+      let currentToolCall = null;
       try {
         while (true) {
           const { done, value } = await reader.read();
@@ -146,13 +181,30 @@ const generateJsCode = (modelId: string, category: 'text' | 'vision' | 'summary'
                   const delta = data.choices[0].delta;
                   const content = delta.content ?? '';
                   const reasoning_content = delta.reasoning_content ?? '';
-                  const finished = data.choices[0].finish_reason === 'stop';
-                  if (content || reasoning_content || finished) yield { content, reasoning_content, finished };
+                  const finished = data.choices[0].finish_reason === 'stop' || data.choices[0].finish_reason === 'tool_calls';
+                  
+                  if (delta.tool_calls && delta.tool_calls.length > 0) {
+                    const tc = delta.tool_calls[0];
+                    if (tc.id) {
+                      if (currentToolCall) yield { tool_calls: [currentToolCall] };
+                      currentToolCall = { id: tc.id, type: 'function', function: { name: tc.function?.name || '', arguments: tc.function?.arguments || '' } };
+                    } else if (currentToolCall && tc.function?.arguments) {
+                      currentToolCall.function.arguments += tc.function.arguments;
+                    }
+                  }
+                  
+                  if (finished && currentToolCall) {
+                    yield { tool_calls: [currentToolCall], finished: true };
+                    currentToolCall = null;
+                  } else if (content || reasoning_content || finished) {
+                    yield { content, reasoning_content, finished };
+                  }
                 }
               } catch (e) { console.warn('解析失败:', e); }
             }
           }
         }
+        if (currentToolCall) yield { tool_calls: [currentToolCall], finished: true };
       } finally { reader.releaseLock(); }
     })();
   } catch (error) { console.error('API 调用失败:', error); throw error; }

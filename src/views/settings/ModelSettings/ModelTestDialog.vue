@@ -11,8 +11,22 @@
         <button class="btn-confirm" @click="closeDialog">{{ testing ? '停止' : '关闭' }}</button>
       </div>
       <div class="dialog-body test-dialog-body">
+        <!-- 测试选项 (初始状态) -->
+        <div v-if="!testing && !testResult && !testError" class="test-config">
+          <div class="config-group">
+            <label class="checkbox-label">
+              <input type="checkbox" v-model="testFunctionCalling" />
+              <span>测试 Function Calling (触发一段 JS 函数)</span>
+            </label>
+            <p class="config-desc">开启后，将在测试请求中附加一个工具定义，检查模型是否能正确触发函数调用。</p>
+          </div>
+          <div class="action-bar">
+            <button class="btn-primary" @click="startTest">开始测试</button>
+          </div>
+        </div>
+
         <!-- 测试进行中 -->
-        <div v-if="testing" class="test-status testing">
+        <div v-else-if="testing" class="test-status testing">
           <div class="loading-spinner"></div>
           <p class="testing-tip">正在测试模型，请稍候...</p>
           <div v-if="streamingReasoning || streamingResponse" class="content-stack-wrapper">
@@ -66,6 +80,7 @@
 </template>
 
 <script setup lang="ts">
+import { ref, watch } from 'vue'
 import AIOutputRender from '../../../components/AIOutputRender.vue'
 import MarkdownRender from 'markstream-vue'
 import 'markstream-vue/index.css'
@@ -92,12 +107,26 @@ interface Props {
 
 const props = defineProps<Props>()
 
+const testFunctionCalling = ref(false)
+
+// 每次打开弹窗时重置选项
+watch(() => props.visible, (newVal) => {
+  if (newVal) {
+    testFunctionCalling.value = false
+  }
+})
+
 const formatTokenRate = (value: number) => `${value.toFixed(1)} tokens/s`
 
 const emit = defineEmits<{
   close: []
   cancelTest: []
+  startTest: [{ testFunctionCalling: boolean }]
 }>()
+
+const startTest = () => {
+  emit('startTest', { testFunctionCalling: testFunctionCalling.value })
+}
 
 const handleOverlayClick = (event: MouseEvent) => {
   // 检查点击是否来自输入框或其相关操作
@@ -186,6 +215,55 @@ const closeDialog = () => {
 @keyframes spin {
   0% { transform: rotate(0deg); }
   100% { transform: rotate(360deg); }
+}
+
+.test-config {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.config-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--text-color);
+  cursor: pointer;
+}
+
+.config-desc {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-left: 22px;
+}
+
+.action-bar {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 10px;
+}
+
+.btn-primary {
+  background-color: var(--primary-color);
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: background-color 0.2s;
+}
+
+.btn-primary:hover {
+  background-color: var(--primary-color-hover);
 }
 
 .status-icon {

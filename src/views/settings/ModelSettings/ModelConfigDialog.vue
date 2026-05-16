@@ -178,11 +178,54 @@ function transform(prompt, context) {
     { role: 'user', content: prompt }
   ];
   
-  return {
+  const payload = {
     ...context.request, // Preserve original request parameters
     messages: messages,
     stream: true, // Enable streaming response
   };
+  
+  // If the incoming request has tools (e.g. for function calling), pass them along
+  if (context.request.tools) {
+    payload.tools = context.request.tools;
+  }
+  
+  return payload;
+}
+`.trim()
+
+const DEFAULT_VISION_JS_CODE = `
+/**
+ * @param {string} prompt - The user's input prompt.
+ * @param {object} context - The context object.
+ * @param {object} context.request - The request object from the client.
+ * @param {function} context.get - A function to get a value from the context.
+ * @param {function} context.set - A function to set a value in the context.
+ * @param {string} context.imageUrl - The base64 encoded image or image URL.
+ * @returns {object} - The modified request payload.
+ */
+function transform(prompt, context) {
+  const messages = [
+    {
+      role: 'user',
+      content: [
+        { type: 'text', text: prompt },
+        { type: 'image_url', image_url: { url: context.imageUrl } }
+      ]
+    }
+  ];
+  
+  const payload = {
+    ...context.request,
+    messages: messages,
+    stream: true,
+  };
+  
+  // If the incoming request has tools (e.g. for function calling), pass them along
+  if (context.request.tools) {
+    payload.tools = context.request.tools;
+  }
+  
+  return payload;
 }
 `.trim()
 
@@ -192,12 +235,12 @@ watch(() => props.model, (newModel) => {
     formData.value = {
       displayName: newModel.displayName,
       category: newModel.category || 'text',
-      jsCode: newModel.jsCode || DEFAULT_JS_CODE
+      jsCode: newModel.jsCode || (newModel.category === 'vision' ? DEFAULT_VISION_JS_CODE : DEFAULT_JS_CODE)
     }
     // 若编辑器已存在，确保文档与最新模型代码同步
     nextTick(() => {
       if (cmView) {
-        setEditorDoc(formData.value.jsCode || DEFAULT_JS_CODE)
+        setEditorDoc(formData.value.jsCode)
       }
     })
   } else {
@@ -215,6 +258,18 @@ watch(() => props.model, (newModel) => {
     })
   }
 }, { immediate: true, deep: true })
+
+// 监听类别切换自动替换模板
+watch(() => formData.value.category, (newCategory) => {
+  if (!isEditing.value && (!formData.value.jsCode || formData.value.jsCode === DEFAULT_JS_CODE || formData.value.jsCode === DEFAULT_VISION_JS_CODE)) {
+    formData.value.jsCode = newCategory === 'vision' ? DEFAULT_VISION_JS_CODE : DEFAULT_JS_CODE;
+    nextTick(() => {
+      if (cmView) {
+        setEditorDoc(formData.value.jsCode);
+      }
+    })
+  }
+});
 
 // 监听弹窗显示状态，打开时初始化，关闭时销毁以避免视图挂载丢失
 watch(() => props.show, async (visible) => {
@@ -240,7 +295,7 @@ watch(() => props.show, async (visible) => {
       formData.value = {
         displayName: props.model.displayName,
         category: props.model.category || 'text',
-        jsCode: props.model.jsCode || DEFAULT_JS_CODE
+        jsCode: props.model.jsCode || (props.model.category === 'vision' ? DEFAULT_VISION_JS_CODE : DEFAULT_JS_CODE)
       }
     } else {
       // 非编辑模式但不进市场时，使用默认模板
@@ -252,7 +307,7 @@ watch(() => props.show, async (visible) => {
     }
 
     // 如果存在旧的 EditorView（可能因 v-if 被移除父容器），先销毁后重建
-    await rebuildEditorWithDoc(formData.value.jsCode || DEFAULT_JS_CODE)
+    await rebuildEditorWithDoc(formData.value.jsCode)
   } else {
     // 隐藏时销毁实例，防止持有已移除的 DOM 引用导致下次无法显示
     if (cmView) {
@@ -523,11 +578,11 @@ const confirmMarketplaceSelection = () => {
   if (m.category) {
     formData.value.category = m.category
   }
-  formData.value.jsCode = m.jsCode || DEFAULT_JS_CODE
+  formData.value.jsCode = m.jsCode || (formData.value.category === 'vision' ? DEFAULT_VISION_JS_CODE : DEFAULT_JS_CODE)
 
   // 关闭市场面板
   marketplaceOpen.value = false
-  void rebuildEditorWithDoc(formData.value.jsCode || DEFAULT_JS_CODE)
+  void rebuildEditorWithDoc(formData.value.jsCode)
 }
 
 const isImageIcon = (icon: string) => isImageIconValue(icon)
@@ -546,7 +601,7 @@ const chooseCustomModel = () => {
 
   // 关闭市场面板，回到编辑界面
   marketplaceOpen.value = false
-  void rebuildEditorWithDoc(formData.value.jsCode || DEFAULT_JS_CODE)
+  void rebuildEditorWithDoc(formData.value.jsCode)
 }
 
 const handleSubmit = () => {

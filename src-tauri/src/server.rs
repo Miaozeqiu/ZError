@@ -200,163 +200,10 @@ fn build_model_query_prompt(
     q
 }
 
-/// 启动 Web 辅助服务器
-async fn start_web_server(web_port: u16, bind_ip: [u8; 4]) -> JoinHandle<()> {
-    use warp::Filter;
-
-    let cors = warp::cors()
-        .allow_any_origin()
-        .allow_headers(vec!["content-type", "authorization"])
-        .allow_methods(vec!["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD"]);
-
-    // dev 模式：反向代理到 vite dev server (3002)
-    if cfg!(debug_assertions) {
-        println!("🌐 Web server (dev) proxying to http://localhost:3002");
-        let client = reqwest::Client::new();
-        let proxy_route = warp::any()
-            .and(warp::method())
-            .and(warp::path::full())
-            .and(
-                warp::query::raw()
-                    .or(warp::any().map(|| String::new()))
-                    .unify(),
-            )
-            .and(warp::header::headers_cloned())
-            .and(warp::body::bytes())
-            .and_then(
-                move |method: warp::http::Method,
-                      path: warp::path::FullPath,
-                      query: String,
-                      headers: warp::http::HeaderMap,
-                      body: bytes::Bytes| {
-                    let client = client.clone();
-                    async move {
-                        let url = if query.is_empty() {
-                            format!("http://localhost:3002{}", path.as_str())
-                        } else {
-                            format!("http://localhost:3002{}?{}", path.as_str(), query)
-                        };
-                        let method_str = method.as_str().to_string();
-                        let req_method = reqwest::Method::from_bytes(method_str.as_bytes())
-                            .unwrap_or(reqwest::Method::GET);
-                        let mut req = client.request(req_method, &url).body(body);
-                        for (key, value) in headers.iter() {
-                            let name = key.as_str();
-                            if name != "host" {
-                                req = req.header(key.as_str(), value.as_bytes());
-                            }
-                        }
-                        match req.send().await {
-                            Ok(resp) => {
-                                let status = resp.status();
-                                let resp_headers = resp.headers().clone();
-                                let resp_body = resp.bytes().await.unwrap_or_default();
-                                let mut reply =
-                                    warp::http::Response::builder().status(status.as_u16());
-                                for (key, value) in resp_headers.iter() {
-                                    let name = key.as_str();
-                                    if name != "transfer-encoding" {
-                                        reply = reply.header(key.as_str(), value.as_bytes());
-                                    }
-                                }
-                                Ok::<_, warp::Rejection>(reply.body(resp_body.to_vec()).unwrap())
-                            }
-                            Err(_) => Ok::<_, warp::Rejection>(
-                                warp::http::Response::builder()
-                                    .status(502)
-                                    .body(b"vite dev server not running on port 3002".to_vec())
-                                    .unwrap(),
-                            ),
-                        }
-                    }
-                },
-            );
-        return tokio::spawn(async move {
-            warp::serve(proxy_route.with(cors))
-                .run((bind_ip, web_port))
-                .await;
-        });
-    }
-
-    // /api/login 路由，避免跨端口 CORS 问题
-    let web_login_route = warp::path("api")
-        .and(warp::path("login"))
-        .and(warp::post())
-        .and(warp::body::json())
-        .and_then(|body: serde_json::Value| async move {
-            let token = body
-                .get("token")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            if token.is_empty() {
-                let resp = serde_json::json!({"success": false, "message": "token不能为空"});
-                return Ok::<_, warp::Rejection>(warp::reply::json(&resp));
-            }
-            let config_path = std::env::current_exe()
-                .ok()
-                .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-                .unwrap_or_else(|| std::path::PathBuf::from("."))
-                .join("config.json");
-            let config: serde_json::Value = std::fs::read_to_string(&config_path)
-                .ok()
-                .and_then(|s| serde_json::from_str(&s).ok())
-                .unwrap_or_default();
-            let admin_token = config
-                .get("adminToken")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            if !admin_token.is_empty() && token == admin_token {
-                return Ok::<_, warp::Rejection>(warp::reply::json(
-                    &serde_json::json!({"success": true, "role": "admin", "name": "管理员"}),
-                ));
-            }
-            if let Some(users) = config
-                .get("multiUser")
-                .and_then(|m| m.get("users"))
-                .and_then(|u| u.as_array())
-            {
-                for user in users {
-                    let ut = user.get("token").and_then(|v| v.as_str()).unwrap_or("");
-                    if !ut.is_empty() && token == ut {
-                        let name = user
-                            .get("name")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("用户")
-                            .to_string();
-                        return Ok::<_, warp::Rejection>(warp::reply::json(
-                            &serde_json::json!({"success": true, "role": "user", "name": name}),
-                        ));
-                    }
-                }
-            }
-            Ok::<_, warp::Rejection>(warp::reply::json(
-                &serde_json::json!({"success": false, "message": "Token 无效"}),
-            ))
-        });
-
-    let fallback_route = warp::any().map(|| {
-        warp::reply::with_status(
-            warp::reply::json(&serde_json::json!({
-                "success": false,
-                "message": "Web 静态资源已移除"
-            })),
-            warp::http::StatusCode::NOT_FOUND,
-        )
-    });
-
-    println!("🌐 Web static assets disabled; only auxiliary API routes are served");
-    let routes = web_login_route.or(fallback_route).with(cors);
-    tokio::spawn(async move {
-        warp::serve(routes).run((bind_ip, web_port)).await;
-    })
-}
-
 /// 启动HTTP服务器
 #[tauri::command]
 pub async fn start_server(
     port: u16,
-    web_port: u16,
     bind_address: String,
     state: State<'_, ServerState>,
 ) -> Result<ServerInfo, String> {
@@ -1165,13 +1012,6 @@ pub async fn start_server(
     // 存储服务器句柄
     *state.handle.lock() = Some(server_handle);
 
-    // 启动 Web 静态文件服务器
-    if web_port > 0 {
-        let web_handle = start_web_server(web_port, bind_ip).await;
-        *state.web_handle.lock() = Some(web_handle);
-        println!("🌐 Web server started on port {}", web_port);
-    }
-
     Ok(result)
 }
 
@@ -1195,11 +1035,6 @@ pub async fn stop_server(state: State<'_, ServerState>) -> Result<ServerInfo, St
     // 停止服务器
     if let Some(handle) = state.handle.lock().take() {
         handle.abort();
-    }
-
-    // 停止 Web 服务器
-    if let Some(web_handle) = state.web_handle.lock().take() {
-        web_handle.abort();
     }
 
     // 更新状态
@@ -1366,7 +1201,11 @@ fn is_model_error(text: &str) -> Option<String> {
     }
     let cleaned = cleaned.trim().to_string();
 
-    if cleaned.starts_with("错误:") || cleaned.starts_with("Error:") {
+    if cleaned == "所有AI均查询失败" {
+        return Some(cleaned);
+    }
+
+    if cleaned.starts_with("错误:") || cleaned.starts_with("Error:") || cleaned.starts_with("API 错误") {
         return Some(cleaned);
     }
 
