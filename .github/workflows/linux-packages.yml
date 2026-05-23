@@ -1,0 +1,75 @@
+name: Build Linux Packages
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-packages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-linux-packages:
+    name: Build deb and rpm
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "src-tauri -> target"
+
+      - name: Install Linux package dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            curl \
+            file \
+            libayatana-appindicator3-dev \
+            libgtk-3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            patchelf \
+            pkg-config \
+            rpm \
+            wget
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build Linux deb and rpm packages
+        run: npm run tauri build -- --bundles deb,rpm
+
+      - name: Upload deb package
+        uses: actions/upload-artifact@v4
+        with:
+          name: zerror-linux-deb
+          path: src-tauri/target/release/bundle/deb/*.deb
+          if-no-files-found: error
+
+      - name: Upload rpm package
+        uses: actions/upload-artifact@v4
+        with:
+          name: zerror-linux-rpm
+          path: src-tauri/target/release/bundle/rpm/*.rpm
+          if-no-files-found: error
