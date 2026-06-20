@@ -14,15 +14,24 @@
     "security": {
       "csp": null,
       "capabilities": ["default", "url-content", "file-info"]
-    }
+    },
+    "macOSPrivateApi": true
   },
   "bundle": {
     "active": true,
-    "targets": ["msi"],
+    "targets": "all",
     "icon": [
-      "icons/icon.ico",
-      "icons/icon.png"
+      "icons/icon.icns",
+      "icons/icon.ico"
     ],
+    "macOS": {
+      "minimumSystemVersion": "10.13",
+      "exceptionDomain": "",
+      "frameworks": [],
+      "providerShortName": "ZError",
+      "entitlements": null,
+      "signingIdentity": null
+    },
     "windows": {
       "wix": {
         "language": "zh-CN"

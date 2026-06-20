@@ -66,11 +66,6 @@
         { "path": "$APPCACHE/**" }
       ]
     },
-    "sql:default",
-    "sql:allow-load",
-    "sql:allow-execute",
-    "sql:allow-select",
-    "sql:allow-close",
     "clipboard-manager:allow-read-text",
     "clipboard-manager:allow-write-text",
 
