@@ -234,7 +234,6 @@ const toggleMaximize = async () => {
 
 const closeWindow = async () => {
   console.log('Close button clicked')
-  console.log('isTauri.value:', isTauri.value)
 
   if (!isTauri.value) {
     console.log('Not in Tauri environment, skipping close')
@@ -244,17 +243,8 @@ const closeWindow = async () => {
   try {
     const { getCurrentWindow } = await import('@tauri-apps/api/window')
     const appWindow = getCurrentWindow()
-
-    if (appWindow.label === 'main') {
-      console.log('Main window detected, hiding to tray...')
-      await appWindow.hide()
-      console.log('Main window hidden successfully')
-      return
-    }
-
-    console.log('Attempting to close secondary window...')
     await appWindow.close()
-    console.log('Secondary window closed successfully')
+    console.log('Window closed successfully')
   } catch (error) {
     console.error('Failed to close window:', error)
   }
