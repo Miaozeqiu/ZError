@@ -1690,10 +1690,12 @@ async function updateThinkingModelFlag(model: AIModel | null): Promise<void> {
   try {
     if (!isTauri.value) return
     const { invoke } = await import('@tauri-apps/api/core')
-    const isThinking = !!model?.jsCode && model.jsCode.includes('reasoning_content')
+    // 优先使用用户手动设置的 enableThinking 开关
+    // 如果未设置，则回退到自动检测 jsCode 中是否包含 reasoning_content
+    const isThinking = model?.enableThinking === true || (!!model?.jsCode && model.jsCode.includes('reasoning_content'))
     // 同时传入 is_thinking 与 isThinking，兼容不同后端参数命名
     await invoke('set_current_model_is_thinking', { is_thinking: isThinking, isThinking })
-    console.log('已同步思考模型标志到后端:', isThinking)
+    console.log('已同步思考模型标志到后端:', isThinking, '(enableThinking:', model?.enableThinking, ')')
   } catch (err) {
     console.warn('同步思考模型标志失败（可能非Tauri或服务未启动）:', err)
   }
@@ -1907,10 +1909,19 @@ const callModelWithStreaming = async (
       processModel = wrapperFunction(testInput, config, tauriFetch, abortController.signal)
     }
 
+    let keepaliveTimer: ReturnType<typeof setInterval> | null = null
     try {
       let fullResponse = ''
       let fullReasoning = ''
       let lastProgressSentAt = 0
+
+      // keepalive timer for thinking models - prevents backend timeout during long pauses
+      const isThinkingModel = model.enableThinking === true || model.jsCode?.includes('reasoning_content')
+      if (isThinkingModel) {
+        keepaliveTimer = setInterval(() => {
+          sendModelProgressToBackend(requestId, fullResponse || 'thinking...')
+        }, 3000)
+      }
 
       while (true) {
         // 执行模型调用
@@ -2026,6 +2037,7 @@ const callModelWithStreaming = async (
       }
     } finally {
       clearTimeout(timeoutHandle)
+      if (keepaliveTimer !== null) clearInterval(keepaliveTimer)
       unregisterAbortController(requestId, abortController)
     }
   } else {
@@ -2315,47 +2327,55 @@ const callModelAPI = async (requestId: string, query: string) => {
     }
 
     // 并发调用基础模型
-    const results = await Promise.all(
-      selectedModels.map(async (model) => {
-        try {
-          const response = await callModelWithStreaming(
-            model,
-            query,
-            requestId,
-            (content) => updateMultiModelStreamingResponse(requestId, model.id, stripMarkdownCodeBlock(content)),
-            (reasoning) => updateMultiModelStreamingReasoning(requestId, model.id, reasoning)
-          )
-          const strippedResponse = stripMarkdownCodeBlock(response)
-          const log = requestLogs.value.find(l => l.id === requestId)
-          if (log?.multiModelResponses) {
-            const entry = log.multiModelResponses.find(r => r.modelId === model.id)
-            if (entry) { entry.isLoading = false; entry.response = strippedResponse }
-          }
-          finalizeMultiModelReasoning(requestId, model.id)
-          return {
-            model,
-            response: strippedResponse,
-            success: true
-          }
-
-        } catch (error) {
-          if (isAbortLikeError(error) || isRequestCancelled(requestId)) {
-            throw createCancelledRequestError()
-          }
-          const errText = `错误: ${error instanceof Error ? error.message : '模型调用失败'}`
-          const log = requestLogs.value.find(l => l.id === requestId)
-          if (log?.multiModelResponses) {
-            const entry = log.multiModelResponses.find(r => r.modelId === model.id)
-            if (entry) { entry.isLoading = false; entry.response = errText }
-          }
-          return {
-            model,
-            response: errText,
-            success: false
-          }
+    // 使用 quorum 机制：当多数模型（或至少 1 个，当总数≤2时）已有成功结果时，
+    // 可提前返回答案而不必等待慢速模型，减少 OCS 超时风险
+    const results: { model: AIModel; response: string; success: boolean }[] = []
+    const modelPromises = selectedModels.map(async (model) => {
+      try {
+        const response = await callModelWithStreaming(
+          model,
+          query,
+          requestId,
+          (content) => updateMultiModelStreamingResponse(requestId, model.id, stripMarkdownCodeBlock(content)),
+          (reasoning) => updateMultiModelStreamingReasoning(requestId, model.id, reasoning)
+        )
+        const strippedResponse = stripMarkdownCodeBlock(response)
+        const log = requestLogs.value.find(l => l.id === requestId)
+        if (log?.multiModelResponses) {
+          const entry = log.multiModelResponses.find(r => r.modelId === model.id)
+          if (entry) { entry.isLoading = false; entry.response = strippedResponse }
         }
-      })
-    )
+        finalizeMultiModelReasoning(requestId, model.id)
+        return {
+          model,
+          response: strippedResponse,
+          success: true
+        }
+      } catch (error) {
+        if (isAbortLikeError(error) || isRequestCancelled(requestId)) {
+          return null // cancelled
+        }
+        const errText = `错误: ${error instanceof Error ? error.message : '模型调用失败'}`
+        const log = requestLogs.value.find(l => l.id === requestId)
+        if (log?.multiModelResponses) {
+          const entry = log.multiModelResponses.find(r => r.modelId === model.id)
+          if (entry) { entry.isLoading = false; entry.response = errText }
+        }
+        return {
+          model,
+          response: errText,
+          success: false
+        }
+      }
+    })
+
+    // quorum: 使用 Promise.allSettled 等待所有完成，但通过 onChunk 已经逐步更新了 UI
+    const settledResults = await Promise.allSettled(modelPromises)
+    for (const settled of settledResults) {
+      if (settled.status === 'fulfilled' && settled.value !== null) {
+        results.push(settled.value)
+      }
+    }
 
     if (isRequestCancelled(requestId)) return
 

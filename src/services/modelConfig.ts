@@ -38,6 +38,7 @@ export interface AIModel {
     inputTokens: number  // 每千个输入token的价格
     outputTokens: number // 每千个输出token的价格
   }
+  enableThinking?: boolean  // 是否启用思考（reasoning）输出
 }
 
 // 模型配置设置接口
@@ -346,11 +347,9 @@ class ModelConfigManager {
   constructor() {
     this.settings = reactive(this.loadSettings())
     this.normalizeSelectedModels()
+    // 强制持久化 enableThinking（修复旧缓存中 false 的残留）
+    this.saveSettings()
     this.setupAutoSave()
-
-    if (this.shouldPersistLoadedSettings) {
-      this.saveSettings()
-    }
   }
 
   /**
@@ -397,7 +396,27 @@ class ModelConfigManager {
     return uniqueIds
   }
 
+  private autoDetectEnableThinking(): void {
+    for (const platform of this.settings.platforms) {
+      for (const model of platform.models || []) {
+        const id = (model.id || '').toLowerCase()
+        const name = ((model.name || '') + (model.displayName || '')).toLowerCase()
+        const isKnownThinking =
+          id.includes('reasoner') || name.includes('reasoner') ||
+          id.includes('-r1') || name.includes('-r1') ||
+          id.includes('thinking') || name.includes('thinking') ||
+          id.includes('deepseek-r1') || name.includes('deepseek r1') ||
+          id.startsWith('o1') || id.startsWith('o3')
+        // 已知思考模型默认开启（修复旧缓存残留 false 的问题）
+        if (isKnownThinking) {
+          model.enableThinking = true
+        }
+      }
+    }
+  }
+
   private normalizeSelectedModels(): void {
+    this.autoDetectEnableThinking()
     const enabledPlatforms = this.settings.platforms.filter(platform => platform.enabled !== false)
     const allModels = enabledPlatforms.flatMap(platform => platform.models || [])
     const enabledModels = allModels.filter(model => model.enabled !== false)
@@ -560,15 +579,34 @@ class ModelConfigManager {
         || this.findLocalPlatformWithSameRemoteModelId(rp)?.apiKey
         || ''
 
-      const remoteModels: AIModel[] = (rp.models || []).map(rm => ({
-        ...rm,
-        platformId: rp.id,
-        isRemote: true,
-        enabled: rm.enabled ?? true,
-        maxTokens: rm.maxTokens ?? 4096,
-        temperature: rm.temperature ?? 0.7,
-        topP: rm.topP ?? 0.9,
-      }))
+      const remoteModels: AIModel[] = (rp.models || []).map(rm => {
+        // 自动检测思考模型：根据模型名称/ID 包含关键词时默认开启思考
+        const modelIdLower = (rm.id || '').toLowerCase()
+        const modelNameLower = (rm.name || '').toLowerCase() + (rm.displayName || '').toLowerCase()
+        const isKnownThinkingModel =
+          modelIdLower.includes('reasoner') ||
+          modelNameLower.includes('reasoner') ||
+          modelIdLower.includes('-r1') ||
+          modelNameLower.includes('-r1') ||
+          modelIdLower.includes('thinking') ||
+          modelNameLower.includes('thinking') ||
+          modelIdLower.includes('deepseek-r1') ||
+          modelNameLower.includes('deepseek r1') ||
+          modelIdLower.startsWith('o1') ||
+          modelIdLower.startsWith('o3')
+        // 保留用户已有的设置，否则按自动检测
+        const existingModel = existingPlatforms.flatMap(p => p.models || []).find(m => m.id === rm.id)
+        return {
+          ...rm,
+          platformId: rp.id,
+          isRemote: true,
+          enabled: rm.enabled ?? true,
+          maxTokens: rm.maxTokens ?? 4096,
+          temperature: rm.temperature ?? 0.7,
+          topP: rm.topP ?? 0.9,
+          enableThinking: existingModel?.enableThinking ?? rm.enableThinking ?? isKnownThinkingModel,
+        }
+      })
       const localModels = dedupeModelsById(
         existingPlatforms.flatMap(platform => (platform.models || [])
           .filter(model => !model.isRemote && isLikelyUserCreatedModel(model, rp.id))

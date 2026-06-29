@@ -135,10 +135,10 @@ impl QuestionKind {
 
     fn prompt_hint(&self) -> &'static str {
         match self {
-            QuestionKind::Single => "这是单选题，请返回正确选项的内容，不要返回选项字母、选项序号或无关说明。",
-            QuestionKind::Multiple => "这是多选题，请返回所有正确选项的内容，不要返回选项字母、选项序号。如果有多个正确选项，请使用“###”连接每个选项内容。",
-            QuestionKind::Judgement => "这是判断题，请只回答“正确”或“错误”，不要添加任何其他内容。",
-            QuestionKind::Completion => "这是一道填空题或者简答题，也有可能是名词解释。如果有多个空，请将每个空的答案使用“###”连接。",
+            QuestionKind::Single => "这是单选题,只有一个正确答案.请返回正确选项的完整文字内容,不要返回A/B/C/D等选项字母或序号.",
+            QuestionKind::Multiple => "这是多选题,可能有多个正确答案.请返回所有正确选项的完整文字内容,多个答案用\"###\"连接,不要返回A/B/C/D等选项字母.",
+            QuestionKind::Judgement => "这是判断题,请只回答正确或错误,不要添加任何其他文字或标点.",
+            QuestionKind::Completion => "这是填空题.如果有多空请用\"###\"连接每个空的答案,只有一个空则直接返回答案内容,不要加序号.",
         }
     }
 }
@@ -177,25 +177,29 @@ fn build_model_query_prompt(
     query_type: Option<&str>,
 ) -> String {
     let mut q = String::from(
-        "请先分析我给出的问题，给出简要的思考过程，如果问题比较复杂，给出详细思考过程。最后将答案用JSON的格式回答我，格式{\"answer\":\"答案\"}。"
+        "你是一个专业的答题助手。我会给你一道题目，请先分别做两件事：\n"
     );
 
-    q.push_str("如果是选择题，请返回对应选项的内容，不要返回选项字母或选项序号。");
+    q.push_str("1. 仔细分析题目，理解题目在问什么，如果有选项则逐一分析每个选项是否正确。\n");
+    q.push_str("2. 输出最终答案，**只输出一个JSON对象**，不要加代码块标记，不要加任何其他文字。\n\n");
+    q.push_str("格式：{\"answer\": \"你的最终答案\"}\n\n");
 
     if let Some(raw_type) = query_type.map(str::trim).filter(|value| !value.is_empty()) {
         if let Some(kind) = detect_question_kind(raw_type) {
-            q.push_str(&format!("题目类型：{}题。", kind.chinese_name()));
-            q.push_str(kind.prompt_hint());
+            q.push_str(&format!("【题目类型：{}题】\n", kind.chinese_name()));
+            q.push_str(&format!("提示：{}\n", kind.prompt_hint()));
         } else {
-            q.push_str(&format!("题目类型字段：{}。", raw_type));
+            q.push_str(&format!("【题目类型字段：{}】\n", raw_type));
         }
     }
 
-    q.push_str(&format!("题目：{}", title));
+    q.push_str(&format!("【题目】\n{}\n", title));
 
     if let Some(options) = options.map(str::trim).filter(|value| !value.is_empty()) {
-        q.push_str(&format!("，选项：{}", options));
+        q.push_str(&format!("【选项】\n{}\n", options));
     }
+
+    q.push_str("\n请先分析，再输出答案JSON：");
 
     q
 }
@@ -235,7 +239,7 @@ pub async fn start_server(
             method, path, status, response_time
         );
 
-        // 对于非query路由，使用简化的日志记录
+        // 对于非query路由,使用简化的日志记录
         logger.log_request(
             method,
             path,
@@ -368,9 +372,9 @@ pub async fn start_server(
                         } else {
                             println!("🔍 数据库中未找到匹配结果: {}", request.title);
 
-                            // 如果检测到URL，发送视觉分析请求（带 __URL_QUESTION__: 前缀）
+                            // 如果检测到URL,发送视觉分析请求（带 __URL_QUESTION__: 前缀）
                             let formatted_query = if has_url {
-                                println!("🔗 检测到URL，发送视觉分析请求: {}", request.title);
+                                println!("🔗 检测到URL,发送视觉分析请求: {}", request.title);
                                 let mut q = format!("__URL_QUESTION__:{}", request.title);
                                 if let Some(options) = &request.options {
                                     if !options.is_empty() {
@@ -390,8 +394,8 @@ pub async fn start_server(
 
                             logger.send_model_call_request(request_id.clone(), formatted_query);
 
-                            // 等待模型调用完成（URL题目等待更长时间：120秒）
-                            let wait_secs = if has_url { 120 } else { 30 };
+                            // 等待模型调用完成（前端有keepalive心跳防止超时,此值为总时长上限）
+                            let wait_secs = if has_url { 120 } else { 60 };
                             match logger.wait_for_model_response(request_id.clone(), wait_secs).await {
                                 Ok(model_content) => {
                                     println!("✅ Received model response: {}", model_content);
@@ -402,16 +406,16 @@ pub async fn start_server(
                                         let mut extracted_answer = extract_answer_from_json(&model_content);
 
                                         // Check for incomplete question response
-                                        if model_content.contains("题目不完整，无法确定具体问题。") {
+                                        if model_content.contains("题目不完整,无法确定具体问题.") {
                                             extracted_answer = String::new();
-                                            println!("⚠️ 检测到题目不完整，将答案留空");
+                                            println!("⚠️ 检测到题目不完整,将答案留空");
                                         }
 
                                         extracted_answer = extracted_answer.trim().to_string();
 
                                         // Store to database
                                         let inserted_id = if extracted_answer.is_empty() {
-                                            println!("⚠️ AI最终处理结果答案为空，跳过保存题目");
+                                            println!("⚠️ AI最终处理结果答案为空,跳过保存题目");
                                             0
                                         } else {
                                             match insert_ai_response(
@@ -565,9 +569,9 @@ pub async fn start_server(
                         } else {
                             println!("🔍 数据库中未找到匹配结果: {}", request.title);
 
-                            // 如果检测到URL，发送视觉分析请求（带 __URL_QUESTION__: 前缀）
+                            // 如果检测到URL,发送视觉分析请求（带 __URL_QUESTION__: 前缀）
                             let formatted_query = if has_url {
-                                println!("🔗 检测到URL，发送视觉分析请求: {}", request.title);
+                                println!("🔗 检测到URL,发送视觉分析请求: {}", request.title);
                                 let mut q = format!("__URL_QUESTION__:{}", request.title);
                                 if let Some(options) = &request.options {
                                     if !options.is_empty() {
@@ -586,8 +590,8 @@ pub async fn start_server(
 
                             logger.send_model_call_request(request_id.clone(), formatted_query);
 
-                            // 等待模型调用完成（URL题目等待更长时间：120秒）
-                            let wait_secs = if has_url { 120 } else { 30 };
+                            // 等待模型调用完成（前端有keepalive心跳防止超时,此值为总时长上限）
+                            let wait_secs = if has_url { 120 } else { 60 };
                             match logger.wait_for_model_response(request_id.clone(), wait_secs).await {
                                 Ok(model_content) => {
                                     println!("✅ Received model response: {}", model_content);
@@ -598,16 +602,16 @@ pub async fn start_server(
                                         let mut extracted_answer = extract_answer_from_json(&model_content);
 
                                         // Check for incomplete question response
-                                        if model_content.contains("题目不完整，无法确定具体问题。") {
+                                        if model_content.contains("题目不完整,无法确定具体问题.") {
                                             extracted_answer = String::new();
-                                            println!("⚠️ 检测到题目不完整，将答案留空");
+                                            println!("⚠️ 检测到题目不完整,将答案留空");
                                         }
 
                                         extracted_answer = extracted_answer.trim().to_string();
 
                                         // Store to database
                                         let inserted_id = if extracted_answer.is_empty() {
-                                            println!("⚠️ AI最终处理结果答案为空，跳过保存题目");
+                                            println!("⚠️ AI最终处理结果答案为空,跳过保存题目");
                                             0
                                         } else {
                                             match insert_ai_response(
@@ -734,7 +738,7 @@ pub async fn start_server(
                         Err(e) => println!("❌ 存储AI响应到数据库失败: {}", e),
                     }
                 } else {
-                    println!("⚠️ 检测到模型错误响应，跳过存储到数据库");
+                    println!("⚠️ 检测到模型错误响应,跳过存储到数据库");
                 }
 
                 // 返回成功响应
@@ -1021,8 +1025,8 @@ pub async fn start_server(
 /// * `state` - 服务器状态管理
 ///
 /// # 返回值
-/// * `Ok(ServerInfo)` - 服务器停止成功，返回服务器信息
-/// * `Err(String)` - 服务器停止失败，返回错误信息
+/// * `Ok(ServerInfo)` - 服务器停止成功,返回服务器信息
+/// * `Err(String)` - 服务器停止失败,返回错误信息
 #[tauri::command]
 pub async fn stop_server(state: State<'_, ServerState>) -> Result<ServerInfo, String> {
     {
@@ -1069,23 +1073,23 @@ pub async fn get_server_status(state: State<'_, ServerState>) -> Result<ServerIn
 /// * `content` - AI响应内容
 ///
 /// # Returns
-/// * `Result<(), String>` - 成功返回Ok(())，失败返回错误信息
+/// * `Result<(), String>` - 成功返回Ok(()),失败返回错误信息
 async fn store_ai_response_to_database(request_id: &str, content: &str) -> Result<(), String> {
-    // 记录AI响应信息，准备存储到数据库
+    // 记录AI响应信息,准备存储到数据库
     println!(
         "📝 准备存储AI响应到数据库: request_id={}, content_length={}",
         request_id,
         content.len()
     );
 
-    // 如果回答是"题目不完整，无法确定具体问题。"，则记录日志
-    if content.contains("题目不完整，无法确定具体问题。") {
+    // 如果回答是"题目不完整,无法确定具体问题.",则记录日志
+    if content.contains("题目不完整,无法确定具体问题.") {
         println!("⚠️ 检测到题目不完整 (in callback)");
     }
 
-    // TODO: 目前无法在此处存储，因为缺少原始问题的标题 (Title)。
-    // 完整的存储逻辑已在 query_post_route 中实现，那里有完整的上下文。
-    // 如果将来需要支持异步回调存储，需要实现通过 request_id 查找原始 title 的机制。
+    // TODO: 目前无法在此处存储,因为缺少原始问题的标题 (Title).
+    // 完整的存储逻辑已在 query_post_route 中实现,那里有完整的上下文.
+    // 如果将来需要支持异步回调存储,需要实现通过 request_id 查找原始 title 的机制.
 
     Ok(())
 }
@@ -1096,7 +1100,7 @@ async fn store_ai_response_to_database(request_id: &str, content: &str) -> Resul
 /// * `json_content` - AI返回的JSON字符串
 ///
 /// # Returns
-/// * `String` - 提取的答案内容，如果解析失败则返回原始内容
+/// * `String` - 提取的答案内容,如果解析失败则返回原始内容
 fn extract_answer_from_json(json_content: &str) -> String {
     // 1) 去除可能的 markdown 代码块标记
     let mut cleaned = json_content.trim().to_string();
@@ -1184,8 +1188,31 @@ fn extract_answer_from_json(json_content: &str) -> String {
         }
     }
 
-    // 5) 回退：返回原始内容
-    println!("⚠️ 未能提取到结构化答案，返回原始内容");
+    // 5) 尝试从中英文"答案:"或"answer:"后面提取文本
+    let text_re = Regex::new(r"(?i)(?:答案|answer)[：:]\s*(.+?)(?:\n|$)").unwrap();
+    if let Some(caps) = text_re.captures(&cleaned) {
+        if let Some(m) = caps.get(1) {
+            let ans = m.as_str().trim().to_string();
+            if !ans.is_empty() {
+                println!("✅ 从\"答案: \"标记后提取到文本: {}", &ans[..std::cmp::min(ans.len(), 100)]);
+                return ans;
+            }
+        }
+    }
+
+    // 6) 如果内容看起来是纯文本答案（不含JSON结构）,直接返回清理后的内容
+    let cleaned_trimmed = cleaned.trim();
+    if cleaned_trimmed.len() > 0 && cleaned_trimmed.len() < 2000 && !cleaned_trimmed.starts_with('{') && !cleaned_trimmed.starts_with('[') {
+        // 检查是否像是一个直接答案（简短文本,不含复杂结构）
+        let lines: Vec<&str> = cleaned_trimmed.lines().filter(|l| !l.trim().is_empty()).collect();
+        if lines.len() <= 3 {
+            println!("✅ 将纯文本内容作为答案使用: {}", &cleaned_trimmed[..std::cmp::min(cleaned_trimmed.len(), 100)]);
+            return cleaned_trimmed.to_string();
+        }
+    }
+
+    // 7) 回退：返回原始内容
+    println!("⚠️ 未能提取到结构化答案,返回原始内容");
     json_content.to_string()
 }
 

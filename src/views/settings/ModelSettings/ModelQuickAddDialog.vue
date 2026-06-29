@@ -30,6 +30,13 @@
             <ModelCategorySwitch v-model="quickAdd.category" :show-summary="false" />
           </div>
         </div>
+        <div class="form-group qa-form-row">
+          <label class="form-label">启用思考</label>
+          <label class="qa-thinking-switch">
+            <input type="checkbox" v-model="quickAdd.enableThinking" />
+            <span class="qa-toggle-slider"></span>
+          </label>
+        </div>
       </div>
 
     </div>
@@ -49,11 +56,11 @@ const emit = defineEmits<{
   (e: 'save', model: any): void
 }>()
 
-const quickAdd = ref({ displayName: '', modelId: '', category: 'text' as 'text' | 'vision' | 'summary' })
+const quickAdd = ref({ displayName: '', modelId: '', category: 'text' as 'text' | 'vision' | 'summary', enableThinking: false })
 
 watch(() => props.show, (newVal) => {
   if (newVal) {
-    quickAdd.value = { displayName: '', modelId: '', category: 'text' }
+    quickAdd.value = { displayName: '', modelId: '', category: 'text', enableThinking: false }
   }
 })
 
@@ -224,6 +231,7 @@ const submitQuickAdd = () => {
     topP: 0.9,
     enabled: true,
     category: quickAdd.value.category as 'text' | 'vision' | 'summary',
+    enableThinking: quickAdd.value.enableThinking,
     jsCode
   }
   emit('save', newModel)
@@ -275,5 +283,47 @@ const submitQuickAdd = () => {
   color: var(--text-secondary);
 }
 
+/* 思考模式切换开关 */
+.qa-thinking-switch {
+  position: relative;
+  display: inline-block;
+  width: 36px;
+  height: 20px;
+  cursor: pointer;
+}
+
+.qa-thinking-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.qa-toggle-slider {
+  position: absolute;
+  inset: 0;
+  background-color: var(--text-secondary, #a0aec0);
+  border-radius: 20px;
+  transition: 0.25s;
+}
+
+.qa-toggle-slider::before {
+  content: "";
+  position: absolute;
+  height: 14px;
+  width: 14px;
+  left: 3px;
+  bottom: 3px;
+  background-color: #fff;
+  border-radius: 50%;
+  transition: 0.25s;
+}
+
+.qa-thinking-switch input:checked + .qa-toggle-slider {
+  background-color: var(--color-primary, #667eea);
+}
+
+.qa-thinking-switch input:checked + .qa-toggle-slider::before {
+  transform: translateX(16px);
+}
 
 </style>
