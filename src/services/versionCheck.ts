@@ -16,7 +16,7 @@ export class VersionCheckService {
   private static readonly API_URL = import.meta.env.DEV
     ? 'http://localhost:5175/latest_version.json'
     : 'https://app.zerror.cc/latest_version.json';
-  private static readonly CURRENT_VERSION = '2.2.5'; // 当前软件版本
+  private static readonly CURRENT_VERSION = '2.2.6-dev'; // 当前软件版本（基于官方2.2.5 + 功能增强）
 
   /**
    * 获取最新版本信息
