@@ -360,11 +360,14 @@
   </div>
 
   <!-- 快速添加模型弹窗 -->
-  <ModelQuickAddDialog 
+  <ModelQuickAddDialog
     :show="showQuickAddDialog"
+    :platform-base-url="selectedPlatform?.baseUrl"
+    :platform-api-key="selectedPlatform?.apiKey"
     @close="showQuickAddDialog = false"
     @save="handleQuickAddSave"
   />
+
 </template>
 
 <script setup lang="ts">
