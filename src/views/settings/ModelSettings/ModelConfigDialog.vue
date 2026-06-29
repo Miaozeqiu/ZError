@@ -3,72 +3,123 @@
   <div v-if="show && marketplaceOpen" class="marketplace-overlay" @click="handleMarketplaceOverlay">
     <div class="marketplace-panel" @click.stop>
       <div class="marketplace-header">
-        <h4 class="marketplace-title">模型广场</h4>
-        <button class="dialog-close" @click="closeMarketplace">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-          </svg>
-        </button>
+        <div class="marketplace-tabs">
+          <button class="marketplace-tab" :class="{ active: marketTab === 'remote' }" @click="marketTab = 'remote'">全部平台</button>
+          <button class="marketplace-tab" :class="{ active: marketTab === 'free' }" @click="switchToFreeTab">免费模型</button>
+        </div>
+        <div class="marketplace-header-actions">
+          <button v-if="marketTab === 'free'" class="btn btn-free-search" :disabled="isSearchingFree" @click="searchFreeModels">
+            {{ isSearchingFree ? '搜索中…' : '🔍 搜索全网免费模型' }}
+          </button>
+          <button class="dialog-close" @click="closeMarketplace">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+          </button>
+        </div>
       </div>
       <div class="marketplace-body">
-        <div class="marketplace-left">
-          <div class="marketplace-list-title">平台</div>
-          <div class="platform-list" v-if="!isLoadingMarket && marketPlatforms.length">
-            <div
-              v-for="p in marketPlatforms"
-              :key="p.id"
-              class="platform-item"
-              :class="{ active: selectedPlatformId === p.id }"
-              @click="selectPlatform(p.id)"
-            >
-              <div class="platform-item-row">
-                <div class="platform-item-icon">
-                  <img v-if="p.icon && isImageIcon(p.icon)" :src="getIconUrl(p.icon)" :alt="p.displayName || p.name || p.id" />
-                  <div v-else class="icon-fallback-small">{{ (p.displayName || p.name || p.id).slice(0,2).toUpperCase() }}</div>
-                </div>
-                <div class="platform-item-info">
-                  <div class="platform-name">{{ p.displayName || p.name || p.id }}</div>
-                  <div class="platform-desc">{{ p.description }}</div>
+        <!-- 全部平台 Tab -->
+        <template v-if="marketTab === 'remote'">
+          <div class="marketplace-left">
+            <div class="marketplace-list-title">平台</div>
+            <div class="platform-list" v-if="!isLoadingMarket && marketPlatforms.length">
+              <div
+                v-for="p in marketPlatforms"
+                :key="p.id"
+                class="platform-item"
+                :class="{ active: selectedPlatformId === p.id }"
+                @click="selectPlatform(p.id)"
+              >
+                <div class="platform-item-row">
+                  <div class="platform-item-icon">
+                    <img v-if="p.icon && isImageIcon(p.icon)" :src="getIconUrl(p.icon)" :alt="p.displayName || p.name || p.id" />
+                    <div v-else class="icon-fallback-small">{{ (p.displayName || p.name || p.id).slice(0,2).toUpperCase() }}</div>
+                  </div>
+                  <div class="platform-item-info">
+                    <div class="platform-name">{{ p.displayName || p.name || p.id }}</div>
+                    <div class="platform-desc">{{ p.description }}</div>
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
-          <div v-else class="marketplace-placeholder">
-            <div v-if="isLoadingMarket">正在加载平台列表…</div>
-            <div v-else-if="marketError">{{ marketError }}</div>
-            <div v-else>暂无平台数据</div>
-          </div>
-        </div>
-        <div class="marketplace-right">
-          <div class="marketplace-list-title">模型</div>
-          <!-- 自定义模型入口 -->
-          <div class="custom-item" @click="chooseCustomModel">
-            <div class="model-header">
-              <div class="model-name">自定义模型</div>
-              <div class="model-tag">手动配置</div>
+            <div v-else class="marketplace-placeholder">
+              <div v-if="isLoadingMarket">正在加载平台列表…</div>
+              <div v-else-if="marketError">{{ marketError }}</div>
+              <div v-else>暂无平台数据</div>
             </div>
-            <div class="model-desc">不依赖预设，直接进入编辑配置。</div>
           </div>
-          <div class="model-list" v-if="selectedPlatform && selectedPlatform.models?.length">
-            <div
-              v-for="m in selectedPlatform.models"
-              :key="m.id || m.name"
-              class="model-item"
-              :class="{ active: selectedModelId === (m.id || m.name) }"
-              @click="selectModel(m)"
-            >
+          <div class="marketplace-right">
+            <div class="marketplace-list-title">模型</div>
+            <div class="custom-item" @click="chooseCustomModel">
               <div class="model-header">
-                <div class="model-name">{{ m.displayName || m.name || m.id }}</div>
-                <div class="model-tag">{{ (m.category === 'vision' ? '视觉' : '文本') }}</div>
+                <div class="model-name">自定义模型</div>
+                <div class="model-tag">手动配置</div>
               </div>
-              <div class="model-desc">{{ m.description }}</div>
+              <div class="model-desc">不依赖预设，直接进入编辑配置。</div>
+            </div>
+            <div class="model-list" v-if="selectedPlatform && selectedPlatform.models?.length">
+              <div
+                v-for="m in selectedPlatform.models"
+                :key="m.id || m.name"
+                class="model-item"
+                :class="{ active: selectedModelId === (m.id || m.name) }"
+                @click="selectModel(m)"
+              >
+                <div class="model-header">
+                  <div class="model-name">{{ m.displayName || m.name || m.id }}</div>
+                  <div class="model-tag">{{ (m.category === 'vision' ? '视觉' : '文本') }}</div>
+                </div>
+                <div class="model-desc">{{ m.description }}</div>
+              </div>
+            </div>
+            <div v-else class="marketplace-placeholder">
+              <div v-if="!selectedPlatformId">请先选择左侧平台</div>
+              <div v-else>此平台暂无模型或加载失败</div>
             </div>
           </div>
-          <div v-else class="marketplace-placeholder">
-            <div v-if="!selectedPlatformId">请先选择左侧平台</div>
-            <div v-else>此平台暂无模型或加载失败</div>
+        </template>
+        <!-- 免费模型 Tab -->
+        <template v-if="marketTab === 'free'">
+          <div class="marketplace-free">
+            <div class="free-search-bar">
+              <input
+                v-model="freeSearchQuery"
+                type="text"
+                class="free-search-input"
+                placeholder="搜索免费模型名称…"
+              />
+            </div>
+            <div v-if="isSearchingFree" class="free-loading">
+              <div class="free-spinner"></div>
+              <span>正在搜索全网免费模型，请稍候…</span>
+            </div>
+            <div v-else-if="freeModelsError" class="free-error">{{ freeModelsError }}</div>
+            <div v-else class="free-model-list">
+              <div
+                v-for="m in filteredFreeModels"
+                :key="m.id"
+                class="free-model-item"
+                @click="selectFreeModel(m)"
+              >
+                <div class="free-model-header">
+                  <div class="free-model-name">{{ m.displayName || m.name || m.id }}</div>
+                  <div class="free-model-badge">{{ m.category === 'vision' ? '🖼️' : '📝' }}</div>
+                </div>
+                <div class="free-model-provider">{{ m.provider }}</div>
+                <div class="free-model-desc">{{ m.description || '免费模型，需自行申请 API Key' }}</div>
+                <div class="free-model-tags">
+                  <span v-if="m.pricing?.inputTokens === 0" class="free-tag free-tag-free">免费</span>
+                  <span v-else-if="m.pricing" class="free-tag">${{ formatPrice(m.pricing.inputTokens) }}/1K tokens</span>
+                  <span class="free-tag free-tag-info">{{ m.apiProtocol || 'OpenAI' }} 协议</span>
+                </div>
+              </div>
+              <div v-if="filteredFreeModels.length === 0" class="marketplace-placeholder">
+                没有找到匹配的免费模型
+              </div>
+            </div>
           </div>
-        </div>
+        </template>
       </div>
     </div>
   </div>
@@ -114,6 +165,17 @@
               <ModelCategorySwitch v-model="formData.category" />
             </div>
 
+            <div class="form-group">
+              <label class="form-label form-label--row">
+                <span>启用思考</span>
+                <label class="switch-toggle">
+                  <input type="checkbox" v-model="formData.enableThinking" />
+                  <span class="switch-slider"></span>
+                </label>
+              </label>
+              <p class="form-hint">开启后，模型会输出思考过程，但响应时间可能明显变长。部分模型/API服务不支持此功能。</p>
+            </div>
+
             <div class="form-actions">
               <button type="button" class="btn btn-secondary" @click="$emit('close')">取消</button>
               <button type="submit" class="btn btn-primary">{{ isEditing ? '保存' : '添加' }}</button>
@@ -157,7 +219,8 @@ const emit = defineEmits<Emits>()
 const formData = ref({
   displayName: '',
   category: 'text' as 'text' | 'vision' | 'summary',
-  jsCode: ''
+  jsCode: '',
+  enableThinking: false
 })
 
 const isEditing = computed(() => !!props.model)
@@ -235,7 +298,8 @@ watch(() => props.model, (newModel) => {
     formData.value = {
       displayName: newModel.displayName,
       category: newModel.category || 'text',
-      jsCode: newModel.jsCode || (newModel.category === 'vision' ? DEFAULT_VISION_JS_CODE : DEFAULT_JS_CODE)
+      jsCode: newModel.jsCode || (newModel.category === 'vision' ? DEFAULT_VISION_JS_CODE : DEFAULT_JS_CODE),
+      enableThinking: newModel.enableThinking === true
     }
     // 若编辑器已存在，确保文档与最新模型代码同步
     nextTick(() => {
@@ -248,7 +312,8 @@ watch(() => props.model, (newModel) => {
     formData.value = {
       displayName: '',
       category: 'text',
-      jsCode: DEFAULT_JS_CODE
+      jsCode: DEFAULT_JS_CODE,
+      enableThinking: false
     }
     // 清空到默认模板，避免残留旧代码
     nextTick(() => {
@@ -295,14 +360,16 @@ watch(() => props.show, async (visible) => {
       formData.value = {
         displayName: props.model.displayName,
         category: props.model.category || 'text',
-        jsCode: props.model.jsCode || (props.model.category === 'vision' ? DEFAULT_VISION_JS_CODE : DEFAULT_JS_CODE)
+        jsCode: props.model.jsCode || (props.model.category === 'vision' ? DEFAULT_VISION_JS_CODE : DEFAULT_JS_CODE),
+        enableThinking: props.model.enableThinking === true
       }
     } else {
       // 非编辑模式但不进市场时，使用默认模板
       formData.value = {
         displayName: '',
         category: 'text',
-        jsCode: DEFAULT_JS_CODE
+        jsCode: DEFAULT_JS_CODE,
+        enableThinking: false
       }
     }
 
@@ -470,6 +537,236 @@ const handleOverlayClick = (event: MouseEvent) => {
   }, 0)
 }
 
+// ===== 免费模型搜索 =====
+const FREE_MODELS_PROVIDERS: MarketplacePlatform[] = [
+  {
+    id: 'free-groq',
+    name: 'Groq',
+    displayName: 'Groq',
+    description: 'Groq LPU 推理引擎，提供极速免费的 LLM 推理',
+    baseUrl: 'https://api.groq.com/openai/v1',
+    icon: '⚡',
+    models: [
+      { id: 'llama-3.3-70b-versatile', name: 'Llama 3.3 70B', displayName: 'Llama 3.3 70B', description: 'Meta Llama 3.3 70B，Groq 免费提供', category: 'text', maxTokens: 8192 },
+      { id: 'llama-3.1-8b-instant', name: 'Llama 3.1 8B', displayName: 'Llama 3.1 8B Instant', description: 'Meta Llama 3.1 8B，极速推理', category: 'text', maxTokens: 8192 },
+      { id: 'mixtral-8x7b-32768', name: 'Mixtral 8x7B', displayName: 'Mixtral 8x7B', description: 'Mistral Mixtral 8x7B，32K 上下文', category: 'text', maxTokens: 32768 },
+      { id: 'gemma2-9b-it', name: 'Gemma 2 9B', displayName: 'Gemma 2 9B IT', description: 'Google Gemma 2 9B', category: 'text', maxTokens: 8192 },
+    ]
+  },
+  {
+    id: 'free-openrouter',
+    name: 'OpenRouter',
+    displayName: 'OpenRouter',
+    description: '聚合多个 AI 模型，含免费模型额度',
+    baseUrl: 'https://openrouter.ai/api/v1',
+    icon: '🌐',
+    models: [
+      { id: 'meta-llama/llama-3.2-3b-instruct:free', name: 'Llama 3.2 3B', displayName: 'Llama 3.2 3B Instruct (Free)', description: 'Meta 最新小模型，完全免费', category: 'text', maxTokens: 8192 },
+      { id: 'microsoft/phi-3-mini-128k-instruct:free', name: 'Phi-3 Mini', displayName: 'Phi-3 Mini 128K (Free)', description: 'Microsoft Phi-3，128K 上下文', category: 'text', maxTokens: 128000 },
+      { id: 'mistralai/mistral-7b-instruct:free', name: 'Mistral 7B', displayName: 'Mistral 7B Instruct (Free)', description: 'Mistral 7B 开源模型', category: 'text', maxTokens: 8192 },
+      { id: 'qwen/qwen-2-7b-instruct:free', name: 'Qwen 2 7B', displayName: 'Qwen 2 7B Instruct (Free)', description: '阿里通义千问 7B', category: 'text', maxTokens: 32768 },
+      { id: 'google/gemma-2-9b-it:free', name: 'Gemma 2 9B', displayName: 'Gemma 2 9B IT (Free)', description: 'Google Gemma 2', category: 'text', maxTokens: 8192 },
+    ]
+  },
+  {
+    id: 'free-google',
+    name: 'Google AI',
+    displayName: 'Google AI Studio',
+    description: 'Google Gemini API，有免费额度',
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+    icon: '🔮',
+    models: [
+      { id: 'gemini-2.0-flash-exp', name: 'Gemini 2.0 Flash', displayName: 'Gemini 2.0 Flash', description: 'Google 最新免费模型，快速且强大', category: 'text', maxTokens: 8192 },
+      { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', displayName: 'Gemini 1.5 Flash', description: '高速免费模型', category: 'text', maxTokens: 32768 },
+      { id: 'gemini-1.5-flash-8b', name: 'Gemini 1.5 Flash 8B', displayName: 'Gemini 1.5 Flash 8B', description: '轻量级免费模型', category: 'text', maxTokens: 32768 },
+    ]
+  },
+  {
+    id: 'free-deepseek',
+    name: 'DeepSeek',
+    displayName: 'DeepSeek',
+    description: 'DeepSeek 官方 API，价格极低',
+    baseUrl: 'https://api.deepseek.com',
+    icon: '🧠',
+    models: [
+      { id: 'deepseek-chat', name: 'DeepSeek V3', displayName: 'DeepSeek V3', description: 'DeepSeek 最新版，极低价格', category: 'text', maxTokens: 32768 },
+      { id: 'deepseek-reasoner', name: 'DeepSeek R1', displayName: 'DeepSeek R1', description: 'DeepSeek 推理模型（思考模型）', category: 'text', maxTokens: 32768, enableThinking: true },
+    ]
+  },
+  {
+    id: 'free-github',
+    name: 'GitHub Models',
+    displayName: 'GitHub Models',
+    description: 'GitHub Marketplace 免费模型，需 GitHub Token',
+    baseUrl: 'https://models.inference.ai.azure.com',
+    icon: '🐙',
+    models: [
+      { id: 'gpt-4o-mini', name: 'GPT-4o Mini', displayName: 'GPT-4o Mini', description: 'OpenAI 最新小模型，GitHub 免费提供', category: 'text', maxTokens: 16384 },
+      { id: 'gpt-4o', name: 'GPT-4o', displayName: 'GPT-4o', description: 'OpenAI GPT-4o，GitHub 有限免费', category: 'text', maxTokens: 16384 },
+      { id: 'Phi-3.5-MoE-instruct', name: 'Phi-3.5 MoE', displayName: 'Phi-3.5 MoE', description: 'Microsoft Phi-3.5 MoE', category: 'text', maxTokens: 32768 },
+      { id: 'AI21-Jamba-1.5-Mini', name: 'Jamba 1.5 Mini', displayName: 'Jamba 1.5 Mini', description: 'AI21 Jamba 1.5', category: 'text', maxTokens: 256000 },
+    ]
+  },
+]
+
+interface FreeModelItem {
+  id: string
+  name?: string
+  displayName?: string
+  description?: string
+  category?: 'text' | 'vision'
+  provider?: string
+  providerBaseUrl?: string
+  pricing?: { inputTokens: number; outputTokens: number }
+  enableThinking?: boolean
+  apiProtocol?: string
+  icon?: string
+}
+
+const marketTab = ref<'remote' | 'free'>('remote')
+const freeSearchQuery = ref('')
+const isSearchingFree = ref(false)
+const freeModelsError = ref<string | null>(null)
+const discoveredFreeModels = ref<FreeModelItem[]>([])
+
+const switchToFreeTab = () => {
+  marketTab.value = 'free'
+  // 首次打开免费tab时，加载内置列表
+  if (discoveredFreeModels.value.length === 0) {
+    loadBuiltinFreeModels()
+  }
+}
+
+const loadBuiltinFreeModels = () => {
+  const models: FreeModelItem[] = []
+  for (const provider of FREE_MODELS_PROVIDERS) {
+    for (const m of (provider.models || [])) {
+      models.push({
+        id: m.id || m.name || '',
+        name: m.name,
+        displayName: m.displayName || m.name || m.id,
+        description: m.description || provider.description,
+        category: m.category || 'text',
+        provider: provider.displayName || provider.name,
+        providerBaseUrl: provider.baseUrl,
+        enableThinking: m.enableThinking,
+        apiProtocol: 'OpenAI',
+        icon: provider.icon,
+      })
+    }
+  }
+  discoveredFreeModels.value = models
+}
+
+const filteredFreeModels = computed(() => {
+  const q = freeSearchQuery.value.trim().toLowerCase()
+  if (!q) return discoveredFreeModels.value
+  return discoveredFreeModels.value.filter(m =>
+    (m.displayName?.toLowerCase().includes(q)) ||
+    (m.name?.toLowerCase().includes(q)) ||
+    (m.provider?.toLowerCase().includes(q)) ||
+    (m.description?.toLowerCase().includes(q))
+  )
+})
+
+const formatPrice = (price?: number): string => {
+  if (price === undefined || price === null) return '免费'
+  if (price === 0) return '免费'
+  return price.toFixed(6)
+}
+
+const searchFreeModels = async () => {
+  isSearchingFree.value = true
+  freeModelsError.value = null
+  try {
+    // 先加载内置免费模型
+    loadBuiltinFreeModels()
+
+    // 尝试从 OpenRouter API 获取免费模型
+    const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http')
+    let orResponse: Response | null = null
+    try {
+      orResponse = await tauriFetch('https://openrouter.ai/api/v1/models', { method: 'GET' })
+    } catch {
+      try {
+        orResponse = await fetch('https://openrouter.ai/api/v1/models')
+      } catch {}
+    }
+
+    if (orResponse?.ok) {
+      const data = await orResponse.json()
+      if (data?.data && Array.isArray(data.data)) {
+        const existingIds = new Set(discoveredFreeModels.value.map(m => m.id))
+        const newModels: FreeModelItem[] = []
+
+        for (const model of data.data) {
+          // 只取免费模型（定价为空或价格为 0 的）
+          const pricing = model.pricing
+          const isFree = !pricing || (pricing.prompt === 0 && pricing.completion === 0)
+          if (!isFree) continue
+
+          const modelId = model.id || ''
+          if (existingIds.has(modelId)) continue
+          existingIds.add(modelId)
+
+          newModels.push({
+            id: modelId,
+            name: model.id,
+            displayName: model.name || model.id,
+            description: model.description || `OpenRouter 免费模型`,
+            category: 'text' as const,
+            provider: 'OpenRouter',
+            providerBaseUrl: 'https://openrouter.ai/api/v1',
+            apiProtocol: 'OpenAI',
+            icon: '🌐',
+          })
+        }
+
+        if (newModels.length > 0) {
+          discoveredFreeModels.value = [...newModels, ...discoveredFreeModels.value]
+        }
+      }
+    }
+  } catch (err: any) {
+    // 内置免费模型已加载，不报错
+    console.warn('搜索免费模型失败（内置列表已加载）:', err)
+  } finally {
+    isSearchingFree.value = false
+  }
+}
+
+const selectFreeModel = (m: FreeModelItem) => {
+  // 选择免费模型后自动填充到表单
+  formData.value.displayName = m.displayName || m.name || m.id
+  formData.value.category = m.category || 'text'
+  formData.value.enableThinking = m.enableThinking === true
+
+  // 生成 jsCode
+  const baseUrl = m.providerBaseUrl || ''
+  const modelId = m.id
+  formData.value.jsCode = `
+/**
+ * OpenAI 兼容协议 - 免费模型
+ */
+function transform(prompt, context) {
+  const messages = [
+    { role: 'system', content: '你是一个答题助手。请直接给出答案，不要额外解释。' },
+    { role: 'user', content: prompt }
+  ];
+  return {
+    ...context.request,
+    model: '${modelId}',
+    messages: messages,
+    stream: true,
+  };
+}
+`.trim()
+
+  // 关闭市场
+  marketplaceOpen.value = false
+  void rebuildEditorWithDoc(formData.value.jsCode)
+}
+
 // ===== 模型广场（远程 JSON 选择） =====
 interface MarketplaceModel {
   id?: string
@@ -482,6 +779,7 @@ interface MarketplaceModel {
   temperature?: number
   topP?: number
   enabled?: boolean
+  enableThinking?: boolean
 }
 
 interface MarketplacePlatform {
@@ -613,7 +911,8 @@ const handleSubmit = () => {
   const modelData: Partial<AIModel> = {
     displayName: formData.value.displayName.trim(),
     category: formData.value.category,
-    jsCode: formData.value.jsCode
+    jsCode: formData.value.jsCode,
+    enableThinking: formData.value.enableThinking
   }
 
   // 如果是编辑模式，保留原有的id
@@ -1163,5 +1462,255 @@ const handleSubmit = () => {
 .model-desc { font-size: 12px; color: var(--text-secondary, #718096); margin-top: 6px; }
 
 .marketplace-placeholder { font-size: 13px; color: var(--text-secondary, #718096); padding: 12px; }
+
+/* 市场 tabs */
+.marketplace-tabs {
+  display: flex;
+  gap: 4px;
+}
+
+.marketplace-tab {
+  padding: 6px 16px;
+  border: 1px solid var(--border-color, #e2e8f0);
+  background: var(--bg-primary, #fff);
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-secondary, #718096);
+  transition: all 0.2s;
+}
+
+.marketplace-tab.active {
+  background: var(--color-primary, #667eea);
+  color: #fff;
+  border-color: var(--color-primary, #667eea);
+}
+
+.marketplace-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn-free-search {
+  padding: 6px 12px;
+  border: 1px solid var(--color-primary, #667eea);
+  background: transparent;
+  color: var(--color-primary, #667eea);
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 12px;
+  white-space: nowrap;
+  transition: all 0.2s;
+}
+
+.btn-free-search:hover:not(:disabled) {
+  background: var(--color-primary, #667eea);
+  color: #fff;
+}
+
+.btn-free-search:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 免费模型面板 */
+.marketplace-free {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 12px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.free-search-bar {
+  margin-bottom: 12px;
+  flex-shrink: 0;
+}
+
+.free-search-input {
+  width: 100%;
+  padding: 10px 14px;
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 8px;
+  font-size: 14px;
+  background: var(--bg-primary, #fff);
+  color: var(--text-primary, #2d3748);
+  outline: none;
+  box-sizing: border-box;
+}
+
+.free-search-input:focus {
+  border-color: var(--color-primary, #667eea);
+  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.15);
+}
+
+.free-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 40px;
+  color: var(--text-secondary, #718096);
+  font-size: 14px;
+}
+
+.free-spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--border-color, #e2e8f0);
+  border-top-color: var(--color-primary, #667eea);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.free-error {
+  padding: 20px;
+  text-align: center;
+  color: var(--text-error, #e53e3e);
+  font-size: 14px;
+}
+
+.free-model-list {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.free-model-item {
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: var(--bg-primary, #fff);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.free-model-item:hover {
+  border-color: var(--color-primary, #667eea);
+  background: var(--hover-bg, #f7fafc);
+}
+
+.free-model-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.free-model-name {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text-primary, #2d3748);
+}
+
+.free-model-badge {
+  font-size: 16px;
+}
+
+.free-model-provider {
+  font-size: 12px;
+  color: var(--color-primary, #667eea);
+  margin-bottom: 4px;
+}
+
+.free-model-desc {
+  font-size: 12px;
+  color: var(--text-secondary, #718096);
+  margin-bottom: 6px;
+}
+
+.free-model-tags {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.free-tag {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--bg-tertiary, #f7fafc);
+  color: var(--text-secondary, #718096);
+  border: 1px solid var(--border-color, #e2e8f0);
+}
+
+.free-tag-free {
+  background: #c6f6d5;
+  color: #276749;
+  border-color: #9ae6b4;
+  font-weight: 600;
+}
+
+.free-tag-info {
+  background: #bee3f8;
+  color: #2b6cb0;
+  border-color: #90cdf4;
+}
+
+/* 切换开关样式 */
+.form-label--row {
+  display: flex !important;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+}
+
+.form-hint {
+  font-size: 12px;
+  color: var(--text-secondary, #718096);
+  margin: 4px 0 0 0;
+  line-height: 1.4;
+}
+
+.switch-toggle {
+  position: relative;
+  display: inline-block;
+  width: 40px;
+  height: 22px;
+  flex-shrink: 0;
+}
+
+.switch-toggle input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.switch-slider {
+  position: absolute;
+  cursor: pointer;
+  inset: 0;
+  background-color: var(--bg-tertiary, #cbd5e0);
+  border-radius: 22px;
+  transition: 0.3s;
+}
+
+.switch-slider::before {
+  content: "";
+  position: absolute;
+  height: 16px;
+  width: 16px;
+  left: 3px;
+  bottom: 3px;
+  background-color: white;
+  border-radius: 50%;
+  transition: 0.3s;
+}
+
+.switch-toggle input:checked + .switch-slider {
+  background-color: var(--color-primary, #667eea);
+}
+
+.switch-toggle input:checked + .switch-slider::before {
+  transform: translateX(18px);
+}
 
 </style>
