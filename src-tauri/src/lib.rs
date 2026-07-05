@@ -87,6 +87,7 @@ pub fn run() {
             search_questions_fuzzy,
             get_folders,
             get_ai_responses,
+            get_paginated_questions,
             get_questions_recursive,
             get_pending_correction_questions,
             get_pending_correction_question_count,

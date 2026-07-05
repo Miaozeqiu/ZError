@@ -353,13 +353,13 @@ watch(() => props.collapseTrigger, () => {
 // 分页相关状态
 const currentPage = ref(1);
 const pageSize = ref(20); // 每页显示20条题目
-const allQuestions = ref<AIResponse[]>([]); // 存储所有题目数据
+const totalQuestions = ref(0);
+const pageBeforeSearch = ref(1);
 
 // 搜索相关状态
 const searchTerm = ref('');
 const isSearchMode = ref(false);
 const searchDebounceTimer = ref<number | null>(null);
-const originalQuestions = ref<AIResponse[]>([]); // 保存原始题目列表
 const highlightTerms = ref<string[]>([]); // 用于高亮的关键词
 const createTimeSortOrder = ref<'desc' | 'asc'>('desc');
 
@@ -424,10 +424,28 @@ const toggleExportMenu = () => {
   exportMenuOpen.value = !exportMenuOpen.value;
 };
 
+const getExportQuestions = async (): Promise<AIResponse[]> => {
+  if (isSearchMode.value) {
+    return sortQuestionListByCreateTime(questions.value);
+  }
+
+  if (props.selectedFolderId === PENDING_CORRECTION_FOLDER_ID) {
+    return sortQuestionListByCreateTime(await databaseService.getPendingCorrectionQuestions());
+  }
+
+  if (props.selectedFolderId && props.selectedFolderId !== 'error') {
+    return sortQuestionListByCreateTime(
+      await databaseService.getQuestionsFromFolderAndSubfolders(parseInt(props.selectedFolderId))
+    );
+  }
+
+  return sortQuestionListByCreateTime(await databaseService.getAIResponses());
+};
+
 const exportFile = async (format: 'csv' | 'xlsx' | 'docx' | 'pdf' | 'txt') => {
   exportMenuOpen.value = false;
   
-  if (allQuestions.value.length === 0) {
+  if (totalQuestions.value === 0 && questions.value.length === 0) {
     alert('当前没有题目可导出');
     return;
   }
@@ -461,7 +479,8 @@ const exportFile = async (format: 'csv' | 'xlsx' | 'docx' | 'pdf' | 'txt') => {
     loading.value = true;
 
     // 2. 生成数据
-    const data = await generateExportData(allQuestions.value, format as ExportFormat);
+    const exportQuestions = await getExportQuestions();
+    const data = await generateExportData(exportQuestions, format as ExportFormat);
 
     // 3. 写入文件
     await writeFile(filePath, data);
@@ -641,8 +660,13 @@ const canPaste = computed(() => {
 const isPendingCorrectionFolder = computed(() => props.selectedFolderId === PENDING_CORRECTION_FOLDER_ID);
 
 // 分页相关计算属性
-const totalQuestions = computed(() => allQuestions.value.length);
-const totalPages = computed(() => Math.ceil(totalQuestions.value / pageSize.value));
+const totalPages = computed(() => {
+  if (isSearchMode.value) {
+    return questions.value.length > 0 ? 1 : 0;
+  }
+
+  return Math.ceil(totalQuestions.value / pageSize.value);
+});
 
 const getQuestionCreateTime = (question: AIResponse) => {
   const timestamp = new Date(question.create_time || '').getTime();
@@ -657,72 +681,79 @@ const sortQuestionListByCreateTime = (list: AIResponse[]) => {
 };
 
 const applyCreateTimeSort = () => {
-  allQuestions.value = sortQuestionListByCreateTime(allQuestions.value);
-
   if (isSearchMode.value) {
     questions.value = sortQuestionListByCreateTime(questions.value);
-    if (originalQuestions.value.length > 0) {
-      originalQuestions.value = sortQuestionListByCreateTime(originalQuestions.value);
-    }
+    return;
   }
 };
 
-// 当前页显示的题目
-const paginatedQuestions = computed(() => {
-  const start = (currentPage.value - 1) * pageSize.value;
-  const end = start + pageSize.value;
-  return allQuestions.value.slice(start, end);
-});
-
-// 监听分页数据变化，更新显示的题目
-watch(paginatedQuestions, (newQuestions) => {
-  questions.value = newQuestions;
-}, { immediate: true });
-
 // 分页控制方法
 const goToPreviousPage = () => {
-  if (currentPage.value > 1) {
-    currentPage.value--;
+  if (!isSearchMode.value && currentPage.value > 1) {
+    loadQuestions(props.selectedFolderId, currentPage.value - 1);
   }
 };
 
 const goToNextPage = () => {
-  if (currentPage.value < totalPages.value) {
-    currentPage.value++;
+  if (!isSearchMode.value && currentPage.value < totalPages.value) {
+    loadQuestions(props.selectedFolderId, currentPage.value + 1);
   }
 };
 
 const goToPage = (page: number) => {
-  if (page >= 1 && page <= totalPages.value) {
-    currentPage.value = page;
+  if (!isSearchMode.value && page >= 1 && page <= totalPages.value) {
+    loadQuestions(props.selectedFolderId, page);
   }
 };
 
 const toggleCreateTimeSort = () => {
   createTimeSortOrder.value = createTimeSortOrder.value === 'desc' ? 'asc' : 'desc';
   applyCreateTimeSort();
+
+  if (!isSearchMode.value) {
+    loadQuestions(props.selectedFolderId, currentPage.value);
+  }
 };
 
+const fetchQuestionPage = async (folderId?: string | null, page = 1) => {
+  if (folderId === PENDING_CORRECTION_FOLDER_ID) {
+    return databaseService.getPaginatedQuestions({
+      pendingCorrectionOnly: true,
+      page,
+      pageSize: pageSize.value,
+      sortOrder: createTimeSortOrder.value,
+    });
+  }
 
+  if (folderId && folderId !== 'error') {
+    return databaseService.getPaginatedQuestions({
+      folderId: parseInt(folderId),
+      page,
+      pageSize: pageSize.value,
+      sortOrder: createTimeSortOrder.value,
+    });
+  }
 
+  return databaseService.getPaginatedQuestions({
+    page,
+    pageSize: pageSize.value,
+    sortOrder: createTimeSortOrder.value,
+  });
+};
 
-
-const loadQuestions = async (folderId?: string | null) => {
+const loadQuestions = async (folderId?: string | null, requestedPage = 1) => {
   try {
     loading.value = true;
 
-    console.log('QuestionList: loadQuestions 被调用', { folderId, type: typeof folderId });
+    console.log('QuestionList: loadQuestions 被调用', { folderId, page: requestedPage, type: typeof folderId });
 
     // 清除搜索状态
     if (isSearchMode.value) {
       searchTerm.value = '';
       isSearchMode.value = false;
-      originalQuestions.value = [];
+      pageBeforeSearch.value = 1;
     }
 
-    // 重置分页到第一页
-    currentPage.value = 1;
-    
     // 切换文件夹时清空选择状态
     selectedQuestions.value.clear();
     updateSelectAllState();
@@ -730,7 +761,6 @@ const loadQuestions = async (folderId?: string | null) => {
     if (folderId === PENDING_CORRECTION_FOLDER_ID) {
       console.log('QuestionList: 加载待修正题目');
       folderPath.value = [{ id: -1, name: '待修正' }];
-      allQuestions.value = await databaseService.getPendingCorrectionQuestions();
     } else if (folderId && folderId !== 'error') {
       const folderIdNum = parseInt(folderId);
       console.log('QuestionList: 解析文件夹ID', { original: folderId, parsed: folderIdNum });
@@ -743,22 +773,28 @@ const loadQuestions = async (folderId?: string | null) => {
         console.error('获取文件夹路径失败:', error);
         folderPath.value = [];
       }
-
-      // 使用新的方法获取文件夹及其所有子文件夹的题目
-      allQuestions.value = await databaseService.getQuestionsFromFolderAndSubfolders(folderIdNum);
     } else {
       console.log('QuestionList: 获取所有题目');
       folderPath.value = [];
-      // 如果没有选择文件夹，显示所有题目
-      allQuestions.value = await databaseService.getAIResponses();
     }
 
-    applyCreateTimeSort();
+    const result = await fetchQuestionPage(folderId, requestedPage);
+    const maxPage = Math.max(1, Math.ceil(result.total / pageSize.value));
 
-    console.log('题目加载成功:', allQuestions.value.length);
+    if (result.total > 0 && requestedPage > maxPage) {
+      await loadQuestions(folderId, maxPage);
+      return;
+    }
+
+    questions.value = result.items;
+    totalQuestions.value = result.total;
+    currentPage.value = result.total === 0 ? 1 : Math.min(requestedPage, maxPage);
+
+    console.log('题目加载成功:', { total: totalQuestions.value, currentPage: currentPage.value, pageSize: pageSize.value });
   } catch (error) {
     console.error('加载题目失败:', error);
-    allQuestions.value = [];
+    questions.value = [];
+    totalQuestions.value = 0;
     folderPath.value = [];
   } finally {
     loading.value = false;
@@ -776,30 +812,7 @@ const refreshData = async () => {
       return;
     }
 
-    const savedPage = currentPage.value;
-
-    if (props.selectedFolderId === PENDING_CORRECTION_FOLDER_ID) {
-      folderPath.value = [{ id: -1, name: '待修正' }];
-      allQuestions.value = await databaseService.getPendingCorrectionQuestions();
-    } else if (props.selectedFolderId && props.selectedFolderId !== 'error') {
-      const folderIdNum = parseInt(props.selectedFolderId);
-      try {
-        folderPath.value = await databaseService.getFolderPath(folderIdNum);
-      } catch (error) {
-        console.error('获取文件夹路径失败:', error);
-        folderPath.value = [];
-      }
-      allQuestions.value = await databaseService.getQuestionsFromFolderAndSubfolders(folderIdNum);
-    } else {
-      folderPath.value = [];
-      allQuestions.value = await databaseService.getAIResponses();
-    }
-
-    applyCreateTimeSort();
-
-    // 恢复到刷新前的页码（若超出范围则回退到最后一页）
-    const pages = Math.max(1, Math.ceil(allQuestions.value.length / pageSize.value));
-    currentPage.value = Math.min(savedPage, pages);
+    await loadQuestions(props.selectedFolderId, currentPage.value);
   } catch (error) {
     console.error('刷新题目失败:', error);
   } finally {
@@ -892,8 +905,6 @@ const replaceQuestionInList = (list: AIResponse[], updatedQuestion: AIResponse) 
 
 const updateQuestionLocally = (updatedQuestion: AIResponse) => {
   replaceQuestionInList(questions.value, updatedQuestion);
-  replaceQuestionInList(allQuestions.value, updatedQuestion);
-  replaceQuestionInList(originalQuestions.value, updatedQuestion);
 
   if (selectedQuestion.value?.id === updatedQuestion.id) {
     selectedQuestion.value = updatedQuestion;
@@ -903,16 +914,15 @@ const updateQuestionLocally = (updatedQuestion: AIResponse) => {
 };
 
 const removeQuestionLocally = (questionId: number) => {
-  const removeFromList = (list: AIResponse[]) => {
-    const questionIndex = list.findIndex(q => q.id === questionId);
-    if (questionIndex !== -1) {
-      list.splice(questionIndex, 1);
-    }
-  };
+  const questionIndex = questions.value.findIndex(q => q.id === questionId);
+  if (questionIndex !== -1) {
+    questions.value.splice(questionIndex, 1);
+  }
 
-  removeFromList(questions.value);
-  removeFromList(allQuestions.value);
-  removeFromList(originalQuestions.value);
+  if (totalQuestions.value > 0) {
+    totalQuestions.value--;
+  }
+
   selectedQuestions.value.delete(questionId);
   updateSelectAllState();
 
@@ -1108,7 +1118,8 @@ const hideResizeCursor = () => {
 
 // 监听选中的文件夹变化
 watch(() => props.selectedFolderId, (newFolderId) => {
-  loadQuestions(newFolderId);
+  currentPage.value = 1;
+  loadQuestions(newFolderId, 1);
 }, { immediate: true });
 
 // 搜索相关方法
@@ -1132,12 +1143,11 @@ const performSearch = async () => {
 
   try {
     loading.value = true;
-    isSearchMode.value = true;
-
-    // 如果还没有保存原始数据，先保存
-    if (originalQuestions.value.length === 0 && questions.value.length > 0) {
-      originalQuestions.value = [...questions.value];
+    if (!isSearchMode.value) {
+      pageBeforeSearch.value = currentPage.value;
     }
+    isSearchMode.value = true;
+    currentPage.value = 1;
 
     // 获取当前选中的文件夹ID
     const currentFolderId =
@@ -1162,7 +1172,8 @@ const performSearch = async () => {
     // 执行搜索
     if (props.selectedFolderId === PENDING_CORRECTION_FOLDER_ID) {
       const keyword = searchTerm.value.trim().toLowerCase();
-      questions.value = sortQuestionListByCreateTime(allQuestions.value.filter(question =>
+      const pendingQuestions = await databaseService.getPendingCorrectionQuestions();
+      questions.value = sortQuestionListByCreateTime(pendingQuestions.filter(question =>
         question.question.toLowerCase().includes(keyword)
       ));
     } else {
@@ -1170,6 +1181,8 @@ const performSearch = async () => {
         await databaseService.searchQuestionsByTitle(searchTerm.value.trim(), currentFolderId)
       );
     }
+
+    totalQuestions.value = questions.value.length;
 
     console.log(`搜索"${searchTerm.value}"找到 ${questions.value.length} 条结果`);
   } catch (error) {
@@ -1190,14 +1203,7 @@ const clearSearch = () => {
     searchDebounceTimer.value = null;
   }
 
-  // 恢复原始题目列表
-  if (originalQuestions.value.length > 0) {
-    questions.value = [...originalQuestions.value];
-    originalQuestions.value = [];
-  } else {
-    // 如果没有原始数据，重新加载
-    loadQuestions(props.selectedFolderId);
-  }
+  loadQuestions(props.selectedFolderId, pageBeforeSearch.value || 1);
 };
 
 // 高亮搜索关键词
@@ -1329,7 +1335,7 @@ const deleteQuestion = async () => {
     await databaseService.deleteQuestion(selectedQuestion.value.id);
     console.log('题目删除成功');
     // 重新加载题目列表
-    await loadQuestions();
+    await loadQuestions(props.selectedFolderId, currentPage.value);
   } catch (error) {
     console.error('删除题目失败:', error);
     alert('删除题目失败: ' + (error as Error).message);
@@ -1366,7 +1372,7 @@ const confirmBatchDeleteQuestions = async () => {
     await databaseService.deleteQuestions(batchDeleteDialog.value.questionIds);
     console.log(`成功删除 ${batchDeleteDialog.value.questionIds.length} 个题目`);
     selectedQuestions.value.clear();
-    await loadQuestions();
+    await loadQuestions(props.selectedFolderId, currentPage.value);
     cancelBatchDeleteQuestions();
   } catch (error) {
     console.error('批量删除题目失败:', error);
@@ -1463,7 +1469,7 @@ const pasteQuestion = async () => {
 
     // 使用nextTick确保DOM更新完成后再刷新
     await nextTick();
-    await loadQuestions(props.selectedFolderId);
+    await loadQuestions(props.selectedFolderId, currentPage.value);
 
     // 发射事件通知父组件刷新文件夹数据
     emit('question-pasted');
@@ -1535,7 +1541,7 @@ const handleQuestionSubmit = async (questionData: any) => {
     hideAddQuestionDialog();
 
     // 重新加载题目列表
-    await loadQuestions(props.selectedFolderId);
+    await loadQuestions(props.selectedFolderId, 1);
 
     // 发出事件通知父组件刷新文件夹统计
     emit('question-added');

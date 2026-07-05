@@ -249,6 +249,10 @@ fn compute_query_match_score(query: &str, candidate: &str) -> Option<f64> {
     Some(char_similarity * 0.7 + coverage * 0.3)
 }
 
+fn is_exact_match_score(score: f64) -> bool {
+    (score - 1.0).abs() <= f64::EPSILON
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AIResponse {
     pub id: i64,
@@ -297,6 +301,12 @@ pub struct FolderStat {
 pub struct FolderPathItem {
     pub id: i64,
     pub name: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PaginatedAIResponses {
+    pub items: Vec<AIResponse>,
+    pub total: i64,
 }
 
 fn get_db_path() -> String {
@@ -514,6 +524,162 @@ pub async fn get_ai_responses(folder_id: Option<i64>) -> Result<Vec<AIResponse>,
         responses.push(row.map_err(|e| format!("{}", e))?);
     }
     Ok(responses)
+}
+
+#[tauri::command]
+pub async fn get_paginated_questions(
+    folder_id: Option<i64>,
+    pending_correction_only: bool,
+    page: i64,
+    page_size: i64,
+    sort_order: Option<String>,
+) -> Result<PaginatedAIResponses, String> {
+    let conn = get_conn()?;
+    let page = page.max(1);
+    let page_size = page_size.clamp(1, 200);
+    let offset = (page - 1) * page_size;
+    let sort_direction = if matches!(sort_order.as_deref(), Some("asc")) {
+        "ASC"
+    } else {
+        "DESC"
+    };
+
+    let (total, items) = if pending_correction_only {
+        let total: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM AIResponses WHERE COALESCE(IsPendingCorrection, 0) = 1",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|e| format!("{}", e))?;
+
+        let data_query = format!(
+            "SELECT ar.Id, ar.Question, ar.Options, ar.Answer, ar.QuestionType, ar.FolderId, f.Name as FolderName, ar.CreateTime, ar.IsAi, COALESCE(ar.IsPendingCorrection, 0)
+             FROM AIResponses ar
+             LEFT JOIN Folders f ON ar.FolderId = f.Id
+             WHERE COALESCE(ar.IsPendingCorrection, 0) = 1
+             ORDER BY ar.CreateTime {}
+             LIMIT ? OFFSET ?",
+            sort_direction
+        );
+
+        let mut stmt = conn.prepare(&data_query).map_err(|e| format!("{}", e))?;
+        let rows = stmt
+            .query_map(rusqlite::params![page_size, offset], map_ai_response_row)
+            .map_err(|e| format!("{}", e))?;
+
+        let mut responses = Vec::new();
+        for row in rows {
+            responses.push(row.map_err(|e| format!("{}", e))?);
+        }
+
+        (total, responses)
+    } else if let Some(folder_id) = folder_id {
+        if folder_id == 0 {
+            let total: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM AIResponses WHERE FolderId = 0",
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(|e| format!("{}", e))?;
+
+            let data_query = format!(
+                "SELECT ar.Id, ar.Question, ar.Options, ar.Answer, ar.QuestionType, ar.FolderId, f.Name as FolderName, ar.CreateTime, ar.IsAi, COALESCE(ar.IsPendingCorrection, 0)
+                 FROM AIResponses ar
+                 INNER JOIN Folders f ON ar.FolderId = f.Id
+                 WHERE ar.FolderId = 0
+                 ORDER BY ar.CreateTime {}
+                 LIMIT ? OFFSET ?",
+                sort_direction
+            );
+
+            let mut stmt = conn.prepare(&data_query).map_err(|e| format!("{}", e))?;
+            let rows = stmt
+                .query_map(rusqlite::params![page_size, offset], map_ai_response_row)
+                .map_err(|e| format!("{}", e))?;
+
+            let mut responses = Vec::new();
+            for row in rows {
+                responses.push(row.map_err(|e| format!("{}", e))?);
+            }
+
+            (total, responses)
+        } else {
+            let total: i64 = conn
+                .query_row(
+                    "WITH RECURSIVE folder_tree AS (
+                       SELECT Id, Name, ParentId FROM Folders WHERE Id = ?
+                       UNION ALL
+                       SELECT f.Id, f.Name, f.ParentId FROM Folders f
+                       INNER JOIN folder_tree ft ON f.ParentId = ft.Id
+                     )
+                     SELECT COUNT(*)
+                     FROM AIResponses ar
+                     INNER JOIN folder_tree ft ON ar.FolderId = ft.Id",
+                    rusqlite::params![folder_id],
+                    |row| row.get(0),
+                )
+                .map_err(|e| format!("{}", e))?;
+
+            let data_query = format!(
+                "WITH RECURSIVE folder_tree AS (
+                   SELECT Id, Name, ParentId FROM Folders WHERE Id = ?
+                   UNION ALL
+                   SELECT f.Id, f.Name, f.ParentId FROM Folders f
+                   INNER JOIN folder_tree ft ON f.ParentId = ft.Id
+                 )
+                 SELECT
+                   ar.Id, ar.Question, ar.Options, ar.Answer, ar.QuestionType,
+                   ar.FolderId, f.Name as FolderName, ar.CreateTime, ar.IsAi, COALESCE(ar.IsPendingCorrection, 0)
+                 FROM AIResponses ar
+                 INNER JOIN folder_tree ft ON ar.FolderId = ft.Id
+                 INNER JOIN Folders f ON ar.FolderId = f.Id
+                 ORDER BY ar.CreateTime {}
+                 LIMIT ? OFFSET ?",
+                sort_direction
+            );
+
+            let mut stmt = conn.prepare(&data_query).map_err(|e| format!("{}", e))?;
+            let rows = stmt
+                .query_map(rusqlite::params![folder_id, page_size, offset], map_ai_response_row)
+                .map_err(|e| format!("{}", e))?;
+
+            let mut responses = Vec::new();
+            for row in rows {
+                responses.push(row.map_err(|e| format!("{}", e))?);
+            }
+
+            (total, responses)
+        }
+    } else {
+        let total: i64 = conn
+            .query_row("SELECT COUNT(*) FROM AIResponses", [], |row| row.get(0))
+            .map_err(|e| format!("{}", e))?;
+
+        let data_query = format!(
+            "SELECT ar.Id, ar.Question, ar.Options, ar.Answer, ar.QuestionType, ar.FolderId, f.Name as FolderName, ar.CreateTime, ar.IsAi, COALESCE(ar.IsPendingCorrection, 0)
+             FROM AIResponses ar
+             LEFT JOIN Folders f ON ar.FolderId = f.Id
+             ORDER BY ar.CreateTime {}
+             LIMIT ? OFFSET ?",
+            sort_direction
+        );
+
+        let mut stmt = conn.prepare(&data_query).map_err(|e| format!("{}", e))?;
+        let rows = stmt
+            .query_map(rusqlite::params![page_size, offset], map_ai_response_row)
+            .map_err(|e| format!("{}", e))?;
+
+        let mut responses = Vec::new();
+        for row in rows {
+            responses.push(row.map_err(|e| format!("{}", e))?);
+        }
+
+        (total, responses)
+    };
+
+    Ok(PaginatedAIResponses { items, total })
 }
 
 #[tauri::command]
@@ -1254,7 +1420,11 @@ pub async fn query_database(
                             _ => None,
                         };
 
-                        if (require_option_match || has_query_options) && option_similarity.is_none() {
+                        let is_exact_title_match = is_exact_match_score(title_similarity);
+                        if !is_exact_title_match
+                            && (require_option_match || has_query_options)
+                            && option_similarity.is_none()
+                        {
                             continue;
                         }
 
@@ -1340,6 +1510,41 @@ pub fn file_exists(path: &str) -> bool {
     std::path::Path::new(path).exists()
 }
 
+fn get_table_columns(conn: &Connection, table_name: &str) -> Result<HashSet<String>, String> {
+    let pragma = format!("PRAGMA table_info('{table_name}')");
+    let mut stmt = conn.prepare(&pragma).map_err(|e| format!("{}", e))?;
+    let cols = stmt
+        .query_map([], |row| Ok(row.get::<_, String>(1)?))
+        .map_err(|e| format!("{}", e))?;
+
+    let mut names = HashSet::new();
+    for col in cols {
+        names.insert(col.map_err(|e| format!("{}", e))?);
+    }
+
+    Ok(names)
+}
+
+fn ensure_column(
+    conn: &Connection,
+    table_columns: &mut HashSet<String>,
+    column_name: &str,
+    alter_sql: &str,
+    backfill_sqls: &[&str],
+) -> Result<(), String> {
+    if table_columns.contains(column_name) {
+        return Ok(());
+    }
+
+    conn.execute(alter_sql, []).map_err(|e| format!("{}", e))?;
+    for sql in backfill_sqls {
+        conn.execute(sql, []).map_err(|e| format!("{}", e))?;
+    }
+
+    table_columns.insert(column_name.to_string());
+    Ok(())
+}
+
 pub fn init_database_schema(db_path: &str) -> Result<(), String> {
     let conn = Connection::open(db_path).map_err(|e| format!("{}", e))?;
     conn.execute(
@@ -1352,6 +1557,22 @@ pub fn init_database_schema(db_path: &str) -> Result<(), String> {
         [],
     )
     .map_err(|e| format!("{}", e))?;
+
+    let mut folder_columns = get_table_columns(&conn, "Folders")?;
+    ensure_column(
+        &conn,
+        &mut folder_columns,
+        "ParentId",
+        "ALTER TABLE Folders ADD COLUMN ParentId INTEGER DEFAULT 0",
+        &["UPDATE Folders SET ParentId = 0 WHERE ParentId IS NULL"],
+    )?;
+    ensure_column(
+        &conn,
+        &mut folder_columns,
+        "CreateTime",
+        "ALTER TABLE Folders ADD COLUMN CreateTime DATETIME",
+        &["UPDATE Folders SET CreateTime = datetime('now') WHERE CreateTime IS NULL"],
+    )?;
 
     let exists_default: i64 = conn
         .query_row("SELECT COUNT(1) FROM Folders WHERE Id = 0", [], |row| {
@@ -1382,41 +1603,79 @@ pub fn init_database_schema(db_path: &str) -> Result<(), String> {
     )
     .map_err(|e| format!("{}", e))?;
 
-    let mut stmt = conn
-        .prepare("PRAGMA table_info('AIResponses')")
+    let mut ai_response_columns = get_table_columns(&conn, "AIResponses")?;
+    let had_folder_name = ai_response_columns.contains("FolderName");
+
+    ensure_column(
+        &conn,
+        &mut ai_response_columns,
+        "QuestionType",
+        "ALTER TABLE AIResponses ADD COLUMN QuestionType TEXT",
+        &[],
+    )?;
+    ensure_column(
+        &conn,
+        &mut ai_response_columns,
+        "CreateTime",
+        "ALTER TABLE AIResponses ADD COLUMN CreateTime DATETIME",
+        &["UPDATE AIResponses SET CreateTime = datetime('now') WHERE CreateTime IS NULL"],
+    )?;
+    ensure_column(
+        &conn,
+        &mut ai_response_columns,
+        "FolderId",
+        "ALTER TABLE AIResponses ADD COLUMN FolderId INTEGER DEFAULT 0",
+        &["UPDATE AIResponses SET FolderId = 0 WHERE FolderId IS NULL"],
+    )?;
+    if had_folder_name {
+        conn.execute(
+            "UPDATE AIResponses
+             SET FolderId = COALESCE(
+               (
+                 SELECT Id
+                 FROM Folders
+                 WHERE Folders.Name = AIResponses.FolderName
+                 ORDER BY CASE WHEN Id = 0 THEN 0 ELSE 1 END, Id
+                 LIMIT 1
+               ),
+               0
+             )
+             WHERE FolderId IS NULL OR FolderId = 0",
+            [],
+        )
         .map_err(|e| format!("{}", e))?;
-    let mut has_is_ai = false;
-    let mut has_is_pending_correction = false;
-    let cols = stmt
-        .query_map([], |row| Ok(row.get::<_, String>(1)?))
-        .map_err(|e| format!("{}", e))?;
-    for c in cols {
-        if let Ok(name) = c {
-            if name == "IsAi" {
-                has_is_ai = true;
-            }
-            if name == "IsPendingCorrection" {
-                has_is_pending_correction = true;
-            }
-        }
     }
-    if !has_is_ai {
-        let _ = conn.execute(
-            "ALTER TABLE AIResponses ADD COLUMN IsAi BOOLEAN DEFAULT 1",
-            [],
-        );
-        let _ = conn.execute("UPDATE AIResponses SET IsAi = 1 WHERE IsAi IS NULL", []);
-    }
-    if !has_is_pending_correction {
-        let _ = conn.execute(
-            "ALTER TABLE AIResponses ADD COLUMN IsPendingCorrection BOOLEAN DEFAULT 0",
-            [],
-        );
-        let _ = conn.execute(
-            "UPDATE AIResponses SET IsPendingCorrection = 0 WHERE IsPendingCorrection IS NULL",
-            [],
-        );
-    }
+    ensure_column(
+        &conn,
+        &mut ai_response_columns,
+        "FolderName",
+        "ALTER TABLE AIResponses ADD COLUMN FolderName TEXT DEFAULT '默认文件夹'",
+        &["UPDATE AIResponses SET FolderName = '默认文件夹' WHERE FolderName IS NULL OR trim(FolderName) = ''"],
+    )?;
+    conn.execute(
+        "UPDATE AIResponses
+         SET FolderName = COALESCE(
+           (SELECT Name FROM Folders WHERE Folders.Id = AIResponses.FolderId),
+           '默认文件夹'
+         )
+         WHERE FolderName IS NULL OR trim(FolderName) = ''",
+        [],
+    )
+    .map_err(|e| format!("{}", e))?;
+    ensure_column(
+        &conn,
+        &mut ai_response_columns,
+        "IsAi",
+        "ALTER TABLE AIResponses ADD COLUMN IsAi BOOLEAN DEFAULT 1",
+        &["UPDATE AIResponses SET IsAi = 1 WHERE IsAi IS NULL"],
+    )?;
+    ensure_column(
+        &conn,
+        &mut ai_response_columns,
+        "IsPendingCorrection",
+        "ALTER TABLE AIResponses ADD COLUMN IsPendingCorrection BOOLEAN DEFAULT 0",
+        &["UPDATE AIResponses SET IsPendingCorrection = 0 WHERE IsPendingCorrection IS NULL"],
+    )?;
 
     conn.execute(
         "CREATE TABLE IF NOT EXISTS RequestLogs (
@@ -1459,7 +1718,9 @@ pub fn init_database_schema(db_path: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::compute_query_match_score;
+    use super::{compute_query_match_score, get_table_columns, init_database_schema, is_exact_match_score};
+    use rusqlite::Connection;
+    use uuid::Uuid;
 
     #[test]
     fn rejects_same_template_with_different_entity() {
@@ -1477,5 +1738,76 @@ mod tests {
             compute_query_match_score("韩国的首都在哪里", "韩国的首都在哪里"),
             Some(1.0)
         );
+    }
+
+    #[test]
+    fn exact_match_score_is_detected() {
+        assert!(is_exact_match_score(1.0));
+        assert!(!is_exact_match_score(0.999));
+    }
+
+    #[test]
+    fn migrates_legacy_database_schema() {
+        let db_path = std::env::temp_dir().join(format!("zerror-migration-{}.db", Uuid::new_v4()));
+        let db_path_str = db_path.to_string_lossy().to_string();
+
+        {
+            let conn = Connection::open(&db_path_str).expect("create legacy database");
+            conn.execute(
+                "CREATE TABLE Folders (
+                  Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  Name TEXT NOT NULL
+                )",
+                [],
+            )
+            .expect("create legacy folders");
+            conn.execute(
+                "CREATE TABLE AIResponses (
+                  Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  Question TEXT NOT NULL,
+                  Options TEXT,
+                  Answer TEXT NOT NULL,
+                  FolderName TEXT DEFAULT '默认文件夹'
+                )",
+                [],
+            )
+            .expect("create legacy ai responses");
+            conn.execute("INSERT INTO Folders (Id, Name) VALUES (0, '默认文件夹')", [])
+                .expect("insert default folder");
+            conn.execute(
+                "INSERT INTO AIResponses (Question, Options, Answer, FolderName) VALUES ('题目', NULL, '答案', '默认文件夹')",
+                [],
+            )
+            .expect("insert legacy response");
+        }
+
+        init_database_schema(&db_path_str).expect("migrate legacy database");
+
+        let conn = Connection::open(&db_path_str).expect("reopen migrated database");
+        let folder_columns = get_table_columns(&conn, "Folders").expect("read folder columns");
+        assert!(folder_columns.contains("ParentId"));
+        assert!(folder_columns.contains("CreateTime"));
+
+        let response_columns = get_table_columns(&conn, "AIResponses").expect("read ai response columns");
+        assert!(response_columns.contains("QuestionType"));
+        assert!(response_columns.contains("CreateTime"));
+        assert!(response_columns.contains("FolderId"));
+        assert!(response_columns.contains("FolderName"));
+        assert!(response_columns.contains("IsAi"));
+        assert!(response_columns.contains("IsPendingCorrection"));
+
+        let (folder_id, folder_name, is_ai, is_pending): (i64, String, i64, i64) = conn
+            .query_row(
+                "SELECT FolderId, FolderName, IsAi, IsPendingCorrection FROM AIResponses LIMIT 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .expect("query migrated values");
+        assert_eq!(folder_id, 0);
+        assert_eq!(folder_name, "默认文件夹");
+        assert_eq!(is_ai, 1);
+        assert_eq!(is_pending, 0);
+
+        let _ = std::fs::remove_file(&db_path_str);
     }
 }
