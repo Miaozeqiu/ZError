@@ -173,23 +173,67 @@
           </div>
 
           <div class="form-group">
+            <label class="form-label">API 协议</label>
+            <select v-model="formData.apiProtocol" class="form-input" @change="onProtocolChange">
+              <option value="openai-chat">OpenAI Chat Completions — /v1/chat/completions</option>
+              <option value="openai-response">OpenAI Responses — /v1/responses</option>
+              <option value="anthropic">Anthropic Messages — /v1/messages</option>
+              <option value="custom">自定义 — 由 jsCode 完全控制</option>
+            </select>
+          </div>
+
+          <div class="form-group">
             <label class="form-label">API 基础URL</label>
-            <input 
-              v-model="formData.baseUrl" 
-              type="url" 
-              class="form-input" 
-              placeholder="https://api.example.com"
+            <input
+              v-model="formData.baseUrl"
+              type="url"
+              class="form-input"
+              :placeholder="protocolPlaceholder"
               required
             >
           </div>
 
           <div class="form-group">
             <label class="form-label">API Key</label>
-            <input 
-              v-model="formData.apiKey" 
-              type="password" 
-              class="form-input" 
+            <input
+              v-model="formData.apiKey"
+              type="password"
+              class="form-input"
               placeholder="输入您的API密钥"
+            >
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">官网链接</label>
+            <input
+              v-model="formData.url"
+              type="url"
+              class="form-input"
+              placeholder="https://platform.example.com"
+            >
+            <p class="form-hint">点击平台图标时跳转到此链接</p>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">邀请链接</label>
+            <div class="input-with-copy">
+              <input
+                v-model="formData.inviteUrl"
+                type="url"
+                class="form-input"
+                placeholder="https://example.com/invite"
+              >
+            </div>
+            <p class="form-hint">有邀请奖励时可填写此链接分享给他人</p>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">邀请码（选填）</label>
+            <input
+              v-model="formData.inviteCode"
+              type="text"
+              class="form-input"
+              placeholder="输入邀请码"
             >
           </div>
 
@@ -219,12 +263,39 @@ const emit = defineEmits<Emits>()
 
 const isEditing = computed(() => !!props.platform)
 
+const protocolPlaceholder = computed(() => {
+  const map: Record<string, string> = {
+    'openai-chat': 'https://api.openai.com',
+    'openai-response': 'https://api.openai.com',
+    'anthropic': 'https://api.anthropic.com',
+    'custom': 'https://your-api.example.com'
+  }
+  return map[formData.value.apiProtocol] || 'https://api.example.com'
+})
+
+const onProtocolChange = () => {
+  // 选择协议时自动填充默认 baseUrl
+  const defaults: Record<string, string> = {
+    'openai-chat': 'https://api.openai.com',
+    'openai-response': 'https://api.openai.com',
+    'anthropic': 'https://api.anthropic.com',
+    'custom': formData.value.baseUrl || ''
+  }
+  if (defaults[formData.value.apiProtocol]) {
+    formData.value.baseUrl = defaults[formData.value.apiProtocol]
+  }
+}
+
 const formData = ref({
   name: '',
   description: '',
   baseUrl: '',
   apiKey: '',
-  icon: ''
+  icon: '',
+  url: '',
+  inviteUrl: '',
+  inviteCode: '',
+  apiProtocol: 'openai-chat'
 })
 
 // 图标相关状态
@@ -308,7 +379,11 @@ const resetForm = () => {
     description: '',
     baseUrl: '',
     apiKey: '',
-    icon: ''
+    icon: '',
+    url: '',
+    inviteUrl: '',
+    inviteCode: '',
+    apiProtocol: 'openai-chat'
   }
   iconLoadError.value = false
   iconError.value = ''
@@ -360,7 +435,11 @@ watch(() => props.platform, (platform) => {
       description: platform.description,
       baseUrl: platform.baseUrl,
       apiKey: platform.apiKey || '',
-      icon: platform.icon || ''
+      icon: platform.icon || '',
+      url: platform.url || '',
+      inviteUrl: platform.inviteUrl || '',
+      inviteCode: platform.inviteCode || '',
+      apiProtocol: (platform as any).apiProtocol || 'openai-chat'
     }
   } else {
     resetForm()
@@ -387,12 +466,16 @@ const handleSubmit = () => {
   }
   const platformData: any = {
     name: formData.value.name,
-    displayName: formData.value.name, // 设置displayName与name相同
+    displayName: formData.value.name,
     description: formData.value.description,
     baseUrl: formData.value.baseUrl,
     apiKey: formData.value.apiKey || undefined,
     icon: formData.value.icon || undefined,
-    enabled: props.platform?.enabled ?? true
+    enabled: props.platform?.enabled ?? true,
+    url: formData.value.url || undefined,
+    inviteUrl: formData.value.inviteUrl || undefined,
+    inviteCode: formData.value.inviteCode || undefined,
+    apiProtocol: formData.value.apiProtocol
   }
   
   // 只有在创建新平台时才提供空的模型数组
@@ -523,4 +606,22 @@ const chooseCustomPlatform = () => {
   background: var(--platform-config-btn-secondary-hover-bg);
   color: var(--platform-config-btn-secondary-hover-text);
 }
+
+.form-hint {
+  font-size: 12px;
+  color: var(--text-secondary, #718096);
+  margin: 4px 0 0 0;
+  line-height: 1.4;
+}
+
+.input-with-copy {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.input-with-copy .form-input {
+  flex: 1;
+}
+
 </style>

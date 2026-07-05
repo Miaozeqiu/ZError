@@ -52,10 +52,9 @@ fn show_main_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
 pub fn run() {
     tauri::Builder::default()
         .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+            if let tauri::WindowEvent::CloseRequested { .. } = event {
                 if window.label() == "main" {
-                    let _ = window.hide();
-                    api.prevent_close();
+                    // 直接关闭，不隐藏到系统托盘
                 }
             }
         })

@@ -360,11 +360,14 @@
   </div>
 
   <!-- 快速添加模型弹窗 -->
-  <ModelQuickAddDialog 
+  <ModelQuickAddDialog
     :show="showQuickAddDialog"
+    :platform-base-url="selectedPlatform?.baseUrl"
+    :platform-api-key="selectedPlatform?.apiKey"
     @close="showQuickAddDialog = false"
     @save="handleQuickAddSave"
   />
+
 </template>
 
 <script setup lang="ts">
@@ -1083,7 +1086,7 @@ const handleDeletePlatform = async () => {
 }
 
 const handleEditModel = () => {
-  if (contextMenuModel.value && !contextMenuModel.value.isRemote) {
+  if (contextMenuModel.value) {
     editModel(contextMenuModel.value)
   }
   hideModelMenu()
@@ -1234,7 +1237,8 @@ const saveModel = async (modelData: Partial<AIModel>) => {
       await updateModel(editingModel.value.id, {
         displayName: modelData.displayName,
         jsCode: modelData.jsCode,
-        category: modelData.category
+        category: modelData.category,
+        enableThinking: modelData.enableThinking
       })
     } else {
       // 使用 addModelToPlatform 自动生成 ID 并保存
@@ -1246,7 +1250,8 @@ const saveModel = async (modelData: Partial<AIModel>) => {
         topP: 1.0,
         enabled: true,
         jsCode: modelData.jsCode || '',
-        category: modelData.category || 'text' as const
+        category: modelData.category || 'text' as const,
+        enableThinking: modelData.enableThinking ?? false
       }
       newModelCategory = newModelData.category
       newModelId = await addModelToPlatform(platformId, newModelData)
