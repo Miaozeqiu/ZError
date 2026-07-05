@@ -1,6 +1,6 @@
 <template>
-  <div class="app-header" data-tauri-drag-region>
-    <div class="header-left">
+  <div class="app-header" :class="{ 'macos-header': isMacOS }" data-tauri-drag-region>
+    <div class="header-left" :class="{ 'macos-left': isMacOS }">
       <div class="app-logo">
         <img src="/icons/favicon.ico" alt="ZError Logo" width="20" height="20" />
       </div>
@@ -17,7 +17,7 @@
           <span class="step-text">配置 AI 模型</span>
           <div class="step-tooltip">
             <strong>步骤 1：配置 AI 模型</strong><br>
-            前往“设置 &gt; 模型设置”，选择一个 AI 平台并填写您的 API Key。<br>
+            前往"设置 &gt; 模型设置"，选择一个 AI 平台并填写您的 API Key。<br>
             <a data-v-f7451f5a="" href="https://docs.zerror.cc/get-apiKey" target="_blank" rel="noopener noreferrer" class="api-doc-link">如何获取Api Key?</a><br><br>
             <strong>必须完成：</strong><br>
             • 在填写 API Key 的平台下，至少选择<strong>一个文本模型</strong>。<br>
@@ -33,7 +33,7 @@
           <span class="step-text">启动服务</span>
           <div class="step-tooltip">
             <strong>步骤 2：启动服务</strong><br>
-            在“首页”<br>启动本地服务器。
+            在"首页"<br>启动本地服务器。
           </div>
         </div>
         <div class="step-connector" :class="{ completed: isStep1Completed && isStep2Completed }"></div>
@@ -67,7 +67,8 @@
       </button>
     </div>
     
-    <div class="header-right">
+    <!-- macOS 隐藏窗口控制按钮 -->
+    <div class="header-right" v-if="!isMacOS">
       <button 
         class="window-control minimize" 
         @click="minimizeWindow"
@@ -118,6 +119,7 @@ const props = defineProps<{
 
 const isMaximized = ref(false)
 const isTauri = ref(false)
+const isMacOS = ref(false)
 
 const { settings: modelSettings, platforms: computedPlatforms, selectedTextModels, selectedTextModel } = useModelConfig()
 
@@ -284,6 +286,14 @@ const checkTauriEnvironment = () => {
   // 更新检测逻辑，使用 __TAURI_INTERNALS__ 作为检测标准
   const isTauriEnv = typeof window !== 'undefined' && window.__TAURI_INTERNALS__ !== undefined
   console.log('Tauri environment detected:', isTauriEnv)
+  
+  // 检测是否是 macOS
+  if (typeof window !== 'undefined') {
+    isMacOS.value = navigator.platform.toLowerCase().includes('mac') || 
+                    navigator.userAgent.toLowerCase().includes('mac')
+    console.log('macOS detected:', isMacOS.value)
+  }
+  
   return isTauriEnv
 }
 
@@ -331,6 +341,13 @@ onMounted(async () => {
   z-index: 1000;
 }
 
+/* macOS 原生标题栏适配 */
+.app-header.macos-header {
+  padding-top: 28px;
+  height: 60px;
+  padding-left: 80px; /* 给 macOS 红绿灯按钮留空间 */
+}
+
 .header-left {
   margin-left: 10px;
   display: flex;
@@ -338,6 +355,10 @@ onMounted(async () => {
   gap: 8px;
   flex: 0 0 auto;
   color:  #ffbd42;
+}
+
+.header-left.macos-left {
+  margin-left: 0;
 }
 
 .app-logo {
@@ -426,6 +447,7 @@ onMounted(async () => {
 .window-control {
   border-radius: 0px;
   height: 32px;
+  width: 46px;
   border: none;
   background: transparent;
   color: var(--text-primary, #2d3748);
