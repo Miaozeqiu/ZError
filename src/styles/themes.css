@@ -4,15 +4,15 @@
 
 /* 主题系统 - CSS变量定义 */
 
-/* 浅色主题（默认） */
+/* 浅色主题（默认）- macOS Monterey 风格 */
 :root {
-  /* 基础颜色 */
-  --color-primary: #ff8928;
-  --color-primary-hover: #5a67d8;
-  --color-secondary: #764ba2;
-  --color-accent: #ff8928;
-  --color-accent-light: #fef6e7;
-  --color-accent-gray: #feeac8;
+  /* 基础颜色 - macOS 原生配色 */
+  --color-primary: #007aff;
+  --color-primary-hover: #0056b3;
+  --color-secondary: #5856d6;
+  --color-accent: #007aff;
+  --color-accent-light: #e8f4fd;
+  --color-accent-gray: #d1d1d6;
 
   /* 按钮颜色 */
   --btn-primary-bg: #e1e1e1;
@@ -223,26 +223,26 @@
   --model-response-card-summary-tag-bg: rgba(217, 119, 6, 0.12);
   --model-response-card-summary-tag-text: #b45309;
 
-  /* 背景颜色 */
-  --bg-primary: #f4f4f4;
-  --bg-secondary: #fff;
-  --bg-tertiary: #e8e8e8;
-  --bg-sidebar: #2d3748;
-  --bg-overlay: rgba(0, 0, 0, 0.5);
+  /* 背景颜色 - macOS 原生灰白 */
+  --bg-primary: #f5f5f7;
+  --bg-secondary: #ffffff;
+  --bg-tertiary: #e8e8ed;
+  --bg-sidebar: #f5f5f7;
+  --bg-overlay: rgba(0, 0, 0, 0.4);
 
-  /* 文字颜色 */
-  --text-primary: #2d3748;
-  --text-secondary: #9c9c9c;
-  --text-tertiary: #718096;
-  --text-light: #a0aec0;
+  /* 文字颜色 - macOS 原生黑灰 */
+  --text-primary: #1d1d1f;
+  --text-secondary: #86868b;
+  --text-tertiary: #6e6e73;
+  --text-light: #aeaeb2;
   --text-white: #ffffff;
-  --text-accent: #ff8928;
+  --text-accent: #007aff;
 
-  /* 边框颜色 */
-  --border-primary: #e2e8f0;
-  --border-secondary: #cbd5e0;
-  --border-focus: #667eea;
-  --border-color: #e3e3e3;
+  /* 边框颜色 - macOS 原生边框 */
+  --border-primary: #d2d2d7;
+  --border-secondary: #c7c7cc;
+  --border-focus: #007aff;
+  --border-color: #e5e5ea;
 
   /* 阴影 */
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1);
@@ -250,11 +250,11 @@
   --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.1);
   --shadow-xl: 0 20px 25px rgba(0, 0, 0, 0.1);
 
-  /* 状态颜色 */
-  --color-success: #48bb78;
-  --color-warning: #ed8936;
-  --color-error: #f56565;
-  --color-info: #4299e1;
+  /* 状态颜色 - macOS 系统状态色 */
+  --color-success: #34c759;
+  --color-warning: #ff9500;
+  --color-error: #ff3b30;
+  --color-info: #007aff;
 
   /* 交互状态 */
   --hover-bg: #f7fafc;
@@ -479,21 +479,21 @@
   --network-group-bg:#ffffff;
 }
 
-/* 深色主题 */
+/* 深色主题 - macOS Dark Mode 风格 */
 [data-theme="dark"] {
   /* 边框颜色 */
-  --border-primary: #3c3c3c;
-  --border-secondary: #2d3748;
-  --border-focus: #667eea;
-  --border-color: #3a3a3a;
+  --border-primary: #3d3d3f;
+  --border-secondary: #2c2c2e;
+  --border-focus: #0a84ff;
+  --border-color: #38383a;
 
-  /* 基础颜色 */
-  --color-primary: #f8b62b;
-  --color-primary-hover: #5a67d8;
-  --color-secondary: #764ba2;
+  /* 基础颜色 - macOS 深色模式配色 */
+  --color-primary: #0a84ff;
+  --color-primary-hover: #409cff;
+  --color-secondary: #5e5ce6;
   --color-accent: #ffffff;
-  --color-accent-light: #4d4d4d;
-  --color-accent-gray: #4d4d4d;
+  --color-accent-light: #3a3a3c;
+  --color-accent-gray: #3a3a3c;
 
   /* 按钮颜色 */
   --btn-primary-bg: #4b4b4b;
@@ -704,20 +704,20 @@
   --model-response-card-summary-tag-bg: rgba(251, 191, 36, 0.14);
   --model-response-card-summary-tag-text: #fcd34d;
 
-  /* 背景颜色 */
-  --bg-primary: #3c3c3c;
-  --bg-secondary: #252526;
-  --bg-tertiary: #6c6c6c;
-  --bg-sidebar: #1a202c;
-  --bg-overlay: rgba(0, 0, 0, 0.7);
+  /* 背景颜色 - macOS Dark Mode */
+  --bg-primary: #1c1c1e;
+  --bg-secondary: #2c2c2e;
+  --bg-tertiary: #3a3a3c;
+  --bg-sidebar: #1c1c1e;
+  --bg-overlay: rgba(0, 0, 0, 0.6);
 
-  /* 文字颜色 */
-  --text-primary: #dcdcdc;
-  --text-secondary: #bbbbbb;
-  --text-tertiary: #cbd5e0;
-  --text-light: #a0aec0;
+  /* 文字颜色 - macOS Dark Mode */
+  --text-primary: #f5f5f7;
+  --text-secondary: #98989d;
+  --text-tertiary: #8e8e93;
+  --text-light: #636366;
   --text-white: #ffffff;
-  --text-accent: #ffa256;
+  --text-accent: #0a84ff;
 
 
   /* 阴影 */
@@ -726,11 +726,11 @@
   --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.3);
   --shadow-xl: 0 20px 25px rgba(0, 0, 0, 0.3);
 
-  /* 状态颜色 */
-  --color-success: #68d391;
-  --color-warning: #f6ad55;
-  --color-error: #fc8181;
-  --color-info: #63b3ed;
+  /* 状态颜色 - macOS Dark Mode 系统状态色 */
+  --color-success: #30d158;
+  --color-warning: #ff9f0a;
+  --color-error: #ff453a;
+  --color-info: #0a84ff;
 
   /* 交互状态 */
   --hover-bg: #353535;

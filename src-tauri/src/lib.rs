@@ -28,12 +28,23 @@ use tauri::Manager;
 pub use types::*;
 
 fn show_main_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
-    if let Some(window) = app.get_webview_window("main") {
-        if window.is_minimized().unwrap_or(false) {
-            let _ = window.unminimize();
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.show();
+            let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
+            let _ = window.set_focus();
         }
-        let _ = window.show();
-        let _ = window.set_focus();
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        if let Some(window) = app.get_webview_window("main") {
+            if window.is_minimized().unwrap_or(false) {
+                let _ = window.unminimize();
+            }
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
     }
 }
 
@@ -48,7 +59,8 @@ pub fn run() {
             }
         })
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_sql::Builder::default().build())
+        // tauri-plugin-sql removed - using rusqlite directly
+        // .plugin(tauri_plugin_sql::Builder::default().build())
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
@@ -86,6 +98,7 @@ pub fn run() {
             search_questions_fuzzy,
             get_folders,
             get_ai_responses,
+            get_paginated_questions,
             get_questions_recursive,
             get_pending_correction_questions,
             get_pending_correction_question_count,
@@ -188,6 +201,19 @@ pub fn run() {
             };
             let app_handle = app.handle().clone();
             let main_window_size = resolve_window_size(&app_handle, MAIN_WINDOW_PRESET);
+            
+            #[cfg(target_os = "macos")]
+            let _main = tauri::WebviewWindowBuilder::new(app, "main", url)
+                .title("ZError")
+                .inner_size(main_window_size.width, main_window_size.height)
+                .min_inner_size(main_window_size.min_width, main_window_size.min_height)
+                .center()
+                .resizable(true)
+                .decorations(true)
+                .title_bar_style(tauri::TitleBarStyle::Overlay)
+                .build();
+                
+            #[cfg(not(target_os = "macos"))]
             let _main = tauri::WebviewWindowBuilder::new(app, "main", url)
                 .title("ZError")
                 .inner_size(main_window_size.width, main_window_size.height)

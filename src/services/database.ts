@@ -21,6 +21,11 @@ export interface AIResponse {
   is_pending_correction?: boolean;
 }
 
+export interface PaginatedAIResponses {
+  items: AIResponse[];
+  total: number;
+}
+
 // 检测是否在 Tauri 环境中
 const isTauriEnvironment = () => {
   if (typeof window === 'undefined') return false;
@@ -150,6 +155,61 @@ class DatabaseService {
     } catch (error) {
       console.error('获取AI响应失败:', error);
       return [];
+    }
+  }
+
+  async getPaginatedQuestions(params: {
+    folderId?: number;
+    pendingCorrectionOnly?: boolean;
+    page: number;
+    pageSize: number;
+    sortOrder?: 'desc' | 'asc';
+  }): Promise<PaginatedAIResponses> {
+    const {
+      folderId,
+      pendingCorrectionOnly = false,
+      page,
+      pageSize,
+      sortOrder = 'desc',
+    } = params;
+
+    if (!this.isTauri) {
+      let responses = [...mockAIResponses];
+
+      if (pendingCorrectionOnly) {
+        responses = responses.filter(response => !!response.is_pending_correction);
+      } else if (folderId !== undefined) {
+        responses = responses.filter(response => response.folder_id === folderId);
+      }
+
+      responses.sort((a, b) => {
+        const aTime = new Date(a.create_time || '').getTime();
+        const bTime = new Date(b.create_time || '').getTime();
+        return sortOrder === 'asc' ? aTime - bTime : bTime - aTime;
+      });
+
+      const safePage = Math.max(1, page);
+      const safePageSize = Math.max(1, pageSize);
+      const start = (safePage - 1) * safePageSize;
+      const end = start + safePageSize;
+
+      return {
+        items: responses.slice(start, end),
+        total: responses.length,
+      };
+    }
+
+    try {
+      return await invoke<PaginatedAIResponses>('get_paginated_questions', {
+        folderId: folderId ?? null,
+        pendingCorrectionOnly,
+        page,
+        pageSize,
+        sortOrder,
+      });
+    } catch (error) {
+      console.error('分页获取题目失败:', error);
+      return { items: [], total: 0 };
     }
   }
 

@@ -24,7 +24,7 @@ use std::path::PathBuf;
 use std::process::Command;
 #[cfg(target_os = "windows")]
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::{OnceLock};
 use urlencoding;
 use zip::ZipArchive;
 
