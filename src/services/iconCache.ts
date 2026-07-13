@@ -1,7 +1,7 @@
 const REMOTE_ICON_CACHE_PREFIX = 'remote_icon_cache_v1:'
 const REMOTE_ICON_CACHE_TTL = 7 * 24 * 60 * 60 * 1000
 const PROD_PLATFORM_ICON_BASE_URL = 'https://app.zerror.cc/providers/'
-const DEV_PLATFORM_ICON_BASE_URL = 'http://localhost:5175/providers/'
+const DEV_PLATFORM_ICON_BASE_URL = 'https://app.zerror.cc/providers/'
 
 const memoryIconCache = new Map<string, string>()
 const pendingIconRequests = new Map<string, Promise<string>>()

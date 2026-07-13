@@ -323,6 +323,8 @@
     <ModelConfigDialog
       :show="showModelConfigDialog"
       :model="editingModel"
+      :platform-base-url="selectedPlatform?.baseUrl"
+      :platform-api-key="selectedPlatform?.apiKey"
       @close="closeModelDialog"
       @save="saveModel"
     />
@@ -359,21 +361,13 @@
     />
   </div>
 
-  <!-- 快速添加模型弹窗 -->
-  <ModelQuickAddDialog
-    :show="showQuickAddDialog"
-    :platform-base-url="selectedPlatform?.baseUrl"
-    :platform-api-key="selectedPlatform?.apiKey"
-    @close="showQuickAddDialog = false"
-    @save="handleQuickAddSave"
-  />
-
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, computed, nextTick } from 'vue'
 import { useModelConfig, fetchRemoteModelsCatalog } from '../../services/modelConfig'
 import type { AIPlatform, AIModel, RemoteModelIconMapping } from '../../services/modelConfig'
+import { resolveExecutableModelJsCode, resolveRuntimeModelId } from '../../services/modelProtocol'
 import { environmentDetector } from '../../services/environmentDetector'
 import { getPlatformIconDisplayUrl, resolvePlatformIconUrl } from '../../services/iconCache'
 import PlatformConfigDialog from './ModelSettings/PlatformConfigDialog.vue'
@@ -385,7 +379,6 @@ import ModelDeleteConfirmDialog from './ModelSettings/ModelDeleteConfirmDialog.v
 import PlatformDeleteConfirmDialog from './ModelSettings/PlatformDeleteConfirmDialog.vue'
 import Toggle from '../../components/Toggle.vue'
 import ModelCategorySwitch from './ModelSettings/ModelCategorySwitch.vue'
-import ModelQuickAddDialog from './ModelSettings/ModelQuickAddDialog.vue'
 import OlTip from './OlTip.vue'
 
 const detailScrollWrap = ref<HTMLElement | null>(null)
@@ -728,9 +721,6 @@ const estimateTextTokens = (text: string): number => {
 }
 
 const resolveTokenRate = (payload: any, response: string, reasoning = '', durationMs = 0): number | null => {
-  const explicitRate = readTokenRateFromPayload(payload)
-  if (explicitRate !== null) return Number(explicitRate.toFixed(1))
-
   const elapsedSeconds = durationMs > 0 ? durationMs / 1000 : 0
   if (elapsedSeconds <= 0) return null
 
@@ -763,7 +753,7 @@ const platformIconUrls = ref<Record<string, string>>({})
 const platformIconBackgrounds = ref<Record<string, boolean>>({})
 const remoteModelIconMappings = ref<RemoteModelIconMapping[]>([])
 const PROD_REMOTE_MODEL_ICON_BASE_URL = 'https://app.zerror.cc/models/'
-const DEV_REMOTE_MODEL_ICON_BASE_URL = 'http://localhost:5175/models/'
+const DEV_REMOTE_MODEL_ICON_BASE_URL = 'https://app.zerror.cc/models/'
 
 const getRemoteModelIconBaseUrl = (): string => {
   const isTauriDev = import.meta.env.DEV && typeof window !== 'undefined' && (window.__TAURI__ || window.__TAURI_INTERNALS__)
@@ -1070,7 +1060,7 @@ const hideModelMenu = () => {
 }
 
 const handleEditPlatform = () => {
-  if (contextMenuPlatform.value && !contextMenuPlatform.value.isRemote) {
+  if (contextMenuPlatform.value) {
     editPlatform(contextMenuPlatform.value)
   }
   hidePlatformMenu()
@@ -1181,22 +1171,9 @@ const openTemplate = () => {
   addNewModel()
 }
 
-// -------- 快速添加（OpenAI 兼容）--------
-const showQuickAddDialog = ref(false)
-
 const openQuickAdd = () => {
   closeAddModelDropdown()
-  showQuickAddDialog.value = true
-}
-
-const handleQuickAddSave = async (newModel: any) => {
-  if (!selectedPlatform.value) return
-
-  const platformId = selectedPlatform.value.id
-  const modelId = await addModelToPlatform(platformId, newModel)
-
-  showQuickAddDialog.value = false
-  await revealModelInList(platformId, modelId, newModel.category || 'text')
+  addNewModel()
 }
 
 
@@ -1236,9 +1213,11 @@ const saveModel = async (modelData: Partial<AIModel>) => {
       // 使用 ModelConfigManager 的 updateModel 以确保正确保存
       await updateModel(editingModel.value.id, {
         displayName: modelData.displayName,
+        modelId: modelData.modelId,
         jsCode: modelData.jsCode,
         category: modelData.category,
-        enableThinking: modelData.enableThinking
+        enableThinking: modelData.enableThinking,
+        apiProtocol: modelData.apiProtocol
       })
     } else {
       // 使用 addModelToPlatform 自动生成 ID 并保存
@@ -1249,9 +1228,11 @@ const saveModel = async (modelData: Partial<AIModel>) => {
         temperature: 0.7,
         topP: 1.0,
         enabled: true,
+        modelId: modelData.modelId,
         jsCode: modelData.jsCode || '',
         category: modelData.category || 'text' as const,
-        enableThinking: modelData.enableThinking ?? false
+        enableThinking: modelData.enableThinking ?? false,
+        apiProtocol: modelData.apiProtocol
       }
       newModelCategory = newModelData.category
       newModelId = await addModelToPlatform(platformId, newModelData)
@@ -1370,6 +1351,7 @@ const addModel = async (platformId: string, model: AIModel) => {
 // 测试模型功能
 const testModel = async (model: AIModel, testFunctionCalling: boolean = false) => {
   if (!selectedPlatform.value) return
+  const runtimeModelId = resolveRuntimeModelId(model)
   
   // 创建AbortController用于取消请求
   testAbortController.value = new AbortController()
@@ -1482,7 +1464,7 @@ const testModel = async (model: AIModel, testFunctionCalling: boolean = false) =
             ]
           }
         ],
-        model: model.id,
+        model: runtimeModelId,
         stream: true
       }
     } else {
@@ -1498,7 +1480,7 @@ const testModel = async (model: AIModel, testFunctionCalling: boolean = false) =
             content: messageContent
           }
         ],
-        model: model.id,
+        model: runtimeModelId,
         stream: true
       }
       
@@ -1527,10 +1509,11 @@ const testModel = async (model: AIModel, testFunctionCalling: boolean = false) =
     
     // 构建配置对象
     const config = {
+      ...model,
       apiKey: selectedPlatform.value.apiKey,
       baseUrl: selectedPlatform.value.baseUrl,
-      model: model.id,
-      ...model
+      model: runtimeModelId,
+      modelId: runtimeModelId
     }
     
     const tauriHttp = await import('@tauri-apps/plugin-http')
@@ -1538,12 +1521,12 @@ const testModel = async (model: AIModel, testFunctionCalling: boolean = false) =
       (input, init) => tauriHttp.fetch(input as any, init as any),
       testAbortController.value?.signal
     )
+    const executableCode = resolveExecutableModelJsCode(model)
     
     // 执行JavaScript配置代码
-    if (model.jsCode) {
+    if (executableCode) {
       try {
         // 创建一个安全的执行环境
-        let executableCode = model.jsCode.trim()
         let processModel
         
         if (executableCode.startsWith('async function') || executableCode.startsWith('function')) {
@@ -1567,12 +1550,13 @@ const testModel = async (model: AIModel, testFunctionCalling: boolean = false) =
         const testStartedAt = performance.now()
         let fullResponse = ''
         let fullReasoning = ''
+        let firstTokenAt: number | null = null
         let lastUsagePayload: any = null
         streamingResponse.value = '' // 重置流式响应
         streamingReasoning.value = '' // 重置流式思考过程
         
         while (true) {
-          const result = await processModel(testInput, config)
+          const result = await processModel(testInput, config, tauriFetch, testAbortController.value?.signal)
           
           if (result) {
             // 如果返回的是生成器或异步迭代器，收集结果
@@ -1591,11 +1575,13 @@ const testModel = async (model: AIModel, testFunctionCalling: boolean = false) =
                   }
                 }
                 if (chunk.content) {
+                  if (firstTokenAt === null) firstTokenAt = performance.now()
                   fullResponse += chunk.content
                   streamingResponse.value = fullResponse // 实时更新流式响应
                 }
                 // 兼容新的思考过程字段
                 if (chunk.reasoning_content) {
+                  if (firstTokenAt === null) firstTokenAt = performance.now()
                   fullReasoning += chunk.reasoning_content
                   streamingReasoning.value = fullReasoning // 实时更新流式思考过程
                 }
@@ -1650,12 +1636,15 @@ const testModel = async (model: AIModel, testFunctionCalling: boolean = false) =
                 currentTestResult.value = null
                 currentTestError.value = '测试失败：模型未返回任何输出内容'
               } else {
-                const tokenRate = resolveTokenRate(lastUsagePayload, fullResponse, fullReasoning, performance.now() - testStartedAt)
+                const firstTokenLatency = firstTokenAt !== null ? firstTokenAt - testStartedAt : null
+                const tokenRateDuration = firstTokenAt !== null ? performance.now() - firstTokenAt : 0
+                const tokenRate = resolveTokenRate(lastUsagePayload, fullResponse, fullReasoning, tokenRateDuration)
 
                 currentTestResult.value = {
                   success: true,
                   response: fullResponse,
                   reasoning_content: fullReasoning,
+                  firstTokenLatency: firstTokenLatency ?? undefined,
                   tokenRate: tokenRate ?? undefined,
                   timestamp: new Date().toLocaleString(),
                   modelType: model.category,
@@ -1681,12 +1670,15 @@ const testModel = async (model: AIModel, testFunctionCalling: boolean = false) =
                 currentTestResult.value = null
                 currentTestError.value = '测试失败：模型未返回任何输出内容'
               } else {
-                const tokenRate = resolveTokenRate(usagePayload, finalResponse, finalReasoning, performance.now() - testStartedAt)
+                const finalCompletedAt = performance.now()
+                const firstTokenLatency = finalCompletedAt - testStartedAt
+                const tokenRate = resolveTokenRate(usagePayload, finalResponse, finalReasoning, 0)
 
                 currentTestResult.value = {
                   success: true,
                   response: finalResponse,
                   reasoning_content: finalReasoning,
+                  firstTokenLatency,
                   tokenRate: tokenRate ?? undefined,
                   timestamp: new Date().toLocaleString(),
                   modelType: model.category,
@@ -1709,7 +1701,7 @@ const testModel = async (model: AIModel, testFunctionCalling: boolean = false) =
         currentTestError.value = `代码执行错误: ${(codeError as Error).message}`
       }
     } else {
-      currentTestError.value = '模型未配置JavaScript代码'
+      currentTestError.value = '模型未配置可执行代码'
     }
   } catch (error) {
     if (isAbortedTestError(error)) {
@@ -1852,7 +1844,7 @@ onUnmounted(() => {
 }
 
 .platform-sidebar {
-  width: 300px;
+  width: 248px;
   background: var(--bg-secondary, #ffffff);
   border-radius: 5px;
   display: flex;
@@ -1911,8 +1903,8 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   width: 100%;
-  padding: 12px;
-  gap: 8px;
+  padding: 8px;
+  gap: 6px;
   box-sizing: border-box;
 }
 
@@ -1921,8 +1913,8 @@ onUnmounted(() => {
   box-sizing: border-box;
   display: flex;
   align-items: center;
-  padding: 12px;
-  border-radius: 16px;
+  padding: 8px 10px;
+  border-radius: 12px;
   cursor: pointer;
   transition: all 0.2s ease;
   border: 1px solid var(--platform-item-border);
@@ -1944,9 +1936,9 @@ onUnmounted(() => {
 }
 
 .platform-icon {
-  width: 32px;
-  height: 32px;
-  margin-right: 12px;
+  width: 28px;
+  height: 28px;
+  margin-right: 8px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1961,7 +1953,7 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   position: relative;
-  border-radius: 8px;
+  border-radius: 7px;
   border: 1px solid var(--platform-config-dialog-header-border);
   box-sizing: border-box;
   overflow: hidden;
@@ -2011,7 +2003,7 @@ onUnmounted(() => {
 
 
 .icon-emoji {
-  font-size: 18px;
+  font-size: 16px;
 }
 
 .icon-image {
@@ -2023,7 +2015,7 @@ onUnmounted(() => {
 }
 
 .icon-fallback {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
   color: var(--text-secondary, #718096);
 }
@@ -2034,7 +2026,7 @@ onUnmounted(() => {
 }
 
 .platform-name {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 500;
   color: var(--text-primary, #2d3748);
   margin: 0;
@@ -2045,20 +2037,20 @@ onUnmounted(() => {
 
 .platform-tags {
   display: flex;
-  gap: 3px;
+  gap: 2px;
   flex-shrink: 0;
   margin-left: auto;
   margin-top: 0;
 }
 
 .platform-tag {
-  font-size: 10px;
-  padding: 0px 4px;
+  font-size: 9px;
+  padding: 0 3px;
   border-radius: 4px;
   background-color: var(--platform-config-icon-section-title-bg);
   color: var(--text-secondary, #718096);
   border: 1px solid var(--platform-config-dialog-header-border);
-  line-height: 1.4;
+  line-height: 1.3;
   white-space: nowrap;
 }
 
@@ -2085,7 +2077,7 @@ onUnmounted(() => {
 }
 
 .detail-content {
-  padding: 24px;
+  padding: 18px;
   overflow-y: scroll;
   flex: 1;
   background: var(--platform-detail-content-bg);
@@ -2137,7 +2129,7 @@ onUnmounted(() => {
 }
 
 .detail-section {
-  margin-bottom: 24px;
+  margin-bottom: 18px;
   border-bottom: 1px solid var(--border-primary);
 }
 
@@ -2152,7 +2144,7 @@ onUnmounted(() => {
   align-items: center;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 
 .platform-title-row {
@@ -2237,37 +2229,37 @@ onUnmounted(() => {
 }
 
 .subsection-title {
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--platform-detail-header-text);
 }
 
 .platform-description {
   color: var(--platform-detail-description-text);
-  margin: 8px 0 0 0;
-  line-height: 1.5;
+  margin: 6px 0 0 0;
+  line-height: 1.4;
 }
 
 /* 表单样式 */
 .form-group {
-  margin-bottom: 16px;
+  margin-bottom: 12px;
 }
 
 .form-label {
   display: block;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 500;
   color: var(--platform-detail-form-label-text);
-  margin-bottom: 6px;
+  margin-bottom: 4px;
 }
 
 .form-input {
   box-sizing: border-box;
   width: 100%;
-  padding: 10px 12px;
+  padding: 9px 11px;
   border: 1px solid transparent;
   border-radius: 8px;
-  font-size: 14px;
+  font-size: 13px;
   color: var(--text-primary);
   background-color: var(--form-input-bg, #F7F7F7);
   transition: border-color 0.2s ease, background-color 0.2s ease;

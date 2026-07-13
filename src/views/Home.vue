@@ -510,6 +510,7 @@ import { ref, onMounted, onUnmounted, computed, nextTick, watch } from 'vue'
 import { useSettings } from '../services/settings'
 import { useModelConfig } from '../services/modelConfig'
 import type { AIModel } from '../services/modelConfig'
+import { resolveExecutableModelJsCode, resolveRuntimeModelId } from '../services/modelProtocol'
 import { databaseService } from '../services/database'
 
 import PortConfigDialog from './home/PortConfigDialog.vue'
@@ -615,6 +616,7 @@ interface RequestLog {
   urlQuestion?: { // URL 题目数据（视觉分析）
     title: string
     options: string
+    questionType?: string
     imageUrl: string | null
     analyzing: boolean
     analysisResult: string | null
@@ -1137,6 +1139,15 @@ const startSSEConnection = () => {
         // 检测是否是 URL 题目，触发视觉分析窗口
         if (requestData.query && requestData.query.startsWith('__URL_QUESTION__:')) {
           handleUrlQuestionRequest(requestData.request_id, requestData.query.slice('__URL_QUESTION__:'.length))
+          return
+        }
+
+        // AI 同题判断（单模型、短链路）
+        if (requestData.query && requestData.query.startsWith('__SAME_QUESTION_CHECK__:')) {
+          handleSameQuestionCheckRequest(
+            requestData.request_id,
+            requestData.query.slice('__SAME_QUESTION_CHECK__:'.length)
+          )
           return
         }
 
@@ -1684,23 +1695,6 @@ const handleFolderConfirm = async (folderId: number, folderName: string, folderP
   await save()
 }
 
-// 辅助方法：根据模型jsCode判断是否为思考模型，并通知后端
-
-async function updateThinkingModelFlag(model: AIModel | null): Promise<void> {
-  try {
-    if (!isTauri.value) return
-    const { invoke } = await import('@tauri-apps/api/core')
-    // 优先使用用户手动设置的 enableThinking 开关
-    // 如果未设置，则回退到自动检测 jsCode 中是否包含 reasoning_content
-    const isThinking = model?.enableThinking === true || (!!model?.jsCode && model.jsCode.includes('reasoning_content'))
-    // 同时传入 is_thinking 与 isThinking，兼容不同后端参数命名
-    await invoke('set_current_model_is_thinking', { is_thinking: isThinking, isThinking })
-    console.log('已同步思考模型标志到后端:', isThinking, '(enableThinking:', model?.enableThinking, ')')
-  } catch (err) {
-    console.warn('同步思考模型标志失败（可能非Tauri或服务未启动）:', err)
-  }
-}
-
 const handlePortConfirm = async (newPort: number) => {
   const wasRunning = serverRunning.value
 
@@ -1834,6 +1828,9 @@ const callModelWithStreaming = async (
     throw createCancelledRequestError()
   }
 
+  const runtimeModelId = resolveRuntimeModelId(model)
+  const executableCode = resolveExecutableModelJsCode(model)
+
   // 获取模型所属的平台
   const platform = platforms.value.find(p => p.models.some(m => m.id === model.id))
 
@@ -1857,17 +1854,18 @@ const callModelWithStreaming = async (
         content: query
       }
     ],
-    model: model.id,
+    model: runtimeModelId,
     stream: true,
     tools: []
   }
 
   // 构建配置对象
   const config = {
+    ...model,
     apiKey: platform.apiKey,
     baseUrl: platform.baseUrl,
-    model: model.id,
-    ...model
+    model: runtimeModelId,
+    modelId: runtimeModelId
   }
 
   // 读取超时配置（秒转毫秒）
@@ -1889,9 +1887,8 @@ const callModelWithStreaming = async (
     } as any)
 
   // 执行JavaScript配置代码
-  if (model.jsCode) {
+  if (executableCode) {
     // 创建一个安全的执行环境
-    let executableCode = model.jsCode.trim()
     let processModel
 
     if (executableCode.startsWith('async function') || executableCode.startsWith('function')) {
@@ -1915,8 +1912,8 @@ const callModelWithStreaming = async (
       let fullReasoning = ''
       let lastProgressSentAt = 0
 
-      // keepalive timer for thinking models - prevents backend timeout during long pauses
-      const isThinkingModel = model.enableThinking === true || model.jsCode?.includes('reasoning_content')
+      // keepalive：仅在启用思考时开启，避免关闭思考后仍按思考模型处理
+      const isThinkingModel = model.enableThinking === true
       if (isThinkingModel) {
         keepaliveTimer = setInterval(() => {
           sendModelProgressToBackend(requestId, fullResponse || 'thinking...')
@@ -1925,7 +1922,7 @@ const callModelWithStreaming = async (
 
       while (true) {
         // 执行模型调用
-        const result = await processModel(testInput, config, abortController.signal)
+        const result = await processModel(testInput, config, tauriFetch, abortController.signal)
 
         if (result) {
           // 如果返回的是生成器或异步迭代器，进行流式处理
@@ -2043,7 +2040,7 @@ const callModelWithStreaming = async (
   } else {
     clearTimeout(timeoutHandle)
     unregisterAbortController(requestId, abortController)
-    throw new Error('模型未配置JavaScript代码')
+    throw new Error('模型未配置可执行代码')
   }
 }
 
@@ -2096,6 +2093,8 @@ const finalizeMultiModelReasoning = (requestId: string, modelId: string) => {
 
 // 调用模型函数
 const callModel = async (model: AIModel, query: string) => {
+  const runtimeModelId = resolveRuntimeModelId(model)
+  const executableCode = resolveExecutableModelJsCode(model)
   // 获取模型所属的平台
   const platform = platforms.value.find(p => p.models.some(m => m.id === model.id))
   if (!platform) {
@@ -2110,16 +2109,17 @@ const callModel = async (model: AIModel, query: string) => {
         content: query
       }
     ],
-    model: model.id,
+    model: runtimeModelId,
     stream: true
   }
 
   // 构建配置对象
   const config = {
+    ...model,
     apiKey: platform.apiKey,
     baseUrl: platform.baseUrl,
-    model: model.id,
-    ...model
+    model: runtimeModelId,
+    modelId: runtimeModelId
   }
 
   const tauriHttp = await import('@tauri-apps/plugin-http')
@@ -2130,9 +2130,8 @@ const callModel = async (model: AIModel, query: string) => {
     } as any)
 
   // 执行JavaScript配置代码
-  if (model.jsCode) {
+  if (executableCode) {
     // 创建一个安全的执行环境
-    let executableCode = model.jsCode.trim()
     let processModel
 
     if (executableCode.startsWith('async function') || executableCode.startsWith('function')) {
@@ -2153,7 +2152,7 @@ const callModel = async (model: AIModel, query: string) => {
     }
 
     // 执行模型调用
-    const result = await processModel(testInput, config)
+    const result = await processModel(testInput, config, tauriFetch)
 
     if (result) {
       // 如果返回的是生成器或异步迭代器，收集结果
@@ -2172,7 +2171,7 @@ const callModel = async (model: AIModel, query: string) => {
       throw new Error('模型配置代码未返回有效结果')
     }
   } else {
-    throw new Error('模型未配置JavaScript代码')
+    throw new Error('模型未配置可执行代码')
   }
 }
 
@@ -2183,9 +2182,6 @@ onMounted(async () => {
 
   // 首先检测 Tauri 环境
   await checkTauriEnvironment()
-
-  // 检测完成后，同步当前模型的思考标志到后端
-  await updateThinkingModelFlag(currentModel.value)
 
   // 然后获取服务器状态
   setTimeout(async () => {
@@ -2210,8 +2206,6 @@ watch(globalSelectedModel, (newModel) => {
   if (newModel) {
     currentModel.value = newModel
     console.log('全局模型已更新:', newModel.displayName)
-    // 同步更新后端思考模型标志
-    updateThinkingModelFlag(newModel)
   }
 }, { immediate: false })
 
@@ -2269,6 +2263,8 @@ const callSingleModelAPI = async (model: AIModel, query: string, logId: string):
 const callModelAPI = async (requestId: string, query: string) => {
   let finalOutput = ''
   console.log('开始调用模型API:', { requestId, query })
+  // 允许同一 requestId 在同题判断后再次发送最终答题结果
+  finalModelResponseState.delete(requestId)
 
   try {
     // 只有文本模型参与基础输出；视觉模型仅在 query 包含图片时才加入
@@ -2846,6 +2842,137 @@ const updateRequestDetailsWithModelReasoning = (requestId: string, reasoning: st
 const processedRequestIds = new Set<string>()
 const activeUrlAnalysisRequestIds = new Set<string>()
 
+type SameQuestionCandidate = {
+  id: number
+  question: string
+  options?: string | null
+}
+
+type SameQuestionCheckPayload = {
+  title: string
+  options?: string | null
+  candidates: SameQuestionCandidate[]
+}
+
+const buildSameQuestionCheckPrompt = (payload: SameQuestionCheckPayload): string => {
+  const candidateLines = (payload.candidates || []).map((c, index) => {
+    const optionsText = c.options ? `\n选项：${c.options}` : ''
+    return `候选${index + 1}（id=${c.id}）：\n题干：${c.question}${optionsText}`
+  }).join('\n\n')
+
+  const optionsBlock = payload.options ? `\n【新题选项】\n${payload.options}\n` : ''
+
+  return [
+    '你是题目判重助手。请判断「新题目」是否与下列候选中的某一道是同一道题（允许措辞略有差异，但题意与考点必须一致）。',
+    '只输出一个 JSON 对象，不要代码块，不要其他文字。',
+    '若是同一题：{"same":true,"matched_id":<候选id>}',
+    '若都不是：{"same":false}',
+    '',
+    '【新题目】',
+    payload.title || '',
+    optionsBlock,
+    '【候选题目】',
+    candidateLines || '（无候选）',
+  ].join('\n')
+}
+
+const parseSameQuestionCheckResult = (raw: string): { same: boolean; matched_id?: number } => {
+  const text = stripMarkdownCodeBlock(raw || '').trim()
+  const start = text.indexOf('{')
+  const end = text.lastIndexOf('}')
+  if (start < 0 || end < start) return { same: false }
+  try {
+    const parsed = JSON.parse(text.slice(start, end + 1))
+    if (parsed?.same === true && (typeof parsed.matched_id === 'number' || typeof parsed.matched_id === 'string')) {
+      const matchedId = Number(parsed.matched_id)
+      if (Number.isFinite(matchedId)) {
+        return { same: true, matched_id: matchedId }
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return { same: false }
+}
+
+// 处理 AI 同题判断请求（单模型）
+const handleSameQuestionCheckRequest = async (requestId: string, payloadJson: string) => {
+  finalModelResponseState.delete(requestId)
+
+  let payload: SameQuestionCheckPayload
+  try {
+    payload = JSON.parse(payloadJson)
+  } catch (error) {
+    console.error('解析同题判断 payload 失败:', error)
+    await sendModelResponseToBackend(requestId, JSON.stringify({ same: false }), true)
+    return
+  }
+
+  const model = globalSelectedTextModels.value[0] || globalSelectedTextModel.value
+  if (!model) {
+    console.warn('同题判断：未选择文本模型，回落为不同题')
+    await sendModelResponseToBackend(requestId, JSON.stringify({ same: false }), true)
+    return
+  }
+
+  const logIndex = requestLogs.value.findIndex(l => l.id === requestId)
+  if (logIndex !== -1) {
+    const platform = platforms.value.find(p => p.models.some(m => m.id === model.id))
+    requestLogs.value[logIndex].isModelCalling = true
+    requestLogs.value[logIndex].modelResponse = undefined
+    requestLogs.value[logIndex].multiModelResponses = [{
+      modelId: model.id,
+      modelName: model.displayName,
+      platformName: platform?.displayName || '未知平台',
+      response: '',
+      streamingReasoning: '',
+      reasoningContent: '',
+      isLoading: true
+    }]
+  }
+
+  try {
+    const prompt = buildSameQuestionCheckPrompt(payload)
+    const response = await callModelWithStreaming(
+      model,
+      prompt,
+      requestId,
+      (content) => updateMultiModelStreamingResponse(requestId, model.id, stripMarkdownCodeBlock(content))
+    )
+    const stripped = stripMarkdownCodeBlock(response)
+    const result = parseSameQuestionCheckResult(stripped)
+    const resultJson = JSON.stringify(result)
+
+    const log = requestLogs.value.find(l => l.id === requestId)
+    if (log?.multiModelResponses) {
+      const entry = log.multiModelResponses.find(r => r.modelId === model.id)
+      if (entry) {
+        entry.isLoading = false
+        entry.response = resultJson
+      }
+    }
+    if (log) {
+      log.isModelCalling = false
+      log.modelResponse = resultJson
+    }
+
+    await sendModelResponseToBackend(requestId, resultJson, true)
+  } catch (error) {
+    console.error('同题判断失败:', error)
+    const fallback = JSON.stringify({ same: false })
+    const log = requestLogs.value.find(l => l.id === requestId)
+    if (log) {
+      log.isModelCalling = false
+      log.modelResponse = fallback
+      if (log.multiModelResponses?.[0]) {
+        log.multiModelResponses[0].isLoading = false
+        log.multiModelResponses[0].response = fallback
+      }
+    }
+    await sendModelResponseToBackend(requestId, fallback, true)
+  }
+}
+
 // 处理 URL 题目请求（由 SSE model_call_request 事件触发）
 const handleUrlQuestionRequest = async (requestId: string, rawTitle: string) => {
   if (processedRequestIds.has(requestId)) return
@@ -2862,12 +2989,22 @@ const handleUrlQuestionRequest = async (requestId: string, rawTitle: string) => 
   }
 
   // 如果 query 里没有 options，从请求日志的 requestBody 中补充
+  let questionType = ''
   if (!originalOptions) {
     const matchedLog = requestLogs.value.find(l => l.id === requestId)
     if (matchedLog?.requestBody) {
       try {
         const rb = JSON.parse(matchedLog.requestBody)
         originalOptions = rb.options || ''
+        questionType = rb.type || rb.questionType || ''
+      } catch (e) { }
+    }
+  } else {
+    const matchedLog = requestLogs.value.find(l => l.id === requestId)
+    if (matchedLog?.requestBody) {
+      try {
+        const rb = JSON.parse(matchedLog.requestBody)
+        questionType = rb.type || rb.questionType || ''
       } catch (e) { }
     }
   }
@@ -2878,6 +3015,7 @@ const handleUrlQuestionRequest = async (requestId: string, rawTitle: string) => 
 
     title,
     options: originalOptions,
+    questionType,
     imageUrl: null as string | null,
     analyzing: false,
     analysisResult: null as string | null,
@@ -3192,27 +3330,103 @@ const saveQuestionsToStorage = (questions: any[]) => {
 
 // ---- URL 题目视觉分析（在详情面板内执行）----
 
-// 解析选项字符串为编号映射
+// 解析选项字符串为编号映射（忽略空行，避免行号对应到空白）
 const parseUrlOptions = (optionsStr: string): Map<string, string> => {
   const map = new Map<string, string>()
   if (!optionsStr?.trim()) return map
-  const matches = [...optionsStr.matchAll(/(?:^|\n)\s*([A-Za-z])[\.、．]\s*([^\n]*)/g)]
-  if (matches.length >= 2) {
-    matches.forEach((m, i) => map.set(String(i + 1), m[2].trim()))
+
+  const lines = optionsStr.replace(/\r\n/g, '\n').split('\n')
+  const labelPattern = /^\s*([A-Za-z])[\.、．]\s*(.*)$/
+  const labeledBlocks: string[] = []
+  let current: string[] | null = null
+  let labeledCount = 0
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim()
+    const labelMatch = line.match(labelPattern)
+    if (labelMatch) {
+      if (current) {
+        const text = current.join('\n').trim()
+        if (text) labeledBlocks.push(text)
+      }
+      labeledCount += 1
+      current = [labelMatch[2] || '']
+      continue
+    }
+    if (current) {
+      if (line) current.push(line)
+      continue
+    }
+  }
+  if (current) {
+    const text = current.join('\n').trim()
+    if (text) labeledBlocks.push(text)
+  }
+
+  // 至少识别到 2 个 A./B. 标签时，按标签块作为选项
+  if (labeledCount >= 2 && labeledBlocks.length >= 2) {
+    labeledBlocks.forEach((text, i) => map.set(String(i + 1), text))
     return map
   }
-  const lines = optionsStr.split('\n').map(l => l.trim()).filter(Boolean)
-  lines.forEach((line, i) => map.set(String(i + 1), line))
+
+  // 否则按非空行拆分，彻底跳过空行，避免行号落在空白上
+  lines
+    .map(l => l.trim())
+    .filter(Boolean)
+    .forEach((line, i) => {
+      const cleaned = line.replace(/^[A-Za-z][\.、．]\s*/, '').trim() || line
+      map.set(String(i + 1), cleaned)
+    })
+
   return map
 }
 
-// 从 AI 响应中解析 ANSWER: 字段并转换为原始文本
+// 从 AI 响应中解析 ANSWER: 字段并转换为原始文本（支持多选）
 const resolveUrlAnswer = (response: string, optionMap: Map<string, string>): string => {
   const match = response.match(/ANSWER:\s*(.+)/i)
   if (!match) return ''
-  const nums = match[1].trim().split(/[,，\s]+/).map(s => s.trim()).filter(Boolean)
-  if (nums.length === 0) return ''
-  return nums.map(n => optionMap.get(n) || n).join('###')
+
+  const raw = match[1].trim()
+  if (!raw) return ''
+
+  const expandToken = (token: string): string[] => {
+    const t = token.trim()
+    if (!t) return []
+    // 纯数字编号
+    if (/^\d+$/.test(t)) return [t]
+    // 单个字母 A/B/C
+    if (/^[A-Za-z]$/.test(t)) return [String(t.toUpperCase().charCodeAt(0) - 64)]
+    // 连续字母如 AC、ABD（多选常见写法）
+    if (/^[A-Za-z]{2,}$/.test(t)) {
+      return [...t.toUpperCase()].map(ch => String(ch.charCodeAt(0) - 64))
+    }
+    // 连续数字串且每位都是合法选项号时拆开，如 "13" → 1,3（仅当每位都在 optionMap 中）
+    if (/^\d{2,}$/.test(t) && optionMap.size > 0) {
+      const digits = [...t]
+      if (digits.every(d => optionMap.has(d))) return digits
+    }
+    return [t]
+  }
+
+  const nums = raw
+    .replace(/[和与及]/g, ' ')
+    .split(/[,，、;\s]+/)
+    .map(s => s.trim())
+    .filter(Boolean)
+    .flatMap(expandToken)
+
+  // 去重并保持顺序
+  const uniqueNums = [...new Set(nums)]
+  if (uniqueNums.length === 0) return ''
+
+  const parts = uniqueNums
+    .map(n => optionMap.get(n) ?? '')
+    .map(v => v.trim())
+    .filter(Boolean)
+
+  // 有选项映射时，必须解析出非空选项文本；否则视为无效（避免输出空格/空串）
+  if (optionMap.size > 0) return parts.join('###')
+  return uniqueNums.join('###')
 }
 
 const DEFAULT_VISION_IMAGE_MIN_SIZE = 32
@@ -3349,11 +3563,11 @@ const prepareVisionRequestContent = async (content: any[], minimumSize = DEFAULT
 }
 
 
-const executeVisionModelWithAutoUpscale = async (processModel: any, input: any, config: any, abortSignal?: AbortSignal) => {
+const executeVisionModelWithAutoUpscale = async (processModel: any, input: any, config: any, requestFetch?: typeof fetch, abortSignal?: AbortSignal) => {
 
 
   try {
-    return await processModel(input, config, abortSignal)
+    return await processModel(input, config, requestFetch, abortSignal)
   } catch (error) {
     const minimumSize = extractVisionImageSizeError(error)
     const originalContent = input?.messages?.[0]?.content
@@ -3373,7 +3587,7 @@ const executeVisionModelWithAutoUpscale = async (processModel: any, input: any, 
         ...input.messages[0],
         content
       }]
-    }, config, abortSignal)
+    }, config, requestFetch, abortSignal)
   }
 }
 
@@ -3434,6 +3648,7 @@ const injectUrlQuestionIfNeeded = (log: RequestLog) => {
       log.urlQuestion = {
         title,
         options,
+        questionType: rb.type || rb.questionType || '',
         imageUrl: null,
         analyzing: false,
         analysisResult: null,
@@ -3541,19 +3756,40 @@ const analyzeUrlQuestion = async (requestId: string) => {
     const platform = platforms.value.find(p => p.models.some(m => m.id === visionModel.id))
     if (!platform) throw new Error('找不到视觉模型对应的平台')
 
-    const { title, options } = log.urlQuestion
+    const { title, options, questionType } = log.urlQuestion
     const optionMap = parseUrlOptions(options)
     const hasOptions = optionMap.size > 0
+    const typeText = (questionType || '').trim()
+    const isMultiple = /多选|multiple/i.test(typeText)
+    const isJudgement = /判断|judg/i.test(typeText)
+    const isSingle = /单选|single/i.test(typeText) && !isMultiple
 
-    // 构建选项文本
+    // 构建选项文本（仅非空选项，连续编号，避免空行干扰行号）
     let optionsText = ''
     if (hasOptions) {
       optionsText = '\n\n选项：\n' + Array.from(optionMap.entries()).map(([k, v]) => `${k}. ${v}`).join('\n')
     }
 
-    const instruction = `\n\n请仔细分析上述题目，给出详细的解题过程和答案。\n\n在回答末尾，严格按照以下格式单独一行给出答案：\nANSWER: <答案>\n\n其中规则：\n${hasOptions
-      ? `- 单选题：写正确选项的编号，如 ANSWER: 2\n- 多选题：多个编号用空格分隔，如 ANSWER: 1 3\n- 判断题：写 正确 或 错误`
-      : `- 填空/解答题：写完整答案内容，如 ANSWER: 42`}`
+    const typeHint = typeText
+      ? `\n【题目类型：${typeText}】\n`
+      : ''
+
+    let answerRule = ''
+    if (hasOptions) {
+      if (isMultiple) {
+        answerRule = `- 这是多选题：必须列出全部正确选项编号，多个编号用空格分隔，如 ANSWER: 1 3\n- 也可以写成 ANSWER: A C（字母对应下方选项顺序）\n- 不要只选一个；禁止输出空答案或仅空格`
+      } else if (isJudgement) {
+        answerRule = `- 判断题：写 正确 或 错误`
+      } else if (isSingle) {
+        answerRule = `- 单选题：只写一个正确选项编号，如 ANSWER: 2；不要根据原始文本的空行号作答\n- 禁止输出空答案或仅空格`
+      } else {
+        answerRule = `- 单选题：只写一个正确选项编号，如 ANSWER: 2\n- 多选题：必须写出全部正确编号，空格分隔，如 ANSWER: 1 3\n- 判断题：写 正确 或 错误\n- 编号以下方「选项」列表为准，不要根据原始空行号作答\n- 禁止输出空答案或仅空格`
+      }
+    } else {
+      answerRule = `- 填空/解答题：写完整答案内容，如 ANSWER: 42`
+    }
+
+    const instruction = `\n\n请仔细分析上述题目，给出详细的解题过程和答案。${typeHint}\n在回答末尾，严格按照以下格式单独一行给出答案：\nANSWER: <答案>\n\n其中规则：\n${answerRule}`
 
     // 将 title + options + instruction 拼成完整文本，按 URL 拆分为交错多模态内容
     // 图片会先在本地拉取并转为 base64，再发送给视觉模型
@@ -3564,10 +3800,12 @@ const analyzeUrlQuestion = async (requestId: string) => {
     const analysisInput = {
       messages: [{ role: 'user', content: preparedMultimodalContent }],
 
-      model: visionModel.id,
+      model: resolveRuntimeModelId(visionModel),
       stream: true
     }
-    const config = { apiKey: platform.apiKey, baseUrl: platform.baseUrl, model: visionModel.id, ...visionModel }
+    const runtimeModelId = resolveRuntimeModelId(visionModel)
+    const executableCode = resolveExecutableModelJsCode(visionModel)
+    const config = { ...visionModel, apiKey: platform.apiKey, baseUrl: platform.baseUrl, model: runtimeModelId, modelId: runtimeModelId }
 
     const tauriHttp = await import('@tauri-apps/plugin-http')
     const tauriFetch: typeof fetch = ((input: RequestInfo | URL, init: RequestInit = {}) =>
@@ -3577,9 +3815,7 @@ const analyzeUrlQuestion = async (requestId: string) => {
         signal: init.signal ?? abortController.signal
       } as any)) as typeof fetch
 
-    if (!visionModel.jsCode) throw new Error('视觉模型未配置 JavaScript 代码')
-
-    const executableCode = visionModel.jsCode.trim()
+    if (!executableCode) throw new Error('视觉模型未配置可执行代码')
     let processModel: any
     if (executableCode.startsWith('async function') || executableCode.startsWith('function')) {
       processModel = new Function('input', 'config', 'fetch', 'abortSignal', `${executableCode}\nreturn processModel;`)(analysisInput, config, tauriFetch, abortController.signal)
@@ -3587,7 +3823,7 @@ const analyzeUrlQuestion = async (requestId: string) => {
       processModel = new Function('input', 'config', 'fetch', 'abortSignal', `return (async function processModel(input, config) { ${executableCode} });`)(analysisInput, config, tauriFetch, abortController.signal)
     }
 
-    const result = await executeVisionModelWithAutoUpscale(processModel, analysisInput, config, abortController.signal)
+    const result = await executeVisionModelWithAutoUpscale(processModel, analysisInput, config, tauriFetch, abortController.signal)
 
     if (!result) throw new Error('模型未返回有效结果')
 

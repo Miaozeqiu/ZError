@@ -1,35 +1,29 @@
 <template>
-  <div v-if="visible" class="model-warning__overlay" @click="onOverlay">
-    <div class="model-warning__dialog" @click.stop>
-      <div class="model-warning__header">
-        <div class="model-warning__icon">
-          <svg t="1763214359535" class="model-warning__icon-svg" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="5469" width="24" height="24">
-            <path d="M512 1024C230.4 1024 0 793.6 0 512S230.4 0 512 0s512 230.4 512 512-230.4 512-512 512z m0-938.666667C277.333333 85.333333 85.333333 277.333333 85.333333 512s192 426.666667 426.666667 426.666667 426.666667-192 426.666667-426.666667S746.666667 85.333333 512 85.333333z" fill="currentColor" p-id="5470"></path>
-            <path d="M512 652.8c-25.6 0-42.666667-17.066667-42.666667-42.666667V273.066667c0-25.6 17.066667-42.666667 42.666667-42.666667s42.666667 17.066667 42.666667 42.666667v337.066666c0 25.6-17.066667 42.666667-42.666667 42.666667z" fill="currentColor" p-id="5471"></path>
-            <path d="M512 746.666667m-42.666667 0a42.666667 42.666667 0 1 0 85.333334 0 42.666667 42.666667 0 1 0-85.333334 0Z" fill="currentColor" p-id="5472"></path>
-          </svg>
-        </div>
-        <div class="model-warning__header-content">
-          <h3 class="model-warning__title">还未选择模型</h3>
-        </div>
-      </div>
-
-      <div class="model-warning__body">
-        <div class="model-warning__section">
-          <div class="model-warning__content">
-            <div class="model-warning__message">
-              <p>未选择AI模型，将无法调用AI,只能搜索题库中有的题目，</p>
-              <p>请选择一个文本模型以正常使用AI功能</p>
-            </div>
+  <div v-if="visible" class="dialog-overlay" @click="onOverlay">
+    <div class="dialog-panel model-warning-panel" @click.stop>
+      <div class="dialog-header">
+        <div class="model-warning__heading">
+          <div class="model-warning__icon">
+            <svg class="model-warning__icon-svg" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" width="22" height="22">
+              <path d="M512 1024C230.4 1024 0 793.6 0 512S230.4 0 512 0s512 230.4 512 512-230.4 512-512 512z m0-938.666667C277.333333 85.333333 85.333333 277.333333 85.333333 512s192 426.666667 426.666667 426.666667 426.666667-192 426.666667-426.666667S746.666667 85.333333 512 85.333333z" fill="currentColor"></path>
+              <path d="M512 652.8c-25.6 0-42.666667-17.066667-42.666667-42.666667V273.066667c0-25.6 17.066667-42.666667 42.666667-42.666667s42.666667 17.066667 42.666667 42.666667v337.066666c0 25.6-17.066667 42.666667-42.666667 42.666667z" fill="currentColor"></path>
+              <path d="M512 746.666667m-42.666667 0a42.666667 42.666667 0 1 0 85.333334 0 42.666667 42.666667 0 1 0-85.333334 0Z" fill="currentColor"></path>
+            </svg>
           </div>
+          <h3 class="dialog-title">还未选择模型</h3>
         </div>
       </div>
 
-      <div class="model-warning__notice-row">
-        <div class="model-warning__checkbox">
+      <div class="dialog-body">
+        <div class="model-warning__message">
+          <p>未选择 AI 模型，将无法调用 AI，只能搜索题库中已有的题目。</p>
+          <p>请选择一个文本模型以正常使用 AI 功能。</p>
+        </div>
+
+        <label class="model-warning__checkbox">
           <Checkbox v-model="dontRemind" />
           <span>不再提醒</span>
-        </div>
+        </label>
       </div>
 
       <div class="model-warning__footer">
@@ -74,66 +68,99 @@ const onOverlay = (e: MouseEvent) => {
 }
 </script>
 
+<style>
+@import '../../styles/dialog.css';
+</style>
+
 <style scoped>
-.model-warning__overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
-  backdrop-filter: blur(4px);
+.dialog-overlay {
+  background: var(--platform-config-overlay-bg);
+  z-index: 2000;
+}
+
+.model-warning-panel {
+  max-width: 460px;
+  display: flex;
+  flex-direction: column;
+}
+
+.model-warning__heading {
   display: flex;
   align-items: center;
-  justify-content: center;
-  z-index: 9999;
-  animation: modelWarningFadeIn 0.2s ease-out;
+  gap: 14px;
 }
-.model-warning__dialog {
-  background: var(--bg-primary);
-  border-radius: 12px;
-  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.15);
-  width: 90%;
-  max-width: 500px;
-  max-height: 80vh;
-  overflow: hidden;
-  animation: modelWarningSlideIn 0.3s ease-out;
-}
-.model-warning__header {
-  display: flex;
-  align-items: center;
-  padding: 24px 24px 16px;
-  border-bottom: 1px solid var(--border-color);
-  gap: 16px;
-}
+
 .model-warning__icon {
   flex-shrink: 0;
-  width: 40px;
-  height: 40px;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
+  width: 32px;
+  height: 32px;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--text-primary);
+  color: var(--text-secondary, #86868b);
 }
-.model-warning__icon-svg { display: block; }
-.model-warning__title {
-  font-size: 20px;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin: 0;
+
+.model-warning__icon-svg {
+  display: block;
 }
-.model-warning__body { padding: 24px 24px; }
-.model-warning__content { background: var(--bg-secondary); border-radius: 8px; padding: 16px; }
-.model-warning__message { margin-bottom: 12px; color: var(--text-primary); font-size: 14px; line-height: 1.6; }
-.model-warning__footer { display: flex; gap: 12px; padding: 16px 24px 24px; justify-content: flex-end; }
-.model-warning__btn { padding: 10px 20px; border-radius: 8px; font-size: 14px; font-weight: 500; cursor: pointer; }
-.model-warning__btn--secondary { border: 1px solid var(--dialog-button-secondary-border); background: var(--dialog-button-secondary-bg); color: var(--dialog-button-secondary-text); }
-.model-warning__btn--primary { border: none; background: var(--dialog-button-primary-bg); color: var(--dialog-button-primary-text); }
-.model-warning__notice-row { display: flex; align-items: center; justify-content: space-between; padding-left: 30px;}
-.model-warning__checkbox { display: inline-flex; align-items: center; gap: 8px; color: var(--text-primary); }
-@keyframes modelWarningFadeIn { from { opacity: 0; } to { opacity: 1; } }
-@keyframes modelWarningSlideIn { from { opacity: 0; transform: translateY(-20px) scale(0.95); } to { opacity: 1; transform: translateY(0) scale(1); } }
+
+.model-warning__message {
+  color: var(--platform-config-dialog-title-text, var(--text-primary));
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.model-warning__message p {
+  margin: 0 0 8px;
+}
+
+.model-warning__message p:last-child {
+  margin-bottom: 0;
+}
+
+.model-warning__checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.model-warning__footer {
+  display: flex;
+  gap: 12px;
+  padding: 16px 24px 24px;
+  justify-content: flex-end;
+}
+
+.model-warning__btn {
+  padding: 8px 18px;
+  border: none;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.model-warning__btn--secondary {
+  background: var(--bg-tertiary, #e8e8ed);
+  color: var(--text-primary, #1d1d1f);
+}
+
+.model-warning__btn--secondary:hover {
+  background: color-mix(in srgb, var(--bg-tertiary, #e8e8ed) 88%, #000);
+}
+
+.model-warning__btn--primary {
+  background: var(--dialog-button-primary-bg, #F8B62B);
+  color: var(--dialog-button-primary-text, #fff);
+}
+
+.model-warning__btn--primary:hover {
+  background: var(--dialog-button-primary-hover, #e5a827);
+}
 </style>

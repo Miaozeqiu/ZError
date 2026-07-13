@@ -50,7 +50,7 @@
             <div class="test-meta">
               <p><strong>测试时间:</strong> {{ testResult.timestamp }}</p>
               <p v-if="testResult.testType"><strong>测试类型:</strong> {{ testResult.testType }}</p>
-              <p v-if="testResult.modelType"><strong>模型类型:</strong> {{ testResult.modelType === 'vision' ? '视觉模型' : '文本模型' }}</p>
+              <p v-if="testResult.firstTokenLatency !== undefined"><strong>首Token:</strong> {{ formatLatency(testResult.firstTokenLatency) }}</p>
               <p v-if="testResult.tokenRate !== undefined"><strong>平均速度:</strong> {{ formatTokenRate(testResult.tokenRate) }}</p>
             </div>
             <div class="content-stack-wrapper">
@@ -91,7 +91,7 @@ interface TestResult {
   timestamp: string
   testType?: string
   modelType?: 'text' | 'vision'
-  reasoning_content?: string
+  firstTokenLatency?: number
   tokenRate?: number
 }
 
@@ -117,6 +117,7 @@ watch(() => props.visible, (newVal) => {
 })
 
 const formatTokenRate = (value: number) => `${value.toFixed(1)} tokens/s`
+const formatLatency = (value: number) => `${(value / 1000).toFixed(2)}s`
 
 const emit = defineEmits<{
   close: []

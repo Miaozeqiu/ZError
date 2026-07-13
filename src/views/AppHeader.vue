@@ -1,6 +1,6 @@
 <template>
   <div class="app-header" :class="{ 'macos-header': isMacOS }" data-tauri-drag-region>
-    <div class="header-left" :class="{ 'macos-left': isMacOS }">
+    <div class="header-left" v-if="!isMacOS">
       <div class="app-logo">
         <img src="/icons/favicon.ico" alt="ZError Logo" width="20" height="20" />
       </div>
@@ -331,10 +331,9 @@ onMounted(async () => {
   z-index: 1000;
 }
 
-/* macOS 原生标题栏适配 */
+/* macOS 原生标题栏适配：stepper 与系统红绿灯同一行 */
 .app-header.macos-header {
-  padding-top: 28px;
-  height: 60px;
+  height: 40px;
   padding-left: 80px; /* 给 macOS 红绿灯按钮留空间 */
 }
 
@@ -345,10 +344,6 @@ onMounted(async () => {
   gap: 8px;
   flex: 0 0 auto;
   color:  #ffbd42;
-}
-
-.header-left.macos-left {
-  margin-left: 0;
 }
 
 .app-logo {

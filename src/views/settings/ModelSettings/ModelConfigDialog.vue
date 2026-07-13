@@ -1,146 +1,21 @@
 <template>
-  <!-- 当市场打开时，独立显示市场弹窗，不渲染底层编辑弹窗阴影 -->
-  <div v-if="show && marketplaceOpen" class="marketplace-overlay" @click="handleMarketplaceOverlay">
-    <div class="marketplace-panel" @click.stop>
-      <div class="marketplace-header">
-        <div class="marketplace-tabs">
-          <button class="marketplace-tab" :class="{ active: marketTab === 'remote' }" @click="marketTab = 'remote'">全部平台</button>
-          <button class="marketplace-tab" :class="{ active: marketTab === 'free' }" @click="switchToFreeTab">免费模型</button>
-        </div>
-        <div class="marketplace-header-actions">
-          <button v-if="marketTab === 'free'" class="btn btn-free-search" :disabled="isSearchingFree" @click="searchFreeModels">
-            {{ isSearchingFree ? '搜索中…' : '🔍 搜索全网免费模型' }}
-          </button>
-          <button class="dialog-close" @click="closeMarketplace">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-            </svg>
-          </button>
-        </div>
+  <div v-if="show" class="dialog-overlay" @click="handleOverlayClick">
+    <div class="dialog-panel model-config-panel" :class="{ 'model-config-panel--compact': !showAdvancedCode }" @click.stop>
+      <div class="dialog-header">
+        <button class="btn-back" type="button" @click="$emit('close')" title="取消">
+          <svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" width="18" height="18">
+            <path d="M768 96c19.2-19.2 19.2-51.2 0-70.4-19.2-19.2-51.2-19.2-70.4 0l-448 448c-19.2 19.2-19.2 51.2 0 70.4l448 448c19.2 19.2 51.2 19.2 70.4 0 19.2-19.2 19.2-51.2 0-70.4L358.4 512l409.6-416z" fill="currentColor"/>
+          </svg>
+        </button>
+        <span class="dialog-title">{{ isEditing ? '编辑模型' : '添加模型' }}</span>
+        <button class="btn-confirm" type="button" :disabled="!isFormValid" @click="handleSubmit">
+          {{ isEditing ? '完成' : '完成' }}
+        </button>
       </div>
-      <div class="marketplace-body">
-        <!-- 全部平台 Tab -->
-        <template v-if="marketTab === 'remote'">
-          <div class="marketplace-left">
-            <div class="marketplace-list-title">平台</div>
-            <div class="platform-list" v-if="!isLoadingMarket && marketPlatforms.length">
-              <div
-                v-for="p in marketPlatforms"
-                :key="p.id"
-                class="platform-item"
-                :class="{ active: selectedPlatformId === p.id }"
-                @click="selectPlatform(p.id)"
-              >
-                <div class="platform-item-row">
-                  <div class="platform-item-icon">
-                    <img v-if="p.icon && isImageIcon(p.icon)" :src="getIconUrl(p.icon)" :alt="p.displayName || p.name || p.id" />
-                    <div v-else class="icon-fallback-small">{{ (p.displayName || p.name || p.id).slice(0,2).toUpperCase() }}</div>
-                  </div>
-                  <div class="platform-item-info">
-                    <div class="platform-name">{{ p.displayName || p.name || p.id }}</div>
-                    <div class="platform-desc">{{ p.description }}</div>
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div v-else class="marketplace-placeholder">
-              <div v-if="isLoadingMarket">正在加载平台列表…</div>
-              <div v-else-if="marketError">{{ marketError }}</div>
-              <div v-else>暂无平台数据</div>
-            </div>
-          </div>
-          <div class="marketplace-right">
-            <div class="marketplace-list-title">模型</div>
-            <div class="custom-item" @click="chooseCustomModel">
-              <div class="model-header">
-                <div class="model-name">自定义模型</div>
-                <div class="model-tag">手动配置</div>
-              </div>
-              <div class="model-desc">不依赖预设，直接进入编辑配置。</div>
-            </div>
-            <div class="model-list" v-if="selectedPlatform && selectedPlatform.models?.length">
-              <div
-                v-for="m in selectedPlatform.models"
-                :key="m.id || m.name"
-                class="model-item"
-                :class="{ active: selectedModelId === (m.id || m.name) }"
-                @click="selectModel(m)"
-              >
-                <div class="model-header">
-                  <div class="model-name">{{ m.displayName || m.name || m.id }}</div>
-                  <div class="model-tag">{{ (m.category === 'vision' ? '视觉' : '文本') }}</div>
-                </div>
-                <div class="model-desc">{{ m.description }}</div>
-              </div>
-            </div>
-            <div v-else class="marketplace-placeholder">
-              <div v-if="!selectedPlatformId">请先选择左侧平台</div>
-              <div v-else>此平台暂无模型或加载失败</div>
-            </div>
-          </div>
-        </template>
-        <!-- 免费模型 Tab -->
-        <template v-if="marketTab === 'free'">
-          <div class="marketplace-free">
-            <div class="free-search-bar">
-              <input
-                v-model="freeSearchQuery"
-                type="text"
-                class="free-search-input"
-                placeholder="搜索免费模型名称…"
-              />
-            </div>
-            <div v-if="isSearchingFree" class="free-loading">
-              <div class="free-spinner"></div>
-              <span>正在搜索全网免费模型，请稍候…</span>
-            </div>
-            <div v-else-if="freeModelsError" class="free-error">{{ freeModelsError }}</div>
-            <div v-else class="free-model-list">
-              <div
-                v-for="m in filteredFreeModels"
-                :key="m.id"
-                class="free-model-item"
-                @click="selectFreeModel(m)"
-              >
-                <div class="free-model-header">
-                  <div class="free-model-name">{{ m.displayName || m.name || m.id }}</div>
-                  <div class="free-model-badge">{{ m.category === 'vision' ? '🖼️' : '📝' }}</div>
-                </div>
-                <div class="free-model-provider">{{ m.provider }}</div>
-                <div class="free-model-desc">{{ m.description || '免费模型，需自行申请 API Key' }}</div>
-                <div class="free-model-tags">
-                  <span v-if="m.pricing?.inputTokens === 0" class="free-tag free-tag-free">免费</span>
-                  <span v-else-if="m.pricing" class="free-tag">${{ formatPrice(m.pricing.inputTokens) }}/1K tokens</span>
-                  <span class="free-tag free-tag-info">{{ m.apiProtocol || 'OpenAI' }} 协议</span>
-                </div>
-              </div>
-              <div v-if="filteredFreeModels.length === 0" class="marketplace-placeholder">
-                没有找到匹配的免费模型
-              </div>
-            </div>
-          </div>
-        </template>
-      </div>
-    </div>
-  </div>
-  <!-- 市场未打开时，显示常规编辑弹窗 -->
-  <div v-else-if="show" class="dialog-overlay" @click="handleOverlayClick">
-    <div class="dialog-content" @click.stop>
-      <!-- <div class="dialog-header" v-if="!marketplaceOpen">
-        <h3 class="dialog-title">{{ isEditing ? '编辑模型' : '添加模型' }}</h3>
-        <div class="dialog-header-actions">
-          <button class="dialog-close" @click="$emit('close')">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-            </svg>
-          </button>
-        </div>
-      </div> -->
-
       <div class="dialog-body">
-        <div class="split-container" v-if="!marketplaceOpen">
-          <!-- 左侧：JavaScript 配置代码（高亮 + 语法检查） -->
-          <div class="editor-panel">
+        <div class="split-container" :class="{ 'split-container--compact': !showAdvancedCode }">
+          <!-- 左侧：JavaScript 配置代码（高亮 + 语法检查，默认收起） -->
+          <div class="editor-panel" :class="{ 'editor-panel--collapsed': !showAdvancedCode }">
             <div class="editor-header">JavaScript 配置代码</div>
           <div class="code-editor">
             <div ref="cmContainerRef" class="cm-container"></div>
@@ -148,7 +23,7 @@
         </div>
 
           <!-- 右侧：基本信息与操作按钮 -->
-          <form class="form-panel" @submit.prevent="handleSubmit">
+          <form class="form-panel" :class="{ 'form-panel--full': !showAdvancedCode }" @submit.prevent="handleSubmit">
             <div class="form-group">
               <label class="form-label">名称</label>
               <input
@@ -160,9 +35,95 @@
               >
             </div>
 
+            <div ref="modelDropdownAnchorRef" class="form-group qa-model-id-group">
+              <label class="form-label">模型 ID</label>
+              <div class="qa-model-id-row">
+                <input
+                  ref="modelIdInputRef"
+                  v-model="formData.modelId"
+                  type="text"
+                  class="form-input"
+                  placeholder="例如：gpt-4o-mini"
+                  @input="handleModelIdInput"
+                  @focus="handleModelIdFocus"
+                  @click="handleModelIdFocus"
+                  @blur="handleModelIdBlur"
+                >
+              </div>
+            </div>
+            <Teleport to="body">
+              <div
+                v-if="showModelDropdown && fetchedModelList.length > 0"
+                ref="modelDropdownRef"
+                class="qa-dropdown"
+                :style="modelDropdownStyle"
+                @mousedown.prevent
+              >
+                <div class="qa-dropdown-list">
+                  <template v-if="filteredFetchedModels.length > 0">
+                    <div v-for="group in groupedFetchedModels" :key="group.owner" class="qa-dropdown-group">
+                      <div class="qa-dropdown-group-title">{{ group.owner }}</div>
+                      <div
+                        v-for="m in group.models"
+                        :key="m.id"
+                        class="qa-dropdown-item"
+                        @mousedown.prevent="selectFetchedModel(m.id)"
+                      >
+                        <span class="qa-dropdown-item-id">{{ m.id }}</span>
+                      </div>
+                    </div>
+                  </template>
+                  <div v-else class="qa-dropdown-empty">无匹配模型</div>
+                </div>
+              </div>
+            </Teleport>
+
             <div class="form-group">
-              <label class="form-label">模型分类</label>
-              <ModelCategorySwitch v-model="formData.category" />
+              <label class="form-label">API 协议</label>
+              <div ref="protocolSelectRef" class="protocol-select-wrap">
+                <button
+                  type="button"
+                  class="protocol-select-trigger"
+                  :class="{ open: showProtocolDropdown }"
+                  @click="toggleProtocolDropdown"
+                >
+                  <span class="protocol-select-text">
+                    {{ currentProtocolOption.label }} - {{ currentProtocolOption.endpoint }}
+                  </span>
+                  <span class="protocol-select-arrow" aria-hidden="true">
+                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M4 6L8 10L12 6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                  </span>
+                </button>
+              </div>
+              <Teleport to="body">
+                <div
+                  v-if="showProtocolDropdown"
+                  ref="protocolDropdownRef"
+                  class="protocol-dropdown"
+                  :style="protocolDropdownStyle"
+                >
+                  <button
+                    v-for="option in protocolOptions"
+                    :key="option.value"
+                    type="button"
+                    class="protocol-dropdown-item"
+                    :class="{ active: formData.apiProtocol === option.value }"
+                    @click="selectProtocol(option.value)"
+                  >
+                    <span class="protocol-dropdown-label">{{ option.label }}</span>
+                    <span class="protocol-dropdown-endpoint">{{ option.endpoint }}</span>
+                  </button>
+                </div>
+              </Teleport>
+            </div>
+
+            <div v-if="showCategorySelect" class="form-group qa-form-row">
+              <label class="form-label">模型类型</label>
+              <div class="qa-category-switch">
+                <ModelCategorySwitch v-model="formData.category" :show-summary="false" />
+              </div>
             </div>
 
             <div class="form-group">
@@ -176,13 +137,8 @@
               <p class="form-hint">开启后，模型会输出思考过程，但响应时间可能明显变长。部分模型/API服务不支持此功能。</p>
             </div>
 
-            <div class="form-actions">
-              <button type="button" class="btn btn-secondary" @click="$emit('close')">取消</button>
-              <button type="submit" class="btn btn-primary">{{ isEditing ? '保存' : '添加' }}</button>
-            </div>
           </form>
         </div>
-        <!-- 市场弹窗独立渲染于根节点，移除内嵌版本 -->
       </div>
     </div>
   </div>
@@ -197,15 +153,15 @@ import { defaultHighlightStyle, syntaxHighlighting } from '@codemirror/language'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { linter, lintGutter } from '@codemirror/lint'
 import * as acorn from 'acorn'
-import { fetchRemoteModelsCatalog, type AIModel } from '../../../services/modelConfig'
-import { getPlatformIconDisplayUrl, isImageIconValue, resolvePlatformIconUrl } from '../../../services/iconCache'
+import { type AIModel } from '../../../services/modelConfig'
+import { buildPresetProcessModelJsCode, normalizeApiProtocol, readModelIdFromJsCode } from '../../../services/modelProtocol'
 import ModelCategorySwitch from './ModelCategorySwitch.vue'
 
 interface Props {
   show: boolean
   model?: AIModel | null
-  // 是否在新增模式下默认打开模型广场
-  startInMarketplace?: boolean
+  platformBaseUrl?: string
+  platformApiKey?: string
 }
 
 interface Emits {
@@ -216,91 +172,376 @@ interface Emits {
 const props = defineProps<Props>()
 const emit = defineEmits<Emits>()
 
+const protocolOptions = [
+  { value: 'openai-chat', label: 'OpenAI Chat', endpoint: '/v1/chat/completions' },
+  { value: 'openai-response', label: 'OpenAI Responses', endpoint: '/v1/responses' },
+  { value: 'anthropic', label: 'Anthropic', endpoint: '/v1/messages' },
+  { value: 'custom', label: '自定义', endpoint: 'jsCode' }
+] as const
+const protocolSelectRef = ref<HTMLElement | null>(null)
+const protocolDropdownRef = ref<HTMLElement | null>(null)
+const protocolDropdownStyle = ref<Record<string, string>>({})
+const showProtocolDropdown = ref(false)
+const modelDropdownAnchorRef = ref<HTMLElement | null>(null)
+const modelIdInputRef = ref<HTMLInputElement | null>(null)
+const modelDropdownRef = ref<HTMLElement | null>(null)
+const modelDropdownStyle = ref<Record<string, string>>({})
+const isFetchingModels = ref(false)
+const showModelDropdown = ref(false)
+
+type FetchedModelItem = {
+  id: string
+  name?: string
+  ownedBy?: string
+}
+
+const fetchedModelList = ref<FetchedModelItem[]>([])
+
 const formData = ref({
   displayName: '',
   category: 'text' as 'text' | 'vision' | 'summary',
   jsCode: '',
-  enableThinking: false
+  modelId: '',
+  enableThinking: false,
+  apiProtocol: 'openai-chat' as AIModel['apiProtocol']
 })
 
 const isEditing = computed(() => !!props.model)
-
-const DEFAULT_JS_CODE = `
-/**
- * @param {string} prompt - The user's input prompt.
- * @param {object} context - The context object.
- * @param {object} context.request - The request object from the client.
- * @param {function} context.get - A function to get a value from the context.
- * @param {function} context.set - A function to set a value in the context.
- * @returns {object} - The modified request payload.
- */
-function transform(prompt, context) {
-  // Example: Add a system message to the chat history
-  const messages = [
-    { role: 'system', content: 'You are a helpful assistant.' },
-    { role: 'user', content: prompt }
-  ];
-  
-  const payload = {
-    ...context.request, // Preserve original request parameters
-    messages: messages,
-    stream: true, // Enable streaming response
-  };
-  
-  // If the incoming request has tools (e.g. for function calling), pass them along
-  if (context.request.tools) {
-    payload.tools = context.request.tools;
+const showCategorySelect = computed(() => !isEditing.value)
+const requiresModelId = computed(() => formData.value.apiProtocol !== 'custom')
+const isFormValid = computed(() => {
+  if (!formData.value.displayName.trim()) return false
+  if (requiresModelId.value && !formData.value.modelId.trim()) return false
+  return true
+})
+const currentProtocolOption = computed(() => {
+  return protocolOptions.find(option => option.value === formData.value.apiProtocol) ?? protocolOptions[0]
+})
+const filteredFetchedModels = computed(() => {
+  const q = formData.value.modelId.trim().toLowerCase()
+  if (!q) return fetchedModelList.value
+  return fetchedModelList.value.filter(m =>
+    m.id.toLowerCase().includes(q) ||
+    (m.ownedBy || '').toLowerCase().includes(q)
+  )
+})
+const groupedFetchedModels = computed(() => {
+  const groups = new Map<string, FetchedModelItem[]>()
+  for (const model of filteredFetchedModels.value) {
+    const owner = model.ownedBy || '未分类'
+    if (!groups.has(owner)) groups.set(owner, [])
+    groups.get(owner)!.push(model)
   }
-  
-  return payload;
-}
-`.trim()
+  return Array.from(groups.entries()).map(([owner, models]) => ({ owner, models }))
+})
 
-const DEFAULT_VISION_JS_CODE = `
-/**
- * @param {string} prompt - The user's input prompt.
- * @param {object} context - The context object.
- * @param {object} context.request - The request object from the client.
- * @param {function} context.get - A function to get a value from the context.
- * @param {function} context.set - A function to set a value in the context.
- * @param {string} context.imageUrl - The base64 encoded image or image URL.
- * @returns {object} - The modified request payload.
- */
-function transform(prompt, context) {
-  const messages = [
-    {
-      role: 'user',
-      content: [
-        { type: 'text', text: prompt },
-        { type: 'image_url', image_url: { url: context.imageUrl } }
-      ]
+const updateProtocolDropdownPosition = () => {
+  if (!protocolSelectRef.value) return
+  const triggerRect = protocolSelectRef.value.getBoundingClientRect()
+  const dropdownWidth = triggerRect.width
+  const estimatedHeight = protocolDropdownRef.value?.getBoundingClientRect().height || 220
+  const spaceBelow = window.innerHeight - triggerRect.bottom
+  const showAbove = spaceBelow < estimatedHeight + 12 && triggerRect.top > estimatedHeight + 12
+
+  protocolDropdownStyle.value = {
+    position: 'fixed',
+    left: `${Math.max(8, Math.min(triggerRect.left, window.innerWidth - dropdownWidth - 8))}px`,
+    top: showAbove ? `${Math.max(8, triggerRect.top - estimatedHeight - 6)}px` : `${triggerRect.bottom + 6}px`,
+    width: `${dropdownWidth}px`,
+    zIndex: '2000'
+  }
+}
+
+const toggleProtocolDropdown = async () => {
+  showProtocolDropdown.value = !showProtocolDropdown.value
+  if (showProtocolDropdown.value) {
+    await nextTick()
+    await nextTick()
+    updateProtocolDropdownPosition()
+  }
+}
+
+const selectProtocol = (protocol: AIModel['apiProtocol']) => {
+  formData.value.apiProtocol = protocol
+  showProtocolDropdown.value = false
+}
+
+const handleProtocolOutsideClick = (event: MouseEvent) => {
+  const target = event.target as Node | null
+  if (
+    !target ||
+    (
+      !protocolSelectRef.value?.contains(target) &&
+      !protocolDropdownRef.value?.contains(target)
+    )
+  ) {
+    showProtocolDropdown.value = false
+  }
+}
+
+const handleProtocolViewportChange = () => {
+  if (showProtocolDropdown.value) {
+    updateProtocolDropdownPosition()
+  }
+}
+
+const updateModelDropdownPosition = () => {
+  if (!modelDropdownAnchorRef.value) return
+  const anchorRect = modelDropdownAnchorRef.value.getBoundingClientRect()
+  const dropdownWidth = anchorRect.width
+  const estimatedHeight = modelDropdownRef.value?.getBoundingClientRect().height || 260
+  const spaceBelow = window.innerHeight - anchorRect.bottom
+  const showAbove = spaceBelow < estimatedHeight + 12 && anchorRect.top > estimatedHeight + 12
+
+  modelDropdownStyle.value = {
+    position: 'fixed',
+    left: `${Math.max(8, Math.min(anchorRect.left, window.innerWidth - dropdownWidth - 8))}px`,
+    top: showAbove ? `${Math.max(8, anchorRect.top - estimatedHeight - 6)}px` : `${anchorRect.bottom + 6}px`,
+    width: `${dropdownWidth}px`,
+    zIndex: '2000'
+  }
+}
+
+let modelDropdownBlurTimer: ReturnType<typeof setTimeout> | null = null
+
+const clearModelDropdownBlurTimer = () => {
+  if (modelDropdownBlurTimer != null) {
+    clearTimeout(modelDropdownBlurTimer)
+    modelDropdownBlurTimer = null
+  }
+}
+
+const openModelDropdown = async () => {
+  clearModelDropdownBlurTimer()
+  showModelDropdown.value = true
+  await nextTick()
+  await nextTick()
+  updateModelDropdownPosition()
+}
+
+const closeModelDropdown = () => {
+  clearModelDropdownBlurTimer()
+  showModelDropdown.value = false
+}
+
+const normalizeBaseUrl = (url?: string) => (url || '').trim().replace(/\/+$/, '')
+
+const modelsCacheByBaseUrl = new Map<string, FetchedModelItem[]>()
+let fetchModelsGeneration = 0
+let tauriFetchPromise: Promise<typeof import('@tauri-apps/plugin-http').fetch> | null = null
+
+const getTauriFetch = () => {
+  if (!tauriFetchPromise) {
+    tauriFetchPromise = import('@tauri-apps/plugin-http').then(m => m.fetch)
+  }
+  return tauriFetchPromise
+}
+
+const applyFetchedModels = async (models: FetchedModelItem[]) => {
+  fetchedModelList.value = models
+  if (document.activeElement === modelIdInputRef.value && models.length > 0) {
+    await openModelDropdown()
+  }
+}
+
+const restoreModelsFromCache = () => {
+  const baseUrl = normalizeBaseUrl(props.platformBaseUrl)
+  const cached = baseUrl ? modelsCacheByBaseUrl.get(baseUrl) : undefined
+  fetchedModelList.value = cached ? [...cached] : []
+}
+
+const handleModelIdFocus = async () => {
+  if (fetchedModelList.value.length > 0) {
+    await openModelDropdown()
+    return
+  }
+  // 兜底：若打开弹窗时未拉到列表，聚焦时再触发一次
+  if (!isFetchingModels.value) {
+    void fetchModels()
+  }
+}
+
+const handleModelIdBlur = () => {
+  clearModelDropdownBlurTimer()
+  // 延迟关闭，避免点击下拉项时因 blur 先触发而收起导致点选失效
+  modelDropdownBlurTimer = setTimeout(() => {
+    modelDropdownBlurTimer = null
+    const active = document.activeElement
+    if (
+      modelIdInputRef.value === active ||
+      modelDropdownRef.value?.contains(active)
+    ) {
+      return
     }
-  ];
-  
-  const payload = {
-    ...context.request,
-    messages: messages,
-    stream: true,
-  };
-  
-  // If the incoming request has tools (e.g. for function calling), pass them along
-  if (context.request.tools) {
-    payload.tools = context.request.tools;
-  }
-  
-  return payload;
+    closeModelDropdown()
+  }, 150)
 }
-`.trim()
+
+const handleModelIdInput = async () => {
+  if (fetchedModelList.value.length > 0) {
+    await openModelDropdown()
+  }
+}
+
+const handleModelDropdownOutsideClick = (event: MouseEvent) => {
+  const target = event.target as Node | null
+  if (
+    !target ||
+    (
+      !modelDropdownAnchorRef.value?.contains(target) &&
+      !modelDropdownRef.value?.contains(target)
+    )
+  ) {
+    closeModelDropdown()
+  }
+}
+
+const handleModelDropdownViewportChange = () => {
+  if (showModelDropdown.value) {
+    updateModelDropdownPosition()
+  }
+}
+
+const parseModelsResponse = (data: any): FetchedModelItem[] => {
+  if (data?.data && Array.isArray(data.data)) {
+    return data.data.map((m: any) => ({
+      id: m.id,
+      name: m.id,
+      ownedBy: m.owned_by || m.ownedBy || m.owner || ''
+    }))
+  }
+  if (Array.isArray(data)) {
+    return data.map((m: any) => ({
+      id: m.id || m.name,
+      name: m.name || m.id,
+      ownedBy: m.owned_by || m.ownedBy || m.owner || ''
+    }))
+  }
+  if (data?.models && Array.isArray(data.models)) {
+    return data.models.map((m: any) => ({
+      id: m.id || m.name,
+      name: m.name || m.id,
+      ownedBy: m.owned_by || m.ownedBy || m.owner || ''
+    }))
+  }
+  return []
+}
+
+const fetchModels = async () => {
+  const baseUrl = normalizeBaseUrl(props.platformBaseUrl)
+  if (!baseUrl) return
+
+  const cached = modelsCacheByBaseUrl.get(baseUrl)
+  if (cached?.length) {
+    await applyFetchedModels(cached)
+  }
+
+  const generation = ++fetchModelsGeneration
+  isFetchingModels.value = true
+
+  try {
+    const endpoints = [`${baseUrl}/models`, `${baseUrl}/v1/models`]
+    let models: FetchedModelItem[] = []
+    let lastErr = ''
+    let unauthorized = false
+    const tauriFetch = await getTauriFetch()
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+    if (props.platformApiKey) headers['Authorization'] = `Bearer ${props.platformApiKey}`
+
+    for (const url of endpoints) {
+      try {
+        const res = await tauriFetch(url, { method: 'GET', headers })
+        if (res.status === 401) { unauthorized = true; lastErr = 'HTTP 401'; continue }
+        if (!res.ok) { lastErr = `HTTP ${res.status}`; continue }
+        const data = await res.json()
+        models = parseModelsResponse(data)
+        if (models.length > 0) break
+        lastErr = '无法解析响应格式'
+      } catch (error: any) {
+        lastErr = error?.message || String(error)
+      }
+    }
+
+    if (generation !== fetchModelsGeneration) return
+
+    if (models.length === 0) {
+      console.warn('获取模型列表失败:', unauthorized ? 'HTTP 401' : lastErr)
+      return
+    }
+
+    const seen = new Set<string>()
+    const uniqueModels = models
+      .filter(m => {
+        if (!m.id || seen.has(m.id)) return false
+        seen.add(m.id)
+        return true
+      })
+      .sort((a, b) => {
+        const ownerCompare = (a.ownedBy || '未分类').localeCompare(b.ownedBy || '未分类')
+        if (ownerCompare !== 0) return ownerCompare
+        return a.id.localeCompare(b.id)
+      })
+
+    modelsCacheByBaseUrl.set(baseUrl, uniqueModels)
+    await applyFetchedModels(uniqueModels)
+  } catch (error: any) {
+    if (generation === fetchModelsGeneration) {
+      console.warn('获取模型列表失败:', error?.message || String(error))
+    }
+  } finally {
+    if (generation === fetchModelsGeneration) {
+      isFetchingModels.value = false
+    }
+  }
+}
+
+const selectFetchedModel = (modelId: string) => {
+  clearModelDropdownBlurTimer()
+  formData.value.modelId = modelId
+  if (!formData.value.displayName.trim()) {
+    formData.value.displayName = modelId
+  }
+  closeModelDropdown()
+}
+
+const DEFAULT_JS_CODE = buildPresetProcessModelJsCode({ protocol: 'openai-chat', modelId: '' })
+const DEFAULT_VISION_JS_CODE = DEFAULT_JS_CODE
+
+const buildCurrentPresetJsCode = () => buildPresetProcessModelJsCode({
+  protocol: formData.value.apiProtocol,
+  modelId: formData.value.modelId,
+  enableThinking: formData.value.enableThinking
+})
+
+const syncPresetJsCode = () => {
+  if (formData.value.apiProtocol === 'custom') return
+  const nextCode = buildCurrentPresetJsCode()
+  if (nextCode !== formData.value.jsCode) {
+    formData.value.jsCode = nextCode
+  }
+}
+
+const createDialogFormData = (model?: AIModel | null) => {
+  const protocol = normalizeApiProtocol(model?.apiProtocol)
+  const modelId = model?.modelId?.trim() || readModelIdFromJsCode(model?.jsCode) || ''
+  const category = model?.category || 'text'
+
+  return {
+    displayName: model?.displayName || '',
+    category,
+    jsCode: protocol === 'custom'
+      ? (model?.jsCode || (category === 'vision' ? DEFAULT_VISION_JS_CODE : DEFAULT_JS_CODE))
+      : buildPresetProcessModelJsCode({ protocol, modelId, enableThinking: deriveEnableThinking(model) }),
+    modelId,
+    enableThinking: deriveEnableThinking(model),
+    apiProtocol: protocol
+  }
+}
 
 // 监听模型变化，更新表单数据
 watch(() => props.model, (newModel) => {
   if (newModel) {
-    formData.value = {
-      displayName: newModel.displayName,
-      category: newModel.category || 'text',
-      jsCode: newModel.jsCode || (newModel.category === 'vision' ? DEFAULT_VISION_JS_CODE : DEFAULT_JS_CODE),
-      enableThinking: newModel.enableThinking === true
-    }
+    formData.value = createDialogFormData(newModel)
     // 若编辑器已存在，确保文档与最新模型代码同步
     nextTick(() => {
       if (cmView) {
@@ -309,12 +550,7 @@ watch(() => props.model, (newModel) => {
     })
   } else {
     // 重置表单为默认值
-    formData.value = {
-      displayName: '',
-      category: 'text',
-      jsCode: DEFAULT_JS_CODE,
-      enableThinking: false
-    }
+    formData.value = createDialogFormData(null)
     // 清空到默认模板，避免残留旧代码
     nextTick(() => {
       if (cmView) {
@@ -326,6 +562,10 @@ watch(() => props.model, (newModel) => {
 
 // 监听类别切换自动替换模板
 watch(() => formData.value.category, (newCategory) => {
+  if (formData.value.apiProtocol !== 'custom') {
+    syncPresetJsCode()
+    return
+  }
   if (!isEditing.value && (!formData.value.jsCode || formData.value.jsCode === DEFAULT_JS_CODE || formData.value.jsCode === DEFAULT_VISION_JS_CODE)) {
     formData.value.jsCode = newCategory === 'vision' ? DEFAULT_VISION_JS_CODE : DEFAULT_JS_CODE;
     nextTick(() => {
@@ -336,46 +576,127 @@ watch(() => formData.value.category, (newCategory) => {
   }
 });
 
+// ===== 思考开关与 jsCode 中 enable_thinking 字面量双向同步 =====
+
+// 读取 jsCode 里 enable_thinking 的布尔字面量；不存在则返回 null
+function readEnableThinkingFromJsCode(code: string | undefined | null): boolean | null {
+  if (!code) return null
+  const m = code.match(/enable_thinking\s*:\s*(true|false)\b/)
+  return m ? m[1] === 'true' : null
+}
+
+// 将 jsCode 中 enable_thinking 字面量改写为目标值；不存在则原样返回
+// （不向不支持该参数的模板注入，避免污染 OpenAI 等协议的请求体）
+const applyEnableThinkingToJsCode = (code: string, enabled: boolean): string => {
+  if (!code) return code
+  return code.replace(/enable_thinking\s*:\s*(true|false)\b/, `enable_thinking: ${enabled}`)
+}
+
+// 加载模型时推导开关初始状态：优先以 jsCode 里的字面量为准，其次回退到存储字段
+function deriveEnableThinking(model: AIModel | null | undefined): boolean {
+  const fromCode = readEnableThinkingFromJsCode(model?.jsCode)
+  if (fromCode !== null) return fromCode
+  return model?.enableThinking === true
+}
+
+// 开关变化 → 改写 jsCode 中 enable_thinking 字面量（仅当其已存在时）
+watch(() => formData.value.enableThinking, (enabled) => {
+  if (formData.value.apiProtocol !== 'custom') {
+    syncPresetJsCode()
+    return
+  }
+  if (readEnableThinkingFromJsCode(formData.value.jsCode) === null) return
+  const updated = applyEnableThinkingToJsCode(formData.value.jsCode, enabled)
+  if (updated !== formData.value.jsCode) {
+    formData.value.jsCode = updated
+    nextTick(() => { if (cmView) setEditorDoc(updated) })
+  }
+})
+
+// jsCode 变化（用户在编辑器中手改）→ 回写开关
+watch(() => formData.value.jsCode, (code) => {
+  const inCode = readEnableThinkingFromJsCode(code)
+  if (inCode === null) return
+  if (formData.value.enableThinking !== inCode) {
+    formData.value.enableThinking = inCode
+  }
+})
+
+// ===== 模型 ID 与 jsCode 中 model 字面量双向同步 =====
+
+// 仅当协议为“自定义”时显示 JavaScript 编辑器
+const showAdvancedCode = computed(() => formData.value.apiProtocol === 'custom')
+
+// 将模型 ID 写入 jsCode：已有 model 字面量则替换其值（保留原引号风格）；
+// 默认模板无 model 字面量时，在 `...context.request,` 之后注入；都不命中则原样返回
+const applyModelIdToJsCode = (code: string, id: string): string => {
+  if (!code) return code
+  const trimmed = id.trim()
+  if (/model\s*:\s*(['"`])[^'"`\n]*?\1/.test(code)) {
+    return code.replace(/(model\s*:\s*)(['"`])([^'"`\n]*?)\2/, (_m, p1: string, q: string) => `${p1}${q}${trimmed}${q}`)
+  }
+  if (!trimmed) return code
+  if (/...\s*context\.request\s*,/.test(code)) {
+    return code.replace(/(...\s*context\.request\s*,)/, `$1\n    model: '${trimmed}',`)
+  }
+  return code
+}
+
+// 加载模型时推导模型 ID：以 jsCode 里 model 字面量为准，无则空串
+// 模型 ID 变化 → 同步写入 jsCode
+watch(() => formData.value.modelId, (id) => {
+  if (formData.value.apiProtocol !== 'custom') {
+    syncPresetJsCode()
+    return
+  }
+  if (!id) return
+  const updated = applyModelIdToJsCode(formData.value.jsCode, id)
+  if (updated !== formData.value.jsCode) {
+    formData.value.jsCode = updated
+    nextTick(() => { if (cmView) setEditorDoc(updated) })
+  }
+})
+
+// jsCode 变化 → 回写模型 ID（与上面的 enableThinking 回写共用同一 jsCode 源）
+watch(() => formData.value.jsCode, (code) => {
+  const inCode = readModelIdFromJsCode(code)
+  if (inCode === null) return
+  if (formData.value.modelId !== inCode) {
+    formData.value.modelId = inCode
+  }
+})
+
+// 自定义协议显示编辑器时（重新）初始化编辑器，确保在可见容器中正确测量尺寸
+watch(showAdvancedCode, async (visible) => {
+  if (!visible) return
+  await nextTick()
+  if (cmView) {
+    cmView.destroy()
+    cmView = null
+  }
+  await rebuildEditorWithDoc(formData.value.jsCode)
+})
+
 // 监听弹窗显示状态，打开时初始化，关闭时销毁以避免视图挂载丢失
 watch(() => props.show, async (visible) => {
+  showProtocolDropdown.value = false
+  showModelDropdown.value = false
   if (visible) {
+    // 弹窗一打开就预拉 /models，避免聚焦输入框时再等网络
+    restoreModelsFromCache()
+    void fetchModels()
+
     await nextTick()
+    formData.value = createDialogFormData(props.model)
 
-    // 打开时先重置市场状态，避免复用旧状态导致错误显示
-    marketplaceOpen.value = false
-
-    // 如果是“新增并默认进入市场”的场景，直接打开市场并跳过编辑器初始化
-    if (!isEditing.value && props.startInMarketplace) {
-      // 清理旧编辑器实例（如果存在）
-      if (cmView) {
-        cmView.destroy()
-        cmView = null
-      }
-      openMarketplace()
-      return
+    // 仅在自定义协议下初始化编辑器，避免在隐藏容器中测量尺寸异常
+    if (showAdvancedCode.value) {
+      await rebuildEditorWithDoc(formData.value.jsCode)
     }
-
-    // 编辑模式或非默认进入市场：确保表单与当前模型同步后再初始化编辑器
-    if (props.model) {
-      formData.value = {
-        displayName: props.model.displayName,
-        category: props.model.category || 'text',
-        jsCode: props.model.jsCode || (props.model.category === 'vision' ? DEFAULT_VISION_JS_CODE : DEFAULT_JS_CODE),
-        enableThinking: props.model.enableThinking === true
-      }
-    } else {
-      // 非编辑模式但不进市场时，使用默认模板
-      formData.value = {
-        displayName: '',
-        category: 'text',
-        jsCode: DEFAULT_JS_CODE,
-        enableThinking: false
-      }
-    }
-
-    // 如果存在旧的 EditorView（可能因 v-if 被移除父容器），先销毁后重建
-    await rebuildEditorWithDoc(formData.value.jsCode)
   } else {
+    fetchModelsGeneration += 1
+    isFetchingModels.value = false
+    fetchedModelList.value = []
     // 隐藏时销毁实例，防止持有已移除的 DOM 引用导致下次无法显示
     if (cmView) {
       cmView.destroy()
@@ -475,6 +796,12 @@ const setEditorDoc = (text: string) => {
 }
 
 onMounted(() => {
+  document.addEventListener('click', handleProtocolOutsideClick)
+  document.addEventListener('click', handleModelDropdownOutsideClick)
+  window.addEventListener('resize', handleProtocolViewportChange)
+  window.addEventListener('resize', handleModelDropdownViewportChange)
+  window.addEventListener('scroll', handleProtocolViewportChange, true)
+  window.addEventListener('scroll', handleModelDropdownViewportChange, true)
   // 监听主题变化：当 data-theme 改变且弹窗可见时，重建编辑器以应用新主题
   themeObserver = new MutationObserver((mutations) => {
     for (const m of mutations) {
@@ -494,6 +821,13 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  clearModelDropdownBlurTimer()
+  document.removeEventListener('click', handleProtocolOutsideClick)
+  document.removeEventListener('click', handleModelDropdownOutsideClick)
+  window.removeEventListener('resize', handleProtocolViewportChange)
+  window.removeEventListener('resize', handleModelDropdownViewportChange)
+  window.removeEventListener('scroll', handleProtocolViewportChange, true)
+  window.removeEventListener('scroll', handleModelDropdownViewportChange, true)
   if (cmView) {
     cmView.destroy()
     cmView = null
@@ -537,382 +871,23 @@ const handleOverlayClick = (event: MouseEvent) => {
   }, 0)
 }
 
-// ===== 免费模型搜索 =====
-const FREE_MODELS_PROVIDERS: MarketplacePlatform[] = [
-  {
-    id: 'free-groq',
-    name: 'Groq',
-    displayName: 'Groq',
-    description: 'Groq LPU 推理引擎，提供极速免费的 LLM 推理',
-    baseUrl: 'https://api.groq.com/openai/v1',
-    icon: '⚡',
-    models: [
-      { id: 'llama-3.3-70b-versatile', name: 'Llama 3.3 70B', displayName: 'Llama 3.3 70B', description: 'Meta Llama 3.3 70B，Groq 免费提供', category: 'text', maxTokens: 8192 },
-      { id: 'llama-3.1-8b-instant', name: 'Llama 3.1 8B', displayName: 'Llama 3.1 8B Instant', description: 'Meta Llama 3.1 8B，极速推理', category: 'text', maxTokens: 8192 },
-      { id: 'mixtral-8x7b-32768', name: 'Mixtral 8x7B', displayName: 'Mixtral 8x7B', description: 'Mistral Mixtral 8x7B，32K 上下文', category: 'text', maxTokens: 32768 },
-      { id: 'gemma2-9b-it', name: 'Gemma 2 9B', displayName: 'Gemma 2 9B IT', description: 'Google Gemma 2 9B', category: 'text', maxTokens: 8192 },
-    ]
-  },
-  {
-    id: 'free-openrouter',
-    name: 'OpenRouter',
-    displayName: 'OpenRouter',
-    description: '聚合多个 AI 模型，含免费模型额度',
-    baseUrl: 'https://openrouter.ai/api/v1',
-    icon: '🌐',
-    models: [
-      { id: 'meta-llama/llama-3.2-3b-instruct:free', name: 'Llama 3.2 3B', displayName: 'Llama 3.2 3B Instruct (Free)', description: 'Meta 最新小模型，完全免费', category: 'text', maxTokens: 8192 },
-      { id: 'microsoft/phi-3-mini-128k-instruct:free', name: 'Phi-3 Mini', displayName: 'Phi-3 Mini 128K (Free)', description: 'Microsoft Phi-3，128K 上下文', category: 'text', maxTokens: 128000 },
-      { id: 'mistralai/mistral-7b-instruct:free', name: 'Mistral 7B', displayName: 'Mistral 7B Instruct (Free)', description: 'Mistral 7B 开源模型', category: 'text', maxTokens: 8192 },
-      { id: 'qwen/qwen-2-7b-instruct:free', name: 'Qwen 2 7B', displayName: 'Qwen 2 7B Instruct (Free)', description: '阿里通义千问 7B', category: 'text', maxTokens: 32768 },
-      { id: 'google/gemma-2-9b-it:free', name: 'Gemma 2 9B', displayName: 'Gemma 2 9B IT (Free)', description: 'Google Gemma 2', category: 'text', maxTokens: 8192 },
-    ]
-  },
-  {
-    id: 'free-google',
-    name: 'Google AI',
-    displayName: 'Google AI Studio',
-    description: 'Google Gemini API，有免费额度',
-    baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
-    icon: '🔮',
-    models: [
-      { id: 'gemini-2.0-flash-exp', name: 'Gemini 2.0 Flash', displayName: 'Gemini 2.0 Flash', description: 'Google 最新免费模型，快速且强大', category: 'text', maxTokens: 8192 },
-      { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', displayName: 'Gemini 1.5 Flash', description: '高速免费模型', category: 'text', maxTokens: 32768 },
-      { id: 'gemini-1.5-flash-8b', name: 'Gemini 1.5 Flash 8B', displayName: 'Gemini 1.5 Flash 8B', description: '轻量级免费模型', category: 'text', maxTokens: 32768 },
-    ]
-  },
-  {
-    id: 'free-deepseek',
-    name: 'DeepSeek',
-    displayName: 'DeepSeek',
-    description: 'DeepSeek 官方 API，价格极低',
-    baseUrl: 'https://api.deepseek.com',
-    icon: '🧠',
-    models: [
-      { id: 'deepseek-chat', name: 'DeepSeek V3', displayName: 'DeepSeek V3', description: 'DeepSeek 最新版，极低价格', category: 'text', maxTokens: 32768 },
-      { id: 'deepseek-reasoner', name: 'DeepSeek R1', displayName: 'DeepSeek R1', description: 'DeepSeek 推理模型（思考模型）', category: 'text', maxTokens: 32768, enableThinking: true },
-    ]
-  },
-  {
-    id: 'free-github',
-    name: 'GitHub Models',
-    displayName: 'GitHub Models',
-    description: 'GitHub Marketplace 免费模型，需 GitHub Token',
-    baseUrl: 'https://models.inference.ai.azure.com',
-    icon: '🐙',
-    models: [
-      { id: 'gpt-4o-mini', name: 'GPT-4o Mini', displayName: 'GPT-4o Mini', description: 'OpenAI 最新小模型，GitHub 免费提供', category: 'text', maxTokens: 16384 },
-      { id: 'gpt-4o', name: 'GPT-4o', displayName: 'GPT-4o', description: 'OpenAI GPT-4o，GitHub 有限免费', category: 'text', maxTokens: 16384 },
-      { id: 'Phi-3.5-MoE-instruct', name: 'Phi-3.5 MoE', displayName: 'Phi-3.5 MoE', description: 'Microsoft Phi-3.5 MoE', category: 'text', maxTokens: 32768 },
-      { id: 'AI21-Jamba-1.5-Mini', name: 'Jamba 1.5 Mini', displayName: 'Jamba 1.5 Mini', description: 'AI21 Jamba 1.5', category: 'text', maxTokens: 256000 },
-    ]
-  },
-]
-
-interface FreeModelItem {
-  id: string
-  name?: string
-  displayName?: string
-  description?: string
-  category?: 'text' | 'vision'
-  provider?: string
-  providerBaseUrl?: string
-  pricing?: { inputTokens: number; outputTokens: number }
-  enableThinking?: boolean
-  apiProtocol?: string
-  icon?: string
-}
-
-const marketTab = ref<'remote' | 'free'>('remote')
-const freeSearchQuery = ref('')
-const isSearchingFree = ref(false)
-const freeModelsError = ref<string | null>(null)
-const discoveredFreeModels = ref<FreeModelItem[]>([])
-
-const switchToFreeTab = () => {
-  marketTab.value = 'free'
-  // 首次打开免费tab时，加载内置列表
-  if (discoveredFreeModels.value.length === 0) {
-    loadBuiltinFreeModels()
-  }
-}
-
-const loadBuiltinFreeModels = () => {
-  const models: FreeModelItem[] = []
-  for (const provider of FREE_MODELS_PROVIDERS) {
-    for (const m of (provider.models || [])) {
-      models.push({
-        id: m.id || m.name || '',
-        name: m.name,
-        displayName: m.displayName || m.name || m.id,
-        description: m.description || provider.description,
-        category: m.category || 'text',
-        provider: provider.displayName || provider.name,
-        providerBaseUrl: provider.baseUrl,
-        enableThinking: m.enableThinking,
-        apiProtocol: 'OpenAI',
-        icon: provider.icon,
-      })
-    }
-  }
-  discoveredFreeModels.value = models
-}
-
-const filteredFreeModels = computed(() => {
-  const q = freeSearchQuery.value.trim().toLowerCase()
-  if (!q) return discoveredFreeModels.value
-  return discoveredFreeModels.value.filter(m =>
-    (m.displayName?.toLowerCase().includes(q)) ||
-    (m.name?.toLowerCase().includes(q)) ||
-    (m.provider?.toLowerCase().includes(q)) ||
-    (m.description?.toLowerCase().includes(q))
-  )
-})
-
-const formatPrice = (price?: number): string => {
-  if (price === undefined || price === null) return '免费'
-  if (price === 0) return '免费'
-  return price.toFixed(6)
-}
-
-const searchFreeModels = async () => {
-  isSearchingFree.value = true
-  freeModelsError.value = null
-  try {
-    // 先加载内置免费模型
-    loadBuiltinFreeModels()
-
-    // 尝试从 OpenRouter API 获取免费模型
-    const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http')
-    let orResponse: Response | null = null
-    try {
-      orResponse = await tauriFetch('https://openrouter.ai/api/v1/models', { method: 'GET' })
-    } catch {
-      try {
-        orResponse = await fetch('https://openrouter.ai/api/v1/models')
-      } catch {}
-    }
-
-    if (orResponse?.ok) {
-      const data = await orResponse.json()
-      if (data?.data && Array.isArray(data.data)) {
-        const existingIds = new Set(discoveredFreeModels.value.map(m => m.id))
-        const newModels: FreeModelItem[] = []
-
-        for (const model of data.data) {
-          // 只取免费模型（定价为空或价格为 0 的）
-          const pricing = model.pricing
-          const isFree = !pricing || (pricing.prompt === 0 && pricing.completion === 0)
-          if (!isFree) continue
-
-          const modelId = model.id || ''
-          if (existingIds.has(modelId)) continue
-          existingIds.add(modelId)
-
-          newModels.push({
-            id: modelId,
-            name: model.id,
-            displayName: model.name || model.id,
-            description: model.description || `OpenRouter 免费模型`,
-            category: 'text' as const,
-            provider: 'OpenRouter',
-            providerBaseUrl: 'https://openrouter.ai/api/v1',
-            apiProtocol: 'OpenAI',
-            icon: '🌐',
-          })
-        }
-
-        if (newModels.length > 0) {
-          discoveredFreeModels.value = [...newModels, ...discoveredFreeModels.value]
-        }
-      }
-    }
-  } catch (err: any) {
-    // 内置免费模型已加载，不报错
-    console.warn('搜索免费模型失败（内置列表已加载）:', err)
-  } finally {
-    isSearchingFree.value = false
-  }
-}
-
-const selectFreeModel = (m: FreeModelItem) => {
-  // 选择免费模型后自动填充到表单
-  formData.value.displayName = m.displayName || m.name || m.id
-  formData.value.category = m.category || 'text'
-  formData.value.enableThinking = m.enableThinking === true
-
-  // 生成 jsCode
-  const baseUrl = m.providerBaseUrl || ''
-  const modelId = m.id
-  formData.value.jsCode = `
-/**
- * OpenAI 兼容协议 - 免费模型
- */
-function transform(prompt, context) {
-  const messages = [
-    { role: 'system', content: '你是一个答题助手。请直接给出答案，不要额外解释。' },
-    { role: 'user', content: prompt }
-  ];
-  return {
-    ...context.request,
-    model: '${modelId}',
-    messages: messages,
-    stream: true,
-  };
-}
-`.trim()
-
-  // 关闭市场
-  marketplaceOpen.value = false
-  void rebuildEditorWithDoc(formData.value.jsCode)
-}
-
-// ===== 模型广场（远程 JSON 选择） =====
-interface MarketplaceModel {
-  id?: string
-  name?: string
-  displayName?: string
-  description?: string
-  category?: 'text' | 'vision'
-  jsCode?: string
-  maxTokens?: number
-  temperature?: number
-  topP?: number
-  enabled?: boolean
-  enableThinking?: boolean
-}
-
-interface MarketplacePlatform {
-  id: string
-  name?: string
-  displayName?: string
-  description?: string
-  baseUrl?: string
-  icon?: string
-  models?: MarketplaceModel[]
-}
-
-const marketplaceOpen = ref(false)
-const marketPlatforms = ref<MarketplacePlatform[]>([])
-const isLoadingMarket = ref(false)
-const marketError = ref<string | null>(null)
-const selectedPlatformId = ref<string | null>(null)
-const selectedModelId = ref<string | null>(null)
-const resolvedIconUrls = ref<Record<string, string>>({})
-const selectedPlatform = computed(() => marketPlatforms.value.find(p => p.id === selectedPlatformId.value) || null)
-const selectedModel = computed<MarketplaceModel | null>(() => {
-  const p = selectedPlatform.value
-  if (!p || !p.models) return null
-  return p.models.find(m => (m.id || m.name) === selectedModelId.value) || null
-})
-
-const primeIconUrlCache = async (icon?: string) => {
-  if (!icon || !isImageIconValue(icon)) return
-
-  resolvedIconUrls.value[icon] = getPlatformIconDisplayUrl(icon)
-
-  try {
-    resolvedIconUrls.value[icon] = await resolvePlatformIconUrl(icon)
-  } catch (error) {
-    console.warn('缓存平台图标失败，回退到原始地址:', icon, error)
-  }
-}
-
-const openMarketplace = async () => {
-  marketplaceOpen.value = true
-  if (!marketPlatforms.value.length) {
-    await loadMarketplace()
-  }
-}
-
-const closeMarketplace = () => {
-  // 在“添加模式且由添加流程直接进入市场”的场景下，关闭市场即退出添加流程
-  if (!isEditing.value && props.startInMarketplace) {
-    emit('close')
-    return
-  }
-  // 其他场景（例如从编辑界面打开市场），关闭市场返回原编辑界面
-  marketplaceOpen.value = false
-}
-
-const handleMarketplaceOverlay = () => {
-  // 点击遮罩关闭（保留与主对话框一致的体验）
-  closeMarketplace()
-}
-
-const loadMarketplace = async () => {
-  isLoadingMarket.value = true
-  marketError.value = null
-  try {
-    const catalog = await fetchRemoteModelsCatalog()
-    marketPlatforms.value = catalog.platforms as MarketplacePlatform[]
-    await Promise.all(marketPlatforms.value.map(platform => primeIconUrlCache(platform.icon)))
-  } catch (err: any) {
-    console.warn('加载模型广场失败：', err)
-    marketError.value = err?.message || '无法加载模型广场数据'
-  } finally {
-    isLoadingMarket.value = false
-  }
-}
-
-const selectPlatform = (pid: string) => {
-  selectedPlatformId.value = pid
-  selectedModelId.value = null
-}
-
-const selectModel = (m: MarketplaceModel) => {
-  selectedModelId.value = (m.id || m.name) ?? ''
-  // 点击模型后直接确认并进入编辑
-  confirmMarketplaceSelection()
-}
-
-const confirmMarketplaceSelection = () => {
-  if (!selectedModel.value || !selectedPlatform.value) return
-  const m = selectedModel.value
-
-  // 仅从市场选择中回填必要字段
-  formData.value.displayName = m.displayName || m.name || m.id || ''
-  // 若市场提供分类，则同步到表单，便于直接提交
-  if (m.category) {
-    formData.value.category = m.category
-  }
-  formData.value.jsCode = m.jsCode || (formData.value.category === 'vision' ? DEFAULT_VISION_JS_CODE : DEFAULT_JS_CODE)
-
-  // 关闭市场面板
-  marketplaceOpen.value = false
-  void rebuildEditorWithDoc(formData.value.jsCode)
-}
-
-const isImageIcon = (icon: string) => isImageIconValue(icon)
-
-const getIconUrl = (icon: string) => {
-  if (!icon) return ''
-  return resolvedIconUrls.value[icon] || getPlatformIconDisplayUrl(icon) || icon
-}
-
-// 自定义模型入口：不依赖远程数据，打开编辑并填充默认值
-const chooseCustomModel = () => {
-  // 回填默认值到表单
-  formData.value.displayName = ''
-  formData.value.category = 'text'
-  formData.value.jsCode = DEFAULT_JS_CODE
-
-  // 关闭市场面板，回到编辑界面
-  marketplaceOpen.value = false
-  void rebuildEditorWithDoc(formData.value.jsCode)
-}
-
 const handleSubmit = () => {
   if (!formData.value.displayName.trim()) {
     alert('请输入模型名称')
+    return
+  }
+  if (requiresModelId.value && !formData.value.modelId.trim()) {
+    alert('请输入模型 ID')
     return
   }
 
   const modelData: Partial<AIModel> = {
     displayName: formData.value.displayName.trim(),
     category: formData.value.category,
-    jsCode: formData.value.jsCode,
-    enableThinking: formData.value.enableThinking
+    modelId: formData.value.modelId.trim(),
+    jsCode: formData.value.apiProtocol === 'custom' ? formData.value.jsCode : buildCurrentPresetJsCode(),
+    enableThinking: formData.value.enableThinking,
+    apiProtocol: formData.value.apiProtocol
   }
 
   // 如果是编辑模式，保留原有的id
@@ -929,61 +904,20 @@ const handleSubmit = () => {
 </style>
 
 <style scoped>
-.dialog-overlay {
-  background: var(--platform-config-overlay-bg);
-}
-
-.dialog-content {
-  background: var(--platform-config-dialog-bg);
-  border: 1px solid var(--platform-config-dialog-border);
-  border-radius: 12px;
-  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+.model-config-panel {
   width: 92vw;           /* 随主窗口变化的宽度 */
   max-width: 1400px;     /* 合理的最大宽度限制 */      /* 随主窗口变化的高度 */
-  overflow: hidden;
   display: flex;
   flex-direction: column;
-  will-change: transform, opacity;
-  transform-origin: center center;
-  backface-visibility: hidden;
-  animation: popup-in 180ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  transition: max-width 0.28s cubic-bezier(0.2, 0.7, 0.2, 1);
 }
 
-.dialog-header {
-  padding: 20px 24px;
-  border-bottom: 1px solid var(--border-color, #e2e8f0);
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
+/* 隐藏 JavaScript 代码时收窄弹窗，避免表单两侧留大块空白 */
+.model-config-panel--compact {
+  max-width: 580px;
 }
 
-.dialog-title {
-  font-size: 20px;
-  font-weight: 600;
-  color: var(--text-primary, #2d3748);
-  margin: 0;
-}
-
-.dialog-close {
-  height: 30px;
-  width: 30px;
-  align-items: center;
-  justify-content: center;
-  background: var(--dialog-button-close-bg);
-  border: none;
-  color: var(--dialog-button-close-text);
-  cursor: pointer;
-  padding: 4px;
-  border-radius: 4px;
-  transition: all 0.2s;
-}
-
-.dialog-close:hover {
-  background: var(--dialog-button-close-hover-bg);
-  color: var(--dialog-button-close-hover-text);
-}
-
-.dialog-body {
+.model-config-panel > .dialog-body {
   padding: 24px;
   flex: 1;
   display: flex;
@@ -998,6 +932,12 @@ const handleSubmit = () => {
   flex: 1 1 auto;
   min-height: 0;  /* 允许子项根据可用空间收缩 */
   min-width: 0;   /* 防止子项溢出导致布局错位 */
+  transition: gap 0.28s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+/* 编辑器收起时去掉间距，让表单居中无偏移 */
+.split-container--compact {
+  gap: 0;
 }
 
 .editor-panel {
@@ -1006,12 +946,45 @@ const handleSubmit = () => {
   flex-direction: column;
   min-height: 0;          /* 让编辑器按高度自适应 */
   min-width: 0;           /* 允许内容在窄屏时收缩 */
+  max-height: none;
+  max-width: 100%;        /* 展开时不超出容器 */
+  overflow: hidden;       /* 收起过程中裁剪内部编辑器 */
+  opacity: 1;
+  transition: max-width 0.28s cubic-bezier(0.2, 0.7, 0.2, 1),
+              max-height 0.28s cubic-bezier(0.2, 0.7, 0.2, 1),
+              opacity 0.24s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+/* 收起：宽度归零 + 淡出，配合 overflow:hidden 实现平滑过渡 */
+.editor-panel--collapsed {
+  flex: 0 0 0;
+  max-width: 0;
+  max-height: 0;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .form-panel {
   flex: 0 0 360px;        /* 固定宽度 */
-  width: 360px;
   max-width: 380px;       /* 限制最大宽度以防样式抖动 */
+  transition: flex-basis 0.28s cubic-bezier(0.2, 0.7, 0.2, 1),
+              max-width 0.28s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+/* 编辑器收起时，表单占满可用宽度并居中，避免左侧留大块空白 */
+.form-panel--full {
+  flex: 0 0 520px;        /* 用具体 flex-basis 以便过渡动画 */
+  max-width: 520px;
+  margin: 0 auto;
+}
+
+.form-hint code {
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 12px;
+  background: var(--bg-tertiary, #f1f5f9);
+  color: var(--text-primary, #2d3748);
+  padding: 1px 5px;
+  border-radius: 4px;
 }
 
 .editor-header {
@@ -1109,44 +1082,102 @@ const handleSubmit = () => {
   margin-bottom: 6px;
 }
 
+.qa-model-id-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
 
-.form-actions {
+.qa-model-id-row .form-input {
+  flex: 1;
+}
+
+.qa-dropdown {
+  position: fixed;
+  box-sizing: border-box;
+  border: 1px solid var(--platform-config-form-input-border, #e2e8f0);
+  border-radius: 10px;
+  background: var(--form-input-bg, #F7F7F7);
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.12);
+  max-height: 320px;
+  display: flex;
+  flex-direction: column;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 6px;
+}
+
+.qa-dropdown-list {
+  flex: 1;
+  overflow-y: auto;
+  max-height: 240px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.qa-dropdown-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.qa-dropdown-group-title {
+  padding: 2px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.qa-dropdown-item {
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 13px;
+  transition: background-color 0.2s ease;
+}
+
+.qa-dropdown-item:hover {
+  background: var(--form-input-hover-bg, #f0f0f0);
+}
+
+.qa-dropdown-item-id {
+  display: block;
+  line-height: 1.4;
+}
+
+.qa-dropdown-empty {
+  padding: 12px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.qa-form-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.qa-form-row .form-label {
+  margin-bottom: 0;
+}
+
+.qa-category-switch {
+  flex: 1;
   display: flex;
   justify-content: flex-end;
-  gap: 12px;
-  margin-top: 24px;
-  padding-top: 20px;
-  border-top: 1px solid var(--border-color, #e2e8f0);
 }
 
-.btn {
-  padding: 10px 20px;
-  border: none;
-  border-radius: 6px;
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.2s;
-}
 
-.btn-primary {
-  background: var(--dialog-button-primary-bg);
-  color: var(--dialog-button-primary-text);
-}
-
-.btn-primary:hover {
-  background: var(--dialog-button-primary-hover);
-}
-
-.btn-secondary {
-  background: var(--dialog-button-secondary-bg);
-  color: var(--dialog-button-secondary-text);
-  border: 1px solid var(--dialog-button-secondary-border);
-}
-
-.btn-secondary:hover {
-  background: var(--dialog-button-secondary-hover-bg);
-  color: var(--dialog-button-secondary-hover-text);
+.btn-confirm:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* 图标相关样式 */
@@ -1283,378 +1314,6 @@ const handleSubmit = () => {
 
 </style>
 <style scoped>
-/* 追加样式：头部动作区与模型广场 */
-.dialog-header-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.btn-tertiary {
-  background: var(--bg-tertiary, #f7fafc);
-  color: var(--text-primary, #2d3748);
-  border: 1px solid var(--border-color, #e2e8f0);
-}
-
-.btn-tertiary:hover {
-  background: var(--hover-bg, #edf2f7);
-}
-
-.marketplace-overlay {
-  position: fixed;
-  inset: 0;
-  background: var(--platform-config-overlay-bg);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1001;
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
-  animation: overlay-fade-in 160ms ease-out both;
-}
-
-.marketplace-panel {
-  width: 90vw;
-  max-width: 1200px;
-  height: 80vh;
-  background: var(--platform-config-dialog-bg, #ffffff);
-  border: 1px solid var(--platform-config-dialog-border);
-  border-radius: 12px;
-  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  will-change: transform, opacity;
-  transform-origin: center center;
-  backface-visibility: hidden;
-  animation: popup-in 180ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
-}
-
-.marketplace-header {
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--platform-config-dialog-header-border);
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.marketplace-title {
-  margin: 0px;
-  font-size: 18px;
-  font-weight: 600;
-}
-
-.marketplace-actions {
-  display: flex;
-  gap: 8px;
-}
-
-.marketplace-body {
-  flex: 1;
-  display: flex;
-  min-height: 0;
-}
-
-.marketplace-left {
-  flex: 0 0 380px;
-  border-right: 1px solid var(--platform-config-dialog-header-border);
-  padding: 12px;
-  overflow: auto;
-}
-
-.marketplace-right {
-  flex: 1;
-  padding: 12px;
-  overflow: auto;
-}
-
-.marketplace-list-title {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-secondary, #718096);
-  margin-bottom: 8px;
-}
-
-.platform-list, .model-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.platform-item, .model-item {
-  border: 1px solid var(--platform-config-icon-option-border, #e2e8f0);
-  border-radius: 8px;
-  padding: 10px 12px;
-  background: var(--platform-config-icon-option-bg, #ffffff);
-  cursor: pointer;
-}
-
-.platform-item-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.platform-item-icon img {
-  width: 40px;
-  height: 40px;
-  max-width: 40px;
-  max-height: 40px;
-  object-fit: contain;
-  border-radius: 6px;
-}
-
-.icon-fallback-small {
-  width: 24px;
-  height: 24px;
-  border-radius: 6px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--platform-config-icon-fallback-text);
-  border: 2px solid var(--platform-config-icon-display-border);
-}
-
-/* 自定义项与模型项保持一致的外观 */
-.custom-item {
-  border: 1px solid var(--platform-config-icon-option-bg, #e2e8f0);
-  border-radius: 8px;
-  padding: 10px 12px;
-  background: var(--bg-primary, #ffffff);
-  cursor: pointer;
-  margin-bottom: 8px;
-}
-.custom-item:hover {
-  background: var(--bg-tertiary, #f7fafc);
-}
-
-.platform-item:hover, .model-item:hover {
-  border-color: var(--primary, #667eea);
-  background: var(--platform-item-active-bg, #f7fafc);
-}
-
-.platform-item.active, .model-item.active {
-  border-color: var(--primary, #667eea);
-  background: var(--platform-item-active-bg, #f7fafc);
-}
-
-.platform-name { font-weight: 600; }
-.platform-desc { font-size: 12px; color: var(--text-secondary, #718096); }
-
-.model-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.model-name { font-weight: 600; }
-.model-tag {
-  background-color: var(--platform-config-icon-section-title-bg);
-  font-size: 12px;
-  color: var(--text-secondary, #718096);
-  border: 1px solid var(--border-color, #e2e8f0);
-  border-radius: 6px;
-  padding: 2px 6px;
-}
-
-.model-desc { font-size: 12px; color: var(--text-secondary, #718096); margin-top: 6px; }
-
-.marketplace-placeholder { font-size: 13px; color: var(--text-secondary, #718096); padding: 12px; }
-
-/* 市场 tabs */
-.marketplace-tabs {
-  display: flex;
-  gap: 4px;
-}
-
-.marketplace-tab {
-  padding: 6px 16px;
-  border: 1px solid var(--border-color, #e2e8f0);
-  background: var(--bg-primary, #fff);
-  border-radius: 8px;
-  cursor: pointer;
-  font-size: 13px;
-  color: var(--text-secondary, #718096);
-  transition: all 0.2s;
-}
-
-.marketplace-tab.active {
-  background: var(--color-primary, #667eea);
-  color: #fff;
-  border-color: var(--color-primary, #667eea);
-}
-
-.marketplace-header-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.btn-free-search {
-  padding: 6px 12px;
-  border: 1px solid var(--color-primary, #667eea);
-  background: transparent;
-  color: var(--color-primary, #667eea);
-  border-radius: 8px;
-  cursor: pointer;
-  font-size: 12px;
-  white-space: nowrap;
-  transition: all 0.2s;
-}
-
-.btn-free-search:hover:not(:disabled) {
-  background: var(--color-primary, #667eea);
-  color: #fff;
-}
-
-.btn-free-search:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-/* 免费模型面板 */
-.marketplace-free {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  padding: 12px;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.free-search-bar {
-  margin-bottom: 12px;
-  flex-shrink: 0;
-}
-
-.free-search-input {
-  width: 100%;
-  padding: 10px 14px;
-  border: 1px solid var(--border-color, #e2e8f0);
-  border-radius: 8px;
-  font-size: 14px;
-  background: var(--bg-primary, #fff);
-  color: var(--text-primary, #2d3748);
-  outline: none;
-  box-sizing: border-box;
-}
-
-.free-search-input:focus {
-  border-color: var(--color-primary, #667eea);
-  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.15);
-}
-
-.free-loading {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  padding: 40px;
-  color: var(--text-secondary, #718096);
-  font-size: 14px;
-}
-
-.free-spinner {
-  width: 20px;
-  height: 20px;
-  border: 2px solid var(--border-color, #e2e8f0);
-  border-top-color: var(--color-primary, #667eea);
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
-.free-error {
-  padding: 20px;
-  text-align: center;
-  color: var(--text-error, #e53e3e);
-  font-size: 14px;
-}
-
-.free-model-list {
-  flex: 1;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.free-model-item {
-  border: 1px solid var(--border-color, #e2e8f0);
-  border-radius: 10px;
-  padding: 12px 14px;
-  background: var(--bg-primary, #fff);
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.free-model-item:hover {
-  border-color: var(--color-primary, #667eea);
-  background: var(--hover-bg, #f7fafc);
-}
-
-.free-model-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 4px;
-}
-
-.free-model-name {
-  font-weight: 600;
-  font-size: 14px;
-  color: var(--text-primary, #2d3748);
-}
-
-.free-model-badge {
-  font-size: 16px;
-}
-
-.free-model-provider {
-  font-size: 12px;
-  color: var(--color-primary, #667eea);
-  margin-bottom: 4px;
-}
-
-.free-model-desc {
-  font-size: 12px;
-  color: var(--text-secondary, #718096);
-  margin-bottom: 6px;
-}
-
-.free-model-tags {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.free-tag {
-  font-size: 11px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: var(--bg-tertiary, #f7fafc);
-  color: var(--text-secondary, #718096);
-  border: 1px solid var(--border-color, #e2e8f0);
-}
-
-.free-tag-free {
-  background: #c6f6d5;
-  color: #276749;
-  border-color: #9ae6b4;
-  font-weight: 600;
-}
-
-.free-tag-info {
-  background: #bee3f8;
-  color: #2b6cb0;
-  border-color: #90cdf4;
-}
-
 /* 切换开关样式 */
 .form-label--row {
   display: flex !important;
@@ -1668,6 +1327,133 @@ const handleSubmit = () => {
   color: var(--text-secondary, #718096);
   margin: 4px 0 0 0;
   line-height: 1.4;
+}
+
+.protocol-select-wrap {
+  position: relative;
+}
+
+.protocol-select-trigger {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 42px;
+  padding: 10px 12px;
+  padding-right: 40px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: var(--form-input-bg, #F7F7F7);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  transition: border-color 0.2s ease, background-color 0.2s ease;
+}
+
+.protocol-select-trigger:hover,
+.protocol-select-trigger.open {
+  border-color: var(--form-input-hover-border, transparent);
+  background: var(--form-input-hover-bg, #f0f0f0);
+}
+
+.protocol-select-trigger:focus {
+  outline: none;
+  border-color: var(--form-input-focus-border, #3182ce);
+}
+
+.protocol-select-text {
+  display: block;
+  width: 100%;
+  padding-right: 8px;
+  line-height: 1.5;
+}
+
+.protocol-select-arrow {
+  position: absolute;
+  top: 50%;
+  right: 12px;
+  transform: translateY(-50%);
+  width: 14px;
+  height: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary, #718096);
+  pointer-events: none;
+  transition: transform 0.2s ease;
+}
+
+.protocol-select-trigger.open .protocol-select-arrow {
+  transform: translateY(-50%) rotate(180deg);
+}
+
+.protocol-dropdown {
+  position: fixed;
+  box-sizing: border-box;
+  max-height: min(320px, calc(100vh - 16px));
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 1px solid var(--platform-config-form-input-border, #e2e8f0);
+  border-radius: 10px;
+  background: var(--form-input-bg, #F7F7F7);
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.12);
+}
+
+.protocol-dropdown-item {
+  appearance: none;
+  -webkit-appearance: none;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 10px 12px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  box-shadow: none;
+  outline: none;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  transition: background-color 0.2s ease, color 0.15s ease;
+}
+
+.protocol-dropdown-item:focus,
+.protocol-dropdown-item:focus-visible,
+.protocol-dropdown-item:active {
+  outline: none;
+  border: none;
+  box-shadow: none;
+}
+
+.protocol-dropdown-item:hover,
+.protocol-dropdown-item.active:hover {
+  background: var(--form-input-hover-bg, #f0f0f0);
+}
+
+.protocol-dropdown-item.active {
+  background: transparent;
+  color: var(--text-primary);
+}
+
+.protocol-dropdown-label {
+  font-weight: 500;
+}
+
+.protocol-dropdown-endpoint {
+  color: var(--text-secondary, #718096);
+  font-size: 11px;
+  flex-shrink: 0;
 }
 
 .switch-toggle {

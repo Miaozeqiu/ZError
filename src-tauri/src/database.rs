@@ -1356,100 +1356,234 @@ pub async fn search_questions_fuzzy(
     Ok(result)
 }
 
-pub async fn query_database(
+#[derive(Debug, Clone)]
+pub struct QuestionMatch {
+    pub id: i64,
+    pub question: String,
+    pub options: Option<String>,
+    pub answer: String,
+    pub is_ai: bool,
+    pub is_pending_correction: bool,
+    pub score: f64,
+}
+
+fn score_question_row(
+    title: &str,
+    query_options: &Option<String>,
+    require_option_match: bool,
+    id: i64,
+    question: String,
+    db_options: Option<String>,
+    answer: String,
+    is_ai: bool,
+    is_pending_correction: bool,
+) -> Option<QuestionMatch> {
+    let query_urls = extract_urls(title);
+    if !query_urls.is_empty() {
+        let db_urls = extract_urls(&question);
+        if query_urls != db_urls {
+            return None;
+        }
+    }
+
+    let title_similarity = compute_query_match_score(title, &question)?;
+
+    let has_query_options = query_options.is_some();
+    let option_similarity = match (
+        query_options.as_deref(),
+        normalize_optional_query_text(db_options.as_deref()),
+    ) {
+        (Some(query_options), Some(db_options)) => {
+            compute_query_match_score(query_options, &db_options)
+        }
+        _ => None,
+    };
+
+    let is_exact_title_match = is_exact_match_score(title_similarity);
+    if !is_exact_title_match
+        && (require_option_match || has_query_options)
+        && option_similarity.is_none()
+    {
+        return None;
+    }
+
+    let final_similarity = match option_similarity {
+        Some(option_similarity) => title_similarity * 0.7 + option_similarity * 0.3,
+        None => title_similarity,
+    };
+
+    Some(QuestionMatch {
+        id,
+        question,
+        options: db_options,
+        answer,
+        is_ai,
+        is_pending_correction,
+        score: final_similarity,
+    })
+}
+
+fn is_exact_question_match(
+    title: &str,
+    query_options: Option<&str>,
+    matched: &QuestionMatch,
+) -> bool {
+    let Some(title_score) = compute_query_match_score(title, &matched.question) else {
+        return false;
+    };
+    if !is_exact_match_score(title_score) {
+        return false;
+    }
+
+    match normalize_optional_query_text(query_options) {
+        None => true,
+        Some(query_opts) => match normalize_optional_query_text(matched.options.as_deref()) {
+            Some(db_opts) => compute_query_match_score(&query_opts, &db_opts)
+                .map(is_exact_match_score)
+                .unwrap_or(false),
+            None => false,
+        },
+    }
+}
+
+fn scan_question_matches(
     title: &str,
     options: Option<&str>,
-) -> Result<Vec<(i64, String, String, bool, bool)>, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<Vec<QuestionMatch>, Box<dyn std::error::Error + Send + Sync>> {
     let db_path = get_db_path();
     let title_clone = title.to_string();
     let query_options = normalize_optional_query_text(options);
     let require_option_match = should_require_option_match(&title_clone);
 
+    let conn = Connection::open(&db_path)?;
+    let mut stmt = conn.prepare(
+        "SELECT Id, Question, Options, Answer, IsAi, COALESCE(IsPendingCorrection, 0) FROM AIResponses",
+    )?;
+
+    let rows = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, Option<String>>(2)?,
+            row.get::<_, String>(3)?,
+            row.get::<_, bool>(4)?,
+            row.get::<_, bool>(5)?,
+        ))
+    })?;
+
+    let mut results = Vec::new();
+    for row in rows {
+        let (id, question, db_options, answer, is_ai, is_pending_correction) = row?;
+        if let Some(matched) = score_question_row(
+            &title_clone,
+            &query_options,
+            require_option_match,
+            id,
+            question,
+            db_options,
+            answer,
+            is_ai,
+            is_pending_correction,
+        ) {
+            results.push(matched);
+        }
+    }
+
+    results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    Ok(results)
+}
+
+/// 仅返回题干（及有选项时的选项）规范化后 100% 相同的记录
+pub async fn query_database_exact(
+    title: &str,
+    options: Option<&str>,
+) -> Result<Vec<QuestionMatch>, Box<dyn std::error::Error + Send + Sync>> {
+    let title = title.to_string();
+    let options = options.map(|s| s.to_string());
+
     let result = tokio::task::spawn_blocking(
-        move || -> Result<Vec<(i64, String, String, bool, bool)>, Box<dyn std::error::Error + Send + Sync>> {
-            let conn = match Connection::open(&db_path) {
-                Ok(c) => c,
-                Err(e) => {
-                    return Err(Box::new(e) as Box<dyn std::error::Error + Send + Sync>);
-                }
-            };
-
-            let mut stmt = conn.prepare(
-                "SELECT Id, Question, Options, Answer, IsAi, COALESCE(IsPendingCorrection, 0) FROM AIResponses",
-            )?;
-
-            let rows = stmt.query_map([], |row| {
-                Ok((
-                    row.get::<_, i64>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, Option<String>>(2)?,
-                    row.get::<_, String>(3)?,
-                    row.get::<_, bool>(4)?,
-                    row.get::<_, bool>(5)?,
-                ))
-            })?;
-
-            let mut results = Vec::new();
-            for row in rows {
-                match row {
-                    Ok((id, question, db_options, answer, is_ai, is_pending_correction)) => {
-                        // 如果查询题目包含 URL，要求数据库记录的 URL 集合完全一致
-                        // 避免"设A图那么B图"误匹配"设C图那么B图"
-                        let query_urls = extract_urls(&title_clone);
-                        if !query_urls.is_empty() {
-                            let db_urls = extract_urls(&question);
-                            if query_urls != db_urls {
-                                continue;
-                            }
-                        }
-
-                        let Some(title_similarity) =
-                            compute_query_match_score(&title_clone, &question)
-                        else {
-                            continue;
-                        };
-
-                        let has_query_options = query_options.is_some();
-                        let option_similarity = match (
-                            query_options.as_deref(),
-                            normalize_optional_query_text(db_options.as_deref()),
-                        ) {
-                            (Some(query_options), Some(db_options)) => {
-                                compute_query_match_score(query_options, &db_options)
-                            }
-                            _ => None,
-                        };
-
-                        let is_exact_title_match = is_exact_match_score(title_similarity);
-                        if !is_exact_title_match
-                            && (require_option_match || has_query_options)
-                            && option_similarity.is_none()
-                        {
-                            continue;
-                        }
-
-                        let final_similarity = match option_similarity {
-                            Some(option_similarity) => title_similarity * 0.7 + option_similarity * 0.3,
-                            None => title_similarity,
-                        };
-
-                        results.push(((id, question, answer, is_ai, is_pending_correction), final_similarity));
-                    }
-                    Err(e) => return Err(Box::new(e) as Box<dyn std::error::Error + Send + Sync>),
-                }
-            }
-
-            results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-
-            let final_results: Vec<(i64, String, String, bool, bool)> =
-                results.into_iter().take(50).map(|(data, _)| data).collect();
-
-            Ok(final_results)
+        move || -> Result<Vec<QuestionMatch>, Box<dyn std::error::Error + Send + Sync>> {
+            let matches = scan_question_matches(&title, options.as_deref())?;
+            Ok(matches
+                .into_iter()
+                .filter(|m| is_exact_question_match(&title, options.as_deref(), m))
+                .collect())
         },
     )
     .await?;
 
     result
+}
+
+/// 模糊候选，供 AI 同题判断（排除精确命中，最多 Top N）
+pub async fn query_database_candidates(
+    title: &str,
+    options: Option<&str>,
+    limit: usize,
+) -> Result<Vec<QuestionMatch>, Box<dyn std::error::Error + Send + Sync>> {
+    let title = title.to_string();
+    let options = options.map(|s| s.to_string());
+
+    let result = tokio::task::spawn_blocking(
+        move || -> Result<Vec<QuestionMatch>, Box<dyn std::error::Error + Send + Sync>> {
+            let matches = scan_question_matches(&title, options.as_deref())?;
+            Ok(matches
+                .into_iter()
+                .filter(|m| !is_exact_question_match(&title, options.as_deref(), m))
+                .take(limit)
+                .collect())
+        },
+    )
+    .await?;
+
+    result
+}
+
+/// 兼容旧调用：返回模糊匹配（含精确），最多 50 条
+pub async fn query_database(
+    title: &str,
+    options: Option<&str>,
+) -> Result<Vec<(i64, String, String, bool, bool)>, Box<dyn std::error::Error + Send + Sync>> {
+    let title = title.to_string();
+    let options = options.map(|s| s.to_string());
+
+    let result = tokio::task::spawn_blocking(
+        move || -> Result<Vec<(i64, String, String, bool, bool)>, Box<dyn std::error::Error + Send + Sync>> {
+            let matches = scan_question_matches(&title, options.as_deref())?;
+            Ok(matches
+                .into_iter()
+                .take(50)
+                .map(|m| (m.id, m.question, m.answer, m.is_ai, m.is_pending_correction))
+                .collect())
+        },
+    )
+    .await?;
+
+    result
+}
+
+pub fn get_ai_response_by_id(
+    id: i64,
+) -> Result<QuestionMatch, Box<dyn std::error::Error + Send + Sync>> {
+    let conn = get_conn().map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+        Box::new(std::io::Error::new(std::io::ErrorKind::Other, e))
+    })?;
+    let row = conn.query_row(
+        "SELECT Id, Question, Options, Answer, IsAi, COALESCE(IsPendingCorrection, 0) FROM AIResponses WHERE Id = ?",
+        [id],
+        |row| {
+            Ok(QuestionMatch {
+                id: row.get(0)?,
+                question: row.get(1)?,
+                options: row.get(2)?,
+                answer: row.get(3)?,
+                is_ai: row.get(4)?,
+                is_pending_correction: row.get(5)?,
+                score: 1.0,
+            })
+        },
+    )?;
+    Ok(row)
 }
 
 pub fn insert_ai_response(
@@ -1718,7 +1852,10 @@ pub fn init_database_schema(db_path: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{compute_query_match_score, get_table_columns, init_database_schema, is_exact_match_score};
+    use super::{
+        compute_query_match_score, get_table_columns, init_database_schema, is_exact_match_score,
+        is_exact_question_match, QuestionMatch,
+    };
     use rusqlite::Connection;
     use uuid::Uuid;
 
@@ -1744,6 +1881,30 @@ mod tests {
     fn exact_match_score_is_detected() {
         assert!(is_exact_match_score(1.0));
         assert!(!is_exact_match_score(0.999));
+    }
+
+    #[test]
+    fn exact_question_match_requires_identical_options_when_present() {
+        let matched = QuestionMatch {
+            id: 1,
+            question: "下列哪项正确".to_string(),
+            options: Some("A.1\nB.2".to_string()),
+            answer: "A.1".to_string(),
+            is_ai: true,
+            is_pending_correction: false,
+            score: 1.0,
+        };
+        assert!(is_exact_question_match(
+            "下列哪项正确",
+            Some("A.1\nB.2"),
+            &matched
+        ));
+        assert!(!is_exact_question_match(
+            "下列哪项正确",
+            Some("A.1\nB.3"),
+            &matched
+        ));
+        assert!(is_exact_question_match("下列哪项正确", None, &matched));
     }
 
     #[test]

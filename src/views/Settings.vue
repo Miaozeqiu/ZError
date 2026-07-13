@@ -497,8 +497,8 @@ const onAboutScrollbarMouseup = () => {
 .category-item {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 8px;
+  gap: 8px;
+  padding: 6px 8px;
   border-radius: 8px;
   cursor: pointer;
   transition: all 0.2s ease;
@@ -526,12 +526,33 @@ const onAboutScrollbarMouseup = () => {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.category-icon svg {
+  display: block;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  padding: 0;
+}
+
+/* 让图标的 color 成为 svg 及每个子元素自身的属性（而非继承），
+   这样无论 currentColor 声明在 svg / path / circle 等哪个元素、有多少段，
+   都在本体逐帧过渡，与文字一致；避免 WebKit 对继承型过渡的 currentColor 延迟刷新 */
+.category-icon svg,
+.category-icon svg * {
+  color: var(--text-primary);
+}
+.category-item.active .category-icon svg,
+.category-item.active .category-icon svg * {
+  color: var(--color-accent);
 }
 
 .category-name {
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 500;
 }
 
@@ -580,6 +601,16 @@ const onAboutScrollbarMouseup = () => {
   box-sizing: border-box;
   overflow: auto;
   border-radius: 4px;
+}
+
+.general-scroll-content.settings-content-wrapper {
+  padding: 16px;
+  padding-top: 0;
+}
+
+.about-scroll-content.settings-content-wrapper {
+  padding: 16px;
+  padding-top: 0;
 }
 
 .custom-scrollbar {

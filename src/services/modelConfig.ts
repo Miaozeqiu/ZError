@@ -1,4 +1,4 @@
-﻿﻿import { reactive, watch, computed } from 'vue'
+import { reactive, watch, computed } from 'vue'
 
 // AI 平台配置接口
 export interface AIPlatform {
@@ -22,6 +22,7 @@ export interface AIPlatform {
 // AI 模型配置接口
 export interface AIModel {
   id: string
+  modelId?: string
   name: string
   displayName: string
   platformId: string
@@ -39,6 +40,7 @@ export interface AIModel {
     outputTokens: number // 每千个输出token的价格
   }
   enableThinking?: boolean  // 是否启用思考（reasoning）输出
+  apiProtocol?: 'openai-chat' | 'openai-response' | 'anthropic' | 'custom'
 }
 
 // 模型配置设置接口
@@ -61,7 +63,7 @@ export interface ModelSettings {
 
 // 远程模型数据 URL
 const PROD_REMOTE_MODELS_URL = 'https://app.zerror.cc/models.json'
-const TAURI_DEV_REMOTE_MODELS_URL = 'http://localhost:5175/models.json'
+const TAURI_DEV_REMOTE_MODELS_URL = 'http://localhost:8081/models.json'
 const REMOTE_MODELS_REQUEST_COOLDOWN_MS = 30 * 1000
 const USER_CREATED_PLATFORM_ID_PREFIX = 'custom_'
 const LEGACY_USER_CREATED_MODEL_ID_PREFIX = 'model_'
@@ -347,8 +349,9 @@ class ModelConfigManager {
   constructor() {
     this.settings = reactive(this.loadSettings())
     this.normalizeSelectedModels()
-    // 强制持久化 enableThinking（修复旧缓存中 false 的残留）
-    this.saveSettings()
+    if (this.shouldPersistLoadedSettings) {
+      this.saveSettings()
+    }
     this.setupAutoSave()
   }
 
@@ -399,6 +402,9 @@ class ModelConfigManager {
   private autoDetectEnableThinking(): void {
     for (const platform of this.settings.platforms) {
       for (const model of platform.models || []) {
+        // 用户已明确设置过（true/false）则不再覆盖，避免“关闭思考”被启动/同步逻辑改回开启
+        if (typeof model.enableThinking === 'boolean') continue
+
         const id = (model.id || '').toLowerCase()
         const name = ((model.name || '') + (model.displayName || '')).toLowerCase()
         const isKnownThinking =
@@ -407,7 +413,6 @@ class ModelConfigManager {
           id.includes('thinking') || name.includes('thinking') ||
           id.includes('deepseek-r1') || name.includes('deepseek r1') ||
           id.startsWith('o1') || id.startsWith('o3')
-        // 已知思考模型默认开启（修复旧缓存残留 false 的问题）
         if (isKnownThinking) {
           model.enableThinking = true
         }

@@ -1,4 +1,7 @@
-use crate::database::{insert_ai_response, query_database, set_question_pending_correction};
+use crate::database::{
+    get_ai_response_by_id, insert_ai_response, query_database_candidates, query_database_exact,
+    set_question_pending_correction, QuestionMatch,
+};
 use crate::types::{
     ModelCallProgressRequest, ModelCallResponseRequest, QueryData, QueryRequest, QueryResponse,
     ServerInfo, ServerState,
@@ -203,6 +206,303 @@ fn build_model_query_prompt(
     q
 }
 
+const SAME_QUESTION_CHECK_PREFIX: &str = "__SAME_QUESTION_CHECK__:";
+const SAME_QUESTION_CANDIDATE_LIMIT: usize = 5;
+
+fn build_same_question_check_prompt(title: &str, options: Option<&str>, candidates: &[QuestionMatch]) -> String {
+    let candidate_list: Vec<serde_json::Value> = candidates
+        .iter()
+        .map(|c| {
+            serde_json::json!({
+                "id": c.id,
+                "question": c.question,
+                "options": c.options,
+            })
+        })
+        .collect();
+
+    let payload = serde_json::json!({
+        "title": title,
+        "options": options,
+        "candidates": candidate_list,
+    });
+
+    format!(
+        "{}{}",
+        SAME_QUESTION_CHECK_PREFIX,
+        serde_json::to_string(&payload).unwrap_or_else(|_| "{}".to_string())
+    )
+}
+
+fn parse_same_question_result(content: &str) -> Option<i64> {
+    let trimmed = content.trim();
+    if trimmed.is_empty() || is_model_error(trimmed).is_some() {
+        return None;
+    }
+
+    let json_str = if let Some(start) = trimmed.find('{') {
+        let end = trimmed.rfind('}').unwrap_or(trimmed.len() - 1);
+        &trimmed[start..=end]
+    } else {
+        trimmed
+    };
+
+    let value: Value = serde_json::from_str(json_str).ok()?;
+    let same = value.get("same").and_then(|v| v.as_bool()).unwrap_or(false);
+    if !same {
+        return None;
+    }
+    value
+        .get("matched_id")
+        .and_then(|v| v.as_i64())
+        .or_else(|| {
+            value
+                .get("matched_id")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as i64)
+        })
+}
+
+fn build_normal_model_query(request: &QueryRequest, has_url: bool) -> String {
+    if has_url {
+        let mut q = format!("__URL_QUESTION__:{}", request.title);
+        if let Some(options) = &request.options {
+            if !options.is_empty() {
+                q.push_str(&format!("\n__OPTIONS__:{}", options));
+            }
+        }
+        q
+    } else {
+        build_model_query_prompt(
+            &request.title,
+            request.options.as_deref(),
+            request.query_type.as_deref(),
+        )
+    }
+}
+
+async fn wait_and_store_ai_answer(
+    logger: &crate::logger::RequestLogger,
+    request: &QueryRequest,
+    request_id: &str,
+    request_origin: &str,
+    has_url: bool,
+) -> (u16, QueryResponse) {
+    let formatted_query = build_normal_model_query(request, has_url);
+    logger.send_model_call_request(request_id.to_string(), formatted_query);
+
+    let wait_secs = if has_url { 120 } else { 60 };
+    match logger
+        .wait_for_model_response(request_id.to_string(), wait_secs)
+        .await
+    {
+        Ok(model_content) => {
+            println!("✅ Received model response: {}", model_content);
+            if let Some(err_msg) = is_model_error(&model_content) {
+                return (500, QueryResponse::error(err_msg));
+            }
+
+            let mut extracted_answer = extract_answer_from_json(&model_content);
+            if model_content.contains("题目不完整,无法确定具体问题.") {
+                extracted_answer = String::new();
+                println!("⚠️ 检测到题目不完整,将答案留空");
+            }
+            extracted_answer = extracted_answer.trim().to_string();
+
+            let inserted_id = if extracted_answer.is_empty() {
+                println!("⚠️ AI最终处理结果答案为空,跳过保存题目");
+                0
+            } else {
+                match insert_ai_response(
+                    &request.title,
+                    &extracted_answer,
+                    request.options.clone(),
+                    request.query_type.clone(),
+                    true,
+                ) {
+                    Ok(id) => {
+                        println!("✅ AI response stored to database");
+                        id
+                    }
+                    Err(e) => {
+                        println!("❌ Failed to store AI response: {}", e);
+                        0
+                    }
+                }
+            };
+
+            let data = build_query_data(
+                request_origin,
+                inserted_id,
+                &request.title,
+                extracted_answer,
+                true,
+                false,
+            );
+            (200, QueryResponse::success(vec![data]))
+        }
+        Err(e) => {
+            println!("❌ Model call timeout or error: {}", e);
+            (
+                408,
+                QueryResponse::error(format!("Model call failed: {}", e)),
+            )
+        }
+    }
+}
+
+async fn resolve_query_with_same_question_check(
+    logger: &crate::logger::RequestLogger,
+    request: &QueryRequest,
+    request_id: &str,
+    request_origin: &str,
+) -> (u16, QueryResponse) {
+    let mut has_url = contains_url(&request.title);
+    if let Some(options) = &request.options {
+        if !has_url {
+            has_url = contains_url(options);
+        }
+    }
+
+    // 1) 精确命中直接返回
+    match query_database_exact(&request.title, request.options.as_deref()).await {
+        Ok(exact_hits) if !exact_hits.is_empty() => {
+            println!("✅ 精确匹配命中: {} 条", exact_hits.len());
+            let data_list: Vec<QueryData> = exact_hits
+                .into_iter()
+                .map(|m| {
+                    build_query_data(
+                        request_origin,
+                        m.id,
+                        &m.question,
+                        m.answer,
+                        m.is_ai,
+                        m.is_pending_correction,
+                    )
+                })
+                .collect();
+            return (200, QueryResponse::success(data_list));
+        }
+        Ok(_) => {
+            println!("🔍 无精确匹配: {}", request.title);
+        }
+        Err(e) => {
+            eprintln!("Database exact query error: {}", e);
+            return (
+                500,
+                QueryResponse::error(format!("Database error: {}", e)),
+            );
+        }
+    }
+
+    // 2) 模糊候选 → AI 同题判断
+    let candidates = match query_database_candidates(
+        &request.title,
+        request.options.as_deref(),
+        SAME_QUESTION_CANDIDATE_LIMIT,
+    )
+    .await
+    {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Database candidate query error: {}", e);
+            return (
+                500,
+                QueryResponse::error(format!("Database error: {}", e)),
+            );
+        }
+    };
+
+    if !candidates.is_empty() {
+        println!(
+            "🤖 发现 {} 条近似候选，请求 AI 同题判断",
+            candidates.len()
+        );
+        let check_prompt =
+            build_same_question_check_prompt(&request.title, request.options.as_deref(), &candidates);
+        logger.send_model_call_request(request_id.to_string(), check_prompt);
+
+        match logger
+            .wait_for_model_response(request_id.to_string(), 30)
+            .await
+        {
+            Ok(judge_content) => {
+                println!("✅ 同题判断结果: {}", judge_content);
+                if let Some(matched_id) = parse_same_question_result(&judge_content) {
+                    if let Some(matched) = candidates.iter().find(|c| c.id == matched_id).cloned() {
+                        let answer = matched.answer.clone();
+                        let inserted_id = match insert_ai_response(
+                            &request.title,
+                            &answer,
+                            request.options.clone(),
+                            request.query_type.clone(),
+                            matched.is_ai,
+                        ) {
+                            Ok(id) => {
+                                println!("✅ 同题变体已入库, matched_id={}, new_id={}", matched_id, id);
+                                id
+                            }
+                            Err(e) => {
+                                println!("❌ 同题变体入库失败: {}，仍返回已有答案", e);
+                                matched.id
+                            }
+                        };
+
+                        let data = build_query_data(
+                            request_origin,
+                            inserted_id,
+                            &request.title,
+                            answer,
+                            matched.is_ai,
+                            false,
+                        );
+                        return (200, QueryResponse::success(vec![data]));
+                    }
+
+                    // matched_id 不在候选中，尝试按 id 查库
+                    if let Ok(matched) = get_ai_response_by_id(matched_id) {
+                        let answer = matched.answer.clone();
+                        let inserted_id = match insert_ai_response(
+                            &request.title,
+                            &answer,
+                            request.options.clone(),
+                            request.query_type.clone(),
+                            matched.is_ai,
+                        ) {
+                            Ok(id) => id,
+                            Err(_) => matched.id,
+                        };
+                        let data = build_query_data(
+                            request_origin,
+                            inserted_id,
+                            &request.title,
+                            answer,
+                            matched.is_ai,
+                            false,
+                        );
+                        return (200, QueryResponse::success(vec![data]));
+                    }
+
+                    println!(
+                        "⚠️ 同题判断返回的 matched_id={} 无效，回落正常答题",
+                        matched_id
+                    );
+                } else {
+                    println!("ℹ️ AI 判定为不同题或解析失败，回落正常答题");
+                }
+            }
+            Err(e) => {
+                println!("⚠️ 同题判断超时/失败: {}，回落正常答题", e);
+            }
+        }
+    } else {
+        println!("🔍 无近似候选，直接走正常 AI 答题");
+    }
+
+    // 3) 正常 AI 答题
+    wait_and_store_ai_answer(logger, request, request_id, request_origin, has_url).await
+}
+
 /// 启动HTTP服务器
 #[tauri::command]
 pub async fn start_server(
@@ -338,129 +638,15 @@ pub async fn start_server(
                     user_agent,
                 );
 
-                // 检测title和options中是否包含URL
-                let mut has_url = contains_url(&request.title);
-                if let Some(options) = &request.options {
-                    if !has_url {
-                        has_url = contains_url(options);
-                    }
-                }
-
                 let request_origin = resolve_request_origin(&headers);
 
-                // 先进行数据库查询（无论是否包含URL）
-                let result = match query_database(&request.title, request.options.as_deref()).await {
-                    Ok(results) => {
-                        if !results.is_empty() {
-                            println!("✅ 在数据库中找到匹配结果: {} 条记录", results.len());
-                            let data_list: Vec<QueryData> = results
-                                .into_iter()
-                                .map(|(id, question, answer, is_ai, is_pending_correction)| {
-                                    build_query_data(
-                                        &request_origin,
-                                        id,
-                                        &question,
-                                        answer,
-                                        is_ai,
-                                        is_pending_correction,
-                                    )
-                                })
-                                .collect();
-                            let response = QueryResponse::success(data_list);
-                            (200, response)
-                        } else {
-                            println!("🔍 数据库中未找到匹配结果: {}", request.title);
-
-                            // 如果检测到URL,发送视觉分析请求（带 __URL_QUESTION__: 前缀）
-                            let formatted_query = if has_url {
-                                println!("🔗 检测到URL,发送视觉分析请求: {}", request.title);
-                                let mut q = format!("__URL_QUESTION__:{}", request.title);
-                                if let Some(options) = &request.options {
-                                    if !options.is_empty() {
-                                        q.push_str(&format!("\n__OPTIONS__:{}", options));
-                                    }
-                                }
-                                q
-                            } else {
-                                // 普通题目：统一使用带分析的文本模型提示词
-                                println!("🤖 Database query returned no results, requesting model call for: {}", request.title);
-                                build_model_query_prompt(
-                                    &request.title,
-                                    request.options.as_deref(),
-                                    request.query_type.as_deref(),
-                                )
-                            };
-
-                            logger.send_model_call_request(request_id.clone(), formatted_query);
-
-                            // 等待模型调用完成（前端有keepalive心跳防止超时,此值为总时长上限）
-                            let wait_secs = if has_url { 120 } else { 60 };
-                            match logger.wait_for_model_response(request_id.clone(), wait_secs).await {
-                                Ok(model_content) => {
-                                    println!("✅ Received model response: {}", model_content);
-                                    if let Some(err_msg) = is_model_error(&model_content) {
-                                        let response = QueryResponse::error(err_msg);
-                                        (500, response)
-                                    } else {
-                                        let mut extracted_answer = extract_answer_from_json(&model_content);
-
-                                        // Check for incomplete question response
-                                        if model_content.contains("题目不完整,无法确定具体问题.") {
-                                            extracted_answer = String::new();
-                                            println!("⚠️ 检测到题目不完整,将答案留空");
-                                        }
-
-                                        extracted_answer = extracted_answer.trim().to_string();
-
-                                        // Store to database
-                                        let inserted_id = if extracted_answer.is_empty() {
-                                            println!("⚠️ AI最终处理结果答案为空,跳过保存题目");
-                                            0
-                                        } else {
-                                            match insert_ai_response(
-                                                &request.title,
-                                                &extracted_answer,
-                                                request.options.clone(),
-                                                request.query_type.clone(),
-                                                true,
-                                            ) {
-                                                Ok(id) => {
-                                                    println!("✅ AI response stored to database");
-                                                    id
-                                                }
-                                                Err(e) => {
-                                                    println!("❌ Failed to store AI response: {}", e);
-                                                    0
-                                                }
-                                            }
-                                        };
-
-                                        let data = build_query_data(
-                                            &request_origin,
-                                            inserted_id,
-                                            &request.title,
-                                            extracted_answer,
-                                            true,
-                                            false,
-                                        );
-                                        let response = QueryResponse::success(vec![data]);
-                                        (200, response)
-                                    }
-                                }
-                                Err(e) => {
-                                    println!("❌ Model call timeout or error: {}", e);
-                                    let response = QueryResponse::error(format!("Model call failed: {}", e));
-                                    (408, response)
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("Database query error: {}", e);
-                        let response = QueryResponse::error(format!("Database error: {}", e));
-                        (500, response)
-                    }
-                };
+                let result = resolve_query_with_same_question_check(
+                    &logger,
+                    &request,
+                    &request_id,
+                    &request_origin,
+                )
+                .await;
 
                 let response_time = start_time.elapsed().as_millis() as u64;
                 let response_body = serde_json::to_string(&result.1).unwrap_or_default();
@@ -535,128 +721,15 @@ pub async fn start_server(
                     user_agent,
                 );
 
-                // 检测title和options中是否包含URL
-                let mut has_url = contains_url(&request.title);
-                if let Some(options) = &request.options {
-                    if !has_url {
-                        has_url = contains_url(options);
-                    }
-                }
-
                 let request_origin = resolve_request_origin(&headers);
 
-                // 先进行数据库查询（无论是否包含URL）
-                let result = match query_database(&request.title, request.options.as_deref()).await {
-                    Ok(results) => {
-                        if !results.is_empty() {
-                            println!("✅ 在数据库中找到匹配结果: {} 条记录", results.len());
-                            let data_list: Vec<QueryData> = results
-                                .into_iter()
-                                .map(|(id, question, answer, is_ai, is_pending_correction)| {
-                                    build_query_data(
-                                        &request_origin,
-                                        id,
-                                        &question,
-                                        answer,
-                                        is_ai,
-                                        is_pending_correction,
-                                    )
-                                })
-                                .collect();
-                            let response = QueryResponse::success(data_list);
-                            (200, response)
-                        } else {
-                            println!("🔍 数据库中未找到匹配结果: {}", request.title);
-
-                            // 如果检测到URL,发送视觉分析请求（带 __URL_QUESTION__: 前缀）
-                            let formatted_query = if has_url {
-                                println!("🔗 检测到URL,发送视觉分析请求: {}", request.title);
-                                let mut q = format!("__URL_QUESTION__:{}", request.title);
-                                if let Some(options) = &request.options {
-                                    if !options.is_empty() {
-                                        q.push_str(&format!("\n__OPTIONS__:{}", options));
-                                    }
-                                }
-                                q
-                            } else {
-                                println!("🤖 Database query returned no results, requesting model call for: {}", request.title);
-                                build_model_query_prompt(
-                                    &request.title,
-                                    request.options.as_deref(),
-                                    request.query_type.as_deref(),
-                                )
-                            };
-
-                            logger.send_model_call_request(request_id.clone(), formatted_query);
-
-                            // 等待模型调用完成（前端有keepalive心跳防止超时,此值为总时长上限）
-                            let wait_secs = if has_url { 120 } else { 60 };
-                            match logger.wait_for_model_response(request_id.clone(), wait_secs).await {
-                                Ok(model_content) => {
-                                    println!("✅ Received model response: {}", model_content);
-                                    if let Some(err_msg) = is_model_error(&model_content) {
-                                        let response = QueryResponse::error(err_msg);
-                                        (500, response)
-                                    } else {
-                                        let mut extracted_answer = extract_answer_from_json(&model_content);
-
-                                        // Check for incomplete question response
-                                        if model_content.contains("题目不完整,无法确定具体问题.") {
-                                            extracted_answer = String::new();
-                                            println!("⚠️ 检测到题目不完整,将答案留空");
-                                        }
-
-                                        extracted_answer = extracted_answer.trim().to_string();
-
-                                        // Store to database
-                                        let inserted_id = if extracted_answer.is_empty() {
-                                            println!("⚠️ AI最终处理结果答案为空,跳过保存题目");
-                                            0
-                                        } else {
-                                            match insert_ai_response(
-                                                &request.title,
-                                                &extracted_answer,
-                                                request.options.clone(),
-                                                request.query_type.clone(),
-                                                true,
-                                            ) {
-                                                Ok(id) => {
-                                                    println!("✅ AI response stored to database");
-                                                    id
-                                                }
-                                                Err(e) => {
-                                                    println!("❌ Failed to store AI response: {}", e);
-                                                    0
-                                                }
-                                            }
-                                        };
-
-                                        let data = build_query_data(
-                                            &request_origin,
-                                            inserted_id,
-                                            &request.title,
-                                            extracted_answer,
-                                            true,
-                                            false,
-                                        );
-                                        let response = QueryResponse::success(vec![data]);
-                                        (200, response)
-                                    }
-                                }
-                                Err(e) => {
-                                    println!("❌ Model call timeout or error: {}", e);
-                                    let response = QueryResponse::error(format!("Model call failed: {}", e));
-                                    (408, response)
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("Database query error: {}", e);
-                        let response = QueryResponse::error(format!("Database error: {}", e));
-                        (500, response)
-                    }
-                };
+                let result = resolve_query_with_same_question_check(
+                    &logger,
+                    &request,
+                    &request_id,
+                    &request_origin,
+                )
+                .await;
 
                 let response_time = start_time.elapsed().as_millis() as u64;
                 let response_body = serde_json::to_string(&result.1).unwrap_or_default();
@@ -1288,4 +1361,28 @@ fn is_model_error(text: &str) -> Option<String> {
     }
 
     None
+}
+
+#[cfg(test)]
+mod same_question_tests {
+    use super::parse_same_question_result;
+
+    #[test]
+    fn parses_same_true_with_matched_id() {
+        assert_eq!(
+            parse_same_question_result(r#"{"same":true,"matched_id":42}"#),
+            Some(42)
+        );
+        assert_eq!(
+            parse_same_question_result("答案如下\n{\"same\": true, \"matched_id\": 7}\n"),
+            Some(7)
+        );
+    }
+
+    #[test]
+    fn parses_same_false_or_invalid_as_none() {
+        assert_eq!(parse_same_question_result(r#"{"same":false}"#), None);
+        assert_eq!(parse_same_question_result("错误: 未选择模型"), None);
+        assert_eq!(parse_same_question_result(""), None);
+    }
 }
