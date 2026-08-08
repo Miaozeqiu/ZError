@@ -109,6 +109,82 @@ fn ensure_tmpdir_same_volume_as_exe() {
     );
 }
 
+/// Windows 任务栏用 ICON_BIG；Tauri 默认只设 ICON_SMALL，且 codegen 只取 ico 第一帧。
+/// 这里从多尺寸 icon.ico 按 DPI 取出小/大图标分别设置，避免任务栏发糊。
+/// 使用 user32 直调，避开项目里 windows 0.56 与 Tauri 自带 0.61 的 HWND 类型冲突。
+#[cfg(windows)]
+fn apply_windows_taskbar_icons(window: &tauri::WebviewWindow) {
+    const WM_SETICON: u32 = 0x0080;
+    const ICON_SMALL: usize = 0;
+    const ICON_BIG: usize = 1;
+    const LR_DEFAULTCOLOR: u32 = 0;
+
+    #[link(name = "user32")]
+    extern "system" {
+        fn SendMessageW(
+            hwnd: *mut core::ffi::c_void,
+            msg: u32,
+            wparam: usize,
+            lparam: isize,
+        ) -> isize;
+        fn LookupIconIdFromDirectoryEx(
+            presbits: *const u8,
+            ficon: i32,
+            cxdesired: i32,
+            cydesired: i32,
+            flags: u32,
+        ) -> i32;
+        fn CreateIconFromResourceEx(
+            presbits: *const u8,
+            dwressize: u32,
+            ficon: i32,
+            dwver: u32,
+            cxdesired: i32,
+            cydesired: i32,
+            flags: u32,
+        ) -> *mut core::ffi::c_void;
+    }
+
+    let Ok(hwnd) = window.hwnd() else {
+        return;
+    };
+    let hwnd = hwnd.0;
+    let ico: &[u8] = include_bytes!("../icons/icon.ico");
+
+    // 任务栏直接用 128/256，不要用 16/32（本身就糊，放大更糊）
+    unsafe fn load_hicon(ico: &[u8], cx: i32, cy: i32) -> Option<*mut core::ffi::c_void> {
+        let offset = LookupIconIdFromDirectoryEx(ico.as_ptr(), 1, cx, cy, LR_DEFAULTCOLOR);
+        if offset <= 0 || (offset as usize) >= ico.len() {
+            return None;
+        }
+        let bits = &ico[offset as usize..];
+        // cx/cy=0：按资源原始尺寸创建，避免再被压成 32
+        let hicon = CreateIconFromResourceEx(
+            bits.as_ptr(),
+            bits.len() as u32,
+            1,
+            0x0003_0000,
+            0,
+            0,
+            LR_DEFAULTCOLOR,
+        );
+        if hicon.is_null() {
+            None
+        } else {
+            Some(hicon)
+        }
+    }
+
+    unsafe {
+        if let Some(hicon) = load_hicon(ico, 128, 128) {
+            SendMessageW(hwnd, WM_SETICON, ICON_SMALL, hicon as isize);
+        }
+        if let Some(hicon) = load_hicon(ico, 256, 256) {
+            SendMessageW(hwnd, WM_SETICON, ICON_BIG, hicon as isize);
+        }
+    }
+}
+
 fn show_main_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     #[cfg(target_os = "macos")]
     {
@@ -310,14 +386,26 @@ pub fn run() {
                 .build();
                 
             #[cfg(not(target_os = "macos"))]
-            let _main = tauri::WebviewWindowBuilder::new(app, "main", url)
-                .title("ZError")
-                .inner_size(main_window_size.width, main_window_size.height)
-                .min_inner_size(main_window_size.min_width, main_window_size.min_height)
-                .center()
-                .resizable(true)
-                .decorations(false)
-                .build();
+            let _main = {
+                // 显式用 256 PNG，避免 codegen 误用 ico 里过小的第一帧导致任务栏发糊
+                let window_icon =
+                    tauri::image::Image::from_bytes(include_bytes!("../icons/128x128@2x.png"))
+                        .expect("window icon png");
+                let built = tauri::WebviewWindowBuilder::new(app, "main", url)
+                    .title("ZError")
+                    .inner_size(main_window_size.width, main_window_size.height)
+                    .min_inner_size(main_window_size.min_width, main_window_size.min_height)
+                    .center()
+                    .resizable(true)
+                    .decorations(false)
+                    .icon(window_icon)?
+                    .build();
+                #[cfg(windows)]
+                if let Ok(ref win) = built {
+                    apply_windows_taskbar_icons(win);
+                }
+                built
+            };
 
             let show = tauri::menu::MenuItemBuilder::with_id("show", "显示窗口").build(app)?;
             let quit = tauri::menu::MenuItemBuilder::with_id("quit", "退出").build(app)?;
@@ -366,10 +454,43 @@ pub fn run() {
                     }
                 }
             }
+            // Windows / Linux：按 DPI 选用已烘焙好的像素尺寸 PNG，避免 256 硬缩发糊
             #[cfg(not(target_os = "macos"))]
             {
-                if let Some(img) = app.default_window_icon().cloned() {
-                    tray_builder = tray_builder.icon(img);
+                let scale = app
+                    .primary_monitor()
+                    .ok()
+                    .flatten()
+                    .map(|m| m.scale_factor())
+                    .unwrap_or(1.0);
+                // Win11 托盘用预烘焙像素图；默认 32，高 DPI 升到 48/64，避免 256 硬缩发糊
+                let tray_bytes: &'static [u8] = if scale >= 2.5 {
+                    include_bytes!("../icons/tray-win-64.png")
+                } else if scale >= 1.75 {
+                    include_bytes!("../icons/tray-win-48.png")
+                } else {
+                    include_bytes!("../icons/tray-win-32.png")
+                };
+                match tauri::image::Image::from_bytes(tray_bytes) {
+                    Ok(img) => {
+                        tray_builder = tray_builder.icon(img);
+                    }
+                    Err(err) => {
+                        eprintln!("⚠️ 托盘 png 加载失败，回退 32px: {err}");
+                        match tauri::image::Image::from_bytes(include_bytes!(
+                            "../icons/tray-win-32.png"
+                        )) {
+                            Ok(img) => {
+                                tray_builder = tray_builder.icon(img);
+                            }
+                            Err(err2) => {
+                                eprintln!("⚠️ 托盘图标加载失败，回退默认图标: {err2}");
+                                if let Some(img) = app.default_window_icon().cloned() {
+                                    tray_builder = tray_builder.icon(img);
+                                }
+                            }
+                        }
+                    }
                 }
             }
 

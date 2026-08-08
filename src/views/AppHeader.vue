@@ -2,7 +2,14 @@
   <div class="app-header" :class="{ 'macos-header': isMacOS }" data-tauri-drag-region>
     <div class="header-left" v-if="!isMacOS">
       <div class="app-logo">
-        <img src="/icons/favicon.ico" alt="ZError Logo" width="20" height="20" />
+        <img
+          src="/icons/app-icon.png"
+          alt="ZError Logo"
+          class="app-logo-img"
+          width="20"
+          height="20"
+          draggable="false"
+        />
       </div>
       <div class="app-title">ZError</div>
     </div>
@@ -117,7 +124,7 @@
           @click="minimizeWindow"
           title="最小化"
         >
-          <svg width="12" height="12" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+          <svg class="window-control-icon" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
             <path d="M863.7 552.5H160.3c-10.6 0-19.2-8.6-19.2-19.2v-41.7c0-10.6 8.6-19.2 19.2-19.2h703.3c10.6 0 19.2 8.6 19.2 19.2v41.7c0 10.6-8.5 19.2-19.1 19.2z" fill="currentColor"/>
           </svg>
         </button>
@@ -127,10 +134,10 @@
           @click="toggleMaximize"
           :title="isMaximized ? '还原' : '最大化'"
         >
-          <svg width="12" height="12" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" v-if="!isMaximized">
+          <svg class="window-control-icon" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" v-if="!isMaximized">
             <path d="M770.9 923.3H253.1c-83.8 0-151.9-68.2-151.9-151.9V253.6c0-83.8 68.2-151.9 151.9-151.9h517.8c83.8 0 151.9 68.2 151.9 151.9v517.8c0 83.8-68.1 151.9-151.9 151.9zM253.1 181.7c-39.7 0-71.9 32.3-71.9 71.9v517.8c0 39.7 32.3 71.9 71.9 71.9h517.8c39.7 0 71.9-32.3 71.9-71.9V253.6c0-39.7-32.3-71.9-71.9-71.9H253.1z" fill="currentColor"/>
           </svg>
-          <svg width="12" height="12" viewBox="0 0 12 12" v-else>
+          <svg class="window-control-icon" viewBox="0 0 12 12" v-else>
             <rect x="2" y="3" width="6" height="6" stroke="currentColor" stroke-width="1.5" fill="none"/>
             <rect x="4" y="1" width="6" height="6" stroke="currentColor" stroke-width="1.5" fill="none"/>
           </svg>
@@ -141,7 +148,7 @@
           @click="closeWindow"
           title="关闭"
         >
-          <svg width="12" height="12" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+          <svg class="window-control-icon" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
             <path d="M897.6 183.5L183 898.1c-7.5 7.5-19.6 7.5-27.1 0l-29.5-29.5c-7.5-7.5-7.5-19.6 0-27.1L841 126.9c7.5-7.5 19.6-7.5 27.1 0l29.5 29.5c7.5 7.4 7.5 19.6 0 27.1z" fill="currentColor"/>
             <path d="M183 126.9l714.7 714.7c7.5 7.5 7.5 19.6 0 27.1l-29.5 29.5c-7.5 7.5-19.6 7.5-27.1 0L126.4 183.5c-7.5-7.5-7.5-19.6 0-27.1l29.5-29.5c7.4-7.5 19.6-7.5 27.1 0z" fill="currentColor"/>
           </svg>
@@ -387,7 +394,7 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 32px;
+  height: 40px;
   background: var(--bg-primary, #f4f4f4);
   color: var(--text-primary, #2d3748);
   user-select: none;
@@ -402,7 +409,7 @@ onMounted(async () => {
 }
 
 .header-left {
-  margin-left: 10px;
+  margin-left: 12px;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -414,8 +421,17 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  overflow: visible;
+}
+
+.app-logo-img {
+  width: 20px;
+  height: 20px;
+  display: block;
+  object-fit: contain;
 }
 
 .app-logo svg {
@@ -423,7 +439,7 @@ onMounted(async () => {
 }
 
 .app-title {
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 600;
   color: var(--text-primary, #2d3748);
 }
@@ -623,7 +639,7 @@ onMounted(async () => {
 
 .window-control {
   border-radius: 0px;
-  height: 32px;
+  height: 40px;
   width: 46px;
   border: none;
   background: transparent;
@@ -633,6 +649,13 @@ onMounted(async () => {
   align-items: center;
   justify-content: center;
   transition: background-color 0.2s ease;
+}
+
+.window-control-icon {
+  width: 16px;
+  height: 16px;
+  display: block;
+  flex: 0 0 auto;
 }
 
 .window-control:hover {

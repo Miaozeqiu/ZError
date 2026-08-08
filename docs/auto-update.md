@@ -67,15 +67,15 @@ export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""
 npm run tauri:build:signed
 ```
 
-Windows PowerShell：
+Windows（推荐，空密码下避免自动签名挂起）：
 
-```powershell
-$env:TAURI_SIGNING_PRIVATE_KEY = "$PWD\src-tauri\keys\zerror.key"
-$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = ""
-npm run tauri:build
+```bat
+:: 私钥放在 src-tauri/keys/zerror.key
+npm run tauri:build:win
+:: 或直接: scripts\build-windows.cmd
 ```
 
-产物目录：`src-tauri/target/release/bundle/`  
+产物：`src-tauri/target/release/bundle/nsis/ZError_*_x64-setup.exe` + `.sig`  
 **私钥丢失后旧客户端无法再接受新签名更新，请离线备份。**
 
 ---
