@@ -30,7 +30,7 @@ export const readModelIdFromJsCode = (code?: string | null): string | null => {
 export const resolveRuntimeModelId = (
   model?: Partial<Pick<AIModel, 'id' | 'modelId'>>
 ): string => {
-  // 不再从 jsCode 解析；远程/预设协议只认 modelId，否则回退到 id
+  // 统一：请求只用 modelId（同步/服务端保证有值）；极端缺省再回退 id
   return model?.modelId?.trim() || model?.id || ''
 }
 

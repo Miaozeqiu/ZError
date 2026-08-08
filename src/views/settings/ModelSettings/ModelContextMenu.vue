@@ -36,10 +36,10 @@ const menuItems = computed<MenuItem[]>(() => {
   const isRemote = props.model?.isRemote
   const items: MenuItem[] = []
 
-  // 远程模型也可以编辑（至少可以配置 enableThinking 等用户设置）
+  // 远程模型也可以查看（协议/思考由管理员锁定，不可改）
   items.push({
     id: 'edit-model',
-    label: '编辑模型',
+    label: isRemote ? '查看模型' : '编辑模型',
     action: 'edit-model',
     icon: {
       type: 'svg',

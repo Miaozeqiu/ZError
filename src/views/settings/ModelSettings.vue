@@ -1219,6 +1219,11 @@ const saveModel = async (modelData: Partial<AIModel>) => {
     let newModelCategory: AIModel['category'] | null = null
 
     if (editingModel.value) {
+      // 远程模型：名称 / id / 协议 / 思考由管理员锁定，禁止本地覆写
+      if (editingModel.value.isRemote) {
+        closeModelDialog()
+        return
+      }
       // 使用 ModelConfigManager 的 updateModel 以确保正确保存
       await updateModel(editingModel.value.id, {
         displayName: modelData.displayName,

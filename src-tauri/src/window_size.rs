@@ -45,7 +45,7 @@ pub struct ResolvedWindowSize {
 }
 
 pub const MAIN_WINDOW_PRESET: WindowSizePreset =
-    WindowSizePreset::new(1000.0, 680.0, 800.0, 560.0, 0.62, 0.68, 1280.0, 900.0);
+    WindowSizePreset::new(880.0, 600.0, 720.0, 500.0, 0.52, 0.58, 1100.0, 760.0);
 
 pub const URL_CONTENT_WINDOW_PRESET: WindowSizePreset =
     WindowSizePreset::new(1200.0, 800.0, 1000.0, 600.0, 0.84, 0.86, 1720.0, 1180.0);

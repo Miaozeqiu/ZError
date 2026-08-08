@@ -1,4 +1,5 @@
 import { reactive, watch, computed } from 'vue'
+import { normalizeApiProtocol } from './modelProtocol'
 
 // AI 平台配置接口
 export interface AIPlatform {
@@ -646,25 +647,29 @@ class ModelConfigManager {
         // 保留用户已有的设置，否则按自动检测
         const existingModel = existingPlatforms.flatMap(p => p.models || []).find(m => m.id === rm.id)
         // 远程不再下发/使用 jsCode、pricing；调用只认 modelId（或 id）+ 协议预设
+        // 协议与思考配置由管理员锁定：每次同步强制采用远程值（缺省才回退 heuristic / 默认）
         const { jsCode: _ignoredRemoteJsCode, pricing: _ignoredRemotePricing, ...remoteModelFields } = rm as AIModel & { pricing?: unknown }
+        const remoteProtocolRaw = normalizeApiProtocol(rm.apiProtocol)
+        const remoteProtocol = remoteProtocolRaw === 'custom' ? 'openai-chat' : remoteProtocolRaw
         return {
           ...remoteModelFields,
           platformId: rp.id,
           isRemote: true,
           jsCode: undefined,
-          modelId: rm.modelId?.trim() || undefined,
-          apiProtocol: rm.apiProtocol,
+          name: rm.name || existingModel?.name || rm.id,
+          displayName: rm.displayName || existingModel?.displayName || rm.name || rm.id,
+          modelId: rm.modelId?.trim() || rm.id,
+          apiProtocol: remoteProtocol,
           enabled: rm.enabled ?? true,
           maxTokens: rm.maxTokens ?? 4096,
           temperature: rm.temperature ?? 0.7,
           topP: rm.topP ?? 0.9,
-          enableThinking: existingModel?.enableThinking ?? rm.enableThinking ?? isKnownThinkingModel,
-          thinkingOffEnableThinkingFalse: existingModel?.thinkingOffEnableThinkingFalse ?? rm.thinkingOffEnableThinkingFalse ?? true,
-          thinkingOffThinkingTypeDisabled: existingModel?.thinkingOffThinkingTypeDisabled ?? rm.thinkingOffThinkingTypeDisabled ?? false,
-          thinkingOffResponsesEffort: existingModel?.thinkingOffResponsesEffort
-            ?? rm.thinkingOffResponsesEffort
-            ?? (existingModel?.thinkingOffEffortNone || rm.thinkingOffEffortNone ? 'minimal' : 'minimal'),
-          thinkingEffort: existingModel?.thinkingEffort ?? rm.thinkingEffort ?? 'medium',
+          enableThinking: rm.enableThinking ?? isKnownThinkingModel,
+          thinkingOffEnableThinkingFalse: rm.thinkingOffEnableThinkingFalse ?? true,
+          thinkingOffThinkingTypeDisabled: rm.thinkingOffThinkingTypeDisabled ?? false,
+          thinkingOffResponsesEffort: rm.thinkingOffResponsesEffort
+            ?? (rm.thinkingOffEffortNone ? 'minimal' : 'minimal'),
+          thinkingEffort: rm.thinkingEffort ?? 'medium',
         }
       })
       const localModels = dedupeModelsById(

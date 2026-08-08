@@ -7,9 +7,9 @@
             <path d="M768 96c19.2-19.2 19.2-51.2 0-70.4-19.2-19.2-51.2-19.2-70.4 0l-448 448c-19.2 19.2-19.2 51.2 0 70.4l448 448c19.2 19.2 51.2 19.2 70.4 0 19.2-19.2 19.2-51.2 0-70.4L358.4 512l409.6-416z" fill="currentColor"/>
           </svg>
         </button>
-        <span class="dialog-title">{{ isEditing ? '编辑模型' : '添加模型' }}</span>
-        <button class="btn-confirm" type="button" :disabled="!isFormValid" @click="handleSubmit">
-          {{ isEditing ? '完成' : '完成' }}
+        <span class="dialog-title">{{ dialogTitle }}</span>
+        <button class="btn-confirm" type="button" :disabled="isRemote ? false : !isFormValid" @click="handlePrimaryAction">
+          {{ isRemote ? '关闭' : (isEditing ? '完成' : '完成') }}
         </button>
       </div>
       <div class="dialog-body">
@@ -35,8 +35,10 @@
                   v-model="formData.modelId"
                   type="text"
                   class="form-input"
-                  :class="{ 'has-arrow': fetchedModelList.length > 0 }"
+                  :class="{ 'has-arrow': !isRemote && fetchedModelList.length > 0 }"
                   placeholder="例如：gpt-4o-mini"
+                  :readonly="isRemote"
+                  :disabled="isRemote"
                   @input="handleModelIdInput"
                   @focus="handleModelIdFocus"
                   @click="handleModelIdFocus"
@@ -94,6 +96,8 @@
                 class="form-input"
                 placeholder="例如：GPT-4 Turbo"
                 required
+                :readonly="isRemote"
+                :disabled="isRemote"
               >
             </div>
 
@@ -104,6 +108,7 @@
                   type="button"
                   class="protocol-select-trigger"
                   :class="{ open: showProtocolDropdown }"
+                  :disabled="isRemote"
                   @mousedown.prevent="toggleProtocolDropdown"
                 >
                   <span class="protocol-select-text">
@@ -126,7 +131,7 @@
                     @mousedown.prevent
                   >
                     <button
-                      v-for="option in protocolOptions"
+                      v-for="option in availableProtocolOptions"
                       :key="option.value"
                       type="button"
                       class="protocol-dropdown-item"
@@ -151,44 +156,50 @@
             <div class="form-group">
               <label class="form-label form-label--row">
                 <span>启用思考</span>
-                <label class="switch-toggle">
-                  <input type="checkbox" v-model="formData.enableThinking" />
+                <label class="switch-toggle" :class="{ disabled: isRemote }">
+                  <input type="checkbox" v-model="formData.enableThinking" :disabled="isRemote" />
                   <span class="switch-slider"></span>
                 </label>
               </label>
-              <p class="form-hint">开启后，模型会输出思考过程，但响应时间可能明显变长。部分模型/API服务不支持此功能。</p>
+              <p class="form-hint">
+                {{ isRemote
+                  ? '远程模型的思考配置由管理员下发，本地不可修改。'
+                  : '开启后，模型会输出思考过程，但响应时间可能明显变长。部分模型/API服务不支持此功能。' }}
+              </p>
 
               <!-- 关闭思考：按协议展示可选参数 -->
               <div v-if="!formData.enableThinking" class="thinking-options">
                 <p class="thinking-options-title">关闭时发送的参数</p>
 
                 <template v-if="isChatProtocol">
-                  <label class="thinking-check">
-                    <input type="checkbox" v-model="formData.thinkingOffEnableThinkingFalse" />
+                  <label class="thinking-check" :class="{ disabled: isRemote }">
+                    <input type="checkbox" v-model="formData.thinkingOffEnableThinkingFalse" :disabled="isRemote" />
                     <code>enable_thinking: false</code>
                   </label>
-                  <label class="thinking-check">
-                    <input type="checkbox" v-model="formData.thinkingOffThinkingTypeDisabled" />
+                  <label class="thinking-check" :class="{ disabled: isRemote }">
+                    <input type="checkbox" v-model="formData.thinkingOffThinkingTypeDisabled" :disabled="isRemote" />
                     <code>thinking: &#123; type: "disabled" &#125;</code>
                   </label>
                 </template>
 
                 <template v-else-if="isResponsesProtocol">
-                  <label class="thinking-check">
+                  <label class="thinking-check" :class="{ disabled: isRemote }">
                     <input
                       type="radio"
                       name="thinking-off-responses-effort"
                       value="none"
                       v-model="formData.thinkingOffResponsesEffort"
+                      :disabled="isRemote"
                     />
                     <code>reasoning.effort: "none"</code>
                   </label>
-                  <label class="thinking-check">
+                  <label class="thinking-check" :class="{ disabled: isRemote }">
                     <input
                       type="radio"
                       name="thinking-off-responses-effort"
                       value="minimal"
                       v-model="formData.thinkingOffResponsesEffort"
+                      :disabled="isRemote"
                     />
                     <code>reasoning.effort: "minimal"</code>
                   </label>
@@ -215,7 +226,8 @@
                     type="button"
                     class="thinking-effort-btn"
                     :class="{ active: formData.thinkingEffort === opt.value }"
-                    @click="formData.thinkingEffort = opt.value"
+                    :disabled="isRemote"
+                    @click="!isRemote && (formData.thinkingEffort = opt.value)"
                   >{{ opt.label }}</button>
                 </div>
               </div>
@@ -305,6 +317,11 @@ const formData = ref({
 })
 
 const isEditing = computed(() => !!props.model)
+const isRemote = computed(() => !!props.model?.isRemote)
+const dialogTitle = computed(() => {
+  if (isRemote.value) return '查看模型'
+  return isEditing.value ? '编辑模型' : '添加模型'
+})
 const showCategorySelect = computed(() => !isEditing.value)
 const requiresModelId = computed(() => formData.value.apiProtocol !== 'custom')
 const isChatProtocol = computed(() => formData.value.apiProtocol === 'openai-chat' || formData.value.apiProtocol === 'custom')
@@ -315,8 +332,16 @@ const isFormValid = computed(() => {
   if (requiresModelId.value && !formData.value.modelId.trim()) return false
   return true
 })
+const availableProtocolOptions = computed(() => {
+  if (isRemote.value) {
+    return protocolOptions.filter(option => option.value !== 'custom')
+  }
+  return protocolOptions
+})
 const currentProtocolOption = computed(() => {
-  return protocolOptions.find(option => option.value === formData.value.apiProtocol) ?? protocolOptions[0]
+  return availableProtocolOptions.value.find(option => option.value === formData.value.apiProtocol)
+    ?? availableProtocolOptions.value[0]
+    ?? protocolOptions[0]
 })
 const filteredFetchedModels = computed(() => {
   const q = formData.value.modelId.trim().toLowerCase()
@@ -354,6 +379,7 @@ const updateProtocolDropdownPosition = () => {
 }
 
 const toggleProtocolDropdown = async () => {
+  if (isRemote.value) return
   const next = !showProtocolDropdown.value
   if (next) closeModelDropdown()
   showProtocolDropdown.value = next
@@ -365,6 +391,7 @@ const toggleProtocolDropdown = async () => {
 }
 
 const selectProtocol = (protocol: AIModel['apiProtocol']) => {
+  if (isRemote.value) return
   formData.value.apiProtocol = protocol
   showProtocolDropdown.value = false
 }
@@ -457,6 +484,7 @@ const restoreModelsFromCache = () => {
 }
 
 const handleModelIdFocus = async () => {
+  if (isRemote.value) return
   if (fetchedModelList.value.length > 0) {
     await openModelDropdown()
     return
@@ -468,6 +496,7 @@ const handleModelIdFocus = async () => {
 }
 
 const toggleModelDropdown = async () => {
+  if (isRemote.value) return
   if (fetchedModelList.value.length === 0) {
     if (!isFetchingModels.value) void fetchModels()
     return
@@ -665,7 +694,8 @@ const normalizeOffResponsesEffort = (
 
 const createDialogFormData = (model?: AIModel | null) => {
   const protocol = normalizeApiProtocol(model?.apiProtocol)
-  const modelId = model?.modelId?.trim() || readModelIdFromJsCode(model?.jsCode) || ''
+  // 统一展示 modelId（服务端/同步保证有值；缺省用目录 id）
+  const modelId = model?.modelId?.trim() || model?.id || readModelIdFromJsCode(model?.jsCode) || ''
   const category = model?.category || 'text'
   const enableThinking = deriveEnableThinking(model)
   const thinkingOffEnableThinkingFalse = model?.thinkingOffEnableThinkingFalse !== false
@@ -1048,7 +1078,19 @@ const handleOverlayClick = (event: MouseEvent) => {
   }, 0)
 }
 
+const handlePrimaryAction = () => {
+  if (isRemote.value) {
+    emit('close')
+    return
+  }
+  handleSubmit()
+}
+
 const handleSubmit = () => {
+  if (isRemote.value) {
+    emit('close')
+    return
+  }
   if (!formData.value.displayName.trim()) {
     alert('请输入模型名称')
     return
@@ -1764,6 +1806,20 @@ const handleSubmit = () => {
   color: var(--text-primary);
   cursor: pointer;
   user-select: none;
+}
+
+.thinking-check.disabled,
+.switch-toggle.disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.thinking-check.disabled,
+.thinking-check.disabled input,
+.switch-toggle.disabled,
+.thinking-effort-btn:disabled,
+.protocol-select-trigger:disabled {
+  cursor: not-allowed;
 }
 
 .thinking-check input {
