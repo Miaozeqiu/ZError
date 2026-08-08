@@ -61,6 +61,7 @@
       @rename="handleRename"
       @clear-questions="handleClearQuestions"
       @delete="handleDelete"
+      @close="hideContextMenu"
     />
     
     <!-- 删除确认弹窗 -->
@@ -99,6 +100,7 @@ import ClearFolderQuestionsConfirmDialog from './ClearFolderQuestionsConfirmDial
 import DeleteConfirmDialog from './DeleteConfirmDialog.vue';
 import { databaseService, type Folder } from '../../services/database';
 import { settingsManager } from '../../services/settings';
+import { claimExclusiveMenu } from '../../composables/useExclusiveMenu';
 
 interface TreeNode {
   id: string;
@@ -432,6 +434,7 @@ const handleContextMenu = (data: { node: TreeNode; x: number; y: number }) => {
     return;
   }
 
+  claimExclusiveMenu('file-tree-context-menu');
   contextMenu.node = data.node;
   contextMenu.x = data.x;
   contextMenu.y = data.y;
@@ -506,6 +509,7 @@ const handleTreeContentRightClick = (event: MouseEvent) => {
     
     // 显示只有"新建文件夹"的右键菜单
     // 使用根文件夹作为父节点（ID为'0'）
+    claimExclusiveMenu('file-tree-context-menu');
     contextMenu.node = {
       id: '0',
       name: '根目录',
@@ -819,21 +823,22 @@ defineExpose({
 }
 
 .tree-header {
-  padding: 8px 12px;
+  padding: 8px 10px;
   border-bottom: 1px solid var(--border-primary);
   background-color: var(--bg-secondary);
   display: flex;
   align-items: center;
-  min-height: 32px;
+  box-sizing: border-box;
 }
 
 .tree-header h3 {
   margin: 0;
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  color: var(--text-secondary);
-  letter-spacing: 0.5px;
+  font-size: 13px;
+  font-weight: 500;
+  text-transform: none;
+  color: var(--text-primary, #2d3748);
+  letter-spacing: normal;
+  line-height: 1.2;
 }
 
 .breadcrumb-path {

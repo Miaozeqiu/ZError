@@ -42,7 +42,12 @@
       "wix": {
         "language": "zh-CN"
       },
-      "nsis": null
+      "nsis": {
+        "languages": ["SimpChinese"],
+        "displayLanguageSelector": false,
+        "installerIcon": "icons/icon.ico",
+        "installMode": "currentUser"
+      }
     }
   },
   "plugins": {

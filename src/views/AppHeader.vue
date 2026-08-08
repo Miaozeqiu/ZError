@@ -15,7 +15,7 @@
     </div>
     
     <div class="header-center">
-      <div class="tutorial-stepper">
+      <div v-if="props.activeTab !== 'questions'" class="tutorial-stepper">
         <div class="step" :class="{ completed: isStep1Completed, active: !isStep1Completed }" @click="$emit('guide-to', 'model-settings')">
           <div class="step-indicator">
             <svg v-if="isStep1Completed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="12" height="12"><polyline points="20 6 9 17 4 12"></polyline></svg>

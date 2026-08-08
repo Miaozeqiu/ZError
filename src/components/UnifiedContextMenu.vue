@@ -1,97 +1,100 @@
 <template>
-  <div 
-    v-if="visible" 
-    class="context-menu" 
-    :style="menuStyle"
-    @click.stop
-  >
-    <!-- 菜单头部（可选） -->
-    <div v-if="header" class="menu-header">
-      {{ header }}
-    </div>
-    <div v-if="header" class="menu-divider"></div>
-    
-    <!-- 菜单项 -->
-    <template v-for="item in menuItems" :key="item.id || item.label">
-      <!-- 分隔线 -->
-      <div v-if="item.type === 'divider'" class="menu-divider"></div>
-      
-      <!-- 标题项 -->
-      <div v-else-if="item.type === 'header'" class="menu-header">
-        {{ item.label }}
+  <Transition name="context-menu-pop">
+    <div 
+      v-if="visible" 
+      class="context-menu" 
+      :style="menuStyle"
+      @click.stop
+    >
+      <!-- 菜单头部（可选） -->
+      <div v-if="header" class="menu-header">
+        {{ header }}
       </div>
+      <div v-if="header" class="menu-divider"></div>
       
-      <!-- 普通菜单项 -->
-      <div 
-        v-else
-        class="menu-item" 
-        :class="{ 
-          disabled: item.disabled, 
-          danger: item.danger 
-        }"
-        @click="handleItemClick(item)"
-      >
-        <!-- 图标 -->
-        <div v-if="item.icon" class="menu-icon">
-          <!-- SVG 图标 -->
-          <svg 
-            v-if="typeof item.icon === 'object' && item.icon.type === 'svg'" 
-            width="16" 
-            height="16" 
-            :viewBox="item.icon.viewBox || '0 0 24 24'" 
-            fill="none" 
-            xmlns="http://www.w3.org/2000/svg"
-          >
-            <path 
-              v-for="(path, index) in item.icon.paths" 
-              :key="`path-${index}`"
-              :d="path.d"
-              :fill="path.fill || 'none'"
-              :stroke="path.stroke || 'currentColor'"
-              :stroke-width="path.strokeWidth || 2"
-            />
-            <rect 
-              v-for="(rect, index) in item.icon.rects" 
-              :key="`rect-${index}`"
-              :x="rect.x"
-              :y="rect.y"
-              :width="rect.width"
-              :height="rect.height"
-              :rx="rect.rx"
-              :ry="rect.ry"
-              :fill="rect.fill || 'none'"
-              :stroke="rect.stroke || 'currentColor'"
-              :stroke-width="rect.strokeWidth || 2"
-            />
-            <polyline 
-              v-for="(polyline, index) in item.icon.polylines" 
-              :key="`polyline-${index}`"
-              :points="polyline.points"
-              :fill="polyline.fill || 'none'"
-              :stroke="polyline.stroke || 'currentColor'"
-              :stroke-width="polyline.strokeWidth || 2"
-            />
-          </svg>
-          
-          <!-- Emoji 图标 -->
-          <span v-else-if="typeof item.icon === 'object' && item.icon.type === 'emoji'">{{ item.icon.content }}</span>
-          
-          <!-- 文本图标 -->
-          <span v-else-if="typeof item.icon === 'object' && item.icon.type === 'text'">{{ item.icon.content }}</span>
-          
-          <!-- 纯字符串图标 (如果是字符串) -->
-          <span v-else-if="typeof item.icon === 'string'">{{ item.icon }}</span>
+      <!-- 菜单项 -->
+      <template v-for="item in menuItems" :key="item.id || item.label">
+        <!-- 分隔线 -->
+        <div v-if="item.type === 'divider'" class="menu-divider"></div>
+        
+        <!-- 标题项 -->
+        <div v-else-if="item.type === 'header'" class="menu-header">
+          {{ item.label }}
         </div>
         
-        <!-- 标签 -->
-        <span class="menu-label">{{ item.label }}</span>
-      </div>
-    </template>
-  </div>
+        <!-- 普通菜单项 -->
+        <div 
+          v-else
+          class="menu-item" 
+          :class="{ 
+            disabled: item.disabled, 
+            danger: item.danger 
+          }"
+          @click="handleItemClick(item)"
+        >
+          <!-- 图标 -->
+          <div v-if="item.icon" class="menu-icon">
+            <!-- SVG 图标 -->
+            <svg 
+              v-if="typeof item.icon === 'object' && item.icon.type === 'svg'" 
+              width="16" 
+              height="16" 
+              :viewBox="item.icon.viewBox || '0 0 24 24'" 
+              fill="none" 
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path 
+                v-for="(path, index) in item.icon.paths" 
+                :key="`path-${index}`"
+                :d="path.d"
+                :fill="path.fill || 'none'"
+                :stroke="path.stroke || 'currentColor'"
+                :stroke-width="path.strokeWidth || 2"
+              />
+              <rect 
+                v-for="(rect, index) in item.icon.rects" 
+                :key="`rect-${index}`"
+                :x="rect.x"
+                :y="rect.y"
+                :width="rect.width"
+                :height="rect.height"
+                :rx="rect.rx"
+                :ry="rect.ry"
+                :fill="rect.fill || 'none'"
+                :stroke="rect.stroke || 'currentColor'"
+                :stroke-width="rect.strokeWidth || 2"
+              />
+              <polyline 
+                v-for="(polyline, index) in item.icon.polylines" 
+                :key="`polyline-${index}`"
+                :points="polyline.points"
+                :fill="polyline.fill || 'none'"
+                :stroke="polyline.stroke || 'currentColor'"
+                :stroke-width="polyline.strokeWidth || 2"
+              />
+            </svg>
+            
+            <!-- Emoji 图标 -->
+            <span v-else-if="typeof item.icon === 'object' && item.icon.type === 'emoji'">{{ item.icon.content }}</span>
+            
+            <!-- 文本图标 -->
+            <span v-else-if="typeof item.icon === 'object' && item.icon.type === 'text'">{{ item.icon.content }}</span>
+            
+            <!-- 纯字符串图标 (如果是字符串) -->
+            <span v-else-if="typeof item.icon === 'string'">{{ item.icon }}</span>
+          </div>
+          
+          <!-- 标签 -->
+          <span class="menu-label">{{ item.label }}</span>
+        </div>
+      </template>
+    </div>
+  </Transition>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue';
+import { createExclusiveMenuId, useExclusiveMenuProp } from '../composables/useExclusiveMenu';
 
 export interface MenuIcon {
   type: 'svg' | 'emoji' | 'text'
@@ -150,6 +153,8 @@ interface Props {
   menuItems: MenuItem[];
   header?: string;
   maxHeight?: number;
+  /** 稳定互斥键；同键视为同一菜单，不同键同时只保留一个 */
+  exclusiveKey?: string;
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -158,7 +163,11 @@ const props = withDefaults(defineProps<Props>(), {
 
 const emit = defineEmits<{
   'item-click': [item: MenuItem];
+  close: [];
 }>();
+
+const menuId = props.exclusiveKey || createExclusiveMenuId('context');
+useExclusiveMenuProp(menuId, () => props.visible, () => emit('close'));
 
 // 处理菜单项点击
 const handleItemClick = (item: MenuItem) => {
@@ -225,6 +234,24 @@ const menuStyle = computed(() => {
   padding: 8px;
   font-size: 14px;
   overflow-y: auto;
+  transform-origin: top left;
+}
+
+.context-menu-pop-enter-active,
+.context-menu-pop-leave-active {
+  transition: opacity 0.14s ease, transform 0.16s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.context-menu-pop-enter-from,
+.context-menu-pop-leave-to {
+  opacity: 0;
+  transform: translateY(-4px) scale(0.96);
+}
+
+.context-menu-pop-enter-to,
+.context-menu-pop-leave-from {
+  opacity: 1;
+  transform: translateY(0) scale(1);
 }
 
 /* 菜单标题样式 */

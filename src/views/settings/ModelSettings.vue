@@ -309,6 +309,7 @@
       :platform="contextMenuPlatform"
       @edit-platform="handleEditPlatform"
       @delete-platform="handleDeletePlatform"
+      @close="hidePlatformMenu"
     />
 
     <!-- 模型右键菜单 -->
@@ -320,6 +321,7 @@
       @edit-model="handleEditModel"
       @test-model="handleTestModel"
       @delete-model="handleDeleteModel"
+      @close="hideModelMenu"
     />
 
     <ModelConfigDialog
@@ -382,6 +384,7 @@ import PlatformDeleteConfirmDialog from './ModelSettings/PlatformDeleteConfirmDi
 import Toggle from '../../components/Toggle.vue'
 import ModelCategorySwitch from './ModelSettings/ModelCategorySwitch.vue'
 import OlTip from './OlTip.vue'
+import { claimExclusiveMenu, useExclusiveMenu } from '../../composables/useExclusiveMenu'
 
 const detailScrollWrap = ref<HTMLElement | null>(null)
 const detailContent = ref<HTMLElement | null>(null)
@@ -1038,6 +1041,7 @@ const getModelIcon = (model: AIModel): string => {
 
 const showPlatformMenu = (event: MouseEvent, platform: AIPlatform) => {
   event.preventDefault()
+  claimExclusiveMenu('platform-context-menu')
   contextMenuX.value = event.clientX
   contextMenuY.value = event.clientY
   contextMenuPlatform.value = platform
@@ -1051,6 +1055,7 @@ const hidePlatformMenu = () => {
 
 const showModelContextMenuHandler = (event: MouseEvent, model: AIModel) => {
   event.preventDefault()
+  claimExclusiveMenu('model-context-menu')
   modelContextMenuX.value = event.clientX
   modelContextMenuY.value = event.clientY
   contextMenuModel.value = model
@@ -1159,6 +1164,7 @@ const updatePlatformBaseUrl = async () => {
 
 // -------- 添加模型下拉 --------
 const showAddModelDropdown = ref(false)
+useExclusiveMenu('model-settings-add-model', showAddModelDropdown)
 const addModelDropdownRef = ref<HTMLElement | null>(null)
 
 const openAddModelDropdown = () => {
@@ -1864,7 +1870,7 @@ onUnmounted(() => {
 }
 
 .sidebar-header {
-  padding: 16px;
+  padding: 8px 10px;
   border-bottom: 1px solid var(--border-primary, #e2e8f0);
   display: flex;
   justify-content: space-between;
@@ -1872,10 +1878,16 @@ onUnmounted(() => {
 }
 
 .sidebar-title {
-  font-size: 16px;
+  font-size: 13px;
   font-weight: 500;
   color: var(--text-primary, #2d3748);
   margin: 0;
+}
+
+.sidebar-header .icon-action-btn--sm {
+  width: 22px;
+  height: 22px;
+  padding: 3px;
 }
 
 .sidebar-title-row {

@@ -4,7 +4,9 @@
     :x="x"
     :y="y"
     :menu-items="menuItems"
+    exclusive-key="platform-context-menu"
     @item-click="handleItemClick"
+    @close="$emit('close')"
   />
 </template>
 
@@ -25,6 +27,7 @@ const props = defineProps<Props>()
 const emit = defineEmits<{
   'edit-platform': []
   'delete-platform': []
+  close: []
 }>()
 
 const menuItems = computed<MenuItem[]>(() => {

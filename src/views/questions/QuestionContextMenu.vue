@@ -4,7 +4,9 @@
     :x="x"
     :y="y"
     :menu-items="menuItems"
+    exclusive-key="question-list-context-menu"
     @item-click="handleItemClick"
+    @close="$emit('close')"
   />
 </template>
 
@@ -34,6 +36,7 @@ const emit = defineEmits<{
   'batch-cut': []
   'delete': []
   'batch-delete': []
+  close: []
 }>()
 
 // 定义菜单项

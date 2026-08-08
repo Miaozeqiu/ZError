@@ -550,6 +550,12 @@ async fn resolve_query_with_same_question_check(
         {
             Ok(judge_content) => {
                 println!("✅ 同题判断结果: {}", judge_content);
+                // 未选择模型等客户端错误：直接返回，避免再回落正常答题又等一轮
+                if let Some((status, err_msg)) = classify_model_failure(&judge_content) {
+                    if status == 400 && err_msg.contains("未选择模型") {
+                        return (status, QueryResponse::error(err_msg));
+                    }
+                }
                 if let Some(matched_id) = parse_same_question_result(&judge_content) {
                     if let Some(matched) = candidates.iter().find(|c| c.id == matched_id).cloned() {
                         let answer = normalize_answer_against_options(
@@ -1646,10 +1652,13 @@ fn is_timeout_like_model_failure(text: &str) -> bool {
         || lower.contains("服务已停止")
 }
 
-/// 将模型失败文本映射为 RequestLog 状态码：超时类 → 408，其它 → 500
+/// 将模型失败文本映射为 RequestLog 状态码：
+/// 未选择模型 → 400，超时类 → 408，其它 → 500
 fn classify_model_failure(text: &str) -> Option<(u16, String)> {
     let err = is_model_error(text)?;
-    if is_timeout_like_model_failure(&err) || is_timeout_like_model_failure(text) {
+    if err.contains("未选择模型") || text.contains("未选择模型") {
+        Some((400, "错误: 未选择模型".to_string()))
+    } else if is_timeout_like_model_failure(&err) || is_timeout_like_model_failure(text) {
         Some((408, err))
     } else {
         Some((500, err))
@@ -1738,7 +1747,7 @@ fn is_model_error(text: &str) -> Option<String> {
 
 #[cfg(test)]
 mod same_question_tests {
-    use super::parse_same_question_result;
+    use super::{classify_model_failure, parse_same_question_result};
 
     #[test]
     fn parses_same_true_with_matched_id() {
@@ -1757,5 +1766,12 @@ mod same_question_tests {
         assert_eq!(parse_same_question_result(r#"{"same":false}"#), None);
         assert_eq!(parse_same_question_result("错误: 未选择模型"), None);
         assert_eq!(parse_same_question_result(""), None);
+    }
+
+    #[test]
+    fn no_model_selected_is_400_not_500() {
+        let (status, msg) = classify_model_failure("错误: 未选择模型").expect("classified");
+        assert_eq!(status, 400);
+        assert_eq!(msg, "错误: 未选择模型");
     }
 }

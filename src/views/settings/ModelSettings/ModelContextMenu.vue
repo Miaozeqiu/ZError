@@ -4,7 +4,9 @@
     :x="x"
     :y="y"
     :menu-items="menuItems"
+    exclusive-key="model-context-menu"
     @item-click="handleItemClick"
+    @close="$emit('close')"
   />
 </template>
 
@@ -26,6 +28,7 @@ const emit = defineEmits<{
   'edit-model': []
   'test-model': [{ testFunctionCalling: boolean }]
   'delete-model': []
+  close: []
 }>()
 
 // 定义菜单项

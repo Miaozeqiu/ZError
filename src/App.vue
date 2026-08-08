@@ -12,6 +12,7 @@ import { databaseService } from "./services/database";
 import { initializationService } from "./services/initialization";
 import { initGlobalTheme } from "./composables/useTheme";
 import { useAppUpdate } from "./composables/useAppUpdate";
+import { useExclusiveMenu } from "./composables/useExclusiveMenu";
 
 // 当前活跃的页面
 const activeTab = ref('home');
@@ -93,6 +94,7 @@ const importing = ref(false);
 type EditableTarget = HTMLInputElement | HTMLTextAreaElement
 
 const inputContextMenuVisible = ref(false)
+useExclusiveMenu('global-input-context-menu', inputContextMenuVisible)
 const inputContextMenuX = ref(0)
 const inputContextMenuY = ref(0)
 const inputContextMenuTarget = ref<EditableTarget | null>(null)
@@ -446,16 +448,18 @@ onUnmounted(() => {
     </div>
   </div>
 
-  <div
-    v-if="inputContextMenuVisible"
-    class="global-input-context-menu"
-    :style="{ left: `${inputContextMenuX}px`, top: `${inputContextMenuY}px` }"
-  >
-    <button class="global-input-context-menu-item" :disabled="!canCutInput" @click="handleInputCut">剪切</button>
-    <button class="global-input-context-menu-item" :disabled="!canCopyInput" @click="handleInputCopy">复制</button>
-    <button class="global-input-context-menu-item" :disabled="!canPasteInput" @click="handleInputPaste">粘贴</button>
-    <button class="global-input-context-menu-item" :disabled="!canSelectAllInput" @click="handleInputSelectAll">全选</button>
-  </div>
+  <Transition name="context-menu-pop">
+    <div
+      v-if="inputContextMenuVisible"
+      class="global-input-context-menu"
+      :style="{ left: `${inputContextMenuX}px`, top: `${inputContextMenuY}px` }"
+    >
+      <button class="global-input-context-menu-item" :disabled="!canCutInput" @click="handleInputCut">剪切</button>
+      <button class="global-input-context-menu-item" :disabled="!canCopyInput" @click="handleInputCopy">复制</button>
+      <button class="global-input-context-menu-item" :disabled="!canPasteInput" @click="handleInputPaste">粘贴</button>
+      <button class="global-input-context-menu-item" :disabled="!canSelectAllInput" @click="handleInputSelectAll">全选</button>
+    </div>
+  </Transition>
 </template>
 
 <style scoped>
@@ -593,6 +597,24 @@ a:hover {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  transform-origin: top left;
+}
+
+.context-menu-pop-enter-active,
+.context-menu-pop-leave-active {
+  transition: opacity 0.14s ease, transform 0.16s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.context-menu-pop-enter-from,
+.context-menu-pop-leave-to {
+  opacity: 0;
+  transform: translateY(-4px) scale(0.96);
+}
+
+.context-menu-pop-enter-to,
+.context-menu-pop-leave-from {
+  opacity: 1;
+  transform: translateY(0) scale(1);
 }
 
 .global-input-context-menu-item {

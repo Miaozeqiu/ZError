@@ -239,6 +239,7 @@ import { linter, lintGutter } from '@codemirror/lint'
 import * as acorn from 'acorn'
 import { type AIModel, type ThinkingEffort, type ThinkingOffResponsesEffort } from '../../../services/modelConfig'
 import { buildPresetProcessModelJsCode, normalizeApiProtocol, readModelIdFromJsCode } from '../../../services/modelProtocol'
+import { useExclusiveMenu } from '../../../composables/useExclusiveMenu'
 import ModelCategorySwitch from './ModelCategorySwitch.vue'
 
 const thinkingEffortOptions: { value: ThinkingEffort; label: string }[] = [
@@ -273,12 +274,14 @@ const protocolSelectRef = ref<HTMLElement | null>(null)
 const protocolDropdownRef = ref<HTMLElement | null>(null)
 const protocolDropdownStyle = ref<Record<string, string>>({})
 const showProtocolDropdown = ref(false)
+useExclusiveMenu('model-config-protocol-dropdown', showProtocolDropdown)
 const modelDropdownAnchorRef = ref<HTMLElement | null>(null)
 const modelIdInputRef = ref<HTMLInputElement | null>(null)
 const modelDropdownRef = ref<HTMLElement | null>(null)
 const modelDropdownStyle = ref<Record<string, string>>({})
 const isFetchingModels = ref(false)
 const showModelDropdown = ref(false)
+useExclusiveMenu('model-config-model-dropdown', showModelDropdown)
 
 type FetchedModelItem = {
   id: string

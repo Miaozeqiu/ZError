@@ -4,7 +4,9 @@
     :x="x"
     :y="y"
     :menu-items="menuItems"
+    exclusive-key="file-tree-context-menu"
     @item-click="handleItemClick"
+    @close="$emit('close')"
   />
 </template>
 
@@ -31,6 +33,7 @@ const emit = defineEmits<{
   'rename': [];
   'delete': [];
   'clear-questions': [];
+  close: [];
 }>();
 
 // 定义菜单项
