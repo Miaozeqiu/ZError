@@ -45,8 +45,8 @@ pub struct ResolvedWindowSize {
 }
 
 pub const MAIN_WINDOW_PRESET: WindowSizePreset =
-    // 介于旧版偏大与上次偏小之间：1920x1080 约 1110x690，笔记本仍按比例收敛
-    WindowSizePreset::new(1040.0, 700.0, 760.0, 520.0, 0.58, 0.64, 1220.0, 840.0);
+    // 略加大：1920x1080 约 1180x740，笔记本仍按比例收敛
+    WindowSizePreset::new(1120.0, 740.0, 780.0, 540.0, 0.615, 0.685, 1280.0, 900.0);
 
 pub const URL_CONTENT_WINDOW_PRESET: WindowSizePreset =
     WindowSizePreset::new(1200.0, 800.0, 1000.0, 600.0, 0.84, 0.86, 1720.0, 1180.0);
