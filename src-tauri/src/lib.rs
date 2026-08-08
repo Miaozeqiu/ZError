@@ -13,11 +13,12 @@ pub mod window_size;
 use crate::window_size::{resolve_window_size, MAIN_WINDOW_PRESET};
 pub use commands::open_text_window;
 pub use commands::{
-    clear_request_logs, convert_doc_to_docx, create_directory, fetch_image_as_base64, file_exists,
-    get_daily_request_counts, get_request_logs, get_username, greet, open_cache_dir, open_devtools,
-    open_url_content_window, read_config, read_doc_range, read_docx_range, read_excel_headers,
-    read_excel_range, read_file_bytes, read_file_range, read_file_text, read_model_config,
-    request_admin_elevation, segment_text, write_config, write_model_config
+    can_native_updater_install, clear_request_logs, convert_doc_to_docx, create_directory,
+    fetch_image_as_base64, file_exists, get_daily_request_counts, get_request_logs, get_username,
+    greet, open_cache_dir, open_devtools, open_url_content_window, read_config, read_doc_range,
+    read_docx_range, read_excel_headers, read_excel_range, read_file_bytes, read_file_range,
+    read_file_text, read_model_config, request_admin_elevation, segment_text, write_config,
+    write_model_config
 };
 pub use database::*;
 pub use database::{
@@ -27,6 +28,86 @@ pub use database::{
 pub use server::{get_server_status, start_server, stop_server};
 use tauri::Manager;
 pub use types::*;
+
+/// macOS updater 用 rename 替换 .app；若 TMPDIR 与可执行文件不在同一卷会报 Cross-device link (os error 18)。
+/// 开发时工程在 /Volumes/外置盘、系统 TMPDIR 在内置盘时尤其常见。
+#[cfg(target_os = "macos")]
+fn ensure_tmpdir_same_volume_as_exe() {
+    use std::os::unix::fs::MetadataExt;
+    use std::path::PathBuf;
+
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    let Ok(exe_meta) = std::fs::metadata(&exe) else {
+        return;
+    };
+    let exe_dev = exe_meta.dev();
+
+    let current_tmp = std::env::temp_dir();
+    if let Ok(tmp_meta) = std::fs::metadata(&current_tmp) {
+        if tmp_meta.dev() == exe_dev {
+            return;
+        }
+    }
+
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Some(dir) = exe.parent() {
+        candidates.push(dir.join(".zerror-updater-tmp"));
+    }
+
+    // .../Xxx.app/Contents/MacOS/zerror → 优先放在 .app 同级目录
+    let mut p = exe.clone();
+    for _ in 0..4 {
+        if p.extension().and_then(|e| e.to_str()) == Some("app") {
+            if let Some(parent) = p.parent() {
+                candidates.push(parent.join(".zerror-updater-tmp"));
+            }
+            break;
+        }
+        match p.parent() {
+            Some(parent) if parent != p => p = parent.to_path_buf(),
+            _ => break,
+        }
+    }
+
+    // 外置卷：/Volumes/Name/... → /Volumes/Name/tmp/ZError-updater
+    let components: Vec<_> = exe.components().collect();
+    if components.len() >= 3 {
+        use std::path::Component;
+        if matches!(components[0], Component::RootDir)
+            && matches!(components[1], Component::Normal(v) if v == "Volumes")
+        {
+            if let Component::Normal(vol) = components[2] {
+                let mut root = PathBuf::from("/");
+                root.push("Volumes");
+                root.push(vol);
+                candidates.push(root.join("tmp").join("ZError-updater"));
+            }
+        }
+    }
+
+    for candidate in candidates {
+        if std::fs::create_dir_all(&candidate).is_err() {
+            continue;
+        }
+        if let Ok(meta) = std::fs::metadata(&candidate) {
+            if meta.dev() == exe_dev {
+                std::env::set_var("TMPDIR", &candidate);
+                eprintln!(
+                    "[zerror] TMPDIR aligned for updater: {} (was on another volume)",
+                    candidate.display()
+                );
+                return;
+            }
+        }
+    }
+
+    eprintln!(
+        "[zerror] warning: could not align TMPDIR with executable volume ({}); updater may fail with Cross-device link",
+        exe.display()
+    );
+}
 
 fn show_main_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     #[cfg(target_os = "macos")]
@@ -51,6 +132,9 @@ fn show_main_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(target_os = "macos")]
+    ensure_tmpdir_same_volume_as_exe();
+
     let mut builder = tauri::Builder::default()
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { .. } = event {
@@ -78,6 +162,7 @@ pub fn run() {
     builder
         .invoke_handler(tauri::generate_handler![
             greet,
+            can_native_updater_install,
             create_directory,
             file_exists,
             get_username,

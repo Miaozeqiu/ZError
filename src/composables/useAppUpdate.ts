@@ -19,6 +19,10 @@ export type HeaderUpdateStatus =
 
 const DISMISS_KEY = 'updateHeaderDismissedVersion'
 const AUTO_DL_KEY = 'updateAutoDownloadedVersion'
+/** 本会话内已关闭过的更新弹窗版本，避免反复弹出 */
+const DIALOG_SKIP_KEY = 'updateDialogSkippedVersion'
+/** 已下载/已安装但尚未重启；下次启动若仍未升到该版本则显示「已就绪」 */
+const PENDING_RELAUNCH_KEY = 'updatePendingRelaunchVersion'
 
 const updateInfo = ref<VersionInfo | null>(null)
 const currentVersion = ref(VersionCheckService.getCurrentVersion())
@@ -35,13 +39,73 @@ const downloadFileName = ref('')
 const downloadUrl = ref('')
 
 let downloadPromise: Promise<void> | null = null
+let checkPromise: Promise<void> | null = null
 
-function fileLabel(name: string): string {
-  if (!name) return ''
-  if (/\.app\.tar\.gz$/i.test(name) || /\.tar\.gz$/i.test(name)) return `${name}（原地更新包）`
-  if (/\.dmg$/i.test(name)) return `${name}（Mac 安装映像）`
-  if (/\.exe$/i.test(name)) return `${name}（Windows 安装包）`
-  return name
+function markDialogSkipped(version?: string) {
+  const ver = version || updateInfo.value?.version
+  if (ver && ver !== '?') {
+    sessionStorage.setItem(DIALOG_SKIP_KEY, ver)
+  }
+  showUpdateDialog.value = false
+}
+
+function openUpdateDialog(options?: { force?: boolean; version?: string }) {
+  const ver = options?.version || updateInfo.value?.version || ''
+  if (!options?.force && ver && sessionStorage.getItem(DIALOG_SKIP_KEY) === ver) {
+    return
+  }
+  // 已在下载/安装时不再自动弹窗，避免挡住顶部进度条
+  if (
+    !options?.force &&
+    (status.value === 'downloading' || status.value === 'installing')
+  ) {
+    return
+  }
+  showUpdateDialog.value = true
+}
+
+function setPendingRelaunch(version: string, packagePath?: string) {
+  if (version && version !== '?') {
+    localStorage.setItem(PENDING_RELAUNCH_KEY, version)
+  }
+  if (packagePath) {
+    localStorage.setItem('updatePendingPackagePath', packagePath)
+  } else {
+    localStorage.removeItem('updatePendingPackagePath')
+  }
+}
+
+function clearPendingRelaunch() {
+  localStorage.removeItem(PENDING_RELAUNCH_KEY)
+  localStorage.removeItem('updatePendingPackagePath')
+}
+
+function restorePendingRelaunchTip(): boolean {
+  const pending = localStorage.getItem(PENDING_RELAUNCH_KEY)
+  if (!pending) return false
+  const current = VersionCheckService.getCurrentVersion()
+  // 已经升到待重启版本（或更高）→ 清掉
+  if (!VersionCheckService.compareVersions(current, pending)) {
+    clearPendingRelaunch()
+    return false
+  }
+  const pendingPath = localStorage.getItem('updatePendingPackagePath') || ''
+  updateInfo.value = {
+    version: pending,
+    changelog: '',
+    downloadUrl: '',
+  }
+  currentVersion.value = current
+  tipVisible.value = true
+  if (pendingPath) {
+    localPath.value = pendingPath
+    nativeUpdater.value = false
+    status.value = 'done'
+  } else {
+    nativeUpdater.value = true
+    status.value = 'ready-relaunch'
+  }
+  return true
 }
 
 function pickNativePackageUrl(update: any): string {
@@ -73,32 +137,19 @@ function setDownloadTarget(url: string, version: string, fileName?: string) {
 const tipText = computed(() => {
   const ver = updateInfo.value?.version
   if (!ver) return ''
-  const file = fileLabel(downloadFileName.value)
   if (status.value === 'downloading') {
-    const pct = progress.value > 0 ? ` ${progress.value}%` : '…'
-    if (file) {
-      return nativeUpdater.value
-        ? `正在下载 v${ver}${pct} · ${file}`
-        : `正在下载安装包 v${ver}${pct} · ${file}`
-    }
     return progress.value > 0
       ? `正在下载 v${ver} ${progress.value}%`
       : `正在下载 v${ver}…`
   }
   if (status.value === 'installing') {
-    return file
-      ? `正在安装 v${ver} · ${file}`
-      : `正在安装 v${ver}…`
+    return `正在安装 v${ver}…`
   }
   if (status.value === 'ready-relaunch') {
-    return file
-      ? `v${ver} 已就绪（${file}），点击重启`
-      : `v${ver} 已就绪，点击重启`
+    return `v${ver} 已就绪，点击重启`
   }
   if (status.value === 'done') {
-    return nativeUpdater.value
-      ? `v${ver} 已安装，点击重启`
-      : (file ? `v${ver} 已下载 ${file}，点击打开` : `v${ver} 已下载，点击打开`)
+    return `v${ver} 已就绪，点击打开`
   }
   if (status.value === 'error') {
     return errorMessage.value
@@ -109,11 +160,13 @@ const tipText = computed(() => {
 })
 
 const tipTitle = computed(() => {
-  if (downloadUrl.value) return downloadUrl.value
-  if (downloadFileName.value) return downloadFileName.value
+  if (status.value === 'ready-relaunch' || (status.value === 'done' && nativeUpdater.value)) {
+    return '点击重启以完成更新'
+  }
   if (status.value === 'done') return '打开已下载的安装包'
   if (status.value === 'error') return '点击重试下载'
-  return '查看更新详情'
+  if (status.value === 'available') return '点击开始更新'
+  return '软件更新'
 })
 
 const hasUpdate = computed(() => !!updateInfo.value)
@@ -147,8 +200,37 @@ async function tryNativeUpdaterCheck(): Promise<{
   }
 }
 
+function humanizeUpdaterError(err: any): string {
+  const msg = err?.message || String(err)
+  if (/Cross-device link|os error 18|EXDEV|CrossesDevices/i.test(msg)) {
+    return '更新临时目录与软件不在同一磁盘。请把 ZError 安装到「应用程序」后再更新'
+  }
+  if (/Invalid argument|os error 22|EINVAL/i.test(msg)) {
+    return '当前不是「应用程序」安装包（开发模式无法原地更新）。请用 DMG 把 ZError 装到 /Applications 后再测更新'
+  }
+  if (/permission|denied|administrator|Failed to move/i.test(msg)) {
+    return '原地更新需要写入权限：请把 ZError 放到「应用程序」后再试；若弹出密码框请允许'
+  }
+  return msg
+}
+
+async function assertNativeUpdaterInstallable() {
+  if (!environmentDetector.isTauriEnvironment()) {
+    throw new Error('非桌面环境，无法原地更新')
+  }
+  const { invoke } = await import('@tauri-apps/api/core')
+  const ok = await invoke<boolean>('can_native_updater_install')
+  if (!ok) {
+    throw new Error(
+      '当前是开发模式（非 .app）。请用 DMG 安装到「应用程序」后再测原地更新；开发态只能测检查/进度 UI，不能真正替换软件',
+    )
+  }
+}
+
 async function startNativeInstall(update: any) {
+  await assertNativeUpdaterInstallable()
   nativeUpdater.value = true
+  tipVisible.value = true
   status.value = 'downloading'
   progress.value = 0
   errorMessage.value = ''
@@ -178,16 +260,33 @@ async function startNativeInstall(update: any) {
     }
   })
 
-  status.value = 'ready-relaunch'
   progress.value = 100
-  if (updateInfo.value?.version) {
-    localStorage.setItem(AUTO_DL_KEY, updateInfo.value.version)
+  const ver = update?.version || updateInfo.value?.version || ''
+  if (ver) {
+    localStorage.setItem(AUTO_DL_KEY, ver)
+    setPendingRelaunch(ver)
   }
+  status.value = 'installing'
 }
 
 async function relaunchApp() {
+  // 不在重启前清 pending：若 relaunch 失败，下次打开仍显示「已就绪」；
+  // 成功升到新版本后由 restorePendingRelaunchTip 自动清除。
   const { relaunch } = await import('@tauri-apps/plugin-process')
   await relaunch()
+}
+
+/** 安装完成后立刻重启；失败则留下「已就绪」供本次点击/下次打开 */
+async function finishNativeUpdateAndRelaunch() {
+  status.value = 'installing'
+  tipVisible.value = true
+  try {
+    await relaunchApp()
+  } catch (err) {
+    console.error('自动重启失败:', err)
+    status.value = 'ready-relaunch'
+    tipVisible.value = true
+  }
 }
 
 async function startAutoDownload(force = false) {
@@ -218,6 +317,7 @@ async function startAutoDownload(force = false) {
           releaseDate: info.releaseDate,
         }
         await startNativeInstall(native.update)
+        await finishNativeUpdateAndRelaunch()
         return
       }
 
@@ -229,11 +329,11 @@ async function startAutoDownload(force = false) {
         errorMessage.value = '未配置下载地址'
         return
       }
-      // 如果回退地址仍是 .app.tar.gz，也标清楚，避免误当成 DMG
       setDownloadTarget(url, info.version)
 
       if (!force && localStorage.getItem(AUTO_DL_KEY) === info.version && localPath.value) {
         status.value = 'done'
+        tipVisible.value = true
         return
       }
 
@@ -249,6 +349,8 @@ async function startAutoDownload(force = false) {
       status.value = 'done'
       progress.value = 100
       localStorage.setItem(AUTO_DL_KEY, info.version)
+      setPendingRelaunch(info.version, result.filePath)
+      tipVisible.value = true
     } catch (err: any) {
       console.error('自动更新失败:', err)
       status.value = 'error'
@@ -262,20 +364,33 @@ async function startAutoDownload(force = false) {
 }
 
 async function checkForUpdates(options?: { forceDialog?: boolean }) {
+  if (checkPromise && !options?.forceDialog) {
+    return checkPromise
+  }
+
+  const wantDialog = !!options?.forceDialog
+
+  checkPromise = (async () => {
   try {
-    let suppressDialog = false
+    // 上次已下载/安装但未完成重启
+    if (!wantDialog && restorePendingRelaunchTip()) {
+      return
+    }
+
+    let suppressAuto = false
     const updateRemindTime = localStorage.getItem('updateRemindTime')
     if (updateRemindTime) {
       const remindTime = new Date(updateRemindTime)
       if (new Date() < remindTime) {
         console.log(`用户选择一周后提醒，提醒时间: ${remindTime.toLocaleString()}`)
-        suppressDialog = !options?.forceDialog
+        // 仅抑制自动检查的顶部提示/下载；手动「检查更新」仍弹出
+        suppressAuto = !wantDialog
       } else {
         localStorage.removeItem('updateRemindTime')
       }
     }
 
-    // 1) 先试原生 updater（tauri.conf → https://webapi.zaizhexue.top/live/update.json）
+    // 1) 先试原生 updater（tauri.conf → live/update.json）
     const native = await tryNativeUpdaterCheck()
     if (native !== null) {
       if (native.error) {
@@ -297,7 +412,9 @@ async function checkForUpdates(options?: { forceDialog?: boolean }) {
         status.value = 'error'
         errorMessage.value = `原生更新检查失败：${native.error}`
         tipVisible.value = true
-        if (!suppressDialog) showUpdateDialog.value = true
+        if (wantDialog) {
+          openUpdateDialog({ force: true, version: updateInfo.value?.version })
+        }
         return
       }
       if (native.available && native.version) {
@@ -312,27 +429,12 @@ async function checkForUpdates(options?: { forceDialog?: boolean }) {
         )
         currentVersion.value = VersionCheckService.getCurrentVersion()
         const dismissed = localStorage.getItem(DISMISS_KEY) === native.version
-        tipVisible.value = !dismissed
+        const shouldShowTip = wantDialog || (!suppressAuto && !dismissed)
+        tipVisible.value = shouldShowTip
         status.value = 'available'
-        if (!suppressDialog) showUpdateDialog.value = true
-        // 有 platforms 签名包时只走原地安装，失败不再偷偷改下 DMG（否则还要拖拽）
-        if (!dismissed) {
-          downloadPromise = (async () => {
-            try {
-              await startNativeInstall(native.update)
-            } catch (err: any) {
-              console.error('原生安装失败:', err)
-              status.value = 'error'
-              const msg = err?.message || String(err)
-              errorMessage.value =
-                /permission|denied|administrator|Failed to move/i.test(msg)
-                  ? '原地更新需要写入权限：请把 ZError 放到「应用程序」后再试；若弹出密码框请允许'
-                  : `原地更新失败：${msg}`
-              tipVisible.value = true
-            } finally {
-              downloadPromise = null
-            }
-          })()
+        // 仅手动「检查更新」才弹窗；发现更新后不自动下载，等用户点击
+        if (wantDialog) {
+          openUpdateDialog({ force: true, version: native.version })
         }
         return
       }
@@ -357,7 +459,8 @@ async function checkForUpdates(options?: { forceDialog?: boolean }) {
 
     updateInfo.value = result.versionInfo
     const dismissed = localStorage.getItem(DISMISS_KEY) === result.versionInfo.version
-    tipVisible.value = !dismissed
+    const shouldShowTip = wantDialog || (!suppressAuto && !dismissed)
+    tipVisible.value = shouldShowTip
     status.value = 'available'
     nativeUpdater.value = false
     setDownloadTarget(
@@ -365,16 +468,17 @@ async function checkForUpdates(options?: { forceDialog?: boolean }) {
       result.versionInfo.version,
     )
 
-    if (!suppressDialog) {
-      showUpdateDialog.value = true
-    }
-
-    if (!dismissed) {
-      void startAutoDownload()
+    if (wantDialog) {
+      openUpdateDialog({ force: true, version: result.versionInfo.version })
     }
   } catch (error) {
     console.error('版本检查失败:', error)
+  } finally {
+    checkPromise = null
   }
+  })()
+
+  return checkPromise
 }
 
 function dismissTip() {
@@ -395,7 +499,7 @@ async function handleTipClick() {
       await relaunchApp()
     } catch (err) {
       console.error('重启失败:', err)
-      showUpdateDialog.value = true
+      openUpdateDialog({ force: true })
     }
     return
   }
@@ -404,17 +508,21 @@ async function handleTipClick() {
       await openDownloadedUpdate(localPath.value)
     } catch (err) {
       console.error('打开安装包失败:', err)
-      showUpdateDialog.value = true
+      openUpdateDialog({ force: true })
     }
     return
   }
   if (status.value === 'downloading' || status.value === 'installing') return
-  showUpdateDialog.value = true
+  // available：不弹窗，仅从「检查更新」按钮打开详情
+  if (status.value === 'available') {
+    tipVisible.value = true
+    void startAutoDownload()
+  }
 }
 
 async function handleDialogDownload() {
   tipVisible.value = true
-  showUpdateDialog.value = false
+  markDialogSkipped()
   if (status.value === 'ready-relaunch' || (status.value === 'done' && nativeUpdater.value)) {
     await relaunchApp()
     return
@@ -430,16 +538,14 @@ async function handleDialogDownload() {
   if (native?.available && native.update) {
     try {
       await startNativeInstall(native.update)
-      if ((status.value as HeaderUpdateStatus) === 'ready-relaunch') {
-        await relaunchApp()
-      }
+      await finishNativeUpdateAndRelaunch()
       return
     } catch (err: any) {
       console.error('对话框原生安装失败:', err)
       status.value = 'error'
-      errorMessage.value = err?.message || String(err)
+      errorMessage.value = humanizeUpdaterError(err)
       tipVisible.value = true
-      showUpdateDialog.value = true
+      openUpdateDialog({ force: true })
       return
     }
   }
@@ -447,25 +553,26 @@ async function handleDialogDownload() {
   await startAutoDownload(true)
   const nextStatus = status.value as HeaderUpdateStatus
   if (nextStatus === 'ready-relaunch') {
-    await relaunchApp()
+    await finishNativeUpdateAndRelaunch()
   } else if (nextStatus === 'done' && localPath.value) {
-    await openDownloadedUpdate(localPath.value)
+    // 回退安装包：已下载，显示已就绪，等用户点顶部提示打开
+    tipVisible.value = true
   }
 }
 
 function handleLater() {
-  showUpdateDialog.value = false
+  markDialogSkipped()
 }
 
 function handleWeekLater() {
-  showUpdateDialog.value = false
+  markDialogSkipped()
   const oneWeekLater = new Date()
   oneWeekLater.setDate(oneWeekLater.getDate() + 7)
   localStorage.setItem('updateRemindTime', oneWeekLater.toISOString())
 }
 
 function closeDialog() {
-  showUpdateDialog.value = false
+  markDialogSkipped()
 }
 
 export function useAppUpdate() {

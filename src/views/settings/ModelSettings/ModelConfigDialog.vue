@@ -1104,7 +1104,8 @@ const handleSubmit = () => {
 <style scoped>
 .model-config-panel {
   width: 92vw;           /* 随主窗口变化的宽度 */
-  max-width: 1400px;     /* 合理的最大宽度限制 */      /* 随主窗口变化的高度 */
+  max-width: 1400px;     /* 合理的最大宽度限制 */
+  max-height: 90vh;      /* 与 dialog-panel 一致，确保内部可滚动 */
   display: flex;
   flex-direction: column;
   transition: max-width 0.28s cubic-bezier(0.2, 0.7, 0.2, 1);
@@ -1118,9 +1119,10 @@ const handleSubmit = () => {
 .model-config-panel > .dialog-body {
   padding: 24px;
   flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  overflow: hidden; /* 由内部区域控制滚动 */
+  overflow: hidden; /* 由内部表单/编辑器各自滚动 */
 }
 
 /* 分栏布局 */
@@ -1165,6 +1167,11 @@ const handleSubmit = () => {
 .form-panel {
   flex: 0 0 360px;        /* 固定宽度 */
   max-width: 380px;       /* 限制最大宽度以防样式抖动 */
+  min-height: 0;          /* 允许在弹窗高度受限时收缩并滚动 */
+  overflow-x: hidden;
+  overflow-y: auto;       /* 底部被遮挡时可滑动查看 */
+  padding-right: 4px;
+  padding-bottom: 8px;
   transition: flex-basis 0.28s cubic-bezier(0.2, 0.7, 0.2, 1),
               max-width 0.28s cubic-bezier(0.2, 0.7, 0.2, 1);
 }
@@ -1174,6 +1181,7 @@ const handleSubmit = () => {
   flex: 0 0 520px;        /* 用具体 flex-basis 以便过渡动画 */
   max-width: 520px;
   margin: 0 auto;
+  align-self: stretch;
 }
 
 .form-hint code {

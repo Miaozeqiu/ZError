@@ -192,15 +192,6 @@
         </div>
       </div>
     </div>
-
-    <UpdateDialog
-      :visible="showUpdateDialog"
-      :version-info="updateInfo"
-      :current-version="currentVersion"
-      @close="handleUpdateDialogClose"
-      @later="handleLater"
-      @week-later="handleWeekLater"
-    />
   </div>
 </template>
 
@@ -208,9 +199,8 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 
 type CSSProperties = Record<string, string>
-import UpdateDialog from '../../components/UpdateDialog.vue'
 import { environmentDetector } from '../../services/environmentDetector'
-import { VersionCheckService, type VersionInfo } from '../../services/versionCheck'
+import { useAppUpdate } from '../../composables/useAppUpdate'
 
 
 interface HeatmapRenderCell {
@@ -240,10 +230,13 @@ const debugInfo = ref({
   availableApis: [] as string[]
 })
 
-const currentVersion = VersionCheckService.getCurrentVersion()
+const {
+  updateInfo,
+  currentVersion,
+  checkForUpdates,
+} = useAppUpdate()
+
 const isCheckingUpdate = ref(false)
-const showUpdateDialog = ref(false)
-const updateInfo = ref<VersionInfo | null>(null)
 const updateStatus = ref('')
 const updateStatusType = ref<'success' | 'error' | ''>('')
 
@@ -709,12 +702,11 @@ const checkForUpdatesManually = async () => {
   updateStatusType.value = ''
 
   try {
-    const result = await VersionCheckService.checkForUpdate()
+    // 走统一更新流：弹窗 + 顶部进度条 + 自动下载
+    await checkForUpdates({ forceDialog: true })
 
-    if (result.needsUpdate && result.versionInfo) {
-      updateInfo.value = result.versionInfo
-      showUpdateDialog.value = true
-      updateStatus.value = `发现新版本 ${result.versionInfo.version}`
+    if (updateInfo.value?.version) {
+      updateStatus.value = `发现新版本 ${updateInfo.value.version}`
       updateStatusType.value = 'success'
       return
     }
@@ -728,21 +720,6 @@ const checkForUpdatesManually = async () => {
   } finally {
     isCheckingUpdate.value = false
   }
-}
-
-const handleUpdateDialogClose = () => {
-  showUpdateDialog.value = false
-}
-
-const handleLater = () => {
-  showUpdateDialog.value = false
-}
-
-const handleWeekLater = () => {
-  showUpdateDialog.value = false
-  const oneWeekLater = new Date()
-  oneWeekLater.setDate(oneWeekLater.getDate() + 7)
-  localStorage.setItem('updateRemindTime', oneWeekLater.toISOString())
 }
 
 const openDebugPanel = async () => {

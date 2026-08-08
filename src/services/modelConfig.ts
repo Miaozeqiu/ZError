@@ -74,7 +74,7 @@ export interface ModelSettings {
   deletedPredefinedModels?: string[]
 }
 
-// 远程模型数据 URL
+// 远程模型数据 URL（测试版 / 正式版统一）
 const PROD_REMOTE_MODELS_URL = 'https://webapi.zaizhexue.top/live/models.json'
 const TAURI_DEV_REMOTE_MODELS_URL = 'https://webapi.zaizhexue.top/live/models.json'
 const REMOTE_MODELS_REQUEST_COOLDOWN_MS = 30 * 1000
