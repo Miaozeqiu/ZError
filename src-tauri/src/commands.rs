@@ -30,6 +30,22 @@ use zip::ZipArchive;
 
 static JIEBA: OnceLock<Jieba> = OnceLock::new();
 
+/// macOS 原地更新只能替换 `.app` 包；`tauri:dev` 的 debug 二进制会误把 `target/debug` 整目录当目标。
+#[tauri::command]
+pub fn can_native_updater_install() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        std::env::current_exe()
+            .ok()
+            .map(|p| p.to_string_lossy().contains(".app/Contents/MacOS"))
+            .unwrap_or(false)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        true
+    }
+}
+
 #[tauri::command]
 pub fn segment_text(text: String) -> Vec<String> {
     let jieba = JIEBA.get_or_init(Jieba::new);

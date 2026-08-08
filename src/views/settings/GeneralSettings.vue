@@ -66,7 +66,7 @@
     <div class="setting-item">
       <div class="setting-info">
         <h3 class="setting-title">AI回答添加到本地题库</h3>
-        <p class="setting-description">(该设置暂时无效，ai返回的答案总是会保存)</p>
+        <p class="setting-description">开启后，AI 新答出的题目会写入本地题库；关闭则只返回答案，不入库。</p>
       </div>
       <div class="setting-control">
         <Toggle v-model="settings.autoAddToQuestionBank" variant="default" size="medium"
@@ -81,7 +81,7 @@
 
       <div class="setting-info">
         <h3 class="setting-title">模型最长响应时间</h3>
-        <p class="setting-description">AI 模型单次响应的超时限制（秒）。超过此时间将停止等待并返回已生成的内容。默认 40 秒。</p>
+        <p class="setting-description">AI 模型单次请求超时（秒）。超时后中止该次调用并可按「失败自动重试次数」重试；整题最长等待 ≈ 本值 × (1+重试) + 缓冲。默认 40 秒。</p>
       </div>
       <div class="setting-control timeout-control">
         <input
@@ -94,6 +94,24 @@
           @change="handleSettingChange('modelResponseTimeout', Number(($event.target as HTMLInputElement).value))"
         />
         <span class="timeout-unit">秒</span>
+      </div>
+    </div>
+    <div class="setting-item">
+      <div class="setting-info">
+        <h3 class="setting-title">失败自动重试次数</h3>
+        <p class="setting-description">仅在「只有一个基础模型」、总结模型失败、或视觉模型调用失败时自动重试。0 表示不重试，默认 2 次。</p>
+      </div>
+      <div class="setting-control timeout-control">
+        <input
+          type="number"
+          class="form-input"
+          :value="settings.modelRetryCount ?? 2"
+          min="0"
+          max="10"
+          step="1"
+          @change="handleSettingChange('modelRetryCount', Math.max(0, Math.min(10, Number(($event.target as HTMLInputElement).value) || 0)))"
+        />
+        <span class="timeout-unit">次</span>
       </div>
     </div>
     </div>
@@ -320,7 +338,7 @@ onMounted(() => {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  padding: 24px 0;
+  padding: 18px 0;
   border-bottom: 1px solid var(--border-color);
 }
 
@@ -330,21 +348,21 @@ onMounted(() => {
 
 .setting-info {
   flex: 1;
-  margin-right: 24px;
+  margin-right: 18px;
 }
 
 .setting-title {
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 500;
   color: var(--text-primary);
-  margin: 0 0 8px 0;
+  margin: 0 0 6px 0;
 }
 
 .setting-description {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--text-secondary);
   margin: 0;
-  line-height: 1.5;
+  line-height: 1.4;
 }
 
 .setting-control {
@@ -358,13 +376,13 @@ onMounted(() => {
 .system-prompt-textarea {
   width: 100%;
   min-height: 140px;
-  padding: 12px;
+  padding: 10px;
   border: 1px solid var(--border-color);
   border-radius: 8px;
   background: var(--bg-primary);
   color: var(--text-primary);
-  font-size: 13px;
-  line-height: 1.6;
+  font-size: 12px;
+  line-height: 1.5;
   resize: vertical;
   box-sizing: border-box;
 }
@@ -384,13 +402,13 @@ onMounted(() => {
   --folder-btn-hover-border: var(--border-secondary);
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 7px 14px;
+  gap: 5px;
+  padding: 6px 12px;
   border-radius: 6px;
   border: 1px solid var(--folder-btn-border);
   background: var(--folder-btn-bg);
   color: var(--folder-btn-text);
-  font-size: 13px;
+  font-size: 12px;
   cursor: pointer;
   transition: background 0.2s ease, border-color 0.2s ease, opacity 0.2s ease !important;
 }
@@ -444,17 +462,17 @@ onMounted(() => {
 .network-group {
   background: var(--network-group-bg);
   border: 1px solid var(--border-color);
-  border-radius: 16px;
-  padding: 0 16px;
-  margin: 16px 0;
+  border-radius: 14px;
+  padding: 0 14px;
+  margin: 12px 0;
   box-shadow: 0 2px 12px rgba(0,0,0,.05);
 }
 
 .group-title {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--text-secondary);
-  padding: 12px 0 4px 0;
+  padding: 10px 0 2px 0;
   letter-spacing: 0.03em;
 }
 
@@ -469,15 +487,15 @@ onMounted(() => {
 .timeout-control {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
 }
 
 .timeout-input {
   width: 80px;
-  padding: 6px 10px;
+  padding: 5px 8px;
   border: 1px solid var(--border-color);
   border-radius: 6px;
-  font-size: 14px;
+  font-size: 12px;
   color: var(--text-primary);
   background: var(--bg-primary);
   text-align: center;
@@ -500,14 +518,14 @@ onMounted(() => {
 }
 
 .timeout-unit {
-  font-size: 14px;
+  font-size: 12px;
   color: var(--text-secondary);
 }
 
 .input-group {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .form-input[type=number] {
@@ -523,7 +541,7 @@ onMounted(() => {
 
 
 .input-suffix {
-  font-size: 14px;
+  font-size: 12px;
   color: var(--text-secondary);
   white-space: nowrap;
 }
@@ -531,8 +549,8 @@ onMounted(() => {
 .setting-title-with-help {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin-bottom: 8px;
+  gap: 4px;
+  margin-bottom: 6px;
 }
 
 .setting-title-with-help .setting-title {
@@ -543,7 +561,7 @@ onMounted(() => {
   background: none;
   border: none;
   cursor: pointer;
-  padding: 2px;
+  padding: 1px;
   color: var(--text-secondary);
   display: flex;
   align-items: center;

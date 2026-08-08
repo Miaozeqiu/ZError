@@ -11,8 +11,8 @@ import FileTree from "./views/questions/FileTree.vue";
 import { databaseService } from "./services/database";
 import { initializationService } from "./services/initialization";
 import { initGlobalTheme } from "./composables/useTheme";
-import { VersionCheckService } from "./services/versionCheck";
-import type { VersionInfo } from "./services/versionCheck";
+import { useAppUpdate } from "./composables/useAppUpdate";
+import { useExclusiveMenu } from "./composables/useExclusiveMenu";
 
 // 当前活跃的页面
 const activeTab = ref('home');
@@ -21,11 +21,19 @@ const collapseTrigger = ref(0);
 const questionBankFocusFolderId = ref<number | null>(null);
 const questionBankFocusRequestKey = ref(0);
 
-
-// 版本更新相关状态
-const showUpdateDialog = ref(false);
-const updateInfo = ref<VersionInfo | null>(null);
-const currentVersion = ref(VersionCheckService.getCurrentVersion());
+const {
+  showUpdateDialog,
+  updateInfo,
+  currentVersion,
+  downloadFileName,
+  downloadUrl,
+  nativeUpdater,
+  checkForUpdates,
+  closeDialog: handleUpdateDialogClose,
+  handleDialogDownload,
+  handleLater,
+  handleWeekLater,
+} = useAppUpdate();
 
 // 暴露到全局 window，供开发者控制台调试
 onMounted(() => {
@@ -73,76 +81,6 @@ const handleOpenQuestionFolder = (folderId: number) => {
   questionBankFocusRequestKey.value++;
 };
 
-
-// 版本检查
-const checkForUpdates = async () => {
-  try {
-    // 检查是否设置了一周后提醒
-    const updateRemindTime = localStorage.getItem('updateRemindTime');
-    if (updateRemindTime) {
-      const remindTime = new Date(updateRemindTime);
-      const currentTime = new Date();
-      
-      if (currentTime < remindTime) {
-        console.log(`用户选择一周后提醒，提醒时间: ${remindTime.toLocaleString()}，当前时间: ${currentTime.toLocaleString()}`);
-        return; // 还没到提醒时间，不显示更新对话框
-      } else {
-        // 已经到了提醒时间，清除提醒设置
-        localStorage.removeItem('updateRemindTime');
-        console.log('已到提醒时间，清除提醒设置');
-      }
-    }
-    
-    const latestVersion = await VersionCheckService.getLatestVersion();
-    
-    if (latestVersion && VersionCheckService.compareVersions(currentVersion.value, latestVersion.version)) {
-      updateInfo.value = latestVersion;
-      showUpdateDialog.value = true;
-      console.log(`发现新版本: ${latestVersion.version}`);
-    } else {
-      console.log('当前已是最新版本');
-    }
-  } catch (error) {
-    console.error('版本检查失败:', error);
-  }
-};
-
-// 处理升级对话框事件
-const handleUpdateDialogClose = () => {
-  showUpdateDialog.value = false;
-};
-
-const handleDownload = (downloadUrl: string) => {
-  // 在Tauri环境中打开下载链接
-  if (window.__TAURI_INTERNALS__) {
-    import('@tauri-apps/plugin-opener').then((mod: any) => {
-      mod.openUrl(downloadUrl);
-    }).catch(() => {
-      window.open(downloadUrl, '_blank');
-    });
-  } else {
-    // 在浏览器环境中打开链接
-    window.open(downloadUrl, '_blank');
-  }
-  showUpdateDialog.value = false;
-
-};
-
-const handleLater = () => {
-  showUpdateDialog.value = false;
-  // 可以在这里设置稍后提醒的逻辑，比如存储到localStorage
-  console.log('用户选择稍后更新');
-};
-
-const handleWeekLater = () => {
-  showUpdateDialog.value = false;
-  // 设置一周后提醒的逻辑
-  const oneWeekLater = new Date();
-  oneWeekLater.setDate(oneWeekLater.getDate() + 7);
-  localStorage.setItem('updateRemindTime', oneWeekLater.toISOString());
-  console.log('用户选择一周后更新，提醒时间:', oneWeekLater.toISOString());
-};
-
 const showImportDialog = ref(false);
 const closeImportDialog = () => {
   showImportDialog.value = false;
@@ -156,6 +94,7 @@ const importing = ref(false);
 type EditableTarget = HTMLInputElement | HTMLTextAreaElement
 
 const inputContextMenuVisible = ref(false)
+useExclusiveMenu('global-input-context-menu', inputContextMenuVisible)
 const inputContextMenuX = ref(0)
 const inputContextMenuY = ref(0)
 const inputContextMenuTarget = ref<EditableTarget | null>(null)
@@ -477,8 +416,11 @@ onUnmounted(() => {
       :visible="showUpdateDialog"
       :version-info="updateInfo"
       :current-version="currentVersion"
+      :download-file-name="downloadFileName"
+      :download-url="downloadUrl"
+      :native-updater="nativeUpdater"
       @close="handleUpdateDialogClose"
-      @download="handleDownload"
+      @download="handleDialogDownload"
       @later="handleLater"
       @week-later="handleWeekLater"
     />
@@ -506,16 +448,18 @@ onUnmounted(() => {
     </div>
   </div>
 
-  <div
-    v-if="inputContextMenuVisible"
-    class="global-input-context-menu"
-    :style="{ left: `${inputContextMenuX}px`, top: `${inputContextMenuY}px` }"
-  >
-    <button class="global-input-context-menu-item" :disabled="!canCutInput" @click="handleInputCut">剪切</button>
-    <button class="global-input-context-menu-item" :disabled="!canCopyInput" @click="handleInputCopy">复制</button>
-    <button class="global-input-context-menu-item" :disabled="!canPasteInput" @click="handleInputPaste">粘贴</button>
-    <button class="global-input-context-menu-item" :disabled="!canSelectAllInput" @click="handleInputSelectAll">全选</button>
-  </div>
+  <Transition name="context-menu-pop">
+    <div
+      v-if="inputContextMenuVisible"
+      class="global-input-context-menu"
+      :style="{ left: `${inputContextMenuX}px`, top: `${inputContextMenuY}px` }"
+    >
+      <button class="global-input-context-menu-item" :disabled="!canCutInput" @click="handleInputCut">剪切</button>
+      <button class="global-input-context-menu-item" :disabled="!canCopyInput" @click="handleInputCopy">复制</button>
+      <button class="global-input-context-menu-item" :disabled="!canPasteInput" @click="handleInputPaste">粘贴</button>
+      <button class="global-input-context-menu-item" :disabled="!canSelectAllInput" @click="handleInputSelectAll">全选</button>
+    </div>
+  </Transition>
 </template>
 
 <style scoped>
@@ -653,6 +597,24 @@ a:hover {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  transform-origin: top left;
+}
+
+.context-menu-pop-enter-active,
+.context-menu-pop-leave-active {
+  transition: opacity 0.14s ease, transform 0.16s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.context-menu-pop-enter-from,
+.context-menu-pop-leave-to {
+  opacity: 0;
+  transform: translateY(-4px) scale(0.96);
+}
+
+.context-menu-pop-enter-to,
+.context-menu-pop-leave-from {
+  opacity: 1;
+  transform: translateY(0) scale(1);
 }
 
 .global-input-context-menu-item {

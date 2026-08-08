@@ -59,9 +59,11 @@
                 d="M960 672v128c0 89.6-70.4 160-160 160h-576C134.4 960 64 889.6 64 800v-576C64 134.4 134.4 64 224 64h128c19.2 0 32 12.8 32 32s-12.8 32-32 32h-128C172.8 128 128 172.8 128 224v576c0 51.2 44.8 96 96 96h576c51.2 0 96-44.8 96-96v-128c0-19.2 12.8-32 32-32s32 12.8 32 32zM800 576c19.2 0 32-12.8 32-32s-12.8-32-32-32H556.8l326.4-326.4c12.8-12.8 12.8-32 0-44.8s-32-12.8-44.8 0L512 467.2V224c0-19.2-12.8-32-32-32s-32 12.8-32 32V576h352z">
               </path>
             </svg>
-          </div>
-          <div v-if="importMenuOpen" class="import-menu">
-            <button class="menu-item" @click="importSoftwareExportedFile">导入ZError导出的文件</button>
+            <transition name="menu-pop">
+              <div v-if="importMenuOpen" class="import-menu" @click.stop>
+                <button class="menu-item" @click="importSoftwareExportedFile">导入ZError导出的文件</button>
+              </div>
+            </transition>
           </div>
 
           <!-- 导出按钮 -->
@@ -82,13 +84,15 @@
                 d="M960 672v128c0 89.6-70.4 160-160 160h-576C134.4 960 64 889.6 64 800v-576C64 134.4 134.4 64 224 64h128c19.2 0 32 12.8 32 32s-12.8 32-32 32h-128C172.8 128 128 172.8 128 224v576c0 51.2 44.8 96 96 96h576c51.2 0 96-44.8 96-96v-128c0-19.2 12.8-32 32-32s32 12.8 32 32zM608 128h243.2L358.4 614.4c-12.8 12.8-12.8 32 0 44.8 6.4 6.4 12.8 6.4 25.6 6.4s19.2 0 25.6-6.4L896 172.8v243.2c0 19.2 12.8 32 32 32 19.2-6.4 32-12.8 32-32V64H608c-19.2 0-32 12.8-32 32s12.8 32 32 32z"
                 fill="currentColor" p-id="1486"></path>
             </svg>
-            <div v-if="exportMenuOpen" class="export-menu" @click.stop>
-              <button class="menu-item" @click="exportFile('csv')">导出为 .csv</button>
-              <button class="menu-item" @click="exportFile('xlsx')">导出为 .xlsx</button>
-              <button class="menu-item" @click="exportFile('docx')">导出为 .docx</button>
-              <button class="menu-item" @click="exportFile('pdf')">导出为 .pdf</button>
-              <button class="menu-item" @click="exportFile('txt')">导出为 .txt</button>
-            </div>
+            <transition name="menu-pop">
+              <div v-if="exportMenuOpen" class="export-menu" @click.stop>
+                <button class="menu-item" @click="exportFile('csv')">导出为 .csv</button>
+                <button class="menu-item" @click="exportFile('xlsx')">导出为 .xlsx</button>
+                <button class="menu-item" @click="exportFile('docx')">导出为 .docx</button>
+                <button class="menu-item" @click="exportFile('pdf')">导出为 .pdf</button>
+                <button class="menu-item" @click="exportFile('txt')">导出为 .txt</button>
+              </div>
+            </transition>
           </div>
           <div class="search-icon-button" role="button" tabindex="0" aria-label="搜索" @click="openSearch"
             @keydown.enter.prevent="openSearch" @keydown.space.prevent="openSearch">
@@ -275,12 +279,12 @@
   </div>
 
   <!-- 题目右键菜单 -->
-  <QuestionContextMenu v-if="contextMenu.visible" :visible="contextMenu.visible" :x="contextMenu.x" :y="contextMenu.y"
+  <QuestionContextMenu :visible="contextMenu.visible" :x="contextMenu.x" :y="contextMenu.y"
     :can-paste="canPaste" :has-selected-question="selectedQuestion !== null" :is-batch-mode="contextMenu.isBatchMode"
     :selected-count="selectedQuestions.size" @copy-question="copyQuestionToClipboard"
     @copy-answer="copyAnswerToClipboard" @copy="copyQuestion" @cut="cutQuestion" @paste="pasteQuestion"
     @batch-copy="batchCopyQuestions" @batch-cut="batchCutQuestions" @delete="deleteQuestion"
-    @batch-delete="batchDeleteQuestions" />
+    @batch-delete="batchDeleteQuestions" @close="hideContextMenu" />
 
   <QuestionBatchDeleteConfirmDialog
     :visible="batchDeleteDialog.visible"
@@ -311,6 +315,7 @@ import QuestionContextMenu from './QuestionContextMenu.vue';
 import QuestionBatchDeleteConfirmDialog from './QuestionBatchDeleteConfirmDialog.vue';
 import QuestionEditor from './QuestionEditor.vue';
 import QuestionDetail from './QuestionDetail.vue';
+import { claimExclusiveMenu, useExclusiveMenu } from '../../composables/useExclusiveMenu';
 
 interface Props {
   selectedFolderId?: string | null;
@@ -371,8 +376,8 @@ const startWidth = ref(0);
 
 // 导入菜单
 const importMenuOpen = ref(false);
+useExclusiveMenu('question-import-menu', importMenuOpen);
 const toggleImportMenu = () => {
-  if (exportMenuOpen.value) exportMenuOpen.value = false;
   importMenuOpen.value = !importMenuOpen.value;
 };
 const importSoftwareExportedFile = async () => {
@@ -419,8 +424,8 @@ const importSoftwareExportedFile = async () => {
 
 // 导出菜单
 const exportMenuOpen = ref(false);
+useExclusiveMenu('question-export-menu', exportMenuOpen);
 const toggleExportMenu = () => {
-  if (importMenuOpen.value) importMenuOpen.value = false;
   exportMenuOpen.value = !exportMenuOpen.value;
 };
 
@@ -1240,6 +1245,7 @@ const handleRightClick = (event: MouseEvent, question: AIResponse) => {
 
     // 显示批量操作菜单
     selectedQuestion.value = null; // 清除单个选择
+    claimExclusiveMenu('question-list-context-menu');
     contextMenu.value = {
       visible: true,
       x: event.clientX,
@@ -1249,6 +1255,7 @@ const handleRightClick = (event: MouseEvent, question: AIResponse) => {
   } else {
     // 单个题目右键菜单
     selectedQuestion.value = question;
+    claimExclusiveMenu('question-list-context-menu');
     contextMenu.value = {
       visible: true,
       x: event.clientX,
@@ -1263,6 +1270,7 @@ const handleListRightClick = (event: MouseEvent) => {
   event.preventDefault();
   // 在空白处右键时，不选择任何题目
   selectedQuestion.value = null;
+  claimExclusiveMenu('question-list-context-menu');
   contextMenu.value = {
     visible: true,
     x: event.clientX,
@@ -1613,9 +1621,13 @@ onUnmounted(() => {
 }
 
 .list-header {
-  padding: 12px 16px;
+  padding: 6px 10px;
   border-bottom: 1px solid var(--border-primary);
   background-color: var(--bg-secondary);
+  box-sizing: border-box;
+  position: relative;
+  z-index: 20;
+  overflow: visible;
 }
 
 /* 分页控制器样式 */
@@ -1638,14 +1650,15 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 28px;
+  width: 22px;
+  height: 22px;
   border: none;
   border-radius: 4px;
   background-color: transparent;
   color: var(--text-primary);
   cursor: pointer;
   transition: all 0.2s ease;
-  padding: 2px;
+  padding: 0;
 }
 
 .pagination-btn:hover:not(:disabled) {
@@ -1660,19 +1673,20 @@ onUnmounted(() => {
 }
 
 .page-info {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--text-secondary);
   font-weight: 500;
-  min-width: 40px;
+  min-width: 36px;
   text-align: center;
-  padding: 0 4px;
+  padding: 0 2px;
+  line-height: 1.2;
 }
 
 .question-count-info {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--ql-count-info-text);
   white-space: nowrap;
-  /* margin-left: 16px; */
+  line-height: 1.2;
 }
 
 /* 搜索框样式 */
@@ -1697,15 +1711,17 @@ onUnmounted(() => {
   align-items: center;
   gap: 8px;
   position: relative;
+  overflow: visible;
 }
 
 .search-input {
   width: var(--search-input-width, 180px);
   flex: 0 0 auto;
-  padding: 8px 0px;
+  padding: 4px 0;
   border: none;
   border-radius: 6px;
-  font-size: 14px;
+  font-size: 12px;
+  line-height: 1.2;
   background-color: transparent;
   transition: border-color 0.2s ease;
 }
@@ -1758,13 +1774,13 @@ onUnmounted(() => {
 }
 
 .add-question-button {
-  padding: 6px;
-  width: 30px;
-  height: 30px;
+  padding: 3px;
+  width: 22px;
+  height: 22px;
   background-color: var(--add-btn-icon-bg);
   color: var(--add-btn-icon-color);
   border: none;
-  border-radius: 6px;
+  border-radius: 5px;
   cursor: pointer;
   transition: background-color 0.2s ease;
   display: flex;
@@ -1774,8 +1790,8 @@ onUnmounted(() => {
 }
 
 .add-question-button svg {
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
 }
 
 .add-question-button:hover {
@@ -1791,12 +1807,12 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   gap: 0px;
-  height: 28px;
-  width: 28px;
+  height: 22px;
+  width: 22px;
   padding: 0px;
-  border-radius: 6px;
+  border-radius: 5px;
   white-space: nowrap;
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 400;
   line-height: 1;
   color: var(--ql-th-text);
@@ -1829,12 +1845,12 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   gap: 0px;
-  height: 28px;
-  width: 28px;
+  height: 22px;
+  width: 22px;
   padding: 0px;
-  border-radius: 6px;
+  border-radius: 5px;
   white-space: nowrap;
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 400;
   line-height: 1;
   color: var(--ql-th-text);
@@ -1880,7 +1896,8 @@ onUnmounted(() => {
 .import-menu {
   position: absolute;
   top: calc(100% + 6px);
-  left: 0;
+  right: 0;
+  left: auto;
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
   border-radius: 6px;
@@ -1888,6 +1905,7 @@ onUnmounted(() => {
   z-index: 1000;
   padding: 6px 0;
   min-width: 160px;
+  max-width: min(220px, calc(100vw - 16px));
 }
 
 .import-menu .menu-item {
@@ -1914,12 +1932,12 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   gap: 0px;
-  height: 28px;
-  width: 28px;
+  height: 22px;
+  width: 22px;
   padding: 0px;
-  border-radius: 6px;
+  border-radius: 5px;
   white-space: nowrap;
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 400;
   line-height: 1;
   color: var(--ql-th-text);
@@ -1956,7 +1974,8 @@ onUnmounted(() => {
 .export-menu {
   position: absolute;
   top: calc(100% + 6px);
-  left: 0;
+  right: 0;
+  left: auto;
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
   border-radius: 6px;
@@ -1964,6 +1983,7 @@ onUnmounted(() => {
   z-index: 1000;
   padding: 6px 0;
   min-width: 160px;
+  max-width: min(220px, calc(100vw - 16px));
 }
 
 .export-menu .menu-item {
@@ -1980,6 +2000,24 @@ onUnmounted(() => {
 
 .export-menu .menu-item:hover {
   background: var(--hover-bg);
+}
+
+.menu-pop-enter-active,
+.menu-pop-leave-active {
+  transition: opacity 0.14s ease, transform 0.16s cubic-bezier(0.2, 0.8, 0.2, 1);
+  transform-origin: top right;
+}
+
+.menu-pop-enter-from,
+.menu-pop-leave-to {
+  opacity: 0;
+  transform: translateY(-4px) scale(0.96);
+}
+
+.menu-pop-enter-to,
+.menu-pop-leave-from {
+  opacity: 1;
+  transform: translateY(0) scale(1);
 }
 
 .search-info {

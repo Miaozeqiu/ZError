@@ -9,41 +9,65 @@ export interface VersionInfo {
   version: string;
   changelog: string;
   downloadUrl: string;
-  releaseDate: string;
+  /** macOS 安装包（可选；缺省回退 downloadUrl） */
+  downloadUrlMac?: string;
+  downloadUrlDarwin?: string;
+  /** Windows 安装包（可选；缺省回退 downloadUrl） */
+  downloadUrlWin?: string;
+  downloadUrlWindows?: string;
+  releaseDate?: string;
+  /** Tauri Updater 字段（与 changelog 并存时可写 notes） */
+  notes?: string;
+  pub_date?: string;
+  platforms?: Record<string, { url: string; signature: string }>;
 }
 
 export class VersionCheckService {
-  private static readonly API_URL = import.meta.env.DEV
-    ? 'http://localhost:5175/latest_version.json'
-    : 'https://app.zerror.cc/latest_version.json';
-  private static readonly CURRENT_VERSION = '2.2.6-dev'; // 当前软件版本（基于官方2.2.5 + 功能增强）
+  private static readonly API_URL = 'https://webapi.zaizhexue.top/live/latest_version.json';
+  private static readonly CURRENT_VERSION = '2.2.7'; // 当前软件版本
+
+  private static getApiUrls(): string[] {
+    return [VersionCheckService.API_URL];
+  }
 
   /**
    * 获取最新版本信息
    */
   public static async getLatestVersion(): Promise<VersionInfo | null> {
-    try {
-      let response: Response;
+    const urls = VersionCheckService.getApiUrls();
+    let lastError: unknown = null;
 
-      if (environmentDetector.isTauriEnvironment()) {
-        // 在 Tauri 环境中使用 HTTP 插件
-        const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http');
-        response = await tauriFetch(VersionCheckService.API_URL);
-      } else {
-        // 在浏览器环境中使用 fetch
-        response = await fetch(VersionCheckService.API_URL);
+    for (const url of urls) {
+      try {
+        let response: Response;
+
+        if (environmentDetector.isTauriEnvironment()) {
+          const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http');
+          response = await tauriFetch(url);
+        } else {
+          response = await fetch(url);
+        }
+
+        if (!response.ok) {
+          lastError = new Error(`HTTP error! status: ${response.status} (${url})`);
+          continue;
+        }
+
+        const data = await response.json();
+        const info = data as VersionInfo;
+        // 兼容 Tauri 清单用 notes 字段
+        if (!info.changelog && info.notes) {
+          info.changelog = info.notes;
+        }
+        return info;
+      } catch (error) {
+        lastError = error;
+        console.warn(`获取版本信息失败 (${url}):`, error);
       }
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const data = await response.json();
-      return data as VersionInfo;
-    } catch (error) {
-      console.error('获取版本信息失败:', error);
-      return null;
     }
+
+    console.error('获取版本信息失败:', lastError);
+    return null;
   }
 
   /**

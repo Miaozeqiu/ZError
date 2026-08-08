@@ -192,15 +192,6 @@
         </div>
       </div>
     </div>
-
-    <UpdateDialog
-      :visible="showUpdateDialog"
-      :version-info="updateInfo"
-      :current-version="currentVersion"
-      @close="handleUpdateDialogClose"
-      @later="handleLater"
-      @week-later="handleWeekLater"
-    />
   </div>
 </template>
 
@@ -208,9 +199,8 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 
 type CSSProperties = Record<string, string>
-import UpdateDialog from '../../components/UpdateDialog.vue'
 import { environmentDetector } from '../../services/environmentDetector'
-import { VersionCheckService, type VersionInfo } from '../../services/versionCheck'
+import { useAppUpdate } from '../../composables/useAppUpdate'
 
 
 interface HeatmapRenderCell {
@@ -240,10 +230,13 @@ const debugInfo = ref({
   availableApis: [] as string[]
 })
 
-const currentVersion = VersionCheckService.getCurrentVersion()
+const {
+  updateInfo,
+  currentVersion,
+  checkForUpdates,
+} = useAppUpdate()
+
 const isCheckingUpdate = ref(false)
-const showUpdateDialog = ref(false)
-const updateInfo = ref<VersionInfo | null>(null)
 const updateStatus = ref('')
 const updateStatusType = ref<'success' | 'error' | ''>('')
 
@@ -709,12 +702,11 @@ const checkForUpdatesManually = async () => {
   updateStatusType.value = ''
 
   try {
-    const result = await VersionCheckService.checkForUpdate()
+    // 走统一更新流：弹窗 + 顶部进度条 + 自动下载
+    await checkForUpdates({ forceDialog: true })
 
-    if (result.needsUpdate && result.versionInfo) {
-      updateInfo.value = result.versionInfo
-      showUpdateDialog.value = true
-      updateStatus.value = `发现新版本 ${result.versionInfo.version}`
+    if (updateInfo.value?.version) {
+      updateStatus.value = `发现新版本 ${updateInfo.value.version}`
       updateStatusType.value = 'success'
       return
     }
@@ -728,21 +720,6 @@ const checkForUpdatesManually = async () => {
   } finally {
     isCheckingUpdate.value = false
   }
-}
-
-const handleUpdateDialogClose = () => {
-  showUpdateDialog.value = false
-}
-
-const handleLater = () => {
-  showUpdateDialog.value = false
-}
-
-const handleWeekLater = () => {
-  showUpdateDialog.value = false
-  const oneWeekLater = new Date()
-  oneWeekLater.setDate(oneWeekLater.getDate() + 7)
-  localStorage.setItem('updateRemindTime', oneWeekLater.toISOString())
 }
 
 const openDebugPanel = async () => {
@@ -796,39 +773,39 @@ const openDebugPanel = async () => {
 .network-group {
   background: var(--network-group-bg);
   border: 1px solid var(--border-color);
-  border-radius: 16px;
-  padding: 0 16px;
-  margin: 16px 0;
+  border-radius: 14px;
+  padding: 0 14px;
+  margin: 12px 0;
   box-shadow: 0 2px 12px rgba(0, 0, 0, .05);
 }
 
 .group-title {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--text-secondary);
-  padding: 12px 0 4px 0;
+  padding: 10px 0 2px 0;
   letter-spacing: 0.03em;
 }
 
 .app-info-item {
   display: flex;
   align-items: center;
-  gap: 20px;
-  padding: 16px 0;
+  gap: 14px;
+  padding: 12px 0;
 }
 
 .app-icon {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 64px;
-  height: 64px;
+  width: 56px;
+  height: 56px;
   flex-shrink: 0;
 }
 
 .app-icon-image {
-  width: 64px;
-  height: 64px;
+  width: 56px;
+  height: 56px;
 }
 
 .app-details {
@@ -842,13 +819,13 @@ const openDebugPanel = async () => {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 12px;
+  gap: 8px;
   margin-left: auto;
   flex-shrink: 0;
 }
 
 .update-status {
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1.4;
   text-align: right;
 }
@@ -862,27 +839,27 @@ const openDebugPanel = async () => {
 }
 
 .app-name {
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 600;
   color: var(--text-primary);
   margin: 0;
 }
 
 .app-version {
-  font-size: 13px;
+  font-size: 12px;
   color: var(--text-secondary);
   margin: 0;
 }
 
 .app-description {
-  font-size: 13px;
+  font-size: 12px;
   color: var(--text-secondary);
   margin: 0;
 }
 
 .request-group {
   min-width: 0;
-  padding-bottom: 16px;
+  padding-bottom: 12px;
 }
 
 .request-summary-grid {
@@ -935,8 +912,8 @@ const openDebugPanel = async () => {
 .request-chart-layout {
   display: grid;
   grid-template-columns: 1fr;
-  gap: 16px;
-  margin-bottom: 16px;
+  gap: 12px;
+  margin-bottom: 12px;
   min-width: 0;
 }
 
@@ -945,9 +922,9 @@ const openDebugPanel = async () => {
   min-width: 0;
   max-width: 100%;
   border: 1px solid var(--request-surface-border);
-  border-radius: 16px;
+  border-radius: 14px;
   background: var(--request-surface-bg);
-  padding: 16px;
+  padding: 12px;
   box-shadow: var(--request-surface-shadow);
 }
 
@@ -962,8 +939,8 @@ const openDebugPanel = async () => {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 12px;
+  gap: 10px;
+  margin-bottom: 10px;
 }
 
 .request-card-header.compact {
@@ -972,14 +949,14 @@ const openDebugPanel = async () => {
 
 .request-card-title {
   margin: 0;
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--text-primary);
 }
 
 .request-card-subtitle {
-  margin: 6px 0 0;
-  font-size: 12px;
+  margin: 4px 0 0;
+  font-size: 11px;
   color: var(--text-secondary);
 }
 
@@ -987,15 +964,15 @@ const openDebugPanel = async () => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 10px;
+  gap: 12px;
+  margin-bottom: 8px;
   min-width: 0;
 }
 
 .request-heatmap-summary {
   display: inline-flex;
   align-items: center;
-  gap: 16px;
+  gap: 12px;
   min-width: 0;
   flex: 1;
   flex-wrap: wrap;
@@ -1016,14 +993,14 @@ const openDebugPanel = async () => {
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 12px;
-  margin-top: 12px;
+  gap: 8px;
+  margin-top: 8px;
 }
 
 .request-heatmap-total {
   display: inline-flex;
   align-items: center;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 400;
   color: var(--text-secondary);
   white-space: nowrap;
@@ -1035,11 +1012,11 @@ const openDebugPanel = async () => {
   top: 0;
   z-index: 20;
   max-width: min(320px, calc(100vw - 24px));
-  padding: 8px 12px;
-  border-radius: 10px;
+  padding: 6px 10px;
+  border-radius: 8px;
   background: rgba(17, 24, 39, 0.96);
   color: #f8fafc;
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1.4;
   white-space: nowrap;
   pointer-events: none;
@@ -1062,22 +1039,22 @@ const openDebugPanel = async () => {
 .heatmap-legend {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: 11px;
   white-space: nowrap;
 }
 
 .heatmap-legend-scale {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
 }
 
 .heatmap-legend-block {
-  width: 16px;
-  height: 16px;
-  border-radius: 4px;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
   border: 1px solid var(--request-surface-border);
   box-sizing: border-box;
 }
@@ -1175,7 +1152,7 @@ const openDebugPanel = async () => {
   flex-direction: column;
   align-items: flex-end;
   gap: 4px;
-  font-size: 12px;
+  font-size: 11px;
   color: var(--text-secondary);
   text-align: right;
   white-space: nowrap;
@@ -1185,11 +1162,11 @@ const openDebugPanel = async () => {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 180px;
-  border-radius: 12px;
+  min-height: 156px;
+  border-radius: 10px;
   background: var(--request-soft-bg);
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: 12px;
   text-align: center;
 }
 
@@ -1201,16 +1178,16 @@ const openDebugPanel = async () => {
 .request-record-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 
 .request-record-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  padding: 14px 16px;
-  border-radius: 14px;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 12px;
   border: 1px solid var(--request-surface-border);
   background: var(--request-item-bg);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
@@ -1224,7 +1201,7 @@ const openDebugPanel = async () => {
 .request-record-title-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
 }
 
@@ -1233,7 +1210,7 @@ const openDebugPanel = async () => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 500;
   color: var(--text-primary);
 }
@@ -1241,9 +1218,9 @@ const openDebugPanel = async () => {
 .request-record-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 8px;
-  font-size: 12px;
+  gap: 8px;
+  margin-top: 6px;
+  font-size: 11px;
   color: var(--text-secondary);
 }
 
@@ -1251,7 +1228,7 @@ const openDebugPanel = async () => {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 8px;
+  gap: 6px;
   flex-shrink: 0;
 }
 
@@ -1262,8 +1239,8 @@ const openDebugPanel = async () => {
   align-items: center;
   justify-content: center;
   border-radius: 999px;
-  padding: 4px 10px;
-  font-size: 12px;
+  padding: 3px 8px;
+  font-size: 11px;
   line-height: 1;
   font-weight: 600;
 }
@@ -1324,7 +1301,7 @@ const openDebugPanel = async () => {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  padding: 20px 0;
+  padding: 16px 0;
   border-bottom: 1px solid var(--border-color);
 }
 
@@ -1334,29 +1311,29 @@ const openDebugPanel = async () => {
 
 .setting-info {
   flex: 1;
-  margin-right: 24px;
+  margin-right: 18px;
 }
 
 .setting-title-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin: 0 0 6px 0;
+  gap: 6px;
+  margin: 0 0 4px 0;
   color: var(--text-primary);
 }
 
 .setting-title {
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 500;
   color: var(--text-primary);
   margin: 0;
 }
 
 .setting-description {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--text-secondary);
   margin: 0;
-  line-height: 1.5;
+  line-height: 1.4;
 }
 
 .setting-control {
@@ -1367,7 +1344,7 @@ const openDebugPanel = async () => {
 
 .plain-link {
   color: var(--color-primary);
-  font-size: 13px;
+  font-size: 12px;
   text-decoration: none;
   transition: opacity 0.2s ease !important;
 }
@@ -1381,13 +1358,13 @@ const openDebugPanel = async () => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  padding: 7px 14px;
-  border-radius: 8px;
+  gap: 5px;
+  padding: 6px 12px;
+  border-radius: 7px;
   border: 1px solid transparent;
   background: var(--form-input-bg, #F7F7F7);
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: 12px;
   cursor: pointer;
   text-decoration: none;
   transition: color 0.2s ease, background-color 0.2s ease, border-color 0.2s ease, opacity 0.2s ease !important;

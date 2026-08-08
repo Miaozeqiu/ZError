@@ -1,4 +1,5 @@
-﻿﻿import { reactive, watch, computed } from 'vue'
+import { reactive, watch, computed } from 'vue'
+import { normalizeApiProtocol } from './modelProtocol'
 
 // AI 平台配置接口
 export interface AIPlatform {
@@ -20,8 +21,14 @@ export interface AIPlatform {
 }
 
 // AI 模型配置接口
+/** 开启思考时的强度：Chat 用 reasoning_effort，Responses/Messages 用 reasoning.effort */
+export type ThinkingEffort = 'low' | 'medium' | 'high' | 'max'
+/** Responses 关闭思考时 reasoning.effort 取值 */
+export type ThinkingOffResponsesEffort = 'none' | 'minimal'
+
 export interface AIModel {
   id: string
+  modelId?: string
   name: string
   displayName: string
   platformId: string
@@ -31,14 +38,23 @@ export interface AIModel {
   enabled: boolean
   category: 'text' | 'vision' | 'summary'  // 模型分类：文本模型、视觉模型或总结模型
   description?: string
-  jsCode?: string  // 模型的JS代码配置
+  jsCode?: string  // 仅自定义协议使用；远程模型忽略此字段
   icon?: string    // 模型图标
   isRemote?: boolean  // 是否来自远程同步（禁止编辑/删除）
-  pricing?: {
-    inputTokens: number  // 每千个输入token的价格
-    outputTokens: number // 每千个输出token的价格
-  }
   enableThinking?: boolean  // 是否启用思考（reasoning）输出
+  /** Chat 关闭：发送 enable_thinking: false（默认 true） */
+  thinkingOffEnableThinkingFalse?: boolean
+  /** @deprecated 已由 thinkingOffResponsesEffort 替代 */
+  thinkingOffEffortNone?: boolean
+  /** Chat / Messages 关闭：发送 thinking: { type: "disabled" } */
+  thinkingOffThinkingTypeDisabled?: boolean
+  /** @deprecated Chat 不再用 reasoning_effort 关闭 */
+  thinkingOffReasoningEffortNone?: boolean
+  /** Responses 关闭：reasoning.effort = none | minimal（默认 minimal） */
+  thinkingOffResponsesEffort?: ThinkingOffResponsesEffort
+  /** 开启思考时的强度（默认 medium） */
+  thinkingEffort?: ThinkingEffort
+  apiProtocol?: 'openai-chat' | 'openai-response' | 'anthropic' | 'custom'
 }
 
 // 模型配置设置接口
@@ -59,16 +75,17 @@ export interface ModelSettings {
   deletedPredefinedModels?: string[]
 }
 
-// 远程模型数据 URL
-const PROD_REMOTE_MODELS_URL = 'https://app.zerror.cc/models.json'
-const TAURI_DEV_REMOTE_MODELS_URL = 'http://localhost:5175/models.json'
+// 远程模型数据 URL（测试版 / 正式版统一）
+const PROD_REMOTE_MODELS_URL = 'https://webapi.zaizhexue.top/live/models.json'
+const TAURI_DEV_REMOTE_MODELS_URL = 'https://webapi.zaizhexue.top/live/models.json'
 const REMOTE_MODELS_REQUEST_COOLDOWN_MS = 30 * 1000
 const USER_CREATED_PLATFORM_ID_PREFIX = 'custom_'
 const LEGACY_USER_CREATED_MODEL_ID_PREFIX = 'model_'
 
-const getRemoteModelsUrl = () => {
-  const isTauriDev = import.meta.env.DEV && typeof window !== 'undefined' && (window.__TAURI__ || window.__TAURI_INTERNALS__)
-  return isTauriDev ? TAURI_DEV_REMOTE_MODELS_URL : PROD_REMOTE_MODELS_URL
+const getRemoteModelsUrls = (): string[] => {
+  return [TAURI_DEV_REMOTE_MODELS_URL, PROD_REMOTE_MODELS_URL].filter(
+    (url, index, arr) => arr.indexOf(url) === index
+  )
 }
 
 export interface RemoteModelIconMapping {
@@ -257,11 +274,19 @@ const sanitizeStoredPlatforms = (platforms: AIPlatform[]): AIPlatform[] => {
           if (model.isRemote) return true
           return isLikelyUserCreatedModel(model, platform.id)
         })
-        .map(model => ({
-          ...model,
-          platformId: preferredPlatform.id,
-          isRemote: model.isRemote === true,
-        })))
+        .map(model => {
+          const nextModel: AIModel = {
+            ...model,
+            platformId: preferredPlatform.id,
+            isRemote: model.isRemote === true,
+          }
+          // 远程模型不再保留 jsCode
+          if (nextModel.isRemote) {
+            delete nextModel.jsCode
+          }
+          return nextModel
+        })
+      )
     )
 
     return {
@@ -277,17 +302,38 @@ let cachedRemoteModelsCatalog: RemoteModelsCatalog | null = null
 let cachedRemoteModelsCatalogAt = 0
 let pendingRemoteModelsCatalogRequest: Promise<RemoteModelsCatalog> | null = null
 
-const requestRemoteModelsCatalog = async (): Promise<RemoteModelsCatalog> => {
+const fetchRemoteModelsCatalogFromUrl = async (url: string): Promise<RemoteModelsCatalog> => {
   try {
     const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http')
-    const r = await tauriFetch(getRemoteModelsUrl(), { method: 'GET' })
+    const r = await tauriFetch(url, { method: 'GET' })
     if (!r.ok) throw new Error(`HTTP ${r.status}`)
     return normalizeRemoteModelsCatalog(await r.json())
-  } catch {
-    const r = await fetch('/models.json')
-    if (!r.ok) throw new Error(`HTTP ${r.status}`)
-    return normalizeRemoteModelsCatalog(await r.json())
+  } catch (tauriError) {
+    // 非 Tauri 或插件失败时回退到浏览器 fetch
+    try {
+      const r = await fetch(url)
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      return normalizeRemoteModelsCatalog(await r.json())
+    } catch (browserError) {
+      throw browserError instanceof Error ? browserError : tauriError
+    }
   }
+}
+
+const requestRemoteModelsCatalog = async (): Promise<RemoteModelsCatalog> => {
+  const urls = getRemoteModelsUrls()
+  let lastError: unknown
+
+  for (const url of urls) {
+    try {
+      return await fetchRemoteModelsCatalogFromUrl(url)
+    } catch (error) {
+      lastError = error
+      console.warn(`加载远程模型目录失败 (${url}):`, error)
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error('加载远程模型目录失败')
 }
 
 export const fetchRemoteModelsCatalog = async (): Promise<RemoteModelsCatalog> => {
@@ -347,8 +393,9 @@ class ModelConfigManager {
   constructor() {
     this.settings = reactive(this.loadSettings())
     this.normalizeSelectedModels()
-    // 强制持久化 enableThinking（修复旧缓存中 false 的残留）
-    this.saveSettings()
+    if (this.shouldPersistLoadedSettings) {
+      this.saveSettings()
+    }
     this.setupAutoSave()
   }
 
@@ -399,6 +446,9 @@ class ModelConfigManager {
   private autoDetectEnableThinking(): void {
     for (const platform of this.settings.platforms) {
       for (const model of platform.models || []) {
+        // 用户已明确设置过（true/false）则不再覆盖，避免“关闭思考”被启动/同步逻辑改回开启
+        if (typeof model.enableThinking === 'boolean') continue
+
         const id = (model.id || '').toLowerCase()
         const name = ((model.name || '') + (model.displayName || '')).toLowerCase()
         const isKnownThinking =
@@ -407,7 +457,6 @@ class ModelConfigManager {
           id.includes('thinking') || name.includes('thinking') ||
           id.includes('deepseek-r1') || name.includes('deepseek r1') ||
           id.startsWith('o1') || id.startsWith('o3')
-        // 已知思考模型默认开启（修复旧缓存残留 false 的问题）
         if (isKnownThinking) {
           model.enableThinking = true
         }
@@ -581,30 +630,48 @@ class ModelConfigManager {
 
       const remoteModels: AIModel[] = (rp.models || []).map(rm => {
         // 自动检测思考模型：根据模型名称/ID 包含关键词时默认开启思考
+        const runtimeModelId = (rm.modelId || rm.id || '').toLowerCase()
         const modelIdLower = (rm.id || '').toLowerCase()
         const modelNameLower = (rm.name || '').toLowerCase() + (rm.displayName || '').toLowerCase()
+        const thinkingProbe = `${runtimeModelId} ${modelIdLower} ${modelNameLower}`
         const isKnownThinkingModel =
-          modelIdLower.includes('reasoner') ||
-          modelNameLower.includes('reasoner') ||
-          modelIdLower.includes('-r1') ||
-          modelNameLower.includes('-r1') ||
-          modelIdLower.includes('thinking') ||
-          modelNameLower.includes('thinking') ||
-          modelIdLower.includes('deepseek-r1') ||
-          modelNameLower.includes('deepseek r1') ||
+          thinkingProbe.includes('reasoner') ||
+          thinkingProbe.includes('-r1') ||
+          thinkingProbe.includes('thinking') ||
+          thinkingProbe.includes('deepseek-r1') ||
+          thinkingProbe.includes('deepseek r1') ||
+          runtimeModelId.startsWith('o1') ||
+          runtimeModelId.startsWith('o3') ||
           modelIdLower.startsWith('o1') ||
           modelIdLower.startsWith('o3')
         // 保留用户已有的设置，否则按自动检测
         const existingModel = existingPlatforms.flatMap(p => p.models || []).find(m => m.id === rm.id)
+        // 远程不再下发/使用 jsCode、pricing；调用只认 modelId（或 id）+ 协议预设
+        // 协议与思考配置由管理员锁定：每次同步强制采用远程值（缺省才回退 heuristic / 默认）
+        const { jsCode: _ignoredRemoteJsCode, pricing: _ignoredRemotePricing, ...remoteModelFields } = rm as AIModel & { pricing?: unknown }
+        const remoteProtocolRaw = normalizeApiProtocol(rm.apiProtocol)
+        const remoteProtocol = remoteProtocolRaw === 'custom' ? 'openai-chat' : remoteProtocolRaw
         return {
-          ...rm,
+          ...remoteModelFields,
           platformId: rp.id,
           isRemote: true,
+          jsCode: undefined,
+          name: rm.name || existingModel?.name || rm.id,
+          displayName: rm.displayName || existingModel?.displayName || rm.name || rm.id,
+          modelId: rm.modelId?.trim() || rm.id,
+          apiProtocol: remoteProtocol,
+          // 图标由管理员在远程目录设置；未设则留空，客户端走 model_icon_mappings
+          icon: typeof rm.icon === 'string' && rm.icon.trim() ? rm.icon.trim() : undefined,
           enabled: rm.enabled ?? true,
           maxTokens: rm.maxTokens ?? 4096,
           temperature: rm.temperature ?? 0.7,
           topP: rm.topP ?? 0.9,
-          enableThinking: existingModel?.enableThinking ?? rm.enableThinking ?? isKnownThinkingModel,
+          enableThinking: rm.enableThinking ?? isKnownThinkingModel,
+          thinkingOffEnableThinkingFalse: rm.thinkingOffEnableThinkingFalse ?? true,
+          thinkingOffThinkingTypeDisabled: rm.thinkingOffThinkingTypeDisabled ?? false,
+          thinkingOffResponsesEffort: rm.thinkingOffResponsesEffort
+            ?? (rm.thinkingOffEffortNone ? 'minimal' : 'minimal'),
+          thinkingEffort: rm.thinkingEffort ?? 'medium',
         }
       })
       const localModels = dedupeModelsById(
@@ -975,6 +1042,24 @@ class ModelConfigManager {
   }
 
   /**
+   * 切换视觉模型选中状态（再点一次取消选择）
+   */
+  toggleSelectedVisionModel(modelId: string): void {
+    if (this.settings.selectedVisionModel === modelId) {
+      this.settings.selectedVisionModel = null
+    } else {
+      this.settings.selectedVisionModel = modelId
+    }
+  }
+
+  /**
+   * 判断视觉模型是否被选中
+   */
+  isVisionModelSelected(modelId: string): boolean {
+    return this.settings.selectedVisionModel === modelId
+  }
+
+  /**
    * 设置选中的模型（兼容旧接口，设置文本模型）
    */
   setSelectedModel(modelId: string | null): void {
@@ -1193,8 +1278,10 @@ export function useModelConfig() {
     setSelectedVisionModel: modelConfigManager.setSelectedVisionModel.bind(modelConfigManager),
     toggleSelectedTextModel: modelConfigManager.toggleSelectedTextModel.bind(modelConfigManager),
     toggleSelectedSummaryModel: modelConfigManager.toggleSelectedSummaryModel.bind(modelConfigManager),
+    toggleSelectedVisionModel: modelConfigManager.toggleSelectedVisionModel.bind(modelConfigManager),
     isTextModelSelected: modelConfigManager.isTextModelSelected.bind(modelConfigManager),
     isSummaryModelSelected: modelConfigManager.isSummaryModelSelected.bind(modelConfigManager),
+    isVisionModelSelected: modelConfigManager.isVisionModelSelected.bind(modelConfigManager),
     addPlatform: modelConfigManager.addPlatform.bind(modelConfigManager),
     updatePlatform: modelConfigManager.updatePlatform.bind(modelConfigManager),
     removePlatform: modelConfigManager.removePlatform.bind(modelConfigManager),

@@ -12,6 +12,8 @@ export interface AppSettings {
   autoAddToQuestionBank: boolean
   // 文本模型最长响应时间（秒）
   modelResponseTimeout: number
+  // 模型失败自动重试次数（仅单模型 / 总结模型 / 视觉模型）；0 表示不重试
+  modelRetryCount: number
 
   
   // 题目显示设置
@@ -67,8 +69,9 @@ const DEFAULT_SETTINGS: AppSettings = {
   theme: 'light',
   language: 'zh-CN',
   autoSave: true,
-  autoAddToQuestionBank: false,
+  autoAddToQuestionBank: true,
   modelResponseTimeout: 40,
+  modelRetryCount: 2,
 
   defaultDifficulty: 'medium',
   itemsPerPage: 20,
@@ -79,8 +82,8 @@ const DEFAULT_SETTINGS: AppSettings = {
     bindAddress: '127.0.0.1'
   },
   windowSize: {
-    width: 1200,
-    height: 800
+    width: 1000,
+    height: 680
   },
   windowPosition: {
     x: 100,
@@ -338,6 +341,7 @@ class SettingsManager {
       autoSave: '自动保存设置',
       autoAddToQuestionBank: '自动将AI返回的题目添加到本地题库',
       modelResponseTimeout: '文本模型最长响应时间（秒）',
+      modelRetryCount: '模型失败自动重试次数',
 
       network: '网络配置设置',
       windowSize: '窗口大小',

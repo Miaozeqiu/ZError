@@ -1,59 +1,5 @@
-﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿<template>
-  <!-- 当平台广场打开时，独立显示市场弹窗，不渲染底层编辑弹窗阴影 -->
-  <div v-if="show && marketplaceOpen" class="marketplace-overlay" @click="handleMarketplaceOverlay">
-    <div class="marketplace-panel" @click.stop>
-      <div class="marketplace-header">
-        <h4 class="marketplace-title">平台广场</h4>
-        <button class="dialog-close" @click="closeMarketplace">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-          </svg>
-        </button>
-      </div>
-      <div class="marketplace-body">
-        <div class="marketplace-left">
-          <div class="marketplace-list-title">平台</div>
-          <div class="platform-list" v-if="!isLoadingMarket && marketPlatforms.length">
-            <div
-              v-for="p in marketPlatforms"
-              :key="p.id"
-              class="platform-item"
-              @click="selectMarketplacePlatform(p)"
-            >
-              <div class="platform-item-row">
-                <div class="platform-item-icon">
-                  <img v-if="p.icon && isImageIcon(p.icon)" :src="getIconUrl(p.icon)" :alt="p.displayName || p.name || p.id" />
-                  <div v-else class="icon-fallback-small">{{ (p.displayName || p.name || p.id).slice(0,2).toUpperCase() }}</div>
-                </div>
-                <div class="platform-item-info">
-                  <div class="platform-name">{{ p.displayName || p.name || p.id }}</div>
-                  <div class="platform-desc">{{ p.description }}</div>
-                </div>
-              </div>
-            </div>
-          </div>
-          <div v-else class="marketplace-placeholder">
-            <div v-if="isLoadingMarket">正在加载平台列表…</div>
-            <div v-else-if="marketError">{{ marketError }}</div>
-            <div v-else>暂无平台数据</div>
-          </div>
-        </div>
-        <div class="marketplace-right">
-          <div class="marketplace-list-title">操作</div>
-          <!-- 自定义平台入口 -->
-          <div class="custom-item" @click="chooseCustomPlatform">
-            <div class="model-header">
-              <div class="model-name">自定义平台</div>
-              <div class="model-tag">手动配置</div>
-            </div>
-            <div class="model-desc">不依赖预设，直接进入平台编辑。</div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-  <!-- 市场未打开时，显示常规编辑弹窗 -->
-  <div v-else-if="show" class="dialog-overlay" @click="handleOverlayClick">
+﻿﻿﻿﻿﻿﻿<template>
+  <div v-if="show" class="dialog-overlay" @click="handleOverlayClick">
     <div class="dialog-content" @click.stop>
       <div class="dialog-header">
         <button class="btn-back" @click="$emit('close')" title="返回">
@@ -163,32 +109,12 @@
           </div>
 
           <div class="form-group">
-            <label class="form-label">平台描述</label>
-            <textarea 
-              v-model="formData.description" 
-              class="form-textarea" 
-              placeholder="简要描述这个AI平台"
-              rows="3"
-            ></textarea>
-          </div>
-
-          <div class="form-group">
-            <label class="form-label">API 协议</label>
-            <select v-model="formData.apiProtocol" class="form-input" @change="onProtocolChange">
-              <option value="openai-chat">OpenAI Chat Completions — /v1/chat/completions</option>
-              <option value="openai-response">OpenAI Responses — /v1/responses</option>
-              <option value="anthropic">Anthropic Messages — /v1/messages</option>
-              <option value="custom">自定义 — 由 jsCode 完全控制</option>
-            </select>
-          </div>
-
-          <div class="form-group">
             <label class="form-label">API 基础URL</label>
             <input
               v-model="formData.baseUrl"
               type="url"
               class="form-input"
-              :placeholder="protocolPlaceholder"
+              placeholder="例如：https://api.openai.com"
               required
             >
           </div>
@@ -203,40 +129,6 @@
             >
           </div>
 
-          <div class="form-group">
-            <label class="form-label">官网链接</label>
-            <input
-              v-model="formData.url"
-              type="url"
-              class="form-input"
-              placeholder="https://platform.example.com"
-            >
-            <p class="form-hint">点击平台图标时跳转到此链接</p>
-          </div>
-
-          <div class="form-group">
-            <label class="form-label">邀请链接</label>
-            <div class="input-with-copy">
-              <input
-                v-model="formData.inviteUrl"
-                type="url"
-                class="form-input"
-                placeholder="https://example.com/invite"
-              >
-            </div>
-            <p class="form-hint">有邀请奖励时可填写此链接分享给他人</p>
-          </div>
-
-          <div class="form-group">
-            <label class="form-label">邀请码（选填）</label>
-            <input
-              v-model="formData.inviteCode"
-              type="text"
-              class="form-input"
-              placeholder="输入邀请码"
-            >
-          </div>
-
         </form>
       </div>
     </div>
@@ -245,7 +137,7 @@
 
 <script setup lang="ts">
 import { ref, watch, computed, nextTick } from 'vue'
-import { fetchRemoteModelsCatalog, type AIPlatform, type AIModel } from '../../../services/modelConfig'
+import { fetchRemoteModelsCatalog, type AIPlatform } from '../../../services/modelConfig'
 import { getPlatformIconDisplayUrl, isImageIconValue, resolvePlatformIconUrl } from '../../../services/iconCache'
 
 interface Props {
@@ -263,39 +155,11 @@ const emit = defineEmits<Emits>()
 
 const isEditing = computed(() => !!props.platform)
 
-const protocolPlaceholder = computed(() => {
-  const map: Record<string, string> = {
-    'openai-chat': 'https://api.openai.com',
-    'openai-response': 'https://api.openai.com',
-    'anthropic': 'https://api.anthropic.com',
-    'custom': 'https://your-api.example.com'
-  }
-  return map[formData.value.apiProtocol] || 'https://api.example.com'
-})
-
-const onProtocolChange = () => {
-  // 选择协议时自动填充默认 baseUrl
-  const defaults: Record<string, string> = {
-    'openai-chat': 'https://api.openai.com',
-    'openai-response': 'https://api.openai.com',
-    'anthropic': 'https://api.anthropic.com',
-    'custom': formData.value.baseUrl || ''
-  }
-  if (defaults[formData.value.apiProtocol]) {
-    formData.value.baseUrl = defaults[formData.value.apiProtocol]
-  }
-}
-
 const formData = ref({
   name: '',
-  description: '',
   baseUrl: '',
   apiKey: '',
-  icon: '',
-  url: '',
-  inviteUrl: '',
-  inviteCode: '',
-  apiProtocol: 'openai-chat'
+  icon: ''
 })
 
 // 图标相关状态
@@ -376,14 +240,9 @@ const loadAvailableIcons = async () => {
 const resetForm = () => {
   formData.value = {
     name: '',
-    description: '',
     baseUrl: '',
     apiKey: '',
-    icon: '',
-    url: '',
-    inviteUrl: '',
-    inviteCode: '',
-    apiProtocol: 'openai-chat'
+    icon: ''
   }
   iconLoadError.value = false
   iconError.value = ''
@@ -432,14 +291,9 @@ watch(() => props.platform, (platform) => {
   if (platform) {
     formData.value = {
       name: platform.name,
-      description: platform.description,
       baseUrl: platform.baseUrl,
       apiKey: platform.apiKey || '',
-      icon: platform.icon || '',
-      url: platform.url || '',
-      inviteUrl: platform.inviteUrl || '',
-      inviteCode: platform.inviteCode || '',
-      apiProtocol: (platform as any).apiProtocol || 'openai-chat'
+      icon: platform.icon || ''
     }
   } else {
     resetForm()
@@ -450,7 +304,6 @@ watch(() => props.platform, (platform) => {
 watch(() => props.show, (show) => {
   if (show) {
     loadAvailableIcons()
-    marketplaceOpen.value = false
     showIconPicker.value = false
   }
 })
@@ -467,15 +320,10 @@ const handleSubmit = () => {
   const platformData: any = {
     name: formData.value.name,
     displayName: formData.value.name,
-    description: formData.value.description,
     baseUrl: formData.value.baseUrl,
     apiKey: formData.value.apiKey || undefined,
     icon: formData.value.icon || undefined,
-    enabled: props.platform?.enabled ?? true,
-    url: formData.value.url || undefined,
-    inviteUrl: formData.value.inviteUrl || undefined,
-    inviteCode: formData.value.inviteCode || undefined,
-    apiProtocol: formData.value.apiProtocol
+    enabled: props.platform?.enabled ?? true
   }
   
   // 只有在创建新平台时才提供空的模型数组
@@ -512,74 +360,6 @@ const handleOverlayClick = (event: MouseEvent) => {
   }, 0)
 }
 
-// ===== 平台广场（远程 JSON 选择） =====
-interface MarketplacePlatform {
-  id: string
-  name?: string
-  displayName?: string
-  description?: string
-  baseUrl?: string
-  icon?: string
-  models?: any[]
-}
-
-const marketplaceOpen = ref(false)
-const marketPlatforms = ref<MarketplacePlatform[]>([])
-const isLoadingMarket = ref(false)
-const marketError = ref<string | null>(null)
-
-const openMarketplace = async () => {
-  marketplaceOpen.value = true
-  if (!marketPlatforms.value.length) {
-    await loadMarketplace()
-  }
-}
-
-const closeMarketplace = () => {
-  // 在“添加模式且默认进入平台广场”的场景下，关闭市场即退出添加流程
-  if (!isEditing.value) {
-    emit('close')
-    return
-  }
-  // 编辑场景：返回编辑界面
-  marketplaceOpen.value = false
-}
-
-const handleMarketplaceOverlay = (_e: MouseEvent) => {
-  // 点击遮罩关闭
-  closeMarketplace()
-}
-
-const loadMarketplace = async () => {
-  isLoadingMarket.value = true
-  marketError.value = null
-  try {
-    const catalog = await fetchRemoteModelsCatalog()
-    marketPlatforms.value = catalog.platforms as MarketplacePlatform[]
-    await Promise.all(marketPlatforms.value.map(platform => primeIconUrlCache(platform.icon)))
-  } catch (err: any) {
-    console.warn('加载平台广场失败：', err)
-    marketError.value = err?.message || '无法加载平台广场数据'
-  } finally {
-    isLoadingMarket.value = false
-  }
-}
-
-const selectMarketplacePlatform = (p: MarketplacePlatform) => {
-  // 回填到表单
-  formData.value.name = p.displayName || p.name || p.id || ''
-  formData.value.description = p.description || ''
-  formData.value.baseUrl = p.baseUrl || ''
-  formData.value.icon = p.icon || ''
-  // 关闭平台广场，进入编辑界面
-  marketplaceOpen.value = false
-}
-
-const chooseCustomPlatform = () => {
-  // 清空并进入编辑界面
-  resetForm()
-  marketplaceOpen.value = false
-}
 </script>
 
 <style>
@@ -605,23 +385,6 @@ const chooseCustomPlatform = () => {
 .btn-secondary:hover {
   background: var(--platform-config-btn-secondary-hover-bg);
   color: var(--platform-config-btn-secondary-hover-text);
-}
-
-.form-hint {
-  font-size: 12px;
-  color: var(--text-secondary, #718096);
-  margin: 4px 0 0 0;
-  line-height: 1.4;
-}
-
-.input-with-copy {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
-.input-with-copy .form-input {
-  flex: 1;
 }
 
 </style>

@@ -1,14 +1,21 @@
 <template>
   <div class="app-header" :class="{ 'macos-header': isMacOS }" data-tauri-drag-region>
-    <div class="header-left" :class="{ 'macos-left': isMacOS }">
+    <div class="header-left" v-if="!isMacOS">
       <div class="app-logo">
-        <img src="/icons/favicon.ico" alt="ZError Logo" width="20" height="20" />
+        <img
+          src="/icons/app-icon.png"
+          alt="ZError Logo"
+          class="app-logo-img"
+          width="20"
+          height="20"
+          draggable="false"
+        />
       </div>
       <div class="app-title">ZError</div>
     </div>
     
     <div class="header-center">
-      <div class="tutorial-stepper">
+      <div v-if="props.activeTab !== 'questions'" class="tutorial-stepper">
         <div class="step" :class="{ completed: isStep1Completed, active: !isStep1Completed }" @click="$emit('guide-to', 'model-settings')">
           <div class="step-indicator">
             <svg v-if="isStep1Completed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="12" height="12"><polyline points="20 6 9 17 4 12"></polyline></svg>
@@ -66,56 +73,120 @@
         <span class="campus-entry-text">想将题库分享给同学？试试校园题库吧</span>
       </button>
     </div>
-    
-    <!-- macOS 隐藏窗口控制按钮 -->
-    <div class="header-right" v-if="!isMacOS">
-      <button 
-        class="window-control minimize" 
-        @click="minimizeWindow"
-        title="最小化"
+
+    <div class="header-right" :class="{ 'header-right--macos': isMacOS }">
+      <div
+        v-if="tipVisible && tipText"
+        class="update-tip"
+        :class="`update-tip--${status}`"
+        data-tauri-drag-region-exclude
       >
-        <svg width="12" height="12" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
-          <path d="M863.7 552.5H160.3c-10.6 0-19.2-8.6-19.2-19.2v-41.7c0-10.6 8.6-19.2 19.2-19.2h703.3c10.6 0 19.2 8.6 19.2 19.2v41.7c0 10.6-8.5 19.2-19.1 19.2z" fill="currentColor"/>
-        </svg>
-      </button>
-      
-      <button 
-        class="window-control maximize" 
-        @click="toggleMaximize"
-        :title="isMaximized ? '还原' : '最大化'"
-      >
-        <svg width="12" height="12" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" v-if="!isMaximized">
-          <path d="M770.9 923.3H253.1c-83.8 0-151.9-68.2-151.9-151.9V253.6c0-83.8 68.2-151.9 151.9-151.9h517.8c83.8 0 151.9 68.2 151.9 151.9v517.8c0 83.8-68.1 151.9-151.9 151.9zM253.1 181.7c-39.7 0-71.9 32.3-71.9 71.9v517.8c0 39.7 32.3 71.9 71.9 71.9h517.8c39.7 0 71.9-32.3 71.9-71.9V253.6c0-39.7-32.3-71.9-71.9-71.9H253.1z" fill="currentColor"/>
-        </svg>
-        <svg width="12" height="12" viewBox="0 0 12 12" v-else>
-          <rect x="2" y="3" width="6" height="6" stroke="currentColor" stroke-width="1.5" fill="none"/>
-          <rect x="4" y="1" width="6" height="6" stroke="currentColor" stroke-width="1.5" fill="none"/>
-        </svg>
-      </button>
-      
-      <button 
-        class="window-control close" 
-        @click="closeWindow"
-        title="关闭"
-      >
-        <svg width="12" height="12" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
-          <path d="M897.6 183.5L183 898.1c-7.5 7.5-19.6 7.5-27.1 0l-29.5-29.5c-7.5-7.5-7.5-19.6 0-27.1L841 126.9c7.5-7.5 19.6-7.5 27.1 0l29.5 29.5c7.5 7.4 7.5 19.6 0 27.1z" fill="currentColor"/>
-          <path d="M183 126.9l714.7 714.7c7.5 7.5 7.5 19.6 0 27.1l-29.5 29.5c-7.5 7.5-19.6 7.5-27.1 0L126.4 183.5c-7.5-7.5-7.5-19.6 0-27.1l29.5-29.5c7.4-7.5 19.6-7.5 27.1 0z" fill="currentColor"/>
-        </svg>
-      </button>
+        <button
+          type="button"
+          class="update-tip-main"
+          :title="tipTitle"
+          @click="handleTipClick"
+        >
+          <span
+            class="update-tip-icon-wrap"
+            :class="{ 'is-progress': status === 'downloading' || status === 'installing' }"
+            aria-hidden="true"
+          >
+            <svg
+              v-if="status === 'downloading' || status === 'installing'"
+              class="update-tip-ring"
+              viewBox="0 0 36 36"
+            >
+              <circle class="update-tip-ring-bg" cx="18" cy="18" r="15.5" />
+              <circle
+                class="update-tip-ring-fg"
+                cx="18"
+                cy="18"
+                r="15.5"
+                :style="ringStyle"
+              />
+            </svg>
+            <svg
+              class="update-tip-icon"
+              viewBox="0 0 1024 1024"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path d="M307.173388 679.532423c0 28.903692-22.882089 52.26751-51.183621 52.267509h-51.123405C101.174367 731.920364 13.800914 652.796507 1.456629 547.599112-10.82744 442.401716 55.771484 344.49046 156.57311 319.561025 177.046558 156.255165 301.69373 27.031576 461.266196 3.727974c159.452034-23.243386 314.568515 65.213955 378.939445 216.17553 121.997667 36.731775 199.074179 159.452034 180.828723 288.073463-18.245456 128.621429-126.212788 224.003613-253.449249 223.822965a51.725565 51.725565 0 0 1-51.123405-52.267509c0-28.903692 22.882089-52.26751 51.183621-52.26751 76.35392 0.180648 141.266795-57.024576 152.226111-134.281736 10.959317-77.196944-35.346807-150.901359-108.569493-172.880208l-45.764179-13.849685-19.08848-44.559859c-45.884611-107.846901-156.682097-171.073727-270.671032-154.51432-113.928719 16.619623-203.048436 108.930789-217.68093 225.56923L249.305788 404.224756l-68.525836 16.920703c-49.979301 12.826013-82.917466 61.600994-76.835648 113.92872 6.142035 52.387942 49.37714 91.829438 100.982274 92.190734h51.183621c28.241316 0 51.183621 23.424034 51.183621 52.26751z m385.743856 107.003876a53.050318 53.050318 0 0 1 0 73.885063l-145.000188 148.010989a50.461029 50.461029 0 0 1-72.379662 0L330.597422 860.421362a53.050318 53.050318 0 0 1 0.60216-73.222687 50.400813 50.400813 0 0 1 71.777502-0.662376l57.747168 59.011704V418.25509c0-28.903692 22.882089-52.26751 51.183621-52.26751 28.241316 0 51.123405 23.363818 51.123405 52.26751v427.112265l57.626736-58.831056a50.400813 50.400813 0 0 1 72.25923 0z" fill="currentColor"/>
+            </svg>
+          </span>
+          <span class="update-tip-text">{{ tipText }}</span>
+        </button>
+      </div>
+
+      <template v-if="!isMacOS">
+        <button
+          class="window-control minimize"
+          @click="minimizeWindow"
+          title="最小化"
+        >
+          <svg class="window-control-icon" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+            <path d="M863.7 552.5H160.3c-10.6 0-19.2-8.6-19.2-19.2v-41.7c0-10.6 8.6-19.2 19.2-19.2h703.3c10.6 0 19.2 8.6 19.2 19.2v41.7c0 10.6-8.5 19.2-19.1 19.2z" fill="currentColor"/>
+          </svg>
+        </button>
+
+        <button
+          class="window-control maximize"
+          @click="toggleMaximize"
+          :title="isMaximized ? '还原' : '最大化'"
+        >
+          <svg class="window-control-icon" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" v-if="!isMaximized">
+            <path d="M770.9 923.3H253.1c-83.8 0-151.9-68.2-151.9-151.9V253.6c0-83.8 68.2-151.9 151.9-151.9h517.8c83.8 0 151.9 68.2 151.9 151.9v517.8c0 83.8-68.1 151.9-151.9 151.9zM253.1 181.7c-39.7 0-71.9 32.3-71.9 71.9v517.8c0 39.7 32.3 71.9 71.9 71.9h517.8c39.7 0 71.9-32.3 71.9-71.9V253.6c0-39.7-32.3-71.9-71.9-71.9H253.1z" fill="currentColor"/>
+          </svg>
+          <svg class="window-control-icon" viewBox="0 0 12 12" v-else>
+            <rect x="2" y="3" width="6" height="6" stroke="currentColor" stroke-width="1.5" fill="none"/>
+            <rect x="4" y="1" width="6" height="6" stroke="currentColor" stroke-width="1.5" fill="none"/>
+          </svg>
+        </button>
+
+        <button
+          class="window-control close"
+          @click="closeWindow"
+          title="关闭"
+        >
+          <svg class="window-control-icon" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+            <path d="M897.6 183.5L183 898.1c-7.5 7.5-19.6 7.5-27.1 0l-29.5-29.5c-7.5-7.5-7.5-19.6 0-27.1L841 126.9c7.5-7.5 19.6-7.5 27.1 0l29.5 29.5c7.5 7.4 7.5 19.6 0 27.1z" fill="currentColor"/>
+            <path d="M183 126.9l714.7 714.7c7.5 7.5 7.5 19.6 0 27.1l-29.5 29.5c-7.5 7.5-19.6 7.5-27.1 0L126.4 183.5c-7.5-7.5-7.5-19.6 0-27.1l29.5-29.5c7.4-7.5 19.6-7.5 27.1 0z" fill="currentColor"/>
+          </svg>
+        </button>
+      </template>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed, watch, onUnmounted } from 'vue'
+import { ref, onMounted, computed, onUnmounted } from 'vue'
 import { useModelConfig } from '../services/modelConfig'
 import { serverRunning } from '../services/serverState'
 import { listen, UnlistenFn } from '@tauri-apps/api/event'
+import { useAppUpdate } from '../composables/useAppUpdate'
 
 const props = defineProps<{
   activeTab?: string
 }>()
+
+const {
+  tipVisible,
+  tipText,
+  tipTitle,
+  status,
+  progress,
+  handleTipClick,
+} = useAppUpdate()
+
+const RING_C = 2 * Math.PI * 15.5
+const ringStyle = computed(() => {
+  const pct = Math.min(100, Math.max(status.value === 'installing' ? 100 : progress.value, 4))
+  const offset = RING_C * (1 - pct / 100)
+  return {
+    strokeDasharray: `${RING_C}`,
+    strokeDashoffset: `${offset}`,
+  }
+})
 
 const isMaximized = ref(false)
 const isTauri = ref(false)
@@ -323,7 +394,7 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 32px;
+  height: 40px;
   background: var(--bg-primary, #f4f4f4);
   color: var(--text-primary, #2d3748);
   user-select: none;
@@ -331,15 +402,14 @@ onMounted(async () => {
   z-index: 1000;
 }
 
-/* macOS 原生标题栏适配 */
+/* macOS 原生标题栏适配：stepper 与系统红绿灯同一行 */
 .app-header.macos-header {
-  padding-top: 28px;
-  height: 60px;
+  height: 40px;
   padding-left: 80px; /* 给 macOS 红绿灯按钮留空间 */
 }
 
 .header-left {
-  margin-left: 10px;
+  margin-left: 12px;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -347,16 +417,21 @@ onMounted(async () => {
   color:  #ffbd42;
 }
 
-.header-left.macos-left {
-  margin-left: 0;
-}
-
 .app-logo {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  overflow: visible;
+}
+
+.app-logo-img {
+  width: 20px;
+  height: 20px;
+  display: block;
+  object-fit: contain;
 }
 
 .app-logo svg {
@@ -364,7 +439,7 @@ onMounted(async () => {
 }
 
 .app-title {
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 600;
   color: var(--text-primary, #2d3748);
 }
@@ -432,11 +507,139 @@ onMounted(async () => {
   align-items: center;
   gap: 1px;
   flex: 0 0 auto;
+  padding-right: 4px;
+  -webkit-app-region: no-drag;
+  pointer-events: auto;
+}
+
+.header-right--macos {
+  padding-right: 12px;
+}
+
+.update-tip {
+  display: inline-flex;
+  align-items: center;
+  max-width: min(360px, 42vw);
+  margin-right: 6px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, #f59e0b 35%, var(--border-color, #e2e8f0));
+  background: color-mix(in srgb, #f59e0b 12%, var(--bg-primary, #fff));
+  overflow: hidden;
+}
+
+.update-tip--installing,
+.update-tip--downloading {
+  border-color: color-mix(in srgb, #3b82f6 40%, var(--border-color, #e2e8f0));
+  background: color-mix(in srgb, #3b82f6 10%, var(--bg-primary, #fff));
+}
+
+.update-tip--ready-relaunch,
+.update-tip--done {
+  border-color: color-mix(in srgb, #22c55e 40%, var(--border-color, #e2e8f0));
+  background: color-mix(in srgb, #22c55e 10%, var(--bg-primary, #fff));
+}
+
+.update-tip--error {
+  border-color: color-mix(in srgb, #ef4444 40%, var(--border-color, #e2e8f0));
+  background: color-mix(in srgb, #ef4444 10%, var(--bg-primary, #fff));
+}
+
+.update-tip-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 3px 10px 3px 6px;
+  border: none;
+  background: transparent;
+  color: var(--text-primary, #2d3748);
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+
+.update-tip-icon-wrap {
+  position: relative;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #575F76;
+}
+
+.update-tip-icon-wrap.is-progress {
+  width: 26px;
+  height: 26px;
+}
+
+.update-tip-icon {
+  width: 14px;
+  height: 14px;
+  display: block;
+  position: relative;
+  z-index: 1;
+}
+
+.update-tip-icon-wrap.is-progress .update-tip-icon {
+  width: 12px;
+  height: 12px;
+}
+
+.update-tip-ring {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+
+.update-tip-ring-bg,
+.update-tip-ring-fg {
+  fill: none;
+  stroke-width: 2.5;
+}
+
+.update-tip-ring-bg {
+  stroke: color-mix(in srgb, #3b82f6 22%, transparent);
+}
+
+.update-tip-ring-fg {
+  stroke: #3b82f6;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.2s ease;
+}
+
+.update-tip--available .update-tip-icon-wrap,
+.update-tip--idle .update-tip-icon-wrap {
+  color: #f59e0b;
+}
+
+.update-tip--downloading .update-tip-icon-wrap,
+.update-tip--installing .update-tip-icon-wrap {
+  color: #3b82f6;
+}
+
+.update-tip--done .update-tip-icon-wrap,
+.update-tip--ready-relaunch .update-tip-icon-wrap {
+  color: #22c55e;
+}
+
+.update-tip--error .update-tip-icon-wrap {
+  color: #ef4444;
+}
+
+.update-tip-text {
+  font-size: 12px;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .window-control {
   border-radius: 0px;
-  height: 32px;
+  height: 40px;
   width: 46px;
   border: none;
   background: transparent;
@@ -446,6 +649,13 @@ onMounted(async () => {
   align-items: center;
   justify-content: center;
   transition: background-color 0.2s ease;
+}
+
+.window-control-icon {
+  width: 16px;
+  height: 16px;
+  display: block;
+  flex: 0 0 auto;
 }
 
 .window-control:hover {

@@ -41,3 +41,11 @@ tooltip.vue
 test_jieba_puct.rs
 wqen3-max.js
 target/
+
+# local build / eval artifacts
+tmp/
+**/.zerror-updater-tmp/
+
+# Tauri updater private signing key (never commit)
+src-tauri/keys/*.key
+!src-tauri/keys/*.key.pub

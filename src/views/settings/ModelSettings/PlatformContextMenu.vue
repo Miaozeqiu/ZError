@@ -4,7 +4,9 @@
     :x="x"
     :y="y"
     :menu-items="menuItems"
+    exclusive-key="platform-context-menu"
     @item-click="handleItemClick"
+    @close="$emit('close')"
   />
 </template>
 
@@ -25,17 +27,18 @@ const props = defineProps<Props>()
 const emit = defineEmits<{
   'edit-platform': []
   'delete-platform': []
+  close: []
 }>()
 
 const menuItems = computed<MenuItem[]>(() => {
-  const disabled = !!props.platform?.isRemote
+  const isRemote = !!props.platform?.isRemote
 
   return [
     {
       id: 'edit-platform',
       label: '编辑平台',
       action: 'edit-platform',
-      disabled,
+      // 远程平台允许编辑（配置 API Key / 基础 URL 等），与远程模型可编辑保持一致
       icon: {
         type: 'svg',
         paths: [
@@ -49,7 +52,7 @@ const menuItems = computed<MenuItem[]>(() => {
       id: 'delete-platform',
       label: '删除平台',
       action: 'delete-platform',
-      disabled,
+      disabled: isRemote,
       danger: true,
       icon: {
         type: 'svg',
