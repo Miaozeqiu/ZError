@@ -178,7 +178,7 @@
       <div class="request-details-header">
         <button class="back-btn" @click="closeRequestDetails">
           <svg t="1760584170728" class="icon" viewBox="0 0 1536 1024" version="1.1" xmlns="http://www.w3.org/2000/svg"
-            p-id="13220" width="20" height="20" transform="scale(-1,1)">
+            p-id="13220" width="20" height="20">
             <path
               d="M981.418667 71.893333A60.245333 60.245333 0 0 1 1070.506667 152.746667l-3.925334 4.309333L711.594667 512l354.986666 354.944c22.186667 22.144 23.466667 57.216 3.925334 80.896l-3.925334 4.266667a60.245333 60.245333 0 0 1-80.896 3.925333l-4.266666-3.925333-368.298667-368.213334a101.632 101.632 0 0 1-4.565333-138.88l4.565333-4.864 368.298667-368.256z"
               fill="#838B9F" opacity=".25" p-id="13221"></path>
@@ -5025,6 +5025,8 @@ body.resizing {
   align-items: center;
   justify-content: center;
   color: var(--request-details-back-btn-text);
+  /* 图标路径默认朝左；用 CSS 翻转（勿写在 SVG transform 上，Mac/Windows 表现不一致） */
+  transform: scaleX(-1);
 }
 
 .back-btn:hover {

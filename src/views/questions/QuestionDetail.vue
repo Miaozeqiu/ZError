@@ -567,6 +567,7 @@ onUnmounted(() => {
 }
 
 .back-btn {
+  /* 图标路径默认朝左；用 CSS 翻转保证 Mac / Windows 一致朝右 */
   transform: scaleX(-1);
 }
 
