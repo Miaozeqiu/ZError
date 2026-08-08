@@ -660,6 +660,8 @@ class ModelConfigManager {
           displayName: rm.displayName || existingModel?.displayName || rm.name || rm.id,
           modelId: rm.modelId?.trim() || rm.id,
           apiProtocol: remoteProtocol,
+          // 图标由管理员在远程目录设置；未设则留空，客户端走 model_icon_mappings
+          icon: typeof rm.icon === 'string' && rm.icon.trim() ? rm.icon.trim() : undefined,
           enabled: rm.enabled ?? true,
           maxTokens: rm.maxTokens ?? 4096,
           temperature: rm.temperature ?? 0.7,

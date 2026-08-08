@@ -758,8 +758,8 @@ const iconLoadErrors = ref<{[key: string]: boolean}>({})
 const platformIconUrls = ref<Record<string, string>>({})
 const platformIconBackgrounds = ref<Record<string, boolean>>({})
 const remoteModelIconMappings = ref<RemoteModelIconMapping[]>([])
-const PROD_REMOTE_MODEL_ICON_BASE_URL = 'https://app.zerror.cc/models/'
-const DEV_REMOTE_MODEL_ICON_BASE_URL = 'https://app.zerror.cc/models/'
+const PROD_REMOTE_MODEL_ICON_BASE_URL = 'https://webapi.zaizhexue.top/models/'
+const DEV_REMOTE_MODEL_ICON_BASE_URL = 'https://webapi.zaizhexue.top/models/'
 
 const getRemoteModelIconBaseUrl = (): string => {
   const isTauriDev = import.meta.env.DEV && typeof window !== 'undefined' && (window.__TAURI__ || window.__TAURI_INTERNALS__)
