@@ -645,7 +645,7 @@ const handleClearQuestions = () => {
 
 // 删除确认弹窗事件处理
 const handleDeleteConfirm = async () => {
-  if (!deleteDialog.folderId) return;
+  if (deleteDialog.folderId == null) return;
 
   const shouldResetSavedFolder = shouldResetQuestionSaveFolder(deleteDialog.folderId);
   
@@ -682,7 +682,8 @@ const handleDeleteCancel = () => {
 };
 
 const handleClearQuestionsConfirm = async () => {
-  if (!clearQuestionsDialog.folderId || clearQuestionsDialog.loading) return;
+  // 默认文件夹 Id 为 0，不能用 !folderId 判断
+  if (clearQuestionsDialog.folderId == null || clearQuestionsDialog.loading) return;
 
   clearQuestionsDialog.loading = true;
 

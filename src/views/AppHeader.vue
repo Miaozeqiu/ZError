@@ -66,56 +66,96 @@
         <span class="campus-entry-text">想将题库分享给同学？试试校园题库吧</span>
       </button>
     </div>
-    
-    <!-- macOS 隐藏窗口控制按钮 -->
-    <div class="header-right" v-if="!isMacOS">
-      <button 
-        class="window-control minimize" 
-        @click="minimizeWindow"
-        title="最小化"
+
+    <div class="header-right" :class="{ 'header-right--macos': isMacOS }">
+      <div
+        v-if="tipVisible && tipText"
+        class="update-tip"
+        :class="`update-tip--${status}`"
+        data-tauri-drag-region-exclude
       >
-        <svg width="12" height="12" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
-          <path d="M863.7 552.5H160.3c-10.6 0-19.2-8.6-19.2-19.2v-41.7c0-10.6 8.6-19.2 19.2-19.2h703.3c10.6 0 19.2 8.6 19.2 19.2v41.7c0 10.6-8.5 19.2-19.1 19.2z" fill="currentColor"/>
-        </svg>
-      </button>
-      
-      <button 
-        class="window-control maximize" 
-        @click="toggleMaximize"
-        :title="isMaximized ? '还原' : '最大化'"
-      >
-        <svg width="12" height="12" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" v-if="!isMaximized">
-          <path d="M770.9 923.3H253.1c-83.8 0-151.9-68.2-151.9-151.9V253.6c0-83.8 68.2-151.9 151.9-151.9h517.8c83.8 0 151.9 68.2 151.9 151.9v517.8c0 83.8-68.1 151.9-151.9 151.9zM253.1 181.7c-39.7 0-71.9 32.3-71.9 71.9v517.8c0 39.7 32.3 71.9 71.9 71.9h517.8c39.7 0 71.9-32.3 71.9-71.9V253.6c0-39.7-32.3-71.9-71.9-71.9H253.1z" fill="currentColor"/>
-        </svg>
-        <svg width="12" height="12" viewBox="0 0 12 12" v-else>
-          <rect x="2" y="3" width="6" height="6" stroke="currentColor" stroke-width="1.5" fill="none"/>
-          <rect x="4" y="1" width="6" height="6" stroke="currentColor" stroke-width="1.5" fill="none"/>
-        </svg>
-      </button>
-      
-      <button 
-        class="window-control close" 
-        @click="closeWindow"
-        title="关闭"
-      >
-        <svg width="12" height="12" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
-          <path d="M897.6 183.5L183 898.1c-7.5 7.5-19.6 7.5-27.1 0l-29.5-29.5c-7.5-7.5-7.5-19.6 0-27.1L841 126.9c7.5-7.5 19.6-7.5 27.1 0l29.5 29.5c7.5 7.4 7.5 19.6 0 27.1z" fill="currentColor"/>
-          <path d="M183 126.9l714.7 714.7c7.5 7.5 7.5 19.6 0 27.1l-29.5 29.5c-7.5 7.5-19.6 7.5-27.1 0L126.4 183.5c-7.5-7.5-7.5-19.6 0-27.1l29.5-29.5c7.4-7.5 19.6-7.5 27.1 0z" fill="currentColor"/>
-        </svg>
-      </button>
+        <button
+          type="button"
+          class="update-tip-main"
+          :title="tipTitle"
+          @click="handleTipClick"
+        >
+          <span class="update-tip-dot" aria-hidden="true"></span>
+          <span class="update-tip-text">{{ tipText }}</span>
+          <span v-if="status === 'downloading'" class="update-tip-bar" aria-hidden="true">
+            <i :style="{ width: `${Math.max(progress, 8)}%` }"></i>
+          </span>
+        </button>
+        <button
+          type="button"
+          class="update-tip-close"
+          title="关闭提示"
+          @click.stop="dismissTip"
+        >
+          ×
+        </button>
+      </div>
+
+      <template v-if="!isMacOS">
+        <button
+          class="window-control minimize"
+          @click="minimizeWindow"
+          title="最小化"
+        >
+          <svg width="12" height="12" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+            <path d="M863.7 552.5H160.3c-10.6 0-19.2-8.6-19.2-19.2v-41.7c0-10.6 8.6-19.2 19.2-19.2h703.3c10.6 0 19.2 8.6 19.2 19.2v41.7c0 10.6-8.5 19.2-19.1 19.2z" fill="currentColor"/>
+          </svg>
+        </button>
+
+        <button
+          class="window-control maximize"
+          @click="toggleMaximize"
+          :title="isMaximized ? '还原' : '最大化'"
+        >
+          <svg width="12" height="12" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" v-if="!isMaximized">
+            <path d="M770.9 923.3H253.1c-83.8 0-151.9-68.2-151.9-151.9V253.6c0-83.8 68.2-151.9 151.9-151.9h517.8c83.8 0 151.9 68.2 151.9 151.9v517.8c0 83.8-68.1 151.9-151.9 151.9zM253.1 181.7c-39.7 0-71.9 32.3-71.9 71.9v517.8c0 39.7 32.3 71.9 71.9 71.9h517.8c39.7 0 71.9-32.3 71.9-71.9V253.6c0-39.7-32.3-71.9-71.9-71.9H253.1z" fill="currentColor"/>
+          </svg>
+          <svg width="12" height="12" viewBox="0 0 12 12" v-else>
+            <rect x="2" y="3" width="6" height="6" stroke="currentColor" stroke-width="1.5" fill="none"/>
+            <rect x="4" y="1" width="6" height="6" stroke="currentColor" stroke-width="1.5" fill="none"/>
+          </svg>
+        </button>
+
+        <button
+          class="window-control close"
+          @click="closeWindow"
+          title="关闭"
+        >
+          <svg width="12" height="12" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+            <path d="M897.6 183.5L183 898.1c-7.5 7.5-19.6 7.5-27.1 0l-29.5-29.5c-7.5-7.5-7.5-19.6 0-27.1L841 126.9c7.5-7.5 19.6-7.5 27.1 0l29.5 29.5c7.5 7.4 7.5 19.6 0 27.1z" fill="currentColor"/>
+            <path d="M183 126.9l714.7 714.7c7.5 7.5 7.5 19.6 0 27.1l-29.5 29.5c-7.5 7.5-19.6 7.5-27.1 0L126.4 183.5c-7.5-7.5-7.5-19.6 0-27.1l29.5-29.5c7.4-7.5 19.6-7.5 27.1 0z" fill="currentColor"/>
+          </svg>
+        </button>
+      </template>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed, watch, onUnmounted } from 'vue'
+import { ref, onMounted, computed, onUnmounted } from 'vue'
 import { useModelConfig } from '../services/modelConfig'
 import { serverRunning } from '../services/serverState'
 import { listen, UnlistenFn } from '@tauri-apps/api/event'
+import { useAppUpdate } from '../composables/useAppUpdate'
 
 const props = defineProps<{
   activeTab?: string
 }>()
+
+const {
+  tipVisible,
+  tipText,
+  tipTitle,
+  status,
+  progress,
+  dismissTip,
+  handleTipClick,
+} = useAppUpdate()
 
 const isMaximized = ref(false)
 const isTauri = ref(false)
@@ -427,6 +467,130 @@ onMounted(async () => {
   align-items: center;
   gap: 1px;
   flex: 0 0 auto;
+  padding-right: 4px;
+  -webkit-app-region: no-drag;
+  pointer-events: auto;
+}
+
+.header-right--macos {
+  padding-right: 12px;
+}
+
+.update-tip {
+  display: inline-flex;
+  align-items: center;
+  max-width: min(360px, 42vw);
+  margin-right: 6px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, #f59e0b 35%, var(--border-color, #e2e8f0));
+  background: color-mix(in srgb, #f59e0b 12%, var(--bg-primary, #fff));
+  overflow: hidden;
+}
+
+.update-tip--installing,
+.update-tip--downloading {
+  border-color: color-mix(in srgb, #3b82f6 40%, var(--border-color, #e2e8f0));
+  background: color-mix(in srgb, #3b82f6 10%, var(--bg-primary, #fff));
+}
+
+.update-tip--ready-relaunch,
+.update-tip--done {
+  border-color: color-mix(in srgb, #22c55e 40%, var(--border-color, #e2e8f0));
+  background: color-mix(in srgb, #22c55e 10%, var(--bg-primary, #fff));
+}
+
+.update-tip--error {
+  border-color: color-mix(in srgb, #ef4444 40%, var(--border-color, #e2e8f0));
+  background: color-mix(in srgb, #ef4444 10%, var(--bg-primary, #fff));
+}
+
+.update-tip-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 2px 8px 2px 8px;
+  border: none;
+  background: transparent;
+  color: var(--text-primary, #2d3748);
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+
+.update-tip-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  background: #f59e0b;
+  box-shadow: 0 0 0 3px color-mix(in srgb, #f59e0b 25%, transparent);
+}
+
+.update-tip--downloading .update-tip-dot,
+.update-tip--installing .update-tip-dot {
+  background: #3b82f6;
+  box-shadow: 0 0 0 3px color-mix(in srgb, #3b82f6 25%, transparent);
+  animation: update-tip-pulse 1.1s ease-in-out infinite;
+}
+
+.update-tip--done .update-tip-dot,
+.update-tip--ready-relaunch .update-tip-dot {
+  background: #22c55e;
+  box-shadow: 0 0 0 3px color-mix(in srgb, #22c55e 25%, transparent);
+}
+
+.update-tip--error .update-tip-dot {
+  background: #ef4444;
+  box-shadow: 0 0 0 3px color-mix(in srgb, #ef4444 25%, transparent);
+}
+
+.update-tip-text {
+  font-size: 12px;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.update-tip-bar {
+  position: relative;
+  width: 42px;
+  height: 3px;
+  border-radius: 999px;
+  background: color-mix(in srgb, currentColor 14%, transparent);
+  overflow: hidden;
+  flex: 0 0 auto;
+}
+
+.update-tip-bar i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #3b82f6;
+}
+
+.update-tip-close {
+  width: 22px;
+  height: 22px;
+  margin-right: 2px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-secondary, #64748b);
+  cursor: pointer;
+  line-height: 1;
+  font-size: 14px;
+  -webkit-app-region: no-drag;
+}
+
+.update-tip-close:hover {
+  background: color-mix(in srgb, currentColor 10%, transparent);
+  color: var(--text-primary, #2d3748);
+}
+
+@keyframes update-tip-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.55; transform: scale(0.86); }
 }
 
 .window-control {

@@ -53,6 +53,15 @@
       "allow": [
         {
           "url": "https://app.zerror.cc/**"
+        },
+        {
+          "url": "https://webapi.zaizhexue.top/**"
+        },
+        {
+          "url": "http://localhost:8081/**"
+        },
+        {
+          "url": "http://127.0.0.1:8081/**"
         }
       ]
     },
@@ -63,11 +72,17 @@
         { "path": "$APPLOCALDATA/**" },
         { "path": "$APPDATA/**" },
         { "path": "$APPCONFIG/**" },
-        { "path": "$APPCACHE/**" }
+        { "path": "$APPCACHE/**" },
+        { "path": "$DOWNLOADS/**" },
+        { "path": "$HOME/Downloads/**" }
       ]
     },
     "clipboard-manager:allow-read-text",
     "clipboard-manager:allow-write-text",
+    "updater:default",
+    "process:default",
+    "process:allow-restart",
+    "process:allow-exit",
 
     "http:allow-fetch",
     {

@@ -231,8 +231,10 @@
             </div>
           </div>
           
-          <div v-if="selectedCategory === 'text'" class="model-list-hint">
+          <div v-if="selectedCategory === 'text' || selectedCategory === 'summary' || selectedCategory === 'vision'" class="model-list-hint">
             <template v-if="selectedCategory === 'text'">可多选，最多 5 个（已选 {{ currentMultiModels.length }}/5）</template>
+            <template v-else-if="selectedCategory === 'summary'">单选，再点一次可取消选择</template>
+            <template v-else>单选，再点一次可取消选择</template>
           </div>
           <div class="model-list">
             <div 
@@ -242,7 +244,7 @@
               class="model-item"
               :class="{ 
                 active: selectedCategory === 'vision' 
-                  ? (currentVisionModel?.id === model.id)
+                  ? isVisionModelSelected(model.id)
                   : (selectedCategory === 'summary' ? isSummaryModelSelected(model.id) : isTextModelSelected(model.id)),
                 'model-item--disabled': isSelectedPlatformDisabled
               }"
@@ -262,8 +264,8 @@
               </div>
               <div class="model-actions">
                 <div 
-                  v-if="selectedCategory === 'vision' ? (currentVisionModel && currentVisionModel.id === model.id) : (selectedCategory === 'summary' ? isSummaryModelSelected(model.id) : isTextModelSelected(model.id))" 
-                  :class="selectedCategory !== 'vision' ? 'model-selected model-selected--multi' : 'model-selected'"
+                  v-if="selectedCategory === 'vision' ? isVisionModelSelected(model.id) : (selectedCategory === 'summary' ? isSummaryModelSelected(model.id) : isTextModelSelected(model.id))" 
+                  :class="selectedCategory === 'text' ? 'model-selected model-selected--multi' : 'model-selected'"
                 >
                   <span class="model-dot"></span>
                 </div>
@@ -531,11 +533,12 @@ const {
   removeModel,
   setSelectedModel: setCurrentModel,
   setSelectedTextModel,
-  setSelectedVisionModel,
   toggleSelectedTextModel,
   toggleSelectedSummaryModel,
+  toggleSelectedVisionModel,
   isTextModelSelected,
   isSummaryModelSelected,
+  isVisionModelSelected,
   selectedModel: globalSelectedModel,
   selectedTextModel: globalSelectedTextModel,
   selectedTextModels: globalSelectedTextModels,
@@ -921,8 +924,8 @@ const selectModel = (model: AIModel) => {
   } else if (selectedCategory.value === 'summary') {
     toggleSelectedSummaryModel(model.id)
   } else if (selectedCategory.value === 'vision') {
-    currentVisionModel.value = model
-    setSelectedVisionModel(model.id)
+    toggleSelectedVisionModel(model.id)
+    // currentVisionModel 由 watch(globalSelectedVisionModel) 同步
   }
 }
 
@@ -1217,6 +1220,10 @@ const saveModel = async (modelData: Partial<AIModel>) => {
         jsCode: modelData.jsCode,
         category: modelData.category,
         enableThinking: modelData.enableThinking,
+        thinkingOffEnableThinkingFalse: modelData.thinkingOffEnableThinkingFalse,
+        thinkingOffThinkingTypeDisabled: modelData.thinkingOffThinkingTypeDisabled,
+        thinkingOffResponsesEffort: modelData.thinkingOffResponsesEffort,
+        thinkingEffort: modelData.thinkingEffort,
         apiProtocol: modelData.apiProtocol
       })
     } else {
@@ -1232,6 +1239,10 @@ const saveModel = async (modelData: Partial<AIModel>) => {
         jsCode: modelData.jsCode || '',
         category: modelData.category || 'text' as const,
         enableThinking: modelData.enableThinking ?? false,
+        thinkingOffEnableThinkingFalse: modelData.thinkingOffEnableThinkingFalse ?? true,
+        thinkingOffThinkingTypeDisabled: modelData.thinkingOffThinkingTypeDisabled ?? false,
+        thinkingOffResponsesEffort: modelData.thinkingOffResponsesEffort ?? 'minimal',
+        thinkingEffort: modelData.thinkingEffort ?? 'medium',
         apiProtocol: modelData.apiProtocol
       }
       newModelCategory = newModelData.category

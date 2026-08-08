@@ -88,6 +88,7 @@ import 'markstream-vue/index.css'
 interface TestResult {
   success: boolean
   response: string
+  reasoning_content?: string
   timestamp: string
   testType?: string
   modelType?: 'text' | 'vision'

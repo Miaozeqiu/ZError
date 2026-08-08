@@ -71,6 +71,8 @@ pub struct RequestLogger {
     broadcaster: broadcast::Sender<SSEEvent>, // 修改为SSEEvent类型
     pending_responses: Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<String>>>>, // 等待模型响应的通道
     pending_error_responses: Arc<Mutex<HashMap<String, (String, std::time::Instant)>>>, // 暂存错误响应，给成功回调留一个兜底窗口
+    /// 按 request_id 记录最近一次进度/响应时间；不依赖 broadcast 订阅（可 Lagged）
+    last_activity: Arc<Mutex<HashMap<String, std::time::Instant>>>,
 }
 
 impl RequestLogger {
@@ -82,7 +84,28 @@ impl RequestLogger {
             broadcaster,
             pending_responses: Arc::new(Mutex::new(HashMap::new())),
             pending_error_responses: Arc::new(Mutex::new(HashMap::new())),
+            last_activity: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    fn touch_activity(&self, request_id: &str) {
+        let mut map = self.last_activity.lock().unwrap();
+        // 清理超过 10 分钟的孤儿条目
+        let ttl = std::time::Duration::from_secs(600);
+        map.retain(|_, at| at.elapsed() <= ttl);
+        map.insert(request_id.to_string(), std::time::Instant::now());
+    }
+
+    fn clear_activity(&self, request_id: &str) {
+        self.last_activity.lock().unwrap().remove(request_id);
+    }
+
+    fn activity_elapsed(&self, request_id: &str) -> Option<std::time::Duration> {
+        self.last_activity
+            .lock()
+            .unwrap()
+            .get(request_id)
+            .map(|at| at.elapsed())
     }
 
     fn persist_query_count(&self, log: &RequestLog) {
@@ -159,38 +182,43 @@ impl RequestLogger {
         response_time: u64,
         response_body: Option<String>,
     ) {
-        let log = RequestLog {
-            id,
-            timestamp: Utc::now(),
-            method,
-            path,
-            status: Some(status),
-            response_time: Some(response_time),
-            request_body: None, // 完成阶段不重复发送请求体
-            response_body,
-            headers: None, // 完成阶段不重复发送请求头
-            ip: None,
-            user_agent: None,
-            stage: "completed".to_string(),
-        };
-
         let mut logs = self.logs.lock().unwrap();
-        logs.push_back(log.clone());
-
-        // Keep only the most recent logs
-        while logs.len() > self.max_logs {
-            logs.pop_front();
-        }
-
+        // 优先就地更新 started 记录，避免同一请求占两条导致上限形同虚设
+        let log = if let Some(existing) = logs.iter_mut().rev().find(|item| item.id == id) {
+            existing.status = Some(status);
+            existing.response_time = Some(response_time);
+            existing.response_body = response_body;
+            existing.stage = "completed".to_string();
+            existing.clone()
+        } else {
+            let created = RequestLog {
+                id,
+                timestamp: Utc::now(),
+                method,
+                path,
+                status: Some(status),
+                response_time: Some(response_time),
+                request_body: None,
+                response_body,
+                headers: None,
+                ip: None,
+                user_agent: None,
+                stage: "completed".to_string(),
+            };
+            logs.push_back(created.clone());
+            while logs.len() > self.max_logs {
+                logs.pop_front();
+            }
+            created
+        };
         drop(logs);
         self.persist_query_count(&log);
 
-        // Broadcast the new log to SSE subscribers
         println!(
             "📡 Broadcasting request complete to {} subscribers",
             self.subscriber_count()
         );
-        match self.broadcaster.send(SSEEvent::RequestLog(log.clone())) {
+        match self.broadcaster.send(SSEEvent::RequestLog(log)) {
             Ok(_) => println!("✅ Request complete broadcast successful"),
             Err(e) => println!("❌ Request complete broadcast failed: {:?}", e),
         }
@@ -266,6 +294,7 @@ impl RequestLogger {
 
     // 新增：发送模型调用进度事件（不会完成等待通道，仅用于活跃心跳）
     pub fn send_model_call_progress(&self, request_id: String, content: String) {
+        self.touch_activity(&request_id);
         let event = ModelCallProgress {
             request_id,
             content,
@@ -290,6 +319,7 @@ impl RequestLogger {
         reasoning_content: Option<String>,
         is_success: bool,
     ) {
+        self.touch_activity(&request_id);
         if is_success {
             self.pending_error_responses
                 .lock()
@@ -305,7 +335,11 @@ impl RequestLogger {
             }
         } else {
             // 错误响应先暂存，给其他可能成功的消费者留出覆盖窗口
-            self.pending_error_responses.lock().unwrap().insert(
+            let mut pending_errors = self.pending_error_responses.lock().unwrap();
+            // 清理超过 2 分钟的孤儿错误，避免 Map 只增不减
+            let ttl = std::time::Duration::from_secs(120);
+            pending_errors.retain(|_, (_, at)| at.elapsed() <= ttl);
+            pending_errors.insert(
                 request_id.clone(),
                 (content.clone(), std::time::Instant::now()),
             );
@@ -337,6 +371,9 @@ impl RequestLogger {
     pub fn clear_logs(&self) {
         let mut logs = self.logs.lock().unwrap();
         logs.clear();
+        self.pending_responses.lock().unwrap().clear();
+        self.pending_error_responses.lock().unwrap().clear();
+        self.last_activity.lock().unwrap().clear();
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<SSEEvent> {
@@ -347,26 +384,29 @@ impl RequestLogger {
         self.broadcaster.receiver_count()
     }
 
-    // 新增：等待模型响应的方法（基于无新token的静默超时）
+    // 等待模型响应：inactivity=无新进度超时；absolute=整段等待上限（防止 keepalive 无限续命）
     pub async fn wait_for_model_response(
         &self,
         request_id: String,
         inactivity_seconds: u64,
+        absolute_seconds: u64,
     ) -> Result<String, String> {
         let (sender, mut final_receiver) = tokio::sync::oneshot::channel();
 
-        // 注册等待最终响应的通道
+        // 注册等待最终响应的通道，并初始化活动时钟
         {
             let mut pending = self.pending_responses.lock().unwrap();
             pending.insert(request_id.clone(), sender);
         }
+        self.touch_activity(&request_id);
 
-        // 订阅SSE事件，用于检测进度心跳
+        // 订阅SSE事件作为补充；主时钟以 last_activity map 为准（HTTP progress 直写）
         let mut sse_receiver = self.broadcaster.subscribe();
-        let inactivity = Duration::from_secs(inactivity_seconds);
+        let inactivity = Duration::from_secs(inactivity_seconds.max(5));
+        let absolute = Duration::from_secs(absolute_seconds.max(inactivity_seconds.max(5)));
+        let wait_started = std::time::Instant::now();
         let error_grace = Duration::from_secs(2);
         let check_interval = Duration::from_millis(300);
-        let mut last_activity = std::time::Instant::now();
 
         loop {
             tokio::select! {
@@ -375,28 +415,30 @@ impl RequestLogger {
                     match res {
                         Ok(content) => {
                             self.pending_error_responses.lock().unwrap().remove(&request_id);
+                            self.clear_activity(&request_id);
                             return Ok(content)
                         },
                         Err(_) => {
                             let mut pending = self.pending_responses.lock().unwrap();
                             pending.remove(&request_id);
                             self.pending_error_responses.lock().unwrap().remove(&request_id);
+                            self.clear_activity(&request_id);
                             return Err("Response channel closed".to_string());
                         }
                     }
                 }
-                // 收到进度或响应事件，视为有新token活动
+                // 收到进度或响应事件，视为有新token活动（补充路径）
                 evt = sse_receiver.recv() => {
                     match evt {
                         Ok(SSEEvent::ModelCallProgress(progress)) if progress.request_id == request_id => {
-                            last_activity = std::time::Instant::now();
+                            self.touch_activity(&request_id);
                         }
                         Ok(SSEEvent::ModelCallResponse(resp)) if resp.request_id == request_id => {
-                            last_activity = std::time::Instant::now();
+                            self.touch_activity(&request_id);
                         }
                         Ok(_) => {}
                         Err(_e) => {
-                            // 忽略广播接收错误（例如滞后），不影响超时判断
+                            // 忽略广播接收错误（例如滞后）；活动以 last_activity map 为准
                         }
                     }
                 }
@@ -406,17 +448,35 @@ impl RequestLogger {
                         errors.get(&request_id).cloned()
                     };
 
+                    let elapsed = self
+                        .activity_elapsed(&request_id)
+                        .unwrap_or_else(|| inactivity);
+
                     if let Some((error_content, error_at)) = pending_error {
-                        if error_at.elapsed() >= error_grace && last_activity.elapsed() >= error_grace {
+                        // 仅按错误到达时间宽限；不要要求 activity 也静默——
+                        // 否则前端 keepalive 会不断 touch，错误永远无法结束等待（一直「处理中」）
+                        if error_at.elapsed() >= error_grace {
                             self.pending_error_responses.lock().unwrap().remove(&request_id);
                             self.pending_responses.lock().unwrap().remove(&request_id);
+                            self.clear_activity(&request_id);
                             return Ok(error_content);
                         }
                     }
 
-                    if last_activity.elapsed() >= inactivity {
+                    if wait_started.elapsed() >= absolute {
                         self.pending_responses.lock().unwrap().remove(&request_id);
                         self.pending_error_responses.lock().unwrap().remove(&request_id);
+                        self.clear_activity(&request_id);
+                        return Err(format!(
+                            "Timeout waiting for model response (absolute {}s)",
+                            absolute.as_secs()
+                        ));
+                    }
+
+                    if elapsed >= inactivity {
+                        self.pending_responses.lock().unwrap().remove(&request_id);
+                        self.pending_error_responses.lock().unwrap().remove(&request_id);
+                        self.clear_activity(&request_id);
                         return Err("Timeout waiting for model response (no new tokens)".to_string());
                     }
                 }
@@ -427,6 +487,7 @@ impl RequestLogger {
 
 impl Default for RequestLogger {
     fn default() -> Self {
-        Self::new(1000) // Default to keeping 1000 logs
+        // 与前端 MAX_REQUEST_LOGS 对齐；完成阶段已就地更新，不再双倍占用
+        Self::new(100)
     }
 }

@@ -24,6 +24,68 @@
 
           <!-- 右侧：基本信息与操作按钮 -->
           <form class="form-panel" :class="{ 'form-panel--full': !showAdvancedCode }" @submit.prevent="handleSubmit">
+            <div ref="modelDropdownAnchorRef" class="form-group qa-model-id-group">
+              <label class="form-label">模型 ID</label>
+              <div
+                class="qa-model-id-row"
+                :class="{ open: showModelDropdown, 'has-dropdown': fetchedModelList.length > 0 }"
+              >
+                <input
+                  ref="modelIdInputRef"
+                  v-model="formData.modelId"
+                  type="text"
+                  class="form-input"
+                  :class="{ 'has-arrow': fetchedModelList.length > 0 }"
+                  placeholder="例如：gpt-4o-mini"
+                  @input="handleModelIdInput"
+                  @focus="handleModelIdFocus"
+                  @click="handleModelIdFocus"
+                  @blur="handleModelIdBlur"
+                >
+                <button
+                  v-if="fetchedModelList.length > 0"
+                  type="button"
+                  class="qa-model-id-arrow"
+                  :class="{ open: showModelDropdown }"
+                  aria-label="选择模型"
+                  @mousedown.prevent
+                  @click="toggleModelDropdown"
+                >
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M4 6L8 10L12 6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+            <Teleport to="body">
+              <Transition name="dropdown-pop">
+                <div
+                  v-if="showModelDropdown && fetchedModelList.length > 0"
+                  ref="modelDropdownRef"
+                  class="qa-dropdown"
+                  :style="modelDropdownStyle"
+                  @mousedown.prevent
+                >
+                  <div class="qa-dropdown-list">
+                    <template v-if="filteredFetchedModels.length > 0">
+                      <div v-for="group in groupedFetchedModels" :key="group.owner" class="qa-dropdown-group">
+                        <div class="qa-dropdown-group-title">{{ group.owner }}</div>
+                        <div
+                          v-for="m in group.models"
+                          :key="m.id"
+                          class="qa-dropdown-item"
+                          @mousedown.prevent="selectFetchedModel(m.id)"
+                        >
+                          <span class="qa-dropdown-item-id">{{ m.id }}</span>
+                        </div>
+                      </div>
+                    </template>
+                    <div v-else class="qa-dropdown-empty">无匹配模型</div>
+                  </div>
+                </div>
+              </Transition>
+            </Teleport>
+
             <div class="form-group">
               <label class="form-label">名称</label>
               <input
@@ -35,49 +97,6 @@
               >
             </div>
 
-            <div ref="modelDropdownAnchorRef" class="form-group qa-model-id-group">
-              <label class="form-label">模型 ID</label>
-              <div class="qa-model-id-row">
-                <input
-                  ref="modelIdInputRef"
-                  v-model="formData.modelId"
-                  type="text"
-                  class="form-input"
-                  placeholder="例如：gpt-4o-mini"
-                  @input="handleModelIdInput"
-                  @focus="handleModelIdFocus"
-                  @click="handleModelIdFocus"
-                  @blur="handleModelIdBlur"
-                >
-              </div>
-            </div>
-            <Teleport to="body">
-              <div
-                v-if="showModelDropdown && fetchedModelList.length > 0"
-                ref="modelDropdownRef"
-                class="qa-dropdown"
-                :style="modelDropdownStyle"
-                @mousedown.prevent
-              >
-                <div class="qa-dropdown-list">
-                  <template v-if="filteredFetchedModels.length > 0">
-                    <div v-for="group in groupedFetchedModels" :key="group.owner" class="qa-dropdown-group">
-                      <div class="qa-dropdown-group-title">{{ group.owner }}</div>
-                      <div
-                        v-for="m in group.models"
-                        :key="m.id"
-                        class="qa-dropdown-item"
-                        @mousedown.prevent="selectFetchedModel(m.id)"
-                      >
-                        <span class="qa-dropdown-item-id">{{ m.id }}</span>
-                      </div>
-                    </div>
-                  </template>
-                  <div v-else class="qa-dropdown-empty">无匹配模型</div>
-                </div>
-              </div>
-            </Teleport>
-
             <div class="form-group">
               <label class="form-label">API 协议</label>
               <div ref="protocolSelectRef" class="protocol-select-wrap">
@@ -85,7 +104,7 @@
                   type="button"
                   class="protocol-select-trigger"
                   :class="{ open: showProtocolDropdown }"
-                  @click="toggleProtocolDropdown"
+                  @mousedown.prevent="toggleProtocolDropdown"
                 >
                   <span class="protocol-select-text">
                     {{ currentProtocolOption.label }} - {{ currentProtocolOption.endpoint }}
@@ -98,24 +117,27 @@
                 </button>
               </div>
               <Teleport to="body">
-                <div
-                  v-if="showProtocolDropdown"
-                  ref="protocolDropdownRef"
-                  class="protocol-dropdown"
-                  :style="protocolDropdownStyle"
-                >
-                  <button
-                    v-for="option in protocolOptions"
-                    :key="option.value"
-                    type="button"
-                    class="protocol-dropdown-item"
-                    :class="{ active: formData.apiProtocol === option.value }"
-                    @click="selectProtocol(option.value)"
+                <Transition name="dropdown-pop">
+                  <div
+                    v-if="showProtocolDropdown"
+                    ref="protocolDropdownRef"
+                    class="protocol-dropdown"
+                    :style="protocolDropdownStyle"
+                    @mousedown.prevent
                   >
-                    <span class="protocol-dropdown-label">{{ option.label }}</span>
-                    <span class="protocol-dropdown-endpoint">{{ option.endpoint }}</span>
-                  </button>
-                </div>
+                    <button
+                      v-for="option in protocolOptions"
+                      :key="option.value"
+                      type="button"
+                      class="protocol-dropdown-item"
+                      :class="{ active: formData.apiProtocol === option.value }"
+                      @mousedown.prevent="selectProtocol(option.value)"
+                    >
+                      <span class="protocol-dropdown-label">{{ option.label }}</span>
+                      <span class="protocol-dropdown-endpoint">{{ option.endpoint }}</span>
+                    </button>
+                  </div>
+                </Transition>
               </Teleport>
             </div>
 
@@ -135,6 +157,68 @@
                 </label>
               </label>
               <p class="form-hint">开启后，模型会输出思考过程，但响应时间可能明显变长。部分模型/API服务不支持此功能。</p>
+
+              <!-- 关闭思考：按协议展示可选参数 -->
+              <div v-if="!formData.enableThinking" class="thinking-options">
+                <p class="thinking-options-title">关闭时发送的参数</p>
+
+                <template v-if="isChatProtocol">
+                  <label class="thinking-check">
+                    <input type="checkbox" v-model="formData.thinkingOffEnableThinkingFalse" />
+                    <code>enable_thinking: false</code>
+                  </label>
+                  <label class="thinking-check">
+                    <input type="checkbox" v-model="formData.thinkingOffThinkingTypeDisabled" />
+                    <code>thinking: &#123; type: "disabled" &#125;</code>
+                  </label>
+                </template>
+
+                <template v-else-if="isResponsesProtocol">
+                  <label class="thinking-check">
+                    <input
+                      type="radio"
+                      name="thinking-off-responses-effort"
+                      value="none"
+                      v-model="formData.thinkingOffResponsesEffort"
+                    />
+                    <code>reasoning.effort: "none"</code>
+                  </label>
+                  <label class="thinking-check">
+                    <input
+                      type="radio"
+                      name="thinking-off-responses-effort"
+                      value="minimal"
+                      v-model="formData.thinkingOffResponsesEffort"
+                    />
+                    <code>reasoning.effort: "minimal"</code>
+                  </label>
+                </template>
+
+                <template v-else-if="isMessagesProtocol">
+                  <p class="thinking-fixed-param"><code>thinking: &#123; type: "disabled" &#125;</code></p>
+                </template>
+
+                <p v-else class="form-hint">自定义协议请在代码中自行控制思考参数。</p>
+              </div>
+
+              <!-- 开启思考：选择强度 -->
+              <div v-else class="thinking-options">
+                <p class="thinking-options-title">
+                  思考强度
+                  <code v-if="isChatProtocol">reasoning_effort</code>
+                  <code v-else>reasoning.effort</code>
+                </p>
+                <div class="thinking-effort-switch">
+                  <button
+                    v-for="opt in thinkingEffortOptions"
+                    :key="opt.value"
+                    type="button"
+                    class="thinking-effort-btn"
+                    :class="{ active: formData.thinkingEffort === opt.value }"
+                    @click="formData.thinkingEffort = opt.value"
+                  >{{ opt.label }}</button>
+                </div>
+              </div>
             </div>
 
           </form>
@@ -153,9 +237,16 @@ import { defaultHighlightStyle, syntaxHighlighting } from '@codemirror/language'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { linter, lintGutter } from '@codemirror/lint'
 import * as acorn from 'acorn'
-import { type AIModel } from '../../../services/modelConfig'
+import { type AIModel, type ThinkingEffort, type ThinkingOffResponsesEffort } from '../../../services/modelConfig'
 import { buildPresetProcessModelJsCode, normalizeApiProtocol, readModelIdFromJsCode } from '../../../services/modelProtocol'
 import ModelCategorySwitch from './ModelCategorySwitch.vue'
+
+const thinkingEffortOptions: { value: ThinkingEffort; label: string }[] = [
+  { value: 'low', label: 'low' },
+  { value: 'medium', label: 'medium' },
+  { value: 'high', label: 'high' },
+  { value: 'max', label: 'max' },
+]
 
 interface Props {
   show: boolean
@@ -203,12 +294,19 @@ const formData = ref({
   jsCode: '',
   modelId: '',
   enableThinking: false,
+  thinkingOffEnableThinkingFalse: true,
+  thinkingOffThinkingTypeDisabled: false,
+  thinkingOffResponsesEffort: 'minimal' as ThinkingOffResponsesEffort,
+  thinkingEffort: 'medium' as ThinkingEffort,
   apiProtocol: 'openai-chat' as AIModel['apiProtocol']
 })
 
 const isEditing = computed(() => !!props.model)
 const showCategorySelect = computed(() => !isEditing.value)
 const requiresModelId = computed(() => formData.value.apiProtocol !== 'custom')
+const isChatProtocol = computed(() => formData.value.apiProtocol === 'openai-chat' || formData.value.apiProtocol === 'custom')
+const isResponsesProtocol = computed(() => formData.value.apiProtocol === 'openai-response')
+const isMessagesProtocol = computed(() => formData.value.apiProtocol === 'anthropic')
 const isFormValid = computed(() => {
   if (!formData.value.displayName.trim()) return false
   if (requiresModelId.value && !formData.value.modelId.trim()) return false
@@ -253,7 +351,9 @@ const updateProtocolDropdownPosition = () => {
 }
 
 const toggleProtocolDropdown = async () => {
-  showProtocolDropdown.value = !showProtocolDropdown.value
+  const next = !showProtocolDropdown.value
+  if (next) closeModelDropdown()
+  showProtocolDropdown.value = next
   if (showProtocolDropdown.value) {
     await nextTick()
     await nextTick()
@@ -266,17 +366,19 @@ const selectProtocol = (protocol: AIModel['apiProtocol']) => {
   showProtocolDropdown.value = false
 }
 
-const handleProtocolOutsideClick = (event: MouseEvent) => {
+const handleProtocolOutsideClick = (event: Event) => {
+  if (!showProtocolDropdown.value) return
   const target = event.target as Node | null
   if (
-    !target ||
+    target &&
     (
-      !protocolSelectRef.value?.contains(target) &&
-      !protocolDropdownRef.value?.contains(target)
+      protocolSelectRef.value?.contains(target) ||
+      protocolDropdownRef.value?.contains(target)
     )
   ) {
-    showProtocolDropdown.value = false
+    return
   }
+  showProtocolDropdown.value = false
 }
 
 const handleProtocolViewportChange = () => {
@@ -313,6 +415,7 @@ const clearModelDropdownBlurTimer = () => {
 
 const openModelDropdown = async () => {
   clearModelDropdownBlurTimer()
+  showProtocolDropdown.value = false
   showModelDropdown.value = true
   await nextTick()
   await nextTick()
@@ -361,6 +464,19 @@ const handleModelIdFocus = async () => {
   }
 }
 
+const toggleModelDropdown = async () => {
+  if (fetchedModelList.value.length === 0) {
+    if (!isFetchingModels.value) void fetchModels()
+    return
+  }
+  if (showModelDropdown.value) {
+    closeModelDropdown()
+    return
+  }
+  await openModelDropdown()
+  modelIdInputRef.value?.focus()
+}
+
 const handleModelIdBlur = () => {
   clearModelDropdownBlurTimer()
   // 延迟关闭，避免点击下拉项时因 blur 先触发而收起导致点选失效
@@ -383,17 +499,19 @@ const handleModelIdInput = async () => {
   }
 }
 
-const handleModelDropdownOutsideClick = (event: MouseEvent) => {
+const handleModelDropdownOutsideClick = (event: Event) => {
+  if (!showModelDropdown.value) return
   const target = event.target as Node | null
   if (
-    !target ||
+    target &&
     (
-      !modelDropdownAnchorRef.value?.contains(target) &&
-      !modelDropdownRef.value?.contains(target)
+      modelDropdownAnchorRef.value?.contains(target) ||
+      modelDropdownRef.value?.contains(target)
     )
   ) {
-    closeModelDropdown()
+    return
   }
+  closeModelDropdown()
 }
 
 const handleModelDropdownViewportChange = () => {
@@ -507,10 +625,18 @@ const selectFetchedModel = (modelId: string) => {
 const DEFAULT_JS_CODE = buildPresetProcessModelJsCode({ protocol: 'openai-chat', modelId: '' })
 const DEFAULT_VISION_JS_CODE = DEFAULT_JS_CODE
 
+const thinkingPresetOptions = () => ({
+  enableThinking: formData.value.enableThinking,
+  thinkingOffEnableThinkingFalse: formData.value.thinkingOffEnableThinkingFalse,
+  thinkingOffThinkingTypeDisabled: formData.value.thinkingOffThinkingTypeDisabled,
+  thinkingOffResponsesEffort: formData.value.thinkingOffResponsesEffort,
+  thinkingEffort: formData.value.thinkingEffort,
+})
+
 const buildCurrentPresetJsCode = () => buildPresetProcessModelJsCode({
   protocol: formData.value.apiProtocol,
   modelId: formData.value.modelId,
-  enableThinking: formData.value.enableThinking
+  ...thinkingPresetOptions()
 })
 
 const syncPresetJsCode = () => {
@@ -521,19 +647,49 @@ const syncPresetJsCode = () => {
   }
 }
 
+const EFFORT_VALUES: ThinkingEffort[] = ['low', 'medium', 'high', 'max']
+const normalizeEffort = (effort?: AIModel['thinkingEffort']): ThinkingEffort =>
+  effort && EFFORT_VALUES.includes(effort) ? effort : 'medium'
+
+const normalizeOffResponsesEffort = (
+  model?: AIModel | null
+): ThinkingOffResponsesEffort => {
+  if (model?.thinkingOffResponsesEffort === 'none' || model?.thinkingOffResponsesEffort === 'minimal') {
+    return model.thinkingOffResponsesEffort
+  }
+  return 'minimal'
+}
+
 const createDialogFormData = (model?: AIModel | null) => {
   const protocol = normalizeApiProtocol(model?.apiProtocol)
   const modelId = model?.modelId?.trim() || readModelIdFromJsCode(model?.jsCode) || ''
   const category = model?.category || 'text'
+  const enableThinking = deriveEnableThinking(model)
+  const thinkingOffEnableThinkingFalse = model?.thinkingOffEnableThinkingFalse !== false
+  const thinkingOffThinkingTypeDisabled = model?.thinkingOffThinkingTypeDisabled === true
+  const thinkingOffResponsesEffort = normalizeOffResponsesEffort(model)
+  const thinkingEffort = normalizeEffort(model?.thinkingEffort)
 
   return {
     displayName: model?.displayName || '',
     category,
     jsCode: protocol === 'custom'
       ? (model?.jsCode || (category === 'vision' ? DEFAULT_VISION_JS_CODE : DEFAULT_JS_CODE))
-      : buildPresetProcessModelJsCode({ protocol, modelId, enableThinking: deriveEnableThinking(model) }),
+      : buildPresetProcessModelJsCode({
+        protocol,
+        modelId,
+        enableThinking,
+        thinkingOffEnableThinkingFalse,
+        thinkingOffThinkingTypeDisabled,
+        thinkingOffResponsesEffort,
+        thinkingEffort,
+      }),
     modelId,
-    enableThinking: deriveEnableThinking(model),
+    enableThinking,
+    thinkingOffEnableThinkingFalse,
+    thinkingOffThinkingTypeDisabled,
+    thinkingOffResponsesEffort,
+    thinkingEffort,
     apiProtocol: protocol
   }
 }
@@ -599,17 +755,34 @@ function deriveEnableThinking(model: AIModel | null | undefined): boolean {
   return model?.enableThinking === true
 }
 
-// 开关变化 → 改写 jsCode 中 enable_thinking 字面量（仅当其已存在时）
-watch(() => formData.value.enableThinking, (enabled) => {
-  if (formData.value.apiProtocol !== 'custom') {
-    syncPresetJsCode()
-    return
+// 开关 / 关闭参数 / 强度变化 → 同步预设协议代码
+watch(
+  () => [
+    formData.value.enableThinking,
+    formData.value.thinkingOffEnableThinkingFalse,
+    formData.value.thinkingOffThinkingTypeDisabled,
+    formData.value.thinkingOffResponsesEffort,
+    formData.value.thinkingEffort,
+    formData.value.apiProtocol,
+  ],
+  () => {
+    if (formData.value.apiProtocol !== 'custom') {
+      syncPresetJsCode()
+      return
+    }
+    if (readEnableThinkingFromJsCode(formData.value.jsCode) === null) return
+    const updated = applyEnableThinkingToJsCode(formData.value.jsCode, formData.value.enableThinking)
+    if (updated !== formData.value.jsCode) {
+      formData.value.jsCode = updated
+      nextTick(() => { if (cmView) setEditorDoc(updated) })
+    }
   }
-  if (readEnableThinkingFromJsCode(formData.value.jsCode) === null) return
-  const updated = applyEnableThinkingToJsCode(formData.value.jsCode, enabled)
-  if (updated !== formData.value.jsCode) {
-    formData.value.jsCode = updated
-    nextTick(() => { if (cmView) setEditorDoc(updated) })
+)
+
+// 刚开启思考时，若强度非法则落到默认 medium
+watch(() => formData.value.enableThinking, (enabled, wasEnabled) => {
+  if (enabled && !wasEnabled) {
+    formData.value.thinkingEffort = normalizeEffort(formData.value.thinkingEffort) || 'medium'
   }
 })
 
@@ -796,8 +969,9 @@ const setEditorDoc = (text: string) => {
 }
 
 onMounted(() => {
-  document.addEventListener('click', handleProtocolOutsideClick)
-  document.addEventListener('click', handleModelDropdownOutsideClick)
+  // 捕获阶段监听，确保点外部时可靠关闭（含 Teleport 到 body 的菜单）
+  document.addEventListener('mousedown', handleProtocolOutsideClick, true)
+  document.addEventListener('mousedown', handleModelDropdownOutsideClick, true)
   window.addEventListener('resize', handleProtocolViewportChange)
   window.addEventListener('resize', handleModelDropdownViewportChange)
   window.addEventListener('scroll', handleProtocolViewportChange, true)
@@ -822,8 +996,8 @@ onMounted(() => {
 
 onUnmounted(() => {
   clearModelDropdownBlurTimer()
-  document.removeEventListener('click', handleProtocolOutsideClick)
-  document.removeEventListener('click', handleModelDropdownOutsideClick)
+  document.removeEventListener('mousedown', handleProtocolOutsideClick, true)
+  document.removeEventListener('mousedown', handleModelDropdownOutsideClick, true)
   window.removeEventListener('resize', handleProtocolViewportChange)
   window.removeEventListener('resize', handleModelDropdownViewportChange)
   window.removeEventListener('scroll', handleProtocolViewportChange, true)
@@ -887,6 +1061,10 @@ const handleSubmit = () => {
     modelId: formData.value.modelId.trim(),
     jsCode: formData.value.apiProtocol === 'custom' ? formData.value.jsCode : buildCurrentPresetJsCode(),
     enableThinking: formData.value.enableThinking,
+    thinkingOffEnableThinkingFalse: formData.value.thinkingOffEnableThinkingFalse,
+    thinkingOffThinkingTypeDisabled: formData.value.thinkingOffThinkingTypeDisabled,
+    thinkingOffResponsesEffort: formData.value.thinkingOffResponsesEffort,
+    thinkingEffort: formData.value.thinkingEffort,
     apiProtocol: formData.value.apiProtocol
   }
 
@@ -901,6 +1079,26 @@ const handleSubmit = () => {
 
 <style>
 @import '../../../styles/dialog.css';
+
+/* Teleport 到 body 的下拉：用非 scoped，保证进出场动画生效 */
+.dropdown-pop-enter-active,
+.dropdown-pop-leave-active {
+  transition: opacity 0.16s ease, transform 0.16s ease;
+  transform-origin: top center;
+  will-change: opacity, transform;
+}
+
+.dropdown-pop-enter-from,
+.dropdown-pop-leave-to {
+  opacity: 0;
+  transform: translateY(-6px) scale(0.98);
+}
+
+.dropdown-pop-enter-to,
+.dropdown-pop-leave-from {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
 </style>
 
 <style scoped>
@@ -1083,13 +1281,44 @@ const handleSubmit = () => {
 }
 
 .qa-model-id-row {
+  position: relative;
   display: flex;
-  gap: 8px;
   align-items: center;
 }
 
 .qa-model-id-row .form-input {
   flex: 1;
+  width: 100%;
+}
+
+.qa-model-id-row .form-input.has-arrow {
+  padding-right: 40px;
+}
+
+.qa-model-id-arrow {
+  position: absolute;
+  top: 50%;
+  right: 12px;
+  transform: translateY(-50%);
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary, #718096);
+  cursor: pointer;
+  transition: transform 0.2s ease, color 0.2s ease;
+}
+
+.qa-model-id-arrow:hover {
+  color: var(--text-primary, #2d3748);
+}
+
+.qa-model-id-arrow.open {
+  transform: translateY(-50%) rotate(180deg);
 }
 
 .qa-dropdown {
@@ -1497,6 +1726,101 @@ const handleSubmit = () => {
 
 .switch-toggle input:checked + .switch-slider::before {
   transform: translateX(18px);
+}
+
+.thinking-options {
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: 10px;
+  background: var(--form-input-bg, #F7F7F7);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.thinking-options-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary, #718096);
+}
+
+.thinking-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-primary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.thinking-check input {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--color-primary, #667eea);
+  cursor: pointer;
+}
+
+.thinking-check-note {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-secondary, #718096);
+  white-space: nowrap;
+}
+
+.thinking-fixed-param {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.thinking-options-title code {
+  margin-left: 6px;
+  font-weight: 500;
+}
+
+.thinking-check code,
+.thinking-options .form-hint code,
+.thinking-options-title code,
+.thinking-fixed-param code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.thinking-effort-switch {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.thinking-effort-btn {
+  appearance: none;
+  border: 1px solid transparent;
+  background: var(--bg-secondary, #fff);
+  color: var(--text-secondary, #718096);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.thinking-effort-btn:hover {
+  color: var(--text-primary);
+  background: var(--form-input-hover-bg, #f0f0f0);
+}
+
+.thinking-effort-btn.active {
+  color: var(--color-primary, #667eea);
+  border-color: rgba(102, 126, 234, 0.35);
+  background: rgba(102, 126, 234, 0.1);
+  font-weight: 600;
 }
 
 </style>

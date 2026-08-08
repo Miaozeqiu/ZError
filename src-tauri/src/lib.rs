@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 // 模块声明
+pub mod app_activity;
 pub mod commands;
 pub mod database;
 pub mod logger;
@@ -50,7 +51,7 @@ fn show_main_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default()
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { .. } = event {
                 if window.label() == "main" {
@@ -64,7 +65,17 @@ pub fn run() {
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_clipboard_manager::init());
+
+    // updater / process 必须挂在 Builder 上（不要放进 setup），否则前端会报 plugin updater not found
+    #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
+    {
+        builder = builder
+            .plugin(tauri_plugin_updater::Builder::new().build())
+            .plugin(tauri_plugin_process::init());
+    }
+
+    builder
         .invoke_handler(tauri::generate_handler![
             greet,
             create_directory,
@@ -229,8 +240,6 @@ pub fn run() {
                 .items(&[&show, &quit])
                 .build()?;
 
-            let tray_icon_image = app.default_window_icon().cloned();
-
             let mut tray_builder = tauri::tray::TrayIconBuilder::new()
                 .menu(&menu)
                 .show_menu_on_left_click(false)
@@ -257,8 +266,26 @@ pub fn run() {
                     _ => {}
                 });
 
-            if let Some(img) = tray_icon_image {
-                tray_builder = tray_builder.icon(img);
+            // macOS 菜单栏用 Template 图（黑底镂空字），系统会按菜单栏着色为白/黑
+            #[cfg(target_os = "macos")]
+            {
+                match tauri::image::Image::from_bytes(include_bytes!("../icons/trayTemplate.png")) {
+                    Ok(img) => {
+                        tray_builder = tray_builder.icon(img).icon_as_template(true);
+                    }
+                    Err(err) => {
+                        eprintln!("⚠️ 托盘 Template 图标加载失败，回退默认图标: {err}");
+                        if let Some(img) = app.default_window_icon().cloned() {
+                            tray_builder = tray_builder.icon(img);
+                        }
+                    }
+                }
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                if let Some(img) = app.default_window_icon().cloned() {
+                    tray_builder = tray_builder.icon(img);
+                }
             }
 
             let _tray = tray_builder.build(app)?;

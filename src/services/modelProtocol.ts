@@ -28,14 +28,53 @@ export const readModelIdFromJsCode = (code?: string | null): string | null => {
 }
 
 export const resolveRuntimeModelId = (
-  model?: Partial<Pick<AIModel, 'id' | 'modelId' | 'jsCode'>>
+  model?: Partial<Pick<AIModel, 'id' | 'modelId'>>
 ): string => {
-  return model?.modelId?.trim() || readModelIdFromJsCode(model?.jsCode) || model?.id || ''
+  // 不再从 jsCode 解析；远程/预设协议只认 modelId，否则回退到 id
+  return model?.modelId?.trim() || model?.id || ''
+}
+
+export type ThinkingRuntimeOptions = {
+  enableThinking?: boolean
+  thinkingOffEnableThinkingFalse?: boolean
+  thinkingOffThinkingTypeDisabled?: boolean
+  thinkingOffResponsesEffort?: AIModel['thinkingOffResponsesEffort']
+  /** @deprecated */
+  thinkingOffEffortNone?: boolean
+  /** @deprecated */
+  thinkingOffReasoningEffortNone?: boolean
+  thinkingEffort?: AIModel['thinkingEffort']
+}
+
+const THINKING_EFFORTS: NonNullable<AIModel['thinkingEffort']>[] = ['low', 'medium', 'high', 'max']
+
+const normalizeOffResponsesEffort = (
+  options?: ThinkingRuntimeOptions
+): 'none' | 'minimal' => {
+  if (options?.thinkingOffResponsesEffort === 'none' || options?.thinkingOffResponsesEffort === 'minimal') {
+    return options.thinkingOffResponsesEffort
+  }
+  // 兼容旧布尔：勾选过则 minimal，否则仍默认 minimal
+  return 'minimal'
+}
+
+export const normalizeThinkingOptions = (options?: ThinkingRuntimeOptions) => {
+  const effort = options?.thinkingEffort
+  return {
+    enable: options?.enableThinking === true,
+    offEnableThinkingFalse: options?.thinkingOffEnableThinkingFalse !== false,
+    offThinkingTypeDisabled: options?.thinkingOffThinkingTypeDisabled === true,
+    offResponsesEffort: normalizeOffResponsesEffort(options),
+    effort: THINKING_EFFORTS.includes(effort as NonNullable<AIModel['thinkingEffort']>)
+      ? effort!
+      : 'medium'
+  }
 }
 
 const buildCommonHelpers = () => `
   const PRESET_MODEL_ID = __MODEL_ID__;
-  const ENABLE_THINKING = __ENABLE_THINKING__;
+  const THINKING = __THINKING__;
+  const ENABLE_THINKING = !!(THINKING && THINKING.enable);
 
   const pickFirstString = (...values) => {
     for (const value of values) {
@@ -45,6 +84,36 @@ const buildCommonHelpers = () => `
   };
 
   const normalizeBaseUrl = (baseUrl) => String(baseUrl || '').replace(/\\/+$/, '');
+
+  // Chat：关 → enable_thinking / thinking.type；开 → reasoning_effort
+  // Responses：关 → reasoning.effort none|minimal；开 → reasoning.effort
+  // apiKind: 'chat' | 'responses'
+  const applyOpenAIThinkingPayload = (payload, apiKind) => {
+    const kind = apiKind === 'responses' ? 'responses' : 'chat';
+    const effort = (THINKING && THINKING.effort) || 'medium';
+
+    if (kind === 'responses') {
+      if (ENABLE_THINKING) {
+        payload.reasoning = { effort: effort };
+      } else {
+        const offEffort = (THINKING && THINKING.offResponsesEffort) || 'minimal';
+        payload.reasoning = { effort: offEffort };
+      }
+      return;
+    }
+
+    // chat
+    if (ENABLE_THINKING) {
+      payload.reasoning_effort = effort;
+      return;
+    }
+    if (!THINKING || THINKING.offEnableThinkingFalse !== false) {
+      payload.enable_thinking = false;
+    }
+    if (THINKING && THINKING.offThinkingTypeDisabled) {
+      payload.thinking = { type: 'disabled' };
+    }
+  };
 
   const getRuntimeModelId = () => PRESET_MODEL_ID || config.modelId || input.model || config.model || '';
 
@@ -71,7 +140,18 @@ const buildCommonHelpers = () => `
     try {
       message = await response.text();
     } catch {}
-    throw new Error(message || ('HTTP ' + response.status));
+    const status = response.status || 0;
+    const statusText = response.statusText || '';
+    const body = (message || '').trim();
+    let detail = body;
+    try {
+      const parsed = JSON.parse(body);
+      detail = parsed.error?.message || parsed.message || parsed.error || body;
+      if (detail && typeof detail !== 'string') detail = JSON.stringify(detail);
+    } catch {}
+    throw new Error(
+      'HTTP ' + status + (statusText ? ' ' + statusText : '') + (detail ? ': ' + detail : '')
+    );
   };
 
   const parseJsonSafe = async (response) => {
@@ -368,14 +448,17 @@ const buildCommonHelpers = () => `
   };
 `
 
-const buildOpenAIChatTemplate = (modelId: string, enableThinking = false) => `
+const injectTemplateHelpers = (modelId: string, thinking: ReturnType<typeof normalizeThinkingOptions>) =>
+  buildCommonHelpers()
+    .replace('__MODEL_ID__', JSON.stringify(modelId))
+    .replace('__THINKING__', JSON.stringify(thinking))
+    .split('\n')
+    .map((line) => `  ${line}`)
+    .join('\n')
+
+const buildOpenAIChatTemplate = (modelId: string, thinking: ReturnType<typeof normalizeThinkingOptions>) => `
 async function processModel(input, config, fetch, abortSignal) {
-${buildCommonHelpers()
-  .replace('__MODEL_ID__', JSON.stringify(modelId))
-  .replace('__ENABLE_THINKING__', JSON.stringify(enableThinking))
-  .split('\n')
-  .map((line) => `  ${line}`)
-  .join('\n')}
+${injectTemplateHelpers(modelId, thinking)}
 
   const runtimeModelId = getRuntimeModelId();
   const payload = {
@@ -390,8 +473,7 @@ ${buildCommonHelpers()
   if (typeof config.temperature === 'number') payload.temperature = config.temperature;
   if (typeof config.topP === 'number') payload.top_p = config.topP;
   if (typeof config.maxTokens === 'number') payload.max_tokens = config.maxTokens;
-  // 显式写入，避免部分网关在缺省时仍开启思考
-  payload.enable_thinking = ENABLE_THINKING === true;
+  applyOpenAIThinkingPayload(payload, 'chat');
 
   const response = await fetch(normalizeBaseUrl(config.baseUrl) + '/v1/chat/completions', {
     method: 'POST',
@@ -415,14 +497,9 @@ ${buildCommonHelpers()
 }
 `.trim()
 
-const buildOpenAIResponsesTemplate = (modelId: string, enableThinking = false) => `
+const buildOpenAIResponsesTemplate = (modelId: string, thinking: ReturnType<typeof normalizeThinkingOptions>) => `
 async function processModel(input, config, fetch, abortSignal) {
-${buildCommonHelpers()
-  .replace('__MODEL_ID__', JSON.stringify(modelId))
-  .replace('__ENABLE_THINKING__', JSON.stringify(enableThinking))
-  .split('\n')
-  .map((line) => `  ${line}`)
-  .join('\n')}
+${injectTemplateHelpers(modelId, thinking)}
 
   const runtimeModelId = getRuntimeModelId();
   const payload = {
@@ -434,9 +511,7 @@ ${buildCommonHelpers()
   if (input.tools && input.tools.length) {
     payload.tools = input.tools.map(mapResponseTool).filter(Boolean);
   }
-  if (ENABLE_THINKING) {
-    payload.reasoning = { effort: 'medium' };
-  }
+  applyOpenAIThinkingPayload(payload, 'responses');
 
   const response = await fetch(normalizeBaseUrl(config.baseUrl) + '/v1/responses', {
     method: 'POST',
@@ -516,14 +591,9 @@ ${buildCommonHelpers()
 }
 `.trim()
 
-const buildAnthropicTemplate = (modelId: string, enableThinking = false) => `
+const buildAnthropicTemplate = (modelId: string, thinking: ReturnType<typeof normalizeThinkingOptions>) => `
 async function processModel(input, config, fetch, abortSignal) {
-${buildCommonHelpers()
-  .replace('__MODEL_ID__', JSON.stringify(modelId))
-  .replace('__ENABLE_THINKING__', JSON.stringify(enableThinking))
-  .split('\n')
-  .map((line) => `  ${line}`)
-  .join('\n')}
+${injectTemplateHelpers(modelId, thinking)}
 
   const runtimeModelId = getRuntimeModelId();
   const prepared = buildAnthropicMessages(input.messages || []);
@@ -542,7 +612,10 @@ ${buildCommonHelpers()
     payload.tools = input.tools.map(mapAnthropicTool).filter(Boolean);
   }
   if (ENABLE_THINKING) {
-    payload.thinking = { type: 'adaptive', display: 'summarized' };
+    const effort = (THINKING && THINKING.effort) || 'medium';
+    payload.reasoning = { effort: effort };
+  } else {
+    payload.thinking = { type: 'disabled' };
   }
 
   const response = await fetch(normalizeBaseUrl(config.baseUrl) + '/v1/messages', {
@@ -624,26 +697,30 @@ ${buildCommonHelpers()
 export const buildPresetProcessModelJsCode = (options: {
   protocol?: ApiProtocol
   modelId?: string
-  enableThinking?: boolean
-}): string => {
+} & ThinkingRuntimeOptions): string => {
   const protocol = normalizeApiProtocol(options.protocol)
   const modelId = options.modelId?.trim() || ''
-  const enableThinking = options.enableThinking === true
+  const thinking = normalizeThinkingOptions(options)
 
   switch (protocol) {
     case 'openai-response':
-      return buildOpenAIResponsesTemplate(modelId, enableThinking)
+      return buildOpenAIResponsesTemplate(modelId, thinking)
     case 'anthropic':
-      return buildAnthropicTemplate(modelId, enableThinking)
+      return buildAnthropicTemplate(modelId, thinking)
     case 'custom':
     case 'openai-chat':
     default:
-      return buildOpenAIChatTemplate(modelId, enableThinking)
+      return buildOpenAIChatTemplate(modelId, thinking)
   }
 }
 
 export const resolveExecutableModelJsCode = (
-  model?: Partial<Pick<AIModel, 'apiProtocol' | 'jsCode' | 'modelId' | 'id' | 'enableThinking'>>
+  model?: Partial<Pick<AIModel,
+    'apiProtocol' | 'jsCode' | 'modelId' | 'id' | 'enableThinking' |
+    'thinkingOffEnableThinkingFalse' | 'thinkingOffThinkingTypeDisabled' |
+    'thinkingOffResponsesEffort' | 'thinkingOffEffortNone' |
+    'thinkingOffReasoningEffortNone' | 'thinkingEffort'
+  >>
 ): string => {
   if (!model) return ''
 
@@ -655,6 +732,12 @@ export const resolveExecutableModelJsCode = (
   return buildPresetProcessModelJsCode({
     protocol,
     modelId: resolveRuntimeModelId(model),
-    enableThinking: model.enableThinking === true
+    enableThinking: model.enableThinking === true,
+    thinkingOffEnableThinkingFalse: model.thinkingOffEnableThinkingFalse,
+    thinkingOffThinkingTypeDisabled: model.thinkingOffThinkingTypeDisabled,
+    thinkingOffResponsesEffort: model.thinkingOffResponsesEffort,
+    thinkingOffEffortNone: model.thinkingOffEffortNone,
+    thinkingOffReasoningEffortNone: model.thinkingOffReasoningEffortNone,
+    thinkingEffort: model.thinkingEffort
   })
 }

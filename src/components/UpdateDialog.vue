@@ -33,6 +33,9 @@
             </ul>
           </div>
         </div>
+        <div v-if="downloadHint" class="download-hint">
+          将下载：<code>{{ downloadHint }}</code>
+        </div>
       </div>
 
       <div class="dialog-footer">
@@ -54,12 +57,16 @@
 import { computed } from 'vue'
 import type { VersionInfo } from '../services/versionCheck'
 import { VersionCheckService } from '../services/versionCheck'
-import { environmentDetector } from '../services/environmentDetector'
+import { resolveDownloadFileName, resolvePlatformDownloadUrl } from '../services/updateDownload'
 
 interface Props {
   visible: boolean
   versionInfo: VersionInfo | null
   currentVersion: string
+  /** 当前实际下载目标（原生 updater / 回退安装包） */
+  downloadFileName?: string
+  downloadUrl?: string
+  nativeUpdater?: boolean
 }
 
 interface Emits {
@@ -71,6 +78,18 @@ interface Emits {
 
 const props = defineProps<Props>()
 const emit = defineEmits<Emits>()
+
+const downloadHint = computed(() => {
+  if (props.downloadFileName) {
+    const kind = props.nativeUpdater
+      ? '原地更新包'
+      : (/\.dmg$/i.test(props.downloadFileName) ? 'Mac 安装映像' : '安装包')
+    return `${props.downloadFileName}（${kind}）`
+  }
+  const url = props.downloadUrl || (props.versionInfo ? resolvePlatformDownloadUrl(props.versionInfo) : '')
+  const name = resolveDownloadFileName(url, props.versionInfo?.version || '')
+  return name || ''
+})
 
 // 格式化更新日志
 const changelogItems = computed(() => {
@@ -119,47 +138,11 @@ const handleWeekLater = () => {
   emit('week-later')
 }
 
-// 处理立即下载
-const handleDownload = async () => {
-  console.log('立即下载按钮被点击')
-  
-  // 使用专门的环境检测服务
-  const isTauri = environmentDetector.isTauriEnvironment(true) // 启用日志
-  console.log('环境检测结果:', isTauri ? 'Tauri环境' : '浏览器环境')
-  
-  try {
-    if (isTauri) {
-      console.log('检测到 Tauri 环境，尝试使用 opener 插件')
-      try {
-        // 使用 Tauri 的 opener 插件打开外部链接
-        const { openUrl } = await import('@tauri-apps/plugin-opener')
-        console.log('成功导入 opener 插件，准备打开链接')
-        await openUrl('https://app.zerror.cc')
-        console.log('成功使用 opener 插件打开链接')
-      } catch (openerError) {
-        console.error('opener 插件失败:', openerError)
-        console.log('回退到 window.open 方法')
-        window.open('https://app.zerror.cc', '_blank')
-      }
-    } else {
-      console.log('浏览器环境，使用 window.open')
-      // 在浏览器环境中使用 window.open
-      window.open('https://app.zerror.cc', '_blank')
-    }
-    emit('close')
-  } catch (error) {
-    console.error('打开链接失败:', error)
-    console.log('最终回退到 window.open')
-    // 如果所有方法都失败，最后尝试 window.open
-    try {
-      window.open('https://app.zerror.cc', '_blank')
-    } catch (finalError) {
-      console.error('window.open 也失败了:', finalError)
-      alert('无法打开链接，请手动访问 https://app.zerror.cc')
-    }
-    emit('close')
-  }
+// 处理立即下载：交给上层自动下载到「下载」目录
+const handleDownload = () => {
+  emit('download', props.versionInfo?.downloadUrl || '')
 }
+
 </script>
 
 <style scoped>
@@ -281,6 +264,23 @@ const handleDownload = async () => {
 
 .changelog-section {
   margin-top: 16px;
+}
+
+.download-hint {
+  margin-top: 14px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--bg-secondary, rgba(127, 127, 127, 0.08));
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.45;
+  word-break: break-all;
+}
+
+.download-hint code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  color: var(--text-primary);
 }
 
 .changelog-title {

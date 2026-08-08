@@ -1109,9 +1109,12 @@ pub async fn delete_questions(ids: Vec<i64>) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
-pub async fn clear_folder_questions(id: i64) -> Result<(), String> {
-    let conn = get_conn()?;
+/// 收集某文件夹及其真实子树（排除 ParentId=自身 的自环，避免默认文件夹 Id=ParentId=0 死循环）
+fn collect_folder_subtree_ids(conn: &Connection, id: i64) -> Result<Vec<i64>, String> {
+    // 默认文件夹：ParentId=0 表示根，不是「自己的子文件夹」；只清自身
+    if id == 0 {
+        return Ok(vec![0]);
+    }
 
     let mut stmt = conn
         .prepare(
@@ -1120,6 +1123,7 @@ pub async fn clear_folder_questions(id: i64) -> Result<(), String> {
           UNION ALL
           SELECT f.Id FROM Folders f
           INNER JOIN folder_tree ft ON f.ParentId = ft.Id
+          WHERE f.Id != ft.Id AND f.Id != 0
         )
         SELECT Id FROM folder_tree",
         )
@@ -1133,6 +1137,17 @@ pub async fn clear_folder_questions(id: i64) -> Result<(), String> {
     for fid in folder_ids_iter {
         folder_ids.push(fid.map_err(|e| format!("{}", e))?);
     }
+
+    if folder_ids.is_empty() {
+        folder_ids.push(id);
+    }
+    Ok(folder_ids)
+}
+
+#[tauri::command]
+pub async fn clear_folder_questions(id: i64) -> Result<(), String> {
+    let conn = get_conn()?;
+    let folder_ids = collect_folder_subtree_ids(&conn, id)?;
 
     for fid in &folder_ids {
         conn.execute("DELETE FROM AIResponses WHERE FolderId = ?", [fid])
@@ -1146,26 +1161,11 @@ pub async fn clear_folder_questions(id: i64) -> Result<(), String> {
 pub async fn delete_folder(id: i64, delete_questions: bool) -> Result<(), String> {
     let conn = get_conn()?;
 
-    // 递归获取所有子文件夹 ID
-    let mut stmt = conn
-        .prepare(
-            "WITH RECURSIVE folder_tree AS (
-          SELECT Id FROM Folders WHERE Id = ?
-          UNION ALL
-          SELECT f.Id FROM Folders f
-          INNER JOIN folder_tree ft ON f.ParentId = ft.Id
-        )
-        SELECT Id FROM folder_tree",
-        )
-        .map_err(|e| format!("{}", e))?;
-
-    let folder_ids_iter = stmt
-        .query_map([id], |row| row.get::<_, i64>(0))
-        .map_err(|e| format!("{}", e))?;
-    let mut folder_ids = Vec::new();
-    for fid in folder_ids_iter {
-        folder_ids.push(fid.map_err(|e| format!("{}", e))?);
+    if id == 0 {
+        return Err("默认文件夹不能被删除".to_string());
     }
+
+    let folder_ids = collect_folder_subtree_ids(&conn, id)?;
 
     if delete_questions {
         // 删除所有这些文件夹中的题目

@@ -1,3 +1,4 @@
+use crate::app_activity::{begin_server_activity, end_server_activity};
 use crate::database::{
     get_ai_response_by_id, insert_ai_response, query_database_candidates, query_database_exact,
     set_question_pending_correction, QuestionMatch,
@@ -10,13 +11,56 @@ use futures_util::StreamExt;
 use regex::Regex;
 use serde_json::Value;
 use std::collections::HashMap;
-use tauri::{Emitter, State};
+use tauri::{AppHandle, Emitter, State};
 use tokio_stream::wrappers::BroadcastStream;
 use uuid;
 use warp::http::HeaderMap;
 use warp::Filter;
 
 const QUERY_TEST_PAGE_HTML: &str = include_str!("query_test_page.html");
+
+fn read_app_config() -> serde_json::Value {
+    let config_path = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("config.json");
+    std::fs::read_to_string(&config_path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+/// 是否将 AI 回答写入本地题库（读取 config.json 的 autoAddToQuestionBank）
+fn should_auto_add_to_question_bank() -> bool {
+    read_app_config()
+        .get("autoAddToQuestionBank")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true)
+}
+
+/// 从设置计算模型等待预算：(静默超时秒, 绝对上限秒)
+/// - inactivity：无新进度多久判超时（≈ 单次最长响应 + 余量）
+/// - absolute：整段等待硬上限（覆盖重试，且不受 keepalive 续命）
+fn model_wait_budget_secs(has_url: bool) -> (u64, u64) {
+    let cfg = read_app_config();
+    let timeout = cfg
+        .get("modelResponseTimeout")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(40)
+        .clamp(5, 600);
+    let retries = cfg
+        .get("modelRetryCount")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(2)
+        .min(10);
+    let inactivity = timeout.saturating_add(20).max(30);
+    let absolute = timeout
+        .saturating_mul(retries + 1)
+        .saturating_add(if has_url { 90 } else { 60 })
+        .max(inactivity);
+    (inactivity, absolute)
+}
 
 /// 验证管理员 token（从 Authorization: Bearer <token> 或直接值中提取）
 fn check_admin_token(auth: &Option<String>) -> bool {
@@ -34,15 +78,7 @@ fn check_admin_token(auth: &Option<String>) -> bool {
     if token.is_empty() {
         return false;
     }
-    let config_path = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join("config.json");
-    let config: serde_json::Value = std::fs::read_to_string(&config_path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default();
+    let config = read_app_config();
     let admin_token = config
         .get("adminToken")
         .and_then(|v| v.as_str())
@@ -137,10 +173,50 @@ impl QuestionKind {
 
     fn prompt_hint(&self) -> &'static str {
         match self {
-            QuestionKind::Single => "这是单选题,只有一个正确答案.请返回正确选项的完整文字内容,不要返回A/B/C/D等选项字母或序号.",
-            QuestionKind::Multiple => "这是多选题,可能有多个正确答案.请返回所有正确选项的完整文字内容,多个答案用\"###\"连接,不要返回A/B/C/D等选项字母.",
-            QuestionKind::Judgement => "这是判断题,请只回答正确或错误,不要添加任何其他文字或标点.",
-            QuestionKind::Completion => "这是填空题.如果有多空请用\"###\"连接每个空的答案,只有一个空则直接返回答案内容,不要加序号.",
+            QuestionKind::Single => {
+                "这是单选题，只有一个正确答案。answer 只能写正确选项的完整文字（与【选项】原文一致），禁止写 A/B/C/D，也禁止写成「B. 传动角」这种带字母前缀的形式，应直接写「传动角」。"
+            }
+            QuestionKind::Multiple => {
+                "这是多选题，可能有多个正确答案。answer 只写各正确选项的完整文字，用 ### 连接（顺序不限）。禁止写 ABD，禁止写「A. xxx###C. yyy」这种带字母前缀的形式。"
+            }
+            QuestionKind::Judgement => {
+                "这是判断题。answer 只能是「正确」或「错误」二字之一。禁止写 A/B，禁止写「A. 正确」。"
+            }
+            QuestionKind::Completion => {
+                "这是填空题。answer 只填空白处应填的内容本身；若有多个空，用 ### 连接。不要加第1空/①/A. 等序号前缀。"
+            }
+        }
+    }
+
+    /// 题型对应的典型对答示例（写入 prompt；前端也会以多轮对话注入）
+    fn few_shot_block(&self) -> &'static str {
+        match self {
+            QuestionKind::Single => {
+                "【作答示例】\n\
+题目：凸轮机构中从动件运动规律取决于（ ）。\n\
+选项：A. 压力角  B. 传动角  C. 极力夹角\n\
+正确输出：{\"answer\": \"传动角\"}\n\
+错误输出：{\"answer\": \"B. 传动角\"} 或 {\"answer\": \"B\"}\n"
+            }
+            QuestionKind::Multiple => {
+                "【作答示例】\n\
+题目：下列属于输入设备的有（ ）。\n\
+选项：A. 键盘  B. 显示器  C. 鼠标  D. 打印机\n\
+正确输出：{\"answer\": \"键盘###鼠标\"}\n\
+错误输出：{\"answer\": \"AC\"} 或 {\"answer\": \"A. 键盘###C. 鼠标\"}\n"
+            }
+            QuestionKind::Judgement => {
+                "【作答示例】\n\
+题目：地球绕太阳公转一周约为 365 天。\n\
+正确输出：{\"answer\": \"正确\"}\n\
+错误输出：{\"answer\": \"A\"} 或 {\"answer\": \"A. 正确\"}\n"
+            }
+            QuestionKind::Completion => {
+                "【作答示例】\n\
+题目：中国的首都是____，最大的城市是____。\n\
+正确输出：{\"answer\": \"北京###上海\"}\n\
+错误输出：{\"answer\": \"第1空：北京###第2空：上海\"}\n"
+            }
         }
     }
 }
@@ -179,17 +255,21 @@ fn build_model_query_prompt(
     query_type: Option<&str>,
 ) -> String {
     let mut q = String::from(
-        "你是一个专业的答题助手。我会给你一道题目，请先分别做两件事：\n"
+        "你是一个专业的答题助手。请按以下要求作答：\n"
     );
 
-    q.push_str("1. 仔细分析题目，理解题目在问什么，如果有选项则逐一分析每个选项是否正确。\n");
-    q.push_str("2. 输出最终答案，**只输出一个JSON对象**，不要加代码块标记，不要加任何其他文字。\n\n");
-    q.push_str("格式：{\"answer\": \"你的最终答案\"}\n\n");
+    q.push_str("1. 先在内部完成审题与推理（可简要），再给出最终答案。\n");
+    q.push_str("2. 最后一行输出**唯一**一个 JSON 对象，不要用 markdown 代码块包裹，JSON 前后不要附加说明。\n");
+    q.push_str("3. JSON 格式严格为：{\"answer\": \"最终答案\"}\n");
+    q.push_str("4. answer 只写答案正文本身：选择题必须与【选项】中去掉「A.」「B.」后的文字完全一致；判断题只写「正确」或「错误」；填空题只写填空内容。\n");
+    q.push_str("5. 严禁把选项字母写进 answer：不要写 A/B/C/D，不要写「B. 传动角」「D. meeting」，应直接写「传动角」「meeting」。不要把分析过程写进 answer。\n\n");
 
     if let Some(raw_type) = query_type.map(str::trim).filter(|value| !value.is_empty()) {
         if let Some(kind) = detect_question_kind(raw_type) {
             q.push_str(&format!("【题目类型：{}题】\n", kind.chinese_name()));
             q.push_str(&format!("提示：{}\n", kind.prompt_hint()));
+            q.push_str(kind.few_shot_block());
+            q.push('\n');
         } else {
             q.push_str(&format!("【题目类型字段：{}】\n", raw_type));
         }
@@ -201,7 +281,7 @@ fn build_model_query_prompt(
         q.push_str(&format!("【选项】\n{}\n", options));
     }
 
-    q.push_str("\n请先分析，再输出答案JSON：");
+    q.push_str("\n请作答，并在最后输出答案 JSON：");
 
     q
 }
@@ -281,25 +361,46 @@ fn build_normal_model_query(request: &QueryRequest, has_url: bool) -> String {
     }
 }
 
+fn emit_model_call_request(app: Option<&AppHandle>, request_id: &str, query: &str) {
+    if let Some(app) = app {
+        let payload = serde_json::json!({
+            "request_id": request_id,
+            "query": query,
+        });
+        if let Err(e) = app.emit("model-call-request", payload) {
+            println!("⚠️ emit model-call-request failed: {}", e);
+        } else {
+            println!("📣 Emitted model-call-request via Tauri event");
+        }
+    }
+}
+
 async fn wait_and_store_ai_answer(
     logger: &crate::logger::RequestLogger,
+    app: Option<&AppHandle>,
     request: &QueryRequest,
     request_id: &str,
     request_origin: &str,
     has_url: bool,
 ) -> (u16, QueryResponse) {
     let formatted_query = build_normal_model_query(request, has_url);
-    logger.send_model_call_request(request_id.to_string(), formatted_query);
+    logger.send_model_call_request(request_id.to_string(), formatted_query.clone());
+    emit_model_call_request(app, request_id, &formatted_query);
 
-    let wait_secs = if has_url { 120 } else { 60 };
+    // 覆盖前端超时 × 重试；absolute 防止 keepalive 无限续命
+    let (inactivity_secs, absolute_secs) = model_wait_budget_secs(has_url);
+    println!(
+        "⏳ model wait budget: inactivity={}s absolute={}s (has_url={})",
+        inactivity_secs, absolute_secs, has_url
+    );
     match logger
-        .wait_for_model_response(request_id.to_string(), wait_secs)
+        .wait_for_model_response(request_id.to_string(), inactivity_secs, absolute_secs)
         .await
     {
         Ok(model_content) => {
             println!("✅ Received model response: {}", model_content);
-            if let Some(err_msg) = is_model_error(&model_content) {
-                return (500, QueryResponse::error(err_msg));
+            if let Some((status, err_msg)) = classify_model_failure(&model_content) {
+                return (status, QueryResponse::error(err_msg));
             }
 
             let mut extracted_answer = extract_answer_from_json(&model_content);
@@ -308,9 +409,24 @@ async fn wait_and_store_ai_answer(
                 println!("⚠️ 检测到题目不完整,将答案留空");
             }
             extracted_answer = extracted_answer.trim().to_string();
+            // 去掉 A./B. 前缀，纯字母映射为选项正文，避免返回/入库带序号的答案
+            let before_norm = extracted_answer.clone();
+            extracted_answer = normalize_answer_against_options(
+                &extracted_answer,
+                request.options.as_deref(),
+            );
+            if extracted_answer != before_norm {
+                println!(
+                    "🔧 答案已规范化: [{}] → [{}]",
+                    before_norm, extracted_answer
+                );
+            }
 
             let inserted_id = if extracted_answer.is_empty() {
                 println!("⚠️ AI最终处理结果答案为空,跳过保存题目");
+                0
+            } else if !should_auto_add_to_question_bank() {
+                println!("ℹ️ autoAddToQuestionBank=false，跳过将 AI 回答写入本地题库");
                 0
             } else {
                 match insert_ai_response(
@@ -353,6 +469,7 @@ async fn wait_and_store_ai_answer(
 
 async fn resolve_query_with_same_question_check(
     logger: &crate::logger::RequestLogger,
+    app: Option<&AppHandle>,
     request: &QueryRequest,
     request_id: &str,
     request_origin: &str,
@@ -371,11 +488,15 @@ async fn resolve_query_with_same_question_check(
             let data_list: Vec<QueryData> = exact_hits
                 .into_iter()
                 .map(|m| {
+                    let answer = normalize_answer_against_options(
+                        &m.answer,
+                        request.options.as_deref(),
+                    );
                     build_query_data(
                         request_origin,
                         m.id,
                         &m.question,
-                        m.answer,
+                        answer,
                         m.is_ai,
                         m.is_pending_correction,
                     )
@@ -420,37 +541,52 @@ async fn resolve_query_with_same_question_check(
         );
         let check_prompt =
             build_same_question_check_prompt(&request.title, request.options.as_deref(), &candidates);
-        logger.send_model_call_request(request_id.to_string(), check_prompt);
+        logger.send_model_call_request(request_id.to_string(), check_prompt.clone());
+        emit_model_call_request(app, request_id, &check_prompt);
 
         match logger
-            .wait_for_model_response(request_id.to_string(), 30)
+            .wait_for_model_response(request_id.to_string(), 30, 45)
             .await
         {
             Ok(judge_content) => {
                 println!("✅ 同题判断结果: {}", judge_content);
                 if let Some(matched_id) = parse_same_question_result(&judge_content) {
                     if let Some(matched) = candidates.iter().find(|c| c.id == matched_id).cloned() {
-                        let answer = matched.answer.clone();
-                        let inserted_id = match insert_ai_response(
-                            &request.title,
-                            &answer,
-                            request.options.clone(),
-                            request.query_type.clone(),
-                            matched.is_ai,
-                        ) {
-                            Ok(id) => {
-                                println!("✅ 同题变体已入库, matched_id={}, new_id={}", matched_id, id);
-                                id
+                        let answer = normalize_answer_against_options(
+                            &matched.answer,
+                            request.options.as_deref(),
+                        );
+                        let response_id = if should_auto_add_to_question_bank() {
+                            match insert_ai_response(
+                                &request.title,
+                                &answer,
+                                request.options.clone(),
+                                request.query_type.clone(),
+                                matched.is_ai,
+                            ) {
+                                Ok(id) => {
+                                    println!(
+                                        "✅ 同题变体已入库, matched_id={}, new_id={}",
+                                        matched_id, id
+                                    );
+                                    id
+                                }
+                                Err(e) => {
+                                    println!("❌ 同题变体入库失败: {}，仍返回已有答案", e);
+                                    matched.id
+                                }
                             }
-                            Err(e) => {
-                                println!("❌ 同题变体入库失败: {}，仍返回已有答案", e);
-                                matched.id
-                            }
+                        } else {
+                            println!(
+                                "ℹ️ autoAddToQuestionBank=false，同题命中不入库，直接返回 matched_id={}",
+                                matched_id
+                            );
+                            matched.id
                         };
 
                         let data = build_query_data(
                             request_origin,
-                            inserted_id,
+                            response_id,
                             &request.title,
                             answer,
                             matched.is_ai,
@@ -461,20 +597,27 @@ async fn resolve_query_with_same_question_check(
 
                     // matched_id 不在候选中，尝试按 id 查库
                     if let Ok(matched) = get_ai_response_by_id(matched_id) {
-                        let answer = matched.answer.clone();
-                        let inserted_id = match insert_ai_response(
-                            &request.title,
-                            &answer,
-                            request.options.clone(),
-                            request.query_type.clone(),
-                            matched.is_ai,
-                        ) {
-                            Ok(id) => id,
-                            Err(_) => matched.id,
+                        let answer = normalize_answer_against_options(
+                            &matched.answer,
+                            request.options.as_deref(),
+                        );
+                        let response_id = if should_auto_add_to_question_bank() {
+                            match insert_ai_response(
+                                &request.title,
+                                &answer,
+                                request.options.clone(),
+                                request.query_type.clone(),
+                                matched.is_ai,
+                            ) {
+                                Ok(id) => id,
+                                Err(_) => matched.id,
+                            }
+                        } else {
+                            matched.id
                         };
                         let data = build_query_data(
                             request_origin,
-                            inserted_id,
+                            response_id,
                             &request.title,
                             answer,
                             matched.is_ai,
@@ -500,7 +643,7 @@ async fn resolve_query_with_same_question_check(
     }
 
     // 3) 正常 AI 答题
-    wait_and_store_ai_answer(logger, request, request_id, request_origin, has_url).await
+    wait_and_store_ai_answer(logger, app, request, request_id, request_origin, has_url).await
 }
 
 /// 启动HTTP服务器
@@ -594,6 +737,7 @@ pub async fn start_server(
 
     // 数据库查询路由 - 带有详细日志记录
     let logger_for_query = state.logger.clone();
+    let app_for_query = state.app_handle.clone();
 
     // POST 请求处理
     let query_post_route = warp::path("query")
@@ -602,6 +746,7 @@ pub async fn start_server(
         .and(warp::body::json())
         .and_then(move |headers: HeaderMap, request: QueryRequest| {
             let logger = logger_for_query.clone();
+            let app = app_for_query.clone();
             async move {
                 let start_time = std::time::Instant::now();
                 let request_body = serde_json::to_string(&request).unwrap_or_default();
@@ -640,39 +785,70 @@ pub async fn start_server(
 
                 let request_origin = resolve_request_origin(&headers);
 
-                let result = resolve_query_with_same_question_check(
-                    &logger,
-                    &request,
-                    &request_id,
-                    &request_origin,
-                )
-                .await;
+                // 独立任务执行：请求端断开时仍会写完 completed 日志，避免 UI 一直「处理中」
+                let logger_task = logger.clone();
+                let app_task = app.clone();
+                let request_task = request;
+                let request_id_task = request_id.clone();
+                let request_origin_task = request_origin;
+                let join = tokio::spawn(async move {
+                    let result = resolve_query_with_same_question_check(
+                        &logger_task,
+                        app_task.as_ref(),
+                        &request_task,
+                        &request_id_task,
+                        &request_origin_task,
+                    )
+                    .await;
+                    let response_time = start_time.elapsed().as_millis() as u64;
+                    let response_body = serde_json::to_string(&result.1).unwrap_or_default();
+                    if let Some(app) = app_task.as_ref() {
+                        let _ = app.emit(
+                            "request-log-complete",
+                            serde_json::json!({
+                                "id": request_id_task,
+                                "status": result.0,
+                                "response_time": response_time,
+                                "stage": "completed",
+                                "path": "/query",
+                                "method": "POST",
+                                "response_body": response_body,
+                            }),
+                        );
+                    }
+                    logger_task.log_request_complete(
+                        request_id_task,
+                        "POST".to_string(),
+                        "/query".to_string(),
+                        result.0,
+                        response_time,
+                        Some(serde_json::to_string(&result.1).unwrap_or_default()),
+                    );
+                    result
+                });
 
-                let response_time = start_time.elapsed().as_millis() as u64;
-                let response_body = serde_json::to_string(&result.1).unwrap_or_default();
-                
-                // 记录请求完成
-                logger.log_request_complete(
-                    request_id,
-                    "POST".to_string(),
-                    "/query".to_string(),
-                    result.0,
-                    response_time,
-                    Some(response_body),
-                );
-
-                Ok::<_, warp::Rejection>(warp::reply::json(&result.1))
+                match join.await {
+                    Ok(result) => Ok::<_, warp::Rejection>(warp::reply::json(&result.1)),
+                    Err(e) => {
+                        eprintln!("❌ /query POST task join error: {}", e);
+                        Ok(warp::reply::json(&QueryResponse::error(
+                            "Internal query task failed".to_string(),
+                        )))
+                    }
+                }
             }
         });
 
     // GET 请求处理
     let logger_for_query_get = state.logger.clone();
+    let app_for_query_get = state.app_handle.clone();
     let query_get_route = warp::path("query")
         .and(warp::get())
         .and(warp::header::headers_cloned())
         .and(warp::query::<HashMap<String, String>>())
         .and_then(move |headers: HeaderMap, params: HashMap<String, String>| {
             let logger = logger_for_query_get.clone();
+            let app = app_for_query_get.clone();
             async move {
                 let start_time = std::time::Instant::now();
                 
@@ -723,28 +899,56 @@ pub async fn start_server(
 
                 let request_origin = resolve_request_origin(&headers);
 
-                let result = resolve_query_with_same_question_check(
-                    &logger,
-                    &request,
-                    &request_id,
-                    &request_origin,
-                )
-                .await;
+                let logger_task = logger.clone();
+                let app_task = app.clone();
+                let request_task = request;
+                let request_id_task = request_id.clone();
+                let request_origin_task = request_origin;
+                let join = tokio::spawn(async move {
+                    let result = resolve_query_with_same_question_check(
+                        &logger_task,
+                        app_task.as_ref(),
+                        &request_task,
+                        &request_id_task,
+                        &request_origin_task,
+                    )
+                    .await;
+                    let response_time = start_time.elapsed().as_millis() as u64;
+                    let response_body = serde_json::to_string(&result.1).unwrap_or_default();
+                    if let Some(app) = app_task.as_ref() {
+                        let _ = app.emit(
+                            "request-log-complete",
+                            serde_json::json!({
+                                "id": request_id_task,
+                                "status": result.0,
+                                "response_time": response_time,
+                                "stage": "completed",
+                                "path": "/query",
+                                "method": "GET",
+                                "response_body": response_body,
+                            }),
+                        );
+                    }
+                    logger_task.log_request_complete(
+                        request_id_task,
+                        "GET".to_string(),
+                        "/query".to_string(),
+                        result.0,
+                        response_time,
+                        Some(serde_json::to_string(&result.1).unwrap_or_default()),
+                    );
+                    result
+                });
 
-                let response_time = start_time.elapsed().as_millis() as u64;
-                let response_body = serde_json::to_string(&result.1).unwrap_or_default();
-                
-                // 记录请求完成
-                logger.log_request_complete(
-                    request_id,
-                    "GET".to_string(),
-                    "/query".to_string(),
-                    result.0,
-                    response_time,
-                    Some(response_body),
-                );
-
-                Ok::<_, warp::Rejection>(warp::reply::json(&result.1))
+                match join.await {
+                    Ok(result) => Ok::<_, warp::Rejection>(warp::reply::json(&result.1)),
+                    Err(e) => {
+                        eprintln!("❌ /query GET task join error: {}", e);
+                        Ok(warp::reply::json(&QueryResponse::error(
+                            "Internal query task failed".to_string(),
+                        )))
+                    }
+                }
             }
         });
 
@@ -1088,6 +1292,8 @@ pub async fn start_server(
     // 存储服务器句柄
     *state.handle.lock() = Some(server_handle);
 
+    begin_server_activity();
+
     Ok(result)
 }
 
@@ -1112,6 +1318,8 @@ pub async fn stop_server(state: State<'_, ServerState>) -> Result<ServerInfo, St
     if let Some(handle) = state.handle.lock().take() {
         handle.abort();
     }
+
+    end_server_activity();
 
     // 更新状态
     let result = {
@@ -1164,6 +1372,143 @@ async fn store_ai_response_to_database(request_id: &str, content: &str) -> Resul
     // 如果将来需要支持异步回调存储,需要实现通过 request_id 查找原始 title 的机制.
 
     Ok(())
+}
+
+/// 从选项文本解析 A/B/C → 选项正文
+fn parse_option_letter_map(options: Option<&str>) -> HashMap<char, String> {
+    let mut map = HashMap::new();
+    let Some(options) = options.map(str::trim).filter(|s| !s.is_empty()) else {
+        return map;
+    };
+    let Ok(re) = Regex::new(r"^([A-Za-z])([\.、．\)])\s*(.+)$") else {
+        return map;
+    };
+    for raw in options.replace("\r\n", "\n").lines() {
+        let line = raw.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if let Some(caps) = re.captures(line) {
+            let letter = caps
+                .get(1)
+                .and_then(|m| m.as_str().chars().next())
+                .map(|c| c.to_ascii_uppercase());
+            let sep = caps.get(2).map(|m| m.as_str()).unwrap_or("");
+            let text = caps.get(3).map(|m| m.as_str().trim()).unwrap_or("");
+            // 避免把正文「C、H、O、N…」误当成选项标号行
+            if sep == "、"
+                && text
+                    .chars()
+                    .next()
+                    .map(|c| c.is_ascii_alphabetic())
+                    .unwrap_or(false)
+                && text.chars().nth(1) == Some('、')
+            {
+                continue;
+            }
+            if let (Some(letter), true) = (letter, !text.is_empty()) {
+                map.insert(letter, text.to_string());
+            }
+        }
+    }
+    map
+}
+
+/// 去掉行首选项字母前缀：`B. 传动角` → `传动角`
+/// 有选项表时，仅当去前缀后能对应到某选项正文才剥离。
+fn strip_leading_option_label(text: &str, map: &HashMap<char, String>) -> String {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+
+    let patterns: [(&str, bool); 2] = [
+        (r"^([A-Za-z])([\.、．\)])\s+(.+)$", false),
+        (r"^([A-Za-z])([\.、．\)])(.+)$", true),
+    ];
+
+    for (pat, tight) in patterns {
+        let Ok(re) = Regex::new(pat) else {
+            continue;
+        };
+        let Some(caps) = re.captures(trimmed) else {
+            continue;
+        };
+        let Some(letter) = caps
+            .get(1)
+            .and_then(|m| m.as_str().chars().next())
+            .map(|c| c.to_ascii_uppercase())
+        else {
+            continue;
+        };
+        let sep = caps.get(2).map(|m| m.as_str()).unwrap_or("");
+        let rest = caps.get(3).map(|m| m.as_str().trim()).unwrap_or("");
+        if rest.is_empty() {
+            continue;
+        }
+        // 无空格且剩余全是字母：留给纯字母映射
+        if tight && rest.chars().all(|c| c.is_ascii_alphabetic()) && rest.len() <= 8 {
+            continue;
+        }
+        if map.is_empty() {
+            if sep == "、" {
+                continue;
+            }
+            return rest.to_string();
+        }
+        if map.get(&letter).map(|s| s.as_str()) == Some(rest) {
+            return rest.to_string();
+        }
+        if map.values().any(|v| v == rest) {
+            return rest.to_string();
+        }
+    }
+    trimmed.to_string()
+}
+
+/// 将模型/题库答案规范为选项正文（去字母前缀，纯字母映射）
+fn normalize_answer_against_options(answer: &str, options: Option<&str>) -> String {
+    let raw = answer.trim();
+    if raw.is_empty() {
+        return String::new();
+    }
+
+    let map = parse_option_letter_map(options);
+    let parts: Vec<&str> = if raw.contains("###") {
+        raw.split("###").collect()
+    } else {
+        vec![raw]
+    };
+
+    let mut normalized: Vec<String> = Vec::new();
+    for part in parts {
+        let mut p = strip_leading_option_label(part.trim(), &map);
+        if p.is_empty() {
+            continue;
+        }
+
+        let compact: String = p.chars().filter(|c| !c.is_whitespace()).collect();
+        if !map.is_empty()
+            && !compact.is_empty()
+            && compact.chars().all(|c| c.is_ascii_alphabetic())
+            && compact.len() <= 8
+        {
+            let letters: Vec<char> = compact.chars().map(|c| c.to_ascii_uppercase()).collect();
+            let texts: Vec<String> = letters
+                .iter()
+                .filter_map(|ch| map.get(ch).cloned())
+                .collect();
+            if texts.len() == letters.len() && !texts.is_empty() {
+                p = texts.join("###");
+            }
+        }
+        normalized.push(p);
+    }
+
+    if normalized.len() == 1 && normalized[0].contains("###") && !raw.contains("###") {
+        return normalized[0].clone();
+    }
+    normalized.join("###")
 }
 
 /// 从JSON响应中提取answer字段
@@ -1288,6 +1633,29 @@ fn extract_answer_from_json(json_content: &str) -> String {
     json_content.to_string()
 }
 
+fn is_timeout_like_model_failure(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    lower.contains("timeout")
+        || lower.contains("超时")
+        || lower.contains("no new tokens")
+        || lower.contains("aborted")
+        || lower.contains("abort")
+        || lower.contains("cancelled")
+        || lower.contains("canceled")
+        || lower.contains("取消")
+        || lower.contains("服务已停止")
+}
+
+/// 将模型失败文本映射为 RequestLog 状态码：超时类 → 408，其它 → 500
+fn classify_model_failure(text: &str) -> Option<(u16, String)> {
+    let err = is_model_error(text)?;
+    if is_timeout_like_model_failure(&err) || is_timeout_like_model_failure(text) {
+        Some((408, err))
+    } else {
+        Some((500, err))
+    }
+}
+
 fn is_model_error(text: &str) -> Option<String> {
     let mut cleaned = text.trim().to_string();
     if cleaned.starts_with("```json") {
@@ -1304,7 +1672,12 @@ fn is_model_error(text: &str) -> Option<String> {
         return Some(cleaned);
     }
 
-    if cleaned.starts_with("错误:") || cleaned.starts_with("Error:") || cleaned.starts_with("API 错误") {
+    // 兼容半角/全角冒号
+    if cleaned.starts_with("错误:")
+        || cleaned.starts_with("错误：")
+        || cleaned.starts_with("Error:")
+        || cleaned.starts_with("API 错误")
+    {
         return Some(cleaned);
     }
 

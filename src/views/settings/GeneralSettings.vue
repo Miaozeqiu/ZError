@@ -66,7 +66,7 @@
     <div class="setting-item">
       <div class="setting-info">
         <h3 class="setting-title">AI回答添加到本地题库</h3>
-        <p class="setting-description">(该设置暂时无效，ai返回的答案总是会保存)</p>
+        <p class="setting-description">开启后，AI 新答出的题目会写入本地题库；关闭则只返回答案，不入库。</p>
       </div>
       <div class="setting-control">
         <Toggle v-model="settings.autoAddToQuestionBank" variant="default" size="medium"
@@ -81,7 +81,7 @@
 
       <div class="setting-info">
         <h3 class="setting-title">模型最长响应时间</h3>
-        <p class="setting-description">AI 模型单次响应的超时限制（秒）。超过此时间将停止等待并返回已生成的内容。默认 40 秒。</p>
+        <p class="setting-description">AI 模型单次请求超时（秒）。超时后中止该次调用并可按「失败自动重试次数」重试；整题最长等待 ≈ 本值 × (1+重试) + 缓冲。默认 40 秒。</p>
       </div>
       <div class="setting-control timeout-control">
         <input
@@ -94,6 +94,24 @@
           @change="handleSettingChange('modelResponseTimeout', Number(($event.target as HTMLInputElement).value))"
         />
         <span class="timeout-unit">秒</span>
+      </div>
+    </div>
+    <div class="setting-item">
+      <div class="setting-info">
+        <h3 class="setting-title">失败自动重试次数</h3>
+        <p class="setting-description">仅在「只有一个基础模型」、总结模型失败、或视觉模型调用失败时自动重试。0 表示不重试，默认 2 次。</p>
+      </div>
+      <div class="setting-control timeout-control">
+        <input
+          type="number"
+          class="form-input"
+          :value="settings.modelRetryCount ?? 2"
+          min="0"
+          max="10"
+          step="1"
+          @change="handleSettingChange('modelRetryCount', Math.max(0, Math.min(10, Number(($event.target as HTMLInputElement).value) || 0)))"
+        />
+        <span class="timeout-unit">次</span>
       </div>
     </div>
     </div>

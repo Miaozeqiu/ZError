@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:build": "tauri build",
+    "tauri:build:signed": "TAURI_SIGNING_PRIVATE_KEY=\"$PWD/src-tauri/keys/zerror.key\" TAURI_SIGNING_PRIVATE_KEY_PASSWORD=\"\" tauri build"
   },
   "dependencies": {
     "@codemirror/lang-javascript": "^6.2.4",
@@ -25,7 +26,9 @@
     "@tauri-apps/plugin-fs": "^2.4.2",
     "@tauri-apps/plugin-http": "^2.5.2",
     "@tauri-apps/plugin-opener": "^2",
+    "@tauri-apps/plugin-process": "^2.3.1",
     "@tauri-apps/plugin-sql": "^2.3.0",
+    "@tauri-apps/plugin-updater": "^2.10.1",
     "@vueuse/integrations": "^14.0.0",
     "acorn": "^8.15.0",
     "docx": "^9.5.1",

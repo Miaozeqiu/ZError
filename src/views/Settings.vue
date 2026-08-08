@@ -103,7 +103,7 @@ const handleOpenModelSettings = () => {
 // 创建响应式的本地设置变量
 const localSettings = ref({
   theme: settings.value.theme,
-  autoAddToQuestionBank: settings.value.autoAddToQuestionBank || false,
+  autoAddToQuestionBank: settings.value.autoAddToQuestionBank ?? true,
   network: {
     serverPort: settings.value.network?.serverPort || 3000,
     enableLanAccess: settings.value.network?.enableLanAccess || false,
@@ -115,7 +115,7 @@ const localSettings = ref({
 const syncLocalSettings = () => {
   localSettings.value = {
     theme: settings.value.theme,
-    autoAddToQuestionBank: settings.value.autoAddToQuestionBank || false,
+    autoAddToQuestionBank: settings.value.autoAddToQuestionBank ?? true,
     network: {
       serverPort: settings.value.network?.serverPort || 3000,
       enableLanAccess: settings.value.network?.enableLanAccess || false,
