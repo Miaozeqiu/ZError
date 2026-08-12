@@ -32,7 +32,7 @@ jobs:
         uses: oven-sh/setup-bun@v2
 
       - name: Install frontend dependencies
-        run: bun install --frozen-lockfile
+        run: bun install
 
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version "^2"
