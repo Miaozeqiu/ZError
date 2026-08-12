@@ -37,6 +37,19 @@ jobs:
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version "^2"
 
+      - name: Disable updater artifacts if no signing key
+        if: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY == '' }}
+        run: |
+          echo "No signing key found, disabling updater artifacts"
+          python3 -c "
+import json
+with open('src-tauri/tauri.conf.json') as f:
+    cfg = json.load(f)
+cfg.setdefault('bundle', {})['createUpdaterArtifacts'] = False
+with open('src-tauri/tauri.conf.json', 'w') as f:
+    json.dump(cfg, f, indent=2)
+"
+
       - name: Build Tauri app (${{ matrix.arch }})
         run: cargo tauri build --target ${{ matrix.target }}
         env:
