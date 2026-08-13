@@ -46,6 +46,45 @@ pub fn can_native_updater_install() -> bool {
     }
 }
 
+/// 清除 macOS 隔离属性。未公证的 adhoc 签名 App 带 quarantine 时，系统会误报「已损坏」。
+/// 若 path 为 .dmg 且内容实际是 gzip（.app.tar.gz 误命名），则返回错误，避免打开时报「已损坏」。
+#[tauri::command]
+pub fn clear_macos_quarantine(path: String) -> Result<(), String> {
+    if path.trim().is_empty() {
+        return Err("path 为空".into());
+    }
+
+    if path.to_lowercase().ends_with(".dmg") {
+        let mut file = File::open(&path).map_err(|e| format!("无法打开文件: {e}"))?;
+        let mut magic = [0u8; 2];
+        use std::io::Read;
+        file.read_exact(&mut magic)
+            .map_err(|e| format!("无法读取文件头: {e}"))?;
+        if magic == [0x1f, 0x8b] {
+            return Err(
+                "下载到的不是 DMG（实际是 .tar.gz 更新包）。请使用应用内更新，或更换为真正的 .dmg 下载地址。"
+                    .into(),
+            );
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let status = Command::new("xattr")
+            .args(["-cr", &path])
+            .status()
+            .map_err(|e| format!("xattr 执行失败: {e}"))?;
+        if !status.success() {
+            return Err(format!("xattr 退出码: {:?}", status.code()));
+        }
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(())
+    }
+}
+
 #[tauri::command]
 pub fn segment_text(text: String) -> Vec<String> {
     let jieba = JIEBA.get_or_init(Jieba::new);

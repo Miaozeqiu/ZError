@@ -129,6 +129,16 @@ export async function openDownloadedUpdate(filePath: string) {
     window.open(filePath, '_blank')
     return
   }
+
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    await invoke('clear_macos_quarantine', { path: filePath })
+  } catch (e: any) {
+    const msg = String(e?.message || e || '')
+    if (msg.includes('不是 DMG') || msg.includes('tar.gz')) throw e
+    /* 非 mac / 无权限时忽略 */
+  }
+
   const { openPath } = await import('@tauri-apps/plugin-opener')
   await openPath(filePath)
 }

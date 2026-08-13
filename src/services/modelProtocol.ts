@@ -618,14 +618,19 @@ ${injectTemplateHelpers(modelId, thinking)}
     payload.thinking = { type: 'disabled' };
   }
 
-  const response = await fetch(normalizeBaseUrl(config.baseUrl) + '/v1/messages', {
+  const requestInit = {
     method: 'POST',
     headers: buildHeaders({
       'anthropic-version': '2023-06-01'
     }),
     body: JSON.stringify(payload),
     signal: abortSignal
-  });
+  };
+  const base = normalizeBaseUrl(config.baseUrl);
+  let response = await fetch(base + '/v1/messages', requestInit);
+  if (response.status === 404) {
+    response = await fetch(base + '/anthropic/v1/messages', requestInit);
+  }
 
   await ensureOk(response);
 

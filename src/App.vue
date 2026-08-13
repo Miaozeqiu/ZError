@@ -390,12 +390,10 @@ onUnmounted(() => {
       
       <!-- 内容区域 -->
       <div class="content-area">
-        <!-- 首页 -->
         <div v-show="activeTab === 'home'" class="content-view">
           <Home :collapse-trigger="collapseTrigger" @navigate="handleNavigate" />
         </div>
-        
-        <!-- 题库页面 -->
+
         <div v-show="activeTab === 'questions'" class="content-view">
           <QuestionBank
             :collapse-trigger="collapseTrigger"
@@ -403,8 +401,7 @@ onUnmounted(() => {
             :focus-folder-request-key="questionBankFocusRequestKey"
           />
         </div>
-        
-        <!-- 设置页面 -->
+
         <div v-show="activeTab === 'settings'" class="content-view">
           <Settings @open-question-folder="handleOpenQuestionFolder" />
         </div>
@@ -531,6 +528,38 @@ body {
 .content-view > * {
   width: 100%;
   height: 100%;
+}
+
+.page-switch-enter-active,
+.page-switch-leave-active {
+  transition:
+    opacity 360ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    transform 360ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.page-switch-enter-active {
+  z-index: 1;
+}
+
+.page-switch-leave-active {
+  z-index: 0;
+  pointer-events: none;
+}
+
+.page-switch-enter-from {
+  opacity: 0;
+  transform: translateY(12px);
+}
+
+.page-switch-leave-to {
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page-switch-enter-active,
+  .page-switch-leave-active {
+    transition: none;
+  }
 }
 
 

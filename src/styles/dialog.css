@@ -557,6 +557,38 @@
   to { opacity: 1; }
 }
 
+/* Vue Transition：用 keyframes 进出场（WebKit 里 animation fill 会锁住 transition） */
+.dialog-overlay.dialog-overlay--vue,
+.dialog-overlay.dialog-overlay--vue .dialog-panel {
+  animation: none;
+}
+
+.dialog-overlay.dialog-overlay--vue.dialog-fade-enter-active {
+  animation: overlay-fade-in 180ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+.dialog-overlay.dialog-overlay--vue.dialog-fade-leave-active {
+  animation: overlay-fade-in 180ms cubic-bezier(0.2, 0.7, 0.2, 1) reverse both;
+  pointer-events: none;
+}
+
+.dialog-overlay.dialog-overlay--vue.dialog-fade-enter-active .dialog-panel {
+  animation: popup-in 180ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+.dialog-overlay.dialog-overlay--vue.dialog-fade-leave-active .dialog-panel {
+  animation: popup-in 180ms cubic-bezier(0.2, 0.7, 0.2, 1) reverse both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dialog-overlay.dialog-overlay--vue.dialog-fade-enter-active,
+  .dialog-overlay.dialog-overlay--vue.dialog-fade-leave-active,
+  .dialog-overlay.dialog-overlay--vue.dialog-fade-enter-active .dialog-panel,
+  .dialog-overlay.dialog-overlay--vue.dialog-fade-leave-active .dialog-panel {
+    animation: none;
+  }
+}
+
 @keyframes picker-expand {
   from {
     opacity: 0;

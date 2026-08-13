@@ -29,7 +29,6 @@ export type ThinkingOffResponsesEffort = 'none' | 'minimal'
 export interface AIModel {
   id: string
   modelId?: string
-  name: string
   displayName: string
   platformId: string
   maxTokens: number
@@ -275,11 +274,16 @@ const sanitizeStoredPlatforms = (platforms: AIPlatform[]): AIPlatform[] => {
           return isLikelyUserCreatedModel(model, platform.id)
         })
         .map(model => {
+          const legacy = model as AIModel & { name?: string }
+          const displayName = (legacy.displayName || legacy.name || legacy.id || '').trim() || legacy.id
           const nextModel: AIModel = {
             ...model,
+            displayName,
             platformId: preferredPlatform.id,
             isRemote: model.isRemote === true,
           }
+          // 废弃模型 name 字段
+          delete (nextModel as AIModel & { name?: string }).name
           // 远程模型不再保留 jsCode
           if (nextModel.isRemote) {
             delete nextModel.jsCode
@@ -450,12 +454,12 @@ class ModelConfigManager {
         if (typeof model.enableThinking === 'boolean') continue
 
         const id = (model.id || '').toLowerCase()
-        const name = ((model.name || '') + (model.displayName || '')).toLowerCase()
+        const label = (model.displayName || '').toLowerCase()
         const isKnownThinking =
-          id.includes('reasoner') || name.includes('reasoner') ||
-          id.includes('-r1') || name.includes('-r1') ||
-          id.includes('thinking') || name.includes('thinking') ||
-          id.includes('deepseek-r1') || name.includes('deepseek r1') ||
+          id.includes('reasoner') || label.includes('reasoner') ||
+          id.includes('-r1') || label.includes('-r1') ||
+          id.includes('thinking') || label.includes('thinking') ||
+          id.includes('deepseek-r1') || label.includes('deepseek r1') ||
           id.startsWith('o1') || id.startsWith('o3')
         if (isKnownThinking) {
           model.enableThinking = true
@@ -632,7 +636,7 @@ class ModelConfigManager {
         // 自动检测思考模型：根据模型名称/ID 包含关键词时默认开启思考
         const runtimeModelId = (rm.modelId || rm.id || '').toLowerCase()
         const modelIdLower = (rm.id || '').toLowerCase()
-        const modelNameLower = (rm.name || '').toLowerCase() + (rm.displayName || '').toLowerCase()
+        const modelNameLower = (rm.displayName || (rm as { name?: string }).name || '').toLowerCase()
         const thinkingProbe = `${runtimeModelId} ${modelIdLower} ${modelNameLower}`
         const isKnownThinkingModel =
           thinkingProbe.includes('reasoner') ||
@@ -648,7 +652,14 @@ class ModelConfigManager {
         const existingModel = existingPlatforms.flatMap(p => p.models || []).find(m => m.id === rm.id)
         // 远程不再下发/使用 jsCode、pricing；调用只认 modelId（或 id）+ 协议预设
         // 协议与思考配置由管理员锁定：每次同步强制采用远程值（缺省才回退 heuristic / 默认）
-        const { jsCode: _ignoredRemoteJsCode, pricing: _ignoredRemotePricing, ...remoteModelFields } = rm as AIModel & { pricing?: unknown }
+        const {
+          jsCode: _ignoredRemoteJsCode,
+          pricing: _ignoredRemotePricing,
+          name: _ignoredRemoteName,
+          icon: _ignoredRemoteIcon,
+          description: _ignoredRemoteDescription,
+          ...remoteModelFields
+        } = rm as AIModel & { pricing?: unknown; name?: string }
         const remoteProtocolRaw = normalizeApiProtocol(rm.apiProtocol)
         const remoteProtocol = remoteProtocolRaw === 'custom' ? 'openai-chat' : remoteProtocolRaw
         return {
@@ -656,12 +667,9 @@ class ModelConfigManager {
           platformId: rp.id,
           isRemote: true,
           jsCode: undefined,
-          name: rm.name || existingModel?.name || rm.id,
-          displayName: rm.displayName || existingModel?.displayName || rm.name || rm.id,
+          displayName: rm.displayName || existingModel?.displayName || (rm as { name?: string }).name || rm.id,
           modelId: rm.modelId?.trim() || rm.id,
           apiProtocol: remoteProtocol,
-          // 图标由管理员在远程目录设置；未设则留空，客户端走 model_icon_mappings
-          icon: typeof rm.icon === 'string' && rm.icon.trim() ? rm.icon.trim() : undefined,
           enabled: rm.enabled ?? true,
           maxTokens: rm.maxTokens ?? 4096,
           temperature: rm.temperature ?? 0.7,
@@ -1137,7 +1145,7 @@ class ModelConfigManager {
       throw new Error('平台不存在')
     }
 
-    const modelId = `${platformId}_${model.name}_${Date.now()}`
+    const modelId = `${platformId}_${model.displayName || 'model'}_${Date.now()}`
     const newModel: AIModel = {
       ...model,
       id: modelId,

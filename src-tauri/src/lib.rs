@@ -13,7 +13,7 @@ pub mod window_size;
 use crate::window_size::{resolve_window_size, MAIN_WINDOW_PRESET};
 pub use commands::open_text_window;
 pub use commands::{
-    can_native_updater_install, clear_request_logs, convert_doc_to_docx, create_directory,
+    can_native_updater_install, clear_macos_quarantine, clear_request_logs, convert_doc_to_docx, create_directory,
     fetch_image_as_base64, file_exists, get_daily_request_counts, get_request_logs, get_username,
     greet, open_cache_dir, open_devtools, open_url_content_window, read_config, read_doc_range,
     read_docx_range, read_excel_headers, read_excel_range, read_file_bytes, read_file_range,
@@ -239,6 +239,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             greet,
             can_native_updater_install,
+            clear_macos_quarantine,
             create_directory,
             file_exists,
             get_username,

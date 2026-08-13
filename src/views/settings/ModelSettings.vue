@@ -149,7 +149,17 @@
         <div class="detail-section">
           <h4 class="subsection-title">API 配置</h4>
           <div class="form-group">
-            <label class="form-label">API Key</label>
+            <div class="form-label-row">
+              <label class="form-label">API Key</label>
+              <a
+                href="https://docs.zerror.cc/get-apiKey"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="api-doc-link"
+              >
+                如何获取Api Key?
+              </a>
+            </div>
             <div class="input-group">
               <div class="input-with-suffix">
                 <input 
@@ -191,16 +201,6 @@
                   </svg>
                 </button>
               </div>
-            </div>
-            <div class="form-tip">
-              <a 
-                href="https://docs.zerror.cc/get-apiKey" 
-                target="_blank" 
-                rel="noopener noreferrer" 
-                class="api-doc-link"
-              >
-                如何获取Api Key?
-              </a>
             </div>
           </div>
           <div class="form-group">
@@ -253,7 +253,7 @@
             >
               <div class="model-icon-wrap">
                 <img v-if="getModelIcon(model)" :src="getModelIcon(model)" :alt="model.displayName" class="model-icon-img" />
-                <div v-else class="model-icon-fallback">{{ (model.displayName || model.name).charAt(0).toUpperCase() }}</div>
+                <div v-else class="model-icon-fallback">{{ (model.displayName || model.id).charAt(0).toUpperCase() }}</div>
               </div>
               <div class="model-info">
                 <div class="model-header">
@@ -330,6 +330,7 @@
       :platform-base-url="selectedPlatform?.baseUrl"
       :platform-api-key="selectedPlatform?.apiKey"
       @close="closeModelDialog"
+      @after-leave="onModelConfigAfterLeave"
       @save="saveModel"
     />
 
@@ -1030,7 +1031,7 @@ const getModelIcon = (model: AIModel): string => {
     return resolveModelIconUrl(model.icon)
   }
 
-  const searchStr = `${model.displayName || ''} ${model.name || ''}`.toLowerCase()
+  const searchStr = `${model.displayName || ''} ${model.id || ''}`.toLowerCase()
   const matchedMapping = remoteModelIconMappings.value.find(mapping =>
     mapping.models.some(keyword => searchStr.includes(keyword.toLowerCase()))
   )
@@ -1093,7 +1094,7 @@ const handleEditModel = () => {
 const handleTestModel = async (payload?: { testFunctionCalling: boolean }) => {
   if (contextMenuModel.value) {
     modelToTest.value = contextMenuModel.value
-    testDialogModelName.value = contextMenuModel.value.name
+    testDialogModelName.value = contextMenuModel.value.displayName || contextMenuModel.value.id
     showTestDialog.value = true
     testingModelId.value = null // 不自动开始测试，等待用户点击
     currentTestResult.value = null
@@ -1115,7 +1116,7 @@ const handleStartTest = async ({ testFunctionCalling }: { testFunctionCalling: b
 
 const handleDeleteModel = async () => {
   if (contextMenuModel.value && !contextMenuModel.value.isRemote) {
-    deleteModelName.value = contextMenuModel.value.displayName || contextMenuModel.value.name
+    deleteModelName.value = contextMenuModel.value.displayName || contextMenuModel.value.id
     deleteModelId.value = contextMenuModel.value.id
     showDeleteModelDialog.value = true
   }
@@ -1207,7 +1208,12 @@ const editModel = (model: AIModel) => {
 
 const closeModelDialog = () => {
   showModelConfigDialog.value = false
-  editingModel.value = null
+}
+
+const onModelConfigAfterLeave = () => {
+  if (!showModelConfigDialog.value) {
+    editingModel.value = null
+  }
 }
 
 const saveModel = async (modelData: Partial<AIModel>) => {
@@ -1240,7 +1246,6 @@ const saveModel = async (modelData: Partial<AIModel>) => {
     } else {
       // 使用 addModelToPlatform 自动生成 ID 并保存
       const newModelData = {
-        name: modelData.displayName || '新模型',
         displayName: modelData.displayName || '新模型',
         maxTokens: 4096,
         temperature: 0.7,
@@ -1875,11 +1880,22 @@ onUnmounted(() => {
 }
 
 .sidebar-header {
+  position: relative;
   padding: 8px 10px;
-  border-bottom: 1px solid var(--border-primary, #e2e8f0);
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+
+.sidebar-header::after {
+  content: '';
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 0;
+  height: 1px;
+  background: color-mix(in srgb, var(--border-primary, #e2e8f0) 42%, transparent);
+  transform: scaleY(0.5);
 }
 
 .sidebar-title {
@@ -2157,14 +2173,28 @@ onUnmounted(() => {
 }
 
 .detail-section {
+  position: relative;
   margin-bottom: 18px;
-  border-bottom: 1px solid var(--border-primary);
+}
+
+.detail-section::after {
+  content: '';
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 0;
+  height: 1px;
+  background: color-mix(in srgb, var(--border-primary, #e2e8f0) 42%, transparent);
+  transform: scaleY(0.5);
 }
 
 .detail-section:last-child {
   margin-bottom: 0;
   padding-bottom: 0;
-  border-bottom: none;
+}
+
+.detail-section:last-child::after {
+  display: none;
 }
 
 .section-header {
@@ -2281,6 +2311,18 @@ onUnmounted(() => {
   margin-bottom: 4px;
 }
 
+.form-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.form-label-row .form-label {
+  margin-bottom: 0;
+}
+
 .form-input {
   box-sizing: border-box;
   width: 100%;
@@ -2305,18 +2347,16 @@ onUnmounted(() => {
   box-shadow: none;
 }
 
-.form-tip {
-  margin-top: 6px;
-}
-
 .api-doc-link {
   font-size: 12px;
   color: var(--text-accent, #3182ce);
   text-decoration: none;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .api-doc-link:hover {
-  color: var(--text-accent-hover, #ffbf84);
+  color: var(--color-primary-hover, #0056b3);
 }
 
 .input-group {

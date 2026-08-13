@@ -1,6 +1,7 @@
 <template>
-  <div v-if="show" class="dialog-overlay" @click="handleOverlayClick">
-    <div class="dialog-panel model-config-panel" :class="{ 'model-config-panel--compact': !showAdvancedCode }" @click.stop>
+  <Transition name="dialog-fade" :duration="180" @after-leave="onDialogAfterLeave">
+    <div v-if="show" key="model-config-dialog" class="dialog-overlay dialog-overlay--vue" @click="handleOverlayClick">
+      <div class="dialog-panel model-config-panel" :class="{ 'model-config-panel--compact': !showAdvancedCode }" @click.stop>
       <div class="dialog-header">
         <button class="btn-back" type="button" @click="$emit('close')" title="取消">
           <svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" width="18" height="18">
@@ -8,9 +9,23 @@
           </svg>
         </button>
         <span class="dialog-title">{{ dialogTitle }}</span>
-        <button class="btn-confirm" type="button" :disabled="isRemote ? false : !isFormValid" @click="handlePrimaryAction">
-          {{ isRemote ? '关闭' : (isEditing ? '完成' : '完成') }}
-        </button>
+        <div class="dialog-header-actions">
+          <button
+            type="button"
+            class="model-test-card"
+            :class="modelTestCardClass"
+            :disabled="isTestingModel || !canTestModel"
+            :title="modelTestTooltip"
+            @click="testModelAvailability"
+          >
+            <span v-if="isTestingModel" class="model-test-spinner" aria-hidden="true" />
+            <span class="model-test-title">{{ modelTestTitle }}</span>
+            <span v-if="modelTestMeta" class="model-test-meta">{{ modelTestMeta }}</span>
+          </button>
+          <button class="btn-confirm" type="button" :disabled="isRemote ? false : !isFormValid" @click="handlePrimaryAction">
+            {{ isRemote ? '关闭' : '完成' }}
+          </button>
+        </div>
       </div>
       <div class="dialog-body">
         <div class="split-container" :class="{ 'split-container--compact': !showAdvancedCode }">
@@ -89,7 +104,7 @@
             </Teleport>
 
             <div class="form-group">
-              <label class="form-label">名称</label>
+              <label class="form-label">显示名</label>
               <input
                 v-model="formData.displayName"
                 type="text"
@@ -219,16 +234,57 @@
                   <code v-if="isChatProtocol">reasoning_effort</code>
                   <code v-else>reasoning.effort</code>
                 </p>
-                <div class="thinking-effort-switch">
-                  <button
-                    v-for="opt in thinkingEffortOptions"
-                    :key="opt.value"
-                    type="button"
-                    class="thinking-effort-btn"
-                    :class="{ active: formData.thinkingEffort === opt.value }"
-                    :disabled="isRemote"
-                    @click="!isRemote && (formData.thinkingEffort = opt.value)"
-                  >{{ opt.label }}</button>
+                <div
+                  class="thinking-effort-slider"
+                  :class="{ 'is-max': isMaxEffort, 'is-dragging': isDraggingEffort, disabled: isRemote }"
+                >
+                  <div
+                    ref="effortBarRef"
+                    class="thinking-effort-bar"
+                    role="slider"
+                    :aria-valuemin="0"
+                    :aria-valuemax="effortMaxIndex"
+                    :aria-valuenow="effortIndex"
+                    aria-label="思考强度"
+                    :aria-disabled="isRemote"
+                    :tabindex="isRemote ? -1 : 0"
+                    @pointerdown="onEffortPointerDown"
+                    @pointermove="onEffortPointerMove"
+                    @pointerup="onEffortPointerUp"
+                    @pointercancel="onEffortPointerUp"
+                    @keydown="onEffortKeydown"
+                  >
+                    <div class="thinking-effort-fill" :style="{ width: effortFillWidth }">
+                      <canvas
+                        v-if="isMaxEffort"
+                        class="thinking-effort-matrix"
+                        aria-hidden="true"
+                        :ref="bindEffortMatrix"
+                      />
+                    </div>
+                    <div class="thinking-effort-dots" aria-hidden="true">
+                      <span
+                        v-for="(opt, index) in thinkingEffortOptions"
+                        v-show="index > 0 && index < thinkingEffortOptions.length - 1"
+                        :key="opt.value"
+                        class="thinking-effort-dot"
+                        :class="{ passed: effortSlide >= index }"
+                        :style="{ left: effortStopLeft(index) }"
+                      />
+                    </div>
+                    <div class="thinking-effort-thumb" :style="{ left: effortThumbLeft }" />
+                  </div>
+                  <div class="thinking-effort-labels">
+                    <button
+                      v-for="(opt, index) in thinkingEffortOptions"
+                      :key="opt.value"
+                      type="button"
+                      class="thinking-effort-label"
+                      :class="{ active: formData.thinkingEffort === opt.value }"
+                      :disabled="isRemote"
+                      @click="!isRemote && (formData.thinkingEffort = opt.value)"
+                    >{{ opt.label }}</button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -237,7 +293,8 @@
         </div>
       </div>
     </div>
-  </div>
+    </div>
+  </Transition>
 </template>
 
 <script setup lang="ts">
@@ -250,7 +307,7 @@ import { oneDark } from '@codemirror/theme-one-dark'
 import { linter, lintGutter } from '@codemirror/lint'
 import * as acorn from 'acorn'
 import { type AIModel, type ThinkingEffort, type ThinkingOffResponsesEffort } from '../../../services/modelConfig'
-import { buildPresetProcessModelJsCode, normalizeApiProtocol, readModelIdFromJsCode } from '../../../services/modelProtocol'
+import { buildPresetProcessModelJsCode, normalizeApiProtocol, readModelIdFromJsCode, resolveExecutableModelJsCode } from '../../../services/modelProtocol'
 import { useExclusiveMenu } from '../../../composables/useExclusiveMenu'
 import ModelCategorySwitch from './ModelCategorySwitch.vue'
 
@@ -260,6 +317,188 @@ const thinkingEffortOptions: { value: ThinkingEffort; label: string }[] = [
   { value: 'high', label: 'high' },
   { value: 'max', label: 'max' },
 ]
+
+type EffortMatrixPulse = {
+  c: number
+  r: number
+  peak: number
+  steps: number
+  fadeRate: number
+  maxSteps: number
+  skipChance: number
+  stepEvery: number
+  stepAcc: number
+}
+
+let effortMatrixRaf = 0
+let effortMatrixStop: (() => void) | null = null
+let effortMatrixIo: IntersectionObserver | null = null
+let effortMatrixRo: ResizeObserver | null = null
+
+const stopEffortMatrixFx = () => {
+  effortMatrixStop?.()
+  effortMatrixStop = null
+  if (effortMatrixRaf) {
+    cancelAnimationFrame(effortMatrixRaf)
+    effortMatrixRaf = 0
+  }
+  effortMatrixIo?.disconnect()
+  effortMatrixRo?.disconnect()
+  effortMatrixIo = null
+  effortMatrixRo = null
+}
+
+const startEffortMatrixFx = (canvas: HTMLCanvasElement) => {
+  stopEffortMatrixFx()
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return
+
+  const CELL = 4
+  const GAP = 1
+  const STEP = CELL + GAP
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+
+  let width = 0
+  let height = 0
+  let cols = 0
+  let rows = 0
+  let offsetX = 0
+  let offsetY = 0
+  let visible = true
+  let running = true
+  let last = performance.now()
+  let bright = new Float32Array(0)
+  const pulses: EffortMatrixPulse[] = []
+  let spawnWait = 0
+
+  const idx = (c: number, r: number) => r * cols + c
+
+  const rebuild = () => {
+    const cssW = canvas.clientWidth || canvas.parentElement?.clientWidth || 0
+    const cssH = canvas.clientHeight || canvas.parentElement?.clientHeight || 0
+    if (cssW < 2 || cssH < 2) return
+    const dpr = Math.min(window.devicePixelRatio || 1, 2)
+    width = cssW
+    height = cssH
+    canvas.width = Math.round(width * dpr)
+    canvas.height = Math.round(height * dpr)
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    cols = Math.max(1, Math.floor((width + GAP) / STEP))
+    rows = Math.max(1, Math.floor((height + GAP) / STEP))
+    offsetX = (width - (cols * STEP - GAP)) / 2
+    offsetY = (height - (rows * STEP - GAP)) / 2
+    bright = new Float32Array(cols * rows)
+    pulses.length = 0
+  }
+
+  const draw = (now: number) => {
+    if (!running) return
+    effortMatrixRaf = requestAnimationFrame(draw)
+    if (!visible || document.hidden) {
+      last = now
+      return
+    }
+    if (width < 2) rebuild()
+    if (width < 2) return
+
+    const dt = Math.min(0.05, (now - last) / 1000)
+    last = now
+
+    if (!reduceMotion) {
+      spawnWait -= dt
+      while (spawnWait <= 0) {
+        const r = (Math.random() * rows) | 0
+        pulses.push({
+          c: cols - 1,
+          r,
+          peak: 0.95 + Math.random() * 0.4,
+          steps: 0,
+          fadeRate: 0.7 + Math.random() * 0.9,
+          maxSteps: Math.floor(cols * (0.45 + Math.random() * 0.6)),
+          skipChance: Math.random() * 0.18,
+          stepEvery: 0.05 + Math.random() * 0.05,
+          stepAcc: 0
+        })
+        const bi = idx(cols - 1, r)
+        bright[bi] = Math.max(bright[bi], 1.2)
+        spawnWait += 0.012 + Math.random() * 0.02
+      }
+
+      for (let p = pulses.length - 1; p >= 0; p--) {
+        const pulse = pulses[p]
+        pulse.stepAcc += dt
+        while (pulse.stepAcc >= pulse.stepEvery) {
+          pulse.stepAcc -= pulse.stepEvery
+          if (Math.random() < pulse.skipChance) {
+            pulse.c -= 1
+            pulse.steps += 1
+          }
+          pulse.c -= 1
+          pulse.steps += 1
+          if (pulse.c < 0 || pulse.steps >= pulse.maxSteps) {
+            pulses.splice(p, 1)
+            break
+          }
+          const fade = Math.max(0, 1 - (pulse.steps / pulse.maxSteps) * pulse.fadeRate)
+          const endJitter = pulse.steps > pulse.maxSteps * 0.55
+            ? 0.5 + Math.random() * 0.5
+            : 0.85 + Math.random() * 0.2
+          const g = pulse.peak * fade * endJitter
+          if (g < 0.08 && Math.random() < 0.45) {
+            pulses.splice(p, 1)
+            break
+          }
+          const bi = idx(pulse.c, pulse.r)
+          bright[bi] = Math.max(bright[bi], g)
+        }
+      }
+    }
+
+    for (let i = 0; i < bright.length; i++) {
+      const decay = 0.1 + (i % 7) * 0.012 + Math.random() * 0.08
+      bright[i] *= Math.pow(decay, dt)
+      if (bright[i] < 0.01) bright[i] = 0
+    }
+
+    ctx.clearRect(0, 0, width, height)
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const g = bright[idx(c, r)]
+        if (g < 0.04) continue
+        const x = offsetX + c * STEP
+        const y = offsetY + r * STEP
+        if (g > 0.35) {
+          ctx.globalAlpha = Math.min(0.9, (g - 0.25) * 0.85)
+          ctx.fillStyle = '#ffd56a'
+          ctx.fillRect(x - 0.5, y - 0.5, CELL + 1, CELL + 1)
+        }
+        ctx.globalAlpha = Math.min(1, g)
+        ctx.fillStyle = g > 0.75 ? '#ffffff' : '#fff3cc'
+        ctx.fillRect(x, y, CELL, CELL)
+      }
+    }
+    ctx.globalAlpha = 1
+  }
+
+  const io = new IntersectionObserver(([entry]) => {
+    visible = !!entry?.isIntersecting
+    if (visible) last = performance.now()
+  }, { threshold: 0 })
+  io.observe(canvas)
+  const ro = new ResizeObserver(() => rebuild())
+  ro.observe(canvas.parentElement || canvas)
+
+  rebuild()
+  effortMatrixIo = io
+  effortMatrixRo = ro
+  effortMatrixStop = () => { running = false }
+  effortMatrixRaf = requestAnimationFrame(draw)
+}
+
+const bindEffortMatrix = (el: Element | null) => {
+  if (el instanceof HTMLCanvasElement) startEffortMatrixFx(el)
+  else stopEffortMatrixFx()
+}
 
 interface Props {
   show: boolean
@@ -271,6 +510,7 @@ interface Props {
 interface Emits {
   (e: 'close'): void
   (e: 'save', model: Partial<AIModel>): void
+  (e: 'afterLeave'): void
 }
 
 const props = defineProps<Props>()
@@ -318,6 +558,105 @@ const formData = ref({
 
 const isEditing = computed(() => !!props.model)
 const isRemote = computed(() => !!props.model?.isRemote)
+const effortMaxIndex = thinkingEffortOptions.length - 1
+const EFFORT_THUMB_PX = 28
+const effortBarRef = ref<HTMLElement | null>(null)
+const effortSlide = ref(1)
+const isDraggingEffort = ref(false)
+const effortIndex = computed(() => {
+  const index = thinkingEffortOptions.findIndex(opt => opt.value === formData.value.thinkingEffort)
+  return index >= 0 ? index : 1
+})
+const isMaxEffort = computed(() => !isDraggingEffort.value && formData.value.thinkingEffort === 'max')
+const effortThumbOffset = (t: number) => {
+  const clamped = Math.min(1, Math.max(0, t))
+  return `calc(${clamped} * (100% - ${EFFORT_THUMB_PX}px) + ${EFFORT_THUMB_PX / 2}px)`
+}
+const effortFillWidth = computed(() => {
+  const t = Math.min(1, Math.max(0, effortSlide.value / effortMaxIndex))
+  return `calc(${t} * (100% - ${EFFORT_THUMB_PX}px) + ${EFFORT_THUMB_PX}px)`
+})
+const effortStopLeft = (index: number) => effortThumbOffset(index / effortMaxIndex)
+const effortThumbLeft = computed(() => effortThumbOffset(effortSlide.value / effortMaxIndex))
+const snapEffortValue = (raw: number) => {
+  const index = Math.min(effortMaxIndex, Math.max(0, Math.round(raw)))
+  effortSlide.value = index
+  const next = thinkingEffortOptions[index]
+  if (next) formData.value.thinkingEffort = next.value
+}
+const applyEffortMagnet = (raw: number) => {
+  const magnets = [1, 2]
+  const radius = 0.42
+  let nearest = -1
+  let nearestDist = radius
+  for (const stop of magnets) {
+    const dist = Math.abs(raw - stop)
+    if (dist < nearestDist) {
+      nearest = stop
+      nearestDist = dist
+    }
+  }
+  if (nearest < 0) return raw
+  const u = (raw - nearest) / radius
+  const sticky = Math.sign(u) * (Math.abs(u) ** 2.4)
+  return nearest + sticky * radius
+}
+const slideEffortFromClientX = (clientX: number) => {
+  const bar = effortBarRef.value
+  if (!bar) return
+  const rect = bar.getBoundingClientRect()
+  const usable = Math.max(1, rect.width - EFFORT_THUMB_PX)
+  const t = (clientX - rect.left - EFFORT_THUMB_PX / 2) / usable
+  const linear = Math.min(effortMaxIndex, Math.max(0, t * effortMaxIndex))
+  effortSlide.value = applyEffortMagnet(linear)
+}
+const suppressEffortSelectStart = (event: Event) => {
+  event.preventDefault()
+}
+const lockEffortTextSelect = (locked: boolean) => {
+  const root = document.documentElement
+  root.style.userSelect = locked ? 'none' : ''
+  root.style.webkitUserSelect = locked ? 'none' : ''
+  if (locked) {
+    window.getSelection()?.removeAllRanges()
+    document.addEventListener('selectstart', suppressEffortSelectStart, true)
+  } else {
+    document.removeEventListener('selectstart', suppressEffortSelectStart, true)
+  }
+}
+const onEffortPointerDown = (event: PointerEvent) => {
+  if (isRemote.value || event.button !== 0) return
+  event.preventDefault()
+  isDraggingEffort.value = true
+  lockEffortTextSelect(true)
+  ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
+  slideEffortFromClientX(event.clientX)
+}
+const onEffortPointerMove = (event: PointerEvent) => {
+  if (!isDraggingEffort.value) return
+  event.preventDefault()
+  slideEffortFromClientX(event.clientX)
+}
+const onEffortPointerUp = () => {
+  if (!isDraggingEffort.value) return
+  snapEffortValue(effortSlide.value)
+  isDraggingEffort.value = false
+  lockEffortTextSelect(false)
+}
+const onEffortKeydown = (event: KeyboardEvent) => {
+  if (isRemote.value) return
+  if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') {
+    event.preventDefault()
+    snapEffortValue(effortIndex.value - 1)
+  } else if (event.key === 'ArrowRight' || event.key === 'ArrowUp') {
+    event.preventDefault()
+    snapEffortValue(effortIndex.value + 1)
+  }
+}
+watch(() => formData.value.thinkingEffort, () => {
+  if (isDraggingEffort.value) return
+  effortSlide.value = effortIndex.value
+}, { immediate: true })
 const dialogTitle = computed(() => {
   if (isRemote.value) return '查看模型'
   return isEditing.value ? '编辑模型' : '添加模型'
@@ -729,6 +1068,7 @@ const createDialogFormData = (model?: AIModel | null) => {
 
 // 监听模型变化，更新表单数据
 watch(() => props.model, (newModel) => {
+  if (!props.show) return
   if (newModel) {
     formData.value = createDialogFormData(newModel)
     // 若编辑器已存在，确保文档与最新模型代码同步
@@ -883,10 +1223,21 @@ watch(showAdvancedCode, async (visible) => {
   await rebuildEditorWithDoc(formData.value.jsCode)
 })
 
+watch(
+  () => [formData.value.modelId, formData.value.apiProtocol, props.platformBaseUrl],
+  () => {
+    if (isTestingModel.value) return
+    modelTestStatus.value = 'idle'
+    modelTestMessage.value = ''
+    modelTestElapsedMs.value = null
+  }
+)
+
 // 监听弹窗显示状态，打开时初始化，关闭时销毁以避免视图挂载丢失
 watch(() => props.show, async (visible) => {
   showProtocolDropdown.value = false
   showModelDropdown.value = false
+  resetModelTestState()
   if (visible) {
     // 弹窗一打开就预拉 /models，避免聚焦输入框时再等网络
     restoreModelsFromCache()
@@ -903,13 +1254,17 @@ watch(() => props.show, async (visible) => {
     fetchModelsGeneration += 1
     isFetchingModels.value = false
     fetchedModelList.value = []
-    // 隐藏时销毁实例，防止持有已移除的 DOM 引用导致下次无法显示
-    if (cmView) {
-      cmView.destroy()
-      cmView = null
-    }
   }
 })
+
+const onDialogAfterLeave = () => {
+  if (props.show) return
+  if (cmView) {
+    cmView.destroy()
+    cmView = null
+  }
+  emit('afterLeave')
+}
 
 // ===== JavaScript 高亮 =====
 const cmContainerRef = ref<HTMLElement | null>(null)
@@ -1028,6 +1383,9 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  stopEffortMatrixFx()
+  lockEffortTextSelect(false)
+  resetModelTestState()
   clearModelDropdownBlurTimer()
   document.removeEventListener('mousedown', handleProtocolOutsideClick, true)
   document.removeEventListener('mousedown', handleModelDropdownOutsideClick, true)
@@ -1092,7 +1450,7 @@ const handleSubmit = () => {
     return
   }
   if (!formData.value.displayName.trim()) {
-    alert('请输入模型名称')
+    alert('请输入显示名')
     return
   }
   if (requiresModelId.value && !formData.value.modelId.trim()) {
@@ -1107,8 +1465,8 @@ const handleSubmit = () => {
     jsCode: formData.value.apiProtocol === 'custom' ? formData.value.jsCode : buildCurrentPresetJsCode(),
     enableThinking: formData.value.enableThinking,
     thinkingOffEnableThinkingFalse: formData.value.thinkingOffEnableThinkingFalse,
-    thinkingOffThinkingTypeDisabled: formData.value.thinkingOffThinkingTypeDisabled,
     thinkingOffResponsesEffort: formData.value.thinkingOffResponsesEffort,
+    thinkingOffThinkingTypeDisabled: formData.value.thinkingOffThinkingTypeDisabled,
     thinkingEffort: formData.value.thinkingEffort,
     apiProtocol: formData.value.apiProtocol
   }
@@ -1120,10 +1478,205 @@ const handleSubmit = () => {
 
   emit('save', modelData)
 }
+
+const isTestingModel = ref(false)
+const modelTestStatus = ref<'idle' | 'success' | 'error'>('idle')
+const modelTestMessage = ref('')
+const modelTestElapsedMs = ref<number | null>(null)
+let modelTestAbort: AbortController | null = null
+
+const canTestModel = computed(() => {
+  if (!normalizeBaseUrl(props.platformBaseUrl)) return false
+  if (requiresModelId.value && !formData.value.modelId.trim()) return false
+  if (formData.value.apiProtocol === 'custom' && !formData.value.jsCode.trim()) return false
+  return true
+})
+
+const modelTestCardClass = computed(() => ({
+  testing: isTestingModel.value,
+  success: !isTestingModel.value && modelTestStatus.value === 'success',
+  error: !isTestingModel.value && modelTestStatus.value === 'error'
+}))
+
+const modelTestTitle = computed(() => {
+  if (isTestingModel.value) return '测试中'
+  if (modelTestStatus.value === 'success') return '可用'
+  if (modelTestStatus.value === 'error') return '不可用'
+  return '测试'
+})
+
+const modelTestTooltip = computed(() => {
+  if (isTestingModel.value) return '正在请求模型'
+  if (modelTestStatus.value === 'error') return modelTestMessage.value || '不可用'
+  if (modelTestStatus.value === 'success') {
+    return modelTestMeta.value ? `可用 · ${modelTestMeta.value}` : '可用'
+  }
+  if (!canTestModel.value) {
+    if (!normalizeBaseUrl(props.platformBaseUrl)) return '当前平台未配置接口地址'
+    if (requiresModelId.value && !formData.value.modelId.trim()) return '填写模型 ID 后即可测试'
+  }
+  return '测试可用性'
+})
+
+const modelTestMeta = computed(() => {
+  if (isTestingModel.value || modelTestElapsedMs.value == null) return ''
+  const ms = modelTestElapsedMs.value
+  return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`
+})
+
+const resetModelTestState = () => {
+  if (modelTestAbort) {
+    modelTestAbort.abort()
+    modelTestAbort = null
+  }
+  isTestingModel.value = false
+  modelTestStatus.value = 'idle'
+  modelTestMessage.value = ''
+  modelTestElapsedMs.value = null
+}
+
+const isAbortError = (error: unknown) => {
+  const name = (error as { name?: string } | null)?.name
+  const message = String((error as Error)?.message || error || '')
+  return name === 'AbortError' || /abort/i.test(message)
+}
+
+const collectProcessModelOutput = async (result: any): Promise<{ content: string; reasoning: string }> => {
+  let content = ''
+  let reasoning = ''
+
+  if (!result) return { content, reasoning }
+
+  if (result[Symbol.asyncIterator]) {
+    for await (const chunk of result) {
+      if (typeof chunk?.content === 'string') content += chunk.content
+      if (typeof chunk?.reasoning_content === 'string') reasoning += chunk.reasoning_content
+    }
+    return { content, reasoning }
+  }
+
+  if (typeof result === 'string') {
+    return { content: result, reasoning }
+  }
+
+  if (typeof result === 'object') {
+    content = String(result.content ?? result.response ?? '')
+    reasoning = String(result.reasoning_content ?? '')
+  }
+
+  return { content, reasoning }
+}
+
+const testModelAvailability = async () => {
+  if (isTestingModel.value || !canTestModel.value) return
+
+  const runtimeModelId = formData.value.modelId.trim()
+  const executableCode = resolveExecutableModelJsCode({
+    apiProtocol: formData.value.apiProtocol,
+    jsCode: formData.value.jsCode,
+    modelId: runtimeModelId,
+    enableThinking: formData.value.enableThinking,
+    thinkingOffEnableThinkingFalse: formData.value.thinkingOffEnableThinkingFalse,
+    thinkingOffThinkingTypeDisabled: formData.value.thinkingOffThinkingTypeDisabled,
+    thinkingOffResponsesEffort: formData.value.thinkingOffResponsesEffort,
+    thinkingEffort: formData.value.thinkingEffort
+  })
+
+  if (!executableCode) {
+    modelTestStatus.value = 'error'
+    modelTestMessage.value = '当前配置没有可执行的请求代码'
+    return
+  }
+
+  if (modelTestAbort) modelTestAbort.abort()
+  modelTestAbort = new AbortController()
+  const abortSignal = modelTestAbort.signal
+
+  isTestingModel.value = true
+  modelTestStatus.value = 'idle'
+  modelTestMessage.value = ''
+  modelTestElapsedMs.value = null
+  const startedAt = performance.now()
+
+  try {
+    const tauriFetch = await getTauriFetch()
+    const fetchWithSignal = (input: RequestInfo | URL, init: RequestInit = {}) => {
+      return tauriFetch(input as any, {
+        ...init,
+        credentials: init.credentials ?? 'include',
+        signal: init.signal ?? abortSignal
+      } as any)
+    }
+    const testInput = {
+      messages: [{ role: 'user', content: 'ping' }],
+      model: runtimeModelId,
+      stream: true
+    }
+    const config = {
+      apiKey: props.platformApiKey,
+      baseUrl: normalizeBaseUrl(props.platformBaseUrl),
+      model: runtimeModelId,
+      modelId: runtimeModelId
+    }
+
+    const processModel = new Function('input', 'config', 'fetch', 'abortSignal', `
+      ${executableCode}
+      return processModel;
+    `)(testInput, config, fetchWithSignal, abortSignal)
+
+    const result = await processModel(testInput, config, fetchWithSignal, abortSignal)
+    const { content, reasoning } = await collectProcessModelOutput(result)
+    const elapsed = Math.round(performance.now() - startedAt)
+
+    if (abortSignal.aborted) return
+
+    modelTestElapsedMs.value = elapsed
+
+    if (!content.trim() && !reasoning.trim()) {
+      modelTestStatus.value = 'error'
+      modelTestMessage.value = '请求成功但未返回内容'
+      return
+    }
+
+    modelTestStatus.value = 'success'
+    modelTestMessage.value = ''
+  } catch (error) {
+    if (abortSignal.aborted || isAbortError(error)) return
+    modelTestElapsedMs.value = Math.round(performance.now() - startedAt)
+    modelTestStatus.value = 'error'
+    modelTestMessage.value = (error as Error)?.message || String(error)
+  } finally {
+    if (modelTestAbort?.signal === abortSignal) {
+      isTestingModel.value = false
+      modelTestAbort = null
+    }
+  }
+}
 </script>
 
 <style>
 @import '../../../styles/dialog.css';
+
+/* 弹窗进出场：必须用 keyframes。进场 animation:both 会锁住 opacity/transform，CSS transition 关不掉（尤其 WebKit）。 */
+.dialog-overlay.dialog-overlay--vue {
+  animation: none;
+}
+.dialog-overlay.dialog-overlay--vue .dialog-panel {
+  animation: none;
+}
+.dialog-overlay.dialog-overlay--vue.dialog-fade-enter-active {
+  animation: overlay-fade-in 180ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+.dialog-overlay.dialog-overlay--vue.dialog-fade-leave-active {
+  animation: overlay-fade-in 180ms cubic-bezier(0.2, 0.7, 0.2, 1) reverse both;
+  pointer-events: none;
+}
+.dialog-overlay.dialog-overlay--vue.dialog-fade-enter-active .dialog-panel {
+  animation: popup-in 180ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+.dialog-overlay.dialog-overlay--vue.dialog-fade-leave-active .dialog-panel {
+  animation: popup-in 180ms cubic-bezier(0.2, 0.7, 0.2, 1) reverse both;
+}
 
 /* Teleport 到 body 的下拉：用非 scoped，保证进出场动画生效 */
 .dropdown-pop-enter-active,
@@ -1817,7 +2370,6 @@ const handleSubmit = () => {
 .thinking-check.disabled,
 .thinking-check.disabled input,
 .switch-toggle.disabled,
-.thinking-effort-btn:disabled,
 .protocol-select-trigger:disabled {
   cursor: not-allowed;
 }
@@ -1858,36 +2410,337 @@ const handleSubmit = () => {
   background: rgba(0, 0, 0, 0.05);
 }
 
-.thinking-effort-switch {
+.thinking-effort-slider {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 8px;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.thinking-effort-slider.disabled {
+  opacity: 0.65;
+}
+
+.thinking-effort-bar {
+  position: relative;
+  height: 28px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text-primary, #2d3748) 8%, transparent);
+  overflow: visible;
+  cursor: grab;
+  touch-action: none;
+  outline: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-user-drag: none;
+}
+
+.thinking-effort-bar:focus-visible {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary, #667eea) 35%, transparent);
+}
+
+.thinking-effort-slider.is-dragging .thinking-effort-bar,
+.thinking-effort-bar:active {
+  cursor: grabbing;
+}
+
+.thinking-effort-slider.disabled .thinking-effort-bar {
+  cursor: not-allowed;
+}
+
+.thinking-effort-fill {
+  position: relative;
+  height: 100%;
+  min-width: 0;
+  border-radius: 8px;
+  background: #e8c57a;
+  overflow: hidden;
+  transition: background-color 180ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.thinking-effort-slider.is-max .thinking-effort-fill {
+  background: #f5bc58;
+}
+
+.thinking-effort-matrix {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  pointer-events: none;
+}
+
+.thinking-effort-dots {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.thinking-effort-dot {
+  position: absolute;
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--text-primary, #2d3748) 28%, transparent);
+  transform: translate(-50%, -50%);
+  opacity: 1;
+  transition: opacity 140ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.thinking-effort-dot.passed {
+  opacity: 0;
+}
+
+.thinking-effort-thumb {
+  position: absolute;
+  top: 0;
+  box-sizing: border-box;
+  width: 28px;
+  height: 28px;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.16);
+  transform: translateX(-50%);
+  pointer-events: none;
+  z-index: 3;
+  transition: transform 120ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.thinking-effort-slider.is-dragging .thinking-effort-thumb {
+  transform: translateX(-50%) scale(0.86);
+}
+
+.thinking-effort-labels {
+  display: flex;
+  justify-content: space-between;
   gap: 6px;
 }
 
-.thinking-effort-btn {
+.thinking-effort-label {
   appearance: none;
-  border: 1px solid transparent;
-  background: var(--bg-secondary, #fff);
+  border: none;
+  background: transparent;
+  padding: 0;
   color: var(--text-secondary, #718096);
-  border-radius: 8px;
-  padding: 6px 10px;
   font: inherit;
   font-size: 12px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   cursor: pointer;
-  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
 
-.thinking-effort-btn:hover {
+.thinking-effort-label:hover:not(:disabled) {
   color: var(--text-primary);
-  background: var(--form-input-hover-bg, #f0f0f0);
 }
 
-.thinking-effort-btn.active {
-  color: var(--color-primary, #667eea);
-  border-color: rgba(102, 126, 234, 0.35);
-  background: rgba(102, 126, 234, 0.1);
+.thinking-effort-label.active {
+  color: var(--text-primary);
   font-weight: 600;
+}
+
+.thinking-effort-label:disabled {
+  cursor: not-allowed;
+}
+
+.model-config-panel > .dialog-header {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 8px;
+}
+
+.model-config-panel > .dialog-header .btn-back {
+  justify-self: start;
+  box-sizing: border-box;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--platform-config-toggle-button-border, #e2e8f0);
+  border-radius: 50%;
+  background: var(--form-input-bg, #F7F7F7);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+  color: #979797;
+  transition:
+    color 180ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    background-color 180ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    border-color 180ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    box-shadow 180ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.model-config-panel > .dialog-header .btn-back:hover {
+  color: var(--platform-config-dialog-title-text, #2d3748);
+  background: var(--form-input-bg, #F7F7F7);
+  border-color: var(--platform-config-toggle-button-hover-border, #cbd5e0);
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.1);
+}
+
+.model-config-panel > .dialog-header .btn-back svg {
+  width: 14px;
+  height: 14px;
+}
+
+.model-config-panel > .dialog-header .dialog-title {
+  justify-self: center;
+  font-weight: 400;
+}
+
+.dialog-header-actions {
+  justify-self: end;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.dialog-header-actions .btn-confirm,
+.model-test-card {
+  box-sizing: border-box;
+  height: 32px;
+  padding: 0 14px;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.dialog-header-actions .btn-confirm {
+  border: 1px solid color-mix(in srgb, #000 14%, #F8B62B);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+  transition:
+    opacity 0.15s ease,
+    border-color 180ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    box-shadow 180ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.dialog-header-actions .btn-confirm:hover:not(:disabled) {
+  opacity: 1;
+  border-color: color-mix(in srgb, #000 22%, #F8B62B);
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.12);
+}
+
+.model-test-card {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 1px solid var(--platform-config-toggle-button-border, #e2e8f0);
+  background: var(--form-input-bg, #F7F7F7);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+  color: var(--text-primary, #2d3748);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  gap: 6px;
+  cursor: pointer;
+  transition:
+    background-color 180ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    border-color 180ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    box-shadow 180ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    color 180ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    transform 120ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.model-test-card:hover:not(:disabled) {
+  border-color: var(--platform-config-toggle-button-hover-border, #cbd5e0);
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.1);
+}
+
+.model-test-card:active:not(:disabled) {
+  transform: scale(0.97);
+  box-shadow: 0 1px 1px rgba(15, 23, 42, 0.05);
+}
+
+.model-test-card:disabled {
+  cursor: default;
+}
+
+.model-test-card:disabled:not(.testing) {
+  opacity: 0.5;
+}
+
+.model-test-card.testing {
+  cursor: wait;
+}
+
+.model-test-card.success {
+  color: var(--color-success, #34c759);
+  background: color-mix(in srgb, var(--color-success, #34c759) 12%, var(--form-input-bg, #F7F7F7));
+  border-color: color-mix(in srgb, var(--color-success, #34c759) 38%, transparent);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--color-success, #34c759) 18%, transparent);
+}
+
+.model-test-card.success:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-success, #34c759) 12%, var(--form-input-bg, #F7F7F7));
+  border-color: color-mix(in srgb, var(--color-success, #34c759) 52%, transparent);
+  box-shadow: 0 2px 6px color-mix(in srgb, var(--color-success, #34c759) 22%, transparent);
+}
+
+.model-test-card.error {
+  color: var(--color-error, #ff3b30);
+  background: color-mix(in srgb, var(--color-error, #ff3b30) 12%, var(--form-input-bg, #F7F7F7));
+  border-color: color-mix(in srgb, var(--color-error, #ff3b30) 38%, transparent);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--color-error, #ff3b30) 18%, transparent);
+}
+
+.model-test-card.error:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-error, #ff3b30) 12%, var(--form-input-bg, #F7F7F7));
+  border-color: color-mix(in srgb, var(--color-error, #ff3b30) 52%, transparent);
+  box-shadow: 0 2px 6px color-mix(in srgb, var(--color-error, #ff3b30) 22%, transparent);
+}
+
+.model-test-title {
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.model-test-spinner {
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+  border: 1.5px solid color-mix(in srgb, currentColor 25%, transparent);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: model-test-spin 700ms linear infinite;
+}
+
+.model-test-meta {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 600;
+  opacity: 0.8;
+  white-space: nowrap;
+}
+
+@keyframes model-test-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .thinking-effort-fill {
+    transition: none;
+  }
+
+  .thinking-effort-thumb {
+    transition: none;
+  }
+
+  .model-test-card {
+    transition: none;
+  }
+
+  .model-test-card:active:not(:disabled) {
+    transform: none;
+  }
+
+  .model-test-spinner {
+    animation: none;
+    opacity: 0.55;
+  }
 }
 
 </style>

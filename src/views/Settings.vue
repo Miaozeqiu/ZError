@@ -32,41 +32,35 @@
 
       <!-- 右侧设置内容 -->
       <div class="settings-content">
-        <!-- 常规设置 -->
-        <div v-if="activeCategory === 'general'" class="settings-section">
-          <div class="settings-inner-wrapper general-scroll-wrap">
-            <div class="settings-content-wrapper general-scroll-content" ref="generalScrollContent" @scroll="onGeneralScroll">
-              <GeneralSettings @open-question-folder="handleOpenQuestionFolder" />
-            </div>
-            <div class="custom-scrollbar" :class="{ 'is-visible': generalScrollbarVisible }" ref="generalScrollbar" @mousedown="onGeneralScrollbarMousedown">
-              <div class="custom-scrollbar-thumb" ref="generalScrollbarThumb"></div>
-            </div>
-          </div>
-        </div>
-
-<!-- 模型设置 -->
-        <!-- 模型设置 -->
-        <div v-if="activeCategory === 'models'" class="settings-section model-settings-layout">
-          <div class="settings-inner-wrapper">
-            <ModelSettings />
-          </div>
-        </div>
-
-
-
-        <!-- 关于应用 -->
-        <div v-if="activeCategory === 'about'" class="settings-section">
-          <div class="settings-inner-wrapper about-scroll-wrap">
-            <div class="settings-content-wrapper about-scroll-content" ref="aboutScrollContent" @scroll="onAboutScroll">
-              <AboutApp />
-            </div>
-            <div class="custom-scrollbar" :class="{ 'is-visible': aboutScrollbarVisible }" ref="aboutScrollbar" @mousedown="onAboutScrollbarMousedown">
-              <div class="custom-scrollbar-thumb" ref="aboutScrollbarThumb"></div>
+        <Transition name="page-switch">
+          <div v-if="activeCategory === 'general'" key="general" class="settings-section">
+            <div class="settings-inner-wrapper general-scroll-wrap">
+              <div class="settings-content-wrapper general-scroll-content" ref="generalScrollContent" @scroll="onGeneralScroll">
+                <GeneralSettings @open-question-folder="handleOpenQuestionFolder" />
+              </div>
+              <div class="custom-scrollbar" :class="{ 'is-visible': generalScrollbarVisible }" ref="generalScrollbar" @mousedown="onGeneralScrollbarMousedown">
+                <div class="custom-scrollbar-thumb" ref="generalScrollbarThumb"></div>
+              </div>
             </div>
           </div>
-        </div>
 
+          <div v-else-if="activeCategory === 'models'" key="models" class="settings-section model-settings-layout">
+            <div class="settings-inner-wrapper">
+              <ModelSettings />
+            </div>
+          </div>
 
+          <div v-else-if="activeCategory === 'about'" key="about" class="settings-section">
+            <div class="settings-inner-wrapper about-scroll-wrap">
+              <div class="settings-content-wrapper about-scroll-content" ref="aboutScrollContent" @scroll="onAboutScroll">
+                <AboutApp />
+              </div>
+              <div class="custom-scrollbar" :class="{ 'is-visible': aboutScrollbarVisible }" ref="aboutScrollbar" @mousedown="onAboutScrollbarMousedown">
+                <div class="custom-scrollbar-thumb" ref="aboutScrollbarThumb"></div>
+              </div>
+            </div>
+          </div>
+        </Transition>
       </div>
     </div>
 
@@ -558,7 +552,11 @@ const onAboutScrollbarMouseup = () => {
 
 .settings-content {
   box-sizing: border-box;
+  position: relative;
   flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
   background: var(--bg-primary);
   border-radius: 4px;
   margin-bottom: 5px;
@@ -566,8 +564,52 @@ const onAboutScrollbarMouseup = () => {
 }
 
 .settings-section {
-  height: 100%;
-  margin-bottom: 40px;
+  position: absolute;
+  inset: 0;
+  height: auto;
+  margin: 0;
+}
+
+/* 常规 / 关于：整张卡片错开浮入 */
+.settings-section:not(.model-settings-layout).page-switch-enter-from {
+  opacity: 1;
+  transform: none;
+}
+
+.settings-section:not(.model-settings-layout).page-switch-leave-to {
+  transform: none;
+}
+
+.settings-section:not(.model-settings-layout).page-switch-enter-active {
+  transition-duration: 620ms;
+}
+
+.settings-section:not(.model-settings-layout).page-switch-enter-active :deep(.network-group) {
+  animation: settings-stagger-in 420ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+.settings-section:not(.model-settings-layout).page-switch-enter-active :deep(.network-group:nth-child(1)) { animation-delay: 0ms; }
+.settings-section:not(.model-settings-layout).page-switch-enter-active :deep(.network-group:nth-child(2)) { animation-delay: 70ms; }
+.settings-section:not(.model-settings-layout).page-switch-enter-active :deep(.network-group:nth-child(3)) { animation-delay: 140ms; }
+.settings-section:not(.model-settings-layout).page-switch-enter-active :deep(.network-group:nth-child(4)) { animation-delay: 210ms; }
+.settings-section:not(.model-settings-layout).page-switch-enter-active :deep(.network-group:nth-child(5)) { animation-delay: 280ms; }
+.settings-section:not(.model-settings-layout).page-switch-enter-active :deep(.network-group:nth-child(6)) { animation-delay: 350ms; }
+
+@keyframes settings-stagger-in {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-section:not(.model-settings-layout).page-switch-enter-active :deep(.network-group) {
+    animation: none;
+  }
 }
 
 .settings-inner-wrapper {
