@@ -16,7 +16,7 @@
           <FileTree
             :initial-selected-id="initialSelectedId"
             :highlight-folder-id="currentSaveFolderId"
-            selection-mode="leaf-only"
+            :selection-mode="selectionMode"
             @folder-select="handleFolderSelect"
           />
 
@@ -31,10 +31,13 @@ import { ref, computed, watch } from 'vue'
 import FileTree from '../views/questions/FileTree.vue'
 import { databaseService } from '../services/database'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   visible: boolean
   initialFolderId?: number | null
-}>()
+  selectionMode?: 'all' | 'leaf-only'
+}>(), {
+  selectionMode: 'leaf-only',
+})
 
 const emit = defineEmits<{
   cancel: []

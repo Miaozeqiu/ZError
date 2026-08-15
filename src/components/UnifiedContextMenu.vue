@@ -1,95 +1,99 @@
 <template>
-  <Transition name="context-menu-pop">
-    <div 
-      v-if="visible" 
-      class="context-menu" 
-      :style="menuStyle"
-      @click.stop
-    >
-      <!-- 菜单头部（可选） -->
-      <div v-if="header" class="menu-header">
-        {{ header }}
-      </div>
-      <div v-if="header" class="menu-divider"></div>
-      
-      <!-- 菜单项 -->
-      <template v-for="item in menuItems" :key="item.id || item.label">
-        <!-- 分隔线 -->
-        <div v-if="item.type === 'divider'" class="menu-divider"></div>
-        
-        <!-- 标题项 -->
-        <div v-else-if="item.type === 'header'" class="menu-header">
-          {{ item.label }}
-        </div>
-        
-        <!-- 普通菜单项 -->
-        <div 
-          v-else
-          class="menu-item" 
-          :class="{ 
-            disabled: item.disabled, 
-            danger: item.danger 
-          }"
-          @click="handleItemClick(item)"
-        >
-          <!-- 图标 -->
-          <div v-if="item.icon" class="menu-icon">
-            <!-- SVG 图标 -->
-            <svg 
-              v-if="typeof item.icon === 'object' && item.icon.type === 'svg'" 
-              width="16" 
-              height="16" 
-              :viewBox="item.icon.viewBox || '0 0 24 24'" 
-              fill="none" 
-              xmlns="http://www.w3.org/2000/svg"
-            >
-              <path 
-                v-for="(path, index) in item.icon.paths" 
-                :key="`path-${index}`"
-                :d="path.d"
-                :fill="path.fill || 'none'"
-                :stroke="path.stroke || 'currentColor'"
-                :stroke-width="path.strokeWidth || 2"
-              />
-              <rect 
-                v-for="(rect, index) in item.icon.rects" 
-                :key="`rect-${index}`"
-                :x="rect.x"
-                :y="rect.y"
-                :width="rect.width"
-                :height="rect.height"
-                :rx="rect.rx"
-                :ry="rect.ry"
-                :fill="rect.fill || 'none'"
-                :stroke="rect.stroke || 'currentColor'"
-                :stroke-width="rect.strokeWidth || 2"
-              />
-              <polyline 
-                v-for="(polyline, index) in item.icon.polylines" 
-                :key="`polyline-${index}`"
-                :points="polyline.points"
-                :fill="polyline.fill || 'none'"
-                :stroke="polyline.stroke || 'currentColor'"
-                :stroke-width="polyline.strokeWidth || 2"
-              />
-            </svg>
-            
-            <!-- Emoji 图标 -->
-            <span v-else-if="typeof item.icon === 'object' && item.icon.type === 'emoji'">{{ item.icon.content }}</span>
-            
-            <!-- 文本图标 -->
-            <span v-else-if="typeof item.icon === 'object' && item.icon.type === 'text'">{{ item.icon.content }}</span>
-            
-            <!-- 纯字符串图标 (如果是字符串) -->
-            <span v-else-if="typeof item.icon === 'string'">{{ item.icon }}</span>
+  <Teleport to="body">
+    <Transition name="context-menu-pop">
+      <div
+        v-if="visible"
+        class="context-menu"
+        :style="menuStyle"
+        @click.stop
+      >
+        <div class="context-menu-body">
+          <!-- 菜单头部（可选） -->
+          <div v-if="header" class="menu-header">
+            {{ header }}
           </div>
+          <div v-if="header" class="menu-divider"></div>
           
-          <!-- 标签 -->
-          <span class="menu-label">{{ item.label }}</span>
+          <!-- 菜单项 -->
+          <template v-for="item in menuItems" :key="item.id || item.label">
+            <!-- 分隔线 -->
+            <div v-if="item.type === 'divider'" class="menu-divider"></div>
+            
+            <!-- 标题项 -->
+            <div v-else-if="item.type === 'header'" class="menu-header">
+              {{ item.label }}
+            </div>
+            
+            <!-- 普通菜单项 -->
+            <div 
+              v-else
+              class="menu-item" 
+              :class="{ 
+                disabled: item.disabled, 
+                danger: item.danger 
+              }"
+              @click="handleItemClick(item)"
+            >
+              <!-- 图标 -->
+              <div v-if="item.icon" class="menu-icon">
+                <!-- SVG 图标 -->
+                <svg 
+                  v-if="typeof item.icon === 'object' && item.icon.type === 'svg'" 
+                  width="16" 
+                  height="16" 
+                  :viewBox="item.icon.viewBox || '0 0 24 24'" 
+                  fill="none" 
+                  xmlns="http://www.w3.org/2000/svg"
+                >
+                  <path 
+                    v-for="(path, index) in item.icon.paths" 
+                    :key="`path-${index}`"
+                    :d="path.d"
+                    :fill="path.fill || 'none'"
+                    :stroke="path.stroke || 'currentColor'"
+                    :stroke-width="path.strokeWidth || 2"
+                  />
+                  <rect 
+                    v-for="(rect, index) in item.icon.rects" 
+                    :key="`rect-${index}`"
+                    :x="rect.x"
+                    :y="rect.y"
+                    :width="rect.width"
+                    :height="rect.height"
+                    :rx="rect.rx"
+                    :ry="rect.ry"
+                    :fill="rect.fill || 'none'"
+                    :stroke="rect.stroke || 'currentColor'"
+                    :stroke-width="rect.strokeWidth || 2"
+                  />
+                  <polyline 
+                    v-for="(polyline, index) in item.icon.polylines" 
+                    :key="`polyline-${index}`"
+                    :points="polyline.points"
+                    :fill="polyline.fill || 'none'"
+                    :stroke="polyline.stroke || 'currentColor'"
+                    :stroke-width="polyline.strokeWidth || 2"
+                  />
+                </svg>
+                
+                <!-- Emoji 图标 -->
+                <span v-else-if="typeof item.icon === 'object' && item.icon.type === 'emoji'">{{ item.icon.content }}</span>
+                
+                <!-- 文本图标 -->
+                <span v-else-if="typeof item.icon === 'object' && item.icon.type === 'text'">{{ item.icon.content }}</span>
+                
+                <!-- 纯字符串图标 (如果是字符串) -->
+                <span v-else-if="typeof item.icon === 'string'">{{ item.icon }}</span>
+              </div>
+              
+              <!-- 标签 -->
+              <span class="menu-label">{{ item.label }}</span>
+            </div>
+          </template>
         </div>
-      </template>
-    </div>
-  </Transition>
+      </div>
+    </Transition>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
@@ -225,16 +229,25 @@ const menuStyle = computed(() => {
 <style scoped>
 .context-menu {
   position: fixed;
-  background: var(--context-menu-bg, #ffffff);
-  border: 1px solid var(--context-menu-border, #e2e8f0);
+  background: var(--context-menu-bg, rgba(255, 255, 255, 0.4));
+  backdrop-filter: blur(40px) saturate(180%);
+  -webkit-backdrop-filter: blur(40px) saturate(180%);
+  border: 1px solid var(--context-menu-border, rgba(255, 255, 255, 0.55));
   border-radius: 12px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
-  z-index: 1000;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.22), 0 4px 12px rgba(0, 0, 0, 0.12), inset 0 0.5px 0 rgba(255, 255, 255, 0.5);
+  z-index: 100000;
   min-width: 160px;
-  padding: 8px;
+  padding: 0;
   font-size: 14px;
-  overflow-y: auto;
+  overflow: visible;
   transform-origin: top left;
+}
+
+.context-menu-body {
+  padding: 8px;
+  overflow-y: auto;
+  max-height: inherit;
+  border-radius: inherit;
 }
 
 .context-menu-pop-enter-active,
@@ -355,5 +368,17 @@ const menuStyle = computed(() => {
 
 [data-theme="dark"] .menu-divider {
   background-color: var(--context-menu-divider-bg, #4a5568);
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .context-menu {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    background: #ffffff;
+  }
+
+  [data-theme="dark"] .context-menu {
+    background: #2d3748;
+  }
 }
 </style>

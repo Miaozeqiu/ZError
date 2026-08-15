@@ -124,7 +124,14 @@
   --ql-time-text: #757575;
   --ql-type-tag-bg: #f2f2f2;
   --ql-type-tag-text: #3d3d3d;
-  --ql-type-tag-border: #d2d2d2;
+  --ql-type-tag-single-bg: #edf4ff;
+  --ql-type-tag-single-text: #2563eb;
+  --ql-type-tag-multiple-bg: #f4edff;
+  --ql-type-tag-multiple-text: #7c3aed;
+  --ql-type-tag-judgement-bg: #fff7e6;
+  --ql-type-tag-judgement-text: #c2410c;
+  --ql-type-tag-fill-bg: #e8f8f2;
+  --ql-type-tag-fill-text: #0f766e;
   --ql-no-type-text: #9a9a9a;
   --ql-empty-text: #4d4d4d;
   --ql-empty-subtext: #8a8a8a;
@@ -275,15 +282,15 @@
   --table-header-divider: #d1d5db;
 
   /* 右键菜单相关颜色 */
-  --context-menu-bg: #ffffff;
-  --context-menu-border: #e2e8f0;
+  --context-menu-bg: rgba(255, 255, 255, 0.42);
+  --context-menu-border: rgba(255, 255, 255, 0.55);
   --context-menu-shadow: rgba(0, 0, 0, 0.1);
   --context-menu-item-text: #2d3748;
-  --context-menu-item-hover-bg: #eaeaea;
+  --context-menu-item-hover-bg: rgba(0, 0, 0, 0.06);
   --context-menu-item-disabled-text: #a0aec0;
-  --context-menu-divider-bg: #e2e8f0;
+  --context-menu-divider-bg: rgba(0, 0, 0, 0.08);
   --context-menu-danger-text: #dc2626;
-  --context-menu-danger-hover-bg: #fee2e2;
+  --context-menu-danger-hover-bg: rgba(254, 226, 226, 0.72);
 
 
   /* 侧边栏导航项颜色 */
@@ -463,11 +470,13 @@
 
   --filetree-node-text: var(--text-primary);
   --filetree-node-hover-bg: var(--hover-bg);
-  --filetree-node-selected-bg: var(--active-bg);
-  --filetree-node-dragover-bg: var(--active-bg);
+  --filetree-node-selected-bg: #f3f3f5;
+  --filetree-node-dragover-bg: var(--filetree-node-selected-bg);
   --filetree-node-dragging-bg: var(--active-bg);
   --filetree-level-line-color: #dfdfdf;
   --filetree-expand-arrow-color: #cccccc;
+  --filetree-count-bg: #ffffff;
+  --filetree-count-shadow: 0 1px 2px rgba(0, 0, 0, 0.12), 0 0 0 1px rgba(0, 0, 0, 0.04);
   --fileinfo-gap: 8px;
   --fileinfo-sidebar-bg: var(--bg-secondary);
   --fileinfo-sidebar-border: var(--border-color);
@@ -605,7 +614,14 @@
   --ql-time-text: #a6a6a6;
   --ql-type-tag-bg: #2b2b2b;
   --ql-type-tag-text: #dddddd;
-  --ql-type-tag-border: #555555;
+  --ql-type-tag-single-bg: rgba(37, 99, 235, 0.18);
+  --ql-type-tag-single-text: #93c5fd;
+  --ql-type-tag-multiple-bg: rgba(124, 58, 237, 0.18);
+  --ql-type-tag-multiple-text: #c4b5fd;
+  --ql-type-tag-judgement-bg: rgba(234, 88, 12, 0.18);
+  --ql-type-tag-judgement-text: #fdba74;
+  --ql-type-tag-fill-bg: rgba(15, 118, 110, 0.22);
+  --ql-type-tag-fill-text: #5eead4;
   --ql-no-type-text: #8e8e8e;
   --ql-empty-text: #d2d2d2;
   --ql-empty-subtext: #9b9b9b;
@@ -751,15 +767,15 @@
   --table-header-divider: #718096;
 
   /* 右键菜单相关颜色 */
-  --context-menu-bg: #515151;
-  --context-menu-border: #4a4a4a;
+  --context-menu-bg: rgba(32, 32, 34, 0.46);
+  --context-menu-border: rgba(255, 255, 255, 0.12);
   --context-menu-shadow: rgba(0, 0, 0, 0.3);
   --context-menu-item-text: #e2e8f0;
-  --context-menu-item-hover-bg: #696969;
+  --context-menu-item-hover-bg: rgba(255, 255, 255, 0.12);
   --context-menu-item-disabled-text: #718096;
-  --context-menu-divider-bg: #747474;
+  --context-menu-divider-bg: rgba(255, 255, 255, 0.14);
   --context-menu-danger-text: #fca5a5;
-  --context-menu-danger-hover-bg: #6b2a2a;
+  --context-menu-danger-hover-bg: rgba(107, 42, 42, 0.72);
 
   /* 侧边栏导航项颜色 */
   --nav-item-text: #a0aec0;
@@ -875,11 +891,13 @@
 
   --filetree-node-text: var(--text-primary);
   --filetree-node-hover-bg: var(--hover-bg);
-  --filetree-node-selected-bg: var(--active-bg);
-  --filetree-node-dragover-bg: var(--active-bg);
+  --filetree-node-selected-bg: #333336;
+  --filetree-node-dragover-bg: var(--filetree-node-selected-bg);
   --filetree-node-dragging-bg: var(--active-bg);
   --filetree-level-line-color: #6b7280;
   --filetree-expand-arrow-color: #9ca3af;
+  --filetree-count-bg: #3a3a3c;
+  --filetree-count-shadow: 0 1px 2px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.06);
   --fileinfo-gap: 8px;
   --fileinfo-sidebar-bg: var(--bg-secondary);
   --fileinfo-sidebar-border: var(--border-color);

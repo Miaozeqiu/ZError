@@ -2,6 +2,8 @@ import { reactive, watch, computed } from 'vue'
 import { normalizeApiProtocol } from './modelProtocol'
 
 // AI 平台配置接口
+export type ApiProtocol = 'openai-chat' | 'openai-response' | 'anthropic' | 'custom'
+
 export interface AIPlatform {
   id: string
   name: string
@@ -10,6 +12,8 @@ export interface AIPlatform {
   apiKey: string
   enabled: boolean
   models: AIModel[]
+  /** 平台级协议；该平台下所有模型共用 */
+  apiProtocol?: ApiProtocol
   customHeaders?: Record<string, string>
   description?: string
   icon?: string        // 平台图标
@@ -35,7 +39,9 @@ export interface AIModel {
   temperature: number
   topP: number
   enabled: boolean
-  category: 'text' | 'vision' | 'summary'  // 模型分类：文本模型、视觉模型或总结模型
+  category: 'text' | 'vision' | 'summary'
+  /** 是否具备视觉能力；远程字段兼容 hasVision / has_vision / vision / capabilities */
+  hasVision?: boolean
   description?: string
   jsCode?: string  // 仅自定义协议使用；远程模型忽略此字段
   icon?: string    // 模型图标
@@ -53,7 +59,34 @@ export interface AIModel {
   thinkingOffResponsesEffort?: ThinkingOffResponsesEffort
   /** 开启思考时的强度（默认 medium） */
   thinkingEffort?: ThinkingEffort
-  apiProtocol?: 'openai-chat' | 'openai-response' | 'anthropic' | 'custom'
+  apiProtocol?: ApiProtocol
+}
+
+export const inferPlatformApiProtocol = (
+  platform?: {
+    apiProtocol?: ApiProtocol | string
+    models?: Array<{ apiProtocol?: ApiProtocol | string }>
+  } | null
+): ApiProtocol => {
+  if (platform?.apiProtocol) return normalizeApiProtocol(platform.apiProtocol)
+  const counts: Record<ApiProtocol, number> = {
+    'openai-chat': 0,
+    'openai-response': 0,
+    anthropic: 0,
+    custom: 0,
+  }
+  for (const model of platform?.models || []) {
+    counts[normalizeApiProtocol(model?.apiProtocol)] += 1
+  }
+  return (Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0] || 'openai-chat') as ApiProtocol
+}
+
+export const resolveModelApiProtocol = (
+  model?: Pick<AIModel, 'apiProtocol'> | null,
+  platform?: Pick<AIPlatform, 'apiProtocol'> | null
+): ApiProtocol => {
+  if (platform?.apiProtocol) return normalizeApiProtocol(platform.apiProtocol)
+  return normalizeApiProtocol(model?.apiProtocol)
 }
 
 // 模型配置设置接口
@@ -63,6 +96,7 @@ export interface ModelSettings {
   selectedSummaryModel: string | null // 选中的总结模型（向后兼容，等于 selectedSummaryModels[0] 或 null）
   selectedSummaryModels: string[]     // 选中的总结模型列表（最多5个）
   selectedVisionModel: string | null  // 选中的视觉模型
+  selectedAgentModel: string | null   // agent 使用的模型（文本或视觉）
   platforms: AIPlatform[]
   globalSettings: {
     timeout: number
@@ -90,6 +124,27 @@ const getRemoteModelsUrls = (): string[] => {
 export interface RemoteModelIconMapping {
   icon: string
   models: string[]
+}
+
+export const modelHasVision = (model?: Pick<AIModel, 'hasVision' | 'category'> | null): boolean => {
+  if (!model) return false
+  if (model.hasVision === true) return true
+  if (model.hasVision === false) return false
+  return model.category === 'vision'
+}
+
+const resolveRemoteHasVision = (raw: Record<string, unknown> | AIModel): boolean => {
+  const record = raw as Record<string, unknown>
+  if (record.hasVision === true || record.has_vision === true || record.vision === true) return true
+  if (record.hasVision === false || record.has_vision === false || record.vision === false) return false
+  const capabilities = record.capabilities
+  if (Array.isArray(capabilities) && capabilities.some((item) => String(item).toLowerCase() === 'vision')) {
+    return true
+  }
+  if (capabilities && typeof capabilities === 'object' && (capabilities as { vision?: unknown }).vision === true) {
+    return true
+  }
+  return record.category === 'vision'
 }
 
 export interface RemoteModelsCatalog {
@@ -281,6 +336,8 @@ const sanitizeStoredPlatforms = (platforms: AIPlatform[]): AIPlatform[] => {
             displayName,
             platformId: preferredPlatform.id,
             isRemote: model.isRemote === true,
+            hasVision: modelHasVision(model),
+            category: 'text',
           }
           // 废弃模型 name 字段
           delete (nextModel as AIModel & { name?: string }).name
@@ -293,11 +350,19 @@ const sanitizeStoredPlatforms = (platforms: AIPlatform[]): AIPlatform[] => {
       )
     )
 
+    const apiProtocol = inferPlatformApiProtocol({
+      ...preferredPlatform,
+      models,
+    })
     return {
       ...preferredPlatform,
       displayName: preferredPlatform.displayName || preferredPlatform.name || preferredPlatform.id,
       apiKey: getPlatformApiKey(sameIdPlatforms, preferredPlatform),
-      models,
+      apiProtocol,
+      models: models.map((model) => ({
+        ...model,
+        apiProtocol: model.isRemote && apiProtocol === 'custom' ? 'openai-chat' : apiProtocol,
+      })),
     }
   })
 }
@@ -371,6 +436,7 @@ const DEFAULT_MODEL_SETTINGS: ModelSettings = {
   selectedSummaryModel: null,
   selectedSummaryModels: [],
   selectedVisionModel: null,
+  selectedAgentModel: null,
   platforms: [],
   globalSettings: {
     timeout: 30000,
@@ -473,9 +539,9 @@ class ModelConfigManager {
     const enabledPlatforms = this.settings.platforms.filter(platform => platform.enabled !== false)
     const allModels = enabledPlatforms.flatMap(platform => platform.models || [])
     const enabledModels = allModels.filter(model => model.enabled !== false)
-    const textModelIds = new Set(enabledModels.filter(model => model.category === 'text').map(model => model.id))
+    const textModelIds = new Set(enabledModels.map(model => model.id))
     const summaryModelIds = new Set(enabledModels.map(model => model.id))
-    const visionModelIds = new Set(enabledModels.filter(model => model.category === 'vision').map(model => model.id))
+    const visionModelIds = new Set(enabledModels.filter(model => modelHasVision(model)).map(model => model.id))
 
     const normalizedTextModels = this.dedupeAndFilterModelIds(
       [
@@ -502,6 +568,10 @@ class ModelConfigManager {
     this.settings.selectedVisionModel = this.settings.selectedVisionModel && visionModelIds.has(this.settings.selectedVisionModel)
       ? this.settings.selectedVisionModel
       : null
+    const agentModelIds = new Set(enabledModels.map((model) => model.id))
+    this.settings.selectedAgentModel = this.settings.selectedAgentModel && agentModelIds.has(this.settings.selectedAgentModel)
+      ? this.settings.selectedAgentModel
+      : null
   }
 
   private clearSelectedModelsForPlatform(platformId: string): void {
@@ -522,6 +592,9 @@ class ModelConfigManager {
 
     if (this.settings.selectedVisionModel && platformModelIds.has(this.settings.selectedVisionModel)) {
       this.settings.selectedVisionModel = null
+    }
+    if (this.settings.selectedAgentModel && platformModelIds.has(this.settings.selectedAgentModel)) {
+      this.settings.selectedAgentModel = null
     }
   }
 
@@ -608,13 +681,13 @@ class ModelConfigManager {
       const userModels = localPlatform.models.filter(model => !model.isRemote && isLikelyUserCreatedModel(model, localPlatform.id))
       if (userModels.length > 0) {
         for (const model of localPlatform.models.filter(model => model.isRemote)) {
-          this._replaceSelectedModel(model.id, model.category, localPlatform.id)
+          this._replaceSelectedModel(model.id, localPlatform.id)
         }
         localPlatform.isRemote = false
         localPlatform.models = userModels
       } else {
         for (const model of localPlatform.models) {
-          this._replaceSelectedModel(model.id, model.category, localPlatform.id)
+          this._replaceSelectedModel(model.id, localPlatform.id)
         }
       }
     }
@@ -631,6 +704,8 @@ class ModelConfigManager {
       const preservedApiKey = getPlatformApiKey(existingPlatforms, existing)
         || this.findLocalPlatformWithSameRemoteModelId(rp)?.apiKey
         || ''
+      const inferredProtocol = inferPlatformApiProtocol(rp)
+      const platformProtocol = inferredProtocol === 'custom' ? 'openai-chat' : inferredProtocol
 
       const remoteModels: AIModel[] = (rp.models || []).map(rm => {
         // 自动检测思考模型：根据模型名称/ID 包含关键词时默认开启思考
@@ -660,8 +735,6 @@ class ModelConfigManager {
           description: _ignoredRemoteDescription,
           ...remoteModelFields
         } = rm as AIModel & { pricing?: unknown; name?: string }
-        const remoteProtocolRaw = normalizeApiProtocol(rm.apiProtocol)
-        const remoteProtocol = remoteProtocolRaw === 'custom' ? 'openai-chat' : remoteProtocolRaw
         return {
           ...remoteModelFields,
           platformId: rp.id,
@@ -669,11 +742,13 @@ class ModelConfigManager {
           jsCode: undefined,
           displayName: rm.displayName || existingModel?.displayName || (rm as { name?: string }).name || rm.id,
           modelId: rm.modelId?.trim() || rm.id,
-          apiProtocol: remoteProtocol,
+          apiProtocol: platformProtocol,
           enabled: rm.enabled ?? true,
           maxTokens: rm.maxTokens ?? 4096,
           temperature: rm.temperature ?? 0.7,
           topP: rm.topP ?? 0.9,
+          category: 'text',
+          hasVision: resolveRemoteHasVision(rm as AIModel & Record<string, unknown>),
           enableThinking: rm.enableThinking ?? isKnownThinkingModel,
           thinkingOffEnableThinkingFalse: rm.thinkingOffEnableThinkingFalse ?? true,
           thinkingOffThinkingTypeDisabled: rm.thinkingOffThinkingTypeDisabled ?? false,
@@ -689,6 +764,9 @@ class ModelConfigManager {
             ...model,
             platformId: rp.id,
             isRemote: false,
+            hasVision: modelHasVision(model),
+            category: 'text' as const,
+            apiProtocol: platformProtocol,
           })))
       )
       const models = this.sortModelsByRemoteOrder(dedupeModelsById([...remoteModels, ...localModels]), remoteModels)
@@ -697,7 +775,7 @@ class ModelConfigManager {
         const remoteModelIds = new Set(remoteModels.map(m => m.id))
         for (const oldModel of existingPlatforms.flatMap(platform => (platform.models || []).filter(model => model.isRemote))) {
           if (!remoteModelIds.has(oldModel.id)) {
-            this._replaceSelectedModel(oldModel.id, oldModel.category, rp.id, models)
+            this._replaceSelectedModel(oldModel.id, rp.id, models)
           }
         }
       }
@@ -707,6 +785,7 @@ class ModelConfigManager {
         name: rp.name || rp.displayName || rp.id,
         displayName: rp.displayName || rp.name || rp.id,
         baseUrl: rp.baseUrl || '',
+        apiProtocol: platformProtocol,
         description: rp.description,
         icon: rp.icon,
         url: rp.url,
@@ -758,39 +837,39 @@ class ModelConfigManager {
    */
   private _replaceSelectedModel(
     modelId: string,
-    category: string,
     platformId: string,
     candidateModels?: AIModel[]
   ): void {
-    const findReplacement = (): AIModel | undefined => {
-      const pool = candidateModels
-        ?? this.settings.platforms.find(p => p.id === platformId)?.models ?? []
-      return pool.find(m => m.id !== modelId && m.category === category && m.enabled !== false)
-    }
+    const pool = candidateModels
+      ?? this.settings.platforms.find(p => p.id === platformId)?.models ?? []
+    const findReplacement = (visionOnly = false): AIModel | undefined =>
+      pool.find((model) =>
+        model.id !== modelId
+        && model.enabled !== false
+        && (!visionOnly || modelHasVision(model))
+      )
 
-    if (category === 'text') {
-      if (this.settings.selectedTextModels?.includes(modelId)) {
-        const replacement = findReplacement()
-        this.settings.selectedTextModels = this.settings.selectedTextModels.filter(id => id !== modelId)
-        if (replacement && !this.settings.selectedTextModels.includes(replacement.id)) {
-          this.settings.selectedTextModels.push(replacement.id)
-        }
-        this.settings.selectedTextModel = this.settings.selectedTextModels[0] || null
+    if (this.settings.selectedTextModels?.includes(modelId)) {
+      const replacement = findReplacement()
+      this.settings.selectedTextModels = this.settings.selectedTextModels.filter(id => id !== modelId)
+      if (replacement && !this.settings.selectedTextModels.includes(replacement.id)) {
+        this.settings.selectedTextModels.push(replacement.id)
       }
-    } else if (category === 'summary') {
-      if (this.settings.selectedSummaryModels?.includes(modelId)) {
-        const replacement = findReplacement()
-        this.settings.selectedSummaryModels = this.settings.selectedSummaryModels.filter(id => id !== modelId)
-        if (replacement && !this.settings.selectedSummaryModels.includes(replacement.id)) {
-          this.settings.selectedSummaryModels.push(replacement.id)
-        }
-        this.settings.selectedSummaryModel = this.settings.selectedSummaryModels[0] || null
+      this.settings.selectedTextModel = this.settings.selectedTextModels[0] || null
+    }
+    if (this.settings.selectedSummaryModels?.includes(modelId)) {
+      const replacement = findReplacement()
+      this.settings.selectedSummaryModels = this.settings.selectedSummaryModels.filter(id => id !== modelId)
+      if (replacement && !this.settings.selectedSummaryModels.includes(replacement.id)) {
+        this.settings.selectedSummaryModels.push(replacement.id)
       }
-    } else if (category === 'vision') {
-      if (this.settings.selectedVisionModel === modelId) {
-        const replacement = findReplacement()
-        this.settings.selectedVisionModel = replacement?.id || null
-      }
+      this.settings.selectedSummaryModel = this.settings.selectedSummaryModels[0] || null
+    }
+    if (this.settings.selectedVisionModel === modelId) {
+      this.settings.selectedVisionModel = findReplacement(true)?.id || null
+    }
+    if (this.settings.selectedAgentModel === modelId) {
+      this.settings.selectedAgentModel = findReplacement()?.id || null
     }
   }
 
@@ -889,12 +968,12 @@ class ModelConfigManager {
     // 优先从新字段 [0] 获取
     if (this.settings.selectedTextModels && this.settings.selectedTextModels.length > 0) {
       const allModels = this.settings.platforms.flatMap(p => p.models)
-      return allModels.find(m => m.id === this.settings.selectedTextModels[0] && m.category === 'text') || null
+      return allModels.find(m => m.id === this.settings.selectedTextModels[0]) || null
     }
     // 兜底从旧字段获取
     if (this.settings.selectedTextModel) {
       const allModels = this.settings.platforms.flatMap(p => p.models)
-      return allModels.find(m => m.id === this.settings.selectedTextModel && m.category === 'text') || null
+      return allModels.find(m => m.id === this.settings.selectedTextModel) || null
     }
     return null
   }
@@ -907,7 +986,7 @@ class ModelConfigManager {
     if (this.settings.selectedTextModels && this.settings.selectedTextModels.length > 0) {
       const allModels = this.settings.platforms.flatMap(p => p.models)
       return this.settings.selectedTextModels
-        .map(id => allModels.find(m => m.id === id && m.category === 'text'))
+        .map(id => allModels.find(m => m.id === id))
         .filter((m): m is AIModel => m !== undefined)
     }
     // 如果新字段为空但旧字段有值，尝试转换
@@ -1006,7 +1085,7 @@ class ModelConfigManager {
     if (!this.settings.selectedVisionModel) return null
     
     const allModels = this.settings.platforms.flatMap(p => p.models)
-    return allModels.find(m => m.id === this.settings.selectedVisionModel && m.category === 'vision') || null
+    return allModels.find(m => m.id === this.settings.selectedVisionModel && modelHasVision(m)) || null
   }
 
   /**
@@ -1067,6 +1146,28 @@ class ModelConfigManager {
     return this.settings.selectedVisionModel === modelId
   }
 
+  getSelectedAgentModel(): AIModel | null {
+    if (!this.settings.selectedAgentModel) return null
+    const allModels = this.settings.platforms.flatMap((platform) => platform.models)
+    return allModels.find((model) => model.id === this.settings.selectedAgentModel) || null
+  }
+
+  setSelectedAgentModel(modelId: string | null): void {
+    this.settings.selectedAgentModel = modelId
+  }
+
+  toggleSelectedAgentModel(modelId: string): void {
+    if (this.settings.selectedAgentModel === modelId) {
+      this.settings.selectedAgentModel = null
+    } else {
+      this.settings.selectedAgentModel = modelId
+    }
+  }
+
+  isAgentModelSelected(modelId: string): boolean {
+    return this.settings.selectedAgentModel === modelId
+  }
+
   /**
    * 设置选中的模型（兼容旧接口，设置文本模型）
    */
@@ -1079,13 +1180,15 @@ class ModelConfigManager {
    */
   addPlatform(platform: Omit<AIPlatform, 'id'>): string {
     const id = `custom_${Date.now()}`
+    const apiProtocol = inferPlatformApiProtocol(platform)
     const newPlatform: AIPlatform = {
       ...platform,
       id,
       displayName: platform.name,
       enabled: platform.enabled ?? true,
       isRemote: false,
-      models: platform.models || []
+      apiProtocol,
+      models: (platform.models || []).map((model) => ({ ...model, apiProtocol }))
     }
 
     this.settings.platforms.push(newPlatform)
@@ -1102,6 +1205,11 @@ class ModelConfigManager {
       Object.assign(platform, updates)
       if (updates.name) {
         platform.displayName = updates.name
+      }
+      if (updates.apiProtocol !== undefined) {
+        const apiProtocol = inferPlatformApiProtocol(platform)
+        platform.apiProtocol = apiProtocol
+        platform.models = (platform.models || []).map((model) => ({ ...model, apiProtocol }))
       }
       if (wasEnabled && platform.enabled === false) {
         this.clearSelectedModelsForPlatform(platformId)
@@ -1131,6 +1239,9 @@ class ModelConfigManager {
     }
     if (this.settings.selectedVisionModel && duplicatedModelIds.has(this.settings.selectedVisionModel)) {
       this.settings.selectedVisionModel = null
+    }
+    if (this.settings.selectedAgentModel && duplicatedModelIds.has(this.settings.selectedAgentModel)) {
+      this.settings.selectedAgentModel = null
     }
 
     this.normalizeSelectedModels()
@@ -1165,6 +1276,7 @@ class ModelConfigManager {
       const model = platform.models.find(m => m.id === modelId)
       if (model) {
         Object.assign(model, updates)
+        this.normalizeSelectedModels()
         break
       }
     }
@@ -1179,7 +1291,7 @@ class ModelConfigManager {
       if (index !== -1) {
         const model = platform.models[index]
         // 替换选中状态（若被选中，自动切换到同平台同类型的另一个模型）
-        this._replaceSelectedModel(modelId, model.category, platform.id)
+        this._replaceSelectedModel(modelId, platform.id)
         platform.models.splice(index, 1)
         break
       }
@@ -1277,6 +1389,7 @@ export function useModelConfig() {
     selectedSummaryModel: computed(() => modelConfigManager.getSelectedSummaryModel()),
     selectedSummaryModels: computed(() => modelConfigManager.getSelectedSummaryModels()),
     selectedVisionModel: computed(() => modelConfigManager.getSelectedVisionModel()),
+    selectedAgentModel: computed(() => modelConfigManager.getSelectedAgentModel()),
     availableModels: computed(() => modelConfigManager.getAvailableModels()),
 
     // 方法
@@ -1284,12 +1397,15 @@ export function useModelConfig() {
     setSelectedTextModel: modelConfigManager.setSelectedTextModel.bind(modelConfigManager),
     setSelectedSummaryModel: modelConfigManager.setSelectedSummaryModel.bind(modelConfigManager),
     setSelectedVisionModel: modelConfigManager.setSelectedVisionModel.bind(modelConfigManager),
+    setSelectedAgentModel: modelConfigManager.setSelectedAgentModel.bind(modelConfigManager),
     toggleSelectedTextModel: modelConfigManager.toggleSelectedTextModel.bind(modelConfigManager),
     toggleSelectedSummaryModel: modelConfigManager.toggleSelectedSummaryModel.bind(modelConfigManager),
     toggleSelectedVisionModel: modelConfigManager.toggleSelectedVisionModel.bind(modelConfigManager),
+    toggleSelectedAgentModel: modelConfigManager.toggleSelectedAgentModel.bind(modelConfigManager),
     isTextModelSelected: modelConfigManager.isTextModelSelected.bind(modelConfigManager),
     isSummaryModelSelected: modelConfigManager.isSummaryModelSelected.bind(modelConfigManager),
     isVisionModelSelected: modelConfigManager.isVisionModelSelected.bind(modelConfigManager),
+    isAgentModelSelected: modelConfigManager.isAgentModelSelected.bind(modelConfigManager),
     addPlatform: modelConfigManager.addPlatform.bind(modelConfigManager),
     updatePlatform: modelConfigManager.updatePlatform.bind(modelConfigManager),
     removePlatform: modelConfigManager.removePlatform.bind(modelConfigManager),

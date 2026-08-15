@@ -68,8 +68,33 @@
       <!-- 文件/文件夹图标 -->
       <span class="node-icon">
         <template v-if="node.type === 'folder'">
-          <!-- 有子文件夹时根据展开状态显示不同图标 -->
-          <template v-if="hasChildren">
+          <span v-if="isDefaultFolder || isPendingFolder" class="special-folder-mark">
+            <svg
+              class="octicon octicon-file-directory-fill"
+              :class="isDefaultFolder ? 'default-folder-icon' : 'pending-folder-icon'"
+              viewBox="0 0 16 16"
+              width="16"
+              height="16"
+              fill="currentColor"
+              aria-hidden="true"
+              focusable="false"
+            >
+              <path d="M1.75 1A1.75 1.75 0 0 0 0 2.75v10.5C0 14.216.784 15 1.75 15h12.5A1.75 1.75 0 0 0 16 13.25v-8.5A1.75 1.75 0 0 0 14.25 3H7.5a.25.25 0 0 1-.2-.1l-.9-1.2C6.07 1.26 5.55 1 5 1H1.75Z" />
+            </svg>
+            <span class="special-folder-badge" :class="isDefaultFolder ? 'is-default' : 'is-pending'" aria-hidden="true">
+              <svg v-if="isDefaultFolder" viewBox="0 0 12 12" width="10" height="10" stroke-linejoin="round" stroke-linecap="round">
+                <path fill="#fff" stroke="#fff" stroke-width="2.7" d="M3.15 1.7h5.7v8.5L6 8.15 3.15 10.2z" />
+                <path fill="#fff" stroke="currentColor" stroke-width="1.35" d="M3.15 1.7h5.7v8.5L6 8.15 3.15 10.2z" />
+              </svg>
+              <svg v-else viewBox="0 0 12 12" width="10" height="10" stroke-linejoin="round" stroke-linecap="round">
+                <path fill="#fff" stroke="#fff" stroke-width="2.7" d="M6 2.15 10.35 10.1H1.65L6 2.15z" />
+                <path fill="#fff" stroke="currentColor" stroke-width="1.35" d="M6 2.15 10.35 10.1H1.65L6 2.15z" />
+                <path fill="none" stroke="currentColor" stroke-width="1.35" d="M6 5.15v2.15" />
+                <path fill="none" stroke="currentColor" stroke-width="1.35" d="M6 8.7h.01" />
+              </svg>
+            </span>
+          </span>
+          <template v-else-if="hasChildren">
             <svg v-if="isExpanded" aria-hidden="true" focusable="false" class="octicon octicon-file-directory-open-fill" viewBox="0 0 16 16" width="16" height="16" fill="currentColor" display="inline-block" overflow="visible" style="vertical-align: text-bottom;">
               <path d="M.513 1.513A1.75 1.75 0 0 1 1.75 1h3.5c.55 0 1.07.26 1.4.7l.9 1.2a.25.25 0 0 0 .2.1H13a1 1 0 0 1 1 1v.5H2.75a.75.75 0 0 0 0 1.5h11.978a1 1 0 0 1 .994 1.117L15 13.25A1.75 1.75 0 0 1 13.25 15H1.75A1.75 1.75 0 0 1 0 13.25V2.75c0-.464.184-.91.513-1.237Z"></path>
             </svg>
@@ -118,38 +143,43 @@
     </div>
     
     <!-- 子节点 -->
-    <div v-if="node.type === 'folder' && isExpanded && node.children" class="children">
-      <FileTreeNode
-        v-for="child in node.children"
-        :key="child.id"
-        :node="child"
-        :level="level + 1"
-        :selected-id="selectedId"
-        :dragged-node-id="draggedNodeId"
-        :expanded-folders="expandedFolders"
-        :renaming-node-id="renamingNodeId"
-        :rename-value="renameValue"
-        @select="(id) => emit('select', id)"
-        @context-menu="(data) => emit('context-menu', data)"
-        @expand-folder="(id) => emit('expand-folder', id)"
-        :hover-target-id="propsHoverTargetId"
-        :hover-position="propsHoverPosition"
-        :selection-mode="props.selectionMode"
-        :highlight-folder-id="props.highlightFolderId"
-        @move-folder="(data) => emit('move-folder', data)"
-
-        @drag-start="(nodeId) => emit('drag-start', nodeId)"
-        @drag-end="() => emit('drag-end')"
-        @drag-hover="(data) => emit('drag-hover', data)"
-        @rename-save="(nodeId, newName) => emit('rename-save', nodeId, newName)"
-        @rename-cancel="() => emit('rename-cancel')"
-      />
+    <div
+      v-if="showChildren"
+      class="children-clip"
+      :class="{ open: childrenOpen }"
+    >
+      <div class="children">
+        <FileTreeNode
+          v-for="child in node.children"
+          :key="child.id"
+          :node="child"
+          :level="level + 1"
+          :selected-id="selectedId"
+          :dragged-node-id="draggedNodeId"
+          :expanded-folders="expandedFolders"
+          :renaming-node-id="renamingNodeId"
+          :rename-value="renameValue"
+          @select="(id) => emit('select', id)"
+          @context-menu="(data) => emit('context-menu', data)"
+          @expand-folder="(id) => emit('expand-folder', id)"
+          :hover-target-id="propsHoverTargetId"
+          :hover-position="propsHoverPosition"
+          :selection-mode="props.selectionMode"
+          :highlight-folder-id="props.highlightFolderId"
+          @move-folder="(data) => emit('move-folder', data)"
+          @drag-start="(nodeId) => emit('drag-start', nodeId)"
+          @drag-end="() => emit('drag-end')"
+          @drag-hover="(data) => emit('drag-hover', data)"
+          @rename-save="(nodeId, newName) => emit('rename-save', nodeId, newName)"
+          @rename-cancel="() => emit('rename-cancel')"
+        />
+      </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick } from 'vue';
+import { ref, computed, watch, nextTick, onUnmounted } from 'vue';
 
 interface TreeNode {
   id: string;
@@ -158,6 +188,7 @@ interface TreeNode {
   children?: TreeNode[];
   questionCount?: number;
   totalQuestionCount?: number;
+  isVirtual?: boolean;
 }
 
 interface Props {
@@ -190,6 +221,47 @@ const emit = defineEmits<{
 }>();
 
 const isExpanded = computed(() => props.expandedFolders.has(props.node.id));
+const showChildren = ref(isExpanded.value);
+const childrenOpen = ref(isExpanded.value);
+const CHILDREN_ANIM_MS = 200;
+let collapseTimer: ReturnType<typeof setTimeout> | null = null;
+
+const prefersReducedMotion = () =>
+  typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+watch(isExpanded, async (open) => {
+  if (collapseTimer != null) {
+    clearTimeout(collapseTimer);
+    collapseTimer = null;
+  }
+
+  if (open) {
+    const alreadyMounted = showChildren.value;
+    showChildren.value = true;
+    if (alreadyMounted) {
+      childrenOpen.value = true;
+      return;
+    }
+    childrenOpen.value = prefersReducedMotion();
+    await nextTick();
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        childrenOpen.value = true;
+      });
+    });
+    return;
+  }
+
+  childrenOpen.value = false;
+  collapseTimer = setTimeout(() => {
+    if (!isExpanded.value) showChildren.value = false;
+    collapseTimer = null;
+  }, prefersReducedMotion() ? 0 : CHILDREN_ANIM_MS + 20);
+});
+
+onUnmounted(() => {
+  if (collapseTimer != null) clearTimeout(collapseTimer);
+});
 const isDragging = ref(false);
 const isDragOver = ref(false);
 const dragPosition = ref<'top' | 'center' | 'bottom' | null>(null);
@@ -221,6 +293,9 @@ watch([propsHoverTargetId, propsHoverPosition], ([id, pos]) => {
 });
 
 const isSelected = computed(() => props.selectedId === props.node.id);
+const isDefaultFolder = computed(() => props.node.id === '0');
+const isPendingFolder = computed(() => props.node.id === '-1' || Boolean(props.node.isVirtual));
+const isPinnedFolder = computed(() => isDefaultFolder.value || Boolean(props.node.isVirtual));
 const isLeafFolder = computed(() => props.node.type === 'folder' && !hasChildren.value);
 const isCurrentSaveFolder = computed(() => isLeafFolder.value && props.highlightFolderId === props.node.id);
 
@@ -336,7 +411,7 @@ const handleDragStart = (event: DragEvent) => {
     nodeType: props.node.type
   });
   
-  if (props.node.type !== 'folder') {
+  if (props.node.type !== 'folder' || isPinnedFolder.value) {
     event.preventDefault();
     return;
   }
@@ -582,7 +657,7 @@ const handleDrop = (event: DragEvent) => {
 // 手动拖拽（替代 HTML5 Drag API）
 const onMouseDown = (e: MouseEvent) => {
   if (e.button !== 0) return;
-  if (props.node.type !== 'folder' || isRenaming.value) return;
+  if (props.node.type !== 'folder' || isRenaming.value || isPinnedFolder.value) return;
   dragStarted.value = false;
   if (nodeContent.value) {
     const rect = nodeContent.value.getBoundingClientRect();
@@ -755,10 +830,6 @@ const findNodeByIdInProps = (id: string): TreeNode | null => {
   cursor: default !important;
 }
 
-.node-content.selected:focus {
-  background-color: #0e639c;
-}
-
 /* 层级连接线 */
 .level-lines {
   position: absolute;
@@ -785,6 +856,21 @@ const findNodeByIdInProps = (id: string): TreeNode | null => {
 }
 
 /* 展开箭头 */
+.children-clip {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 200ms ease-out;
+}
+
+.children-clip.open {
+  grid-template-rows: 1fr;
+}
+
+.children {
+  min-height: 0;
+  overflow: hidden;
+}
+
 .expand-arrow {
   width: 16px;
   height: 16px;
@@ -793,7 +879,7 @@ const findNodeByIdInProps = (id: string): TreeNode | null => {
   justify-content: center;
   cursor: pointer;
   color: var(--filetree-expand-arrow-color);
-  transition: transform 0.2s ease;
+  transition: transform 200ms ease-out;
 }
 
 .expand-arrow.expanded {
@@ -818,8 +904,16 @@ const findNodeByIdInProps = (id: string): TreeNode | null => {
 
 .arrow-icon,
 .octicon-chevron-right {
+  transition: transform 200ms ease-out;
+}
 
-  transition: transform 0.2s ease;
+@media (prefers-reduced-motion: reduce) {
+  .children-clip,
+  .expand-arrow,
+  .arrow-icon,
+  .octicon-chevron-right {
+    transition: none;
+  }
 }
 
 .expand-arrow-placeholder {
@@ -836,12 +930,55 @@ const findNodeByIdInProps = (id: string): TreeNode | null => {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  overflow: visible;
 }
 
 .folder-icon,
 .octicon-file-directory-fill,
 .octicon-file-directory-open-fill {
   color: #f8b62b;
+}
+
+.special-folder-mark {
+  position: relative;
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.default-folder-icon {
+  color: #5b8def;
+}
+
+.pending-folder-icon {
+  color: #e35d5c;
+}
+
+.special-folder-badge {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 13px;
+  height: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.special-folder-badge.is-default {
+  color: #5b8def;
+}
+
+.special-folder-badge.is-pending {
+  color: #e35d5c;
+}
+
+.special-folder-badge svg {
+  display: block;
+  overflow: visible;
 }
 
 
@@ -865,6 +1002,8 @@ const findNodeByIdInProps = (id: string): TreeNode | null => {
   color: #24292f;
   outline: none;
   margin-left: 0;
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .rename-input:focus {
@@ -881,11 +1020,12 @@ const findNodeByIdInProps = (id: string): TreeNode | null => {
   margin-left: auto;
   font-size: 11px;
   color: var(--text-secondary);
-  background-color: var(--bg-tertiary);
+  background-color: var(--filetree-count-bg);
   padding: 2px 6px;
   border-radius: 8px;
   min-width: 12px;
   text-align: center;
+  box-shadow: var(--filetree-count-shadow);
 }
 
 

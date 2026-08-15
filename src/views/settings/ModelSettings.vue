@@ -76,6 +76,7 @@
                 <span v-if="isPlatformSelectedForCategory(platform, 'text')" class="platform-tag">文本</span>
                 <span v-if="isPlatformSelectedForCategory(platform, 'vision')" class="platform-tag">视觉</span>
                 <span v-if="isPlatformSelectedForCategory(platform, 'summary')" class="platform-tag">总结</span>
+                <span v-if="isPlatformSelectedForCategory(platform, 'agent')" class="platform-tag">agent</span>
               </div>
               <!-- 启用开关已移至详情面板 -->
             </div>
@@ -205,13 +206,59 @@
           </div>
           <div class="form-group">
             <label class="form-label">Base URL</label>
-            <input 
-              type="text" 
-              v-model="selectedPlatform.baseUrl"
-              @input="updatePlatformBaseUrl"
-              class="form-input"
-              placeholder="API 基础地址"
-            >
+            <div class="base-url-row">
+              <input
+                type="text"
+                v-model="selectedPlatform.baseUrl"
+                @input="updatePlatformBaseUrl"
+                class="form-input"
+                placeholder="API 基础地址"
+              >
+              <div class="protocol-select-wrap">
+                <button
+                  ref="platformProtocolTriggerRef"
+                  type="button"
+                  class="protocol-select-trigger"
+                  :class="{ open: showPlatformProtocolDropdown }"
+                  :disabled="selectedPlatform.isRemote"
+                  :title="selectedPlatform.isRemote ? '远程平台协议由管理员下发' : '该平台下所有模型共用此协议'"
+                  aria-haspopup="listbox"
+                  :aria-expanded="showPlatformProtocolDropdown"
+                  @click="togglePlatformProtocolDropdown"
+                >
+                  <span class="protocol-select-path">{{ currentPlatformProtocolPath }}</span>
+                  <svg class="protocol-select-arrow" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+                    <path d="M4.2 6.2a.75.75 0 0 1 1.06 0L8 8.94l2.74-2.74a.75.75 0 1 1 1.06 1.06l-3.27 3.27a.75.75 0 0 1-1.06 0L4.2 7.26a.75.75 0 0 1 0-1.06z" fill="currentColor"/>
+                  </svg>
+                </button>
+                <Teleport to="body">
+                  <Transition name="dropdown-pop">
+                    <div
+                      v-if="showPlatformProtocolDropdown"
+                      ref="platformProtocolDropdownRef"
+                      class="protocol-dropdown"
+                      :style="platformProtocolDropdownStyle"
+                      role="listbox"
+                      aria-label="API 协议"
+                    >
+                      <button
+                        v-for="opt in platformProtocolOptions"
+                        :key="opt.value"
+                        type="button"
+                        class="protocol-dropdown-item"
+                        :class="{ active: (selectedPlatform.apiProtocol || 'openai-chat') === opt.value }"
+                        role="option"
+                        :aria-selected="(selectedPlatform.apiProtocol || 'openai-chat') === opt.value"
+                        @click="selectPlatformProtocol(opt.value)"
+                      >
+                        <span class="protocol-dropdown-path">{{ opt.endpoint }}</span>
+                        <span class="protocol-dropdown-label">{{ opt.label }}</span>
+                      </button>
+                    </div>
+                  </Transition>
+                </Teleport>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -231,9 +278,9 @@
             </div>
           </div>
           
-          <div v-if="selectedCategory === 'text' || selectedCategory === 'summary' || selectedCategory === 'vision'" class="model-list-hint">
+          <div v-if="selectedCategory === 'text' || selectedCategory === 'summary' || selectedCategory === 'vision' || selectedCategory === 'agent'" class="model-list-hint">
             <template v-if="selectedCategory === 'text'">可多选，最多 5 个（已选 {{ currentMultiModels.length }}/5）</template>
-            <template v-else-if="selectedCategory === 'summary'">单选，再点一次可取消选择</template>
+            <template v-else-if="selectedCategory === 'agent'">单选，显示全部模型，再点一次可取消选择</template>
             <template v-else>单选，再点一次可取消选择</template>
           </div>
           <div class="model-list">
@@ -243,10 +290,9 @@
               :data-model-id="model.id"
               class="model-item"
               :class="{ 
-                active: selectedCategory === 'vision' 
-                  ? isVisionModelSelected(model.id)
-                  : (selectedCategory === 'summary' ? isSummaryModelSelected(model.id) : isTextModelSelected(model.id)),
-                'model-item--disabled': isSelectedPlatformDisabled
+                active: isCurrentCategoryModelSelected(model),
+                'model-item--disabled': isSelectedPlatformDisabled,
+                'model-item--no-vision': isVisionUnavailable(model)
               }"
               @click="selectModel(model)"
               @contextmenu.prevent="showModelContextMenuHandler($event, model)"
@@ -258,16 +304,16 @@
               <div class="model-info">
                 <div class="model-header">
                   <h5 class="model-name">{{ model.displayName }}</h5>
-                 
+                  <span v-if="modelHasVision(model)" class="model-kind-tag">视觉</span>
                 </div>
                 
               </div>
               <div class="model-actions">
-                <div 
-                  v-if="selectedCategory === 'vision' ? isVisionModelSelected(model.id) : (selectedCategory === 'summary' ? isSummaryModelSelected(model.id) : isTextModelSelected(model.id))" 
-                  :class="selectedCategory === 'text' ? 'model-selected model-selected--multi' : 'model-selected'"
+                <div
+                  class="model-selected"
+                  :class="{ 'model-selected--multi': selectedCategory === 'text' }"
                 >
-                  <span class="model-dot"></span>
+                  <span v-if="isCurrentCategoryModelSelected(model)" class="model-dot"></span>
                 </div>
               </div>
             </div>
@@ -329,6 +375,7 @@
       :model="editingModel"
       :platform-base-url="selectedPlatform?.baseUrl"
       :platform-api-key="selectedPlatform?.apiKey"
+      :platform-api-protocol="selectedPlatform?.apiProtocol"
       @close="closeModelDialog"
       @after-leave="onModelConfigAfterLeave"
       @save="saveModel"
@@ -370,8 +417,8 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, computed, nextTick } from 'vue'
-import { useModelConfig, fetchRemoteModelsCatalog } from '../../services/modelConfig'
-import type { AIPlatform, AIModel, RemoteModelIconMapping } from '../../services/modelConfig'
+import { useModelConfig, fetchRemoteModelsCatalog, modelHasVision } from '../../services/modelConfig'
+import type { AIPlatform, AIModel, ApiProtocol, RemoteModelIconMapping } from '../../services/modelConfig'
 import { resolveExecutableModelJsCode, resolveRuntimeModelId } from '../../services/modelProtocol'
 import { environmentDetector } from '../../services/environmentDetector'
 import { getPlatformIconDisplayUrl, resolvePlatformIconUrl } from '../../services/iconCache'
@@ -431,6 +478,7 @@ const updateScrollbarThumb = () => {
 }
 
 const onDetailScroll = () => {
+  closePlatformProtocolDropdown()
   updateScrollbarThumb()
   showScrollbar()
 }
@@ -540,15 +588,18 @@ const {
   toggleSelectedTextModel,
   toggleSelectedSummaryModel,
   toggleSelectedVisionModel,
+  toggleSelectedAgentModel,
   isTextModelSelected,
   isSummaryModelSelected,
   isVisionModelSelected,
+  isAgentModelSelected,
   selectedModel: globalSelectedModel,
   selectedTextModel: globalSelectedTextModel,
   selectedTextModels: globalSelectedTextModels,
   selectedSummaryModel: globalSelectedSummaryModel,
   selectedSummaryModels: globalSelectedSummaryModels,
   selectedVisionModel: globalSelectedVisionModel,
+  selectedAgentModel: globalSelectedAgentModel,
 } = useModelConfig()
 
 // 对话框状态
@@ -578,15 +629,18 @@ const getPlatformSelectedCount = (platform: AIPlatform): number => {
   if (selectedCategory.value === 'vision') {
     return globalSelectedVisionModel.value?.platformId === platform.id ? 1 : 0
   }
+  if (selectedCategory.value === 'agent') {
+    return globalSelectedAgentModel.value?.platformId === platform.id ? 1 : 0
+  }
   const ids = currentMultiModels.value.map(m => m.id)
-  return platform.models.filter(m => (m.category === 'text' || m.category === 'summary') && ids.includes(m.id)).length
+  return platform.models.filter(m => ids.includes(m.id)).length
 }
 
 // 模型分类筛选状态
-const selectedCategory = ref<'summary' | 'text' | 'vision'>('text')
+const selectedCategory = ref<'summary' | 'text' | 'vision' | 'agent'>('text')
 
 // 检查平台是否有模型被选中（针对特定分类）
-const isPlatformSelectedForCategory = (platform: AIPlatform, category: 'summary' | 'text' | 'vision') => {
+const isPlatformSelectedForCategory = (platform: AIPlatform, category: 'summary' | 'text' | 'vision' | 'agent') => {
   if (category === 'text') {
     return globalSelectedTextModels.value.some(m => m.platformId === platform.id)
   }
@@ -596,7 +650,17 @@ const isPlatformSelectedForCategory = (platform: AIPlatform, category: 'summary'
   if (category === 'vision') {
     return globalSelectedVisionModel.value?.platformId === platform.id
   }
+  if (category === 'agent') {
+    return globalSelectedAgentModel.value?.platformId === platform.id
+  }
   return false
+}
+
+const isCurrentCategoryModelSelected = (model: AIModel) => {
+  if (selectedCategory.value === 'vision') return isVisionModelSelected(model.id)
+  if (selectedCategory.value === 'summary') return isSummaryModelSelected(model.id)
+  if (selectedCategory.value === 'agent') return isAgentModelSelected(model.id)
+  return isTextModelSelected(model.id)
 }
 
 // 计算属性：根据分类筛选模型
@@ -605,13 +669,11 @@ const filteredModels = computed(() => {
   
   const models = selectedPlatform.value.models || []
   
-  // 'summary' 和 'text' 都显示文本模型
-  if (selectedCategory.value === 'summary' || selectedCategory.value === 'text') {
-    return models.filter(model => model.category === 'text')
-  }
-  
-  return models.filter(model => model.category === 'vision')
+  return models
 })
+
+const isVisionUnavailable = (model: AIModel) =>
+  selectedCategory.value === 'vision' && !modelHasVision(model)
 
 const isSelectedPlatformDisabled = computed(() => selectedPlatform.value?.enabled === false)
 
@@ -621,6 +683,8 @@ const currentModel = computed(() => {
     return globalSelectedTextModel.value
   } else if (selectedCategory.value === 'summary') {
     return globalSelectedSummaryModel.value
+  } else if (selectedCategory.value === 'agent') {
+    return globalSelectedAgentModel.value
   } else {
     return currentVisionModel.value
   }
@@ -901,14 +965,18 @@ const selectPlatform = (platform: AIPlatform) => {
   selectedModel.value = null
 }
 
-const revealModelInList = async (platformId: string, modelId: string, category: AIModel['category']) => {
+const revealModelInList = async (
+  platformId: string,
+  modelId: string,
+  category: 'summary' | 'text' | 'vision' | 'agent'
+) => {
   const latestPlatform = modelConfig.platforms.find(platform => platform.id === platformId)
   if (latestPlatform) {
     selectedPlatform.value = latestPlatform
     selectedModel.value = latestPlatform.models.find(model => model.id === modelId) || null
   }
 
-  selectedCategory.value = category === 'vision' ? 'vision' : (category === 'summary' ? 'summary' : 'text')
+  selectedCategory.value = category
 
   await nextTick()
   updateScrollbarThumb()
@@ -919,7 +987,7 @@ const revealModelInList = async (platformId: string, modelId: string, category: 
 }
 
 const selectModel = (model: AIModel) => {
-  if (isSelectedPlatformDisabled.value) {
+  if (isSelectedPlatformDisabled.value || isVisionUnavailable(model)) {
     return
   }
 
@@ -930,6 +998,8 @@ const selectModel = (model: AIModel) => {
   } else if (selectedCategory.value === 'vision') {
     toggleSelectedVisionModel(model.id)
     // currentVisionModel 由 watch(globalSelectedVisionModel) 同步
+  } else if (selectedCategory.value === 'agent') {
+    toggleSelectedAgentModel(model.id)
   }
 }
 
@@ -1163,6 +1233,89 @@ const updatePlatformBaseUrl = async () => {
   }
 }
 
+const platformProtocolOptions = computed(() => {
+  const options: { value: ApiProtocol; label: string; endpoint: string }[] = [
+    { value: 'openai-chat', label: 'Chat', endpoint: '/chat/completions' },
+    { value: 'openai-response', label: 'Responses', endpoint: '/responses' },
+    { value: 'anthropic', label: 'Messages', endpoint: '/v1/messages' },
+  ]
+  if (!selectedPlatform.value?.isRemote) {
+    options.push({ value: 'custom', label: '自定义', endpoint: '自定义' })
+  }
+  return options
+})
+
+const currentPlatformProtocolPath = computed(() => {
+  const value = selectedPlatform.value?.apiProtocol || 'openai-chat'
+  return platformProtocolOptions.value.find((opt) => opt.value === value)?.endpoint || '/chat/completions'
+})
+
+const showPlatformProtocolDropdown = ref(false)
+const platformProtocolTriggerRef = ref<HTMLElement | null>(null)
+const platformProtocolDropdownRef = ref<HTMLElement | null>(null)
+const platformProtocolDropdownStyle = ref<Record<string, string>>({})
+useExclusiveMenu('model-settings-platform-protocol', showPlatformProtocolDropdown)
+
+const updatePlatformProtocolDropdownPosition = () => {
+  if (!platformProtocolTriggerRef.value) return
+  const triggerRect = platformProtocolTriggerRef.value.getBoundingClientRect()
+  const dropdownWidth = Math.max(triggerRect.width, 220)
+  const estimatedHeight = platformProtocolDropdownRef.value?.getBoundingClientRect().height || 168
+  const spaceBelow = window.innerHeight - triggerRect.bottom
+  const showAbove = spaceBelow < estimatedHeight + 12 && triggerRect.top > estimatedHeight + 12
+
+  platformProtocolDropdownStyle.value = {
+    position: 'fixed',
+    left: `${Math.max(8, Math.min(triggerRect.right - dropdownWidth, window.innerWidth - dropdownWidth - 8))}px`,
+    top: showAbove ? `${Math.max(8, triggerRect.top - estimatedHeight - 6)}px` : `${triggerRect.bottom + 6}px`,
+    width: `${dropdownWidth}px`,
+    zIndex: '2000',
+  }
+}
+
+const closePlatformProtocolDropdown = () => {
+  showPlatformProtocolDropdown.value = false
+}
+
+const togglePlatformProtocolDropdown = async () => {
+  if (selectedPlatform.value?.isRemote) return
+  showPlatformProtocolDropdown.value = !showPlatformProtocolDropdown.value
+  if (showPlatformProtocolDropdown.value) {
+    await nextTick()
+    updatePlatformProtocolDropdownPosition()
+  }
+}
+
+const selectPlatformProtocol = async (protocol: ApiProtocol) => {
+  closePlatformProtocolDropdown()
+  await updatePlatformApiProtocol(protocol)
+}
+
+const handlePlatformProtocolOutsideClick = (event: Event) => {
+  if (!showPlatformProtocolDropdown.value) return
+  const target = event.target as Node | null
+  if (
+    target &&
+    (
+      platformProtocolTriggerRef.value?.contains(target) ||
+      platformProtocolDropdownRef.value?.contains(target)
+    )
+  ) {
+    return
+  }
+  closePlatformProtocolDropdown()
+}
+
+const updatePlatformApiProtocol = async (protocol: ApiProtocol) => {
+  if (!selectedPlatform.value || selectedPlatform.value.isRemote) return
+  try {
+    selectedPlatform.value.apiProtocol = protocol
+    await updatePlatform(selectedPlatform.value.id, { apiProtocol: protocol })
+  } catch (error) {
+    console.error('更新平台协议失败:', error)
+  }
+}
+
 // -------- 添加模型下拉 --------
 const showAddModelDropdown = ref(false)
 useExclusiveMenu('model-settings-add-model', showAddModelDropdown)
@@ -1222,7 +1375,7 @@ const saveModel = async (modelData: Partial<AIModel>) => {
   try {
     const platformId = selectedPlatform.value.id
     let newModelId: string | null = null
-    let newModelCategory: AIModel['category'] | null = null
+    let revealCategory: 'summary' | 'text' | 'vision' | 'agent' | null = null
 
     if (editingModel.value) {
       // 远程模型：名称 / id / 协议 / 思考由管理员锁定，禁止本地覆写
@@ -1235,13 +1388,14 @@ const saveModel = async (modelData: Partial<AIModel>) => {
         displayName: modelData.displayName,
         modelId: modelData.modelId,
         jsCode: modelData.jsCode,
-        category: modelData.category,
+        category: 'text',
+        hasVision: modelData.hasVision === true,
         enableThinking: modelData.enableThinking,
         thinkingOffEnableThinkingFalse: modelData.thinkingOffEnableThinkingFalse,
         thinkingOffThinkingTypeDisabled: modelData.thinkingOffThinkingTypeDisabled,
         thinkingOffResponsesEffort: modelData.thinkingOffResponsesEffort,
         thinkingEffort: modelData.thinkingEffort,
-        apiProtocol: modelData.apiProtocol
+        apiProtocol: selectedPlatform.value.apiProtocol || modelData.apiProtocol
       })
     } else {
       // 使用 addModelToPlatform 自动生成 ID 并保存
@@ -1253,22 +1407,24 @@ const saveModel = async (modelData: Partial<AIModel>) => {
         enabled: true,
         modelId: modelData.modelId,
         jsCode: modelData.jsCode || '',
-        category: modelData.category || 'text' as const,
+        category: 'text' as const,
+        hasVision: modelData.hasVision === true,
         enableThinking: modelData.enableThinking ?? false,
         thinkingOffEnableThinkingFalse: modelData.thinkingOffEnableThinkingFalse ?? true,
         thinkingOffThinkingTypeDisabled: modelData.thinkingOffThinkingTypeDisabled ?? false,
         thinkingOffResponsesEffort: modelData.thinkingOffResponsesEffort ?? 'minimal',
         thinkingEffort: modelData.thinkingEffort ?? 'medium',
-        apiProtocol: modelData.apiProtocol
+        apiProtocol: selectedPlatform.value.apiProtocol || modelData.apiProtocol
       }
-      newModelCategory = newModelData.category
       newModelId = await addModelToPlatform(platformId, newModelData)
+      const stayOnCurrent = selectedCategory.value !== 'vision' || newModelData.hasVision
+      revealCategory = stayOnCurrent ? selectedCategory.value : 'text'
     }
     
     closeModelDialog()
 
-    if (newModelId && newModelCategory) {
-      await revealModelInList(platformId, newModelId, newModelCategory)
+    if (newModelId && revealCategory) {
+      await revealModelInList(platformId, newModelId, revealCategory)
     }
   } catch (error) {
     console.error('保存模型失败:', error)
@@ -1394,7 +1550,7 @@ const testModel = async (model: AIModel, testFunctionCalling: boolean = false) =
     // 根据模型类型构建不同的测试输入数据
     let testInput: any
     
-    if (model.category === 'vision' && !testFunctionCalling) {
+    if (modelHasVision(model) && !testFunctionCalling) {
       // 视觉模型测试：使用图片输入
       // 将图片转换为base64格式
       let imageBase64 = ''
@@ -1548,7 +1704,7 @@ const testModel = async (model: AIModel, testFunctionCalling: boolean = false) =
       (input, init) => tauriHttp.fetch(input as any, init as any),
       testAbortController.value?.signal
     )
-    const executableCode = resolveExecutableModelJsCode(model)
+    const executableCode = resolveExecutableModelJsCode(model, selectedPlatform.value)
     
     // 执行JavaScript配置代码
     if (executableCode) {
@@ -1674,8 +1830,8 @@ const testModel = async (model: AIModel, testFunctionCalling: boolean = false) =
                   firstTokenLatency: firstTokenLatency ?? undefined,
                   tokenRate: tokenRate ?? undefined,
                   timestamp: new Date().toLocaleString(),
-                  modelType: model.category,
-                  testType: model.category === 'vision' ? '图像理解测试' : '文本对话测试'
+                  modelType: modelHasVision(model) ? 'vision' : 'text',
+                  testType: modelHasVision(model) ? '图像理解测试' : '文本对话测试'
                 }
               }
               break;
@@ -1708,8 +1864,8 @@ const testModel = async (model: AIModel, testFunctionCalling: boolean = false) =
                   firstTokenLatency,
                   tokenRate: tokenRate ?? undefined,
                   timestamp: new Date().toLocaleString(),
-                  modelType: model.category,
-                  testType: model.category === 'vision' ? '图像理解测试' : '文本对话测试'
+                  modelType: modelHasVision(model) ? 'vision' : 'text',
+                  testType: modelHasVision(model) ? '图像理解测试' : '文本对话测试'
                 }
               }
               break;
@@ -1764,6 +1920,8 @@ onMounted(() => {
   document.addEventListener('click', hidePlatformMenu)
   document.addEventListener('click', hideModelMenu)
   document.addEventListener('click', handleAddModelOutsideClick)
+  document.addEventListener('click', handlePlatformProtocolOutsideClick)
+  window.addEventListener('resize', closePlatformProtocolDropdown)
   
   // 预加载平台图标
   loadPlatformIcons()
@@ -1783,6 +1941,8 @@ onUnmounted(() => {
   document.removeEventListener('click', hidePlatformMenu)
   document.removeEventListener('click', hideModelMenu)
   document.removeEventListener('click', handleAddModelOutsideClick)
+  document.removeEventListener('click', handlePlatformProtocolOutsideClick)
+  window.removeEventListener('resize', closePlatformProtocolDropdown)
   if (scrollHideTimer) clearTimeout(scrollHideTimer)
   if (platformScrollHideTimer) clearTimeout(platformScrollHideTimer)
 })
@@ -1791,6 +1951,7 @@ onUnmounted(() => {
 // 文本模型通过 currentTextModel computed 自动同步
 
 watch(selectedPlatform, async () => {
+  closePlatformProtocolDropdown()
   await nextTick()
   updateScrollbarThumb()
   updatePlatformScrollbarThumb()
@@ -2175,6 +2336,7 @@ onUnmounted(() => {
 .detail-section {
   position: relative;
   margin-bottom: 18px;
+  padding-bottom: 16px;
 }
 
 .detail-section::after {
@@ -2323,6 +2485,153 @@ onUnmounted(() => {
   margin-bottom: 0;
 }
 
+.form-hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-secondary, #718096);
+}
+
+.base-url-row {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.base-url-row .form-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.protocol-select-wrap {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.protocol-select-trigger {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 196px;
+  height: 100%;
+  min-height: 38px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: var(--form-input-bg, #F7F7F7);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color 0.2s ease, background-color 0.2s ease, transform 0.12s ease;
+}
+
+.protocol-select-trigger:hover,
+.protocol-select-trigger.open {
+  background: var(--form-input-hover-bg, #f0f0f0);
+  border-color: var(--form-input-hover-border, transparent);
+}
+
+.protocol-select-trigger:focus {
+  outline: none;
+  border-color: var(--form-input-focus-border, #e3e3e3);
+}
+
+.protocol-select-trigger:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.protocol-select-trigger:disabled {
+  cursor: default;
+  opacity: 0.72;
+}
+
+.protocol-select-path,
+.protocol-dropdown-path {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  letter-spacing: -0.01em;
+}
+
+.protocol-dropdown-label {
+  color: var(--text-secondary, #718096);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.protocol-select-arrow {
+  flex-shrink: 0;
+  color: var(--text-secondary, #718096);
+  transition: transform 0.16s ease;
+}
+
+.protocol-select-trigger.open .protocol-select-arrow {
+  transform: rotate(180deg);
+}
+
+.protocol-dropdown {
+  box-sizing: border-box;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--context-menu-bg, rgba(255, 255, 255, 0.4));
+  backdrop-filter: blur(40px) saturate(180%);
+  -webkit-backdrop-filter: blur(40px) saturate(180%);
+  border: 1px solid var(--context-menu-border, rgba(255, 255, 255, 0.55));
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.22), 0 4px 12px rgba(0, 0, 0, 0.12), inset 0 0.5px 0 rgba(255, 255, 255, 0.5);
+  font-size: 14px;
+}
+
+.protocol-dropdown-item {
+  appearance: none;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 32px;
+  padding: 4px 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--context-menu-item-text, #2d3748);
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  transition: background-color 0.2s ease;
+}
+
+.protocol-dropdown-item:hover,
+.protocol-dropdown-item.active {
+  background-color: var(--context-menu-item-hover-bg, rgba(0, 0, 0, 0.06));
+}
+
+.dropdown-pop-enter-active,
+.dropdown-pop-leave-active {
+  transition: opacity 0.14s ease, transform 0.16s cubic-bezier(0.2, 0.8, 0.2, 1);
+  transform-origin: top center;
+}
+
+.dropdown-pop-enter-from,
+.dropdown-pop-leave-to {
+  opacity: 0;
+  transform: translateY(-4px) scale(0.96);
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .protocol-dropdown {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    background: #ffffff;
+  }
+}
+
 .form-input {
   box-sizing: border-box;
   width: 100%;
@@ -2404,16 +2713,17 @@ input[type="password"].api-key-input::-ms-reveal {
 .model-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 4px;
 }
 
 .model-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px;
+  gap: 12px;
+  padding: 7px 10px;
   border: 1px solid var(--model-item-border);
-  border-radius: 16px;
+  border-radius: 10px;
   cursor: pointer;
   transition: all 0.2s ease;
   background: var(--model-item-bg);
@@ -2437,6 +2747,22 @@ input[type="password"].api-key-input::-ms-reveal {
   color: var(--model-item-text);
 }
 
+.model-item--no-vision {
+  cursor: not-allowed;
+  opacity: 0.34;
+  filter: grayscale(1);
+}
+
+.model-item--no-vision:hover {
+  background: var(--model-item-bg);
+  border-color: var(--model-item-border);
+  color: var(--model-item-text);
+}
+
+.model-item--no-vision .model-name {
+  color: var(--text-secondary, #9aa3af);
+}
+
 .model-item.active {
   background-color: var(--model-item-active-bg);
   border-color: var(--model-item-active-border);
@@ -2448,6 +2774,13 @@ input[type="password"].api-key-input::-ms-reveal {
   flex: 1;
 }
 
+.model-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
 .model-name {
   font-size: 14px;
   font-weight: 500;
@@ -2455,16 +2788,31 @@ input[type="password"].api-key-input::-ms-reveal {
   margin: 0;
 }
 
+.model-kind-tag {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: #c47b12;
+  background: color-mix(in srgb, #f8bd40 28%, transparent);
+}
+
 .model-actions {
   display: flex;
   align-items: center;
   gap: 8px;
+  margin-left: 4px;
 }
 
 .model-selected {
   display: flex;
   align-items: center;
   justify-content: center;
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
 }
 
 .model-dot {
@@ -2660,7 +3008,7 @@ input[type="password"].api-key-input::-ms-reveal {
   gap: 5px;
   font-size: 11px;
   color: var(--text-secondary, #718096);
-  padding: 4px 4px 8px;
+  padding: 2px 2px 6px;
   user-select: none;
 }
 
@@ -2675,9 +3023,9 @@ input[type="password"].api-key-input::-ms-reveal {
 /* 模型图标 */
 .model-icon-wrap {
   flex-shrink: 0;
-  width: 26px;
-  height: 26px;
-  border-radius: 6px;
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
   overflow: hidden;
   display: flex;
   align-items: center;
@@ -2688,7 +3036,7 @@ input[type="password"].api-key-input::-ms-reveal {
   width: 100%;
   height: 100%;
   object-fit: contain;
-  border-radius: 6px;
+  border-radius: 5px;
 }
 .model-icon-fallback {
   width: 100%;
@@ -2698,8 +3046,8 @@ input[type="password"].api-key-input::-ms-reveal {
   justify-content: center;
   background: var(--color-accent-light, rgba(49,130,206,0.1));
   color: var(--btn-primary, #3182ce);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
-  border-radius: 6px;
+  border-radius: 5px;
 }
 </style>

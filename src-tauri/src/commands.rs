@@ -486,6 +486,12 @@ pub async fn read_file_bytes(path: String) -> Result<String, String> {
 }
 
 #[tauri::command]
+pub async fn stat_local_file(path: String) -> Result<serde_json::Value, String> {
+    let meta = fs::metadata(&path).map_err(|e| format!("读取文件信息失败: {}", e))?;
+    Ok(serde_json::json!({ "size": meta.len() }))
+}
+
+#[tauri::command]
 pub async fn read_excel_headers(path: String) -> Result<Vec<String>, String> {
     let mut workbook = open_workbook_auto(&path).map_err(|e| format!("打开Excel失败: {}", e))?;
     let sheet_names = workbook.sheet_names().to_owned();
@@ -1077,6 +1083,46 @@ pub async fn open_cache_dir(app: tauri::AppHandle) -> Result<(), String> {
     {
         Command::new("xdg-open")
             .arg(cache_dir.to_str().unwrap_or(""))
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
+}
+
+/// 在访达 / 资源管理器中显示文件或文件夹。
+#[tauri::command]
+pub fn reveal_in_file_manager(path: String) -> Result<(), String> {
+    let path = path.trim();
+    if path.is_empty() {
+        return Err("path 为空".into());
+    }
+    if !std::path::Path::new(path).exists() {
+        return Err("文件不存在".into());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .args(["-R", path])
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("explorer")
+            .args(["/select,", path])
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let parent = std::path::Path::new(path)
+            .parent()
+            .and_then(|p| p.to_str())
+            .unwrap_or(path);
+        Command::new("xdg-open")
+            .arg(parent)
             .spawn()
             .map_err(|e| e.to_string())?;
     }

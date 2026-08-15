@@ -12,6 +12,7 @@ export default defineConfig(async () => ({
   resolve: {
     alias: {
       '@': resolve(__dirname, 'src'),
+      '@terrastruct/d2': resolve(__dirname, 'node_modules/@terrastruct/d2/dist/browser/index.js'),
     },
   },
 
@@ -35,7 +36,10 @@ export default defineConfig(async () => ({
   publicDir: 'public',
   
   // 确保 src/assets 中的文件被处理
-  assetsInclude: ['**/*.png', '**/*.jpg', '**/*.jpeg', '**/*.gif', '**/*.svg', '**/*.webp'],
+  assetsInclude: ['**/*.png', '**/*.jpg', '**/*.jpeg', '**/*.gif', '**/*.svg', '**/*.webp', '**/*.wasm'],
+  optimizeDeps: {
+    exclude: ['@terrastruct/d2'],
+  },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //

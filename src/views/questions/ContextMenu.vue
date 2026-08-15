@@ -23,6 +23,7 @@ interface Props {
   canSetAsSaveFolder?: boolean;
   isCurrentSaveFolder?: boolean;
   isVirtualNode?: boolean;
+  canOrganize?: boolean;
 }
 
 const props = defineProps<Props>();
@@ -30,6 +31,7 @@ const props = defineProps<Props>();
 const emit = defineEmits<{
   'new-folder': [];
   'set-save-folder': [];
+  'organize': [];
   'rename': [];
   'delete': [];
   'clear-questions': [];
@@ -53,8 +55,10 @@ const menuItems = computed(() => {
     ];
   }
 
-  const items: any[] = [
-    {
+  const items: any[] = [];
+
+  if (!props.isDefaultFolder) {
+    items.push({
       id: 'new-folder',
       label: '新建文件夹',
       action: 'new-folder',
@@ -62,27 +66,35 @@ const menuItems = computed(() => {
         type: 'emoji' as const,
         content: ''
       }
-    }
-  ];
+    });
+  }
+
+  if (props.canOrganize && !props.isDefaultFolder) {
+    items.push({
+      id: 'organize',
+      label: '整理',
+      action: 'organize',
+      icon: {
+        type: 'emoji' as const,
+        content: ''
+      }
+    });
+  }
 
   if (props.canSetAsSaveFolder) {
-    items.push(
-      {
-        id: 'set-save-folder',
-        label: '设为保存文件夹',
-        action: 'set-save-folder',
-        icon: {
-          type: 'emoji' as const,
-          content: ''
-        },
-        disabled: props.isCurrentSaveFolder
+    items.push({
+      id: 'set-save-folder',
+      label: '设为保存文件夹',
+      action: 'set-save-folder',
+      icon: {
+        type: 'emoji' as const,
+        content: ''
       },
-      {
-        id: 'divider-1',
-        type: 'divider' as const
-      }
-    );
-  } else {
+      disabled: props.isCurrentSaveFolder
+    });
+  }
+
+  if (items.length) {
     items.push({
       id: 'divider-1',
       type: 'divider' as const
@@ -137,6 +149,9 @@ const handleItemClick = (item: any) => {
       break;
     case 'set-save-folder':
       emit('set-save-folder');
+      break;
+    case 'organize':
+      emit('organize');
       break;
     case 'rename':
       emit('rename');

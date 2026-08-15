@@ -2027,10 +2027,9 @@ const callModelWithStreaming = async (
   }
 
   const runtimeModelId = resolveRuntimeModelId(model)
-  const executableCode = resolveExecutableModelJsCode(model)
-
   // 获取模型所属的平台
   const platform = platforms.value.find(p => p.models.some(m => m.id === model.id))
+  const executableCode = resolveExecutableModelJsCode(model, platform)
 
   if (!platform) {
     console.error('未找到模型所属平台 - 详细信息:')
@@ -2307,9 +2306,8 @@ const finalizeMultiModelReasoning = (requestId: string, modelId: string) => {
 // 调用模型函数
 const callModel = async (model: AIModel, query: string) => {
   const runtimeModelId = resolveRuntimeModelId(model)
-  const executableCode = resolveExecutableModelJsCode(model)
-  // 获取模型所属的平台
   const platform = platforms.value.find(p => p.models.some(m => m.id === model.id))
+  const executableCode = resolveExecutableModelJsCode(model, platform)
   if (!platform) {
     throw new Error('未找到模型所属平台')
   }
@@ -4145,7 +4143,7 @@ const analyzeUrlQuestion = async (requestId: string) => {
       stream: true
     }
     const runtimeModelId = resolveRuntimeModelId(visionModel)
-    const executableCode = resolveExecutableModelJsCode(visionModel)
+    const executableCode = resolveExecutableModelJsCode(visionModel, platform)
     const config = { ...visionModel, apiKey: platform.apiKey, baseUrl: platform.baseUrl, model: runtimeModelId, modelId: runtimeModelId }
 
     const tauriHttp = await import('@tauri-apps/plugin-http')

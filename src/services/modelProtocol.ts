@@ -300,11 +300,84 @@ const buildCommonHelpers = () => `
       .filter(Boolean);
   };
 
+  const parseToolArguments = (raw) => {
+    if (raw && typeof raw === 'object') return raw;
+    try {
+      return JSON.parse(raw || '{}');
+    } catch {
+      return {};
+    }
+  };
+
+  const buildChatMessages = (messages) => {
+    return (messages || []).map((message) => {
+      if (message.role === 'tool') {
+        return {
+          role: 'tool',
+          tool_call_id: message.tool_call_id || message.id,
+          content: typeof message.content === 'string' ? message.content : joinTextParts(message.content)
+        };
+      }
+
+      if (message.role === 'assistant') {
+        const next = {
+          role: 'assistant',
+          content: message.content == null ? '' : message.content
+        };
+        if (Array.isArray(message.tool_calls) && message.tool_calls.length) {
+          next.tool_calls = message.tool_calls;
+        }
+        return next;
+      }
+
+      return {
+        role: message.role,
+        content: message.content
+      };
+    });
+  };
+
   const buildResponsesInput = (messages) => {
-    return (messages || []).map((message) => ({
-      role: message.role === 'system' ? 'system' : message.role,
-      content: mapResponsesContent(message.content)
-    }));
+    const items = [];
+
+    for (const message of messages || []) {
+      if (message.role === 'tool') {
+        items.push({
+          type: 'function_call_output',
+          call_id: message.tool_call_id || message.id,
+          output: typeof message.content === 'string' ? message.content : joinTextParts(message.content)
+        });
+        continue;
+      }
+
+      if (message.role === 'assistant' && Array.isArray(message.tool_calls) && message.tool_calls.length) {
+        const text = typeof message.content === 'string' ? message.content : joinTextParts(message.content);
+        if (text) {
+          items.push({
+            role: 'assistant',
+            content: [{ type: 'output_text', text: text }]
+          });
+        }
+        for (const tc of message.tool_calls) {
+          items.push({
+            type: 'function_call',
+            call_id: tc.id,
+            name: (tc.function && tc.function.name) || tc.name || '',
+            arguments: (tc.function && typeof tc.function.arguments === 'string')
+              ? tc.function.arguments
+              : JSON.stringify((tc.function && tc.function.arguments) || {})
+          });
+        }
+        continue;
+      }
+
+      items.push({
+        role: message.role === 'system' ? 'system' : message.role,
+        content: mapResponsesContent(message.content)
+      });
+    }
+
+    return items;
   };
 
   const extractResponsesText = (payload) => {
@@ -373,6 +446,23 @@ const buildCommonHelpers = () => `
           return { type: 'text', text: item.text };
         }
 
+        if (item.type === 'tool_use') {
+          return {
+            type: 'tool_use',
+            id: item.id,
+            name: item.name || '',
+            input: item.input || {}
+          };
+        }
+
+        if (item.type === 'tool_result') {
+          return {
+            type: 'tool_result',
+            tool_use_id: item.tool_use_id || item.id,
+            content: typeof item.content === 'string' ? item.content : joinTextParts(item.content)
+          };
+        }
+
         const imageUrl = item.image_url && typeof item.image_url.url === 'string' ? item.image_url.url : '';
         if (item.type === 'image_url' && imageUrl.startsWith('data:')) {
           const match = imageUrl.match(/^data:(.+?);base64,(.+)$/);
@@ -396,17 +486,54 @@ const buildCommonHelpers = () => `
     const systemParts = [];
     const normalizedMessages = [];
 
+    const pushMessage = (role, content) => {
+      if (content == null || (Array.isArray(content) && !content.length)) return;
+      const last = normalizedMessages[normalizedMessages.length - 1];
+      if (last && last.role === role && Array.isArray(last.content) && Array.isArray(content)) {
+        last.content = last.content.concat(content);
+        return;
+      }
+      normalizedMessages.push({ role: role, content: content });
+    };
+
     for (const message of messages || []) {
-      if (message.role === 'system') {
+      if (message.role === 'system' || message.role === 'developer') {
         const systemText = typeof message.content === 'string' ? message.content : joinTextParts(message.content);
         if (systemText) systemParts.push(systemText);
         continue;
       }
 
-      normalizedMessages.push({
-        role: message.role === 'assistant' ? 'assistant' : 'user',
-        content: mapAnthropicContent(message.content)
-      });
+      if (message.role === 'tool') {
+        pushMessage('user', [{
+          type: 'tool_result',
+          tool_use_id: message.tool_call_id || message.id,
+          content: typeof message.content === 'string' ? message.content : joinTextParts(message.content)
+        }]);
+        continue;
+      }
+
+      if (message.role === 'assistant') {
+        const blocks = [];
+        const text = typeof message.content === 'string' ? message.content : joinTextParts(message.content);
+        if (text) blocks.push({ type: 'text', text: text });
+        if (Array.isArray(message.content)) {
+          for (const item of mapAnthropicContent(message.content)) {
+            if (item && item.type && item.type !== 'text') blocks.push(item);
+          }
+        }
+        for (const tc of message.tool_calls || []) {
+          blocks.push({
+            type: 'tool_use',
+            id: tc.id,
+            name: (tc.function && tc.function.name) || tc.name || '',
+            input: parseToolArguments(tc.function && tc.function.arguments)
+          });
+        }
+        pushMessage('assistant', blocks.length ? blocks : (text || ''));
+        continue;
+      }
+
+      pushMessage('user', mapAnthropicContent(message.content));
     }
 
     return {
@@ -463,7 +590,7 @@ ${injectTemplateHelpers(modelId, thinking)}
   const runtimeModelId = getRuntimeModelId();
   const payload = {
     model: runtimeModelId,
-    messages: input.messages || [],
+    messages: buildChatMessages(input.messages || []),
     stream: input.stream !== false
   };
 
@@ -475,7 +602,7 @@ ${injectTemplateHelpers(modelId, thinking)}
   if (typeof config.maxTokens === 'number') payload.max_tokens = config.maxTokens;
   applyOpenAIThinkingPayload(payload, 'chat');
 
-  const response = await fetch(normalizeBaseUrl(config.baseUrl) + '/v1/chat/completions', {
+  const response = await fetch(normalizeBaseUrl(config.baseUrl) + '/chat/completions', {
     method: 'POST',
     headers: buildHeaders(),
     body: JSON.stringify(payload),
@@ -513,7 +640,7 @@ ${injectTemplateHelpers(modelId, thinking)}
   }
   applyOpenAIThinkingPayload(payload, 'responses');
 
-  const response = await fetch(normalizeBaseUrl(config.baseUrl) + '/v1/responses', {
+  const response = await fetch(normalizeBaseUrl(config.baseUrl) + '/responses', {
     method: 'POST',
     headers: buildHeaders(),
     body: JSON.stringify(payload),
@@ -725,11 +852,12 @@ export const resolveExecutableModelJsCode = (
     'thinkingOffEnableThinkingFalse' | 'thinkingOffThinkingTypeDisabled' |
     'thinkingOffResponsesEffort' | 'thinkingOffEffortNone' |
     'thinkingOffReasoningEffortNone' | 'thinkingEffort'
-  >>
+  >>,
+  platform?: { apiProtocol?: AIModel['apiProtocol'] } | null
 ): string => {
   if (!model) return ''
 
-  const protocol = normalizeApiProtocol(model.apiProtocol)
+  const protocol = normalizeApiProtocol(platform?.apiProtocol || model.apiProtocol)
   if (protocol === 'custom') {
     return model.jsCode?.trim() || ''
   }

@@ -15,7 +15,7 @@
     </div>
     
     <div class="header-center">
-      <div v-if="props.activeTab !== 'questions'" class="tutorial-stepper">
+      <div v-if="props.activeTab !== 'questions' && props.activeTab !== 'import-tasks' && props.activeTab !== 'agent'" class="tutorial-stepper">
         <div class="step" :class="{ completed: isStep1Completed, active: !isStep1Completed }" @click="$emit('guide-to', 'model-settings')">
           <div class="step-indicator">
             <svg v-if="isStep1Completed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="12" height="12"><polyline points="20 6 9 17 4 12"></polyline></svg>
@@ -220,7 +220,7 @@ const isStep1Completed = computed(() => {
   // 判断：在这些配置了 apiKey 的平台中，是否至少有一个平台，其拥有的某个文本模型正处于被选中状态
   const isCompleted = configuredPlatforms.some(platform => {
     const hasSelectedTextModel = platform.models?.some(model => {
-      const isSelected = model.category === 'text' && selectedTextModelIds.has(model.id);
+      const isSelected = selectedTextModelIds.has(model.id);
       if (isSelected) {
         console.log(`找到符合条件的文本模型：${model.id} (属于平台: ${platform.id})`);
       }
@@ -463,7 +463,7 @@ onMounted(async () => {
   outline: none;
   background: transparent;
   box-shadow: none;
-  color: var(--text-primary, #2d3748);
+  color: var(--text-secondary, #718096);
   cursor: pointer;
   transition: color 0.2s ease, opacity 0.2s ease, transform 0.2s ease;
   -webkit-app-region: no-drag;
@@ -471,7 +471,7 @@ onMounted(async () => {
 }
 
 .campus-entry:hover {
-  color: color-mix(in srgb, var(--text-primary, #2d3748) 75%, #f9a214);
+  color: var(--text-primary, #2d3748);
 }
 
 .campus-entry:active {
@@ -480,18 +480,13 @@ onMounted(async () => {
 
 .campus-entry:focus-visible {
   border-radius: 999px;
-  box-shadow: 0 0 0 2px color-mix(in srgb, #f9a214 45%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--text-secondary, #718096) 45%, transparent);
 }
 
 .campus-entry-icon {
   width: 18px;
   height: 18px;
   flex: 0 0 auto;
-  filter: drop-shadow(0 0 4px rgba(249, 162, 20, 0.55)) drop-shadow(0 0 10px rgba(254, 209, 108, 0.35));
-}
-
-.campus-entry:hover .campus-entry-icon {
-  filter: drop-shadow(0 0 6px rgba(249, 162, 20, 0.7)) drop-shadow(0 0 14px rgba(254, 209, 108, 0.45));
 }
 
 .campus-entry-text {

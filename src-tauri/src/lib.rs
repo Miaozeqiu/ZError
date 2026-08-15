@@ -16,8 +16,9 @@ pub use commands::{
     can_native_updater_install, clear_macos_quarantine, clear_request_logs, convert_doc_to_docx, create_directory,
     fetch_image_as_base64, file_exists, get_daily_request_counts, get_request_logs, get_username,
     greet, open_cache_dir, open_devtools, open_url_content_window, read_config, read_doc_range,
+    reveal_in_file_manager,
     read_docx_range, read_excel_headers, read_excel_range, read_file_bytes, read_file_range,
-    read_file_text, read_model_config, request_admin_elevation, segment_text, write_config,
+    read_file_text, read_model_config, request_admin_elevation, segment_text, stat_local_file, write_config,
     write_model_config
 };
 pub use database::*;
@@ -208,6 +209,7 @@ fn show_main_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    crate::app_activity::prefer_chinese_system_dialogs();
     #[cfg(target_os = "macos")]
     ensure_tmpdir_same_volume_as_exe();
 
@@ -256,6 +258,7 @@ pub fn run() {
             request_admin_elevation,
             read_file_text,
             read_file_bytes,
+            stat_local_file,
             read_excel_headers,
             read_excel_range,
             read_docx_range,
@@ -268,6 +271,7 @@ pub fn run() {
             read_model_config,
             write_model_config,
             open_cache_dir,
+            reveal_in_file_manager,
             search_questions_fuzzy,
             get_folders,
             get_ai_responses,

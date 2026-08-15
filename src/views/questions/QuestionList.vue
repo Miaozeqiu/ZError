@@ -44,6 +44,7 @@
             </svg>
           </div>
           <div 
+            ref="importButtonRef"
             class="import-icon-button" 
             :class="{ 'active': importMenuOpen }"
             role="button" 
@@ -59,15 +60,11 @@
                 d="M960 672v128c0 89.6-70.4 160-160 160h-576C134.4 960 64 889.6 64 800v-576C64 134.4 134.4 64 224 64h128c19.2 0 32 12.8 32 32s-12.8 32-32 32h-128C172.8 128 128 172.8 128 224v576c0 51.2 44.8 96 96 96h576c51.2 0 96-44.8 96-96v-128c0-19.2 12.8-32 32-32s32 12.8 32 32zM800 576c19.2 0 32-12.8 32-32s-12.8-32-32-32H556.8l326.4-326.4c12.8-12.8 12.8-32 0-44.8s-32-12.8-44.8 0L512 467.2V224c0-19.2-12.8-32-32-32s-32 12.8-32 32V576h352z">
               </path>
             </svg>
-            <transition name="menu-pop">
-              <div v-if="importMenuOpen" class="import-menu" @click.stop>
-                <button class="menu-item" @click="importSoftwareExportedFile">导入ZError导出的文件</button>
-              </div>
-            </transition>
           </div>
 
           <!-- 导出按钮 -->
           <div 
+            ref="exportButtonRef"
             class="export-icon-button" 
             :class="{ 'active': exportMenuOpen }"
             role="button" 
@@ -84,15 +81,6 @@
                 d="M960 672v128c0 89.6-70.4 160-160 160h-576C134.4 960 64 889.6 64 800v-576C64 134.4 134.4 64 224 64h128c19.2 0 32 12.8 32 32s-12.8 32-32 32h-128C172.8 128 128 172.8 128 224v576c0 51.2 44.8 96 96 96h576c51.2 0 96-44.8 96-96v-128c0-19.2 12.8-32 32-32s32 12.8 32 32zM608 128h243.2L358.4 614.4c-12.8 12.8-12.8 32 0 44.8 6.4 6.4 12.8 6.4 25.6 6.4s19.2 0 25.6-6.4L896 172.8v243.2c0 19.2 12.8 32 32 32 19.2-6.4 32-12.8 32-32V64H608c-19.2 0-32 12.8-32 32s12.8 32 32 32z"
                 fill="currentColor" p-id="1486"></path>
             </svg>
-            <transition name="menu-pop">
-              <div v-if="exportMenuOpen" class="export-menu" @click.stop>
-                <button class="menu-item" @click="exportFile('csv')">导出为 .csv</button>
-                <button class="menu-item" @click="exportFile('xlsx')">导出为 .xlsx</button>
-                <button class="menu-item" @click="exportFile('docx')">导出为 .docx</button>
-                <button class="menu-item" @click="exportFile('pdf')">导出为 .pdf</button>
-                <button class="menu-item" @click="exportFile('txt')">导出为 .txt</button>
-              </div>
-            </transition>
           </div>
           <div class="search-icon-button" role="button" tabindex="0" aria-label="搜索" @click="openSearch"
             @keydown.enter.prevent="openSearch" @keydown.space.prevent="openSearch">
@@ -126,13 +114,14 @@
         <div class="loading-text">加载中...</div>
       </div>
 
-      <div v-else-if="questions.length === 0" class="empty-state" @contextmenu.prevent="handleListRightClick">
-        <div class="empty-icon">📝</div>
-        <div class="empty-text">暂无题目</div>
-        <div class="empty-subtext">{{ isPendingCorrectionFolder ? '当前没有待修正题目' : '选择一个文件夹查看题目' }}</div>
-      </div>
-
-      <div v-else ref="questionTableContainerRef" class="question-table-container" @contextmenu.prevent="handleListRightClick">
+      <transition v-else :name="listTransitionName" mode="out-in">
+        <div v-if="!hasLoaded" key="boot" class="list-placeholder"></div>
+        <div v-else-if="questions.length === 0" key="empty" class="empty-state" @contextmenu.prevent="handleListRightClick">
+          <div class="empty-icon">📝</div>
+          <div class="empty-text">暂无题目</div>
+          <div class="empty-subtext">{{ isPendingCorrectionFolder ? '当前没有待修正题目' : '选择一个文件夹查看题目' }}</div>
+        </div>
+        <div v-else :key="listContentKey" class="question-table-container" @contextmenu.prevent="handleListRightClick">
         <table class="question-table">
           <thead>
             <tr>
@@ -222,7 +211,6 @@
                     <template v-for="(part, i) in getContentParts(question.question)" :key="question.id + '-' + i">
                       <span v-if="part.type === 'text'">{{ part.text }}</span>
                       <img v-else-if="imgSrc(part.url as string)" :src="imgSrc(part.url as string)"
-                        @load="scheduleScrollableCellUpdate"
                         :class="['list-image', invertClass(part.url as string)]" />
                       <span v-else class="image-loading">[图片加载中]</span>
                     </template>
@@ -235,7 +223,6 @@
                     :key="'opt-' + question.id + '-' + i">
                     <span v-if="part.type === 'text'">{{ part.text }}</span>
                     <img v-else-if="imgSrc(part.url as string)" :src="imgSrc(part.url as string)"
-                      @load="scheduleScrollableCellUpdate"
                       :class="['list-image', invertClass(part.url as string)]" />
                     <span v-else class="image-loading">[图片加载中]</span>
                   </template>
@@ -251,14 +238,17 @@
                     ></span>
                     <span v-else-if="part.type === 'text'">{{ part.text }}</span>
                     <img v-else-if="imgSrc(part.url as string)" :src="imgSrc(part.url as string)"
-                      @load="scheduleScrollableCellUpdate"
                       :class="['list-image', invertClass(part.url as string)]" />
                     <span v-else class="image-loading">[图片加载中]</span>
                   </template>
                 </div>
               </td>
               <td class="col-type">
-                <span v-if="question.question_type" class="type-tag">{{ question.question_type }}</span>
+                <span
+                  v-if="question.question_type"
+                  class="type-tag"
+                  :class="`type-tag--${typeTagKind(question.question_type)}`"
+                >{{ question.question_type }}</span>
                 <span v-else class="no-type">-</span>
               </td>
               <td class="col-time">{{ formatTime(question.create_time) }}</td>
@@ -266,6 +256,7 @@
           </tbody>
         </table>
       </div>
+      </transition>
     </div>
 
     <QuestionDetail v-if="selectedQuestionDetails" :question="selectedQuestionDetails" :show="showDetailOverlay"
@@ -277,6 +268,25 @@
       @update:editAnswer="(v) => editFormData.answer = v" @update:editType="(v) => editFormData.question_type = v"
       @resize-start="startResize" @resize-over="showResizeCursor" @resize-leave="hideResizeCursor" />
   </div>
+
+  <UnifiedContextMenu
+    :visible="importMenuOpen"
+    :x="importMenuPos.x"
+    :y="importMenuPos.y"
+    :menu-items="importMenuItems"
+    exclusive-key="question-import-menu"
+    @item-click="handleImportMenuClick"
+    @close="importMenuOpen = false"
+  />
+  <UnifiedContextMenu
+    :visible="exportMenuOpen"
+    :x="exportMenuPos.x"
+    :y="exportMenuPos.y"
+    :menu-items="exportMenuItems"
+    exclusive-key="question-export-menu"
+    @item-click="handleExportMenuClick"
+    @close="exportMenuOpen = false"
+  />
 
   <!-- 题目右键菜单 -->
   <QuestionContextMenu :visible="contextMenu.visible" :x="contextMenu.x" :y="contextMenu.y"
@@ -292,6 +302,14 @@
     :loading="batchDeleteDialog.loading"
     @confirm="confirmBatchDeleteQuestions"
     @cancel="cancelBatchDeleteQuestions"
+  />
+
+  <FolderPickerDialog
+    :visible="agentImportPickerVisible"
+    :initial-folder-id="agentImportInitialFolderId"
+    selection-mode="all"
+    @cancel="cancelAgentImportFolder"
+    @confirm="confirmAgentImportFolder"
   />
 
   <!-- 题目编辑器 -->
@@ -315,7 +333,12 @@ import QuestionContextMenu from './QuestionContextMenu.vue';
 import QuestionBatchDeleteConfirmDialog from './QuestionBatchDeleteConfirmDialog.vue';
 import QuestionEditor from './QuestionEditor.vue';
 import QuestionDetail from './QuestionDetail.vue';
-import { claimExclusiveMenu, useExclusiveMenu } from '../../composables/useExclusiveMenu';
+import UnifiedContextMenu, { type MenuItem } from '../../components/UnifiedContextMenu.vue';
+import FolderPickerDialog from '../../components/FolderPickerDialog.vue';
+import { claimExclusiveMenu } from '../../composables/useExclusiveMenu';
+import { startFileImportChat } from '../../services/agentChat';
+import { modelConfigManager } from '../../services/modelConfig';
+import { settingsManager } from '../../services/settings';
 
 interface Props {
   selectedFolderId?: string | null;
@@ -337,11 +360,12 @@ const emit = defineEmits<{
 
 const questions = ref<AIResponse[]>([]);
 const loading = ref(false);
+const hasLoaded = ref(false);
+const listTransitionName = ref('list-fade');
 const selectedQuestionId = ref<number | null>(null);
 const selectedQuestionDetails = ref<AIResponse | null>(null);
 const showDetailOverlay = ref(false);
 const folderPath = ref<{ id: number, name: string }[]>([]);
-const questionTableContainerRef = ref<HTMLElement | null>(null);
 
 // folderPath 变化时通知父组件
 watch(folderPath, (path) => {
@@ -368,18 +392,123 @@ const searchDebounceTimer = ref<number | null>(null);
 const highlightTerms = ref<string[]>([]); // 用于高亮的关键词
 const createTimeSortOrder = ref<'desc' | 'asc'>('desc');
 
+const listContentKey = ref('boot');
+let loadGeneration = 0;
+
+const hasSelectedFolder = (folderId?: string | null) => {
+  return folderId != null && folderId !== '' && folderId !== 'error';
+};
+
+const parseFolderId = (folderId: string) => {
+  const parsed = Number.parseInt(folderId, 10);
+  return Number.isNaN(parsed) ? null : parsed;
+};
+
 // 拖拽相关状态
 const isResizing = ref(false);
 const overlayWidth = ref(400); // 默认宽度400px
 const startX = ref(0);
 const startWidth = ref(0);
 
-// 导入菜单
+const importButtonRef = ref<HTMLElement | null>(null);
+const exportButtonRef = ref<HTMLElement | null>(null);
 const importMenuOpen = ref(false);
-useExclusiveMenu('question-import-menu', importMenuOpen);
-const toggleImportMenu = () => {
-  importMenuOpen.value = !importMenuOpen.value;
+const exportMenuOpen = ref(false);
+const importMenuPos = ref({ x: 0, y: 0 });
+const exportMenuPos = ref({ x: 0, y: 0 });
+
+const importMenuItems: MenuItem[] = [
+  { id: 'import-zerror', label: '导入ZError导出的文件', action: 'import-zerror' },
+  { id: 'import-other', label: '其他文件（AI 识别）', action: 'import-other' },
+];
+
+const exportMenuItems: MenuItem[] = [
+  { id: 'csv', label: '导出为 .csv', action: 'csv' },
+  { id: 'xlsx', label: '导出为 .xlsx', action: 'xlsx' },
+  { id: 'docx', label: '导出为 .docx', action: 'docx' },
+  { id: 'pdf', label: '导出为 .pdf', action: 'pdf' },
+  { id: 'txt', label: '导出为 .txt', action: 'txt' },
+];
+
+const placeDropdownMenu = (el: HTMLElement | null, width = 196) => {
+  if (!el) return { x: 0, y: 0 };
+  const rect = el.getBoundingClientRect();
+  return {
+    x: Math.max(10, rect.right - width),
+    y: rect.bottom + 6,
+  };
 };
+
+const toggleImportMenu = () => {
+  if (importMenuOpen.value) {
+    importMenuOpen.value = false;
+    return;
+  }
+  importMenuPos.value = placeDropdownMenu(importButtonRef.value, 232);
+  importMenuOpen.value = true;
+};
+
+const handleImportMenuClick = (item: MenuItem) => {
+  importMenuOpen.value = false;
+  if (item.action === 'import-zerror') {
+    importSoftwareExportedFile();
+  } else if (item.action === 'import-other') {
+    importOtherFileWithAgent();
+  }
+};
+const agentImportPickerVisible = ref(false);
+const pendingAgentImportPath = ref<string | null>(null);
+const agentImportInitialFolderId = computed(() => {
+  const selected = parseFolderId(props.selectedFolderId || '');
+  if (selected !== null && selected >= 0) return selected;
+  return settingsManager.get('questionSaveFolderId') ?? 0;
+});
+
+const importOtherFileWithAgent = async () => {
+  if (!isTauriEnvironment()) {
+    alert('此功能仅在 Tauri 应用中可用');
+    return;
+  }
+
+  if (!modelConfigManager.getSelectedTextModel() && !modelConfigManager.getSelectedModel()) {
+    alert('请先在设置里选择一个文本模型，再使用 AI 识别导入');
+    return;
+  }
+
+  try {
+    const selected = await open({
+      title: '选择要识别的文件',
+      multiple: false,
+      directory: false,
+      filters: [{
+        name: '题目文件',
+        extensions: ['txt', 'md', 'csv', 'xlsx', 'xls', 'docx', 'doc', 'pdf'],
+      }],
+    });
+
+    if (!selected) return;
+    pendingAgentImportPath.value = Array.isArray(selected) ? selected[0] : selected;
+    agentImportPickerVisible.value = true;
+  } catch (error) {
+    console.error('选择文件失败:', error);
+  }
+};
+
+const cancelAgentImportFolder = () => {
+  agentImportPickerVisible.value = false;
+  pendingAgentImportPath.value = null;
+};
+
+const confirmAgentImportFolder = (folderId: number, folderName: string, folderPath: string) => {
+  const filePath = pendingAgentImportPath.value;
+  agentImportPickerVisible.value = false;
+  pendingAgentImportPath.value = null;
+  if (!filePath) return;
+
+  void startFileImportChat({ filePath, folderId, folderName, folderPath });
+  window.dispatchEvent(new CustomEvent('navigate-tab', { detail: 'agent' }));
+};
+
 const importSoftwareExportedFile = async () => {
   if (!isTauriEnvironment()) {
     alert('此功能仅在 Tauri 应用中可用');
@@ -389,10 +518,11 @@ const importSoftwareExportedFile = async () => {
 
   try {
     const selected = await open({
+      title: '选择要导入的文件',
       multiple: false,
       directory: false,
       filters: [{
-        name: 'Supported Files',
+        name: '支持的文件',
         extensions: ['csv', 'xlsx', 'docx', 'txt', 'pdf']
       }]
     });
@@ -422,11 +552,20 @@ const importSoftwareExportedFile = async () => {
 };
 
 
-// 导出菜单
-const exportMenuOpen = ref(false);
-useExclusiveMenu('question-export-menu', exportMenuOpen);
 const toggleExportMenu = () => {
-  exportMenuOpen.value = !exportMenuOpen.value;
+  if (exportMenuOpen.value) {
+    exportMenuOpen.value = false;
+    return;
+  }
+  exportMenuPos.value = placeDropdownMenu(exportButtonRef.value, 168);
+  exportMenuOpen.value = true;
+};
+
+const handleExportMenuClick = (item: MenuItem) => {
+  exportMenuOpen.value = false;
+  if (item.action) {
+    exportFile(item.action as ExportFormat);
+  }
 };
 
 const getExportQuestions = async (): Promise<AIResponse[]> => {
@@ -438,10 +577,13 @@ const getExportQuestions = async (): Promise<AIResponse[]> => {
     return sortQuestionListByCreateTime(await databaseService.getPendingCorrectionQuestions());
   }
 
-  if (props.selectedFolderId && props.selectedFolderId !== 'error') {
-    return sortQuestionListByCreateTime(
-      await databaseService.getQuestionsFromFolderAndSubfolders(parseInt(props.selectedFolderId))
-    );
+  if (hasSelectedFolder(props.selectedFolderId) && props.selectedFolderId !== PENDING_CORRECTION_FOLDER_ID) {
+    const folderIdNum = parseFolderId(props.selectedFolderId);
+    if (folderIdNum !== null) {
+      return sortQuestionListByCreateTime(
+        await databaseService.getQuestionsFromFolderAndSubfolders(folderIdNum)
+      );
+    }
   }
 
   return sortQuestionListByCreateTime(await databaseService.getAIResponses());
@@ -472,6 +614,7 @@ const exportFile = async (format: 'csv' | 'xlsx' | 'docx' | 'pdf' | 'txt') => {
     
     const suggestedName = `${folderName}_${currentDate}`;
     const filePath = await save({
+      title: '导出题目',
       filters: [{
         name: format.toUpperCase() + ' 文件',
         extensions: [format]
@@ -614,29 +757,9 @@ const analyzeImage = async (url: string, src: string) => {
   } catch { }
 }
 
-const updateScrollableCells = () => {
-  const container = questionTableContainerRef.value
-  if (!container) return
-
-  const cells = container.querySelectorAll<HTMLElement>('.cell-question, .cell-answer')
-  cells.forEach((cell) => {
-    const canScroll = cell.scrollHeight > cell.clientHeight + 1
-    cell.classList.toggle('is-scrollable', canScroll)
-  })
-}
-
-const scheduleScrollableCellUpdate = () => {
-  nextTick(() => {
-    requestAnimationFrame(() => {
-      updateScrollableCells()
-    })
-  })
-}
-
 watch(questions, async () => {
   imageSrcMap.value = {}
   await fetchImages(visibleImageUrls.value)
-  scheduleScrollableCellUpdate()
 }, { immediate: true })
 
 // 计算属性
@@ -695,18 +818,21 @@ const applyCreateTimeSort = () => {
 // 分页控制方法
 const goToPreviousPage = () => {
   if (!isSearchMode.value && currentPage.value > 1) {
+    listTransitionName.value = 'list-prev';
     loadQuestions(props.selectedFolderId, currentPage.value - 1);
   }
 };
 
 const goToNextPage = () => {
   if (!isSearchMode.value && currentPage.value < totalPages.value) {
+    listTransitionName.value = 'list-next';
     loadQuestions(props.selectedFolderId, currentPage.value + 1);
   }
 };
 
 const goToPage = (page: number) => {
-  if (!isSearchMode.value && page >= 1 && page <= totalPages.value) {
+  if (!isSearchMode.value && page >= 1 && page <= totalPages.value && page !== currentPage.value) {
+    listTransitionName.value = page > currentPage.value ? 'list-next' : 'list-prev';
     loadQuestions(props.selectedFolderId, page);
   }
 };
@@ -730,60 +856,63 @@ const fetchQuestionPage = async (folderId?: string | null, page = 1) => {
     });
   }
 
-  if (folderId && folderId !== 'error') {
-    return databaseService.getPaginatedQuestions({
-      folderId: parseInt(folderId),
-      page,
-      pageSize: pageSize.value,
-      sortOrder: createTimeSortOrder.value,
-    });
+  if (hasSelectedFolder(folderId)) {
+    const folderIdNum = parseFolderId(folderId as string);
+    if (folderIdNum !== null) {
+      return databaseService.getPaginatedQuestions({
+        folderId: folderIdNum,
+        page,
+        pageSize: pageSize.value,
+        sortOrder: createTimeSortOrder.value,
+      });
+    }
   }
 
-  return databaseService.getPaginatedQuestions({
-    page,
-    pageSize: pageSize.value,
-    sortOrder: createTimeSortOrder.value,
-  });
+  return { items: [], total: 0 };
 };
 
 const loadQuestions = async (folderId?: string | null, requestedPage = 1) => {
+  const generation = ++loadGeneration;
+
   try {
-    loading.value = true;
-
-    console.log('QuestionList: loadQuestions 被调用', { folderId, page: requestedPage, type: typeof folderId });
-
-    // 清除搜索状态
     if (isSearchMode.value) {
       searchTerm.value = '';
       isSearchMode.value = false;
       pageBeforeSearch.value = 1;
     }
 
-    // 切换文件夹时清空选择状态
     selectedQuestions.value.clear();
     updateSelectAllState();
 
-    if (folderId === PENDING_CORRECTION_FOLDER_ID) {
-      console.log('QuestionList: 加载待修正题目');
-      folderPath.value = [{ id: -1, name: '待修正' }];
-    } else if (folderId && folderId !== 'error') {
-      const folderIdNum = parseInt(folderId);
-      console.log('QuestionList: 解析文件夹ID', { original: folderId, parsed: folderIdNum });
-
-      // 获取文件夹路径
-      try {
-        folderPath.value = await databaseService.getFolderPath(folderIdNum);
-        console.log('获取文件夹路径:', folderPath.value);
-      } catch (error) {
-        console.error('获取文件夹路径失败:', error);
-        folderPath.value = [];
-      }
-    } else {
-      console.log('QuestionList: 获取所有题目');
+    if (!hasSelectedFolder(folderId)) {
+      if (generation !== loadGeneration) return;
+      questions.value = [];
+      totalQuestions.value = 0;
+      currentPage.value = 1;
       folderPath.value = [];
+      listContentKey.value = 'empty';
+      return;
     }
 
+    const pathPromise = (async () => {
+      if (folderId === PENDING_CORRECTION_FOLDER_ID) {
+        return [{ id: -1, name: '待修正' }];
+      }
+      const folderIdNum = parseFolderId(folderId as string);
+      if (folderIdNum === null) {
+        return [];
+      }
+      try {
+        return await databaseService.getFolderPath(folderIdNum);
+      } catch (error) {
+        console.error('获取文件夹路径失败:', error);
+        return [];
+      }
+    })();
+
     const result = await fetchQuestionPage(folderId, requestedPage);
+    if (generation !== loadGeneration) return;
+
     const maxPage = Math.max(1, Math.ceil(result.total / pageSize.value));
 
     if (result.total > 0 && requestedPage > maxPage) {
@@ -794,24 +923,30 @@ const loadQuestions = async (folderId?: string | null, requestedPage = 1) => {
     questions.value = result.items;
     totalQuestions.value = result.total;
     currentPage.value = result.total === 0 ? 1 : Math.min(requestedPage, maxPage);
+    listContentKey.value = `folder:${folderId}:page:${currentPage.value}`;
 
-    console.log('题目加载成功:', { total: totalQuestions.value, currentPage: currentPage.value, pageSize: pageSize.value });
+    pathPromise.then((path) => {
+      if (generation === loadGeneration) {
+        folderPath.value = path;
+      }
+    });
   } catch (error) {
+    if (generation !== loadGeneration) return;
     console.error('加载题目失败:', error);
     questions.value = [];
     totalQuestions.value = 0;
     folderPath.value = [];
+    listContentKey.value = 'empty';
   } finally {
-    loading.value = false;
+    if (generation === loadGeneration) {
+      hasLoaded.value = true;
+    }
   }
 };
 
 // 刷新当前分页数据（不重置页码），并暴露给父组件调用
 const refreshData = async () => {
   try {
-    loading.value = true;
-
-    // 如果处于搜索模式，重新执行一次搜索以刷新结果
     if (isSearchMode.value && searchTerm.value.trim()) {
       await performSearch();
       return;
@@ -820,8 +955,6 @@ const refreshData = async () => {
     await loadQuestions(props.selectedFolderId, currentPage.value);
   } catch (error) {
     console.error('刷新题目失败:', error);
-  } finally {
-    loading.value = false;
   }
 };
 
@@ -979,6 +1112,15 @@ const saveEdit = async () => {
   }
 };
 
+const typeTagKind = (type: string): 'single' | 'multiple' | 'judgement' | 'fill' | 'other' => {
+  const t = type.replace(/\s/g, '')
+  if (/多选|多项|不定项/.test(t)) return 'multiple'
+  if (/判断/.test(t)) return 'judgement'
+  if (/填空|简答|解答/.test(t)) return 'fill'
+  if (/单选|单项/.test(t)) return 'single'
+  return 'other'
+}
+
 const formatTime = (timeStr?: string): string => {
   if (!timeStr) return '';
   try {
@@ -1123,6 +1265,7 @@ const hideResizeCursor = () => {
 
 // 监听选中的文件夹变化
 watch(() => props.selectedFolderId, (newFolderId) => {
+  listTransitionName.value = 'list-fade';
   currentPage.value = 1;
   loadQuestions(newFolderId, 1);
 }, { immediate: true });
@@ -1146,19 +1289,21 @@ const performSearch = async () => {
     return;
   }
 
+  const generation = ++loadGeneration;
+
   try {
-    loading.value = true;
     if (!isSearchMode.value) {
       pageBeforeSearch.value = currentPage.value;
     }
+    listTransitionName.value = 'list-fade';
     isSearchMode.value = true;
     currentPage.value = 1;
 
-    // 获取当前选中的文件夹ID
-    const currentFolderId =
-      props.selectedFolderId && props.selectedFolderId !== PENDING_CORRECTION_FOLDER_ID
-        ? parseInt(props.selectedFolderId)
-        : undefined;
+    const parsedFolderId =
+      hasSelectedFolder(props.selectedFolderId) && props.selectedFolderId !== PENDING_CORRECTION_FOLDER_ID
+        ? parseFolderId(props.selectedFolderId)
+        : null;
+    const currentFolderId = parsedFolderId ?? undefined;
 
     // 获取用于高亮的关键词（进行分词）
     try {
@@ -1178,22 +1323,21 @@ const performSearch = async () => {
     if (props.selectedFolderId === PENDING_CORRECTION_FOLDER_ID) {
       const keyword = searchTerm.value.trim().toLowerCase();
       const pendingQuestions = await databaseService.getPendingCorrectionQuestions();
+      if (generation !== loadGeneration) return;
       questions.value = sortQuestionListByCreateTime(pendingQuestions.filter(question =>
         question.question.toLowerCase().includes(keyword)
       ));
     } else {
-      questions.value = sortQuestionListByCreateTime(
-        await databaseService.searchQuestionsByTitle(searchTerm.value.trim(), currentFolderId)
-      );
+      const searchResults = await databaseService.searchQuestionsByTitle(searchTerm.value.trim(), currentFolderId);
+      if (generation !== loadGeneration) return;
+      questions.value = sortQuestionListByCreateTime(searchResults);
     }
 
     totalQuestions.value = questions.value.length;
-
-    console.log(`搜索"${searchTerm.value}"找到 ${questions.value.length} 条结果`);
+    listContentKey.value = `search:${searchTerm.value}`;
   } catch (error) {
+    if (generation !== loadGeneration) return;
     console.error('搜索失败:', error);
-  } finally {
-    loading.value = false;
   }
 };
 
@@ -1201,6 +1345,7 @@ const clearSearch = () => {
   searchTerm.value = '';
   isSearchMode.value = false;
   highlightTerms.value = [];
+  listTransitionName.value = 'list-fade';
 
   // 清除防抖定时器
   if (searchDebounceTimer.value) {
@@ -1497,27 +1642,16 @@ const hideContextMenu = () => {
 // 点击其他地方隐藏右键菜单
 const handleClickOutside = (event: MouseEvent) => {
   const target = event.target as Element;
+  if (target.closest('.context-menu')) {
+    return;
+  }
   if (contextMenu.value.visible) {
-    const menuElement = document.querySelector('.context-menu');
-    if (menuElement && menuElement.contains(target)) {
-      return;
-    }
     hideContextMenu();
   }
-  if (importMenuOpen.value) {
-    const importBtn = document.querySelector('.import-icon-button');
-    const importMenu = document.querySelector('.import-menu');
-    if ((importBtn && importBtn.contains(target)) || (importMenu && importMenu.contains(target))) {
-      return;
-    }
+  if (importMenuOpen.value && !target.closest('.import-icon-button')) {
     importMenuOpen.value = false;
   }
-  if (exportMenuOpen.value) {
-    const exportBtn = document.querySelector('.export-icon-button');
-    const exportMenu = document.querySelector('.export-menu');
-    if ((exportBtn && exportBtn.contains(target)) || (exportMenu && exportMenu.contains(target))) {
-      return;
-    }
+  if (exportMenuOpen.value && !target.closest('.export-icon-button')) {
     exportMenuOpen.value = false;
   }
 };
@@ -1563,13 +1697,10 @@ const handleQuestionSubmit = async (questionData: any) => {
 // 生命周期钩子
 onMounted(() => {
   document.addEventListener('click', handleClickOutside);
-  window.addEventListener('resize', scheduleScrollableCellUpdate);
-  scheduleScrollableCellUpdate();
 });
 
 onUnmounted(() => {
   document.removeEventListener('click', handleClickOutside);
-  window.removeEventListener('resize', scheduleScrollableCellUpdate);
 });
 </script>
 
@@ -1621,13 +1752,28 @@ onUnmounted(() => {
 }
 
 .list-header {
-  padding: 6px 10px;
-  border-bottom: 1px solid var(--border-primary);
+  height: 36px;
+  min-height: 36px;
+  padding: 0 10px;
   background-color: var(--bg-secondary);
   box-sizing: border-box;
   position: relative;
   z-index: 20;
   overflow: visible;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.list-header::after {
+  content: '';
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 0;
+  height: 1px;
+  background: color-mix(in srgb, var(--border-primary, #e2e8f0) 42%, transparent);
+  transform: scaleY(0.5);
 }
 
 /* 分页控制器样式 */
@@ -1691,12 +1837,15 @@ onUnmounted(() => {
 
 /* 搜索框样式 */
 .search-container {
-  /* margin-top: 12px; */
   display: flex;
   flex-direction: row;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  flex-wrap: nowrap;
 }
 
 .search-left-info {
@@ -1893,37 +2042,6 @@ onUnmounted(() => {
   display: none;
 }
 
-.import-menu {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
-  left: auto;
-  background: var(--bg-primary);
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
-  z-index: 1000;
-  padding: 6px 0;
-  min-width: 160px;
-  max-width: min(220px, calc(100vw - 16px));
-}
-
-.import-menu .menu-item {
-  display: block;
-  width: 100%;
-  text-align: left;
-  padding: 8px 12px;
-  font-size: 13px;
-  color: var(--text-primary);
-  background: transparent;
-  border: none;
-  cursor: pointer;
-}
-
-.import-menu .menu-item:hover {
-  background: var(--hover-bg);
-}
-
 .export-icon-button {
   user-select: none;
   transition: background 20ms ease-in;
@@ -1971,55 +2089,6 @@ onUnmounted(() => {
   display: none;
 }
 
-.export-menu {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
-  left: auto;
-  background: var(--bg-primary);
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
-  z-index: 1000;
-  padding: 6px 0;
-  min-width: 160px;
-  max-width: min(220px, calc(100vw - 16px));
-}
-
-.export-menu .menu-item {
-  display: block;
-  width: 100%;
-  text-align: left;
-  padding: 8px 12px;
-  font-size: 13px;
-  color: var(--text-primary);
-  background: transparent;
-  border: none;
-  cursor: pointer;
-}
-
-.export-menu .menu-item:hover {
-  background: var(--hover-bg);
-}
-
-.menu-pop-enter-active,
-.menu-pop-leave-active {
-  transition: opacity 0.14s ease, transform 0.16s cubic-bezier(0.2, 0.8, 0.2, 1);
-  transform-origin: top right;
-}
-
-.menu-pop-enter-from,
-.menu-pop-leave-to {
-  opacity: 0;
-  transform: translateY(-4px) scale(0.96);
-}
-
-.menu-pop-enter-to,
-.menu-pop-leave-from {
-  opacity: 1;
-  transform: translateY(0) scale(1);
-}
-
 .search-info {
   margin-top: 0;
   font-size: 12px;
@@ -2039,8 +2108,59 @@ onUnmounted(() => {
 
 .list-content {
   flex: 1;
+  overflow-x: hidden;
   overflow-y: auto;
   position: relative;
+}
+
+.list-placeholder {
+  min-height: 120px;
+}
+
+.list-fade-enter-active,
+.list-fade-leave-active,
+.list-next-enter-active,
+.list-next-leave-active,
+.list-prev-enter-active,
+.list-prev-leave-active {
+  transition: opacity 160ms ease-out, transform 160ms ease-out;
+}
+
+.list-fade-enter-from,
+.list-fade-leave-to {
+  opacity: 0;
+  transform: translateY(6px);
+}
+
+.list-next-enter-from {
+  opacity: 0;
+  transform: translateX(16px);
+}
+
+.list-next-leave-to {
+  opacity: 0;
+  transform: translateX(-16px);
+}
+
+.list-prev-enter-from {
+  opacity: 0;
+  transform: translateX(-16px);
+}
+
+.list-prev-leave-to {
+  opacity: 0;
+  transform: translateX(16px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .list-fade-enter-active,
+  .list-fade-leave-active,
+  .list-next-enter-active,
+  .list-next-leave-active,
+  .list-prev-enter-active,
+  .list-prev-leave-active {
+    transition: none;
+  }
 }
 
 .empty-state {
@@ -2085,18 +2205,41 @@ onUnmounted(() => {
 }
 
 .question-table thead {
-  background-color: var(--ql-th-bg);
-  border-bottom: 2px solid var(--border-primary);
+  background-color: transparent;
 }
 
 .question-table th {
-  padding: 12px 8px;
+  padding: 6px 8px;
+  height: 32px;
   text-align: left;
   font-weight: 500;
   color: var(--ql-th-text);
-  border-bottom: 1px solid var(--border-primary);
+  border-bottom: none;
   white-space: nowrap;
   position: relative;
+  box-sizing: border-box;
+}
+
+.question-table th::after,
+.question-table td::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background: color-mix(in srgb, var(--border-primary, #e2e8f0) 42%, transparent);
+  pointer-events: none;
+}
+
+.question-table th:first-child::after,
+.question-table td:first-child::after {
+  left: 10px;
+}
+
+.question-table th:last-child::after,
+.question-table td:last-child::after {
+  right: 10px;
 }
 
 .question-table th .th-header {
@@ -2127,11 +2270,10 @@ onUnmounted(() => {
 }
 
 .question-table th:not(:last-child) {
-  box-shadow: inset -1px 0 0 var(--ql-divider);
+  box-shadow: inset -1px 0 0 color-mix(in srgb, var(--ql-divider) 42%, transparent);
 }
 
 .question-table tbody tr {
-  border-bottom: 1px solid var(--border-color);
   cursor: pointer;
   transition: background-color 0.2s ease;
   position: relative;
@@ -2152,28 +2294,29 @@ onUnmounted(() => {
 
 .question-table td {
   padding: 12px 8px;
-  vertical-align: top;
-  border-bottom: 1px solid var(--border-primary);
+  vertical-align: middle;
+  overflow: hidden;
+  border-bottom: none;
   position: relative;
 }
 
 .question-table tbody tr td:not(:last-child) {
-  box-shadow: inset -1px 0 0 color-mix(in srgb, var(--ql-table-divider) 60%, transparent);
+  box-shadow: inset -1px 0 0 color-mix(in srgb, var(--ql-table-divider) 32%, transparent);
 }
 
 /* 悬停时的分割线效果 */
 .question-table tbody tr:hover td:not(:last-child) {
-  box-shadow: inset -1px 0 0 color-mix(in srgb, var(--ql-table-divider-hover) 80%, transparent);
+  box-shadow: inset -1px 0 0 color-mix(in srgb, var(--ql-table-divider-hover) 48%, transparent);
 }
 
 /* 选中行的分割线效果 */
 .question-table tbody tr.active td:not(:last-child) {
-  box-shadow: inset -1px 0 0 var(--ql-table-divider-active);
+  box-shadow: inset -1px 0 0 color-mix(in srgb, var(--ql-table-divider-active) 55%, transparent);
 }
 
 /* 多选行的分割线效果 */
 .question-table tbody tr.selected td:not(:last-child) {
-  box-shadow: inset -1px 0 0 color-mix(in srgb, var(--ql-table-divider-selected) 90%, transparent);
+  box-shadow: inset -1px 0 0 color-mix(in srgb, var(--ql-table-divider-selected) 48%, transparent);
 }
 
 .col-id {
@@ -2182,85 +2325,44 @@ onUnmounted(() => {
   color: var(--ql-id-text);
 }
 
-.col-question {
-  min-width: 200px;
-  max-width: 250px;
-  word-break: break-word;
-  line-height: 1.4;
-}
-
+.col-question,
 .col-options {
   min-width: 200px;
   max-width: 250px;
-  word-break: break-word;
-  line-height: 1.4;
-}
-
-.col-question span {
-  display: block;
-  white-space: nowrap;
   overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 100%;
+  line-height: 1.4;
 }
 
 .col-answer {
   min-width: 250px;
   max-width: 400px;
-}
-
-.col-answer > span {
-  display: block;
-  white-space: nowrap;
   overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 100%;
 }
 
+.col-answer > span,
 .cell-question,
 .cell-answer {
-  max-height: 120px;
-  overflow-y: auto;
-  overflow-x: hidden;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
   white-space: pre-wrap;
-  scrollbar-width: none;
-  -ms-overflow-style: none;
-}
-
-.cell-question::-webkit-scrollbar,
-.cell-answer::-webkit-scrollbar {
-  display: none;
-}
-
-.question-table td.col-question:has(.cell-question.is-scrollable),
-.question-table td.col-options:has(.cell-question.is-scrollable),
-.question-table td.col-answer:has(.cell-answer.is-scrollable) {
-  transition: background-color 0.18s ease;
-}
-
-.question-table tbody tr:hover td.col-question:has(.cell-question.is-scrollable),
-.question-table tbody tr:hover td.col-options:has(.cell-question.is-scrollable),
-.question-table tbody tr:hover td.col-answer:has(.cell-answer.is-scrollable),
-.question-table tbody tr.active td.col-question:has(.cell-question.is-scrollable),
-.question-table tbody tr.active td.col-options:has(.cell-question.is-scrollable),
-.question-table tbody tr.active td.col-answer:has(.cell-answer.is-scrollable),
-.question-table tbody tr.selected td.col-question:has(.cell-question.is-scrollable),
-.question-table tbody tr.selected td.col-options:has(.cell-question.is-scrollable),
-.question-table tbody tr.selected td.col-answer:has(.cell-answer.is-scrollable) {
-  background-color: color-mix(in srgb, var(--ql-row-active-bg) 58%, transparent);
+  word-break: break-word;
+  line-height: 1.4;
 }
 
 .cell-question span,
 .cell-answer span {
   display: inline;
-  white-space: pre-wrap;
-  overflow: visible;
-  text-overflow: clip;
 }
 
 .list-image {
   display: inline;
-  max-width: 100%;
+  max-height: 1.25em;
+  max-width: 4em;
   border-radius: 6px;
   margin: 0 4px;
   vertical-align: middle;
@@ -2293,19 +2395,41 @@ onUnmounted(() => {
   width: 140px;
   font-size: 12px;
   color: var(--ql-time-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .type-tag {
   padding: 3px 8px;
   background-color: var(--ql-type-tag-bg);
   color: var(--ql-type-tag-text);
-  border: 1px solid var(--ql-type-tag-border);
   border-radius: 999px;
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.02em;
   line-height: 1.2;
   box-sizing: border-box;
+}
+
+.type-tag--single {
+  background-color: var(--ql-type-tag-single-bg);
+  color: var(--ql-type-tag-single-text);
+}
+
+.type-tag--multiple {
+  background-color: var(--ql-type-tag-multiple-bg);
+  color: var(--ql-type-tag-multiple-text);
+}
+
+.type-tag--judgement {
+  background-color: var(--ql-type-tag-judgement-bg);
+  color: var(--ql-type-tag-judgement-text);
+}
+
+.type-tag--fill {
+  background-color: var(--ql-type-tag-fill-bg);
+  color: var(--ql-type-tag-fill-text);
 }
 
 .col-type .type-tag {
@@ -2363,6 +2487,7 @@ onUnmounted(() => {
   max-width: 40px;
   text-align: center;
   padding: 8px !important;
+  overflow: visible;
 }
 
 /* 复选框样式 */

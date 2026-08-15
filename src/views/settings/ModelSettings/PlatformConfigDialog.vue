@@ -1,4 +1,4 @@
-﻿﻿﻿﻿﻿﻿<template>
+﻿<template>
   <div v-if="show" class="dialog-overlay" @click="handleOverlayClick">
     <div class="dialog-content" @click.stop>
       <div class="dialog-header">
@@ -110,13 +110,57 @@
 
           <div class="form-group">
             <label class="form-label">API 基础URL</label>
-            <input
-              v-model="formData.baseUrl"
-              type="url"
-              class="form-input"
-              placeholder="例如：https://api.openai.com"
-              required
-            >
+            <div class="base-url-row">
+              <input
+                v-model="formData.baseUrl"
+                type="url"
+                class="form-input"
+                placeholder="例如：https://api.openai.com/v1"
+                required
+              >
+              <div class="protocol-select-wrap">
+                <button
+                  ref="protocolTriggerRef"
+                  type="button"
+                  class="protocol-select-trigger"
+                  :class="{ open: showProtocolDropdown }"
+                  aria-haspopup="listbox"
+                  :aria-expanded="showProtocolDropdown"
+                  @click="toggleProtocolDropdown"
+                >
+                  <span class="protocol-select-path">{{ currentProtocolPath }}</span>
+                  <svg class="protocol-select-arrow" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+                    <path d="M4.2 6.2a.75.75 0 0 1 1.06 0L8 8.94l2.74-2.74a.75.75 0 1 1 1.06 1.06l-3.27 3.27a.75.75 0 0 1-1.06 0L4.2 7.26a.75.75 0 0 1 0-1.06z" fill="currentColor"/>
+                  </svg>
+                </button>
+                <Teleport to="body">
+                  <Transition name="dropdown-pop">
+                    <div
+                      v-if="showProtocolDropdown"
+                      ref="protocolDropdownRef"
+                      class="protocol-dropdown"
+                      :style="protocolDropdownStyle"
+                      role="listbox"
+                      aria-label="API 协议"
+                    >
+                      <button
+                        v-for="opt in protocolOptions"
+                        :key="opt.value"
+                        type="button"
+                        class="protocol-dropdown-item"
+                        :class="{ active: formData.apiProtocol === opt.value }"
+                        role="option"
+                        :aria-selected="formData.apiProtocol === opt.value"
+                        @click="selectProtocol(opt.value)"
+                      >
+                        <span class="protocol-dropdown-path">{{ opt.endpoint }}</span>
+                        <span class="protocol-dropdown-meta">{{ opt.label }}</span>
+                      </button>
+                    </div>
+                  </Transition>
+                </Teleport>
+              </div>
+            </div>
           </div>
 
           <div class="form-group">
@@ -136,9 +180,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, computed, nextTick } from 'vue'
-import { fetchRemoteModelsCatalog, type AIPlatform } from '../../../services/modelConfig'
+import { ref, watch, computed, nextTick, onMounted, onUnmounted } from 'vue'
+import { fetchRemoteModelsCatalog, type AIPlatform, type ApiProtocol } from '../../../services/modelConfig'
 import { getPlatformIconDisplayUrl, isImageIconValue, resolvePlatformIconUrl } from '../../../services/iconCache'
+import { useExclusiveMenu } from '../../../composables/useExclusiveMenu'
 
 interface Props {
   show: boolean
@@ -155,11 +200,78 @@ const emit = defineEmits<Emits>()
 
 const isEditing = computed(() => !!props.platform)
 
+const protocolOptions: { value: ApiProtocol; label: string; endpoint: string }[] = [
+  { value: 'openai-chat', label: 'Chat', endpoint: '/chat/completions' },
+  { value: 'openai-response', label: 'Responses', endpoint: '/responses' },
+  { value: 'anthropic', label: 'Messages', endpoint: '/v1/messages' },
+  { value: 'custom', label: '自定义', endpoint: '自定义' },
+]
+
+const currentProtocolPath = computed(() => {
+  return protocolOptions.find((opt) => opt.value === formData.value.apiProtocol)?.endpoint || '/chat/completions'
+})
+
+const showProtocolDropdown = ref(false)
+const protocolTriggerRef = ref<HTMLElement | null>(null)
+const protocolDropdownRef = ref<HTMLElement | null>(null)
+const protocolDropdownStyle = ref<Record<string, string>>({})
+useExclusiveMenu('platform-config-protocol', showProtocolDropdown)
+
+const updateProtocolDropdownPosition = () => {
+  if (!protocolTriggerRef.value) return
+  const triggerRect = protocolTriggerRef.value.getBoundingClientRect()
+  const dropdownWidth = Math.max(triggerRect.width, 220)
+  const estimatedHeight = protocolDropdownRef.value?.getBoundingClientRect().height || 200
+  const spaceBelow = window.innerHeight - triggerRect.bottom
+  const showAbove = spaceBelow < estimatedHeight + 12 && triggerRect.top > estimatedHeight + 12
+
+  protocolDropdownStyle.value = {
+    position: 'fixed',
+    left: `${Math.max(8, Math.min(triggerRect.right - dropdownWidth, window.innerWidth - dropdownWidth - 8))}px`,
+    top: showAbove ? `${Math.max(8, triggerRect.top - estimatedHeight - 6)}px` : `${triggerRect.bottom + 6}px`,
+    width: `${dropdownWidth}px`,
+    zIndex: '2400',
+  }
+}
+
+const closeProtocolDropdown = () => {
+  showProtocolDropdown.value = false
+}
+
+const toggleProtocolDropdown = async () => {
+  showProtocolDropdown.value = !showProtocolDropdown.value
+  if (showProtocolDropdown.value) {
+    await nextTick()
+    updateProtocolDropdownPosition()
+  }
+}
+
+const selectProtocol = (protocol: ApiProtocol) => {
+  formData.value.apiProtocol = protocol
+  closeProtocolDropdown()
+}
+
+const handleProtocolOutsideClick = (event: Event) => {
+  if (!showProtocolDropdown.value) return
+  const target = event.target as Node | null
+  if (
+    target &&
+    (
+      protocolTriggerRef.value?.contains(target) ||
+      protocolDropdownRef.value?.contains(target)
+    )
+  ) {
+    return
+  }
+  closeProtocolDropdown()
+}
+
 const formData = ref({
   name: '',
   baseUrl: '',
   apiKey: '',
-  icon: ''
+  icon: '',
+  apiProtocol: 'openai-chat' as ApiProtocol,
 })
 
 // 图标相关状态
@@ -242,7 +354,8 @@ const resetForm = () => {
     name: '',
     baseUrl: '',
     apiKey: '',
-    icon: ''
+    icon: '',
+    apiProtocol: 'openai-chat',
   }
   iconLoadError.value = false
   iconError.value = ''
@@ -293,7 +406,8 @@ watch(() => props.platform, (platform) => {
       name: platform.name,
       baseUrl: platform.baseUrl,
       apiKey: platform.apiKey || '',
-      icon: platform.icon || ''
+      icon: platform.icon || '',
+      apiProtocol: platform.apiProtocol || 'openai-chat',
     }
   } else {
     resetForm()
@@ -305,7 +419,19 @@ watch(() => props.show, (show) => {
   if (show) {
     loadAvailableIcons()
     showIconPicker.value = false
+  } else {
+    closeProtocolDropdown()
   }
+})
+
+onMounted(() => {
+  document.addEventListener('click', handleProtocolOutsideClick)
+  window.addEventListener('resize', closeProtocolDropdown)
+})
+
+onUnmounted(() => {
+  document.removeEventListener('click', handleProtocolOutsideClick)
+  window.removeEventListener('resize', closeProtocolDropdown)
 })
 
 const handleSubmit = () => {
@@ -321,6 +447,7 @@ const handleSubmit = () => {
     name: formData.value.name,
     displayName: formData.value.name,
     baseUrl: formData.value.baseUrl,
+    apiProtocol: formData.value.apiProtocol,
     apiKey: formData.value.apiKey || undefined,
     icon: formData.value.icon || undefined,
     enabled: props.platform?.enabled ?? true
@@ -385,6 +512,141 @@ const handleOverlayClick = (event: MouseEvent) => {
 .btn-secondary:hover {
   background: var(--platform-config-btn-secondary-hover-bg);
   color: var(--platform-config-btn-secondary-hover-text);
+}
+
+.base-url-row {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.base-url-row .form-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.protocol-select-wrap {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.protocol-select-trigger {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 220px;
+  height: 100%;
+  min-height: 42px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: var(--form-input-bg, #F7F7F7);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  transition: border-color 0.2s ease, background-color 0.2s ease, transform 0.12s ease;
+}
+
+.protocol-select-trigger:hover,
+.protocol-select-trigger.open {
+  background: var(--form-input-hover-bg, #f0f0f0);
+  border-color: var(--form-input-hover-border, transparent);
+}
+
+.protocol-select-trigger:focus {
+  outline: none;
+  border-color: var(--form-input-focus-border, #3182ce);
+}
+
+.protocol-select-trigger:active {
+  transform: scale(0.97);
+}
+
+.protocol-select-path,
+.protocol-dropdown-path {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  letter-spacing: -0.01em;
+}
+
+.protocol-select-arrow {
+  flex-shrink: 0;
+  color: var(--text-secondary, #718096);
+  transition: transform 0.16s ease;
+}
+
+.protocol-select-trigger.open .protocol-select-arrow {
+  transform: rotate(180deg);
+}
+
+.protocol-dropdown {
+  box-sizing: border-box;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--context-menu-bg, rgba(255, 255, 255, 0.4));
+  backdrop-filter: blur(40px) saturate(180%);
+  -webkit-backdrop-filter: blur(40px) saturate(180%);
+  border: 1px solid var(--context-menu-border, rgba(255, 255, 255, 0.55));
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.22), 0 4px 12px rgba(0, 0, 0, 0.12), inset 0 0.5px 0 rgba(255, 255, 255, 0.5);
+  font-size: 14px;
+}
+
+.protocol-dropdown-item {
+  appearance: none;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 32px;
+  padding: 4px 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--context-menu-item-text, #2d3748);
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  transition: background-color 0.2s ease;
+}
+
+.protocol-dropdown-item:hover,
+.protocol-dropdown-item.active {
+  background-color: var(--context-menu-item-hover-bg, rgba(0, 0, 0, 0.06));
+}
+
+.protocol-dropdown-meta {
+  color: var(--text-secondary, #718096);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.dropdown-pop-enter-active,
+.dropdown-pop-leave-active {
+  transition: opacity 0.14s ease, transform 0.16s cubic-bezier(0.2, 0.8, 0.2, 1);
+  transform-origin: top center;
+}
+
+.dropdown-pop-enter-from,
+.dropdown-pop-leave-to {
+  opacity: 0;
+  transform: translateY(-4px) scale(0.96);
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .protocol-dropdown {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    background: #ffffff;
+  }
 }
 
 </style>

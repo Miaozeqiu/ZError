@@ -24,7 +24,7 @@ export interface VersionInfo {
 
 export class VersionCheckService {
   private static readonly API_URL = 'https://webapi.zaizhexue.top/live/latest_version.json';
-  private static readonly CURRENT_VERSION = '2.2.7'; // 当前软件版本
+  private static readonly CURRENT_VERSION = '2.2.8'; // 当前软件版本
 
   private static getApiUrls(): string[] {
     return [VersionCheckService.API_URL];

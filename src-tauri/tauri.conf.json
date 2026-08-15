@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "ZError",
-  "version": "2.2.7",
+  "version": "2.2.8",
   "identifier": "com.zerror.app",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -30,11 +30,15 @@
       "icons/icon.ico",
       "icons/icon.png"
     ],
+    "resources": {
+      "infoplist/zh-Hans.lproj/InfoPlist.strings": "zh-Hans.lproj/InfoPlist.strings",
+      "infoplist/zh_CN.lproj/InfoPlist.strings": "zh_CN.lproj/InfoPlist.strings"
+    },
     "macOS": {
       "minimumSystemVersion": "10.13",
       "exceptionDomain": "",
       "frameworks": [],
-      "providerShortName": "ZError",
+      "providerShortName": null,
       "entitlements": null,
       "signingIdentity": null
     },

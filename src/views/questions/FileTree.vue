@@ -56,8 +56,10 @@
       :can-set-as-save-folder="Boolean(props.showSetSaveFolderAction && contextMenu.node && isLeafFolder(contextMenu.node) && contextMenu.node.id !== '0')"
       :is-current-save-folder="Boolean(contextMenu.node && props.highlightFolderId === contextMenu.node.id)"
       :is-virtual-node="Boolean(contextMenu.node?.isVirtual)"
+      :can-organize="Boolean(props.showOrganizeAction && contextMenu.node && !contextMenu.node.isVirtual && contextMenu.node.id !== '0')"
       @new-folder="handleNewFolder"
       @set-save-folder="handleSetSaveFolder"
+      @organize="handleOrganizeFolder"
       @rename="handleRename"
       @clear-questions="handleClearQuestions"
       @delete="handleDelete"
@@ -94,6 +96,7 @@ const props = defineProps<{
   highlightFolderId?: string | null
   selectionMode?: 'all' | 'leaf-only'
   showSetSaveFolderAction?: boolean
+  showOrganizeAction?: boolean
 }>();
 import ContextMenu from './ContextMenu.vue';
 import ClearFolderQuestionsConfirmDialog from './ClearFolderQuestionsConfirmDialog.vue';
@@ -120,6 +123,7 @@ const emit = defineEmits<{
   'context-menu': [{ node: TreeNode; x: number; y: number }];
   'expand-folder': [id: string]
   'set-save-folder': [folderId: number, folderName: string, folderPath: string]
+  'organize-folder': [folderId: number, folderName: string]
   'questions-cleared': [folderId: number]
 }>();
 
@@ -269,8 +273,12 @@ const buildFolderTree = (
       
       console.log('Debug: 构建树结构 - 处理文件夹:', folder.name, 'parent_id:', folder.parent_id);
       
-      // 修复根节点判断逻辑：ParentId 为 null、undefined、0 都视为根节点
-      // 特别注意：默认文件夹的ParentId是0，应该被视为根节点
+      if (folder.id === 0) {
+        rootNodes.push(node);
+        return;
+      }
+
+      // ParentId 为 null、undefined、0 都视为根节点
       const isRootNode = folder.parent_id === null || folder.parent_id === undefined || folder.parent_id === 0;
       
       console.log('Debug: 文件夹', folder.name, 'parent_id:', folder.parent_id, 'isRootNode:', isRootNode);
@@ -308,6 +316,12 @@ const buildFolderTree = (
   
   // 更新所有节点的总题目数量
   rootNodes.forEach(updateTotalQuestionCount);
+
+  const defaultIndex = rootNodes.findIndex(node => node.id === '0');
+  if (defaultIndex > 0) {
+    const [defaultNode] = rootNodes.splice(defaultIndex, 1);
+    rootNodes.unshift(defaultNode);
+  }
 
   rootNodes.unshift({
     id: PENDING_CORRECTION_NODE_ID,
@@ -441,6 +455,20 @@ const handleContextMenu = (data: { node: TreeNode; x: number; y: number }) => {
   contextMenu.visible = true;
 };
 
+const handleOrganizeFolder = () => {
+  if (!contextMenu.node || contextMenu.node.isVirtual || contextMenu.node.id === '0') {
+    hideContextMenu();
+    return;
+  }
+  const folderId = parseInt(contextMenu.node.id, 10);
+  if (!Number.isFinite(folderId) || folderId < 0) {
+    hideContextMenu();
+    return;
+  }
+  emit('organize-folder', folderId, contextMenu.node.name);
+  hideContextMenu();
+};
+
 const handleSetSaveFolder = async () => {
   if (!contextMenu.node || contextMenu.node.id === '0' || !isLeafFolder(contextMenu.node)) {
     hideContextMenu();
@@ -467,9 +495,16 @@ const handleExpandFolder = (id: string) => {
 const handleMoveFolder = async (data: { sourceId: string; targetId: string; position: 'before' | 'after' | 'inside' }) => {
   try {
     console.log('FileTree: 处理文件夹移动', data);
-    
+
+    if (data.sourceId === '0' || data.sourceId === PENDING_CORRECTION_NODE_ID) {
+      return;
+    }
+
     const sourceIdNum = parseInt(data.sourceId);
     const targetIdNum = parseInt(data.targetId);
+    if (sourceIdNum === 0 || Number.isNaN(sourceIdNum) || Number.isNaN(targetIdNum)) {
+      return;
+    }
     
     console.log('FileTree: 移动参数', { sourceIdNum, targetIdNum, position: data.position });
     
@@ -541,6 +576,10 @@ const cancelRename = () => {
 // 创建新文件夹
 const createNewFolder = async () => {
   if (!contextMenu.node) return;
+  if (contextMenu.node.id === '0' && contextMenu.node.name !== '根目录') {
+    hideContextMenu();
+    return;
+  }
   
   try {
     let parentId: number;
@@ -820,15 +859,32 @@ defineExpose({
   display: flex;
   flex-direction: column;
   -webkit-app-region: no-drag;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .tree-header {
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--border-primary);
+  position: relative;
+  height: 36px;
+  min-height: 36px;
+  padding: 0 10px;
   background-color: var(--bg-secondary);
   display: flex;
   align-items: center;
   box-sizing: border-box;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.tree-header::after {
+  content: '';
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 0;
+  height: 1px;
+  background: color-mix(in srgb, var(--border-primary, #e2e8f0) 42%, transparent);
+  transform: scaleY(0.5);
 }
 
 .tree-header h3 {
@@ -838,7 +894,7 @@ defineExpose({
   text-transform: none;
   color: var(--text-primary, #2d3748);
   letter-spacing: normal;
-  line-height: 1.2;
+  line-height: 1;
 }
 
 .breadcrumb-path {
@@ -847,6 +903,9 @@ defineExpose({
   flex-wrap: nowrap;
   overflow: hidden;
   gap: 2px;
+  min-width: 0;
+  width: 100%;
+  height: 100%;
 }
 
 .breadcrumb-item {

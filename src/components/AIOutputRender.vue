@@ -36,12 +36,10 @@
 </template>
 
 <script setup lang="ts">
-import MarkdownRender, { enableKatex, enableMermaid } from 'markstream-vue'
+import MarkdownRender from 'markstream-vue'
 import 'markstream-vue/index.css'
 import 'katex/dist/katex.min.css'
-
-enableKatex()
-enableMermaid()
+import '../services/markstream'
 
 defineProps<{
   reasoningContent?: string

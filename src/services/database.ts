@@ -612,6 +612,9 @@ class DatabaseService {
 
   // 移动文件夹
   async moveFolder(id: number, parentId: number, _position?: number): Promise<void> {
+    if (id === 0) {
+      return;
+    }
     if (!this.isTauri) {
       const folder = mockFolders.find(f => f.id === id);
       if (folder) folder.parent_id = parentId;

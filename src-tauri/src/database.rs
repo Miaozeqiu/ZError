@@ -809,6 +809,8 @@ pub async fn get_folder_path(folder_id: i64) -> Result<Vec<FolderPathItem>, Stri
           FROM Folders f
           INNER JOIN folder_path fp ON f.Id = fp.ParentId
           WHERE f.Id != fp.id
+            AND fp.id != 0
+            AND fp.level < 32
         )
         SELECT id, name
         FROM folder_path
@@ -1213,9 +1215,33 @@ pub async fn rename_folder(id: i64, new_name: String) -> Result<(), String> {
 #[tauri::command]
 pub async fn move_folder(id: i64, parent_id: i64) -> Result<(), String> {
     let conn = get_conn()?;
-    // 检查防止循环嵌套（虽然前端会有检查，但后端建议也做简单保护）
+    if id == 0 {
+        return Err("默认文件夹不能移动".to_string());
+    }
     if id == parent_id {
         return Err("Cannot move folder to itself".to_string());
+    }
+
+    // 禁止把目标挂到自己的子孙下面，避免 ParentId 成环
+    if parent_id != 0 {
+        let would_cycle: bool = conn
+            .query_row(
+                "WITH RECURSIVE ancestors AS (
+                   SELECT Id, ParentId, 0 as level FROM Folders WHERE Id = ?
+                   UNION ALL
+                   SELECT f.Id, f.ParentId, a.level + 1
+                   FROM Folders f
+                   INNER JOIN ancestors a ON f.Id = a.ParentId
+                   WHERE f.Id != a.Id AND a.Id != 0 AND a.level < 32
+                 )
+                 SELECT EXISTS(SELECT 1 FROM ancestors WHERE Id = ?)",
+                rusqlite::params![parent_id, id],
+                |row| row.get(0),
+            )
+            .map_err(|e| format!("{}", e))?;
+        if would_cycle {
+            return Err("不能将文件夹移动到自己的子文件夹中".to_string());
+        }
     }
 
     conn.execute(
@@ -1718,6 +1744,9 @@ pub fn init_database_schema(db_path: &str) -> Result<(), String> {
             "INSERT INTO Folders (Id, Name, ParentId) VALUES (0, '默认文件夹', 0)",
             [],
         );
+    } else {
+        // 默认文件夹必须在根上；历史拖拽可能把它挂到其他文件夹下并形成环
+        let _ = conn.execute("UPDATE Folders SET ParentId = 0 WHERE Id = 0 AND ParentId != 0", []);
     }
 
     conn.execute(

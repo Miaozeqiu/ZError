@@ -4,6 +4,8 @@ import FileTree from "./questions/FileTree.vue";
 import QuestionList from "./questions/QuestionList.vue";
 import type { AIResponse } from "../services/database";
 import { useSettingsManager } from "../composables/useSettingsManager";
+import { startFolderOrganizeChat } from "../services/agentChat";
+import { modelConfigManager } from "../services/modelConfig";
 
 // 接收来自顶层 App 的折叠触发器，用于在切换 tab 时收起题目详情
 const props = defineProps<{
@@ -252,6 +254,15 @@ const handleRefresh = () => {
   }
 };
 
+const handleOrganizeFolder = (folderId: number, folderName: string) => {
+  if (!modelConfigManager.getSelectedAgentModel() && !modelConfigManager.getSelectedTextModel()) {
+    alert('请先在模型设置的 agent 里选择一个模型');
+    return;
+  }
+  window.dispatchEvent(new CustomEvent('navigate-tab', { detail: 'agent' }));
+  void startFolderOrganizeChat({ folderId, folderName });
+};
+
 const handleSetSaveFolder = async (folderId: number, folderName: string, folderPath: string) => {
   try {
     setSetting('questionSaveDir', folderPath || folderName);
@@ -320,13 +331,25 @@ watch(() => props.collapseTrigger, () => {
   initCustomScrollbars();
 });
 
+const handleQuestionsImported = (event: Event) => {
+  const folderId = (event as CustomEvent<{ folderId?: number }>).detail?.folderId
+  if (fileTreeRef.value) {
+    fileTreeRef.value.refreshData();
+  }
+  if (folderId != null && String(folderId) === selectedFolderId.value && questionListRef.value) {
+    questionListRef.value.refreshData();
+  }
+};
+
 onMounted(() => {
   initCustomScrollbars();
   window.addEventListener('resize', handleWindowResize);
+  window.addEventListener('questions-imported', handleQuestionsImported);
 });
 
 onUnmounted(() => {
   window.removeEventListener('resize', handleWindowResize);
+  window.removeEventListener('questions-imported', handleQuestionsImported);
   paneCleanupMap.forEach(cleanup => cleanup());
   paneCleanupMap.clear();
   (Object.keys(paneHideTimers) as ScrollbarPaneKey[]).forEach((key) => {
@@ -347,9 +370,11 @@ onUnmounted(() => {
         :current-folder-path="selectedFolderPath"
         :highlight-folder-id="currentSaveFolderId"
         :show-set-save-folder-action="true"
+        :show-organize-action="true"
         @folder-select="handleFolderSelect" 
         @expand-folder="handleExpandFolder"
         @set-save-folder="handleSetSaveFolder"
+        @organize-folder="handleOrganizeFolder"
         @questions-cleared="handleQuestionsCleared"
       />
       <div

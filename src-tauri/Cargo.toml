@@ -1,6 +1,6 @@
 [package]
 name = "zerror"
-version = "2.2.7"
+version = "2.2.8"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -55,7 +55,7 @@ windows = { version = "0.56", features = ["Win32_Foundation", "Win32_UI_WindowsA
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
-objc2-foundation = { version = "0.3", features = ["NSProcessInfo", "NSString", "NSObject"] }
+objc2-foundation = { version = "0.3", features = ["NSProcessInfo", "NSString", "NSObject", "NSUserDefaults", "NSArray"] }
 
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-process = "2.0"

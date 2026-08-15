@@ -7,6 +7,7 @@ import UpdateDialog from "./components/UpdateDialog.vue";
 import Home from "./views/Home.vue";
 import Settings from "./views/Settings.vue";
 import QuestionBank from "./views/QuestionBank.vue";
+import Agent from "./views/Agent.vue";
 import FileTree from "./views/questions/FileTree.vue";
 import { databaseService } from "./services/database";
 import { initializationService } from "./services/initialization";
@@ -45,7 +46,17 @@ onMounted(() => {
 });
 
 // 导航处理函数
+const handleNavigateTab = (event: Event) => {
+  const tab = (event as CustomEvent<string>).detail
+  if (typeof tab === 'string' && tab) {
+    handleNavigate(tab)
+  }
+}
+
 const handleNavigate = (tab: string) => {
+  if (tab === 'import-tasks') {
+    tab = 'agent'
+  }
   // 仅在实际切换到不同 tab 时触发折叠
   if (activeTab.value !== tab) {
     activeTab.value = tab;
@@ -343,6 +354,7 @@ onMounted(async () => {
     console.error('监听事件失败:', error);
   }
   (window as any).__appImportDialogReady = true;
+  window.addEventListener('navigate-tab', handleNavigateTab as EventListener)
   document.addEventListener('contextmenu', handleGlobalContextMenu, true)
   document.addEventListener('mousedown', handleGlobalPointerDown, true)
   document.addEventListener('keydown', handleGlobalKeydown, true)
@@ -366,6 +378,7 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+  window.removeEventListener('navigate-tab', handleNavigateTab as EventListener)
   document.removeEventListener('contextmenu', handleGlobalContextMenu, true)
   document.removeEventListener('mousedown', handleGlobalPointerDown, true)
   document.removeEventListener('keydown', handleGlobalKeydown, true)
@@ -400,6 +413,10 @@ onUnmounted(() => {
             :focus-folder-id="questionBankFocusFolderId"
             :focus-folder-request-key="questionBankFocusRequestKey"
           />
+        </div>
+
+        <div v-show="activeTab === 'agent' || activeTab === 'import-tasks'" class="content-view">
+          <Agent @open-folder="handleOpenQuestionFolder" />
         </div>
 
         <div v-show="activeTab === 'settings'" class="content-view">
@@ -620,13 +637,16 @@ a:hover {
   min-width: 150px;
   padding: 6px;
   border-radius: 10px;
-  border: 1px solid var(--border-primary, #e2e8f0);
-  background: var(--bg-secondary, #ffffff);
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.16);
+  border: 1px solid var(--context-menu-border, rgba(255, 255, 255, 0.55));
+  background: var(--context-menu-bg, rgba(255, 255, 255, 0.42));
+  backdrop-filter: blur(40px) saturate(180%);
+  -webkit-backdrop-filter: blur(40px) saturate(180%);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.22), 0 4px 12px rgba(0, 0, 0, 0.12), inset 0 0.5px 0 rgba(255, 255, 255, 0.5);
   display: flex;
   flex-direction: column;
   gap: 4px;
   transform-origin: top left;
+  overflow: visible;
 }
 
 .context-menu-pop-enter-active,
@@ -664,6 +684,14 @@ a:hover {
 .global-input-context-menu-item:disabled {
   color: var(--text-disabled, #a0aec0);
   cursor: not-allowed;
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .global-input-context-menu {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    background: var(--bg-secondary, #ffffff);
+  }
 }
 
 h1 {
