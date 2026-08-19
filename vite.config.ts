@@ -1,13 +1,48 @@
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
 import vue from "@vitejs/plugin-vue";
 import { resolve } from 'path';
+import { appendFileSync, mkdirSync } from 'fs';
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
 
+const agentDebugLogPlugin = (): Plugin => ({
+  name: 'agent-debug-log',
+  configureServer(server) {
+    const dir = resolve(__dirname, 'logs', 'agent-chat')
+    server.middlewares.use('/__agent-debug-log', (req, res, next) => {
+      if (req.method !== 'POST') {
+        next()
+        return
+      }
+      const chunks: Buffer[] = []
+      req.on('data', (chunk) => chunks.push(Buffer.from(chunk)))
+      req.on('end', () => {
+        try {
+          const body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}') as {
+            file?: string
+            entry?: Record<string, unknown>
+          }
+          const file = String(body.file || 'session').replace(/[^\w.-]+/g, '_').slice(0, 80)
+          mkdirSync(dir, { recursive: true })
+          appendFileSync(
+            resolve(dir, `${file}.jsonl`),
+            `${JSON.stringify({ ts: new Date().toISOString(), ...body.entry })}\n`,
+          )
+          res.statusCode = 204
+          res.end()
+        } catch (error) {
+          res.statusCode = 400
+          res.end(error instanceof Error ? error.message : String(error))
+        }
+      })
+    })
+  },
+})
+
 // https://vitejs.dev/config/
 export default defineConfig(async () => ({
-  plugins: [vue()],
+  plugins: [vue(), agentDebugLogPlugin()],
   
   resolve: {
     alias: {
@@ -59,7 +94,7 @@ export default defineConfig(async () => ({
       : undefined,
     watch: {
       // 3. tell vite to ignore watching `src-tauri`
-      ignored: ["**/src-tauri/**"],
+      ignored: ["**/src-tauri/**", "**/logs/**"],
     },
   },
 }));

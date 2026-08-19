@@ -15,7 +15,7 @@
     </div>
     
     <div class="header-center">
-      <div v-if="props.activeTab !== 'questions' && props.activeTab !== 'import-tasks' && props.activeTab !== 'agent'" class="tutorial-stepper">
+      <div v-if="props.activeTab !== 'questions' && props.activeTab !== 'import-tasks' && props.activeTab !== 'agent' && props.activeTab !== 'study'" class="tutorial-stepper">
         <div class="step" :class="{ completed: isStep1Completed, active: !isStep1Completed }" @click="$emit('guide-to', 'model-settings')">
           <div class="step-indicator">
             <svg v-if="isStep1Completed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="12" height="12"><polyline points="20 6 9 17 4 12"></polyline></svg>
@@ -72,6 +72,41 @@
         </svg>
         <span class="campus-entry-text">想将题库分享给同学？试试校园题库吧</span>
       </button>
+
+      <div v-if="showStudyStrip" class="study-header-strip" data-tauri-drag-region-exclude>
+        <div
+          v-for="subject in studySubjects"
+          :key="subject.id"
+          class="study-chip"
+          :class="{ 'is-active': subject.id === activeStudyId }"
+        >
+          <button
+            type="button"
+            class="study-chip-main"
+            :title="`${subject.name} · 掌握 ${subjectProgress(subject)}%`"
+            @click="selectStudySubject(subject.id)"
+          >
+            <span class="study-chip-name">{{ subject.name }}</span>
+            <span class="study-chip-progress">{{ subjectProgress(subject) }}%</span>
+            <span class="study-chip-bar" aria-hidden="true">
+              <span :style="{ width: `${subjectProgress(subject)}%`, background: barColor(subject.progress) }" />
+            </span>
+          </button>
+          <button
+            type="button"
+            class="study-chip-graph"
+            title="展开知识图谱"
+            @click="expandStudyGraph(subject.id)"
+          >
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <circle cx="12" cy="12" r="8.25" stroke="currentColor" stroke-width="1.4" />
+              <ellipse cx="12" cy="12" rx="3.4" ry="8.25" stroke="currentColor" stroke-width="1.25" />
+              <path d="M4.2 9.2h15.6M4.2 14.8h15.6" stroke="currentColor" stroke-width="1.25" />
+              <path d="M12 3.75c2.15 2.4 3.35 5.15 3.35 8.25S14.15 17.85 12 20.25C9.85 17.85 8.65 15.1 8.65 12S9.85 6.15 12 3.75Z" stroke="currentColor" stroke-width="1.25" />
+            </svg>
+          </button>
+        </div>
+      </div>
     </div>
 
     <div class="header-right" :class="{ 'header-right--macos': isMacOS }">
@@ -164,9 +199,18 @@ import { useModelConfig } from '../services/modelConfig'
 import { serverRunning } from '../services/serverState'
 import { listen, UnlistenFn } from '@tauri-apps/api/event'
 import { useAppUpdate } from '../composables/useAppUpdate'
+import { databaseService, type StudySubject } from '../services/database'
+import { progressColor } from '../utils/studyGraph'
+
+const STUDY_STORAGE_KEY = 'zerror-study-subject'
 
 const props = defineProps<{
   activeTab?: string
+}>()
+
+const emit = defineEmits<{
+  'guide-to': [target: string]
+  navigate: [tab: string]
 }>()
 
 const {
@@ -193,6 +237,47 @@ const isTauri = ref(false)
 const isMacOS = ref(false)
 
 const { settings: modelSettings, platforms: computedPlatforms, selectedTextModels, selectedTextModel } = useModelConfig()
+
+const studySubjects = ref<StudySubject[]>([])
+const activeStudyId = ref<number | null>(null)
+
+const showStudyStrip = computed(() => {
+  const tab = props.activeTab || ''
+  return (tab === 'study' || tab === 'agent' || tab === 'import-tasks') && studySubjects.value.length > 0
+})
+
+const subjectProgress = (subject: StudySubject) => Math.round((Number(subject.progress) || 0) * 100)
+const barColor = (progress: number) => progressColor(progress)
+
+const loadStudySubjects = async () => {
+  try {
+    studySubjects.value = await databaseService.listStudySubjects()
+    const stored = Number(localStorage.getItem(STUDY_STORAGE_KEY))
+    activeStudyId.value = studySubjects.value.some((item) => item.id === stored)
+      ? stored
+      : studySubjects.value[0]?.id ?? null
+  } catch {
+    studySubjects.value = []
+  }
+}
+
+const openStudyGraphPane = (id: number) => {
+  activeStudyId.value = id
+  localStorage.setItem(STUDY_STORAGE_KEY, String(id))
+  window.dispatchEvent(new CustomEvent('open-study-graph', { detail: { subjectId: id, expand: true } }))
+  const tab = props.activeTab || ''
+  if (tab !== 'agent' && tab !== 'import-tasks') {
+    emit('navigate', 'agent')
+  }
+}
+
+const selectStudySubject = (id: number) => {
+  openStudyGraphPane(id)
+}
+
+const expandStudyGraph = (id: number) => {
+  openStudyGraphPane(id)
+}
 
 // Tutorial Stepper Logic
 const isStep1Completed = computed(() => {
@@ -247,12 +332,15 @@ onMounted(async () => {
     console.log('--- 接收到来自后端的 OCS HEAD 请求事件，步骤 3 已完成 ---');
     isStep3Completed.value = true;
   });
+  void loadStudySubjects()
+  window.addEventListener('study-graph-updated', loadStudySubjects)
 })
 
 onUnmounted(() => {
   if (unlistenHeadEvent) {
     unlistenHeadEvent();
   }
+  window.removeEventListener('study-graph-updated', loadStudySubjects)
 })
 
 const minimizeWindow = async () => {
@@ -495,6 +583,117 @@ onMounted(async () => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.study-header-strip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  margin: 0 auto;
+  padding: 0 8px;
+  overflow-x: auto;
+  pointer-events: auto;
+  -webkit-app-region: no-drag;
+  scrollbar-width: none;
+}
+
+.study-header-strip::-webkit-scrollbar {
+  display: none;
+}
+
+.study-chip {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  height: 26px;
+  padding: 0 2px 0 8px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--text-secondary, #718096) 18%, transparent);
+  background: color-mix(in srgb, var(--bg-primary, #fff) 72%, transparent);
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  transition: background-color 0.16s ease, border-color 0.16s ease, transform 0.16s ease;
+}
+
+.study-chip.is-active {
+  border-color: color-mix(in srgb, var(--color-primary, #667eea) 42%, var(--border-color, #e2e8f0));
+  background: color-mix(in srgb, var(--color-primary, #667eea) 10%, var(--bg-primary, #fff));
+}
+
+.study-chip-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-primary, #2d3748);
+  cursor: pointer;
+}
+
+.study-chip-name {
+  max-width: 88px;
+  font-size: 12px;
+  font-weight: 550;
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.study-chip-progress {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary, #718096);
+  line-height: 1;
+}
+
+.study-chip-bar {
+  width: 28px;
+  height: 3px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-secondary, #718096) 16%, transparent);
+  overflow: hidden;
+}
+
+.study-chip-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+}
+
+.study-chip-graph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin-left: 2px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-secondary, #718096);
+  cursor: pointer;
+  transition: color 0.16s ease, background-color 0.16s ease, transform 0.16s ease;
+}
+
+.study-chip-graph svg {
+  width: 15px;
+  height: 15px;
+}
+
+.study-chip-graph:hover {
+  color: var(--color-primary, #667eea);
+  background: color-mix(in srgb, var(--color-primary, #667eea) 12%, transparent);
+}
+
+.study-chip-graph:active {
+  transform: scale(0.94);
 }
 
 .header-right {

@@ -48,24 +48,90 @@
 
     <div class="chat-workspace">
       <section class="chat-main">
-        <div v-if="!activeChat" class="detail-empty">
-          <div>问一道题，或从题库把文件发给我导入</div>
-          <button class="start-btn" type="button" @click="() => createChat()">开始对话</button>
-          <button class="composer-model is-empty" type="button" @click="showModelSelector = true">
-            {{ agentModelLabel }}
-          </button>
-        </div>
-
-        <template v-else>
-          <div class="chat-thread-wrap">
+        <div class="chat-thread-wrap">
           <div
             ref="threadRef"
             class="chat-thread"
             @scroll.passive="updateThreadPinned"
+            @wheel.passive="cancelThreadJump"
             @pointerdown="onThreadPointerDown"
           >
+            <div v-if="showFeatureCards" class="feature-panel">
+              <div class="feature-kicker">我可以帮你</div>
+              <div class="feature-grid">
+                <button class="feature-card" type="button" @click="startImportFromCard">
+                  <span class="feature-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
+                      <path d="M14 3v6h6" />
+                      <path d="M12 18v-7" />
+                      <path d="M9 14l3 3 3-3" />
+                    </svg>
+                  </span>
+                  <span class="feature-copy">
+                    <span class="feature-title">导入文件</span>
+                    <span class="feature-desc">识别题目并写入题库</span>
+                  </span>
+                </button>
+                <button class="feature-card" type="button" @click="startOrganizeFromCard">
+                  <span class="feature-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" />
+                      <path d="M8 13h8" />
+                      <path d="M8 16h5" />
+                    </svg>
+                  </span>
+                  <span class="feature-copy">
+                    <span class="feature-title">整理文件夹</span>
+                    <span class="feature-desc">按内容归类、移动和重命名</span>
+                  </span>
+                </button>
+                <button class="feature-card" type="button" @click="startExplainFromCard">
+                  <span class="feature-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M4 19V5a2 2 0 0 1 2-2h9l5 5v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z" />
+                      <path d="M14 3v5h5" />
+                      <path d="M8 13h8" />
+                      <path d="M8 17h5" />
+                    </svg>
+                  </span>
+                  <span class="feature-copy">
+                    <span class="feature-title">讲解题目</span>
+                    <span class="feature-desc">粘贴或描述一道题</span>
+                  </span>
+                </button>
+                <button class="feature-card" type="button" @click="startQuizFromCard">
+                  <span class="feature-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                      <circle cx="12" cy="12" r="9" />
+                      <path d="M9.5 9.5a2.5 2.5 0 1 1 3.6 2.25c-.7.4-1.1.9-1.1 1.75" />
+                      <path d="M12 17h.01" />
+                    </svg>
+                  </span>
+                  <span class="feature-copy">
+                    <span class="feature-title">出题练习</span>
+                    <span class="feature-desc">点选作答，并记下练习记录</span>
+                  </span>
+                </button>
+                <button class="feature-card" type="button" @click="startGraphFromCard">
+                  <span class="feature-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                      <circle cx="6" cy="7" r="2.2" />
+                      <circle cx="18" cy="8" r="2.2" />
+                      <circle cx="8" cy="17" r="2.2" />
+                      <circle cx="16" cy="16" r="2.2" />
+                      <path d="M8 8.6 16.2 9.6M7.6 9.2 8.8 14.8M16.2 10.2 15.2 14M9.8 16.2h4" />
+                    </svg>
+                  </span>
+                  <span class="feature-copy">
+                    <span class="feature-title">知识图谱</span>
+                    <span class="feature-desc">为科目绘制独立知识点</span>
+                  </span>
+                </button>
+              </div>
+            </div>
             <div
-              v-for="(message, messageIndex) in activeChat.messages"
+              v-for="(message, messageIndex) in activeChat?.messages || []"
               :key="message.id"
               class="chat-turn"
               :class="`is-${message.role}`"
@@ -126,6 +192,25 @@
                       </svg>
                     </span>
                     <span class="activity-text" :class="{ 'is-live': step.status === 'running' }">{{ step.label }}</span>
+                  </div>
+                  <p v-if="step.status === 'failed' && step.detail" class="activity-detail">{{ step.detail }}</p>
+
+                  <div
+                    v-if="step.name === 'present_quiz' && step.status === 'done' && quizCardsFor(step).length"
+                    class="write-block is-quiz"
+                    :class="{ 'is-open': isQuizOpen(message.id, step.id) }"
+                  >
+                    <button class="write-head" type="button" @click="toggleQuiz(message.id, step.id)">
+                      <span class="write-file">
+                        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                          <circle cx="12" cy="12" r="9" />
+                          <path d="M9.5 9.5a2.5 2.5 0 1 1 3.6 2.25c-.7.4-1.1.9-1.1 1.75" />
+                          <path d="M12 17h.01" />
+                        </svg>
+                        练习
+                      </span>
+                      <span class="write-stat">{{ quizStatFor(message, step.id, quizCardsFor(step)) }}</span>
+                    </button>
                   </div>
 
                   <div
@@ -188,24 +273,39 @@
                 </div>
 
                 <div
-                  v-if="message.content"
+                  v-if="fallbackQuizCards(message).length"
+                  class="write-block is-quiz"
+                  :class="{ 'is-open': isQuizOpen(message.id, `${message.id}-md`) }"
+                >
+                  <button class="write-head" type="button" @click="toggleQuiz(message.id, `${message.id}-md`)">
+                    <span class="write-file">
+                      <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="9" />
+                        <path d="M9.5 9.5a2.5 2.5 0 1 1 3.6 2.25c-.7.4-1.1.9-1.1 1.75" />
+                        <path d="M12 17h.01" />
+                      </svg>
+                      练习
+                    </span>
+                    <span class="write-stat">{{ quizStatFor(message, `${message.id}-md`, fallbackQuizCards(message)) }}</span>
+                  </button>
+                </div>
+
+                <div
+                  v-if="displayAssistantContent(message)"
                   class="assistant-text"
                 >
                   <MarkdownRender
                     :key="message.id"
                     custom-id="agent-chat"
                     mode="chat"
-                    :content="message.content"
+                    :content="displayAssistantContent(message)"
                     :final="message.status !== 'streaming'"
                     :index-key="message.id"
                     :max-live-nodes="0"
-                    :batch-rendering="true"
-                    :render-batch-size="16"
-                    :render-batch-delay="8"
-                    :render-batch-budget-ms="4"
-                    :fade="message.status !== 'streaming'"
-                    :smooth-streaming="message.status === 'streaming' ? 'auto' : false"
-                    :typewriter="message.status === 'streaming' ? 'simple' : false"
+                    :fade="false"
+                    :smooth-streaming="message.status === 'streaming'"
+                    typewriter="off"
+                    html-policy="safe"
                     :render-code-blocks-as-pre="true"
                     :d2-props="{ progressiveRender: true, progressiveIntervalMs: 450 }"
                   />
@@ -242,6 +342,17 @@
           </div>
 
           <form class="composer" @submit.prevent="submit">
+            <button
+              v-if="!threadPinned"
+              class="thread-jump"
+              type="button"
+              @click="jumpThreadToBottom"
+            >
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M6 9l6 6 6-6" />
+              </svg>
+              回到底部
+            </button>
             <div class="composer-box">
               <div v-if="composerImages.length" class="composer-images">
                 <div
@@ -297,7 +408,7 @@
               <div
                 ref="composerRef"
                 class="composer-input"
-                :class="{ 'is-empty': !draft.trim() }"
+                :class="{ 'is-empty': !draft.trim() && !composing }"
                 contenteditable="true"
                 role="textbox"
                 :data-placeholder="composerPlaceholder"
@@ -365,11 +476,75 @@
               </div>
             </div>
           </form>
-        </template>
       </section>
 
       <Transition name="write-pane">
-        <aside v-if="openedWriteStep" class="write-pane">
+        <aside v-if="openedQuiz" class="write-pane is-quiz">
+          <div class="write-pane-inner">
+            <div class="write-pane-head">
+              <div class="write-file">
+                <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="9" />
+                  <path d="M9.5 9.5a2.5 2.5 0 1 1 3.6 2.25c-.7.4-1.1.9-1.1 1.75" />
+                  <path d="M12 17h.01" />
+                </svg>
+                练习
+              </div>
+              <span class="write-stat">{{ quizStatFor(openedQuiz.message, openedQuiz.stepId, openedQuiz.cards) }}</span>
+              <button class="header-action" type="button" @click="openedQuizKey = null">关闭</button>
+            </div>
+            <div class="write-pane-body-wrap">
+              <div ref="writePaneBodyRef" class="write-pane-body is-quiz-page">
+                <AgentQuizBlock
+                  layout="pane"
+                  :step-id="openedQuiz.stepId"
+                  :cards="openedQuiz.cards"
+                  @attempt="onQuizAttempt(openedQuiz.messageId, $event)"
+                />
+              </div>
+              <div
+                class="custom-scrollbar"
+                :class="{ 'is-visible': scrollbarVisible.write }"
+                ref="writeBarRef"
+                @mousedown="onScrollbarMousedown('write', $event)"
+              >
+                <div class="custom-scrollbar-thumb" ref="writeThumbRef"></div>
+              </div>
+            </div>
+          </div>
+        </aside>
+      </Transition>
+      <Transition name="write-pane">
+        <aside v-if="openedGraph && !openedQuiz && !openedWriteStep" class="write-pane is-graph">
+          <div class="write-pane-inner">
+            <div class="write-pane-head">
+              <div class="write-file">
+                <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="6" cy="7" r="2.2" />
+                  <circle cx="18" cy="8" r="2.2" />
+                  <circle cx="8" cy="17" r="2.2" />
+                  <circle cx="16" cy="16" r="2.2" />
+                  <path d="M8 8.6 16.2 9.6M7.6 9.2 8.8 14.8M16.2 10.2 15.2 14M9.8 16.2h4" />
+                </svg>
+                {{ paneGraphName || '知识图谱' }}
+              </div>
+              <span class="write-stat">{{ graphPaneStat }}</span>
+              <button class="header-action" type="button" @click="closeGraphPane">关闭</button>
+            </div>
+            <div class="write-pane-body-wrap">
+              <div class="write-pane-body is-graph-page">
+                <StudyMermaidGraph
+                  :graph="paneGraph"
+                  :streaming="graphStreaming"
+                  :empty-text="graphEmptyText"
+                />
+              </div>
+            </div>
+          </div>
+        </aside>
+      </Transition>
+      <Transition name="write-pane">
+        <aside v-if="openedWriteStep && !openedQuiz && !openedGraph" class="write-pane">
           <div class="write-pane-inner">
             <div class="write-pane-head">
               <div class="write-file">
@@ -450,7 +625,7 @@
       :visible="folderPickerVisible"
       :initial-folder-id="folderPickerInitialId"
       selection-mode="all"
-      @cancel="folderPickerVisible = false"
+      @cancel="cancelFolderPicker"
       @confirm="onFolderPicked"
     />
 
@@ -493,6 +668,9 @@ import {
   consumeComposerAttachments,
   isImageAttachment,
   createChat,
+  startFileImportChat,
+  startFolderOrganizeChat,
+  startStudyGraphChat,
   encodeFolderToken,
   extractFolderAttachments,
   isFileAttachment,
@@ -503,7 +681,11 @@ import {
   selectChat,
   sendChatMessage,
   stopChat,
+  hydrateQuizCards,
+  formatQuizAttempt,
+  recordQuizAttempt,
 } from '../services/agentChat'
+import type { AgentQuizAttempt } from '../services/agentChat'
 import type { AgentChatMessage, AgentChatSession } from '../services/agentChat'
 import FolderPickerDialog from '../components/FolderPickerDialog.vue'
 import { databaseService } from '../services/database'
@@ -521,6 +703,13 @@ import MarkdownRender, {
   setCustomComponents,
 } from 'markstream-vue'
 import AgentD2Block from '../components/AgentD2Block.vue'
+import AgentHtmlBlock from '../components/AgentHtmlBlock.vue'
+import AgentCodeBlock from '../components/AgentCodeBlock.vue'
+import AgentQuizBlock from '../components/AgentQuizBlock.vue'
+import StudyMermaidGraph from '../components/StudyMermaidGraph.vue'
+import { studyGraphStream } from '../services/studyGraphStream'
+import { graphFromPayload, type StudyGraphNode } from '../utils/studyGraph'
+import { getQuizCards, parseMarkdownQuizzes, parseOptions, parseQuizCards, stripMarkdownQuizzes, type QuizCard } from '../utils/quizPractice'
 import '../services/markstream'
 import hljs from 'highlight.js/lib/core'
 import bash from 'highlight.js/lib/languages/bash'
@@ -582,6 +771,8 @@ setCustomComponents('agent-chat', {
   d2: AgentD2Block,
   d2lang: AgentD2Block,
   infographic: InfographicBlockNode,
+  html_block: AgentHtmlBlock,
+  code_block: AgentCodeBlock,
 })
 
 defineEmits<{
@@ -712,19 +903,34 @@ const addFile = async () => {
 }
 
 const folderPickerVisible = ref(false)
+const folderPickerMode = ref<'mention' | 'organize' | 'import'>('mention')
+const pendingImportPath = ref<string | null>(null)
 const folderPickerInitialId = computed(() => {
   const tokens = parseFolderTokens(draft.value)
   return tokens.at(-1)?.folderId ?? null
 })
+const showFeatureCards = computed(() => !(activeChat.value?.messages.length))
+
+const ensureAgentModel = () => {
+  if (agentModel.value) return true
+  alert('请先选择一个模型')
+  showModelSelector.value = true
+  return false
+}
 
 const openFolderPicker = () => {
   saveComposerSelection()
+  folderPickerMode.value = 'mention'
   folderPickerVisible.value = true
 }
 
-const onFolderPicked = async (folderId: number, folderName: string, folderPath: string) => {
+const cancelFolderPicker = () => {
   folderPickerVisible.value = false
-  if (!Number.isFinite(folderId) || folderId < 0) return
+  folderPickerMode.value = 'mention'
+  pendingImportPath.value = null
+}
+
+const resolvePickedFolderPath = async (folderId: number, folderName: string, folderPath: string) => {
   let path = String(folderPath || folderName || '').trim() || folderName
   try {
     const parts = await databaseService.getFolderPath(folderId)
@@ -732,11 +938,99 @@ const onFolderPicked = async (folderId: number, folderName: string, folderPath: 
   } catch {
     // keep picker path
   }
+  return path
+}
+
+const onFolderPicked = async (folderId: number, folderName: string, folderPath: string) => {
+  const mode = folderPickerMode.value
+  folderPickerVisible.value = false
+  folderPickerMode.value = 'mention'
+  if (!Number.isFinite(folderId) || folderId < 0) {
+    pendingImportPath.value = null
+    return
+  }
+  const path = await resolvePickedFolderPath(folderId, folderName, folderPath)
+  if (mode === 'organize') {
+    if (folderId === 0) {
+      alert('默认文件夹不能整理，请选择一个子文件夹')
+      return
+    }
+    await startFolderOrganizeChat({ folderId, folderName, folderPath: path })
+    return
+  }
+  if (mode === 'import') {
+    const filePath = pendingImportPath.value
+    pendingImportPath.value = null
+    if (!filePath) return
+    await startFileImportChat({ filePath, folderId, folderName, folderPath: path })
+    return
+  }
   insertFolderMention({
     folderId,
     folderName: folderName || '文件夹',
     folderPath: path,
   })
+}
+
+const startImportFromCard = async () => {
+  if (!ensureAgentModel()) return
+  if (!isTauriEnvironment()) {
+    alert('此功能仅在应用中可用')
+    return
+  }
+  try {
+    const selected = await open({
+      title: '选择要导入的文件',
+      multiple: false,
+      directory: false,
+      filters: [{
+        name: '文件',
+        extensions: ['txt', 'md', 'csv', 'xlsx', 'xls', 'docx', 'doc', 'pdf'],
+      }],
+    })
+    const filePath = selectedFilePath(selected)
+    if (!filePath) return
+    pendingImportPath.value = filePath
+    folderPickerMode.value = 'import'
+    folderPickerVisible.value = true
+  } catch (error) {
+    console.error('选择导入文件失败:', error)
+  }
+}
+
+const startOrganizeFromCard = () => {
+  if (!ensureAgentModel()) return
+  folderPickerMode.value = 'organize'
+  folderPickerVisible.value = true
+}
+
+const fillComposer = async (text: string) => {
+  draft.value = text
+  await nextTick()
+  const input = composerRef.value
+  if (!input) return
+  input.textContent = text
+  input.focus()
+  const selection = window.getSelection()
+  const range = document.createRange()
+  range.selectNodeContents(input)
+  range.collapse(false)
+  selection?.removeAllRanges()
+  selection?.addRange(range)
+  resizeComposer()
+}
+
+const startExplainFromCard = () => {
+  void fillComposer('请讲解这道题：')
+}
+
+const startQuizFromCard = () => {
+  void fillComposer('请从题库出几道选择题练习。先看掌握度和练习记录，优先出未掌握或最近答错的，然后用 present_quiz 出示可点选的题目，不要把选项写成普通列表。')
+}
+
+const startGraphFromCard = () => {
+  if (!ensureAgentModel()) return
+  void startStudyGraphChat()
 }
 const agentModel = computed(() => selectedAgentModel.value || selectedTextModel.value)
 const agentModelLabel = computed(() => agentModel.value?.displayName || '选择模型')
@@ -1044,6 +1338,7 @@ const syncDraftFromComposer = () => {
 }
 
 const onComposerInput = () => {
+  if (!threadPinned.value) jumpThreadToBottom()
   if (composing.value) {
     resizeComposer()
     return
@@ -1262,17 +1557,37 @@ const resizeComposer = () => {
   input.style.overflowY = next >= COMPOSER_MAX_HEIGHT ? 'auto' : 'hidden'
 }
 
-const parseOptions = (raw?: string) => {
-  if (!raw?.trim()) return [] as { key: string; text: string }[]
-  return raw
-    .split(/\n+/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => {
-      const match = line.match(/^([A-Ha-h])[\.、.\)\s]\s*(.*)$/)
-      if (match) return { key: match[1].toUpperCase(), text: match[2] || '' }
-      return { key: '', text: line }
-    })
+const quizCardsFor = (step: ImportTaskStep): QuizCard[] => {
+  const stored = getQuizCards(step.id)
+  if (stored.length) return stored
+  return parseQuizCards(step.preview || [])
+}
+
+const mdQuizCache = ref<Record<string, QuizCard[]>>({})
+
+const stepQuizCards = (message: AgentChatMessage) =>
+  (message.steps || [])
+    .filter((step) => step.name === 'present_quiz' && step.status === 'done')
+    .flatMap((step) => quizCardsFor(step))
+
+const fallbackQuizCards = (message: AgentChatMessage) => {
+  if (stepQuizCards(message).length) return []
+  return mdQuizCache.value[message.id] || parseMarkdownQuizzes(message.content)
+}
+
+const displayAssistantContent = (message: AgentChatMessage) => {
+  const dumped = parseMarkdownQuizzes(message.content)
+  if (!dumped.length) return message.content
+  const stripped = stripMarkdownQuizzes(message.content, dumped)
+  return stripped || '请在右侧练习页作答。'
+}
+
+const hydrateMessageQuiz = async (message: AgentChatMessage) => {
+  if (message.role !== 'assistant' || message.status === 'streaming') return
+  if (stepQuizCards(message).length || mdQuizCache.value[message.id]) return
+  const parsed = parseMarkdownQuizzes(message.content)
+  if (!parsed.length) return
+  mdQuizCache.value[message.id] = await hydrateQuizCards(parsed)
 }
 
 const typeTagKind = (type?: string) => {
@@ -1312,7 +1627,120 @@ const visiblePreview = (step: ImportTaskStep): ImportStepPreview[] => {
   return items.slice(0, WRITE_PREVIEW_COUNT)
 }
 
+const openedQuizKey = ref<string | null>(null)
+
+const quizKeyOf = (messageId: string, stepId: string) => `${messageId}\t${stepId}`
+
+const isQuizOpen = (messageId: string, stepId: string) =>
+  openedQuizKey.value === quizKeyOf(messageId, stepId)
+
+const quizStatFor = (message: AgentChatMessage, stepId: string, cards: QuizCard[]) => {
+  const done = new Set((message.quizAttempts || []).map((item) => item.uid))
+  const answered = cards.filter((card) => done.has(card.uid)).length
+  if (message.quizReported || (cards.length && answered >= cards.length)) return `已完成 ${cards.length}`
+  if (answered) return `${answered}/${cards.length}`
+  return `${cards.length} 题`
+}
+
+const latestQuizKey = computed(() => {
+  const messages = [...(activeChat.value?.messages || [])].reverse()
+  for (const message of messages) {
+    if (message.role !== 'assistant') continue
+    for (const step of [...(message.steps || [])].reverse()) {
+      if (step.name === 'present_quiz' && step.status === 'done' && quizCardsFor(step).length) {
+        return quizKeyOf(message.id, step.id)
+      }
+    }
+    if (fallbackQuizCards(message).length) return quizKeyOf(message.id, `${message.id}-md`)
+  }
+  return null
+})
+
+const openedQuiz = computed(() => {
+  if (!openedQuizKey.value) return null
+  const [messageId, stepId] = openedQuizKey.value.split('\t')
+  const message = activeChat.value?.messages.find((item) => item.id === messageId)
+  if (!message || !stepId) return null
+  const step = message.steps.find((item) => item.id === stepId)
+  const cards = stepId.endsWith('-md')
+    ? fallbackQuizCards(message)
+    : step
+      ? quizCardsFor(step)
+      : getQuizCards(stepId)
+  if (!cards.length) return null
+  return { messageId, stepId, cards, message }
+})
+
+const openedGraphSubjectId = ref<number | null>(null)
+const paneGraph = ref<StudyGraphNode | null>(null)
+const paneGraphName = ref('')
+const paneGraphCount = ref(0)
+const openedGraph = computed(() => openedGraphSubjectId.value != null)
+const graphStreaming = computed(() => {
+  const stream = studyGraphStream.value
+  const id = openedGraphSubjectId.value
+  return Boolean(stream?.streaming && (stream.subjectId == null || id == null || stream.subjectId === id))
+})
+const graphEmptyText = computed(() =>
+  graphStreaming.value ? 'Agent 正在绘制知识图谱' : '这个科目还没有图谱',
+)
+const graphPaneStat = computed(() => {
+  if (graphStreaming.value && !paneGraphCount.value) return '正在绘制'
+  if (graphStreaming.value) return `${paneGraphCount.value} 个 · 绘制中`
+  return paneGraphCount.value ? `${paneGraphCount.value} 个节点` : ''
+})
+
+const loadPaneGraph = async (id: number) => {
+  try {
+    const payload = await databaseService.getStudyGraph(id)
+    paneGraph.value = payload.nodes.length ? graphFromPayload(payload) : null
+    paneGraphName.value = payload.subject?.name || paneGraph.value?.name || '知识图谱'
+    paneGraphCount.value = payload.nodes.length
+  } catch {
+    paneGraph.value = null
+    paneGraphCount.value = 0
+  }
+}
+
+const openGraphPane = (subjectId: number) => {
+  openedQuizKey.value = null
+  openedWriteStepId.value = null
+  openedGraphSubjectId.value = subjectId
+  void loadPaneGraph(subjectId)
+}
+
+const closeGraphPane = () => {
+  openedGraphSubjectId.value = null
+}
+
+const onStudyGraphUpdated = (event: Event) => {
+  const id = Number((event as CustomEvent<{ subjectId?: number }>).detail?.subjectId)
+  const current = openedGraphSubjectId.value
+  if (current == null) return
+  void loadPaneGraph(Number.isFinite(id) && id > 0 ? id : current)
+}
+
+const onOpenStudyGraph = (event: Event) => {
+  const detail = (event as CustomEvent<{ subjectId?: number; expand?: boolean }>).detail
+  const id = Number(detail?.subjectId)
+  if (!Number.isFinite(id) || id <= 0) return
+  openGraphPane(id)
+}
+
+const toggleQuiz = (messageId: string, stepId: string) => {
+  const key = quizKeyOf(messageId, stepId)
+  if (openedQuizKey.value === key) {
+    openedQuizKey.value = null
+    return
+  }
+  openedWriteStepId.value = null
+  openedGraphSubjectId.value = null
+  openedQuizKey.value = key
+}
+
 const openWrite = (stepId: string) => {
+  openedQuizKey.value = null
+  openedGraphSubjectId.value = null
   openedWriteStepId.value = openedWriteStepId.value === stepId ? null : stepId
 }
 
@@ -1355,6 +1783,21 @@ const iconPaths = (name: string) => {
   if (name === 'save_questions') {
     return ['M12 20h9', 'M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z']
   }
+  if (name === 'update_question_metrics') {
+    return ['M4 7h16', 'M4 12h10', 'M4 17h7']
+  }
+  if (name === 'get_practice_history' || name === 'add_practice_note') {
+    return ['M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z', 'M14 2v6h6', 'M8 13h8', 'M8 17h5']
+  }
+  if (name === 'present_quiz') {
+    return ['M9 11l3 3L22 4', 'M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11']
+  }
+  if (name === 'list_subjects' || name === 'create_subject' || name === 'rename_subject' || name === 'delete_subject') {
+    return ['M4 19.5A2.5 2.5 0 0 1 6.5 17H20', 'M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z']
+  }
+  if (name === 'get_knowledge_graph' || name === 'set_knowledge_graph' || name === 'patch_knowledge_graph') {
+    return ['M6 7a2 2 0 1 0 0-4 2 2 0 0 0 0 4z', 'M18 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4z', 'M8 18a2 2 0 1 0 0-4 2 2 0 0 0 0 4z', 'M16 17a2 2 0 1 0 0-4 2 2 0 0 0 0 4z', 'M8 8l8 1', 'M7 9l2 6', 'M16 10l-1 4']
+  }
   return ['M12 3v3', 'M12 18v3', 'M3 12h3', 'M18 12h3']
 }
 
@@ -1392,6 +1835,7 @@ const composing = ref(false)
 
 const onComposerCompositionStart = () => {
   composing.value = true
+  if (!threadPinned.value) jumpThreadToBottom()
 }
 
 const onComposerCompositionEnd = () => {
@@ -1427,6 +1871,45 @@ const onComposerKeydown = (event: KeyboardEvent) => {
   submit()
 }
 
+const reportedQuiz = new Set<string>()
+const pendingQuizReviews = ref<AgentQuizAttempt[]>([])
+let flushingQuiz = false
+
+const quizAttemptKey = (attempt: AgentQuizAttempt) => `${attempt.stepId}:${attempt.uid}`
+
+const sendQuizAttempt = async (attempt: AgentQuizAttempt) => {
+  threadPinned.value = true
+  await nextTick()
+  jumpThreadToBottom()
+  await sendChatMessage(formatQuizAttempt(attempt))
+}
+
+const flushQuizReviews = async () => {
+  if (flushingQuiz) return
+  flushingQuiz = true
+  try {
+    while (pendingQuizReviews.value.length && activeChatId.value && !sending.value) {
+      const attempt = pendingQuizReviews.value[0]
+      pendingQuizReviews.value = pendingQuizReviews.value.slice(1)
+      await sendQuizAttempt(attempt)
+    }
+  } finally {
+    flushingQuiz = false
+  }
+}
+
+const onQuizAttempt = (messageId: string, attempt: AgentQuizAttempt) => {
+  const sessionId = activeChatId.value
+  if (!sessionId) return
+  recordQuizAttempt(sessionId, messageId, attempt)
+  if (attempt.kind === 'note') return
+  const key = quizAttemptKey(attempt)
+  if (reportedQuiz.has(key)) return
+  reportedQuiz.add(key)
+  pendingQuizReviews.value = [...pendingQuizReviews.value, attempt]
+  void flushQuizReviews()
+}
+
 const submit = async () => {
   syncDraftFromComposer()
   const text = draft.value.trim()
@@ -1441,7 +1924,9 @@ const submit = async () => {
     return
   }
   clearComposer()
+  threadPinned.value = true
   await nextTick()
+  jumpThreadToBottom()
   const message = text || (
     files.length
       ? `我附上了「${files.map((item) => item.fileName).join('、')}」。`
@@ -1453,6 +1938,8 @@ const submit = async () => {
 const THREAD_PIN_PX = 72
 const threadPinned = ref(true)
 let threadScrollFrame = 0
+let threadJumping = false
+let threadJumpAnim = 0
 const selectionBoxes = ref<{ left: number; top: number; width: number; height: number }[]>([])
 let customSelectionRange: Range | null = null
 let selectionAnchor: Range | null = null
@@ -1695,16 +2182,60 @@ const isThreadNearBottom = (pane: HTMLElement) =>
   pane.scrollHeight - pane.clientHeight - pane.scrollTop <= THREAD_PIN_PX
 
 const updateThreadPinned = () => {
+  if (threadJumping) return
   const pane = threadRef.value
   threadPinned.value = !pane || isThreadNearBottom(pane)
   if (customSelectionRange) paintCustomSelection(customSelectionRange)
 }
 
-const scrollThreadToBottom = () => {
+const cancelThreadJump = () => {
+  if (!threadJumping) return
+  cancelAnimationFrame(threadJumpAnim)
+  threadJumping = false
+  threadJumpAnim = 0
+}
+
+const snapThreadToBottom = () => {
   const pane = threadRef.value
-  if (!pane || !threadPinned.value) return
+  if (!pane) return
   pane.scrollTop = pane.scrollHeight
   updateScrollbarThumb('thread')
+}
+
+const jumpThreadToBottom = () => {
+  threadPinned.value = true
+  const pane = threadRef.value
+  if (!pane) return
+  const start = pane.scrollTop
+  const distance = () => pane.scrollHeight - pane.clientHeight - start
+  if (distance() <= 2) {
+    snapThreadToBottom()
+    return
+  }
+  cancelThreadJump()
+  threadJumping = true
+  const startedAt = performance.now()
+  const duration = Math.min(420, Math.max(220, distance() * 0.35))
+  const step = (now: number) => {
+    const target = pane.scrollHeight - pane.clientHeight
+    const t = Math.min(1, (now - startedAt) / duration)
+    const eased = 1 - (1 - t) ** 3
+    pane.scrollTop = start + (target - start) * eased
+    updateScrollbarThumb('thread')
+    if (t < 1) {
+      threadJumpAnim = requestAnimationFrame(step)
+      return
+    }
+    threadJumping = false
+    threadJumpAnim = 0
+    threadPinned.value = true
+  }
+  threadJumpAnim = requestAnimationFrame(step)
+}
+
+const scrollThreadToBottom = () => {
+  if (!threadPinned.value) return
+  snapThreadToBottom()
 }
 
 const scheduleThreadFollow = () => {
@@ -1792,6 +2323,20 @@ const scheduleHighlight = () => {
   requestAnimationFrame(() => highlightThreadCode())
 }
 
+watch(
+  () => activeChat.value?.messages.map((message) => `${message.id}:${message.status}:${message.content.length}`).join('|'),
+  () => {
+    for (const message of activeChat.value?.messages || []) {
+      void hydrateMessageQuiz(message)
+    }
+  },
+  { immediate: true },
+)
+
+watch(sending, (busy) => {
+  if (!busy) void flushQuizReviews()
+})
+
 watch(activeChatId, async () => {
   openedWriteStepId.value = null
   threadPinned.value = true
@@ -1803,9 +2348,36 @@ watch(activeChatId, async () => {
   scrollThreadToBottom()
 })
 
-watch(openedWriteStep, async (step) => {
+watch(latestQuizKey, (key) => {
+  if (!key) {
+    openedQuizKey.value = null
+    return
+  }
+  openedWriteStepId.value = null
+  openedGraphSubjectId.value = null
+  openedQuizKey.value = key
+}, { immediate: true })
+
+watch(
+  () => {
+    const stream = studyGraphStream.value
+    return stream ? `${stream.streaming ? 1 : 0}:${stream.subjectId ?? ''}` : ''
+  },
+  (curr, prev) => {
+    const stream = studyGraphStream.value
+    if (!stream?.subjectId) return
+    const started = curr.startsWith('1:') && !String(prev || '').startsWith('1:')
+    if (started) {
+      openGraphPane(stream.subjectId)
+      return
+    }
+    if (openedGraphSubjectId.value === stream.subjectId) void loadPaneGraph(stream.subjectId)
+  },
+)
+
+watch([openedWriteStep, openedQuiz], async ([write, quiz]) => {
   await nextTick()
-  if (step) bindPaneScrollbar('write')
+  if (write || quiz) bindPaneScrollbar('write')
 })
 
 watch(
@@ -1824,13 +2396,15 @@ watch(
 
 onMounted(() => {
   bindPaneScrollbar('list')
-  if (activeChat.value) bindPaneScrollbar('thread')
+  bindPaneScrollbar('thread')
   scheduleHighlight()
   document.addEventListener('pointermove', onThreadPointerMove)
   document.addEventListener('pointerup', onThreadPointerUp)
   document.addEventListener('copy', onCopyCustomSelection)
   document.addEventListener('selectstart', onThreadSelectStart)
   document.addEventListener('keydown', onPreviewKeydown)
+  window.addEventListener('study-graph-updated', onStudyGraphUpdated)
+  window.addEventListener('open-study-graph', onOpenStudyGraph)
 })
 
 onUnmounted(() => {
@@ -1840,6 +2414,8 @@ onUnmounted(() => {
   document.removeEventListener('copy', onCopyCustomSelection)
   document.removeEventListener('selectstart', onThreadSelectStart)
   document.removeEventListener('keydown', onPreviewKeydown)
+  window.removeEventListener('study-graph-updated', onStudyGraphUpdated)
+  window.removeEventListener('open-study-graph', onOpenStudyGraph)
   paneCleanupMap.forEach((cleanup) => cleanup())
   ;(Object.keys(paneHideTimers) as ScrollbarPaneKey[]).forEach((key) => {
     if (paneHideTimers[key]) clearTimeout(paneHideTimers[key])
@@ -1920,8 +2496,7 @@ onUnmounted(() => {
   color: var(--text-primary, #2d3748);
 }
 
-.header-action,
-.start-btn {
+.header-action {
   border: none;
   background: transparent;
   color: var(--text-secondary, #718096);
@@ -1931,8 +2506,7 @@ onUnmounted(() => {
   border-radius: 6px;
 }
 
-.header-action:hover,
-.start-btn:hover {
+.header-action:hover {
   color: var(--text-primary, #2d3748);
   background: var(--hover-bg, rgba(0, 0, 0, 0.04));
 }
@@ -2114,23 +2688,10 @@ onUnmounted(() => {
   to { transform: rotate(360deg); }
 }
 
-.list-empty,
-.detail-empty {
+.list-empty {
   color: var(--text-secondary, #718096);
   font-size: 13px;
-}
-
-.list-empty {
   padding: 16px 10px;
-}
-
-.detail-empty {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
 }
 
 .attach-row {
@@ -2207,6 +2768,82 @@ onUnmounted(() => {
   height: 108px;
   max-width: none;
   pointer-events: none;
+}
+
+.feature-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 14px;
+  min-height: calc(100% - 108px);
+  box-sizing: border-box;
+}
+
+.feature-kicker {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary, #718096);
+}
+
+.feature-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.feature-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 14px 14px 13px;
+  border: none;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--text-primary, #2d3748) 4.5%, transparent);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.1s ease-out;
+}
+
+.feature-card:hover {
+  background: color-mix(in srgb, var(--text-primary, #2d3748) 7.5%, transparent);
+}
+
+.feature-card:active {
+  transform: scale(0.97);
+}
+
+.feature-icon {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-primary, #2d3748);
+  background: color-mix(in srgb, var(--bg-secondary, #fff) 80%, transparent);
+}
+
+.feature-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.feature-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary, #2d3748);
+}
+
+.feature-desc {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-secondary, #718096);
 }
 
 .chat-thread-wrap > .custom-scrollbar {
@@ -2424,6 +3061,18 @@ onUnmounted(() => {
   white-space: pre-wrap;
 }
 
+.activity-line.is-failed .activity-text {
+  color: #c2410c;
+}
+
+.activity-detail {
+  margin: 0 0 0 24px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #c2410c;
+  white-space: pre-wrap;
+}
+
 .assistant-text :deep(.table-node__loading) {
   display: none;
 }
@@ -2515,6 +3164,11 @@ onUnmounted(() => {
 .assistant-text :deep(li:has(.checkbox-node))::before,
 .assistant-text :deep(.list-item:has(.checkbox-node))::before {
   content: none;
+}
+
+.assistant-text :deep(.agent-html),
+.assistant-text :deep(.agent-html-frame) {
+  overflow: hidden;
 }
 
 .assistant-text :deep(.code-block-container),
@@ -2633,9 +3287,25 @@ onUnmounted(() => {
   display: flex;
 }
 
+.write-pane.is-quiz {
+  width: 420px;
+}
+
+.write-pane.is-graph {
+  width: min(560px, 46vw);
+}
+
+.write-pane.is-graph .write-stat {
+  color: #2563eb;
+}
+
+.write-pane.is-quiz .write-stat {
+  color: #2563eb;
+}
+
 .write-pane-inner {
-  width: 380px;
-  min-width: 380px;
+  width: 100%;
+  min-width: 0;
   flex: 1;
   min-height: 0;
   display: flex;
@@ -2663,14 +3333,38 @@ onUnmounted(() => {
   min-height: 0;
 }
 
+.write-pane-body.is-quiz-page {
+  display: flex;
+  overflow: hidden;
+}
+
+.write-pane-body.is-graph-page {
+  display: flex;
+  overflow: hidden;
+  padding: 0;
+}
+
 .write-pane-enter-active,
 .write-pane-leave-active {
-  transition: width 220ms cubic-bezier(0.23, 1, 0.32, 1);
+  transition: width 280ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.write-pane-enter-active .write-pane-inner,
+.write-pane-leave-active .write-pane-inner {
+  transition:
+    opacity 200ms ease,
+    transform 280ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 .write-pane-enter-from,
 .write-pane-leave-to {
-  width: 0;
+  width: 0 !important;
+}
+
+.write-pane-enter-from .write-pane-inner,
+.write-pane-leave-to .write-pane-inner {
+  opacity: 0;
+  transform: translateX(18px);
 }
 
 .write-block {
@@ -2682,6 +3376,14 @@ onUnmounted(() => {
 
 .write-block.is-open {
   border-color: color-mix(in srgb, #16a34a 35%, var(--border-primary, #e2e8f0));
+}
+
+.write-block.is-quiz.is-open {
+  border-color: color-mix(in srgb, #3b82f6 35%, var(--border-primary, #e2e8f0));
+}
+
+.write-block.is-quiz .write-stat {
+  color: #2563eb;
 }
 
 .write-head {
@@ -2900,6 +3602,30 @@ onUnmounted(() => {
   color: color-mix(in srgb, var(--text-primary, #2d3748) 42%, transparent);
 }
 
+.thread-jump {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 8px;
+  padding: 5px 10px;
+  border: 0.5px solid color-mix(in srgb, var(--border-primary, #e2e8f0) 70%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-secondary, #fff) 88%, transparent);
+  box-shadow: 0 1px 2px color-mix(in srgb, #000 4%, transparent), 0 6px 16px color-mix(in srgb, #000 6%, transparent);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  color: var(--text-secondary, #718096);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.thread-jump:hover {
+  color: var(--text-primary, #2d3748);
+  background: var(--bg-secondary, #fff);
+}
+
 .composer {
   position: absolute;
   left: 0;
@@ -2907,7 +3633,8 @@ onUnmounted(() => {
   bottom: 0;
   z-index: 3;
   display: flex;
-  justify-content: center;
+  flex-direction: column;
+  align-items: center;
   padding: 20px var(--chat-gutter) 12px;
   background: linear-gradient(
     to bottom,
@@ -3178,13 +3905,6 @@ onUnmounted(() => {
   background: color-mix(in srgb, var(--text-primary, #2d3748) 6%, transparent);
 }
 
-.composer-model.is-empty {
-  max-width: 220px;
-  height: auto;
-  line-height: 1.4;
-  padding: 4px 8px;
-}
-
 .composer-send {
   flex-shrink: 0;
   width: 28px;
@@ -3228,6 +3948,8 @@ onUnmounted(() => {
 
   .write-pane-enter-active,
   .write-pane-leave-active,
+  .write-pane-enter-active .write-pane-inner,
+  .write-pane-leave-active .write-pane-inner,
   .composer-file-leave-active,
   .composer-file-move {
     transition: none;

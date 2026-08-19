@@ -1,6 +1,7 @@
 import * as XLSX from 'xlsx';
 import { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, WidthType, AlignmentType } from 'docx';
 import { AIResponse } from '../services/database';
+import { difficultyLabel, importanceLabel, masteryLabel } from './questionMetrics';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -24,13 +25,16 @@ export const generateExportData = async (questions: AIResponse[], format: Export
 };
 
 const generateCSV = (questions: AIResponse[]): Uint8Array => {
-  const header = ['ID', '题目', '选项', '答案', '类型', '创建时间'];
+  const header = ['ID', '题目', '选项', '答案', '类型', '重要性', '掌握程度', '难度', '创建时间'];
   const rows = questions.map((q, index) => [
     (index + 1).toString(),
     `"${(q.question || '').replace(/"/g, '""')}"`,
     `"${(q.options || '').replace(/"/g, '""')}"`,
     `"${(q.answer || '').replace(/"/g, '""')}"`,
     `"${(q.question_type || '').replace(/"/g, '""')}"`,
+    `"${importanceLabel(q.importance)}"`,
+    `"${masteryLabel(q.mastery)}"`,
+    `"${difficultyLabel(q.difficulty)}"`,
     `"${(q.create_time || '').replace(/"/g, '""')}"`
   ]);
   
@@ -60,6 +64,9 @@ ${q.options || '无'}
 ${q.answer}
 
 类型: ${q.question_type}
+重要性: ${importanceLabel(q.importance)}
+掌握程度: ${masteryLabel(q.mastery)}
+难度: ${difficultyLabel(q.difficulty)}
 创建时间: ${q.create_time}
 --------------------------------------------------
 `;
@@ -75,6 +82,9 @@ const generateXLSX = (questions: AIResponse[]): Uint8Array => {
     '选项': q.options,
     '答案': q.answer,
     '类型': q.question_type,
+    '重要性': importanceLabel(q.importance),
+    '掌握程度': masteryLabel(q.mastery),
+    '难度': difficultyLabel(q.difficulty),
     '创建时间': q.create_time
   }));
   
@@ -90,10 +100,13 @@ const generateDOCX = async (questions: AIResponse[]): Promise<Uint8Array> => {
     new TableRow({
       children: [
         new TableCell({ children: [new Paragraph({ text: "ID", alignment: AlignmentType.CENTER })], width: { size: 5, type: WidthType.PERCENTAGE } }),
-        new TableCell({ children: [new Paragraph({ text: "题目", alignment: AlignmentType.CENTER })], width: { size: 40, type: WidthType.PERCENTAGE } }),
-        new TableCell({ children: [new Paragraph({ text: "选项", alignment: AlignmentType.CENTER })], width: { size: 25, type: WidthType.PERCENTAGE } }),
-        new TableCell({ children: [new Paragraph({ text: "答案", alignment: AlignmentType.CENTER })], width: { size: 15, type: WidthType.PERCENTAGE } }),
-        new TableCell({ children: [new Paragraph({ text: "类型", alignment: AlignmentType.CENTER })], width: { size: 15, type: WidthType.PERCENTAGE } }),
+        new TableCell({ children: [new Paragraph({ text: "题目", alignment: AlignmentType.CENTER })], width: { size: 34, type: WidthType.PERCENTAGE } }),
+        new TableCell({ children: [new Paragraph({ text: "选项", alignment: AlignmentType.CENTER })], width: { size: 20, type: WidthType.PERCENTAGE } }),
+        new TableCell({ children: [new Paragraph({ text: "答案", alignment: AlignmentType.CENTER })], width: { size: 16, type: WidthType.PERCENTAGE } }),
+        new TableCell({ children: [new Paragraph({ text: "类型", alignment: AlignmentType.CENTER })], width: { size: 9, type: WidthType.PERCENTAGE } }),
+        new TableCell({ children: [new Paragraph({ text: "重要性", alignment: AlignmentType.CENTER })], width: { size: 8, type: WidthType.PERCENTAGE } }),
+        new TableCell({ children: [new Paragraph({ text: "掌握程度", alignment: AlignmentType.CENTER })], width: { size: 8, type: WidthType.PERCENTAGE } }),
+        new TableCell({ children: [new Paragraph({ text: "难度", alignment: AlignmentType.CENTER })], width: { size: 7, type: WidthType.PERCENTAGE } }),
       ],
       tableHeader: true,
     })
@@ -108,6 +121,9 @@ const generateDOCX = async (questions: AIResponse[]): Promise<Uint8Array> => {
           new TableCell({ children: [new Paragraph(q.options || '')] }),
           new TableCell({ children: [new Paragraph(q.answer || '')] }),
           new TableCell({ children: [new Paragraph(q.question_type || '')] }),
+          new TableCell({ children: [new Paragraph(importanceLabel(q.importance))] }),
+          new TableCell({ children: [new Paragraph(masteryLabel(q.mastery))] }),
+          new TableCell({ children: [new Paragraph(difficultyLabel(q.difficulty))] }),
         ],
       })
     );
@@ -164,13 +180,16 @@ const generatePDF = async (questions: AIResponse[]): Promise<Uint8Array> => {
     doc.setFont('AlibabaPuHuiTi');
 
     // 4. 生成表格
-    const head = [['ID', '题目', '选项', '答案', '类型', '创建时间']];
+    const head = [['ID', '题目', '选项', '答案', '类型', '重要性', '掌握程度', '难度', '创建时间']];
     const body = questions.map((q, index) => [
       (index + 1).toString(),
       q.question || '',
       q.options || '',
       q.answer || '',
       q.question_type || '',
+      importanceLabel(q.importance),
+      masteryLabel(q.mastery),
+      difficultyLabel(q.difficulty),
       q.create_time || ''
     ]);
 
@@ -193,8 +212,11 @@ const generatePDF = async (questions: AIResponse[]): Promise<Uint8Array> => {
         1: { cellWidth: 60 }, // 题目
         2: { cellWidth: 40 }, // 选项
         3: { cellWidth: 25 }, // 答案
-        4: { cellWidth: 20 }, // 类型
-        5: { cellWidth: 30 }  // 时间
+        4: { cellWidth: 16 }, // 类型
+        5: { cellWidth: 16 }, // 重要性
+        6: { cellWidth: 16 }, // 掌握程度
+        7: { cellWidth: 14 }, // 难度
+        8: { cellWidth: 22 }  // 时间
       }
     });
 

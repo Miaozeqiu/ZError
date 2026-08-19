@@ -43,6 +43,48 @@
               >{{ t.label }}</button>
             </div>
           </div>
+
+          <div class="form-group">
+            <label class="form-label">重要性</label>
+            <div class="type-selector">
+              <button
+                v-for="level in importanceLevels"
+                :key="`imp-${level.value}`"
+                type="button"
+                class="type-btn"
+                :class="{ active: formData.importance === level.value }"
+                @click="formData.importance = level.value"
+              >{{ level.label }}</button>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">掌握程度</label>
+            <div class="type-selector">
+              <button
+                v-for="level in masteryLevels"
+                :key="`mas-${level.value}`"
+                type="button"
+                class="type-btn"
+                :class="{ active: formData.mastery === level.value }"
+                @click="formData.mastery = level.value"
+              >{{ level.label }}</button>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">难度</label>
+            <div class="type-selector">
+              <button
+                v-for="level in difficultyLevels"
+                :key="`dif-${level.value}`"
+                type="button"
+                class="type-btn"
+                :class="{ active: formData.difficulty === level.value }"
+                @click="formData.difficulty = level.value"
+              >{{ level.label }}</button>
+            </div>
+          </div>
         </form>
       </div>
     </div>
@@ -51,6 +93,12 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
+import {
+  DIFFICULTY_LEVELS,
+  IMPORTANCE_LEVELS,
+  MASTERY_LEVELS,
+  type QuestionMetricValue,
+} from '../../utils/questionMetrics';
 
 interface Props {
   visible: boolean;
@@ -67,8 +115,15 @@ const emit = defineEmits<{
     answer: string;
     question_type?: string;
     folderId: string | null;
+    importance: QuestionMetricValue;
+    mastery: QuestionMetricValue;
+    difficulty: QuestionMetricValue;
   }];
 }>();
+
+const importanceLevels = IMPORTANCE_LEVELS;
+const masteryLevels = MASTERY_LEVELS;
+const difficultyLevels = DIFFICULTY_LEVELS;
 
 const questionTypes = [
   { label: '单选', value: '单选' },
@@ -83,6 +138,9 @@ const formData = ref({
   options: '',
   answer: '',
   questionType: '' as string,
+  importance: 0 as QuestionMetricValue,
+  mastery: 0 as QuestionMetricValue,
+  difficulty: 0 as QuestionMetricValue,
 });
 
 // 表单验证
@@ -97,6 +155,9 @@ const resetForm = () => {
     options: '',
     answer: '',
     questionType: '',
+    importance: 0,
+    mastery: 0,
+    difficulty: 0,
   };
 };
 
@@ -110,6 +171,9 @@ const handleSubmit = () => {
     answer: formData.value.answer.trim(),
     question_type: formData.value.questionType || undefined,
     folderId: props.selectedFolderId || '0',
+    importance: formData.value.importance,
+    mastery: formData.value.mastery,
+    difficulty: formData.value.difficulty,
   });
 
   resetForm();

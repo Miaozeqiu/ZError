@@ -19,11 +19,90 @@ export interface AIResponse {
   create_time: string;
   is_ai?: boolean;
   is_pending_correction?: boolean;
+  importance?: number;
+  mastery?: number;
+  difficulty?: number;
+}
+
+export interface QuestionMetricBucket {
+  importance: number;
+  mastery: number;
+  difficulty: number;
+  count: number;
 }
 
 export interface PaginatedAIResponses {
   items: AIResponse[];
   total: number;
+}
+
+export interface PracticeRecord {
+  id: number;
+  question_id: number;
+  user_answer: string;
+  is_correct: boolean;
+  note: string;
+  source: string;
+  create_time?: string;
+}
+
+export interface PracticeSummary {
+  question_id: number;
+  count: number;
+  last_answer: string;
+  last_correct: boolean;
+  last_note: string;
+  last_time?: string;
+}
+
+export interface StudySubject {
+  id: number
+  name: string
+  description: string
+  create_time?: string
+  node_count: number
+  progress: number
+}
+
+export interface StudyGraphNodeRow {
+  id: number
+  subject_id: number
+  node_key: string
+  name: string
+  summary: string
+  mastery: number
+  parent_id?: number | null
+  sort_order: number
+}
+
+export interface StudyGraphEdgeRow {
+  id: number
+  subject_id: number
+  from_id: number
+  to_id: number
+  relation: string
+}
+
+export interface StudyGraphPayload {
+  subject: StudySubject
+  nodes: StudyGraphNodeRow[]
+  edges: StudyGraphEdgeRow[]
+}
+
+export interface StudyGraphNodeInput {
+  key?: string
+  name: string
+  summary?: string
+  parent_key?: string
+  mastery?: number
+}
+
+export interface StudyGraphNodePatch {
+  id: number
+  name?: string
+  summary?: string
+  mastery?: number
+  parent_id?: number
 }
 
 // 检测是否在 Tauri 环境中
@@ -36,6 +115,8 @@ const isTauriEnvironment = () => {
 };
 
 // 模拟数据
+let mockStudySubjects: StudySubject[] = []
+const mockStudyGraphs = new Map<number, { nodes: StudyGraphNodeRow[]; edges: StudyGraphEdgeRow[] }>()
 let mockFolders: Folder[] = [
   { id: 0, name: '默认文件夹', parent_id: null, created_at: '2024-01-01' },
   { id: 1, name: 'JavaScript', parent_id: 0, created_at: '2024-01-01' },
@@ -164,6 +245,9 @@ class DatabaseService {
     page: number;
     pageSize: number;
     sortOrder?: 'desc' | 'asc';
+    importance?: number | null;
+    mastery?: number | null;
+    difficulty?: number | null;
   }): Promise<PaginatedAIResponses> {
     const {
       folderId,
@@ -171,6 +255,9 @@ class DatabaseService {
       page,
       pageSize,
       sortOrder = 'desc',
+      importance,
+      mastery,
+      difficulty,
     } = params;
 
     if (!this.isTauri) {
@@ -180,6 +267,15 @@ class DatabaseService {
         responses = responses.filter(response => !!response.is_pending_correction);
       } else if (folderId !== undefined) {
         responses = responses.filter(response => response.folder_id === folderId);
+      }
+      if (importance != null) {
+        responses = responses.filter(response => (response.importance || 0) === importance);
+      }
+      if (mastery != null) {
+        responses = responses.filter(response => (response.mastery || 0) === mastery);
+      }
+      if (difficulty != null) {
+        responses = responses.filter(response => (response.difficulty || 0) === difficulty);
       }
 
       responses.sort((a, b) => {
@@ -206,6 +302,9 @@ class DatabaseService {
         page,
         pageSize,
         sortOrder,
+        importance: importance ?? null,
+        mastery: mastery ?? null,
+        difficulty: difficulty ?? null,
       });
     } catch (error) {
       console.error('分页获取题目失败:', error);
@@ -380,6 +479,41 @@ class DatabaseService {
     }
   }
 
+  async getQuestionMetricStats(params: {
+    folderId?: number;
+    pendingCorrectionOnly?: boolean;
+  } = {}): Promise<QuestionMetricBucket[]> {
+    const { folderId, pendingCorrectionOnly = false } = params;
+    if (!this.isTauri) {
+      let responses = [...mockAIResponses];
+      if (pendingCorrectionOnly) {
+        responses = responses.filter((item) => !!item.is_pending_correction);
+      } else if (folderId !== undefined) {
+        responses = responses.filter((item) => item.folder_id === folderId);
+      }
+      const map = new Map<string, QuestionMetricBucket>();
+      for (const item of responses) {
+        const importance = item.importance || 0;
+        const mastery = item.mastery || 0;
+        const difficulty = item.difficulty || 0;
+        const key = `${importance}-${mastery}-${difficulty}`;
+        const current = map.get(key) || { importance, mastery, difficulty, count: 0 };
+        current.count += 1;
+        map.set(key, current);
+      }
+      return [...map.values()];
+    }
+    try {
+      return await invoke<QuestionMetricBucket[]>('get_question_metric_stats', {
+        folderId: folderId ?? null,
+        pendingCorrectionOnly,
+      });
+    } catch (error) {
+      console.error('获取题目指标统计失败:', error);
+      return [];
+    }
+  }
+
   // 复制题目到指定文件夹
   async copyQuestionToFolder(questionId: number, targetFolderId: number): Promise<void> {
     if (!this.isTauri) {
@@ -421,7 +555,7 @@ class DatabaseService {
   }
 
   // 添加新题目
-  async addQuestion(questionData: { content: string; options?: string; answer: string; question_type?: string; folderId: string | number; isAi?: number }): Promise<AIResponse> {
+  async addQuestion(questionData: { content: string; options?: string; answer: string; question_type?: string; folderId: string | number; isAi?: number; importance?: number; mastery?: number; difficulty?: number }): Promise<AIResponse> {
     const folderId = typeof questionData.folderId === 'string' ? parseInt(questionData.folderId) : questionData.folderId;
     
     if (!this.isTauri) {
@@ -433,7 +567,10 @@ class DatabaseService {
         question_type: questionData.question_type || '',
         folder_id: folderId,
         create_time: new Date().toISOString(),
-        is_ai: !!questionData.isAi
+        is_ai: !!questionData.isAi,
+        importance: questionData.importance || 0,
+        mastery: questionData.mastery || 0,
+        difficulty: questionData.difficulty || 0,
       };
       mockAIResponses.push(newQuestion);
       return newQuestion;
@@ -447,7 +584,10 @@ class DatabaseService {
         answer: questionData.answer,
         questionType: questionData.question_type || null,
         folderId: folderId,
-        isAi: questionData.isAi === 1
+        isAi: questionData.isAi === 1,
+        importance: questionData.importance ?? 0,
+        mastery: questionData.mastery ?? 0,
+        difficulty: questionData.difficulty ?? 0,
       });
       return newQuestion;
     } catch (error) {
@@ -457,7 +597,7 @@ class DatabaseService {
   }
 
   // 更新题目
-  async updateQuestion(questionId: number, updateData: { question?: string; options?: string | null; answer?: string; question_type?: string }): Promise<void> {
+  async updateQuestion(questionId: number, updateData: { question?: string; options?: string | null; answer?: string; question_type?: string; importance?: number; mastery?: number; difficulty?: number }): Promise<void> {
     if (!this.isTauri) {
       const question = mockAIResponses.find(q => q.id === questionId);
       if (!question) throw new Error('题目不存在');
@@ -465,7 +605,12 @@ class DatabaseService {
       if (updateData.options) question.options = updateData.options;
       if (updateData.answer) question.answer = updateData.answer;
       if (updateData.question_type) question.question_type = updateData.question_type;
-      question.is_pending_correction = false;
+      if (updateData.importance != null) question.importance = updateData.importance;
+      if (updateData.mastery != null) question.mastery = updateData.mastery;
+      if (updateData.difficulty != null) question.difficulty = updateData.difficulty;
+      if (updateData.question || updateData.options || updateData.answer || updateData.question_type) {
+        question.is_pending_correction = false;
+      }
       return;
     }
     
@@ -476,7 +621,10 @@ class DatabaseService {
         question: updateData.question || null,
         options: updateData.options || null,
         answer: updateData.answer || null,
-        questionType: updateData.question_type || null
+        questionType: updateData.question_type || null,
+        importance: updateData.importance ?? null,
+        mastery: updateData.mastery ?? null,
+        difficulty: updateData.difficulty ?? null,
       });
     } catch (error) {
       console.error('更新题目失败:', error);
@@ -608,6 +756,213 @@ class DatabaseService {
       console.error('清除文件夹题目失败:', error);
       throw error;
     }
+  }
+
+  async getQuestionsByIds(ids: number[]): Promise<AIResponse[]> {
+    const unique = [...new Set(ids.filter((id) => Number.isFinite(id) && id > 0))]
+    if (!unique.length) return []
+    if (!this.isTauri) {
+      return mockAIResponses.filter((item) => unique.includes(item.id))
+    }
+    try {
+      return await invoke<AIResponse[]>('get_questions_by_ids', { ids: unique })
+    } catch {
+      const all = await this.getAIResponses()
+      return all.filter((item) => unique.includes(item.id))
+    }
+  }
+
+  async addPracticeRecord(input: {
+    questionId: number
+    userAnswer: string
+    isCorrect: boolean
+    note?: string
+    source?: string
+  }): Promise<PracticeRecord> {
+    if (!this.isTauri) {
+      return {
+        id: Date.now(),
+        question_id: input.questionId,
+        user_answer: input.userAnswer,
+        is_correct: input.isCorrect,
+        note: input.note || '',
+        source: input.source || 'agent',
+        create_time: new Date().toISOString(),
+      }
+    }
+    return invoke<PracticeRecord>('add_practice_record', {
+      questionId: input.questionId,
+      userAnswer: input.userAnswer,
+      isCorrect: input.isCorrect,
+      note: input.note || '',
+      source: input.source || 'agent',
+    })
+  }
+
+  async updatePracticeNote(id: number, note: string): Promise<void> {
+    if (!this.isTauri) return
+    await invoke('update_practice_note', { id, note })
+  }
+
+  async getPracticeHistory(questionId: number, limit = 20): Promise<PracticeRecord[]> {
+    if (!this.isTauri) return []
+    return invoke<PracticeRecord[]>('get_practice_history', { questionId, limit })
+  }
+
+  async getPracticeSummaries(ids: number[]): Promise<PracticeSummary[]> {
+    const unique = [...new Set(ids.filter((id) => Number.isFinite(id) && id > 0))]
+    if (!unique.length) return []
+    if (!this.isTauri) {
+      return unique.map((id) => ({
+        question_id: id,
+        count: 0,
+        last_answer: '',
+        last_correct: false,
+        last_note: '',
+      }))
+    }
+    return invoke<PracticeSummary[]>('get_practice_summaries', { ids: unique })
+  }
+
+  async listStudySubjects(): Promise<StudySubject[]> {
+    if (!this.isTauri) return mockStudySubjects.map((item) => ({ ...item }))
+    return invoke<StudySubject[]>('list_study_subjects')
+  }
+
+  async createStudySubject(name: string, description = ''): Promise<StudySubject> {
+    if (!this.isTauri) {
+      const subject: StudySubject = {
+        id: Date.now(),
+        name: name.trim(),
+        description,
+        create_time: new Date().toISOString(),
+        node_count: 0,
+        progress: 0,
+      }
+      mockStudySubjects.unshift(subject)
+      return { ...subject }
+    }
+    return invoke<StudySubject>('create_study_subject', { name, description })
+  }
+
+  async renameStudySubject(id: number, name?: string, description?: string): Promise<StudySubject> {
+    if (!this.isTauri) {
+      const subject = mockStudySubjects.find((item) => item.id === id)
+      if (!subject) throw new Error('学习科目不存在')
+      if (name?.trim()) subject.name = name.trim()
+      if (description != null) subject.description = description
+      return { ...subject }
+    }
+    return invoke<StudySubject>('rename_study_subject', { id, name, description })
+  }
+
+  async deleteStudySubject(id: number): Promise<void> {
+    if (!this.isTauri) {
+      mockStudySubjects = mockStudySubjects.filter((item) => item.id !== id)
+      mockStudyGraphs.delete(id)
+      return
+    }
+    await invoke('delete_study_subject', { id })
+  }
+
+  async getStudyGraph(subjectId: number): Promise<StudyGraphPayload> {
+    if (!this.isTauri) {
+      const subject = mockStudySubjects.find((item) => item.id === subjectId)
+      if (!subject) throw new Error('学习科目不存在')
+      const graph = mockStudyGraphs.get(subjectId)
+      return {
+        subject: { ...subject, node_count: graph?.nodes.length || 0 },
+        nodes: graph?.nodes || [],
+        edges: graph?.edges || [],
+      }
+    }
+    return invoke<StudyGraphPayload>('get_study_graph', { subjectId })
+  }
+
+  async setStudyGraph(
+    subjectId: number,
+    nodes: StudyGraphNodeInput[],
+    edges?: { from_key: string; to_key: string; relation?: string }[],
+  ): Promise<StudyGraphPayload> {
+    if (!this.isTauri) {
+      const subject = mockStudySubjects.find((item) => item.id === subjectId)
+      if (!subject) throw new Error('学习科目不存在')
+      const rows: StudyGraphNodeRow[] = nodes.map((node, index) => ({
+        id: Date.now() + index,
+        subject_id: subjectId,
+        node_key: node.key || `n${index + 1}`,
+        name: node.name,
+        summary: node.summary || '',
+        mastery: node.mastery || 0,
+        parent_id: null,
+        sort_order: index,
+      }))
+      const byKey = new Map(rows.map((item) => [item.node_key, item]))
+      const byName = new Map(rows.map((item) => [item.name, item]))
+      nodes.forEach((node, index) => {
+        const parent = node.parent_key
+          ? byKey.get(node.parent_key) || byName.get(node.parent_key)
+          : undefined
+        if (parent && parent.id !== rows[index].id) {
+          rows[index].parent_id = parent.id
+        }
+      })
+      const edgeRows: StudyGraphEdgeRow[] = (edges || []).map((edge, index) => ({
+        id: Date.now() + index,
+        subject_id: subjectId,
+        from_id: byKey.get(edge.from_key)?.id || 0,
+        to_id: byKey.get(edge.to_key)?.id || 0,
+        relation: edge.relation || '',
+      }))
+      mockStudyGraphs.set(subjectId, { nodes: rows, edges: edgeRows })
+      subject.node_count = rows.length
+      subject.progress = rows.length ? rows.reduce((sum, item) => sum + item.mastery, 0) / (rows.length * 3) : 0
+      return { subject: { ...subject }, nodes: rows, edges: edgeRows }
+    }
+    return invoke<StudyGraphPayload>('set_study_graph', { subjectId, nodes, edges })
+  }
+
+  async patchStudyGraph(
+    subjectId: number,
+    patch: {
+      add?: StudyGraphNodeInput[]
+      update?: StudyGraphNodePatch[]
+      remove_ids?: number[]
+    },
+  ): Promise<StudyGraphPayload> {
+    if (!this.isTauri) {
+      const current = await this.getStudyGraph(subjectId)
+      const remove = new Set(patch.remove_ids || [])
+      let nodes = current.nodes.filter((item) => !remove.has(item.id))
+      for (const item of patch.update || []) {
+        const node = nodes.find((row) => row.id === item.id)
+        if (!node) continue
+        if (item.name != null) node.name = item.name
+        if (item.summary != null) node.summary = item.summary
+        if (item.mastery != null) node.mastery = item.mastery
+        if (item.parent_id != null) node.parent_id = item.parent_id || null
+      }
+      mockStudyGraphs.set(subjectId, { nodes, edges: current.edges })
+      if (patch.add?.length) {
+        return this.setStudyGraph(subjectId, [
+          ...nodes.map((item) => ({
+            key: item.node_key,
+            name: item.name,
+            summary: item.summary,
+            parent_key: nodes.find((row) => row.id === item.parent_id)?.node_key,
+            mastery: item.mastery,
+          })),
+          ...patch.add,
+        ])
+      }
+      return this.getStudyGraph(subjectId)
+    }
+    return invoke<StudyGraphPayload>('patch_study_graph', {
+      subjectId,
+      add: patch.add,
+      update: patch.update,
+      removeIds: patch.remove_ids,
+    })
   }
 
   // 移动文件夹

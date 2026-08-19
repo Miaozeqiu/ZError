@@ -9,6 +9,11 @@ export interface ImportStepPreview {
   options?: string
   answer: string
   question_type?: string
+  question_id?: number
+  explanation?: string
+  importance?: number
+  mastery?: number
+  difficulty?: number
 }
 
 export interface ImportTaskStep {

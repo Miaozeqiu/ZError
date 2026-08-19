@@ -65,18 +65,69 @@ const formatRunnerError = (error: unknown) => {
   ) {
     return new Error('模型请求中断或超时，识别题目通常需要更长时间，请稍后重试')
   }
+  if (/Repetitive tool calls|相同参数|infinite loops/i.test(message)) {
+    return new Error('模型重复调用了同一个工具，已中止。请再试一次，或换个说法继续。')
+  }
   return error instanceof Error ? error : new Error(message)
 }
 
 const SINGLETON_TOOLS = new Set(['get_file_info', 'list_folders'])
+const REPEAT_NUDGE = '不要再用相同参数重复调用工具。请根据已经得到的结果直接回复用户，不要再调用任何工具。'
+
+const sortJson = (value: unknown): unknown => {
+  if (Array.isArray(value)) return value.map(sortJson)
+  if (value && typeof value === 'object') {
+    return Object.keys(value as Record<string, unknown>)
+      .sort()
+      .reduce<Record<string, unknown>>((acc, key) => {
+        acc[key] = sortJson((value as Record<string, unknown>)[key])
+        return acc
+      }, {})
+  }
+  return value
+}
+
+const toolSignature = (name: string, raw: string) => {
+  const args = String(raw || '').trim()
+  try {
+    return `${name}:${JSON.stringify(sortJson(JSON.parse(args || '{}')))}`
+  } catch {
+    return `${name}:${args.replace(/\s+/g, '')}`
+  }
+}
+
+const isRepetitiveToolError = (error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error)
+  return /Repetitive tool calls|相同参数|infinite loops/i.test(message)
+}
+
+const mergeJsonObjects = (left: string, right: string) => {
+  const tryParse = (value: string) => {
+    try {
+      return JSON.parse(value)
+    } catch {
+      return null
+    }
+  }
+  const a = tryParse(left)
+  const b = tryParse(right)
+  if (a && b && typeof a === 'object' && typeof b === 'object' && !Array.isArray(a) && !Array.isArray(b)) {
+    return JSON.stringify({ ...a, ...b })
+  }
+  const glued = `${left}${right}`.replace(/}\s*{/g, ',')
+  if (tryParse(glued)) return glued
+  return null
+}
 
 const mergeToolArgs = (prev: string, next: string) => {
   if (!next) return prev
   if (!prev) return next
   if (next === prev) return prev
+  if (!prev.trim() || prev.trim() === '{}') return next
+  if (!next.trim() || next.trim() === '{}') return prev
   if (next.startsWith(prev)) return next
   if (prev.startsWith(next)) return prev
-  return prev + next
+  return mergeJsonObjects(prev, next) || `${prev}${next}`
 }
 
 const sameToolPayload = (left: any, right: any) => {
@@ -270,6 +321,8 @@ export async function runTextModel(
 
   const maxRounds = Math.max(1, options?.maxRounds ?? 1)
   let fullResponse = ''
+  const seenToolCalls = new Set<string>()
+  let toolsDisabled = false
 
   try {
     for (let round = 0; round < maxRounds; round += 1) {
@@ -278,7 +331,18 @@ export async function runTextModel(
       fullResponse = ''
       onDelta?.('')
       options?.onEvent?.({ type: 'round_start' })
-      const result = await processModel(input, config, tauriFetch, abortController.signal)
+      let result: any
+      try {
+        result = await processModel(input, config, tauriFetch, abortController.signal)
+      } catch (error) {
+        if (!toolsDisabled && isRepetitiveToolError(error)) {
+          toolsDisabled = true
+          input.tools = []
+          input.messages.push({ role: 'user', content: REPEAT_NUDGE })
+          continue
+        }
+        throw error
+      }
       throwIfStopped()
       if (!result) {
         throw new Error('模型没有返回结果')
@@ -317,8 +381,22 @@ export async function runTextModel(
       }
 
       toolCalls = finalizeToolCalls(toolCalls)
+      if (toolCalls.length && options?.executeTool && !toolsDisabled) {
+        const fresh = toolCalls.filter((tc) => {
+          const name = tc.function?.name || ''
+          if (!name) return false
+          return !seenToolCalls.has(toolSignature(name, tc.function?.arguments || ''))
+        })
+        if (!fresh.length) {
+          toolsDisabled = true
+          input.tools = []
+          input.messages.push({ role: 'user', content: REPEAT_NUDGE })
+          continue
+        }
+        toolCalls = fresh
+      }
 
-      if (!toolCalls.length || !options?.executeTool) {
+      if (!toolCalls.length || !options?.executeTool || toolsDisabled) {
         return fullResponse.trim()
       }
 
@@ -335,6 +413,7 @@ export async function runTextModel(
           name: tc.function?.name || '',
           arguments: tc.function?.arguments || '',
         }
+        if (call.name) seenToolCalls.add(toolSignature(call.name, call.arguments))
         options.onEvent?.({
           type: 'tool_start',
           id: call.id,

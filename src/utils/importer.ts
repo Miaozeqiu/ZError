@@ -3,6 +3,7 @@ import { databaseService } from '../services/database';
 import mammoth from 'mammoth';
 import { readFile } from '@tauri-apps/plugin-fs';
 import * as pdfjsLib from 'pdfjs-dist';
+import { parseDifficulty, parseImportance, parseMastery } from './questionMetrics';
 
 // 设置 worker 路径
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
@@ -15,6 +16,9 @@ interface ImportedQuestion {
     options: string | null;
     answer: string;
     question_type: string;
+    importance?: number;
+    mastery?: number;
+    difficulty?: number;
 }
 
 export const parseSoftwareExportedFile = async (filePath: string): Promise<ImportedQuestion[]> => {
@@ -70,7 +74,10 @@ const parsePDF = async (filePath: string): Promise<ImportedQuestion[]> => {
                         question: q.question || '',
                         options: q.options || null,
                         answer: q.answer || '',
-                        question_type: q.question_type || ''
+                        question_type: q.question_type || '',
+                        importance: parseImportance(q.importance ?? q.Importance),
+                        mastery: parseMastery(q.mastery ?? q.Mastery),
+                        difficulty: parseDifficulty(q.difficulty ?? q.Difficulty),
                     }));
                 } catch (e) {
                     console.error('Failed to parse hidden data:', e);
@@ -313,17 +320,27 @@ const parseCSV = async (filePath: string): Promise<ImportedQuestion[]> => {
     const content = await readFile(filePath);
     const text = new TextDecoder().decode(content);
     const rows = text.split('\n').map(row => row.split(','));
-    // Assuming header is ID, 题目, 选项, 答案, 类型, 创建时间
-    // Skip header
+    const strip = (value = '') => value.replace(/^\uFEFF/, '').replace(/^"|"$/g, '').replace(/""/g, '"');
+    const header = (rows[0] || []).map(strip);
+    const questionIdx = header.indexOf('题目');
+    const optionsIdx = header.indexOf('选项');
+    const answerIdx = header.indexOf('答案');
+    const typeIdx = header.indexOf('类型');
+    const importanceIdx = header.indexOf('重要性');
+    const masteryIdx = header.indexOf('掌握程度');
+    const difficultyIdx = header.indexOf('难度');
     const questions: ImportedQuestion[] = [];
     for (let i = 1; i < rows.length; i++) {
         const row = rows[i];
         if (row.length < 5) continue;
         questions.push({
-            question: row[1].replace(/^"|"$/g, '').replace(/""/g, '"'),
-            options: row[2].replace(/^"|"$/g, '').replace(/""/g, '"') || null,
-            answer: row[3].replace(/^"|"$/g, '').replace(/""/g, '"'),
-            question_type: row[4].replace(/^"|"$/g, '').replace(/""/g, '"'),
+            question: strip(row[questionIdx >= 0 ? questionIdx : 1]),
+            options: strip(row[optionsIdx >= 0 ? optionsIdx : 2]) || null,
+            answer: strip(row[answerIdx >= 0 ? answerIdx : 3]),
+            question_type: strip(row[typeIdx >= 0 ? typeIdx : 4]),
+            importance: parseImportance(importanceIdx >= 0 ? strip(row[importanceIdx]) : 0),
+            mastery: parseMastery(masteryIdx >= 0 ? strip(row[masteryIdx]) : 0),
+            difficulty: parseDifficulty(difficultyIdx >= 0 ? strip(row[difficultyIdx]) : 0),
         });
     }
     return questions;
@@ -341,6 +358,9 @@ const parseXLSX = async (filePath: string): Promise<ImportedQuestion[]> => {
         options: row['选项'] || null,
         answer: row['答案'] || '',
         question_type: row['类型'] || '',
+        importance: parseImportance(row['重要性']),
+        mastery: parseMastery(row['掌握程度']),
+        difficulty: parseDifficulty(row['难度']),
     }));
 };
 
@@ -385,13 +405,20 @@ const parseDOCX = async (filePath: string): Promise<ImportedQuestion[]> => {
                     const options = getCellText(cells[2]) || null;
                     const answer = getCellText(cells[3]);
                     const question_type = getCellText(cells[4]);
+                    const headerTexts = Array.from(rows[0]?.querySelectorAll('td, th') || []).map((cell) => getCellText(cell as HTMLTableCellElement));
+                    const importanceIdx = headerTexts.indexOf('重要性');
+                    const masteryIdx = headerTexts.indexOf('掌握程度');
+                    const difficultyIdx = headerTexts.indexOf('难度');
                     
                     if (question) {
                         questions.push({
                             question,
                             options,
                             answer,
-                            question_type
+                            question_type,
+                            importance: parseImportance(importanceIdx >= 0 ? getCellText(cells[importanceIdx]) : 0),
+                            mastery: parseMastery(masteryIdx >= 0 ? getCellText(cells[masteryIdx]) : 0),
+                            difficulty: parseDifficulty(difficultyIdx >= 0 ? getCellText(cells[difficultyIdx]) : 0),
                         });
                     }
                 }
@@ -427,6 +454,9 @@ const parseTXTContent = (text: string): ImportedQuestion[] => {
         const optionsMatch = part.match(/选项:\s*([\s\S]*?)(?=\n\s*答案:|$)/);
         const answerMatch = part.match(/答案:\s*([\s\S]*?)(?=\n\s*类型:|$)/);
         const typeMatch = part.match(/类型: (.*)/);
+        const importanceMatch = part.match(/重要性:\s*(.*)/);
+        const masteryMatch = part.match(/掌握程度:\s*(.*)/);
+        const difficultyMatch = part.match(/难度:\s*(.*)/);
         
         if (questionMatch) {
             questions.push({
@@ -434,6 +464,9 @@ const parseTXTContent = (text: string): ImportedQuestion[] => {
                 options: optionsMatch ? optionsMatch[1].trim() : null,
                 answer: answerMatch ? answerMatch[1].trim() : '',
                 question_type: typeMatch ? typeMatch[1].trim() : '',
+                importance: parseImportance(importanceMatch?.[1]),
+                mastery: parseMastery(masteryMatch?.[1]),
+                difficulty: parseDifficulty(difficultyMatch?.[1]),
             });
         }
     }

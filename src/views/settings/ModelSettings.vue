@@ -111,13 +111,13 @@
                 </svg>
               </button>
               <OlTip
-                v-if="selectedPlatform.inviteUrl || selectedPlatform.inviteCode || selectedPlatform.inviteText"
-                :text="selectedPlatform.inviteCode?.trim() ? '复制并跳转' : ''"
+                v-if="platformHasInvite(selectedPlatform)"
+                :text="inviteField(selectedPlatform.inviteCode) ? '复制并跳转' : ''"
               >
                 <button
                   class="platform-link-btn platform-invite-btn"
                   @click="handleInviteButtonClick(selectedPlatform)"
-                  :aria-label="selectedPlatform.inviteCode?.trim() ? '复制并跳转' : (selectedPlatform.inviteText || '邀请链接')"
+                  :aria-label="inviteField(selectedPlatform.inviteCode) ? '复制并跳转' : (inviteField(selectedPlatform.inviteText) || '邀请链接')"
                 >
                   <span class="invite-gift-wrap">
                     <!-- 盒身（下半部分） -->
@@ -133,7 +133,7 @@
                       <path d="M387.211266 127.959149c-64.982337-37.558599-142.186123-24.890024-150.681521 0.745211-9.38965 28.168949 36.664346 58.126402 103.286146 93.002244 43.818365 22.952477 160.667338 8.942523 160.667339 8.942523s-48.289627-65.280421-113.271964-102.689978zM901.704449 128.555318c-8.495397-25.635234-85.699183-38.303809-150.681521-0.745211s-113.271964 102.689978-113.271963 102.689978 116.998015 14.009953 160.667338-8.942523c66.6218-34.726799 112.675796-64.833295 103.286146-93.002244z" fill="#FFB82C"/>
                     </svg>
                   </span>
-                  <span v-if="selectedPlatform.inviteText" class="invite-text">{{ selectedPlatform.inviteText }}</span>
+                  <span v-if="inviteField(selectedPlatform.inviteText)" class="invite-text">{{ selectedPlatform.inviteText }}</span>
                 </button>
               </OlTip>
             </div>
@@ -1493,9 +1493,20 @@ const copyTextToClipboard = async (text: string) => {
   }
 }
 
+const inviteField = (value?: string) => (value || '').trim()
+
+const platformHasInvite = (platform?: AIPlatform | null) => {
+  if (!platform) return false
+  return Boolean(
+    inviteField(platform.inviteUrl)
+    || inviteField(platform.inviteCode)
+    || inviteField(platform.inviteText)
+  )
+}
+
 const handleInviteButtonClick = async (platform: AIPlatform) => {
-  const inviteCode = platform.inviteCode?.trim()
-  const inviteUrl = platform.inviteUrl?.trim()
+  const inviteCode = inviteField(platform.inviteCode)
+  const inviteUrl = inviteField(platform.inviteUrl)
 
   if (inviteCode) {
     await copyTextToClipboard(inviteCode)

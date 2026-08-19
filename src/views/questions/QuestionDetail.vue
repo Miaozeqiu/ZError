@@ -92,6 +92,34 @@
               <span class="meta-pill-label">创建</span>
               <span class="meta-pill-value">{{ formatCompactTime(question?.create_time) }}</span>
             </div>
+            <div class="meta-pill">
+              <span class="meta-pill-label">重要性</span>
+              <span class="meta-pill-value">{{ importanceLabel(question?.importance) }}</span>
+            </div>
+            <div class="meta-pill">
+              <span class="meta-pill-label">掌握程度</span>
+              <span class="meta-pill-value">{{ masteryLabel(question?.mastery) }}</span>
+            </div>
+            <div class="meta-pill">
+              <span class="meta-pill-label">难度</span>
+              <span class="meta-pill-value">{{ difficultyLabel(question?.difficulty) }}</span>
+            </div>
+          </div>
+        </div>
+        <div class="detail-item">
+          <label>练习记录:</label>
+          <div v-if="!practiceHistory.length" class="detail-value practice-empty">暂无作答记录</div>
+          <div v-else class="practice-list">
+            <div v-for="item in practiceHistory" :key="item.id" class="practice-item">
+              <div class="practice-item-top">
+                <span class="practice-flag" :class="item.is_correct ? 'is-ok' : 'is-bad'">
+                  {{ item.user_answer ? (item.is_correct ? '答对' : '答错') : '备注' }}
+                </span>
+                <span v-if="item.user_answer" class="practice-answer">{{ item.user_answer }}</span>
+                <span class="practice-time">{{ formatCompactTime(item.create_time) }}</span>
+              </div>
+              <div v-if="item.note" class="practice-note">{{ item.note }}</div>
+            </div>
           </div>
         </div>
       </div>
@@ -138,6 +166,45 @@
             placeholder="请输入题目类型..."
           />
         </div>
+        <div class="form-group">
+          <label>重要性:</label>
+          <div class="metric-selector">
+            <button
+              v-for="level in importanceLevels"
+              :key="`imp-${level.value}`"
+              type="button"
+              class="metric-btn"
+              :class="{ active: editImportance === level.value }"
+              @click="$emit('update:editImportance', level.value)"
+            >{{ level.label }}</button>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>掌握程度:</label>
+          <div class="metric-selector">
+            <button
+              v-for="level in masteryLevels"
+              :key="`mas-${level.value}`"
+              type="button"
+              class="metric-btn"
+              :class="{ active: editMastery === level.value }"
+              @click="$emit('update:editMastery', level.value)"
+            >{{ level.label }}</button>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>难度:</label>
+          <div class="metric-selector">
+            <button
+              v-for="level in difficultyLevels"
+              :key="`dif-${level.value}`"
+              type="button"
+              class="metric-btn"
+              :class="{ active: editDifficulty === level.value }"
+              @click="$emit('update:editDifficulty', level.value)"
+            >{{ level.label }}</button>
+          </div>
+        </div>
         <div class="edit-actions">
           <button @click="$emit('cancel-edit')" class="cancel-btn" :disabled="isSavingEdit">取消</button>
           <button @click="$emit('save-edit')" class="save-btn" :disabled="!isEditFormValid || isSavingEdit">
@@ -155,9 +222,18 @@
 
 <script setup lang="ts">
 import { computed, ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
-import type { AIResponse } from '../../services/database'
+import { databaseService, type AIResponse, type PracticeRecord } from '../../services/database'
 import { splitQuestionImageParts, fetchQuestionImageBase64, shouldInvertTransparentDarkImage } from '../../utils/questionImage'
 import type { QuestionImagePart as Part } from '../../utils/questionImage'
+import {
+  DIFFICULTY_LEVELS,
+  IMPORTANCE_LEVELS,
+  MASTERY_LEVELS,
+  difficultyLabel,
+  importanceLabel,
+  masteryLabel,
+  type QuestionMetricValue,
+} from '../../utils/questionMetrics'
 
 interface Props {
   question: AIResponse | null
@@ -168,6 +244,9 @@ interface Props {
   editOptions: string
   editAnswer: string
   editType: string
+  editImportance: QuestionMetricValue
+  editMastery: QuestionMetricValue
+  editDifficulty: QuestionMetricValue
   isEditFormValid: boolean
   isSavingEdit: boolean
   isResizing: boolean
@@ -188,9 +267,35 @@ const emit = defineEmits<{
   (e: 'update:editOptions', v: string): void
   (e: 'update:editAnswer', v: string): void
   (e: 'update:editType', v: string): void
+  (e: 'update:editImportance', v: QuestionMetricValue): void
+  (e: 'update:editMastery', v: QuestionMetricValue): void
+  (e: 'update:editDifficulty', v: QuestionMetricValue): void
 }>()
+
+const importanceLevels = IMPORTANCE_LEVELS
+const masteryLevels = MASTERY_LEVELS
+const difficultyLevels = DIFFICULTY_LEVELS
 const imageSrcMap = ref<Record<string, string>>({})
 const blackOnlyMap = ref<Record<string, boolean>>({})
+
+const practiceHistory = ref<PracticeRecord[]>([])
+
+const loadPracticeHistory = async () => {
+  const id = props.question?.id
+  if (!id) {
+    practiceHistory.value = []
+    return
+  }
+  try {
+    practiceHistory.value = await databaseService.getPracticeHistory(id, 20)
+  } catch {
+    practiceHistory.value = []
+  }
+}
+
+watch(() => props.question?.id, () => {
+  void loadPracticeHistory()
+}, { immediate: true })
 
 const contentParts = computed<Part[]>(() => splitQuestionImageParts(props.question?.question || ''))
 const optionsParts = computed<Part[]>(() => splitQuestionImageParts(props.question?.options || ''))
@@ -674,6 +779,55 @@ onUnmounted(() => {
   border-color: var(--form-input-hover-border, transparent);
 }
 
+.practice-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.practice-item {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background-color: var(--form-input-bg, #F7F7F7);
+}
+
+.practice-item-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.practice-flag.is-ok {
+  color: #15803d;
+}
+
+.practice-flag.is-bad {
+  color: #b91c1c;
+}
+
+.practice-answer {
+  color: var(--text-primary);
+}
+
+.practice-time {
+  margin-left: auto;
+  color: var(--text-secondary, #718096);
+  font-size: 12px;
+}
+
+.practice-note {
+  margin-top: 6px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-secondary, #4a5568);
+  white-space: pre-wrap;
+}
+
+.practice-empty {
+  color: var(--text-secondary, #718096);
+}
+
 .detail-meta-strip {
   display: flex;
   flex-wrap: wrap;
@@ -792,6 +946,29 @@ onUnmounted(() => {
 .edit-textarea:hover {
   background-color: var(--form-input-hover-bg, #f0f0f0);
   border-color: var(--form-input-hover-border, transparent);
+}
+
+.metric-selector {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.metric-btn {
+  padding: 7px 14px;
+  border: 1px solid var(--platform-config-dialog-header-border);
+  border-radius: 20px;
+  background: transparent;
+  color: var(--platform-config-form-label-text);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.metric-btn.active {
+  background: var(--question-editor-submit-bg);
+  border-color: var(--question-editor-submit-bg);
+  color: var(--question-editor-submit-text);
 }
 
 .edit-input:focus,

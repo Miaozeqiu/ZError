@@ -265,6 +265,30 @@ pub struct AIResponse {
     pub create_time: Option<String>,
     pub is_ai: bool,
     pub is_pending_correction: bool,
+    pub importance: i64,
+    pub mastery: i64,
+    pub difficulty: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PracticeRecord {
+    pub id: i64,
+    pub question_id: i64,
+    pub user_answer: String,
+    pub is_correct: bool,
+    pub note: String,
+    pub source: String,
+    pub create_time: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PracticeSummary {
+    pub question_id: i64,
+    pub count: i64,
+    pub last_answer: String,
+    pub last_correct: bool,
+    pub last_note: String,
+    pub last_time: Option<String>,
 }
 
 fn map_ai_response_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AIResponse> {
@@ -279,6 +303,9 @@ fn map_ai_response_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AIResponse> 
         create_time: row.get(7)?,
         is_ai: row.get(8)?,
         is_pending_correction: row.get(9)?,
+        importance: row.get(10).unwrap_or(0),
+        mastery: row.get(11).unwrap_or(0),
+        difficulty: row.get(12).unwrap_or(0),
     })
 }
 
@@ -298,6 +325,14 @@ pub struct FolderStat {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct QuestionMetricBucket {
+    pub importance: i64,
+    pub mastery: i64,
+    pub difficulty: i64,
+    pub count: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct FolderPathItem {
     pub id: i64,
     pub name: String,
@@ -307,6 +342,71 @@ pub struct FolderPathItem {
 pub struct PaginatedAIResponses {
     pub items: Vec<AIResponse>,
     pub total: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct StudySubject {
+    pub id: i64,
+    pub name: String,
+    pub description: String,
+    pub create_time: Option<String>,
+    pub node_count: i64,
+    pub progress: f64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct StudyGraphNodeRow {
+    pub id: i64,
+    pub subject_id: i64,
+    pub node_key: String,
+    pub name: String,
+    pub summary: String,
+    pub mastery: i64,
+    pub parent_id: Option<i64>,
+    pub sort_order: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct StudyGraphEdgeRow {
+    pub id: i64,
+    pub subject_id: i64,
+    pub from_id: i64,
+    pub to_id: i64,
+    pub relation: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct StudyGraphPayload {
+    pub subject: StudySubject,
+    pub nodes: Vec<StudyGraphNodeRow>,
+    pub edges: Vec<StudyGraphEdgeRow>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct StudyGraphNodeInput {
+    pub key: Option<String>,
+    pub name: String,
+    pub summary: Option<String>,
+    #[serde(default, alias = "parentKey")]
+    pub parent_key: Option<String>,
+    #[serde(default)]
+    pub mastery: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct StudyGraphEdgeInput {
+    pub from_key: String,
+    pub to_key: String,
+    pub relation: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct StudyGraphNodePatch {
+    pub id: i64,
+    pub name: Option<String>,
+    pub summary: Option<String>,
+    pub mastery: Option<i64>,
+    pub parent_id: Option<i64>,
 }
 
 fn get_db_path() -> String {
@@ -496,13 +596,13 @@ pub async fn get_folders() -> Result<Vec<Folder>, String> {
 pub async fn get_ai_responses(folder_id: Option<i64>) -> Result<Vec<AIResponse>, String> {
     let conn = get_conn()?;
     let query = if folder_id.is_some() {
-        "SELECT ar.Id, ar.Question, ar.Options, ar.Answer, ar.QuestionType, ar.FolderId, f.Name as FolderName, ar.CreateTime, ar.IsAi, COALESCE(ar.IsPendingCorrection, 0)
+        "SELECT ar.Id, ar.Question, ar.Options, ar.Answer, ar.QuestionType, ar.FolderId, f.Name as FolderName, ar.CreateTime, ar.IsAi, COALESCE(ar.IsPendingCorrection, 0), COALESCE(ar.Importance, 0), COALESCE(ar.Mastery, 0), COALESCE(ar.Difficulty, 0)
          FROM AIResponses ar
          LEFT JOIN Folders f ON ar.FolderId = f.Id
          WHERE ar.FolderId = ?
          ORDER BY ar.CreateTime DESC"
     } else {
-        "SELECT ar.Id, ar.Question, ar.Options, ar.Answer, ar.QuestionType, ar.FolderId, f.Name as FolderName, ar.CreateTime, ar.IsAi, COALESCE(ar.IsPendingCorrection, 0)
+        "SELECT ar.Id, ar.Question, ar.Options, ar.Answer, ar.QuestionType, ar.FolderId, f.Name as FolderName, ar.CreateTime, ar.IsAi, COALESCE(ar.IsPendingCorrection, 0), COALESCE(ar.Importance, 0), COALESCE(ar.Mastery, 0), COALESCE(ar.Difficulty, 0)
          FROM AIResponses ar
          LEFT JOIN Folders f ON ar.FolderId = f.Id
          ORDER BY ar.CreateTime DESC"
@@ -533,6 +633,9 @@ pub async fn get_paginated_questions(
     page: i64,
     page_size: i64,
     sort_order: Option<String>,
+    importance: Option<i64>,
+    mastery: Option<i64>,
+    difficulty: Option<i64>,
 ) -> Result<PaginatedAIResponses, String> {
     let conn = get_conn()?;
     let page = page.max(1);
@@ -543,24 +646,53 @@ pub async fn get_paginated_questions(
     } else {
         "DESC"
     };
+    let metric_ar = {
+        let mut extra = String::new();
+        if let Some(value) = importance {
+            extra.push_str(&format!(" AND COALESCE(ar.Importance, 0) = {}", value.clamp(0, 3)));
+        }
+        if let Some(value) = mastery {
+            extra.push_str(&format!(" AND COALESCE(ar.Mastery, 0) = {}", value.clamp(0, 3)));
+        }
+        if let Some(value) = difficulty {
+            extra.push_str(&format!(" AND COALESCE(ar.Difficulty, 0) = {}", value.clamp(0, 3)));
+        }
+        extra
+    };
+    let metric = {
+        let mut extra = String::new();
+        if let Some(value) = importance {
+            extra.push_str(&format!(" AND COALESCE(Importance, 0) = {}", value.clamp(0, 3)));
+        }
+        if let Some(value) = mastery {
+            extra.push_str(&format!(" AND COALESCE(Mastery, 0) = {}", value.clamp(0, 3)));
+        }
+        if let Some(value) = difficulty {
+            extra.push_str(&format!(" AND COALESCE(Difficulty, 0) = {}", value.clamp(0, 3)));
+        }
+        extra
+    };
 
     let (total, items) = if pending_correction_only {
         let total: i64 = conn
             .query_row(
-                "SELECT COUNT(*) FROM AIResponses WHERE COALESCE(IsPendingCorrection, 0) = 1",
+                &format!(
+                    "SELECT COUNT(*) FROM AIResponses WHERE COALESCE(IsPendingCorrection, 0) = 1{}",
+                    metric
+                ),
                 [],
                 |row| row.get(0),
             )
             .map_err(|e| format!("{}", e))?;
 
         let data_query = format!(
-            "SELECT ar.Id, ar.Question, ar.Options, ar.Answer, ar.QuestionType, ar.FolderId, f.Name as FolderName, ar.CreateTime, ar.IsAi, COALESCE(ar.IsPendingCorrection, 0)
+            "SELECT ar.Id, ar.Question, ar.Options, ar.Answer, ar.QuestionType, ar.FolderId, f.Name as FolderName, ar.CreateTime, ar.IsAi, COALESCE(ar.IsPendingCorrection, 0), COALESCE(ar.Importance, 0), COALESCE(ar.Mastery, 0), COALESCE(ar.Difficulty, 0)
              FROM AIResponses ar
              LEFT JOIN Folders f ON ar.FolderId = f.Id
-             WHERE COALESCE(ar.IsPendingCorrection, 0) = 1
+             WHERE COALESCE(ar.IsPendingCorrection, 0) = 1{}
              ORDER BY ar.CreateTime {}
              LIMIT ? OFFSET ?",
-            sort_direction
+            metric_ar, sort_direction
         );
 
         let mut stmt = conn.prepare(&data_query).map_err(|e| format!("{}", e))?;
@@ -578,20 +710,20 @@ pub async fn get_paginated_questions(
         if folder_id == 0 {
             let total: i64 = conn
                 .query_row(
-                    "SELECT COUNT(*) FROM AIResponses WHERE FolderId = 0",
+                    &format!("SELECT COUNT(*) FROM AIResponses WHERE FolderId = 0{}", metric),
                     [],
                     |row| row.get(0),
                 )
                 .map_err(|e| format!("{}", e))?;
 
             let data_query = format!(
-                "SELECT ar.Id, ar.Question, ar.Options, ar.Answer, ar.QuestionType, ar.FolderId, f.Name as FolderName, ar.CreateTime, ar.IsAi, COALESCE(ar.IsPendingCorrection, 0)
+                "SELECT ar.Id, ar.Question, ar.Options, ar.Answer, ar.QuestionType, ar.FolderId, f.Name as FolderName, ar.CreateTime, ar.IsAi, COALESCE(ar.IsPendingCorrection, 0), COALESCE(ar.Importance, 0), COALESCE(ar.Mastery, 0), COALESCE(ar.Difficulty, 0)
                  FROM AIResponses ar
                  INNER JOIN Folders f ON ar.FolderId = f.Id
-                 WHERE ar.FolderId = 0
+                 WHERE ar.FolderId = 0{}
                  ORDER BY ar.CreateTime {}
                  LIMIT ? OFFSET ?",
-                sort_direction
+                metric_ar, sort_direction
             );
 
             let mut stmt = conn.prepare(&data_query).map_err(|e| format!("{}", e))?;
@@ -608,15 +740,19 @@ pub async fn get_paginated_questions(
         } else {
             let total: i64 = conn
                 .query_row(
-                    "WITH RECURSIVE folder_tree AS (
-                       SELECT Id, Name, ParentId FROM Folders WHERE Id = ?
-                       UNION ALL
-                       SELECT f.Id, f.Name, f.ParentId FROM Folders f
-                       INNER JOIN folder_tree ft ON f.ParentId = ft.Id
-                     )
-                     SELECT COUNT(*)
-                     FROM AIResponses ar
-                     INNER JOIN folder_tree ft ON ar.FolderId = ft.Id",
+                    &format!(
+                        "WITH RECURSIVE folder_tree AS (
+                           SELECT Id, Name, ParentId FROM Folders WHERE Id = ?
+                           UNION ALL
+                           SELECT f.Id, f.Name, f.ParentId FROM Folders f
+                           INNER JOIN folder_tree ft ON f.ParentId = ft.Id
+                         )
+                         SELECT COUNT(*)
+                         FROM AIResponses ar
+                         INNER JOIN folder_tree ft ON ar.FolderId = ft.Id
+                         WHERE 1 = 1{}",
+                        metric_ar
+                    ),
                     rusqlite::params![folder_id],
                     |row| row.get(0),
                 )
@@ -631,13 +767,14 @@ pub async fn get_paginated_questions(
                  )
                  SELECT
                    ar.Id, ar.Question, ar.Options, ar.Answer, ar.QuestionType,
-                   ar.FolderId, f.Name as FolderName, ar.CreateTime, ar.IsAi, COALESCE(ar.IsPendingCorrection, 0)
+                   ar.FolderId, f.Name as FolderName, ar.CreateTime, ar.IsAi, COALESCE(ar.IsPendingCorrection, 0), COALESCE(ar.Importance, 0), COALESCE(ar.Mastery, 0), COALESCE(ar.Difficulty, 0)
                  FROM AIResponses ar
                  INNER JOIN folder_tree ft ON ar.FolderId = ft.Id
                  INNER JOIN Folders f ON ar.FolderId = f.Id
+                 WHERE 1 = 1{}
                  ORDER BY ar.CreateTime {}
                  LIMIT ? OFFSET ?",
-                sort_direction
+                metric_ar, sort_direction
             );
 
             let mut stmt = conn.prepare(&data_query).map_err(|e| format!("{}", e))?;
@@ -654,16 +791,21 @@ pub async fn get_paginated_questions(
         }
     } else {
         let total: i64 = conn
-            .query_row("SELECT COUNT(*) FROM AIResponses", [], |row| row.get(0))
+            .query_row(
+                &format!("SELECT COUNT(*) FROM AIResponses WHERE 1 = 1{}", metric),
+                [],
+                |row| row.get(0),
+            )
             .map_err(|e| format!("{}", e))?;
 
         let data_query = format!(
-            "SELECT ar.Id, ar.Question, ar.Options, ar.Answer, ar.QuestionType, ar.FolderId, f.Name as FolderName, ar.CreateTime, ar.IsAi, COALESCE(ar.IsPendingCorrection, 0)
+            "SELECT ar.Id, ar.Question, ar.Options, ar.Answer, ar.QuestionType, ar.FolderId, f.Name as FolderName, ar.CreateTime, ar.IsAi, COALESCE(ar.IsPendingCorrection, 0), COALESCE(ar.Importance, 0), COALESCE(ar.Mastery, 0), COALESCE(ar.Difficulty, 0)
              FROM AIResponses ar
              LEFT JOIN Folders f ON ar.FolderId = f.Id
+             WHERE 1 = 1{}
              ORDER BY ar.CreateTime {}
              LIMIT ? OFFSET ?",
-            sort_direction
+            metric_ar, sort_direction
         );
 
         let mut stmt = conn.prepare(&data_query).map_err(|e| format!("{}", e))?;
@@ -689,7 +831,7 @@ pub async fn get_questions_recursive(folder_id: i64) -> Result<Vec<AIResponse>, 
     let query = if folder_id == 0 {
         "SELECT
           ar.Id, ar.Question, ar.Options, ar.Answer, ar.QuestionType,
-          ar.FolderId, f.Name as FolderName, ar.CreateTime, ar.IsAi, COALESCE(ar.IsPendingCorrection, 0)
+          ar.FolderId, f.Name as FolderName, ar.CreateTime, ar.IsAi, COALESCE(ar.IsPendingCorrection, 0), COALESCE(ar.Importance, 0), COALESCE(ar.Mastery, 0), COALESCE(ar.Difficulty, 0)
         FROM AIResponses ar
         INNER JOIN Folders f ON ar.FolderId = f.Id
         WHERE ar.FolderId = 0
@@ -703,7 +845,7 @@ pub async fn get_questions_recursive(folder_id: i64) -> Result<Vec<AIResponse>, 
         )
         SELECT
           ar.Id, ar.Question, ar.Options, ar.Answer, ar.QuestionType,
-          ar.FolderId, f.Name as FolderName, ar.CreateTime, ar.IsAi, COALESCE(ar.IsPendingCorrection, 0)
+          ar.FolderId, f.Name as FolderName, ar.CreateTime, ar.IsAi, COALESCE(ar.IsPendingCorrection, 0), COALESCE(ar.Importance, 0), COALESCE(ar.Mastery, 0), COALESCE(ar.Difficulty, 0)
         FROM AIResponses ar
         INNER JOIN folder_tree ft ON ar.FolderId = ft.Id
         INNER JOIN Folders f ON ar.FolderId = f.Id
@@ -733,7 +875,7 @@ pub async fn get_pending_correction_questions() -> Result<Vec<AIResponse>, Strin
     let conn = get_conn()?;
     let mut stmt = conn
         .prepare(
-            "SELECT ar.Id, ar.Question, ar.Options, ar.Answer, ar.QuestionType, ar.FolderId, f.Name as FolderName, ar.CreateTime, ar.IsAi, COALESCE(ar.IsPendingCorrection, 0)
+            "SELECT ar.Id, ar.Question, ar.Options, ar.Answer, ar.QuestionType, ar.FolderId, f.Name as FolderName, ar.CreateTime, ar.IsAi, COALESCE(ar.IsPendingCorrection, 0), COALESCE(ar.Importance, 0), COALESCE(ar.Mastery, 0), COALESCE(ar.Difficulty, 0)
              FROM AIResponses ar
              LEFT JOIN Folders f ON ar.FolderId = f.Id
              WHERE COALESCE(ar.IsPendingCorrection, 0) = 1
@@ -867,6 +1009,75 @@ pub async fn get_folder_stats() -> Result<Vec<FolderStat>, String> {
     Ok(stats)
 }
 
+#[tauri::command]
+pub async fn get_question_metric_stats(
+    folder_id: Option<i64>,
+    pending_correction_only: bool,
+) -> Result<Vec<QuestionMetricBucket>, String> {
+    let conn = get_conn()?;
+    let query = if pending_correction_only {
+        "SELECT COALESCE(Importance, 0), COALESCE(Mastery, 0), COALESCE(Difficulty, 0), COUNT(*)
+         FROM AIResponses
+         WHERE COALESCE(IsPendingCorrection, 0) = 1
+         GROUP BY COALESCE(Importance, 0), COALESCE(Mastery, 0), COALESCE(Difficulty, 0)".to_string()
+    } else if let Some(folder_id) = folder_id {
+        if folder_id == 0 {
+            "SELECT COALESCE(Importance, 0), COALESCE(Mastery, 0), COALESCE(Difficulty, 0), COUNT(*)
+             FROM AIResponses
+             WHERE FolderId = 0
+             GROUP BY COALESCE(Importance, 0), COALESCE(Mastery, 0), COALESCE(Difficulty, 0)".to_string()
+        } else {
+            "WITH RECURSIVE folder_tree AS (
+               SELECT Id FROM Folders WHERE Id = ?
+               UNION ALL
+               SELECT f.Id FROM Folders f
+               INNER JOIN folder_tree ft ON f.ParentId = ft.Id
+             )
+             SELECT COALESCE(ar.Importance, 0), COALESCE(ar.Mastery, 0), COALESCE(ar.Difficulty, 0), COUNT(*)
+             FROM AIResponses ar
+             INNER JOIN folder_tree ft ON ar.FolderId = ft.Id
+             GROUP BY COALESCE(ar.Importance, 0), COALESCE(ar.Mastery, 0), COALESCE(ar.Difficulty, 0)".to_string()
+        }
+    } else {
+        "SELECT COALESCE(Importance, 0), COALESCE(Mastery, 0), COALESCE(Difficulty, 0), COUNT(*)
+         FROM AIResponses
+         GROUP BY COALESCE(Importance, 0), COALESCE(Mastery, 0), COALESCE(Difficulty, 0)".to_string()
+    };
+
+    let mut stmt = conn.prepare(&query).map_err(|e| format!("{}", e))?;
+    let mut buckets = Vec::new();
+    if !pending_correction_only && folder_id.unwrap_or(0) != 0 {
+        let rows = stmt
+            .query_map(rusqlite::params![folder_id.unwrap()], |row| {
+                Ok(QuestionMetricBucket {
+                    importance: row.get(0)?,
+                    mastery: row.get(1)?,
+                    difficulty: row.get(2)?,
+                    count: row.get(3)?,
+                })
+            })
+            .map_err(|e| format!("{}", e))?;
+        for row in rows {
+            buckets.push(row.map_err(|e| format!("{}", e))?);
+        }
+    } else {
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(QuestionMetricBucket {
+                    importance: row.get(0)?,
+                    mastery: row.get(1)?,
+                    difficulty: row.get(2)?,
+                    count: row.get(3)?,
+                })
+            })
+            .map_err(|e| format!("{}", e))?;
+        for row in rows {
+            buckets.push(row.map_err(|e| format!("{}", e))?);
+        }
+    }
+    Ok(buckets)
+}
+
 // 辅助函数：获取目标文件夹（智能归类）
 fn get_target_folder_id(conn: &Connection, parent_folder_id: i64) -> Result<i64, rusqlite::Error> {
     if parent_folder_id == 0 {
@@ -958,9 +1169,15 @@ pub async fn add_question(
     question_type: Option<String>,
     folder_id: i64,
     is_ai: Option<bool>,
+    importance: Option<i64>,
+    mastery: Option<i64>,
+    difficulty: Option<i64>,
 ) -> Result<AIResponse, String> {
     let conn = get_conn()?;
     let is_ai = is_ai.unwrap_or(false);
+    let importance = importance.unwrap_or(0).clamp(0, 3);
+    let mastery = mastery.unwrap_or(0).clamp(0, 3);
+    let difficulty = difficulty.unwrap_or(0).clamp(0, 3);
 
     if is_ai && answer.trim().is_empty() {
         return Err("AI处理结果答案为空，不保存题目".to_string());
@@ -969,16 +1186,16 @@ pub async fn add_question(
     let target_folder_id = get_target_folder_id(&conn, folder_id).map_err(|e| format!("{}", e))?;
 
     conn.execute(
-        "INSERT INTO AIResponses (Question, Options, Answer, QuestionType, FolderId, IsAi, CreateTime)
-        VALUES (?, ?, ?, ?, ?, ?, datetime('now'))",
-        rusqlite::params![content, options, answer, question_type, target_folder_id, is_ai],
+        "INSERT INTO AIResponses (Question, Options, Answer, QuestionType, FolderId, IsAi, Importance, Mastery, Difficulty, CreateTime)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))",
+        rusqlite::params![content, options, answer, question_type, target_folder_id, is_ai, importance, mastery, difficulty],
     ).map_err(|e| format!("{}", e))?;
 
     let id = conn.last_insert_rowid();
 
     // 获取完整的插入数据返回
     let response = conn.query_row(
-        "SELECT ar.Id, ar.Question, ar.Options, ar.Answer, ar.QuestionType, ar.FolderId, f.Name as FolderName, ar.CreateTime, ar.IsAi, COALESCE(ar.IsPendingCorrection, 0)
+        "SELECT ar.Id, ar.Question, ar.Options, ar.Answer, ar.QuestionType, ar.FolderId, f.Name as FolderName, ar.CreateTime, ar.IsAi, COALESCE(ar.IsPendingCorrection, 0), COALESCE(ar.Importance, 0), COALESCE(ar.Mastery, 0), COALESCE(ar.Difficulty, 0)
          FROM AIResponses ar
          LEFT JOIN Folders f ON ar.FolderId = f.Id
          WHERE ar.Id = ?",
@@ -996,9 +1213,12 @@ pub async fn update_question(
     options: Option<String>,
     answer: Option<String>,
     question_type: Option<String>,
+    importance: Option<i64>,
+    mastery: Option<i64>,
+    difficulty: Option<i64>,
 ) -> Result<(), String> {
     let conn = get_conn()?;
-    let mut has_updates = false;
+    let mut has_content_updates = false;
 
     if let Some(q) = question {
         conn.execute(
@@ -1006,7 +1226,7 @@ pub async fn update_question(
             rusqlite::params![q, id],
         )
         .map_err(|e| format!("{}", e))?;
-        has_updates = true;
+        has_content_updates = true;
     }
     if let Some(o) = options {
         conn.execute(
@@ -1014,7 +1234,7 @@ pub async fn update_question(
             rusqlite::params![o, id],
         )
         .map_err(|e| format!("{}", e))?;
-        has_updates = true;
+        has_content_updates = true;
     }
     if let Some(a) = answer {
         conn.execute(
@@ -1022,7 +1242,7 @@ pub async fn update_question(
             rusqlite::params![a, id],
         )
         .map_err(|e| format!("{}", e))?;
-        has_updates = true;
+        has_content_updates = true;
     }
     if let Some(t) = question_type {
         conn.execute(
@@ -1030,10 +1250,31 @@ pub async fn update_question(
             rusqlite::params![t, id],
         )
         .map_err(|e| format!("{}", e))?;
-        has_updates = true;
+        has_content_updates = true;
+    }
+    if let Some(value) = importance {
+        conn.execute(
+            "UPDATE AIResponses SET Importance = ? WHERE Id = ?",
+            rusqlite::params![value.clamp(0, 3), id],
+        )
+        .map_err(|e| format!("{}", e))?;
+    }
+    if let Some(value) = mastery {
+        conn.execute(
+            "UPDATE AIResponses SET Mastery = ? WHERE Id = ?",
+            rusqlite::params![value.clamp(0, 3), id],
+        )
+        .map_err(|e| format!("{}", e))?;
+    }
+    if let Some(value) = difficulty {
+        conn.execute(
+            "UPDATE AIResponses SET Difficulty = ? WHERE Id = ?",
+            rusqlite::params![value.clamp(0, 3), id],
+        )
+        .map_err(|e| format!("{}", e))?;
     }
 
-    if has_updates {
+    if has_content_updates {
         conn.execute(
             "UPDATE AIResponses SET IsPendingCorrection = 0 WHERE Id = ?",
             rusqlite::params![id],
@@ -1066,9 +1307,9 @@ pub async fn copy_question(question_id: i64, target_folder_id: i64) -> Result<()
         get_target_folder_id(&conn, target_folder_id).map_err(|e| format!("{}", e))?;
 
     // 获取原题
-    let (q, o, a, qt, ia, ipc): (String, Option<String>, String, Option<String>, bool, bool) = conn
+    let (q, o, a, qt, ia, ipc, importance, mastery, difficulty): (String, Option<String>, String, Option<String>, bool, bool, i64, i64, i64) = conn
         .query_row(
-            "SELECT Question, Options, Answer, QuestionType, IsAi, COALESCE(IsPendingCorrection, 0) FROM AIResponses WHERE Id = ?",
+            "SELECT Question, Options, Answer, QuestionType, IsAi, COALESCE(IsPendingCorrection, 0), COALESCE(Importance, 0), COALESCE(Mastery, 0), COALESCE(Difficulty, 0) FROM AIResponses WHERE Id = ?",
             [question_id],
             |row| {
                 Ok((
@@ -1078,23 +1319,614 @@ pub async fn copy_question(question_id: i64, target_folder_id: i64) -> Result<()
                     row.get(3)?,
                     row.get(4)?,
                     row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
+                    row.get(8)?,
                 ))
             },
         )
         .map_err(|e| format!("{}", e))?;
 
     conn.execute(
-        "INSERT INTO AIResponses (Question, Options, Answer, QuestionType, FolderId, IsAi, IsPendingCorrection, CreateTime)
-        VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))",
-        rusqlite::params![q, o, a, qt, actual_target_id, ia, ipc],
+        "INSERT INTO AIResponses (Question, Options, Answer, QuestionType, FolderId, IsAi, IsPendingCorrection, Importance, Mastery, Difficulty, CreateTime)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))",
+        rusqlite::params![q, o, a, qt, actual_target_id, ia, ipc, importance, mastery, difficulty],
     ).map_err(|e| format!("{}", e))?;
 
     Ok(())
 }
 
 #[tauri::command]
+pub async fn get_questions_by_ids(ids: Vec<i64>) -> Result<Vec<AIResponse>, String> {
+    let conn = get_conn()?;
+    let mut items = Vec::new();
+    for id in ids {
+        if id <= 0 {
+            continue;
+        }
+        if let Ok(item) = conn.query_row(
+            "SELECT ar.Id, ar.Question, ar.Options, ar.Answer, ar.QuestionType, ar.FolderId, f.Name as FolderName, ar.CreateTime, ar.IsAi, COALESCE(ar.IsPendingCorrection, 0), COALESCE(ar.Importance, 0), COALESCE(ar.Mastery, 0), COALESCE(ar.Difficulty, 0)
+             FROM AIResponses ar
+             LEFT JOIN Folders f ON ar.FolderId = f.Id
+             WHERE ar.Id = ?",
+            [id],
+            map_ai_response_row,
+        ) {
+            items.push(item);
+        }
+    }
+    Ok(items)
+}
+
+fn map_practice_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PracticeRecord> {
+    Ok(PracticeRecord {
+        id: row.get(0)?,
+        question_id: row.get(1)?,
+        user_answer: row.get(2)?,
+        is_correct: row.get::<_, i64>(3)? != 0,
+        note: row.get(4)?,
+        source: row.get(5)?,
+        create_time: row.get(6)?,
+    })
+}
+
+#[tauri::command]
+pub async fn add_practice_record(
+    question_id: i64,
+    user_answer: String,
+    is_correct: bool,
+    note: Option<String>,
+    source: Option<String>,
+) -> Result<PracticeRecord, String> {
+    if question_id <= 0 {
+        return Err("题目 Id 无效".to_string());
+    }
+    let conn = get_conn()?;
+    let exists: i64 = conn
+        .query_row(
+            "SELECT COUNT(1) FROM AIResponses WHERE Id = ?",
+            [question_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| format!("{}", e))?;
+    if exists == 0 {
+        return Err("题目不存在".to_string());
+    }
+    let note = note.unwrap_or_default();
+    let source = source.unwrap_or_else(|| "agent".to_string());
+    conn.execute(
+        "INSERT INTO QuestionPracticeHistory (QuestionId, UserAnswer, IsCorrect, Note, Source, CreateTime)
+         VALUES (?, ?, ?, ?, ?, datetime('now'))",
+        rusqlite::params![question_id, user_answer, if is_correct { 1 } else { 0 }, note, source],
+    )
+    .map_err(|e| format!("{}", e))?;
+    let id = conn.last_insert_rowid();
+    conn.query_row(
+        "SELECT Id, QuestionId, UserAnswer, IsCorrect, Note, Source, CreateTime
+         FROM QuestionPracticeHistory WHERE Id = ?",
+        [id],
+        map_practice_row,
+    )
+    .map_err(|e| format!("{}", e))
+}
+
+#[tauri::command]
+pub async fn update_practice_note(id: i64, note: String) -> Result<(), String> {
+    let conn = get_conn()?;
+    let changed = conn
+        .execute(
+            "UPDATE QuestionPracticeHistory SET Note = ? WHERE Id = ?",
+            rusqlite::params![note, id],
+        )
+        .map_err(|e| format!("{}", e))?;
+    if changed == 0 {
+        return Err("练习记录不存在".to_string());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn get_practice_history(
+    question_id: i64,
+    limit: Option<i64>,
+) -> Result<Vec<PracticeRecord>, String> {
+    let conn = get_conn()?;
+    let limit = limit.unwrap_or(20).clamp(1, 50);
+    let mut stmt = conn
+        .prepare(
+            "SELECT Id, QuestionId, UserAnswer, IsCorrect, Note, Source, CreateTime
+             FROM QuestionPracticeHistory
+             WHERE QuestionId = ?
+             ORDER BY Id DESC
+             LIMIT ?",
+        )
+        .map_err(|e| format!("{}", e))?;
+    let rows = stmt
+        .query_map(rusqlite::params![question_id, limit], map_practice_row)
+        .map_err(|e| format!("{}", e))?;
+    let mut items = Vec::new();
+    for row in rows {
+        items.push(row.map_err(|e| format!("{}", e))?);
+    }
+    Ok(items)
+}
+
+#[tauri::command]
+pub async fn get_practice_summaries(ids: Vec<i64>) -> Result<Vec<PracticeSummary>, String> {
+    let conn = get_conn()?;
+    let mut items = Vec::new();
+    for id in ids {
+        if id <= 0 {
+            continue;
+        }
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(1) FROM QuestionPracticeHistory WHERE QuestionId = ?",
+                [id],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+        if count == 0 {
+            items.push(PracticeSummary {
+                question_id: id,
+                count: 0,
+                last_answer: String::new(),
+                last_correct: false,
+                last_note: String::new(),
+                last_time: None,
+            });
+            continue;
+        }
+        let last = conn
+            .query_row(
+                "SELECT UserAnswer, IsCorrect, Note, CreateTime
+                 FROM QuestionPracticeHistory
+                 WHERE QuestionId = ?
+                 ORDER BY Id DESC
+                 LIMIT 1",
+                [id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)? != 0,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                    ))
+                },
+            )
+            .map_err(|e| format!("{}", e))?;
+        items.push(PracticeSummary {
+            question_id: id,
+            count,
+            last_answer: last.0,
+            last_correct: last.1,
+            last_note: last.2,
+            last_time: last.3,
+        });
+    }
+    Ok(items)
+}
+
+fn clamp_mastery(value: i64) -> i64 {
+    if value < 0 {
+        0
+    } else if value > 3 {
+        3
+    } else {
+        value
+    }
+}
+
+fn map_study_subject_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StudySubject> {
+    let avg: f64 = row.get::<_, f64>(5).unwrap_or(0.0);
+    Ok(StudySubject {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        description: row.get(2)?,
+        create_time: row.get(3)?,
+        node_count: row.get(4)?,
+        progress: (avg / 3.0).clamp(0.0, 1.0),
+    })
+}
+
+fn load_study_subject(conn: &Connection, subject_id: i64) -> Result<StudySubject, String> {
+    conn.query_row(
+        "SELECT s.Id, s.Name, s.Description, s.CreateTime,
+                COUNT(n.Id), COALESCE(AVG(n.Mastery), 0)
+         FROM StudySubjects s
+         LEFT JOIN StudyGraphNodes n ON n.SubjectId = s.Id
+         WHERE s.Id = ?
+         GROUP BY s.Id",
+        [subject_id],
+        map_study_subject_row,
+    )
+    .map_err(|_| "学习科目不存在".to_string())
+}
+
+fn load_study_graph(conn: &Connection, subject_id: i64) -> Result<StudyGraphPayload, String> {
+    let subject = load_study_subject(conn, subject_id)?;
+    let mut node_stmt = conn
+        .prepare(
+            "SELECT Id, SubjectId, NodeKey, Name, Summary, Mastery, ParentId, SortOrder
+             FROM StudyGraphNodes WHERE SubjectId = ? ORDER BY SortOrder, Id",
+        )
+        .map_err(|e| format!("{}", e))?;
+    let nodes = node_stmt
+        .query_map([subject_id], |row| {
+            Ok(StudyGraphNodeRow {
+                id: row.get(0)?,
+                subject_id: row.get(1)?,
+                node_key: row.get(2)?,
+                name: row.get(3)?,
+                summary: row.get(4)?,
+                mastery: row.get(5)?,
+                parent_id: row.get(6)?,
+                sort_order: row.get(7)?,
+            })
+        })
+        .map_err(|e| format!("{}", e))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("{}", e))?;
+    let mut edge_stmt = conn
+        .prepare(
+            "SELECT Id, SubjectId, FromId, ToId, Relation
+             FROM StudyGraphEdges WHERE SubjectId = ? ORDER BY Id",
+        )
+        .map_err(|e| format!("{}", e))?;
+    let edges = edge_stmt
+        .query_map([subject_id], |row| {
+            Ok(StudyGraphEdgeRow {
+                id: row.get(0)?,
+                subject_id: row.get(1)?,
+                from_id: row.get(2)?,
+                to_id: row.get(3)?,
+                relation: row.get(4)?,
+            })
+        })
+        .map_err(|e| format!("{}", e))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("{}", e))?;
+    Ok(StudyGraphPayload {
+        subject,
+        nodes,
+        edges,
+    })
+}
+
+#[tauri::command]
+pub async fn list_study_subjects() -> Result<Vec<StudySubject>, String> {
+    let conn = get_conn()?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT s.Id, s.Name, s.Description, s.CreateTime,
+                    COUNT(n.Id), COALESCE(AVG(n.Mastery), 0)
+             FROM StudySubjects s
+             LEFT JOIN StudyGraphNodes n ON n.SubjectId = s.Id
+             GROUP BY s.Id
+             ORDER BY s.Id DESC",
+        )
+        .map_err(|e| format!("{}", e))?;
+    let rows = stmt
+        .query_map([], map_study_subject_row)
+        .map_err(|e| format!("{}", e))?;
+    let mut items = Vec::new();
+    for row in rows {
+        items.push(row.map_err(|e| format!("{}", e))?);
+    }
+    Ok(items)
+}
+
+#[tauri::command]
+pub async fn create_study_subject(name: String, description: Option<String>) -> Result<StudySubject, String> {
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return Err("科目名称不能为空".to_string());
+    }
+    let description = description.unwrap_or_default();
+    let conn = get_conn()?;
+    conn.execute(
+        "INSERT INTO StudySubjects (Name, Description, CreateTime) VALUES (?, ?, datetime('now'))",
+        rusqlite::params![name, description],
+    )
+    .map_err(|e| format!("{}", e))?;
+    let id = conn.last_insert_rowid();
+    load_study_subject(&conn, id)
+}
+
+#[tauri::command]
+pub async fn rename_study_subject(
+    id: i64,
+    name: Option<String>,
+    description: Option<String>,
+) -> Result<StudySubject, String> {
+    let conn = get_conn()?;
+    let current = load_study_subject(&conn, id)?;
+    let next_name = name
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or(current.name);
+    let next_description = description.unwrap_or(current.description);
+    conn.execute(
+        "UPDATE StudySubjects SET Name = ?, Description = ? WHERE Id = ?",
+        rusqlite::params![next_name, next_description, id],
+    )
+    .map_err(|e| format!("{}", e))?;
+    load_study_subject(&conn, id)
+}
+
+#[tauri::command]
+pub async fn delete_study_subject(id: i64) -> Result<(), String> {
+    let conn = get_conn()?;
+    load_study_subject(&conn, id)?;
+    conn.execute("DELETE FROM StudyGraphEdges WHERE SubjectId = ?", [id])
+        .map_err(|e| format!("{}", e))?;
+    conn.execute("DELETE FROM StudyGraphNodes WHERE SubjectId = ?", [id])
+        .map_err(|e| format!("{}", e))?;
+    conn.execute("DELETE FROM StudySubjects WHERE Id = ?", [id])
+        .map_err(|e| format!("{}", e))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn get_study_graph(subject_id: i64) -> Result<StudyGraphPayload, String> {
+    let conn = get_conn()?;
+    load_study_graph(&conn, subject_id)
+}
+
+fn insert_study_nodes(
+    conn: &Connection,
+    subject_id: i64,
+    nodes: &[StudyGraphNodeInput],
+    start_order: i64,
+    existing: &mut HashMap<String, i64>,
+) -> Result<HashMap<String, i64>, String> {
+    if nodes.len() > 60 {
+        return Err("一次不要超过 60 个知识点".to_string());
+    }
+    let mut new_keys: HashMap<String, i64> = HashMap::new();
+    let mut name_to_key: HashMap<String, String> = HashMap::new();
+    let mut final_keys: Vec<String> = Vec::with_capacity(nodes.len());
+    for (index, node) in nodes.iter().enumerate() {
+        let name = node.name.trim().to_string();
+        if name.is_empty() {
+            final_keys.push(String::new());
+            continue;
+        }
+        let base = node
+            .key
+            .as_ref()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| format!("n{}", start_order + index as i64 + 1));
+        let mut key = base.clone();
+        let mut suffix = 2;
+        while existing.contains_key(&key) || new_keys.contains_key(&key) {
+            key = format!("{}_{}", base, suffix);
+            suffix += 1;
+        }
+        let mastery = clamp_mastery(node.mastery.unwrap_or(0));
+        let summary = node.summary.clone().unwrap_or_default();
+        conn.execute(
+            "INSERT INTO StudyGraphNodes (SubjectId, NodeKey, Name, Summary, Mastery, ParentId, SortOrder)
+             VALUES (?, ?, ?, ?, ?, NULL, ?)",
+            rusqlite::params![subject_id, key, name, summary, mastery, start_order + index as i64],
+        )
+        .map_err(|e| format!("{}", e))?;
+        let id = conn.last_insert_rowid();
+        new_keys.insert(key.clone(), id);
+        existing.insert(key.clone(), id);
+        name_to_key.entry(name).or_insert_with(|| key.clone());
+        final_keys.push(key);
+    }
+    for (index, node) in nodes.iter().enumerate() {
+        let child_key = &final_keys[index];
+        if child_key.is_empty() {
+            continue;
+        }
+        let Some(parent_raw) = node
+            .parent_key
+            .as_ref()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+        else {
+            continue;
+        };
+        if parent_raw == *child_key {
+            continue;
+        }
+        let parent_key = if existing.contains_key(&parent_raw) {
+            parent_raw
+        } else if let Some(mapped) = name_to_key.get(&parent_raw) {
+            mapped.clone()
+        } else {
+            continue;
+        };
+        let Some(&child_id) = existing.get(child_key) else {
+            continue;
+        };
+        let Some(&parent_id) = existing.get(&parent_key) else {
+            continue;
+        };
+        conn.execute(
+            "UPDATE StudyGraphNodes SET ParentId = ? WHERE Id = ?",
+            rusqlite::params![parent_id, child_id],
+        )
+        .map_err(|e| format!("{}", e))?;
+    }
+    Ok(new_keys)
+}
+
+#[tauri::command]
+pub async fn set_study_graph(
+    subject_id: i64,
+    nodes: Vec<StudyGraphNodeInput>,
+    edges: Option<Vec<StudyGraphEdgeInput>>,
+) -> Result<StudyGraphPayload, String> {
+    let conn = get_conn()?;
+    load_study_subject(&conn, subject_id)?;
+    conn.execute("DELETE FROM StudyGraphEdges WHERE SubjectId = ?", [subject_id])
+        .map_err(|e| format!("{}", e))?;
+    conn.execute("DELETE FROM StudyGraphNodes WHERE SubjectId = ?", [subject_id])
+        .map_err(|e| format!("{}", e))?;
+    let key_to_id = insert_study_nodes(&conn, subject_id, &nodes, 0, &mut HashMap::new())?;
+    if let Some(edges) = edges {
+        for edge in edges {
+            let from_id = *key_to_id
+                .get(edge.from_key.trim())
+                .ok_or_else(|| format!("边的起点「{}」不存在", edge.from_key))?;
+            let to_id = *key_to_id
+                .get(edge.to_key.trim())
+                .ok_or_else(|| format!("边的终点「{}」不存在", edge.to_key))?;
+            if from_id == to_id {
+                continue;
+            }
+            let relation = edge.relation.unwrap_or_default();
+            conn.execute(
+                "INSERT INTO StudyGraphEdges (SubjectId, FromId, ToId, Relation) VALUES (?, ?, ?, ?)",
+                rusqlite::params![subject_id, from_id, to_id, relation],
+            )
+            .map_err(|e| format!("{}", e))?;
+        }
+    }
+    load_study_graph(&conn, subject_id)
+}
+
+#[tauri::command]
+pub async fn patch_study_graph(
+    subject_id: i64,
+    add: Option<Vec<StudyGraphNodeInput>>,
+    update: Option<Vec<StudyGraphNodePatch>>,
+    remove_ids: Option<Vec<i64>>,
+) -> Result<StudyGraphPayload, String> {
+    let conn = get_conn()?;
+    load_study_subject(&conn, subject_id)?;
+    if let Some(ids) = remove_ids {
+        for id in ids {
+            conn.execute(
+                "DELETE FROM StudyGraphEdges WHERE SubjectId = ? AND (FromId = ? OR ToId = ?)",
+                rusqlite::params![subject_id, id, id],
+            )
+            .map_err(|e| format!("{}", e))?;
+            conn.execute(
+                "UPDATE StudyGraphNodes SET ParentId = NULL WHERE SubjectId = ? AND ParentId = ?",
+                rusqlite::params![subject_id, id],
+            )
+            .map_err(|e| format!("{}", e))?;
+            conn.execute(
+                "DELETE FROM StudyGraphNodes WHERE SubjectId = ? AND Id = ?",
+                rusqlite::params![subject_id, id],
+            )
+            .map_err(|e| format!("{}", e))?;
+        }
+    }
+    if let Some(items) = update {
+        for item in items {
+            let exists: i64 = conn
+                .query_row(
+                    "SELECT COUNT(1) FROM StudyGraphNodes WHERE Id = ? AND SubjectId = ?",
+                    rusqlite::params![item.id, subject_id],
+                    |row| row.get(0),
+                )
+                .map_err(|e| format!("{}", e))?;
+            if exists == 0 {
+                return Err(format!("知识点 {} 不在该科目中", item.id));
+            }
+            if let Some(name) = item.name {
+                let name = name.trim().to_string();
+                if name.is_empty() {
+                    return Err("知识点名称不能为空".to_string());
+                }
+                conn.execute(
+                    "UPDATE StudyGraphNodes SET Name = ? WHERE Id = ?",
+                    rusqlite::params![name, item.id],
+                )
+                .map_err(|e| format!("{}", e))?;
+            }
+            if let Some(summary) = item.summary {
+                conn.execute(
+                    "UPDATE StudyGraphNodes SET Summary = ? WHERE Id = ?",
+                    rusqlite::params![summary, item.id],
+                )
+                .map_err(|e| format!("{}", e))?;
+            }
+            if let Some(mastery) = item.mastery {
+                conn.execute(
+                    "UPDATE StudyGraphNodes SET Mastery = ? WHERE Id = ?",
+                    rusqlite::params![clamp_mastery(mastery), item.id],
+                )
+                .map_err(|e| format!("{}", e))?;
+            }
+            if let Some(parent_id) = item.parent_id {
+                if parent_id == item.id {
+                    return Err("知识点不能作为自己的父节点".to_string());
+                }
+                if parent_id > 0 {
+                    let parent_ok: i64 = conn
+                        .query_row(
+                            "SELECT COUNT(1) FROM StudyGraphNodes WHERE Id = ? AND SubjectId = ?",
+                            rusqlite::params![parent_id, subject_id],
+                            |row| row.get(0),
+                        )
+                        .map_err(|e| format!("{}", e))?;
+                    if parent_ok == 0 {
+                        return Err(format!("父节点 {} 不在该科目中", parent_id));
+                    }
+                    conn.execute(
+                        "UPDATE StudyGraphNodes SET ParentId = ? WHERE Id = ?",
+                        rusqlite::params![parent_id, item.id],
+                    )
+                    .map_err(|e| format!("{}", e))?;
+                } else {
+                    conn.execute(
+                        "UPDATE StudyGraphNodes SET ParentId = NULL WHERE Id = ?",
+                        [item.id],
+                    )
+                    .map_err(|e| format!("{}", e))?;
+                }
+            }
+        }
+    }
+    if let Some(items) = add {
+        if !items.is_empty() {
+            let max_order: i64 = conn
+                .query_row(
+                    "SELECT COALESCE(MAX(SortOrder), -1) FROM StudyGraphNodes WHERE SubjectId = ?",
+                    [subject_id],
+                    |row| row.get(0),
+                )
+                .unwrap_or(-1);
+            let mut existing: HashMap<String, i64> = HashMap::new();
+            let mut key_stmt = conn
+                .prepare("SELECT NodeKey, Name, Id FROM StudyGraphNodes WHERE SubjectId = ?")
+                .map_err(|e| format!("{}", e))?;
+            let rows = key_stmt
+                .query_map([subject_id], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2)?,
+                    ))
+                })
+                .map_err(|e| format!("{}", e))?;
+            for row in rows {
+                let (key, name, id) = row.map_err(|e| format!("{}", e))?;
+                existing.insert(key, id);
+                let name = name.trim().to_string();
+                if !name.is_empty() {
+                    existing.entry(name).or_insert(id);
+                }
+            }
+            insert_study_nodes(&conn, subject_id, &items, max_order + 1, &mut existing)?;
+        }
+    }
+    load_study_graph(&conn, subject_id)
+}
+
+#[tauri::command]
 pub async fn delete_question(id: i64) -> Result<(), String> {
     let conn = get_conn()?;
+    conn.execute("DELETE FROM QuestionPracticeHistory WHERE QuestionId = ?", [id])
+        .map_err(|e| format!("{}", e))?;
     conn.execute("DELETE FROM AIResponses WHERE Id = ?", [id])
         .map_err(|e| format!("{}", e))?;
     Ok(())
@@ -1103,8 +1935,9 @@ pub async fn delete_question(id: i64) -> Result<(), String> {
 #[tauri::command]
 pub async fn delete_questions(ids: Vec<i64>) -> Result<(), String> {
     let conn = get_conn()?;
-    // 由于 rusqlite 批量删除比较麻烦，这里采用循环方式
     for id in ids {
+        conn.execute("DELETE FROM QuestionPracticeHistory WHERE QuestionId = ?", [id])
+            .map_err(|e| format!("{}", e))?;
         conn.execute("DELETE FROM AIResponses WHERE Id = ?", [id])
             .map_err(|e| format!("{}", e))?;
     }
@@ -1281,7 +2114,7 @@ pub async fn search_questions_fuzzy(
                 // 默认文件夹仅显示自身题目
                 "SELECT
                   ar.Id, ar.Question, ar.Options, ar.Answer, ar.QuestionType,
-                  ar.FolderId, f.Name as FolderName, ar.CreateTime, ar.IsAi, COALESCE(ar.IsPendingCorrection, 0)
+                  ar.FolderId, f.Name as FolderName, ar.CreateTime, ar.IsAi, COALESCE(ar.IsPendingCorrection, 0), COALESCE(ar.Importance, 0), COALESCE(ar.Mastery, 0), COALESCE(ar.Difficulty, 0)
                 FROM AIResponses ar
                 INNER JOIN Folders f ON ar.FolderId = f.Id
                 WHERE ar.FolderId = 0"
@@ -1295,7 +2128,7 @@ pub async fn search_questions_fuzzy(
                 )
                 SELECT
                   ar.Id, ar.Question, ar.Options, ar.Answer, ar.QuestionType,
-                  ar.FolderId, f.Name as FolderName, ar.CreateTime, ar.IsAi, COALESCE(ar.IsPendingCorrection, 0)
+                  ar.FolderId, f.Name as FolderName, ar.CreateTime, ar.IsAi, COALESCE(ar.IsPendingCorrection, 0), COALESCE(ar.Importance, 0), COALESCE(ar.Mastery, 0), COALESCE(ar.Difficulty, 0)
                 FROM AIResponses ar
                 INNER JOIN folder_tree ft ON ar.FolderId = ft.Id
                 INNER JOIN Folders f ON ar.FolderId = f.Id"
@@ -1304,7 +2137,7 @@ pub async fn search_questions_fuzzy(
             // 所有文件夹
             "SELECT
               ar.Id, ar.Question, ar.Options, ar.Answer, ar.QuestionType,
-              ar.FolderId, f.Name as FolderName, ar.CreateTime, ar.IsAi, COALESCE(ar.IsPendingCorrection, 0)
+              ar.FolderId, f.Name as FolderName, ar.CreateTime, ar.IsAi, COALESCE(ar.IsPendingCorrection, 0), COALESCE(ar.Importance, 0), COALESCE(ar.Mastery, 0), COALESCE(ar.Difficulty, 0)
             FROM AIResponses ar
             LEFT JOIN Folders f ON ar.FolderId = f.Id"
         };
@@ -1839,6 +2672,93 @@ pub fn init_database_schema(db_path: &str) -> Result<(), String> {
         "ALTER TABLE AIResponses ADD COLUMN IsPendingCorrection BOOLEAN DEFAULT 0",
         &["UPDATE AIResponses SET IsPendingCorrection = 0 WHERE IsPendingCorrection IS NULL"],
     )?;
+    ensure_column(
+        &conn,
+        &mut ai_response_columns,
+        "Importance",
+        "ALTER TABLE AIResponses ADD COLUMN Importance INTEGER DEFAULT 0",
+        &["UPDATE AIResponses SET Importance = 0 WHERE Importance IS NULL"],
+    )?;
+    ensure_column(
+        &conn,
+        &mut ai_response_columns,
+        "Mastery",
+        "ALTER TABLE AIResponses ADD COLUMN Mastery INTEGER DEFAULT 0",
+        &["UPDATE AIResponses SET Mastery = 0 WHERE Mastery IS NULL"],
+    )?;
+    ensure_column(
+        &conn,
+        &mut ai_response_columns,
+        "Difficulty",
+        "ALTER TABLE AIResponses ADD COLUMN Difficulty INTEGER DEFAULT 0",
+        &["UPDATE AIResponses SET Difficulty = 0 WHERE Difficulty IS NULL"],
+    )?;
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS QuestionPracticeHistory (
+          Id INTEGER PRIMARY KEY AUTOINCREMENT,
+          QuestionId INTEGER NOT NULL,
+          UserAnswer TEXT NOT NULL DEFAULT '',
+          IsCorrect INTEGER DEFAULT 0,
+          Note TEXT DEFAULT '',
+          Source TEXT DEFAULT 'agent',
+          CreateTime DATETIME DEFAULT CURRENT_TIMESTAMP
+        )",
+        [],
+    )
+    .map_err(|e| format!("{}", e))?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_practice_question
+         ON QuestionPracticeHistory (QuestionId, Id DESC)",
+        [],
+    )
+    .map_err(|e| format!("{}", e))?;
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS StudySubjects (
+          Id INTEGER PRIMARY KEY AUTOINCREMENT,
+          Name TEXT NOT NULL,
+          Description TEXT DEFAULT '',
+          CreateTime DATETIME DEFAULT CURRENT_TIMESTAMP
+        )",
+        [],
+    )
+    .map_err(|e| format!("{}", e))?;
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS StudyGraphNodes (
+          Id INTEGER PRIMARY KEY AUTOINCREMENT,
+          SubjectId INTEGER NOT NULL,
+          NodeKey TEXT NOT NULL,
+          Name TEXT NOT NULL,
+          Summary TEXT DEFAULT '',
+          Mastery INTEGER DEFAULT 0,
+          ParentId INTEGER,
+          SortOrder INTEGER DEFAULT 0
+        )",
+        [],
+    )
+    .map_err(|e| format!("{}", e))?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_study_nodes_subject ON StudyGraphNodes (SubjectId, SortOrder, Id)",
+        [],
+    )
+    .map_err(|e| format!("{}", e))?;
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS StudyGraphEdges (
+          Id INTEGER PRIMARY KEY AUTOINCREMENT,
+          SubjectId INTEGER NOT NULL,
+          FromId INTEGER NOT NULL,
+          ToId INTEGER NOT NULL,
+          Relation TEXT DEFAULT ''
+        )",
+        [],
+    )
+    .map_err(|e| format!("{}", e))?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_study_edges_subject ON StudyGraphEdges (SubjectId)",
+        [],
+    )
+    .map_err(|e| format!("{}", e))?;
 
     conn.execute(
         "CREATE TABLE IF NOT EXISTS RequestLogs (

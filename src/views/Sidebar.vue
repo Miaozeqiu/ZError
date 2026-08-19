@@ -32,6 +32,19 @@
 
       <div
         class="nav-item"
+        :class="{ active: activeTab === 'study' }"
+        @click="$emit('navigate', 'study')"
+        title="学习"
+      >
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M8 7h8M8 11h5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+        </svg>
+      </div>
+
+      <div
+        class="nav-item"
         :class="{ active: activeTab === 'agent' || activeTab === 'import-tasks' }"
         @click="$emit('navigate', 'agent')"
         title="agent"

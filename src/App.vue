@@ -7,9 +7,11 @@ import UpdateDialog from "./components/UpdateDialog.vue";
 import Home from "./views/Home.vue";
 import Settings from "./views/Settings.vue";
 import QuestionBank from "./views/QuestionBank.vue";
+import Study from "./views/Study.vue";
 import Agent from "./views/Agent.vue";
 import FileTree from "./views/questions/FileTree.vue";
 import { databaseService } from "./services/database";
+import { parseDifficulty, parseImportance, parseMastery } from "./utils/questionMetrics";
 import { initializationService } from "./services/initialization";
 import { initGlobalTheme } from "./composables/useTheme";
 import { useAppUpdate } from "./composables/useAppUpdate";
@@ -38,6 +40,12 @@ const {
 
 // 暴露到全局 window，供开发者控制台调试
 onMounted(() => {
+  document.querySelectorAll('.assistant-text style, .agent-html style, .agent-html-preview style')
+    .forEach((el) => el.remove())
+  document.documentElement.scrollLeft = 0
+  document.body.scrollLeft = 0
+  document.getElementById('app')?.scrollTo(0, 0)
+
   ;(window as any).startTutorial = () => {
     localStorage.removeItem('tutorial_stepper_finished');
     window.dispatchEvent(new Event('start-tutorial'));
@@ -290,7 +298,15 @@ const normalizeImportItems = (items: any): any[] => {
     const opts = x?.Options ?? x?.options ?? null;
     const ans = x?.Answer ?? x?.answer ?? "";
     const type = x?.QuestionType ?? x?.question_type ?? "";
-    return { content: String(q), options: Array.isArray(opts) ? opts : (typeof opts === "string" ? opts : null), answer: String(ans), question_type: String(type) };
+    return {
+      content: String(q),
+      options: Array.isArray(opts) ? opts : (typeof opts === "string" ? opts : null),
+      answer: String(ans),
+      question_type: String(type),
+      importance: parseImportance(x?.Importance ?? x?.importance),
+      mastery: parseMastery(x?.Mastery ?? x?.mastery),
+      difficulty: parseDifficulty(x?.Difficulty ?? x?.difficulty),
+    };
   });
 };
 
@@ -311,7 +327,16 @@ const handleFolderSelect = (folderId: number, folderName: string) => {
         if (!content) continue;
         const optionsStr = Array.isArray(item.options) ? item.options.join("\n") : (typeof item.options === "string" ? item.options : undefined);
         const answerStr = String(item.answer ?? "");
-        await databaseService.addQuestion({ content, options: optionsStr, answer: answerStr, folderId: selectedImportFolderId.value });
+        await databaseService.addQuestion({
+          content,
+          options: optionsStr,
+          answer: answerStr,
+          question_type: item.question_type,
+          folderId: selectedImportFolderId.value,
+          importance: item.importance,
+          mastery: item.mastery,
+          difficulty: item.difficulty,
+        });
         count++;
       }
       showImportDialog.value = false;
@@ -393,7 +418,7 @@ onUnmounted(() => {
 <template>
   <div class="app-container">
     <!-- 自定义Header -->
-    <AppHeader :active-tab="activeTab" @guide-to="handleGuideAction" />
+    <AppHeader :active-tab="activeTab" @guide-to="handleGuideAction" @navigate="handleNavigate" />
 
     
     <!-- 主要内容区域 -->
@@ -413,6 +438,10 @@ onUnmounted(() => {
             :focus-folder-id="questionBankFocusFolderId"
             :focus-folder-request-key="questionBankFocusRequestKey"
           />
+        </div>
+
+        <div v-show="activeTab === 'study'" class="content-view">
+          <Study />
         </div>
 
         <div v-show="activeTab === 'agent' || activeTab === 'import-tasks'" class="content-view">
@@ -491,9 +520,11 @@ onUnmounted(() => {
 
 
 
+html,
 body {
   margin: 0;
   padding: 0;
+  max-width: none;
   background-color: var(--bg-tertiary, #f4f4f4);
   color: var(--text-primary, #2d3748);
   overflow: hidden;
@@ -502,6 +533,7 @@ body {
 #app {
   height: 100vh;
   width: 100vw;
+  max-width: none;
   overflow: hidden;
   background-color: var(--bg-tertiary, #f4f4f4);
 }
@@ -511,12 +543,14 @@ body {
   flex-direction: column;
   height: 100%;
   width: 100%;
+  max-width: none;
   background-color: var(--bg-tertiary, #f4f4f4);
 }
 
 .main-content {
   display: flex;
   flex: 1;
+  min-width: 0;
   overflow: hidden;
   height: 100%;
   width: 100%;
@@ -524,7 +558,7 @@ body {
 
 .content-area {
   margin-bottom: 100px;
-  width: 100%;
+  min-width: 0;
   height: 100%;
   flex: 1;
   overflow: hidden;
@@ -596,13 +630,10 @@ body {
   -webkit-text-size-adjust: 100%;
 }
 
-.container {
-  margin: 0;
-  padding-top: 10vh;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  text-align: center;
+/* markstream-vue/index.css ships an unscoped Tailwind .container */
+#app .container,
+.app-container {
+  max-width: none;
 }
 
 .logo {

@@ -1,4 +1,4 @@
-﻿<template>
+﻿﻿<template>
   <div v-if="show" class="dialog-overlay" @click="handleOverlayClick">
     <div class="dialog-content" @click.stop>
       <div class="dialog-header">

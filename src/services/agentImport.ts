@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import * as pdfjsLib from 'pdfjs-dist'
 import { databaseService } from './database'
+import { parseDifficulty, parseImportance, parseMastery } from '../utils/questionMetrics'
 import {
   addImportTaskStep,
   createImportTask,
@@ -20,6 +21,9 @@ export interface ExtractedQuestion {
   options?: string
   answer: string
   question_type?: string
+  importance?: number
+  mastery?: number
+  difficulty?: number
 }
 
 type FileKind = 'excel' | 'docx' | 'doc' | 'pdf' | 'text'
@@ -373,6 +377,9 @@ export const parseQuestions = (raw: unknown): ExtractedQuestion[] => {
         options: String(item?.options || '').trim(),
         answer: String(item?.answer || '').trim(),
         question_type: String(item?.question_type || item?.type || '').trim(),
+        importance: item?.importance == null ? undefined : parseImportance(item.importance),
+        mastery: item?.mastery == null ? undefined : parseMastery(item.mastery),
+        difficulty: item?.difficulty == null ? undefined : parseDifficulty(item.difficulty),
       }))
       .filter((item) => item.question && item.answer)
   }
