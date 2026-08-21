@@ -25,7 +25,7 @@ export const emitStudyGraphStream = (detail: {
 
 export const finishStudyGraphStream = (subjectId?: number) => {
   const current = studyGraphStream.value
-  if (!current) return
+  if (!current?.streaming) return
   if (subjectId != null && current.subjectId != null && current.subjectId !== subjectId) return
   studyGraphStream.value = { ...current, streaming: false }
 }

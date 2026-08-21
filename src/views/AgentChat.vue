@@ -1,9 +1,12 @@
 <template>
-  <div class="chat-page">
-    <aside class="chat-sidebar">
+  <div class="chat-page" :class="{ 'list-collapsed': chatListCollapsed }">
+    <aside class="chat-sidebar" :class="{ 'is-collapsed': chatListCollapsed }">
       <div class="pane-header">
         <div class="header-title">对话</div>
-        <button class="header-action" type="button" @click="() => createChat()">新对话</button>
+        <div class="header-actions">
+          <button class="header-action" type="button" @click="() => createChat()">新对话</button>
+          <button class="header-action" type="button" title="收起对话列表" @click="setChatListCollapsed(true)">收起</button>
+        </div>
       </div>
       <div class="chat-list-wrap">
         <div ref="listRef" class="chat-list">
@@ -55,10 +58,44 @@
             @scroll.passive="updateThreadPinned"
             @wheel.passive="cancelThreadJump"
             @pointerdown="onThreadPointerDown"
+            @contextmenu.prevent="onThreadContextMenu"
           >
             <div v-if="showFeatureCards" class="feature-panel">
               <div class="feature-kicker">我可以帮你</div>
               <div class="feature-grid">
+                <div class="feature-study" :class="{ 'is-open': startStudyOpen }">
+                  <button class="feature-card" type="button" @click="toggleStartStudy">
+                    <span class="feature-icon" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                        <path d="M6.5 2H20v15H6.5A2.5 2.5 0 0 0 4 19.5V4.5A2.5 2.5 0 0 1 6.5 2z" />
+                        <path d="M8 7h8" />
+                        <path d="M8 11h5" />
+                      </svg>
+                    </span>
+                    <span class="feature-copy">
+                      <span class="feature-title">开始学习</span>
+                      <span class="feature-desc">选择科目，挂到当前对话</span>
+                    </span>
+                  </button>
+                  <div v-if="startStudyOpen" class="feature-study-menu">
+                    <div class="feature-study-menu-title">选择科目</div>
+                    <button
+                      v-for="subject in startStudySubjects"
+                      :key="subject.id"
+                      type="button"
+                      class="feature-study-option"
+                      :class="{ 'is-active': subject.id === activeChat?.studySubjectId }"
+                      @click="pickStartStudy(subject.id)"
+                    >
+                      <span class="feature-study-option-name">{{ subject.name }}</span>
+                      <span class="feature-study-option-meta">{{ subjectStudyProgress(subject) }}%</span>
+                    </button>
+                    <div v-if="!startStudySubjects.length" class="feature-study-empty">
+                      还没有科目，先去学习页新建
+                    </div>
+                  </div>
+                </div>
                 <button class="feature-card" type="button" @click="startImportFromCard">
                   <span class="feature-icon" aria-hidden="true">
                     <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -420,6 +457,7 @@
                 @mousedown="onComposerMouseDown"
                 @mouseup="onComposerMouseUp"
                 @keyup="onComposerKeyup"
+                @contextmenu.prevent="onComposerContextMenu"
               />
               <div class="composer-toolbar">
                 <button class="composer-add" type="button" title="添加文件" @click="addFile">
@@ -479,7 +517,8 @@
       </section>
 
       <Transition name="write-pane">
-        <aside v-if="openedQuiz" class="write-pane is-quiz">
+        <aside v-if="openedQuiz" class="write-pane is-quiz" :class="{ 'is-resizing': paneResizing }" :style="writePaneStyle">
+          <div class="write-pane-resizer" title="拖动调节宽度" @pointerdown.stop="startPaneResize" />
           <div class="write-pane-inner">
             <div class="write-pane-head">
               <div class="write-file">
@@ -515,7 +554,8 @@
         </aside>
       </Transition>
       <Transition name="write-pane">
-        <aside v-if="openedGraph && !openedQuiz && !openedWriteStep" class="write-pane is-graph">
+        <aside v-if="openedGraph && !openedQuiz && !openedWriteStep" class="write-pane is-graph" :class="{ 'is-resizing': paneResizing }" :style="writePaneStyle">
+          <div class="write-pane-resizer" title="拖动调节宽度" @pointerdown.stop="startPaneResize" />
           <div class="write-pane-inner">
             <div class="write-pane-head">
               <div class="write-file">
@@ -534,9 +574,12 @@
             <div class="write-pane-body-wrap">
               <div class="write-pane-body is-graph-page">
                 <StudyMermaidGraph
+                  ref="graphPaneRef"
                   :graph="paneGraph"
                   :streaming="graphStreaming"
+                  :selected-name="graphFocusName"
                   :empty-text="graphEmptyText"
+                  @select="onGraphSelect"
                 />
               </div>
             </div>
@@ -544,7 +587,8 @@
         </aside>
       </Transition>
       <Transition name="write-pane">
-        <aside v-if="openedWriteStep && !openedQuiz && !openedGraph" class="write-pane">
+        <aside v-if="openedWriteStep && !openedQuiz && !openedGraph" class="write-pane" :class="{ 'is-resizing': paneResizing }" :style="writePaneStyle">
+          <div class="write-pane-resizer" title="拖动调节宽度" @pointerdown.stop="startPaneResize" />
           <div class="write-pane-inner">
             <div class="write-pane-head">
               <div class="write-file">
@@ -629,6 +673,26 @@
       @confirm="onFolderPicked"
     />
 
+    <UnifiedContextMenu
+      :visible="selectionMenuVisible"
+      :x="selectionMenuX"
+      :y="selectionMenuY"
+      :menu-items="selectionMenuItems"
+      exclusive-key="agent-chat-selection-menu"
+      @item-click="onSelectionMenuClick"
+      @close="selectionMenuVisible = false"
+    />
+
+    <UnifiedContextMenu
+      :visible="composerMenuVisible"
+      :x="composerMenuX"
+      :y="composerMenuY"
+      :menu-items="composerMenuItems"
+      exclusive-key="agent-chat-composer-menu"
+      @item-click="onComposerMenuClick"
+      @close="composerMenuVisible = false"
+    />
+
     <Teleport to="body">
       <Transition name="image-preview">
         <div
@@ -662,6 +726,8 @@ import {
   activeChat,
   activeChatId,
   chatSessions,
+  chatListCollapsed,
+  setChatListCollapsed,
   addComposerAttachment,
   addComposerImage,
   composerAttachments,
@@ -680,7 +746,9 @@ import {
   removeComposerAttachment,
   selectChat,
   sendChatMessage,
+  setChatStudySubject,
   stopChat,
+  isChatBusy,
   hydrateQuizCards,
   formatQuizAttempt,
   recordQuizAttempt,
@@ -688,7 +756,9 @@ import {
 import type { AgentQuizAttempt } from '../services/agentChat'
 import type { AgentChatMessage, AgentChatSession } from '../services/agentChat'
 import FolderPickerDialog from '../components/FolderPickerDialog.vue'
-import { databaseService } from '../services/database'
+import UnifiedContextMenu, { type MenuItem } from '../components/UnifiedContextMenu.vue'
+import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager'
+import { databaseService, type StudySubject } from '../services/database'
 import type { AIModel } from '../services/modelConfig'
 import { modelHasVision, useModelConfig } from '../services/modelConfig'
 import { readFileBase64 } from '../utils/fileReader'
@@ -707,7 +777,7 @@ import AgentHtmlBlock from '../components/AgentHtmlBlock.vue'
 import AgentCodeBlock from '../components/AgentCodeBlock.vue'
 import AgentQuizBlock from '../components/AgentQuizBlock.vue'
 import StudyMermaidGraph from '../components/StudyMermaidGraph.vue'
-import { studyGraphStream } from '../services/studyGraphStream'
+import { finishStudyGraphStream, studyGraphStream } from '../services/studyGraphStream'
 import { graphFromPayload, type StudyGraphNode } from '../utils/studyGraph'
 import { getQuizCards, parseMarkdownQuizzes, parseOptions, parseQuizCards, stripMarkdownQuizzes, type QuizCard } from '../utils/quizPractice'
 import '../services/markstream'
@@ -910,6 +980,44 @@ const folderPickerInitialId = computed(() => {
   return tokens.at(-1)?.folderId ?? null
 })
 const showFeatureCards = computed(() => !(activeChat.value?.messages.length))
+const STUDY_STORAGE_KEY = 'zerror-study-subject'
+const startStudyOpen = ref(false)
+const startStudySubjects = ref<StudySubject[]>([])
+
+const subjectStudyProgress = (subject: StudySubject) => Math.round((Number(subject.progress) || 0) * 100)
+
+const closeStartStudy = () => {
+  startStudyOpen.value = false
+}
+
+const loadStartStudySubjects = async () => {
+  try {
+    startStudySubjects.value = await databaseService.listStudySubjects()
+  } catch {
+    startStudySubjects.value = []
+  }
+}
+
+const toggleStartStudy = async () => {
+  startStudyOpen.value = !startStudyOpen.value
+  if (startStudyOpen.value) await loadStartStudySubjects()
+}
+
+const pickStartStudy = (id: number) => {
+  setChatStudySubject(id)
+  localStorage.setItem(STUDY_STORAGE_KEY, String(id))
+  closeStartStudy()
+}
+
+const onStartStudyPointerDown = (event: PointerEvent) => {
+  const target = event.target as HTMLElement | null
+  if (target?.closest('.feature-study')) return
+  closeStartStudy()
+}
+
+watch(showFeatureCards, (show) => {
+  if (!show) closeStartStudy()
+})
 
 const ensureAgentModel = () => {
   if (agentModel.value) return true
@@ -1368,6 +1476,11 @@ const onComposerPaste = async (event: ClipboardEvent) => {
   const text = event.clipboardData?.getData('text/plain') || ''
   if (!text) return
   event.preventDefault()
+  insertComposerText(text)
+}
+
+const insertComposerText = (text: string) => {
+  restoreComposerSelection()
   if (document.queryCommandSupported?.('insertText')) {
     document.execCommand('insertText', false, text)
   } else {
@@ -1671,15 +1784,79 @@ const openedQuiz = computed(() => {
   return { messageId, stepId, cards, message }
 })
 
+const PANE_WIDTH_KEY = 'zerror-agent-pane-width'
+const PANE_WIDTH_MIN = 280
+const readStoredPaneWidth = () => {
+  const n = Number(localStorage.getItem(PANE_WIDTH_KEY))
+  return Number.isFinite(n) && n >= PANE_WIDTH_MIN ? Math.round(n) : null
+}
+const paneWidth = ref<number | null>(readStoredPaneWidth())
+const paneResizing = ref(false)
+let stopPaneResize: (() => void) | null = null
+
+const writePaneStyle = computed(() =>
+  paneWidth.value == null
+    ? undefined
+    : {
+        width: `${paneWidth.value}px`,
+        '--write-pane-width': `${paneWidth.value}px`,
+      },
+)
+
+const clampPaneWidth = (width: number) => {
+  const workspace = document.querySelector('.chat-workspace') as HTMLElement | null
+  const max = Math.max(PANE_WIDTH_MIN, Math.round((workspace?.clientWidth || window.innerWidth) * 0.72))
+  return Math.max(PANE_WIDTH_MIN, Math.min(max, Math.round(width)))
+}
+
+const startPaneResize = (event: PointerEvent) => {
+  if (event.button !== 0) return
+  event.preventDefault()
+  const pane = (event.currentTarget as HTMLElement).closest('.write-pane') as HTMLElement | null
+  const startX = event.clientX
+  const startW = pane?.getBoundingClientRect().width || paneWidth.value || 420
+  paneResizing.value = true
+  const prevCursor = document.body.style.cursor
+  const prevSelect = document.body.style.userSelect
+  document.body.style.cursor = 'ew-resize'
+  document.body.style.userSelect = 'none'
+  const onMove = (next: PointerEvent) => {
+    paneWidth.value = clampPaneWidth(startW + (startX - next.clientX))
+  }
+  const onUp = () => {
+    stopPaneResize?.()
+  }
+  stopPaneResize = () => {
+    window.removeEventListener('pointermove', onMove)
+    window.removeEventListener('pointerup', onUp)
+    window.removeEventListener('pointercancel', onUp)
+    document.body.style.cursor = prevCursor
+    document.body.style.userSelect = prevSelect
+    paneResizing.value = false
+    stopPaneResize = null
+    if (paneWidth.value != null) localStorage.setItem(PANE_WIDTH_KEY, String(paneWidth.value))
+  }
+  window.addEventListener('pointermove', onMove)
+  window.addEventListener('pointerup', onUp)
+  window.addEventListener('pointercancel', onUp)
+}
+
 const openedGraphSubjectId = ref<number | null>(null)
 const paneGraph = ref<StudyGraphNode | null>(null)
 const paneGraphName = ref('')
 const paneGraphCount = ref(0)
+const graphFocusName = ref('')
+const lastGraphFocus = new Map<number, string>()
+const graphPaneRef = ref<{ focusByName: (name: string, instant?: boolean) => boolean; fitView?: () => boolean } | null>(null)
 const openedGraph = computed(() => openedGraphSubjectId.value != null)
 const graphStreaming = computed(() => {
   const stream = studyGraphStream.value
   const id = openedGraphSubjectId.value
-  return Boolean(stream?.streaming && (stream.subjectId == null || id == null || stream.subjectId === id))
+  return Boolean(
+    stream?.streaming
+    && isChatBusy.value
+    && (stream.subjectId == null || id == null || stream.subjectId === id),
+  )
 })
 const graphEmptyText = computed(() =>
   graphStreaming.value ? 'Agent 正在绘制知识图谱' : '这个科目还没有图谱',
@@ -1702,10 +1879,24 @@ const loadPaneGraph = async (id: number) => {
   }
 }
 
-const openGraphPane = (subjectId: number) => {
+const rememberGraphFocus = (subjectId: number, name: string) => {
+  const focus = String(name || '').trim()
+  if (focus) lastGraphFocus.set(subjectId, focus)
+  else lastGraphFocus.delete(subjectId)
+}
+
+const onGraphSelect = (name: string) => {
+  graphFocusName.value = name
+  const id = openedGraphSubjectId.value
+  if (id != null) rememberGraphFocus(id, name)
+}
+
+const openGraphPane = (subjectId: number, nodeName?: string) => {
   openedQuizKey.value = null
   openedWriteStepId.value = null
   openedGraphSubjectId.value = subjectId
+  const focus = String(nodeName || lastGraphFocus.get(subjectId) || '').trim()
+  graphFocusName.value = focus
   void loadPaneGraph(subjectId)
 }
 
@@ -1721,10 +1912,10 @@ const onStudyGraphUpdated = (event: Event) => {
 }
 
 const onOpenStudyGraph = (event: Event) => {
-  const detail = (event as CustomEvent<{ subjectId?: number; expand?: boolean }>).detail
+  const detail = (event as CustomEvent<{ subjectId?: number; expand?: boolean; nodeName?: string }>).detail
   const id = Number(detail?.subjectId)
   if (!Number.isFinite(id) || id <= 0) return
-  openGraphPane(id)
+  openGraphPane(id, detail?.nodeName)
 }
 
 const toggleQuiz = (messageId: string, stepId: string) => {
@@ -1792,11 +1983,14 @@ const iconPaths = (name: string) => {
   if (name === 'present_quiz') {
     return ['M9 11l3 3L22 4', 'M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11']
   }
-  if (name === 'list_subjects' || name === 'create_subject' || name === 'rename_subject' || name === 'delete_subject') {
+  if (name === 'list_subjects' || name === 'get_subject' || name === 'create_subject' || name === 'rename_subject' || name === 'delete_subject') {
     return ['M4 19.5A2.5 2.5 0 0 1 6.5 17H20', 'M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z']
   }
-  if (name === 'get_knowledge_graph' || name === 'set_knowledge_graph' || name === 'patch_knowledge_graph') {
+  if (name === 'get_knowledge_graph' || name === 'set_knowledge_graph' || name === 'patch_knowledge_graph' || name === 'focus_knowledge_graph' || name === 'open_knowledge_graph') {
     return ['M6 7a2 2 0 1 0 0-4 2 2 0 0 0 0 4z', 'M18 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4z', 'M8 18a2 2 0 1 0 0-4 2 2 0 0 0 0 4z', 'M16 17a2 2 0 1 0 0-4 2 2 0 0 0 0 4z', 'M8 8l8 1', 'M7 9l2 6', 'M16 10l-1 4']
+  }
+  if (name === 'evaluate_study_progress') {
+    return ['M3 17c3-8 6-10 9-10s6 2 9 10', 'M12 7v10']
   }
   return ['M12 3v3', 'M12 18v3', 'M3 12h3', 'M18 12h3']
 }
@@ -1949,11 +2143,241 @@ let selectionStartX = 0
 let selectionStartY = 0
 let lastFocusRange: Range | null = null
 let selectionScopeEl: Element | null = null
+const selectionMenuVisible = ref(false)
+const selectionMenuX = ref(0)
+const selectionMenuY = ref(0)
+
+const selectedChatText = () => (customSelectionRange?.toString() || '').replace(/\u200B/g, '').trim()
+
+const selectionMenuItems = computed<MenuItem[]>(() => [
+  { id: 'copy', label: '复制', action: 'copy' },
+  { id: 'quote', label: '引用', action: 'quote' },
+  { id: 'ask', label: '提问', action: 'ask' },
+])
+
+const hideSelectionMenu = () => {
+  selectionMenuVisible.value = false
+}
+
+const composerMenuVisible = ref(false)
+const composerMenuX = ref(0)
+const composerMenuY = ref(0)
+const composerMenuHasSelection = ref(false)
+const composerMenuHasContent = ref(false)
+
+const composerMenuItems = computed<MenuItem[]>(() => [
+  { id: 'cut', label: '剪切', action: 'cut', disabled: !composerMenuHasSelection.value },
+  { id: 'copy', label: '复制', action: 'copy', disabled: !composerMenuHasSelection.value },
+  { id: 'paste', label: '粘贴', action: 'paste' },
+  { id: 'select-all', label: '全选', action: 'select-all', disabled: !composerMenuHasContent.value },
+])
+
+const hideComposerMenu = () => {
+  composerMenuVisible.value = false
+}
+
+const serializeComposerRange = (range: Range) => {
+  const wrap = document.createElement('div')
+  wrap.appendChild(range.cloneContents())
+  return serializeComposer(wrap)
+}
+
+const composerRangeText = (range: Range | null) => {
+  const input = composerRef.value
+  if (!input || !range || range.collapsed || !input.contains(range.commonAncestorContainer)) return ''
+  return serializeComposerRange(range)
+}
+
+const currentComposerRange = () => {
+  const input = composerRef.value
+  const sel = window.getSelection()
+  if (sel?.rangeCount) {
+    const range = sel.getRangeAt(0)
+    if (input?.contains(range.commonAncestorContainer)) return range
+  }
+  if (savedComposerRange && input?.contains(savedComposerRange.commonAncestorContainer)) {
+    return savedComposerRange
+  }
+  return null
+}
+
+const writeClipboardText = async (text: string) => {
+  try {
+    await writeText(text)
+  } catch {
+    await navigator.clipboard.writeText(text)
+  }
+}
+
+const readClipboardText = async () => {
+  try {
+    return await readText()
+  } catch {
+    try {
+      return await navigator.clipboard.readText()
+    } catch {
+      return ''
+    }
+  }
+}
+
+const onComposerContextMenu = (event: MouseEvent) => {
+  saveComposerSelection()
+  const input = composerRef.value
+  const range = currentComposerRange()
+  composerMenuHasSelection.value = Boolean(composerRangeText(range))
+  composerMenuHasContent.value = Boolean(input && serializeComposer(input).trim())
+  composerMenuX.value = event.clientX
+  composerMenuY.value = event.clientY
+  hideSelectionMenu()
+  composerMenuVisible.value = true
+}
+
+const applyComposerMenuRange = () => {
+  restoreComposerSelection()
+  return currentComposerRange()
+}
+
+const cutComposerSelection = async () => {
+  const range = applyComposerMenuRange()
+  const text = composerRangeText(range)
+  if (!text) return
+  await writeClipboardText(text)
+  document.execCommand('delete')
+  syncDraftFromComposer()
+  resizeComposer()
+  saveComposerSelection()
+}
+
+const copyComposerSelection = async () => {
+  const text = composerRangeText(applyComposerMenuRange())
+  if (!text) return
+  await writeClipboardText(text)
+}
+
+const pasteComposerSelection = async () => {
+  const text = await readClipboardText()
+  if (!text) return
+  insertComposerText(text)
+}
+
+const selectAllComposer = () => {
+  const input = composerRef.value
+  const sel = window.getSelection()
+  if (!input || !sel) return
+  input.focus()
+  const range = document.createRange()
+  range.selectNodeContents(input)
+  sel.removeAllRanges()
+  sel.addRange(range)
+  savedComposerRange = range.cloneRange()
+}
+
+const onComposerMenuClick = async (item: MenuItem) => {
+  hideComposerMenu()
+  if (item.action === 'cut') await cutComposerSelection()
+  if (item.action === 'copy') await copyComposerSelection()
+  if (item.action === 'paste') await pasteComposerSelection()
+  if (item.action === 'select-all') selectAllComposer()
+}
+
+const copySelectedChatText = async () => {
+  const text = selectedChatText()
+  if (!text) return
+  await writeClipboardText(text)
+}
+
+const quoteSelectedChatText = async () => {
+  const text = selectedChatText()
+  if (!text) return
+  syncDraftFromComposer()
+  const quote = text.split('\n').map((line) => `> ${line}`).join('\n')
+  const next = draft.value.trim() ? `${draft.value.trim()}\n\n${quote}` : quote
+  await fillComposer(next)
+}
+
+const askSelectedChatText = async () => {
+  const text = selectedChatText()
+  if (!text) return
+  await fillComposer(`请解释下面这段内容：\n\n${text}`)
+}
+
+const onSelectionMenuClick = async (item: MenuItem) => {
+  hideSelectionMenu()
+  if (item.action === 'copy') await copySelectedChatText()
+  if (item.action === 'quote') await quoteSelectedChatText()
+  if (item.action === 'ask') await askSelectedChatText()
+}
+
+const onThreadContextMenu = (event: MouseEvent) => {
+  if (!selectedChatText()) return
+  selectionMenuX.value = event.clientX
+  selectionMenuY.value = event.clientY
+  selectionMenuVisible.value = true
+}
+
+const onSelectionMenuPointerDown = (event: PointerEvent) => {
+  if (event.button === 2) return
+  if (event.target instanceof Element && event.target.closest('.context-menu')) return
+  hideSelectionMenu()
+  hideComposerMenu()
+}
+
+const onSelectionMenuKeydown = (event: KeyboardEvent) => {
+  if (event.key !== 'Escape') return
+  hideSelectionMenu()
+  hideComposerMenu()
+}
+
+const SELECTION_CHROME = 'button, input, textarea, select, .write-head, .chat-item-delete, .agent-d2-zoom, .chat-selection'
+const SELECTION_BLOCKS = [
+  'pre',
+  'table',
+  'img',
+  '.mermaid-block-container',
+  '.d2-block-container',
+  '.infographic-block-container',
+  '.agent-html',
+  '.agent-html-preview',
+  '.katex-display',
+].join(',')
+const SELECTION_VISUAL_BLOCKS = [
+  'img',
+  '.mermaid-block-container',
+  '.d2-block-container',
+  '.infographic-block-container',
+  '.agent-html',
+  '.agent-html-preview',
+  '.katex-display',
+].join(',')
+const SELECTION_INLINES = 'code, .katex, img, a, strong, em, .strong-node, .emphasis-node'
+
+const selectionHostOf = (node: Node | null) => {
+  const el = node instanceof Element ? node : node?.parentElement
+  return el?.closest('.assistant-text, .user-bubble, .activity-text') || null
+}
+
+const isChromeNode = (node: Node | null) => {
+  const el = node instanceof Element ? node : node?.parentElement
+  return Boolean(el?.closest(SELECTION_CHROME))
+}
+
+const specialBlockOf = (node: Node | null) => {
+  const el = node instanceof Element ? node : node?.parentElement
+  return el?.closest(SELECTION_BLOCKS) || null
+}
+
+const isSelectableText = (node: Node) => {
+  if (node.nodeType !== Node.TEXT_NODE || !/\S/.test(node.textContent || '')) return false
+  if (isChromeNode(node)) return false
+  if (node.parentElement?.closest('svg, canvas')) return false
+  return true
+}
 
 const isThreadSelectableTarget = (target: EventTarget | null) => {
   const el = target instanceof Element ? target : null
   if (!el) return false
-  if (el.closest('button, a, input, textarea, .write-head, .chat-item-delete, .composer-box, .user-image, .user-file')) return false
+  if (el.closest(`${SELECTION_CHROME}, .composer-box, .user-image, .user-file`)) return false
   return Boolean(el.closest('.assistant-text, .user-bubble, .activity-text'))
 }
 
@@ -1978,18 +2402,67 @@ const offsetInTextNode = (node: Text, x: number, y: number) => {
   return low
 }
 
+const nativeCaretAt = (x: number, y: number) => {
+  const doc = document as Document & {
+    caretRangeFromPoint?: (x: number, y: number) => Range | null
+    caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null
+  }
+  if (typeof doc.caretRangeFromPoint === 'function') {
+    try {
+      return doc.caretRangeFromPoint(x, y)
+    } catch {
+      return null
+    }
+  }
+  const pos = doc.caretPositionFromPoint?.(x, y)
+  if (!pos) return null
+  const range = document.createRange()
+  try {
+    range.setStart(pos.offsetNode, pos.offset)
+    range.collapse(true)
+    return range
+  } catch {
+    return null
+  }
+}
+
+const snapToBlockEdge = (block: Element, y: number) => {
+  const box = block.getBoundingClientRect()
+  const range = document.createRange()
+  if (y < box.top + box.height / 2) range.setStartBefore(block)
+  else range.setStartAfter(block)
+  range.collapse(true)
+  return range
+}
+
 const caretRangeAt = (x: number, y: number) => {
   const scope = selectionScopeEl
   if (!scope) return null
+  const hit = document.elementFromPoint(x, y)
+  const hitBlock = hit && scope.contains(hit) ? hit.closest(SELECTION_BLOCKS) : null
+  const native = nativeCaretAt(x, y)
+  if (native && scope.contains(native.startContainer)) {
+    const block = specialBlockOf(native.startContainer) || hitBlock
+    const inChrome = isChromeNode(native.startContainer) || Boolean(native.startContainer.parentElement?.closest('svg, canvas'))
+    const inVisual = Boolean(block && block.matches(SELECTION_VISUAL_BLOCKS) && !isSelectableText(native.startContainer))
+    if (block && scope.contains(block) && (inChrome || inVisual)) {
+      return snapToBlockEdge(block, y)
+    }
+    return native
+  }
+  if (hitBlock && scope.contains(hitBlock) && hitBlock.matches(SELECTION_VISUAL_BLOCKS)) {
+    return snapToBlockEdge(hitBlock, y)
+  }
+
   const lines: { node: Text; top: number; bottom: number; left: number; right: number }[] = []
   const walker = document.createTreeWalker(scope, NodeFilter.SHOW_TEXT)
   let current: Node | null
   while ((current = walker.nextNode())) {
-    if (!/\S/.test(current.textContent || '')) continue
+    if (!isSelectableText(current)) continue
     const probe = document.createRange()
     probe.selectNodeContents(current)
     for (const rect of probe.getClientRects()) {
-      if (rect.width < 1 || rect.height < 1) continue
+      if (rect.width < 1 || rect.height < 6 || rect.height > 40) continue
       lines.push({
         node: current as Text,
         top: rect.top,
@@ -2030,6 +2503,14 @@ const caretRangeAt = (x: number, y: number) => {
   return range
 }
 
+const lineLikeRects = (rects: DOMRect[]) => {
+  const usable = rects.filter((rect) => rect.width >= 1 && rect.height >= 6)
+  if (!usable.length) return []
+  const heights = [...usable.map((rect) => rect.height)].sort((a, b) => a - b)
+  const mid = heights[Math.floor(heights.length / 2)] || 18
+  return usable.filter((rect) => rect.height <= Math.max(40, mid * 2.2))
+}
+
 const collectTextRects = (range: Range) => {
   const ancestor = range.commonAncestorContainer
   const root = ancestor.nodeType === Node.TEXT_NODE ? ancestor.parentNode : ancestor
@@ -2038,7 +2519,7 @@ const collectTextRects = (range: Range) => {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
   let node: Node | null
   while ((node = walker.nextNode())) {
-    if (!/\S/.test(node.textContent || '') || !range.intersectsNode(node)) continue
+    if (!isSelectableText(node) || !range.intersectsNode(node)) continue
     const length = node.textContent?.length || 0
     const start = node === range.startContainer ? range.startOffset : 0
     const end = node === range.endContainer ? range.endOffset : length
@@ -2052,7 +2533,13 @@ const collectTextRects = (range: Range) => {
       // skip detached nodes
     }
   }
-  return rects
+  const host = root instanceof Element ? root : root.parentElement
+  host?.querySelectorAll(SELECTION_INLINES).forEach((el) => {
+    if (isChromeNode(el) || el.closest(SELECTION_BLOCKS) || !range.intersectsNode(el)) return
+    const box = el.getBoundingClientRect()
+    if (box.width >= 2 && box.height >= 6 && box.height <= 40) rects.push(box)
+  })
+  return lineLikeRects(rects)
 }
 
 const mergeSelectionRects = (
@@ -2065,7 +2552,7 @@ const mergeSelectionRects = (
     if (
       last &&
       Math.abs(rect.top - last.top) <= 3 &&
-      rect.left <= last.left + last.width + 8
+      rect.left <= last.left + last.width + 16
     ) {
       const right = Math.max(last.left + last.width, rect.left + rect.width)
       last.left = Math.min(last.left, rect.left)
@@ -2078,9 +2565,12 @@ const mergeSelectionRects = (
   return merged
 }
 
+const rangeIsLive = (range: Range) =>
+  document.contains(range.startContainer) && document.contains(range.endContainer)
+
 const paintCustomSelection = (range: Range | null) => {
   const root = threadRef.value
-  if (!root || !range || range.collapsed) {
+  if (!root || !range || range.collapsed || !rangeIsLive(range)) {
     customSelectionRange = null
     if (selectionBoxes.value.length) selectionBoxes.value = []
     return
@@ -2099,12 +2589,34 @@ const paintCustomSelection = (range: Range | null) => {
   )
 }
 
+let selectionPaintFrame = 0
+let selectionResizeObs: ResizeObserver | null = null
+
+const scheduleSelectionPaint = () => {
+  if (!customSelectionRange || selectionPaintFrame) return
+  selectionPaintFrame = requestAnimationFrame(() => {
+    selectionPaintFrame = 0
+    if (customSelectionRange) paintCustomSelection(customSelectionRange)
+  })
+}
+
+const bindSelectionLayout = () => {
+  selectionResizeObs?.disconnect()
+  const thread = threadRef.value
+  if (!thread) return
+  selectionResizeObs = new ResizeObserver(() => scheduleSelectionPaint())
+  selectionResizeObs.observe(thread)
+  const main = thread.closest('.chat-main')
+  if (main) selectionResizeObs.observe(main)
+}
+
 const clearCustomSelection = () => {
   selectionAnchor = null
   lastFocusRange = null
   selectionScopeEl = null
   selectionDragging = false
   selectionMoved = false
+  hideSelectionMenu()
   paintCustomSelection(null)
   window.getSelection()?.removeAllRanges()
 }
@@ -2132,21 +2644,21 @@ const updateCustomSelection = (x: number, y: number) => {
 }
 
 const onThreadPointerDown = (event: PointerEvent) => {
-  if (event.button !== 0 || !isThreadSelectableTarget(event.target)) {
+  if (event.button !== 0) return
+  if (!isThreadSelectableTarget(event.target)) {
     if (!(event.target instanceof Element) || !event.target.closest('.chat-selection')) {
       clearCustomSelection()
     }
     return
   }
   window.getSelection()?.removeAllRanges()
-  selectionScopeEl = (event.target instanceof Element
-    ? event.target.closest('.assistant-text, .user-bubble, .activity-text')
-    : null)
+  selectionScopeEl = event.target instanceof Node ? selectionHostOf(event.target) : null
   selectionAnchor = caretRangeAt(event.clientX, event.clientY)
   selectionStartX = event.clientX
   selectionStartY = event.clientY
   selectionDragging = Boolean(selectionAnchor)
   selectionMoved = false
+  hideSelectionMenu()
   paintCustomSelection(null)
 }
 
@@ -2185,7 +2697,8 @@ const updateThreadPinned = () => {
   if (threadJumping) return
   const pane = threadRef.value
   threadPinned.value = !pane || isThreadNearBottom(pane)
-  if (customSelectionRange) paintCustomSelection(customSelectionRange)
+  hideSelectionMenu()
+  scheduleSelectionPaint()
 }
 
 const cancelThreadJump = () => {
@@ -2317,6 +2830,7 @@ const highlightThreadCode = () => {
       // keep plain text
     }
   })
+  scheduleSelectionPaint()
 }
 
 const scheduleHighlight = () => {
@@ -2334,8 +2848,11 @@ watch(
 )
 
 watch(sending, (busy) => {
-  if (!busy) void flushQuizReviews()
-})
+  if (busy) return
+  void flushQuizReviews()
+  const id = openedGraphSubjectId.value ?? activeChat.value?.studySubjectId
+  finishStudyGraphStream(id == null ? undefined : id)
+}, { immediate: true })
 
 watch(activeChatId, async () => {
   openedWriteStepId.value = null
@@ -2394,28 +2911,43 @@ watch(
   }
 )
 
+watch(paneWidth, () => scheduleSelectionPaint())
+
 onMounted(() => {
   bindPaneScrollbar('list')
   bindPaneScrollbar('thread')
+  bindSelectionLayout()
   scheduleHighlight()
   document.addEventListener('pointermove', onThreadPointerMove)
   document.addEventListener('pointerup', onThreadPointerUp)
+  document.addEventListener('pointerdown', onSelectionMenuPointerDown, true)
   document.addEventListener('copy', onCopyCustomSelection)
   document.addEventListener('selectstart', onThreadSelectStart)
+  document.addEventListener('keydown', onSelectionMenuKeydown)
   document.addEventListener('keydown', onPreviewKeydown)
+  window.addEventListener('resize', scheduleSelectionPaint)
   window.addEventListener('study-graph-updated', onStudyGraphUpdated)
   window.addEventListener('open-study-graph', onOpenStudyGraph)
+  document.addEventListener('pointerdown', onStartStudyPointerDown)
 })
 
 onUnmounted(() => {
   if (threadScrollFrame) cancelAnimationFrame(threadScrollFrame)
+  if (selectionPaintFrame) cancelAnimationFrame(selectionPaintFrame)
+  selectionResizeObs?.disconnect()
+  selectionResizeObs = null
   document.removeEventListener('pointermove', onThreadPointerMove)
   document.removeEventListener('pointerup', onThreadPointerUp)
+  document.removeEventListener('pointerdown', onSelectionMenuPointerDown, true)
   document.removeEventListener('copy', onCopyCustomSelection)
   document.removeEventListener('selectstart', onThreadSelectStart)
+  document.removeEventListener('keydown', onSelectionMenuKeydown)
   document.removeEventListener('keydown', onPreviewKeydown)
+  window.removeEventListener('resize', scheduleSelectionPaint)
   window.removeEventListener('study-graph-updated', onStudyGraphUpdated)
   window.removeEventListener('open-study-graph', onOpenStudyGraph)
+  document.removeEventListener('pointerdown', onStartStudyPointerDown)
+  stopPaneResize?.()
   paneCleanupMap.forEach((cleanup) => cleanup())
   ;(Object.keys(paneHideTimers) as ScrollbarPaneKey[]).forEach((key) => {
     if (paneHideTimers[key]) clearTimeout(paneHideTimers[key])
@@ -2431,6 +2963,10 @@ onUnmounted(() => {
   background: var(--bg-primary, #f5f5f7);
 }
 
+.chat-page.list-collapsed {
+  gap: 0;
+}
+
 .chat-sidebar {
   width: 260px;
   flex-shrink: 0;
@@ -2441,6 +2977,24 @@ onUnmounted(() => {
   background: var(--bg-secondary, #fff);
   border-radius: 4px;
   margin-bottom: 5px;
+  transition: width 180ms cubic-bezier(0.23, 1, 0.32, 1),
+    opacity 160ms cubic-bezier(0.23, 1, 0.32, 1),
+    margin 180ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.chat-sidebar.is-collapsed {
+  width: 0;
+  min-width: 0;
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
+  border: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-sidebar {
+    transition: none;
+  }
 }
 
 .chat-workspace {
@@ -2494,6 +3048,12 @@ onUnmounted(() => {
   font-size: 13px;
   font-weight: 600;
   color: var(--text-primary, #2d3748);
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
 }
 
 .header-action {
@@ -2783,6 +3343,85 @@ onUnmounted(() => {
 .feature-kicker {
   font-size: 13px;
   font-weight: 600;
+  color: var(--text-secondary, #718096);
+}
+
+.feature-study {
+  position: relative;
+  min-width: 0;
+}
+
+.feature-study > .feature-card {
+  height: 100%;
+}
+
+.feature-study-menu {
+  position: absolute;
+  top: calc(100% + 10px);
+  left: 0;
+  z-index: 20;
+  width: 228px;
+  max-height: 280px;
+  overflow: auto;
+  padding: 6px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--border-color, #e2e8f0) 80%, transparent);
+  background: color-mix(in srgb, var(--bg-secondary, #fff) 92%, transparent);
+  box-shadow: 0 12px 32px color-mix(in srgb, #000 12%, transparent);
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+}
+
+.feature-study-menu-title {
+  padding: 6px 8px 4px;
+  font-size: 11px;
+  color: var(--text-secondary, #718096);
+}
+
+.feature-study-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-height: 32px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-primary, #2d3748);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.feature-study-option:hover {
+  background: color-mix(in srgb, var(--text-primary, #2d3748) 6%, transparent);
+}
+
+.feature-study-option:active {
+  transform: scale(0.98);
+}
+
+.feature-study-option.is-active {
+  background: color-mix(in srgb, var(--color-primary, #667eea) 10%, transparent);
+}
+
+.feature-study-option-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.feature-study-option-meta {
+  flex-shrink: 0;
+  margin-left: 8px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary, #718096);
+}
+
+.feature-study-empty {
+  padding: 8px;
+  font-size: 12px;
   color: var(--text-secondary, #718096);
 }
 
@@ -3280,19 +3919,49 @@ onUnmounted(() => {
 }
 
 .write-pane {
-  width: 380px;
+  --write-pane-width: 380px;
+  position: relative;
+  width: var(--write-pane-width);
   flex-shrink: 0;
   overflow: hidden;
   min-height: 0;
   display: flex;
 }
 
+.write-pane-resizer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  z-index: 4;
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+.write-pane-resizer::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: transparent;
+  transition: background 140ms ease, width 140ms ease;
+}
+
+.write-pane-resizer:hover::after,
+.write-pane.is-resizing .write-pane-resizer::after {
+  width: 2px;
+  background: color-mix(in srgb, var(--text-primary, #2d3748) 28%, transparent);
+}
+
 .write-pane.is-quiz {
-  width: 420px;
+  --write-pane-width: 420px;
 }
 
 .write-pane.is-graph {
-  width: min(560px, 46vw);
+  --write-pane-width: min(560px, 46vw);
 }
 
 .write-pane.is-graph .write-stat {
@@ -3304,14 +3973,14 @@ onUnmounted(() => {
 }
 
 .write-pane-inner {
-  width: 100%;
-  min-width: 0;
+  width: var(--write-pane-width, 100%);
+  min-width: var(--write-pane-width, 100%);
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
   background: var(--bg-secondary, #fff);
-  box-shadow: inset 1px 0 0 color-mix(in srgb, var(--border-primary, #e2e8f0) 42%, transparent);
+  border-left: 1px solid var(--border-color, var(--border-primary, #e2e8f0));
 }
 
 .write-pane-head {

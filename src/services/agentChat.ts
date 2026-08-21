@@ -8,6 +8,9 @@ import { getQuizCards, parseQuizCards, saveQuizCards, type QuizCard } from '../u
 import { collectGraphNodes, extractMermaidSource, graphFromPayload, graphToMermaid, parseGraphEdgeInputs, parseGraphNodeInputs } from '../utils/studyGraph'
 import { clipAgentDebug, logAgentDebug } from './agentDebugLog'
 import { emitStudyGraphStream, finishStudyGraphStream } from './studyGraphStream'
+import { runStudyProgressEvaluation } from './studyProgressAgent'
+import { associateQuestionsToKnowledge } from './questionKnowledge'
+import { clampForgettingStage, forgettingStageLabel, retentionScore } from '../utils/studyForgetting'
 
 export interface AgentQuizAttempt {
   stepId: string
@@ -150,13 +153,31 @@ export interface AgentChatSession {
   title: string
   messages: AgentChatMessage[]
   attachments?: AgentChatAttachment[]
+  studySubjectId?: number
   createdAt: number
   updatedAt: number
 }
 
 const STORAGE_KEY = 'zerror-agent-chat-sessions'
+const CHAT_LIST_COLLAPSED_KEY = 'zerror-chat-list-collapsed'
 const sessions = ref<AgentChatSession[]>([])
 const activeId = ref<string | null>(null)
+export const chatListCollapsed = ref(false)
+
+try {
+  chatListCollapsed.value = localStorage.getItem(CHAT_LIST_COLLAPSED_KEY) === '1'
+} catch {
+  chatListCollapsed.value = false
+}
+
+export const setChatListCollapsed = (value: boolean) => {
+  chatListCollapsed.value = Boolean(value)
+  try {
+    localStorage.setItem(CHAT_LIST_COLLAPSED_KEY, chatListCollapsed.value ? '1' : '0')
+  } catch {
+    // ignore quota / private mode
+  }
+}
 const chatAborts = new Map<string, AbortController>()
 
 const loadPersisted = () => {
@@ -168,6 +189,7 @@ const loadPersisted = () => {
     sessions.value = parsed.slice(0, 30).map((session) => ({
       ...session,
       attachments: Array.isArray(session.attachments) ? session.attachments : undefined,
+      studySubjectId: Number(session.studySubjectId) > 0 ? Number(session.studySubjectId) : undefined,
       messages: (session.messages || []).map((message) => ({
         ...message,
         attachments: Array.isArray(message.attachments) ? message.attachments : undefined,
@@ -358,7 +380,7 @@ const CHAT_TOOLS = [
     type: 'function',
     function: {
       name: 'list_questions',
-      description: '查看某个文件夹里的题目，返回 Id、题干、答案、题型、重要性/掌握度/难度，以及最近练习摘要。出题或改指标前先调用。一次最多 40 道，多的翻页。',
+      description: '查看某个文件夹里的题目，返回 Id、题干、答案、题型、重要性/掌握度/难度、已关联知识点，以及最近练习摘要。出题、整理题目或改指标前先调用。一次最多 40 道，多的翻页。',
       parameters: {
         type: 'object',
         properties: {
@@ -435,6 +457,11 @@ const CHAT_TOOLS = [
                 importance: { type: 'integer', description: '0未设置 1低 2中 3高' },
                 mastery: { type: 'integer', description: '0未设置 1未掌握 2一般 3已掌握' },
                 difficulty: { type: 'integer', description: '0未设置 1简单 2中等 3困难' },
+                knowledge_point: { type: 'string', description: '对应知识点或节名' },
+                node_name: { type: 'string', description: '图谱节点名，可与 knowledge_point 相同' },
+                node_id: { type: 'integer', description: '已有知识点 Id' },
+                parent_name: { type: 'string', description: '所属章名，没有对应节点时用来挂到该章下' },
+                subject_id: { type: 'integer' },
               },
               required: ['question', 'answer'],
             },
@@ -513,6 +540,10 @@ const CHAT_TOOLS = [
                 answer: { type: 'string' },
                 question_type: { type: 'string', description: '单选/多选/判断/填空' },
                 explanation: { type: 'string' },
+                knowledge_point: { type: 'string', description: '对应知识点或节名' },
+                node_name: { type: 'string' },
+                node_id: { type: 'integer' },
+                parent_name: { type: 'string' },
               },
             },
           },
@@ -523,16 +554,125 @@ const CHAT_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'link_questions_to_knowledge',
+      description: '把题库题目关联到知识图谱节点。用户说整理题目、把题挂到某节、这题考某某时调用。没有对应节点就自动生成。可用 question_ids，或对每道题分别给 node_name / parent_name。',
+      parameters: {
+        type: 'object',
+        properties: {
+          question_ids: { type: 'array', items: { type: 'integer' } },
+          question_id: { type: 'integer' },
+          subject_id: { type: 'integer' },
+          subject_name: { type: 'string' },
+          node_id: { type: 'integer' },
+          node_name: { type: 'string', description: '知识点或节名' },
+          knowledge_point: { type: 'string' },
+          parent_name: { type: 'string', description: '所属章名' },
+          questions: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                question_id: { type: 'integer' },
+                node_id: { type: 'integer' },
+                node_name: { type: 'string' },
+                knowledge_point: { type: 'string' },
+                parent_name: { type: 'string' },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_knowledge_questions',
+      description: '查看某个知识点关联了哪些题目。出该节的练习或整理题目后可调用。',
+      parameters: {
+        type: 'object',
+        properties: {
+          node_id: { type: 'integer' },
+          node_name: { type: 'string' },
+          subject_id: { type: 'integer' },
+          subject_name: { type: 'string' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'merge_subjects',
+      description: '把多个学习科目合成一个大科目。源科目的图谱会作为章节并入目标科目，题目与知识点的关联会保留。源科目随后删除。',
+      parameters: {
+        type: 'object',
+        properties: {
+          target_id: { type: 'integer', description: '合并后保留的科目 Id' },
+          target_name: { type: 'string' },
+          source_ids: { type: 'array', items: { type: 'integer' }, description: '要并进来的科目 Id' },
+          source_names: { type: 'array', items: { type: 'string' } },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'split_subject',
+      description: '把一个科目拆成新科目。指定要拆出的章/节，它们及其下级会移到新科目。题目关联跟着节点走。',
+      parameters: {
+        type: 'object',
+        properties: {
+          subject_id: { type: 'integer' },
+          subject_name: { type: 'string' },
+          parts: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                name: { type: 'string', description: '新科目名称' },
+                description: { type: 'string' },
+                node_ids: { type: 'array', items: { type: 'integer' } },
+                node_names: { type: 'array', items: { type: 'string' } },
+              },
+              required: ['name'],
+            },
+          },
+          name: { type: 'string', description: '只拆出一块时的新科目名' },
+          node_ids: { type: 'array', items: { type: 'integer' } },
+          node_names: { type: 'array', items: { type: 'string' } },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'list_subjects',
-      description: '查看学习页的科目列表。知识图谱科目独立于题库文件夹。',
+      description: '查看学习页有哪些科目。用户问有哪些科目、列出学习科目时必须调用。科目独立于题库文件夹。',
       parameters: { type: 'object', properties: {} },
     },
   },
   {
     type: 'function',
     function: {
+      name: 'get_subject',
+      description: '查看某一个学习科目的详情（简介、进度、知识点数量），并在右侧展开它的思维导图。用户说查看某科、打开某科、看看某科时调用。',
+      parameters: {
+        type: 'object',
+        properties: {
+          subject_id: { type: 'integer' },
+          subject_name: { type: 'string' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'create_subject',
-      description: '在学习页新建一个科目，用于绘制知识图谱。不要用创建文件夹代替。',
+      description: '在学习页新建一个科目，并展开它的思维导图。用户说新建科目、加一个学习科目时必须调用。不要用创建文件夹代替。',
       parameters: {
         type: 'object',
         properties: {
@@ -576,8 +716,30 @@ const CHAT_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'attach_study_subject',
+      description: '把学习科目挂到当前对话。右上角会显示正在学习，之后讲解、出题、改图谱都默认用这个科目。用户说想学某科时必须调用。',
+      parameters: {
+        type: 'object',
+        properties: {
+          subject_id: { type: 'integer' },
+          subject_name: { type: 'string' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'detach_study_subject',
+      description: '撤下当前对话的学习状态。只有用户明确说不学了、撤下或取消学习状态时才调用。',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'get_knowledge_graph',
-      description: '查看某科目当前的知识图谱节点。改图或生成前先调用。',
+      description: '查看某科目当前的知识图谱。节点含 forgetting_stage（0–6 复习点）和上次复习时间。章的熟练度由子节点汇总，不要用题目那种掌握度 0–3 理解图谱。',
       parameters: {
         type: 'object',
         properties: {
@@ -591,12 +753,16 @@ const CHAT_TOOLS = [
     type: 'function',
     function: {
       name: 'set_knowledge_graph',
-      description: '为某科目整图写入知识图谱，会替换该科目原有节点。只在整图推倒重来时用。结构必须像教材目录：科目→章→节，不要散落考点云。禁止空泛节点（学科基础、核心概念、方法与应用）。禁止空调用。生成新图请优先多次 patch_knowledge_graph。',
+      description: '整图替换某科目知识图谱，会丢掉已有节点和遗忘进度。仅当用户明确说重画、推倒重来、全部重做，并带 replace=true 时使用。普通绘制、补章、改名一律用 patch_knowledge_graph。',
       parameters: {
         type: 'object',
         properties: {
           subject_id: { type: 'integer' },
           subject_name: { type: 'string' },
+          replace: {
+            type: 'boolean',
+            description: '必须为 true。表示用户明确要求整图重画。缺省或 false 时拒绝覆盖。',
+          },
           mermaid: {
             type: 'string',
             description: 'mermaid flowchart TB 或 mindmap 源码，不要包代码围栏',
@@ -614,7 +780,7 @@ const CHAT_TOOLS = [
                 name: { type: 'string' },
                 summary: { type: 'string' },
                 parent_key: { type: 'string' },
-                mastery: { type: 'integer', description: '0未评估 1未掌握 2一般 3已掌握' },
+                mastery: { type: 'integer', description: '不要填。图谱进度用 evaluate_study_progress，不是 0–3 掌握度' },
               },
               required: ['name'],
             },
@@ -640,7 +806,7 @@ const CHAT_TOOLS = [
     type: 'function',
     function: {
       name: 'patch_knowledge_graph',
-      description: '往知识图谱里添加或修改节点。生成图谱时用这个分批添加，一次 3–8 个。先加章名，再给每章加 2–4 个节名（parent_key 填章的 key 或中文名）。节点名用教材目录口吻，不要定理/论文名。可多次调用，每批不同。不要一次塞整张图。',
+      description: '往知识图谱里添加或修改节点。生成图谱时用这个分批添加，一次 3–8 个。先加章名，再给每章加 2–4 个节名（parent_key 填章的 key 或中文名）。节点名用教材目录口吻，不要定理/论文名。不要用手写 mastery 表示遗忘进度，学完/复习后调用 evaluate_study_progress。可多次调用，每批不同。不要一次塞整张图。',
       parameters: {
         type: 'object',
         properties: {
@@ -655,7 +821,6 @@ const CHAT_TOOLS = [
                 name: { type: 'string' },
                 summary: { type: 'string' },
                 parent_key: { type: 'string' },
-                mastery: { type: 'integer' },
               },
               required: ['name'],
             },
@@ -668,13 +833,58 @@ const CHAT_TOOLS = [
                 id: { type: 'integer' },
                 name: { type: 'string' },
                 summary: { type: 'string' },
-                mastery: { type: 'integer' },
                 parent_id: { type: 'integer' },
               },
               required: ['id'],
             },
           },
           remove_ids: { type: 'array', items: { type: 'integer' } },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'focus_knowledge_graph',
+      description: '在右侧知识图谱里聚焦某个章或节，镜头会移到该节点及其子节点。讲解、点名某一章/节，或用户说「看某某」「讲这一块」时必须调用。node_name 用图谱里的中文名。',
+      parameters: {
+        type: 'object',
+        properties: {
+          subject_id: { type: 'integer' },
+          subject_name: { type: 'string' },
+          node_name: { type: 'string', description: '图谱节点的章名或节名，例如「劳动需求」' },
+          node_id: { type: 'integer' },
+        },
+        required: ['node_name'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'open_knowledge_graph',
+      description: '展开右侧思维导图。用户说打开图谱、展开思维导图、看知识图谱、打开导图时必须调用。可指定科目，默认用当前学习状态。只要展开整张图，不要用这个聚焦单个节点。',
+      parameters: {
+        type: 'object',
+        properties: {
+          subject_id: { type: 'integer' },
+          subject_name: { type: 'string' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'evaluate_study_progress',
+      description: '把遗忘曲线评估交给后台。按 7 个复习点（刚学→1天→2天→4天→7天→15天→30天）更新叶子节点。再次讲解已学过的点是复习（阶段上移），不是打回刚学。讲解完、练完、用户说学过/忘了/复习过时调用。立刻返回，不要自己打分或改 mastery。',
+      parameters: {
+        type: 'object',
+        properties: {
+          subject_id: { type: 'integer' },
+          subject_name: { type: 'string' },
+          hint: { type: 'string', description: '这次真正讲到、练到或用户点名的节名（叶子中文名，可多个）。不要写章名，不要写「基础/入门」' },
         },
       },
     },
@@ -689,17 +899,22 @@ const SYSTEM_PROMPT = `你是题库与学习助手。可以讲解、出题、整
 3. 用户要求新建、重命名、移动、删除文件夹时，使用对应工具。默认文件夹（Id=0）不能重命名、移动或删除。不确定文件夹时先 list_folders。
 4. 用户要求把某几道题、某一类题挪到别的文件夹时，先 list_questions 或 search_questions 确认题目 Id，再 move_questions。不要把整个文件夹当题目移动；挪文件夹用 move_folder。一次不要超过 50 道。
 5. 删除文件夹必须用户说清楚要删，并且说明题目是一起删还是留着。
-6. 题目字段：question、options（写成 "A. xxx\\nB. xxx"）、answer、question_type（单选/多选/判断/填空）、importance/mastery/difficulty（0–3，或低/中/高、未掌握/一般/已掌握、简单/中等/困难）。
-7. 出选择题或判断题练习时，必须调用 present_quiz，题目会出现在右侧练习页供点选。不要把选项写成普通列表让用户在输入框回答。题库里的题只传 question_id；自己出的题带上题干、选项、答案和解析。
-8. 出题前用 list_questions 看掌握度和练习记录，优先出未掌握、掌握度为 /、或最近答错的题。需要细节时 get_practice_history。
-9. 用户要求改重要性、掌握度、难度时用 update_question_metrics。保存新题时可在 save_questions 里一并写入这些指标。
+6. 题目字段：question、options（写成 "A. xxx\\nB. xxx"）、answer、question_type（单选/多选/判断/填空）、importance/mastery/difficulty（0–3，或低/中/高、未掌握/一般/已掌握、简单/中等/困难）。能看出考点就写 knowledge_point / node_name，能看出章节就写 parent_name。
+7. 出选择题或判断题练习时，必须调用 present_quiz，题目会出现在右侧练习页供点选。不要把选项写成普通列表让用户在输入框回答。题库里的题只传 question_id；自己出的题带上题干、选项、答案、解析，以及 knowledge_point 或 node_name。挂着学习状态时，新出的题会自动关联知识点，没有对应节点就生成。
+8. 出题前用 list_questions 看掌握度、练习记录和已关联知识点，优先出未掌握、掌握度为 /、或最近答错的题。需要细节时 get_practice_history。按某节出题可先 list_knowledge_questions。
+9. 用户要求改重要性、掌握度、难度时用 update_question_metrics。保存新题时可在 save_questions 里一并写入这些指标和知识点。用户说整理题目、把题挂到某节时，调用 link_questions_to_knowledge。
 10. 用户要求记下易错点或复习提示时，用 add_practice_note。
 11. 不要编造用户没有给出或没有确认的题目。
-12. 同一工具、相同参数只调用一次。list_questions 已含练习摘要，不要再对每道题 get_practice_history，除非用户点名某一题。present_quiz 成功后立刻停止调用工具，只用一两句话收尾，不要再 list_questions 或再次 present_quiz。patch_knowledge_graph 例外：生成图谱时必须多次调用，每批 3–8 个不同节点，先写全章，再补节，直到大约 28–45 个目录节点。
+12. 同一工具、相同参数只调用一次。list_questions 已含练习摘要，不要再对每道题 get_practice_history，除非用户点名某一题。present_quiz 成功后立刻停止调用工具，只用一两句话收尾，不要再 list_questions 或再次 present_quiz。patch_knowledge_graph 例外：空图从零画时必须多次调用，每批 3–8 个不同节点，先写全章再补节；已有图谱只改用户点名的部分，不要为凑 28–45 个而继续加。
 13. 用户每做完一题就会发来该题的选择。立刻只讲评这一题：判断对错、解释原因、点出易错点。不要装作没看到，不要一次讲评整套题，也不要再出新题，除非用户要求继续。
 14. 操作完成后用一两句话说明结果。出题后提醒用户看右侧练习页。不要重复列出 present_quiz 已经出示的选项。
-15. 学习页的科目和知识图谱独立于题库文件夹。用户要画、改、生成知识图谱时，用 patch_knowledge_graph 分批添加节点，不要一次塞整张 mermaid，不要调用空的 set_knowledge_graph。图谱必须像教材目录，不要像散落考点云：先加 8–12 个章名，再给每章加 2–4 个节名（parent_key 用章的 key 或中文名）。到节为止，不要再拆定理、模型、公式、论文名。禁止学科基础、核心概念、方法与应用、基础知识、综合应用、概述、其他。整图推倒重来才用 set_knowledge_graph。不要先问用户确认。若工具返回 error，修正后再调用，不要声称已经生成。画完用一两句话提醒用户看学习页。
-16. 用户消息里如果带了 subject_id，必须使用这个科目，不要另建同名科目。`
+15. 学习页的科目和知识图谱独立于题库文件夹。改图前先 get_knowledge_graph。已有节点时按用户这句话做事：说补、加、改名、删某一章/节就 patch；说重画、推倒重来、全部重做才 set_knowledge_graph（必须 replace=true）。没说重画就不要清空。空图才从零分批画：先加 8–12 个章名，再给每章加 2–4 个节名。到节为止，不要拆定理、模型、公式、论文名。禁止学科基础、核心概念、方法与应用、基础知识、综合应用、概述、其他。不要先问用户确认。若工具返回 error，修正后再调用。画完用一两句话说明改了什么。
+16. 用户消息里如果带了 subject_id，或消息前有【学习状态】，必须使用这个科目，不要另建同名科目。对话挂着学习状态时，默认按该科目的进度讲解、出题或改图谱；用户撤下前不要换科目。
+17. 用户说想学某科、开始学某科、或点名某科目时：先 list_subjects。有同名就 attach_study_subject；没有就 create_subject，再 attach_study_subject。挂上后右上角会显示「正在学习」。用户说撤下、不学了或取消学习状态时，调用 detach_study_subject。
+18. 讲解或点名图谱里的某一章、某一节时，调用 focus_knowledge_graph，右侧图谱会聚焦到该节点。用户说「看某某」「讲这一章」「聚焦某某」时必须调用。node_name 用 get_knowledge_graph 里的中文名。不要在分批画图时对每个新节点都 focus。
+19. 用户说打开/展开思维导图、看知识图谱时，调用 open_knowledge_graph。用户问有哪些学习科目时调用 list_subjects。用户说查看某一科、打开某一科时调用 get_subject。用户说新建科目时调用 create_subject。这些操作会在右侧展开对应界面，不要只口头描述。
+20. 挂着学习状态时，在这些时机调用 evaluate_study_progress：已经讲完或讲评完之后、用户说以前学过/忘了/复习过某块、用户问进度。hint 只写这次真正讲到、练到或用户点名的节名（叶子），不要写章名，不要写「基础/入门」。图谱进度是 7 段遗忘曲线，不是题目那种掌握度 0–3。再次讲解已学过的节是复习。不要用 patch_knowledge_graph 改 mastery，不要自己口头打分。画图谱、只列出目录、只 focus 某一章、动笔讲解之前、只闲聊、或刚评估过同一批内容时不要调用。
+21. 导入或保存题目时尽量带上 knowledge_point / parent_name。对应不上现有节点就自动生成，不要为此先问用户。用户要把几门课合成一门时用 merge_subjects；要把某几章拆成新科目时用 split_subject。拆分前先 get_knowledge_graph 拿到 node_id 或准确章名。`
 
 const unescapeJsonString = (value: string) => {
   try {
@@ -794,12 +1009,25 @@ const pickSubjectRef = (args: Record<string, unknown> | any) => {
   }
 }
 
-const WRITE_GRAPH_HINT = '请立刻调用 patch_knowledge_graph，用 add 传入 3–8 个节点。第一批只写章名；之后给章补节，parent_key 填章的中文名。不要传空参数，不要一次塞整张 mermaid，不要加定理或论文名叶子。'
+const openStudyGraphPane = (subjectId: number, nodeName?: string) => {
+  if (!Number.isFinite(subjectId) || subjectId <= 0) return
+  window.dispatchEvent(new CustomEvent('open-study-graph', {
+    detail: {
+      subjectId,
+      expand: true,
+      ...(String(nodeName || '').trim() ? { nodeName: String(nodeName).trim() } : {}),
+    },
+  }))
+}
 
-const GRAPH_QUALITY = `用 patch_knowledge_graph 分批画图，不要一次写整张 mermaid。图谱必须像教材目录，不要像散落考点云。
+const WRITE_GRAPH_HINT = '图谱是空的，请调用 patch_knowledge_graph，用 add 传入 3–8 个节点。第一批只写章名；之后给章补节，parent_key 填章的中文名。不要传空参数，不要一次塞整张 mermaid，不要加定理或论文名叶子。'
+
+const KEEP_GRAPH_HINT = '已有图谱。先看现有节点再 patch 增删改，不要 set_knowledge_graph，不要清空重画。只有用户明确说重画、推倒重来、全部重做时才整图替换。'
+
+const GRAPH_QUALITY = `用 patch_knowledge_graph 分批改图，不要一次写整张 mermaid。图谱必须像教材目录，不要像散落考点云。
 - 三层：科目 → 章（8–12 个章名）→ 节（每章 2–4 个节名）。到节为止
-- 第一批只加章；之后每批给 1–2 章补节，parent_key 填章名
-- 每批 3–8 个，连续调用到大约 28–45 个
+- 已有图谱时：先 get_knowledge_graph，只补缺的章/节或按用户点名增删改，保留已有节点和遗忘进度
+- 空图才从零画：第一批只加章；之后每批给 1–2 章补节，parent_key 填章名；每批 3–8 个，大约 28–45 个
 - 节点名用教材目录口吻，例如「劳动需求」「短期劳动需求」「人力资本」
 - 禁止空泛桶：学科基础、核心概念、方法与应用、基础知识、综合应用、概述、其他
 - 禁止把定理、模型、公式、论文平铺成叶子，例如不要单独列出「保留工资定理」「明瑟方程」「Oaxaca-Blinder」「Card-Krueger」`
@@ -864,6 +1092,20 @@ const describeFolders = (items?: AgentChatAttachment[]) => {
     return `- ${path}（folder_id=${item.folderId}）`
   })
   return `\n\n指定文件夹：\n${lines.join('\n')}`
+}
+
+const studyStatePrefix = async (sessionId: string) => {
+  const id = Number(sessions.value.find((item) => item.id === sessionId)?.studySubjectId)
+  if (!Number.isFinite(id) || id <= 0) return ''
+  try {
+    const subjects = await databaseService.listStudySubjects()
+    const subject = subjects.find((item) => item.id === id)
+    if (!subject) return ''
+    const pct = Math.round((Number(subject.progress) || 0) * 100)
+    return `【学习状态】当前对话挂着科目「${subject.name}」（subject_id=${subject.id}）。掌握进度 ${pct}%，约 ${subject.node_count || 0} 个知识点。讲解、出题、改图谱时默认用这个科目，不要另建同名科目。\n\n`
+  } catch {
+    return ''
+  }
 }
 
 const modelUserContent = (text: string, items?: AgentChatAttachment[]) => {
@@ -1109,10 +1351,86 @@ const describeActivity = (name: string, args: any, status: ImportTaskStep['statu
             : `出示了 ${count} 道可点选练习`,
     }
   }
+  if (name === 'link_questions_to_knowledge') {
+    const count = extra?.linked ?? (Array.isArray(args?.question_ids) ? args.question_ids.length : args?.question_id ? 1 : 0)
+    return {
+      target: count ? `${count} 道题目` : '题目',
+      label:
+        status === 'running'
+          ? '正在关联知识点'
+          : status === 'failed'
+            ? '关联知识点失败'
+            : `关联了 ${count || 0} 道题目的知识点`,
+    }
+  }
+  if (name === 'list_knowledge_questions') {
+    const title = extra?.node_name || args?.node_name || '知识点'
+    return {
+      target: title,
+      label:
+        status === 'running'
+          ? `正在查看「${title}」的题目`
+          : status === 'failed'
+            ? '查看知识点题目失败'
+            : `查看了「${title}」的相关题目`,
+    }
+  }
+  if (name === 'merge_subjects') {
+    return {
+      target: extra?.name || args?.target_name || '科目',
+      label:
+        status === 'running'
+          ? '正在合并科目'
+          : status === 'failed'
+            ? '合并科目失败'
+            : extra?.message || '合并了学习科目',
+    }
+  }
+  if (name === 'split_subject') {
+    return {
+      target: extra?.name || args?.name || '科目',
+      label:
+        status === 'running'
+          ? '正在拆分科目'
+          : status === 'failed'
+            ? '拆分科目失败'
+            : extra?.message || '拆分了学习科目',
+    }
+  }
   if (name === 'list_subjects') {
     return {
       target: '学习科目',
       label: status === 'running' ? '正在查看科目' : status === 'failed' ? '查看科目失败' : '查看了学习科目',
+    }
+  }
+  if (name === 'get_subject') {
+    const title = extra?.name || args?.subject_name || '科目'
+    return {
+      target: title,
+      label: status === 'running' ? `正在查看「${title}」` : status === 'failed' ? `查看「${title}」失败` : `查看了「${title}」`,
+    }
+  }
+  if (name === 'open_knowledge_graph') {
+    const title = extra?.name || args?.subject_name || '思维导图'
+    return {
+      target: title,
+      label: status === 'running' ? '正在展开思维导图' : status === 'failed' ? '展开思维导图失败' : `展开了「${title}」的思维导图`,
+    }
+  }
+  if (name === 'evaluate_study_progress') {
+    const title = extra?.name || args?.subject_name || '掌握度'
+    const count = extra?.updated
+    return {
+      target: title,
+      label: status === 'running'
+        ? '正在评估掌握度'
+        : status === 'failed'
+          ? '评估掌握度失败'
+          : extra?.started && count == null
+            ? '已交给评估助手'
+            : count
+              ? `按遗忘曲线更新了 ${count} 个知识点`
+              : extra?.message || '完成了掌握度评估',
     }
   }
   if (name === 'create_subject') {
@@ -1131,6 +1449,19 @@ const describeActivity = (name: string, args: any, status: ImportTaskStep['statu
     return {
       target: args?.subject_name || '科目',
       label: status === 'running' ? '正在删除科目' : status === 'failed' ? '删除科目失败' : '删除了学习科目',
+    }
+  }
+  if (name === 'attach_study_subject') {
+    const title = extra?.name || args?.subject_name || '科目'
+    return {
+      target: title,
+      label: status === 'running' ? '正在挂上学习状态' : status === 'failed' ? '挂上学习状态失败' : `挂上了「${title}」`,
+    }
+  }
+  if (name === 'detach_study_subject') {
+    return {
+      target: extra?.name || '学习状态',
+      label: status === 'running' ? '正在撤下学习状态' : status === 'failed' ? '撤下学习状态失败' : '撤下了学习状态',
     }
   }
   if (name === 'get_knowledge_graph') {
@@ -1171,6 +1502,18 @@ const describeActivity = (name: string, args: any, status: ImportTaskStep['statu
             : count
               ? `添加了 ${count} 个知识点`
               : '更新了知识图谱',
+    }
+  }
+  if (name === 'focus_knowledge_graph') {
+    const title = extra?.node?.name || args?.node_name || '节点'
+    return {
+      target: extra?.subject?.name || args?.subject_name || '知识图谱',
+      label:
+        status === 'running'
+          ? `正在聚焦「${title}」`
+          : status === 'failed'
+            ? `聚焦「${title}」失败`
+            : `聚焦了「${title}」`,
     }
   }
   return { target: name, label: name || '未知动作' }
@@ -1268,10 +1611,23 @@ const summarizeQuestion = (item: {
 
 const withPractice = async <T extends { id: number }>(items: T[]) => {
   const summaries = await databaseService.getPracticeSummaries(items.map((item) => item.id))
+  const links = await databaseService.listQuestionKnowledge(items.map((item) => item.id)).catch(() => [])
   const map = new Map(summaries.map((item) => [item.question_id, item]))
+  const byQuestion = new Map<number, { node_id: number; node_name: string; subject_id: number; subject_name: string }[]>()
+  for (const item of links) {
+    const list = byQuestion.get(item.question_id) || []
+    list.push({
+      node_id: item.node_id,
+      node_name: item.node_name,
+      subject_id: item.subject_id,
+      subject_name: item.subject_name,
+    })
+    byQuestion.set(item.question_id, list)
+  }
   return items.map((item) => ({
     ...summarizeQuestion(item as any),
     practice: map.get(item.id) || { count: 0 },
+    knowledge: byQuestion.get(item.id) || [],
   }))
 }
 
@@ -1418,10 +1774,10 @@ const resolveQuizCards = async (raw: unknown): Promise<QuizCard[]> => {
   return cards.slice(0, 10)
 }
 
-const saveQuestions = async (items: ExtractedQuestion[], folderId: number) => {
-  let saved = 0
+const saveQuestions = async (items: ExtractedQuestion[], folderId: number, subjectId?: number) => {
+  const created: { id: number; item: ExtractedQuestion }[] = []
   for (const item of items) {
-    await databaseService.addQuestion({
+    const question = await databaseService.addQuestion({
       content: item.question,
       options: item.options || '',
       answer: item.answer,
@@ -1432,12 +1788,33 @@ const saveQuestions = async (items: ExtractedQuestion[], folderId: number) => {
       mastery: item.mastery,
       difficulty: item.difficulty,
     })
-    saved += 1
+    created.push({ id: question.id, item })
   }
-  if (saved) {
+  const association = created.length
+    ? await associateQuestionsToKnowledge(
+      created.map(({ id, item }) => ({
+        questionId: id,
+        question: item.question,
+        knowledge_point: item.knowledge_point,
+        node_name: item.node_name,
+        node_id: item.node_id,
+        parent_name: item.parent_name,
+        subject_id: item.subject_id,
+      })),
+      { subjectId, createMissing: true },
+    )
+    : { linked: 0, created: 0, skipped: created.length, links: [] }
+  if (created.length) {
     window.dispatchEvent(new CustomEvent('questions-imported', { detail: { folderId } }))
+    if (association.created || association.linked) {
+      window.dispatchEvent(new CustomEvent('study-graph-updated', { detail: { subjectId } }))
+    }
   }
-  return saved
+  return {
+    saved: created.length,
+    questionIds: created.map((item) => item.id),
+    association,
+  }
 }
 
 export const composerAttachments = ref<AgentChatAttachment[]>([])
@@ -1494,13 +1871,46 @@ export const selectChat = (id: string) => {
   activeId.value = id
 }
 
-export const createChat = (init?: Partial<Pick<AgentChatSession, 'title' | 'attachments'>>) => {
+const matchSubjectInText = <T extends { id: number; name: string }>(text: string, subjects: T[]) => {
+  const raw = String(text || '')
+  const ranked = subjects
+    .filter((item) => item.name && item.name.length >= 2 && raw.includes(item.name))
+    .sort((a, b) => b.name.length - a.name.length)
+  return ranked[0] || null
+}
+
+const attachStudyFromUserText = async (sessionId: string, text: string) => {
+  if (sessions.value.find((item) => item.id === sessionId)?.studySubjectId) return
+  try {
+    const hit = matchSubjectInText(text, await databaseService.listStudySubjects())
+    if (hit) setChatStudySubject(hit.id, sessionId)
+  } catch {
+    // ignore
+  }
+}
+
+export const setChatStudySubject = (subjectId?: number | null, sessionId?: string) => {
+  const id = sessionId || activeId.value
+  const nextId = Number(subjectId) > 0 ? Number(subjectId) : undefined
+  if (!id) {
+    createChat({ studySubjectId: nextId })
+    return
+  }
+  patchSession(id, (session) => ({
+    ...session,
+    studySubjectId: nextId,
+    updatedAt: Date.now(),
+  }))
+}
+
+export const createChat = (init?: Partial<Pick<AgentChatSession, 'title' | 'attachments' | 'studySubjectId'>>) => {
   composerAttachments.value = []
   const session: AgentChatSession = {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     title: init?.title || '新对话',
     messages: [],
     attachments: init?.attachments,
+    studySubjectId: Number(init?.studySubjectId) > 0 ? Number(init?.studySubjectId) : undefined,
     createdAt: Date.now(),
     updatedAt: Date.now(),
   }
@@ -1581,34 +1991,56 @@ export const startFolderOrganizeChat = async (input: {
   )
 }
 
-export const startStudyGraphChat = async (input?: { subjectId?: number; subjectName?: string }) => {
+export const startStudyGraphChat = async (input?: {
+  subjectId?: number
+  subjectName?: string
+  rebuild?: boolean
+}) => {
   const name = String(input?.subjectName || '').trim()
   const id = Number(input?.subjectId)
+  const rebuild = Boolean(input?.rebuild)
   window.dispatchEvent(new CustomEvent('navigate-tab', { detail: 'agent' }))
   if (Number.isFinite(id) && id > 0) {
+    const existing = await databaseService.getStudyGraph(id).catch(() => null)
+    const nodes = existing?.nodes || []
     emitStudyGraphStream({
       subjectId: id,
       mermaid: `flowchart TB\nsubject["${name || '知识图谱'}"]`,
       streaming: true,
     })
-    try {
-      await databaseService.setStudyGraph(id, [])
-      window.dispatchEvent(new CustomEvent('study-graph-updated', { detail: { subjectId: id } }))
-    } catch {
-      // 旧图清不掉也继续画，避免挡住生成
+    createChat({ title: `知识图谱 ${name || id}`, studySubjectId: id })
+    if (rebuild && nodes.length) {
+      try {
+        await databaseService.setStudyGraph(id, [])
+        window.dispatchEvent(new CustomEvent('study-graph-updated', { detail: { subjectId: id } }))
+      } catch {
+        // 清不掉也继续，按重画提示生成
+      }
     }
-    createChat({ title: `知识图谱 ${name || id}` })
-    await sendChatMessage(
-      `请为学习科目「${name || '未命名'}」（subject_id=${id}）绘制知识图谱。${GRAPH_QUALITY}
+    if (!nodes.length || rebuild) {
+      await sendChatMessage(
+        `请为学习科目「${name || '未命名'}」（subject_id=${id}）从零绘制知识图谱。${GRAPH_QUALITY}
 ${graphSubjectHint(name)}
-用 patch_knowledge_graph，subject_id=${id}，add 里每次放 3–8 个节点。先写章，再给每章补节（parent_key 填章名）。不要调用空的 set_knowledge_graph，不要问确认，不要铺定理或论文名。画完用一两句话说明。`,
+用 patch_knowledge_graph，subject_id=${id}，add 里每次放 3–8 个节点。先写章，再给章补节。不要调用空的 set_knowledge_graph，不要问确认。画完用一两句话说明。`,
+      )
+      return
+    }
+    const chapters = nodes.filter((item) => !item.parent_id).map((item) => item.name).slice(0, 16).join('、')
+    await sendChatMessage(
+      `科目「${name || '未命名'}」（subject_id=${id}）已经有 ${nodes.length} 个节点。先 get_knowledge_graph。
+${KEEP_GRAPH_HINT}
+已有章：${chapters || '（见工具返回）'}
+用户点了绘制：只补缺的章/节，或按这句话里的具体要求增删改。不要重画整张图，不要 set_knowledge_graph。
+${graphSubjectHint(name)}
+用 patch_knowledge_graph。做完用一两句话说明补了什么。`,
     )
     return
   }
   createChat({ title: '知识图谱' })
   await sendChatMessage(
-    `请帮我在学习页建立知识图谱。先 list_subjects，没有合适科目就 create_subject。${GRAPH_QUALITY}
-用 patch_knowledge_graph 分批 add 节点。不要询问是否同意结构，不要说无法写入。`,
+    `请帮我在学习页处理知识图谱。先 list_subjects；有合适科目就 get_knowledge_graph。
+已有图谱就按用户要求 patch，不要重画。没有科目或图谱为空再 create_subject 并从零画。
+${GRAPH_QUALITY}`,
   )
 }
 
@@ -1715,6 +2147,28 @@ export const recordQuizAttempt = (sessionId: string, messageId: string, attempt:
   }))
 }
 
+const isGraphCatalogMessage = (item: AgentChatMessage) => {
+  if (item.role !== 'assistant') return false
+  const drew = (item.steps || []).some((step) =>
+    ['patch_knowledge_graph', 'set_knowledge_graph', 'create_subject'].includes(step.name),
+  )
+  const text = String(item.content || '')
+  return drew && /知识图谱|共\s*\d+\s*章|覆盖从/.test(text)
+}
+
+const collectRecentTurns = (sessionId: string, limit = 8) => {
+  const messages = sessions.value.find((item) => item.id === sessionId)?.messages || []
+  const usable = messages.filter((item) => String(item.content || '').trim() && !isGraphCatalogMessage(item))
+  return usable
+    .slice(-limit)
+    .map((item, index, items) => {
+      const latestTeach = index === items.length - 1 && item.role === 'assistant'
+      const max = latestTeach ? 1800 : 500
+      return `${item.role === 'user' ? '用户' : '助手'}：${String(item.content).slice(0, max)}`
+    })
+    .join('\n')
+}
+
 export const sendChatMessage = async (text: string, files?: AgentChatAttachment[]) => {
   const content = text.trim()
   if (!content) return
@@ -1723,6 +2177,7 @@ export const sendChatMessage = async (text: string, files?: AgentChatAttachment[
   if (!session) session = createChat()
   const sessionId = session.id
   if (sessionIsStreaming(sessions.value.find((item) => item.id === sessionId))) return
+  await attachStudyFromUserText(sessionId, content)
 
   const abort = new AbortController()
   chatAborts.set(sessionId, abort)
@@ -1790,14 +2245,24 @@ export const sendChatMessage = async (text: string, files?: AgentChatAttachment[
     }
     return folders
   })()
-  const modelPrompt = modelUserContent(content, promptFolders)
+  const studyPrefix = await studyStatePrefix(sessionId)
+  const modelPrompt = `${studyPrefix}${modelUserContent(content, promptFolders)}`
   const images = (attachments || []).filter((item) => isImageAttachment(item) && item.imageUrl)
   const userContent = images.length
-    ? toMultimodalUserContent(content, [...images, ...promptFolders])
+    ? [
+        ...images.map((item) => ({
+          type: 'image_url' as const,
+          image_url: { url: item.imageUrl, detail: 'high' as const },
+        })),
+        { type: 'text' as const, text: modelPrompt },
+      ]
     : undefined
 
   let drawingGraph = false
-  const streamSubjectId = Number(String(content).match(/subject_id\s*=\s*(\d+)/)?.[1])
+  const streamSubjectId = Number(
+    String(content).match(/subject_id\s*=\s*(\d+)/)?.[1]
+    || sessions.value.find((item) => item.id === sessionId)?.studySubjectId,
+  )
 
   try {
     const liveMessage = () =>
@@ -2104,12 +2569,29 @@ export const sendChatMessage = async (text: string, files?: AgentChatAttachment[
             || (attachedFolder?.folderId != null ? await resolveFolder(attachedFolder.folderId) : null)
             || (attachment?.folderId != null ? await resolveFolder(attachment.folderId) : null)
             || (await resolveFolder(0))
-          const saved = await saveQuestions(questions, folder?.id ?? 0)
+          const attachedSubject = Number(sessions.value.find((item) => item.id === sessionId)?.studySubjectId)
+          const result = await saveQuestions(
+            questions,
+            folder?.id ?? 0,
+            attachedSubject > 0 ? attachedSubject : undefined,
+          )
+          const linked = result.association.linked
           return JSON.stringify({
-            saved,
+            saved: result.saved,
+            questionIds: result.questionIds,
             folderId: folder?.id ?? 0,
             folderName: folder?.name || '默认',
-            message: `已写入 ${saved} 道题目到「${folder?.name || '默认'}」`,
+            linked,
+            created_nodes: result.association.created,
+            knowledge: result.association.links.slice(0, 20).map((item) => ({
+              question_id: item.question_id,
+              node_id: item.node_id,
+              node_name: item.node_name,
+              subject_id: item.subject_id,
+            })),
+            message: linked
+              ? `已写入 ${result.saved} 道题目到「${folder?.name || '默认'}」，并关联了 ${linked} 个知识点`
+              : `已写入 ${result.saved} 道题目到「${folder?.name || '默认'}」`,
           })
         }
 
@@ -2186,6 +2668,45 @@ export const sendChatMessage = async (text: string, files?: AgentChatAttachment[
           if (!cards.length) {
             return JSON.stringify({ error: '没有可出示的题目。请先 list_questions，或传入 question_ids。' })
           }
+          const attachedSubject = Number(sessions.value.find((item) => item.id === sessionId)?.studySubjectId)
+          const subjectId = attachedSubject > 0 ? attachedSubject : undefined
+          const folder = args.folder_id != null ? await resolveFolder(args.folder_id, args.folder_name) : null
+          const existingHints = []
+          for (let index = 0; index < cards.length; index += 1) {
+            const card = cards[index]
+            if (card.question_id) {
+              if (card.node_id || card.node_name || card.knowledge_point || card.parent_name) {
+                existingHints.push({
+                  questionId: card.question_id,
+                  question: card.question,
+                  knowledge_point: card.knowledge_point,
+                  node_name: card.node_name,
+                  node_id: card.node_id,
+                  parent_name: card.parent_name,
+                  subject_id: card.subject_id,
+                })
+              }
+              continue
+            }
+            if (!card.question || !card.answer) continue
+            if (!(card.node_id || card.node_name || card.knowledge_point || subjectId)) continue
+            const saved = await saveQuestions([{
+              question: card.question,
+              options: card.options,
+              answer: card.answer,
+              question_type: card.question_type,
+              knowledge_point: card.knowledge_point,
+              node_name: card.node_name,
+              node_id: card.node_id,
+              parent_name: card.parent_name,
+              subject_id: card.subject_id,
+            }], folder?.id ?? 0, subjectId)
+            const id = saved.questionIds[0]
+            if (id) cards[index] = { ...card, uid: `q-${id}`, question_id: id }
+          }
+          if (existingHints.length) {
+            await associateQuestionsToKnowledge(existingHints, { subjectId, createMissing: true })
+          }
           saveQuizCards(call.id, cards)
           return JSON.stringify({
             presented: cards.length,
@@ -2196,6 +2717,7 @@ export const sendChatMessage = async (text: string, files?: AgentChatAttachment[
               importance: card.importance,
               mastery: card.mastery,
               difficulty: card.difficulty,
+              knowledge_point: card.node_name || card.knowledge_point,
             })),
             message: `已出示 ${cards.length} 道可点选练习。现在直接用一两句话收尾，不要再调用任何工具，也不要再列出选项。`,
           })
@@ -2243,18 +2765,32 @@ export const sendChatMessage = async (text: string, files?: AgentChatAttachment[
             progress: Math.round((item.progress || 0) * 100),
           }))
 
-        const summarizeGraph = (payload: Awaited<ReturnType<typeof databaseService.getStudyGraph>>) => ({
-          subject: payload.subject,
-          node_count: payload.nodes.length,
-          nodes: payload.nodes.map((item) => ({
-            id: item.id,
-            key: item.node_key,
-            name: item.name,
-            summary: String(item.summary || '').slice(0, 80),
-            mastery: item.mastery,
-            parent_id: item.parent_id || null,
-          })),
-        })
+        const summarizeGraph = (payload: Awaited<ReturnType<typeof databaseService.getStudyGraph>>) => {
+          const parentIds = new Set(
+            payload.nodes.map((item) => item.parent_id).filter((id): id is number => id != null),
+          )
+          return {
+            subject: payload.subject,
+            node_count: payload.nodes.length,
+            note: 'forgetting_stage 是 0–6 复习点。父节点熟练度由子节点汇总。',
+            nodes: payload.nodes.map((item) => {
+              const stage = clampForgettingStage(item.forgetting_stage)
+              const retention = retentionScore(item)
+              return {
+                id: item.id,
+                key: item.node_key,
+                name: item.name,
+                summary: String(item.summary || '').slice(0, 80),
+                forgetting_stage: stage,
+                stage_label: forgettingStageLabel(stage),
+                retention: retention == null ? null : Math.round(retention * 100),
+                last_reviewed_at: item.last_reviewed_at || null,
+                parent_id: item.parent_id || null,
+                leaf: !parentIds.has(item.id),
+              }
+            }),
+          }
+        }
 
         const SCATTERED_LEAF = /定理|方程|分解|Card-?Krueger|Oaxaca|Blinder|CES|生产函数|明瑟|保留工资|弹性系数/
         const graphBuildMessage = (
@@ -2275,10 +2811,20 @@ export const sendChatMessage = async (text: string, files?: AgentChatAttachment[
             const names = bareChapters.slice(0, 6).map((item) => item.name).join('、')
             return `已添加 ${added} 个，当前共 ${nodes.length} 个。这些章还没有节：${names}。请继续给它们各加 2–4 个节名，不要加定理或论文名。`
           }
-          if (nodes.length < 28) {
-            return `已添加 ${added} 个，当前共 ${nodes.length} 个。目录还不够完整，请继续给尚未展开的章补 2–4 个节。`
+          if (nodes.length < 28 && added >= 3) {
+            return `已添加 ${added} 个，当前共 ${nodes.length} 个。若用户是从零画图，继续给尚未展开的章补 2–4 个节；若只是补某几处，现在可以停。`
           }
-          return `已添加 ${added} 个，当前共 ${nodes.length} 个。目录已成形，不要再拆定理或公式叶子。用一两句话收尾并提醒用户看学习页。`
+          return `已添加 ${added} 个，当前共 ${nodes.length} 个。不要整图重画。用一两句话说明改了什么。`
+        }
+
+        const resolveSubjectFromArgs = async (raw: Record<string, unknown> | any, fallbackAttached = true) => {
+          const ref = pickSubjectRef(raw)
+          let subject = await resolveSubject(ref.id, ref.name, true)
+          if (!subject && fallbackAttached) {
+            const attached = Number(sessions.value.find((item) => item.id === sessionId)?.studySubjectId)
+            if (attached > 0) subject = await resolveSubject(attached)
+          }
+          return subject
         }
 
         if (call.name === 'list_subjects') {
@@ -2286,6 +2832,57 @@ export const sendChatMessage = async (text: string, files?: AgentChatAttachment[
           return JSON.stringify({
             count: subjects.length,
             subjects: summarizeSubjects(subjects),
+            message: subjects.length
+              ? '查看某一科请用 get_subject，展开思维导图请用 open_knowledge_graph。'
+              : '还没有学习科目。请先 create_subject。',
+          })
+        }
+
+        if (call.name === 'get_subject') {
+          const subject = await resolveSubjectFromArgs(args)
+          if (!subject) {
+            const subjects = await databaseService.listStudySubjects()
+            return JSON.stringify({
+              error: '找不到该科目',
+              subjects: summarizeSubjects(subjects),
+              message: subjects.length ? '请用上面的 subject_id 再调用 get_subject。' : '还没有科目，请先 create_subject。',
+            })
+          }
+          const payload = await databaseService.getStudyGraph(subject.id)
+          openStudyGraphPane(subject.id)
+          return JSON.stringify({
+            ...summarizeSubjects([subject])[0],
+            description: subject.description,
+            node_count: payload.nodes.length,
+            chapters: payload.nodes
+              .filter((item) => !item.parent_id)
+              .map((item) => item.name)
+              .slice(0, 16),
+            message: payload.nodes.length
+              ? `已打开「${subject.name}」的思维导图。`
+              : `已打开「${subject.name}」，图谱还是空的。${WRITE_GRAPH_HINT}`,
+          })
+        }
+
+        if (call.name === 'open_knowledge_graph') {
+          const subject = await resolveSubjectFromArgs(args)
+          if (!subject) {
+            const subjects = await databaseService.listStudySubjects()
+            return JSON.stringify({
+              error: '找不到要展开的科目',
+              subjects: summarizeSubjects(subjects),
+              message: subjects.length ? '请指定 subject_id，或先挂上学习状态。' : '还没有科目，请先 create_subject。',
+            })
+          }
+          const payload = await databaseService.getStudyGraph(subject.id)
+          openStudyGraphPane(subject.id)
+          return JSON.stringify({
+            opened: true,
+            subject: summarizeSubjects([subject])[0],
+            node_count: payload.nodes.length,
+            message: payload.nodes.length
+              ? `已展开「${subject.name}」的思维导图。`
+              : `已展开「${subject.name}」，图谱还是空的。${WRITE_GRAPH_HINT}`,
           })
         }
 
@@ -2294,9 +2891,41 @@ export const sendChatMessage = async (text: string, files?: AgentChatAttachment[
           if (!name) return JSON.stringify({ error: '科目名称不能为空' })
           const subject = await databaseService.createStudySubject(name, String(args.description || ''))
           notifyStudyGraph(subject.id)
+          if (!sessions.value.find((item) => item.id === sessionId)?.studySubjectId) {
+            setChatStudySubject(subject.id, sessionId)
+          }
+          openStudyGraphPane(subject.id)
           return JSON.stringify({
             ...subject,
-            message: `已创建科目「${subject.name}」，subject_id=${subject.id}。${WRITE_GRAPH_HINT}`,
+            attached: Boolean(sessions.value.find((item) => item.id === sessionId)?.studySubjectId === subject.id),
+            message: `已创建科目「${subject.name}」，subject_id=${subject.id}，并展开了思维导图。${WRITE_GRAPH_HINT}`,
+          })
+        }
+
+        if (call.name === 'attach_study_subject') {
+          const ref = pickSubjectRef(args)
+          const subject = await resolveSubject(ref.id, ref.name, true)
+          if (!subject) return JSON.stringify({ error: '找不到该科目，请先 list_subjects 或 create_subject' })
+          setChatStudySubject(subject.id, sessionId)
+          return JSON.stringify({
+            attached: true,
+            id: subject.id,
+            name: subject.name,
+            progress: Math.round((subject.progress || 0) * 100),
+            node_count: subject.node_count,
+            message: `已把「${subject.name}」挂到当前对话，右上角会显示正在学习。`,
+          })
+        }
+
+        if (call.name === 'detach_study_subject') {
+          const currentId = sessions.value.find((item) => item.id === sessionId)?.studySubjectId
+          const subjects = currentId ? await databaseService.listStudySubjects().catch(() => []) : []
+          const current = subjects.find((item) => item.id === currentId)
+          setChatStudySubject(null, sessionId)
+          return JSON.stringify({
+            attached: false,
+            name: current?.name,
+            message: current ? `已撤下「${current.name}」的学习状态。` : '当前对话没有学习状态。',
           })
         }
 
@@ -2339,7 +2968,9 @@ export const sendChatMessage = async (text: string, files?: AgentChatAttachment[
             const payload = await databaseService.getStudyGraph(subject.id)
             return JSON.stringify({
               ...summarizeGraph(payload),
-              ...(payload.nodes.length ? {} : { message: `图谱为空。${WRITE_GRAPH_HINT}` }),
+              message: payload.nodes.length
+                ? KEEP_GRAPH_HINT
+                : `图谱为空。${WRITE_GRAPH_HINT}`,
             })
           } catch (error) {
             const subjects = await databaseService.listStudySubjects().catch(() => [])
@@ -2372,6 +3003,12 @@ export const sendChatMessage = async (text: string, files?: AgentChatAttachment[
               return JSON.stringify({ error: `没有解析到知识点。${WRITE_GRAPH_HINT}` })
             }
             const existing = await databaseService.getStudyGraph(subject.id)
+            const replace = args.replace === true || args.replace === 'true'
+            if (existing.nodes.length && !replace) {
+              return JSON.stringify({
+                error: `「${subject.name}」已有 ${existing.nodes.length} 个节点。${KEEP_GRAPH_HINT}`,
+              })
+            }
             if (existing.nodes.length >= 8 && nodes.length < Math.min(8, Math.ceil(existing.nodes.length / 3))) {
               return JSON.stringify({
                 error: `这次只解析到 ${nodes.length} 个节点，少于已有图谱，没有覆盖。请改用 patch_knowledge_graph 分批添加。`,
@@ -2394,6 +3031,62 @@ export const sendChatMessage = async (text: string, files?: AgentChatAttachment[
           }
         }
 
+        if (call.name === 'focus_knowledge_graph') {
+          const nodeName = String(args.node_name ?? args.name ?? args.node ?? '').trim()
+          const nodeId = Number(args.node_id ?? args.id)
+          if (!nodeName && !(Number.isFinite(nodeId) && nodeId > 0)) {
+            return JSON.stringify({ error: '请提供 node_name，用图谱里的章名或节名' })
+          }
+          const subjectId = Number(args.subject_id ?? args.subjectId)
+          const subjectName = String(args.subject_name ?? args.subjectName ?? '').trim()
+          let subject = await resolveSubject(
+            Number.isFinite(subjectId) && subjectId > 0 ? subjectId : undefined,
+            subjectName || undefined,
+            true,
+          )
+          if (!subject) {
+            const attached = Number(sessions.value.find((item) => item.id === sessionId)?.studySubjectId)
+            if (attached > 0) subject = await resolveSubject(attached)
+          }
+          if (!subject) return JSON.stringify({ error: '找不到科目，请先 list_subjects 或挂上学习状态' })
+          const payload = await databaseService.getStudyGraph(subject.id)
+          if (!payload.nodes.length) {
+            return JSON.stringify({ error: '这个科目还没有图谱', subject: payload.subject })
+          }
+          const byId = Number.isFinite(nodeId) && nodeId > 0
+            ? payload.nodes.find((item) => item.id === nodeId)
+            : null
+          const exact = byId || payload.nodes.find((item) => item.name === nodeName || item.node_key === nodeName)
+          const fuzzy = exact || payload.nodes.filter((item) =>
+            item.name.includes(nodeName) || nodeName.includes(item.name),
+          )
+          const matched = Array.isArray(fuzzy)
+            ? (fuzzy.find((item) => item.name.startsWith(nodeName)) || (fuzzy.length === 1 ? fuzzy[0] : null))
+            : fuzzy
+          if (!matched) {
+            const candidates = Array.isArray(fuzzy) && fuzzy.length
+              ? fuzzy.map((item) => item.name).slice(0, 8)
+              : payload.nodes.map((item) => item.name).slice(0, 20)
+            return JSON.stringify({
+              error: `图谱里没有「${nodeName || nodeId}」`,
+              candidates,
+            })
+          }
+          openStudyGraphPane(subject.id, matched.name)
+          return JSON.stringify({
+            focused: true,
+            subject: { id: subject.id, name: subject.name },
+            node: {
+              id: matched.id,
+              key: matched.node_key,
+              name: matched.name,
+              summary: String(matched.summary || '').slice(0, 120),
+              mastery: matched.mastery,
+            },
+            message: `已在图谱中聚焦「${matched.name}」`,
+          })
+        }
+
         if (call.name === 'patch_knowledge_graph') {
           const ref = pickSubjectRef(args)
           const subject = await resolveSubject(ref.id, ref.name, true)
@@ -2413,6 +3106,189 @@ export const sendChatMessage = async (text: string, files?: AgentChatAttachment[
             ...summarizeGraph(payload),
             added: add.length,
             message: graphBuildMessage(payload, add.length),
+          })
+        }
+
+        if (call.name === 'link_questions_to_knowledge') {
+          const subject = await resolveSubjectFromArgs(args).catch(() => null)
+          const rows = Array.isArray(args.questions) ? args.questions : []
+          const ids = parseQuestionIds(args)
+          const hints = [
+            ...rows.map((item: any) => ({
+              questionId: Number(item?.question_id || item?.id),
+              question: String(item?.question || ''),
+              knowledge_point: String(item?.knowledge_point || '').trim() || undefined,
+              node_name: String(item?.node_name || item?.knowledge_point || '').trim() || undefined,
+              node_id: Number(item?.node_id) > 0 ? Number(item.node_id) : undefined,
+              parent_name: String(item?.parent_name || '').trim() || undefined,
+              subject_id: Number(item?.subject_id) > 0 ? Number(item.subject_id) : subject?.id,
+            })),
+            ...ids.map((id) => ({
+              questionId: id,
+              knowledge_point: String(args.knowledge_point || '').trim() || undefined,
+              node_name: String(args.node_name || args.knowledge_point || '').trim() || undefined,
+              node_id: Number(args.node_id) > 0 ? Number(args.node_id) : undefined,
+              parent_name: String(args.parent_name || '').trim() || undefined,
+              subject_id: subject?.id,
+            })),
+          ].filter((item) => item.questionId > 0)
+          if (!hints.length) return JSON.stringify({ error: '需要 question_id 或 question_ids' })
+          const result = await associateQuestionsToKnowledge(hints, {
+            subjectId: subject?.id,
+            createMissing: true,
+          })
+          if (result.created || result.linked) notifyStudyGraph(subject?.id)
+          return JSON.stringify({
+            linked: result.linked,
+            created_nodes: result.created,
+            skipped: result.skipped,
+            knowledge: result.links.slice(0, 30).map((item) => ({
+              question_id: item.question_id,
+              node_id: item.node_id,
+              node_name: item.node_name,
+              subject_id: item.subject_id,
+              subject_name: item.subject_name,
+            })),
+            message: result.linked
+              ? `已把 ${result.linked} 道题目关联到知识点${result.created ? `，并新建了 ${result.created} 个节点` : ''}`
+              : '没有关联成功。请先挂上学习状态或指定 subject_id / node_name。',
+          })
+        }
+
+        if (call.name === 'list_knowledge_questions') {
+          const subject = await resolveSubjectFromArgs(args).catch(() => null)
+          const nodeId = Number(args.node_id)
+          let resolvedId = Number.isFinite(nodeId) && nodeId > 0 ? nodeId : 0
+          let nodeName = String(args.node_name || '').trim()
+          if (!resolvedId) {
+            if (!subject || !nodeName) {
+              return JSON.stringify({ error: '请提供 node_id，或同时提供科目和 node_name' })
+            }
+            const payload = await databaseService.getStudyGraph(subject.id)
+            const matched = payload.nodes.find((item) => item.name === nodeName)
+              || payload.nodes.filter((item) => item.name.includes(nodeName) || nodeName.includes(item.name))
+            const node = Array.isArray(matched)
+              ? (matched.length === 1 ? matched[0] : matched.find((item) => item.name.startsWith(nodeName)) || null)
+              : matched
+            if (!node) {
+              return JSON.stringify({
+                error: `图谱里没有「${nodeName}」`,
+                candidates: payload.nodes.map((item) => item.name).slice(0, 20),
+              })
+            }
+            resolvedId = node.id
+            nodeName = node.name
+          }
+          const questionIds = await databaseService.listNodeQuestions(resolvedId)
+          const questions = questionIds.length ? await databaseService.getQuestionsByIds(questionIds) : []
+          return JSON.stringify({
+            node_id: resolvedId,
+            node_name: nodeName,
+            count: questions.length,
+            questions: await withPractice(questions.slice(0, 40)),
+          })
+        }
+
+        if (call.name === 'merge_subjects') {
+          const target = await resolveSubject(
+            Number(args.target_id || args.subject_id) || undefined,
+            String(args.target_name || args.subject_name || '').trim() || undefined,
+            true,
+          )
+          if (!target) return JSON.stringify({ error: '找不到目标科目，请先 list_subjects' })
+          const sourceIds = new Set<number>()
+          const rawIds = Array.isArray(args.source_ids) ? args.source_ids : []
+          for (const value of rawIds) {
+            const id = Number(value)
+            if (id > 0 && id !== target.id) sourceIds.add(id)
+          }
+          const names = Array.isArray(args.source_names) ? args.source_names : []
+          for (const name of names) {
+            const found = await resolveSubject(undefined, String(name || '').trim())
+            if (found && found.id !== target.id) sourceIds.add(found.id)
+          }
+          if (!sourceIds.size) return JSON.stringify({ error: '请提供要并入的 source_ids 或 source_names' })
+          const merged = await databaseService.mergeStudySubjects(target.id, [...sourceIds])
+          notifyStudyGraph(merged.id)
+          openStudyGraphPane(merged.id)
+          return JSON.stringify({
+            ...summarizeSubjects([merged])[0],
+            merged_from: [...sourceIds],
+            message: `已把 ${sourceIds.size} 个科目并入「${merged.name}」`,
+          })
+        }
+
+        if (call.name === 'split_subject') {
+          const subject = await resolveSubjectFromArgs(args)
+          if (!subject) return JSON.stringify({ error: '找不到要拆分的科目' })
+          const payload = await databaseService.getStudyGraph(subject.id)
+          const resolvePartNodes = (ids: unknown, names: unknown) => {
+            const set = new Set<number>()
+            for (const value of Array.isArray(ids) ? ids : []) {
+              const id = Number(value)
+              if (payload.nodes.some((item) => item.id === id)) set.add(id)
+            }
+            for (const raw of Array.isArray(names) ? names : []) {
+              const name = String(raw || '').trim()
+              if (!name) continue
+              const exact = payload.nodes.find((item) => item.name === name)
+              const fuzzy = exact ? [exact] : payload.nodes.filter((item) => item.name.includes(name) || name.includes(item.name))
+              if (fuzzy.length === 1) set.add(fuzzy[0].id)
+            }
+            return [...set]
+          }
+          const rawParts = Array.isArray(args.parts) ? args.parts : []
+          const parts = rawParts.length
+            ? rawParts.map((part: any) => ({
+              name: String(part?.name || '').trim(),
+              description: String(part?.description || ''),
+              node_ids: resolvePartNodes(part?.node_ids, part?.node_names),
+            }))
+            : [{
+              name: String(args.name || '').trim(),
+              description: String(args.description || ''),
+              node_ids: resolvePartNodes(args.node_ids, args.node_names),
+            }]
+          const valid = parts.filter((part) => part.name && part.node_ids.length)
+          if (!valid.length) {
+            return JSON.stringify({ error: '请提供要拆出的科目名，以及 node_ids 或准确的章/节名' })
+          }
+          const result = await databaseService.splitStudySubject(subject.id, valid)
+          notifyStudyGraph(subject.id)
+          for (const created of result.created) notifyStudyGraph(created.id)
+          return JSON.stringify({
+            original: summarizeSubjects([result.original])[0],
+            created: summarizeSubjects(result.created),
+            message: `已从「${subject.name}」拆出 ${result.created.map((item) => item.name).join('、')}`,
+          })
+        }
+
+        if (call.name === 'evaluate_study_progress') {
+          const subject = await resolveSubjectFromArgs(args)
+          if (!subject) {
+            return JSON.stringify({ error: '找不到科目，请先挂上学习状态或指定 subject_id' })
+          }
+          const hint = String(args.hint || args.notes || args.topic || '').trim()
+          void runStudyProgressEvaluation({
+            subjectId: subject.id,
+            hint,
+            recentTurns: collectRecentTurns(sessionId),
+          }).then((result) => {
+            const status = result.error ? 'failed' : 'done'
+            const activity = describeActivity('evaluate_study_progress', args, status, result)
+            patchStep(sessionId, assistantId, call.id, {
+              status,
+              label: activity.label,
+              target: activity.target,
+              detail: result.error,
+              finishedAt: Date.now(),
+            })
+          })
+          return JSON.stringify({
+            started: true,
+            subject_id: subject.id,
+            name: subject.name,
+            message: '掌握度评估已交给后台助手，继续和用户对话即可，不要等待评估结束。',
           })
         }
 
@@ -2537,8 +3413,10 @@ export const sendChatMessage = async (text: string, files?: AgentChatAttachment[
       error: error instanceof Error ? error.message : String(error),
     })
   } finally {
-    if (drawingGraph || Number.isFinite(streamSubjectId)) {
-      finishStudyGraphStream(Number.isFinite(streamSubjectId) ? streamSubjectId : undefined)
+    const liveId = studyGraphStream.value?.subjectId
+    const id = Number.isFinite(streamSubjectId) ? streamSubjectId : liveId
+    if (drawingGraph || studyGraphStream.value?.streaming) {
+      if (liveId == null || id == null || liveId === id) finishStudyGraphStream(id)
     }
     if (chatAborts.get(sessionId) === abort) chatAborts.delete(sessionId)
   }

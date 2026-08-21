@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import * as pdfjsLib from 'pdfjs-dist'
 import { databaseService } from './database'
+import { associateQuestionsToKnowledge } from './questionKnowledge'
 import { parseDifficulty, parseImportance, parseMastery } from '../utils/questionMetrics'
 import {
   addImportTaskStep,
@@ -24,6 +25,11 @@ export interface ExtractedQuestion {
   importance?: number
   mastery?: number
   difficulty?: number
+  knowledge_point?: string
+  node_name?: string
+  node_id?: number
+  parent_name?: string
+  subject_id?: number
 }
 
 type FileKind = 'excel' | 'docx' | 'doc' | 'pdf' | 'text'
@@ -107,6 +113,9 @@ const IMPORT_TOOLS = [
                 options: { type: 'string', description: '选项，没有则空字符串' },
                 answer: { type: 'string', description: '答案' },
                 question_type: { type: 'string', description: '单选/多选/判断/填空' },
+                knowledge_point: { type: 'string', description: '对应知识点或节名，没有就根据题干概括' },
+                node_name: { type: 'string', description: '图谱节点名，可与 knowledge_point 相同' },
+                parent_name: { type: 'string', description: '所属章名' },
               },
               required: ['question', 'answer'],
             },
@@ -380,6 +389,11 @@ export const parseQuestions = (raw: unknown): ExtractedQuestion[] => {
         importance: item?.importance == null ? undefined : parseImportance(item.importance),
         mastery: item?.mastery == null ? undefined : parseMastery(item.mastery),
         difficulty: item?.difficulty == null ? undefined : parseDifficulty(item.difficulty),
+        knowledge_point: String(item?.knowledge_point || item?.knowledge || '').trim() || undefined,
+        node_name: String(item?.node_name || item?.knowledge_point || '').trim() || undefined,
+        node_id: Number(item?.node_id || item?.nodeId) > 0 ? Number(item?.node_id || item?.nodeId) : undefined,
+        parent_name: String(item?.parent_name || item?.chapter || '').trim() || undefined,
+        subject_id: Number(item?.subject_id || item?.subjectId) > 0 ? Number(item?.subject_id || item?.subjectId) : undefined,
       }))
       .filter((item) => item.question && item.answer)
   }
@@ -484,7 +498,7 @@ const SYSTEM_PROMPT = `你是题库导入助手。用户选了一份本地文件
 1. 先调用 get_file_info，再分段调用 read_range，不要一次读完全文。
 2. 每看完一段，立刻用 save_questions 保存识别到的题目。
 3. 只提取文件里真实存在的题目，不要编造。
-4. 题目字段：question（题干）、options（选项，可写成 "A. xxx\\nB. xxx"）、answer、question_type（单选/多选/判断/填空）。
+4. 题目字段：question（题干）、options（选项，可写成 "A. xxx\\nB. xxx"）、answer、question_type（单选/多选/判断/填空）。能看出考点就写 knowledge_point 或 node_name，能看出章节就写 parent_name。没有对应知识点时也要写一个简短考点名，系统会自动生成并关联。
 5. 全部读完并保存后，用一两句话总结导入结果。不要把题目 JSON 直接输出到对话里。`
 
 const composeSummary = (raw: string, task: ImportTask, count: number) => {
@@ -516,9 +530,9 @@ const runTask = async (task: ImportTask) => {
   }
 
   const saveQuestions = async (items: ExtractedQuestion[]) => {
-    let saved = 0
+    const created: { id: number; item: ExtractedQuestion }[] = []
     for (const item of items) {
-      await databaseService.addQuestion({
+      const question = await databaseService.addQuestion({
         content: item.question,
         options: item.options || '',
         answer: item.answer,
@@ -526,7 +540,7 @@ const runTask = async (task: ImportTask) => {
         folderId: task.folderId,
         isAi: 1,
       })
-      saved += 1
+      created.push({ id: question.id, item })
       importedCount += 1
       updateImportTask(task.id, {
         status: 'saving',
@@ -534,7 +548,21 @@ const runTask = async (task: ImportTask) => {
         progressText: `正在写入题目，已写入 ${importedCount} 道`,
       })
     }
-    return saved
+    if (created.length) {
+      await associateQuestionsToKnowledge(
+        created.map(({ id, item }) => ({
+          questionId: id,
+          question: item.question,
+          knowledge_point: item.knowledge_point,
+          node_name: item.node_name,
+          node_id: item.node_id,
+          parent_name: item.parent_name,
+          subject_id: item.subject_id,
+        })),
+        { hintText: task.fileName, createMissing: true },
+      )
+    }
+    return created.length
   }
 
   const executeTool = async (call: ModelToolCall) => {

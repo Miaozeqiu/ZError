@@ -6,6 +6,7 @@ import type {
   StudySubject,
 } from '../services/database'
 import { masteryLabel, normalizeMetric } from './questionMetrics'
+import { rolledRetention } from './studyForgetting'
 
 export interface StudyProgress {
   count: number
@@ -22,6 +23,9 @@ export interface StudyGraphNode {
   name: string
   summary?: string
   mastery?: number
+  importance?: number
+  forgetting_stage?: number
+  last_reviewed_at?: string | null
   stats: StudyProgress
   children: StudyGraphNode[]
   extraLinks?: { from: string; to: string }[]
@@ -63,6 +67,15 @@ export const subjectStats = (subject: StudySubject): StudyProgress => ({
   progress: Number(subject.progress) || 0,
 })
 
+const applyRolledStats = (node: StudyGraphNode, now = Date.now()): StudyGraphNode => {
+  node.children.forEach((child) => applyRolledStats(child, now))
+  node.stats = {
+    ...node.stats,
+    progress: rolledRetention(node, now) ?? 0,
+  }
+  return node
+}
+
 export const graphFromPayload = (payload: StudyGraphPayload): StudyGraphNode => {
   const byId = new Map<number, StudyGraphNode>()
   const rows = payload.nodes.filter((row) => !isJunkGraphNode({ key: row.node_key, name: row.name }))
@@ -73,6 +86,9 @@ export const graphFromPayload = (payload: StudyGraphPayload): StudyGraphNode => 
       name: isBadGraphLabel(row.name) ? row.node_key : row.name,
       summary: row.summary,
       mastery: normalizeMetric(row.mastery),
+      importance: normalizeMetric(row.importance),
+      forgetting_stage: row.forgetting_stage,
+      last_reviewed_at: row.last_reviewed_at,
       stats: statsFromMastery(row.mastery),
       children: [],
     })
@@ -89,14 +105,14 @@ export const graphFromPayload = (payload: StudyGraphPayload): StudyGraphNode => 
     .filter((edge) => byId.has(edge.from_id) && byId.has(edge.to_id) && edge.from_id !== edge.to_id)
     .map((edge) => ({ from: `node:${edge.from_id}`, to: `node:${edge.to_id}` }))
   const stats = mergeStats(rows.map((row) => statsFromMastery(row.mastery)))
-  return {
+  return applyRolledStats({
     id: `subject:${payload.subject.id}`,
     name: payload.subject.name,
     summary: payload.subject.description,
     stats,
     children: roots,
     extraLinks,
-  }
+  })
 }
 
 export const flattenGraph = (root: StudyGraphNode) => {
@@ -612,15 +628,15 @@ export const graphFromInputs = (
   const links = extraLinks.filter((edge) => !treeLinks.has(`${edge.from}->${edge.to}`))
   const stats = mergeStats([...byKey.values()].map((node) => node.stats))
   if (roots.length === 1) {
-    return { ...roots[0], stats, extraLinks: links }
+    return applyRolledStats({ ...roots[0], stats, extraLinks: links })
   }
-  return {
+  return applyRolledStats({
     id: 'subject',
     name: subjectName || '知识图谱',
     stats,
     children: roots,
     extraLinks: links,
-  }
+  })
 }
 
 export const graphFromMermaid = (subjectName: string, raw: string): StudyGraphNode | null => {
@@ -644,12 +660,14 @@ export const mergeGraphDetails = (from: StudyGraphNode, onto?: StudyGraphNode | 
       nodeId: hit?.nodeId ?? node.nodeId,
       summary: node.summary || hit?.summary,
       mastery: hit?.mastery ?? node.mastery,
+      forgetting_stage: hit?.forgetting_stage ?? node.forgetting_stage,
+      last_reviewed_at: hit?.last_reviewed_at ?? node.last_reviewed_at,
       stats: hit?.stats ?? node.stats,
       children: node.children.map(apply),
       extraLinks: node.extraLinks,
     }
   }
-  return apply(from)
+  return applyRolledStats(apply(from))
 }
 
 export const inputsToMermaid = (subjectName: string, nodes: StudyGraphNodeInput[]) => {

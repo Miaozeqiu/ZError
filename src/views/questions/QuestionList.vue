@@ -6,23 +6,9 @@
         <!-- 题目数量 + 分页，显示在搜索栏最左侧 -->
         <div class="search-left-info">
           <div class="question-count-info">
-            共 {{ listViewMode === 'chart' ? visibleChartTotal : totalQuestions }} 道题目
+            共 {{ totalQuestions }} 道题目
           </div>
-          <div class="view-switch" v-if="hasSelectedFolder(selectedFolderId)">
-            <button
-              type="button"
-              class="view-switch-btn"
-              :class="{ active: listViewMode === 'table' }"
-              @click="listViewMode = 'table'"
-            >表格</button>
-            <button
-              type="button"
-              class="view-switch-btn"
-              :class="{ active: listViewMode === 'chart' }"
-              @click="listViewMode = 'chart'"
-            >统计</button>
-          </div>
-          <div class="pagination-container" v-if="listViewMode === 'table' && totalQuestions > 0">
+          <div class="pagination-container" v-if="totalQuestions > 0">
             <div class="pagination">
               <button class="pagination-btn prev-btn" :disabled="currentPage <= 1" @click="goToPreviousPage">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -123,102 +109,7 @@
     </div>
 
     <div class="list-content" @contextmenu.prevent="handleListRightClick">
-      <div v-if="listViewMode === 'chart' && hasSelectedFolder(selectedFolderId)" class="metric-chart">
-        <div class="metric-chart-panel">
-          <div class="metric-chart-head">
-            <div class="metric-axis-controls">
-              <div class="metric-axis-group">
-                <span>{{ sliceAxisDef.label }}</span>
-                <div class="view-switch">
-                  <button
-                    type="button"
-                    class="view-switch-btn"
-                    :class="{ active: chartSliceValue == null }"
-                    @click="chartSliceValue = null"
-                  >全部</button>
-                  <button
-                    v-for="level in sliceAxisDef.levels"
-                    :key="`slice-${level.value}`"
-                    type="button"
-                    class="view-switch-btn"
-                    :class="{ active: chartSliceValue === level.value }"
-                    @click="chartSliceValue = level.value"
-                  >{{ level.label }}</button>
-                </div>
-              </div>
-            </div>
-            <button
-              v-if="metricFilterLabel"
-              class="metric-chart-clear"
-              type="button"
-              @click="clearMetricFilter"
-            >清除 · {{ metricFilterLabel }}</button>
-          </div>
-          <table class="metric-table">
-            <thead>
-              <tr>
-                <th class="metric-corner">
-                  <button
-                    type="button"
-                    class="metric-corner-col"
-                    :title="`切换为${sliceAxisDef.label}`"
-                    @click.stop="cycleChartColAxis"
-                  >{{ colAxisDef.label }}</button>
-                  <button
-                    type="button"
-                    class="metric-corner-row"
-                    :title="`切换为${sliceAxisDef.label}`"
-                    @click.stop="cycleChartRowAxis"
-                  >{{ rowAxisDef.label }}</button>
-                </th>
-                <th
-                  v-for="col in colLevels"
-                  :key="`h-${col.value}`"
-                  :class="{ 'is-active': isColFilter(col.value) }"
-                  @click="toggleColFilter(col.value)"
-                >{{ col.label }}</th>
-                <th class="is-total">合计</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="row in rowLevels" :key="`r-${row.value}`">
-                <th
-                  :class="{ 'is-active': isRowFilter(row.value) }"
-                  @click="toggleRowFilter(row.value)"
-                >{{ row.label }}</th>
-                <td
-                  v-for="col in colLevels"
-                  :key="`${row.value}-${col.value}`"
-                  :class="{
-                    'is-empty': metricCount(row.value, col.value) === 0,
-                    'is-active': isCellFilter(row.value, col.value),
-                  }"
-                  :style="{ '--heat': metricHeat(row.value, col.value) }"
-                  @click="toggleCellFilter(row.value, col.value)"
-                >{{ metricCount(row.value, col.value) }}</td>
-                <td
-                  class="is-total"
-                  :class="{ 'is-active': isRowFilter(row.value) }"
-                  @click="toggleRowFilter(row.value)"
-                >{{ rowTotal(row.value) }}</td>
-              </tr>
-              <tr class="metric-total-row">
-                <th class="is-total">合计</th>
-                <td
-                  v-for="col in colLevels"
-                  :key="`t-${col.value}`"
-                  class="is-total"
-                  :class="{ 'is-active': isColFilter(col.value) }"
-                  @click="toggleColFilter(col.value)"
-                >{{ colTotal(col.value) }}</td>
-                <td class="is-total is-grand" @click="clearMetricFilter">{{ visibleChartTotal }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <div v-else-if="loading" class="loading-state">
+      <div v-if="loading" class="loading-state">
         <div class="loading-spinner"></div>
         <div class="loading-text">加载中...</div>
       </div>
@@ -328,6 +219,16 @@
                     </template>
                   </template>
                 </div>
+                <div v-if="knowledgeFor(question.id).length" class="knowledge-tags">
+                  <button
+                    v-for="link in knowledgeFor(question.id)"
+                    :key="link.node_id"
+                    class="knowledge-tag"
+                    type="button"
+                    :title="`${link.subject_name} · ${link.node_name}`"
+                    @click.stop="openKnowledge(link)"
+                  >{{ link.node_name }}</button>
+                </div>
               </td>
               <td class="col-options">
                 <div class="cell-question">
@@ -401,13 +302,10 @@
     <QuestionDetail v-if="selectedQuestionDetails" :question="selectedQuestionDetails" :show="showDetailOverlay"
       :width="overlayWidth" :is-edit-mode="isEditMode" :edit-question="editFormData.question"
       :edit-options="editFormData.options" :edit-answer="editFormData.answer" :edit-type="editFormData.question_type"
-      :edit-importance="editFormData.importance" :edit-mastery="editFormData.mastery" :edit-difficulty="editFormData.difficulty"
       :is-edit-form-valid="isEditFormValid" :is-saving-edit="isSavingEdit" :is-resizing="isResizing" :format-time="formatTime" @close="closeDetail"
       @toggle-edit="toggleEditMode" @cancel-edit="cancelEdit" @save-edit="saveEdit"
       @update:editQuestion="(v) => editFormData.question = v" @update:editOptions="(v) => editFormData.options = v"
       @update:editAnswer="(v) => editFormData.answer = v" @update:editType="(v) => editFormData.question_type = v"
-      @update:editImportance="(v) => editFormData.importance = v" @update:editMastery="(v) => editFormData.mastery = v"
-      @update:editDifficulty="(v) => editFormData.difficulty = v"
       @resize-start="startResize" @resize-over="showResizeCursor" @resize-leave="hideResizeCursor" />
   </div>
 
@@ -461,7 +359,8 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue';
-import { databaseService, type AIResponse, type QuestionMetricBucket } from '../../services/database';
+import { databaseService, type AIResponse, type QuestionKnowledgeLink } from '../../services/database';
+import { openKnowledgeInStudy } from '../../services/questionKnowledge';
 import { isTauriEnvironment } from '../../services/environmentDetector';
 import { invoke } from '@tauri-apps/api/core';
 import { save, open } from '@tauri-apps/plugin-dialog';
@@ -482,13 +381,10 @@ import { startFileImportChat } from '../../services/agentChat';
 import { modelConfigManager } from '../../services/modelConfig';
 import { settingsManager } from '../../services/settings';
 import {
-  METRIC_DEFS,
-  METRIC_KEYS,
   cycleMetric,
   difficultyLabel,
   importanceLabel,
   masteryLabel,
-  metricValueLabel,
   normalizeMetric,
   type QuestionMetricKey,
   type QuestionMetricValue,
@@ -513,6 +409,7 @@ const emit = defineEmits<{
 }>();
 
 const questions = ref<AIResponse[]>([]);
+const knowledgeByQuestion = ref<Record<number, QuestionKnowledgeLink[]>>({});
 const loading = ref(false);
 const hasLoaded = ref(false);
 const listTransitionName = ref('list-fade');
@@ -525,6 +422,34 @@ const folderPath = ref<{ id: number, name: string }[]>([]);
 watch(folderPath, (path) => {
   emit('folder-path-change', path)
 }, { deep: true })
+
+const knowledgeFor = (id: number) => knowledgeByQuestion.value[id] || []
+
+const openKnowledge = (link: QuestionKnowledgeLink) => {
+  openKnowledgeInStudy(link)
+}
+
+const loadKnowledgeLinks = async (items: AIResponse[]) => {
+  const ids = items.map((item) => item.id)
+  if (!ids.length) {
+    knowledgeByQuestion.value = {}
+    return
+  }
+  try {
+    const links = await databaseService.listQuestionKnowledge(ids)
+    const map: Record<number, QuestionKnowledgeLink[]> = {}
+    for (const link of links) {
+      (map[link.question_id] ||= []).push(link)
+    }
+    knowledgeByQuestion.value = map
+  } catch {
+    knowledgeByQuestion.value = {}
+  }
+}
+
+watch(questions, (items) => {
+  void loadKnowledgeLinks(items)
+})
 
 // 在切换顶层 tab 时，收起题目详情面板
 watch(() => props.collapseTrigger, () => {
@@ -545,16 +470,6 @@ const isSearchMode = ref(false);
 const searchDebounceTimer = ref<number | null>(null);
 const highlightTerms = ref<string[]>([]); // 用于高亮的关键词
 const createTimeSortOrder = ref<'desc' | 'asc'>('desc');
-const metricStats = ref<QuestionMetricBucket[]>([]);
-const metricFilter = ref<{
-  importance?: QuestionMetricValue;
-  mastery?: QuestionMetricValue;
-  difficulty?: QuestionMetricValue;
-} | null>(null);
-const listViewMode = ref<'table' | 'chart'>('table');
-const chartRowAxis = ref<QuestionMetricKey>('importance');
-const chartColAxis = ref<QuestionMetricKey>('mastery');
-const chartSliceValue = ref<QuestionMetricValue | null>(null);
 
 const listContentKey = ref('boot');
 let loadGeneration = 0;
@@ -1019,155 +934,6 @@ const toggleCreateTimeSort = () => {
   }
 };
 
-type MetricFilter = {
-  importance?: QuestionMetricValue;
-  mastery?: QuestionMetricValue;
-  difficulty?: QuestionMetricValue;
-};
-
-const rowAxisDef = computed(() => METRIC_DEFS[chartRowAxis.value]);
-const colAxisDef = computed(() => METRIC_DEFS[chartColAxis.value]);
-const sliceAxisKey = computed(() =>
-  METRIC_KEYS.find((key) => key !== chartRowAxis.value && key !== chartColAxis.value) ?? 'difficulty'
-);
-const sliceAxisDef = computed(() => METRIC_DEFS[sliceAxisKey.value]);
-const rowLevels = computed(() => rowAxisDef.value.levels);
-const colLevels = computed(() => colAxisDef.value.levels);
-
-const slicedStats = computed(() => {
-  const slice = chartSliceValue.value;
-  if (slice == null) return metricStats.value;
-  const key = sliceAxisKey.value;
-  return metricStats.value.filter((bucket) => (bucket[key] || 0) === slice);
-});
-
-const metricCount = (rowValue: number, colValue: number) =>
-  slicedStats.value
-    .filter((bucket) =>
-      (bucket[chartRowAxis.value] || 0) === rowValue
-      && (bucket[chartColAxis.value] || 0) === colValue
-    )
-    .reduce((sum, bucket) => sum + bucket.count, 0);
-
-const rowTotal = (rowValue: number) =>
-  colLevels.value.reduce((sum, col) => sum + metricCount(rowValue, col.value), 0);
-
-const colTotal = (colValue: number) =>
-  rowLevels.value.reduce((sum, row) => sum + metricCount(row.value, colValue), 0);
-
-const visibleChartTotal = computed(() =>
-  slicedStats.value.reduce((sum, bucket) => sum + bucket.count, 0)
-);
-
-const metricMaxCount = computed(() =>
-  Math.max(1, ...rowLevels.value.flatMap((row) =>
-    colLevels.value.map((col) => metricCount(row.value, col.value))
-  ))
-);
-
-const metricHeat = (rowValue: number, colValue: number) => {
-  const count = metricCount(rowValue, colValue);
-  if (count <= 0) return 0;
-  return count / metricMaxCount.value;
-};
-
-const sameMetricFilter = (left: MetricFilter | null, right: MetricFilter) =>
-  METRIC_KEYS.every((key) => (left?.[key] ?? null) === (right[key] ?? null));
-
-const filterWithSlice = (base: MetricFilter): MetricFilter => {
-  if (chartSliceValue.value == null) return base;
-  return { ...base, [sliceAxisKey.value]: chartSliceValue.value };
-};
-
-const metricFilterLabel = computed(() => {
-  const filter = metricFilter.value;
-  if (!filter) return '';
-  return METRIC_KEYS
-    .filter((key) => filter[key] != null)
-    .map((key) => `${METRIC_DEFS[key].label} ${metricValueLabel(key, filter[key])}`)
-    .join(' · ');
-});
-
-const applyMetricFilter = (next: MetricFilter | null) => {
-  metricFilter.value = next;
-  if (isSearchMode.value) {
-    searchTerm.value = '';
-    isSearchMode.value = false;
-    highlightTerms.value = [];
-  }
-  loadQuestions(props.selectedFolderId, 1);
-};
-
-const clearMetricFilter = () => {
-  if (!metricFilter.value) return;
-  applyMetricFilter(null);
-};
-
-const isCellFilter = (rowValue: QuestionMetricValue, colValue: QuestionMetricValue) =>
-  sameMetricFilter(metricFilter.value, filterWithSlice({
-    [chartRowAxis.value]: rowValue,
-    [chartColAxis.value]: colValue,
-  }));
-
-const isRowFilter = (rowValue: QuestionMetricValue) =>
-  sameMetricFilter(metricFilter.value, filterWithSlice({ [chartRowAxis.value]: rowValue }));
-
-const isColFilter = (colValue: QuestionMetricValue) =>
-  sameMetricFilter(metricFilter.value, filterWithSlice({ [chartColAxis.value]: colValue }));
-
-const toggleCellFilter = (rowValue: QuestionMetricValue, colValue: QuestionMetricValue) => {
-  const next = filterWithSlice({
-    [chartRowAxis.value]: rowValue,
-    [chartColAxis.value]: colValue,
-  });
-  applyMetricFilter(sameMetricFilter(metricFilter.value, next) ? null : next);
-};
-
-const toggleRowFilter = (rowValue: QuestionMetricValue) => {
-  const next = filterWithSlice({ [chartRowAxis.value]: rowValue });
-  applyMetricFilter(sameMetricFilter(metricFilter.value, next) ? null : next);
-};
-
-const toggleColFilter = (colValue: QuestionMetricValue) => {
-  const next = filterWithSlice({ [chartColAxis.value]: colValue });
-  applyMetricFilter(sameMetricFilter(metricFilter.value, next) ? null : next);
-};
-
-const cycleChartRowAxis = () => {
-  chartRowAxis.value = sliceAxisKey.value;
-  chartSliceValue.value = null;
-};
-
-const cycleChartColAxis = () => {
-  chartColAxis.value = sliceAxisKey.value;
-  chartSliceValue.value = null;
-};
-
-const loadMetricStats = async (folderId?: string | null) => {
-  if (!hasSelectedFolder(folderId)) {
-    metricStats.value = [];
-    return;
-  }
-
-  try {
-    if (folderId === PENDING_CORRECTION_FOLDER_ID) {
-      metricStats.value = await databaseService.getQuestionMetricStats({ pendingCorrectionOnly: true });
-      return;
-    }
-
-    const folderIdNum = parseFolderId(folderId as string);
-    if (folderIdNum === null) {
-      metricStats.value = [];
-      return;
-    }
-
-    metricStats.value = await databaseService.getQuestionMetricStats({ folderId: folderIdNum });
-  } catch (error) {
-    console.error('加载题目分类统计失败:', error);
-    metricStats.value = [];
-  }
-};
-
 const cycleQuestionMetric = async (question: AIResponse, field: QuestionMetricKey) => {
   const previous = normalizeMetric(question[field]);
   const next = cycleMetric(previous);
@@ -1180,10 +946,6 @@ const cycleQuestionMetric = async (question: AIResponse, field: QuestionMetricKe
 
   try {
     await databaseService.updateQuestion(question.id, { [field]: next });
-    await loadMetricStats(props.selectedFolderId);
-    if (metricFilter.value?.[field] != null && metricFilter.value[field] !== next) {
-      await loadQuestions(props.selectedFolderId, currentPage.value);
-    }
   } catch (error) {
     question[field] = previous;
     if (selectedQuestionDetails.value?.id === question.id) {
@@ -1195,19 +957,12 @@ const cycleQuestionMetric = async (question: AIResponse, field: QuestionMetricKe
 };
 
 const fetchQuestionPage = async (folderId?: string | null, page = 1) => {
-  const importance = metricFilter.value?.importance ?? null;
-  const mastery = metricFilter.value?.mastery ?? null;
-  const difficulty = metricFilter.value?.difficulty ?? null;
-
   if (folderId === PENDING_CORRECTION_FOLDER_ID) {
     return databaseService.getPaginatedQuestions({
       pendingCorrectionOnly: true,
       page,
       pageSize: pageSize.value,
       sortOrder: createTimeSortOrder.value,
-      importance,
-      mastery,
-      difficulty,
     });
   }
 
@@ -1219,9 +974,6 @@ const fetchQuestionPage = async (folderId?: string | null, page = 1) => {
         page,
         pageSize: pageSize.value,
         sortOrder: createTimeSortOrder.value,
-        importance,
-        mastery,
-        difficulty,
       });
     }
   }
@@ -1248,7 +1000,6 @@ const loadQuestions = async (folderId?: string | null, requestedPage = 1) => {
       totalQuestions.value = 0;
       currentPage.value = 1;
       folderPath.value = [];
-      metricStats.value = [];
       listContentKey.value = 'empty';
       return;
     }
@@ -1289,7 +1040,6 @@ const loadQuestions = async (folderId?: string | null, requestedPage = 1) => {
         folderPath.value = path;
       }
     });
-    void loadMetricStats(folderId);
   } catch (error) {
     if (generation !== loadGeneration) return;
     console.error('加载题目失败:', error);
@@ -1470,15 +1220,6 @@ const saveEdit = async () => {
       emit('question-updated');
     }
 
-    await loadMetricStats(props.selectedFolderId);
-    if (metricFilter.value && (
-      (metricFilter.value.importance != null && metricFilter.value.importance !== updatedQuestion.importance)
-      || (metricFilter.value.mastery != null && metricFilter.value.mastery !== updatedQuestion.mastery)
-      || (metricFilter.value.difficulty != null && metricFilter.value.difficulty !== updatedQuestion.difficulty)
-    )) {
-      await loadQuestions(props.selectedFolderId, currentPage.value);
-    }
-
     console.log('题目更新成功');
   } catch (error) {
     console.error('更新题目失败:', error);
@@ -1642,7 +1383,6 @@ const hideResizeCursor = () => {
 watch(() => props.selectedFolderId, (newFolderId) => {
   listTransitionName.value = 'list-fade';
   currentPage.value = 1;
-  metricFilter.value = null;
   loadQuestions(newFolderId, 1);
 }, { immediate: true });
 
@@ -1673,7 +1413,6 @@ const performSearch = async () => {
     }
     listTransitionName.value = 'list-fade';
     isSearchMode.value = true;
-    listViewMode.value = 'table';
     currentPage.value = 1;
 
     const parsedFolderId =
@@ -2153,168 +1892,6 @@ onUnmounted(() => {
   transform: scaleY(0.5);
 }
 
-.metric-chart {
-  height: 100%;
-  min-height: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 32px 24px;
-  box-sizing: border-box;
-}
-
-.metric-chart-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.metric-chart-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.metric-axis-controls {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px 16px;
-}
-
-.metric-axis-group {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.metric-axis-group > span {
-  font-size: 11px;
-  color: var(--ql-time-text);
-}
-
-.metric-chart-clear {
-  border: none;
-  background: transparent;
-  color: var(--ql-count-info-text);
-  font-size: 12px;
-  cursor: pointer;
-  padding: 0;
-}
-
-.metric-chart-clear:hover {
-  color: var(--text-primary);
-}
-
-.metric-table {
-  border-collapse: collapse;
-  table-layout: fixed;
-}
-
-.metric-table th,
-.metric-table td {
-  width: 72px;
-  height: 52px;
-  padding: 0;
-  border: 1px solid var(--ql-table-divider);
-  text-align: center;
-  vertical-align: middle;
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
-  font-weight: 500;
-  color: var(--text-primary);
-  background: var(--bg-secondary);
-}
-
-.metric-table thead th,
-.metric-table tbody th {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--ql-th-text);
-  background: var(--ql-th-bg);
-  cursor: pointer;
-}
-
-.metric-table .metric-corner {
-  position: relative;
-  width: 88px;
-  cursor: default;
-  color: var(--ql-time-text);
-  font-size: 11px;
-  overflow: hidden;
-}
-
-.metric-table .metric-corner::after {
-  content: '';
-  position: absolute;
-  left: 10%;
-  right: 10%;
-  top: 50%;
-  height: 1px;
-  background: var(--ql-table-divider);
-  transform: rotate(28deg);
-}
-
-.metric-corner-col,
-.metric-corner-row {
-  position: absolute;
-  border: none;
-  padding: 0;
-  background: transparent;
-  color: inherit;
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.02em;
-  line-height: 1;
-  cursor: pointer;
-}
-
-.metric-corner-col:hover,
-.metric-corner-row:hover {
-  color: var(--text-primary);
-}
-
-.metric-corner-col {
-  top: 8px;
-  right: 8px;
-}
-
-.metric-corner-row {
-  left: 8px;
-  bottom: 8px;
-}
-
-.metric-table td {
-  background: color-mix(in srgb, var(--text-primary) calc(var(--heat, 0) * 16%), var(--bg-secondary));
-  cursor: pointer;
-}
-
-.metric-table td.is-empty {
-  color: var(--ql-no-type-text);
-  font-weight: 400;
-}
-
-.metric-table .is-total {
-  color: var(--ql-time-text);
-  background: var(--ql-th-bg);
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-}
-
-.metric-table .is-grand {
-  color: var(--text-primary);
-  font-weight: 600;
-}
-
-.metric-table thead th.is-active,
-.metric-table tbody th.is-active,
-.metric-table td.is-active,
-.metric-table .is-total.is-active {
-  box-shadow: inset 0 0 0 1px var(--text-primary);
-}
-
 /* 分页控制器样式 */
 .pagination-container {
   display: flex;
@@ -2392,32 +1969,6 @@ onUnmounted(() => {
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
-}
-
-.view-switch {
-  display: inline-flex;
-  align-items: center;
-  padding: 2px;
-  border-radius: 7px;
-  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
-}
-
-.view-switch-btn {
-  height: 20px;
-  padding: 0 8px;
-  border: none;
-  border-radius: 5px;
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 20px;
-  cursor: pointer;
-}
-
-.view-switch-btn.active {
-  background: var(--bg-primary, #fff);
-  color: var(--text-primary);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--border-primary, #e2e8f0) 55%, transparent);
 }
 
 .search-box {
@@ -2922,6 +2473,32 @@ onUnmounted(() => {
 .cell-question span,
 .cell-answer span {
   display: inline;
+}
+
+.knowledge-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.knowledge-tag {
+  max-width: 100%;
+  overflow: hidden;
+  padding: 1px 7px;
+  border: none;
+  border-radius: 999px;
+  background: color-mix(in srgb, #2F6F78 12%, transparent);
+  color: #2F6F78;
+  font-size: 11px;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.knowledge-tag:hover {
+  background: color-mix(in srgb, #2F6F78 20%, transparent);
 }
 
 .list-image {

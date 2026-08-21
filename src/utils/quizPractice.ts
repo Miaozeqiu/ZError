@@ -11,6 +11,11 @@ export interface QuizCard {
   importance?: number
   mastery?: number
   difficulty?: number
+  knowledge_point?: string
+  node_name?: string
+  node_id?: number
+  parent_name?: string
+  subject_id?: number
 }
 
 export interface QuizOption {
@@ -182,6 +187,11 @@ export const toQuizCard = (item: Record<string, unknown>, index: number): QuizCa
     importance: item.importance == null ? undefined : parseImportance(item.importance),
     mastery: item.mastery == null ? undefined : parseMastery(item.mastery),
     difficulty: item.difficulty == null ? undefined : parseDifficulty(item.difficulty),
+    knowledge_point: String(item.knowledge_point || item.knowledge || '').trim() || undefined,
+    node_name: String(item.node_name || item.knowledge_point || '').trim() || undefined,
+    node_id: Number(item.node_id || item.nodeId) > 0 ? Number(item.node_id || item.nodeId) : undefined,
+    parent_name: String(item.parent_name || item.chapter || '').trim() || undefined,
+    subject_id: Number(item.subject_id || item.subjectId) > 0 ? Number(item.subject_id || item.subjectId) : undefined,
   }
 }
 

@@ -12,11 +12,36 @@
     <canvas v-show="viewGraph" ref="canvasRef" class="study-net" />
     <div v-if="!viewGraph" class="study-mermaid-empty">{{ emptyText }}</div>
     <div v-if="streaming && viewGraph" class="study-mermaid-live">正在绘制</div>
+    <div v-if="dash && viewGraph" class="study-dash" @pointerdown.stop @click.stop>
+      <div class="study-dash-meters">
+        <div class="study-dash-meter">
+          <svg viewBox="0 0 64 64" aria-hidden="true">
+            <circle class="study-dash-track" cx="32" cy="32" r="22" />
+            <circle
+              class="study-dash-arc is-mastery"
+              cx="32"
+              cy="32"
+              r="22"
+              :stroke-dasharray="arcDash(dash.mastery)"
+            />
+          </svg>
+          <div class="study-dash-readout">
+            <strong>{{ dash.masteryPct }}%</strong>
+          </div>
+        </div>
+      </div>
+      <div class="study-dash-legend" aria-hidden="true">
+        <span v-for="item in masteryLegend" :key="item.label" class="study-dash-swatch">
+          <i :style="{ background: item.color }" />
+          {{ item.label }}
+        </span>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   graphFromMermaid,
   mergeGraphDetails,
@@ -26,14 +51,18 @@ import {
   fontForDepth,
   hitSlop,
   labelLimitForDepth,
+  MASTERY_COLORS,
+  childrenByParent,
   nodeColor,
   POP_MS,
+  retentionColor,
   SIZE_RATIO,
   stepForceGraph,
   syncForceGraph,
   type ForceGraph,
   type ForceNode,
 } from '../utils/studyGraphForce'
+import { rolledRetention } from '../utils/studyForgetting'
 
 const props = defineProps<{
   source?: string
@@ -44,7 +73,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  select: [name: string]
+  select: [name: string, id?: string]
 }>()
 
 const wrapRef = ref<HTMLElement | null>(null)
@@ -62,6 +91,38 @@ const viewGraph = computed(() => {
   return props.graph || null
 })
 
+const ARC = 2 * Math.PI * 22
+
+type MasteryBand = 'unset' | 'weak' | 'fair' | 'solid'
+
+const nowTick = ref(Date.now())
+let clockTimer: number | null = null
+
+const BAND_META: Record<MasteryBand, { label: string; color: string }> = {
+  unset: { label: '未评估', color: MASTERY_COLORS[0].fill },
+  weak: { label: '遗忘中', color: retentionColor(0.2).fill },
+  fair: { label: '记忆中', color: retentionColor(0.6).fill },
+  solid: { label: '牢固', color: retentionColor(1).fill },
+}
+
+const masteryLegend = (['unset', 'weak', 'fair', 'solid'] as MasteryBand[])
+  .map((band) => ({ label: BAND_META[band].label, color: BAND_META[band].color }))
+
+const dash = computed(() => {
+  const root = viewGraph.value
+  if (!root?.children.length) return null
+  const mastery = rolledRetention(root, nowTick.value) ?? 0
+  return {
+    mastery,
+    masteryPct: Math.round(mastery * 100),
+  }
+})
+
+const arcDash = (t: number) => {
+  const value = Math.max(0, Math.min(1, t)) * ARC
+  return `${value} ${ARC}`
+}
+
 const camera = { x: 0, y: 0, scale: 1 }
 const bodies = new Map<string, ForceNode>()
 let sim: ForceGraph = { nodes: [], links: [] }
@@ -72,6 +133,9 @@ let dragMoved = false
 let pointerId: number | null = null
 let lastX = 0
 let lastY = 0
+let layoutW = 0
+let layoutH = 0
+let resizeFrameTimer = 0
 let raf = 0
 let running = false
 let resize: ResizeObserver | null = null
@@ -79,7 +143,9 @@ let camFrom = { x: 0, y: 0, scale: 1 }
 let camTo = { x: 0, y: 0, scale: 1 }
 let camStart = 0
 let camT = 1
+let camEase: 'cubic' | 'back' = 'cubic'
 const CAM_DUR = 420
+const SETTLE_DUR = 560
 
 const easeOutCubic = (t: number) => 1 - (1 - t) ** 3
 
@@ -101,18 +167,22 @@ const stopCamera = () => {
   camT = 1
 }
 
-const animateCamera = (x: number, y: number, scale: number) => {
+const animateCamera = (x: number, y: number, scale: number, ease: 'cubic' | 'back' = 'cubic', duration = CAM_DUR) => {
   camFrom = { x: camera.x, y: camera.y, scale: camera.scale }
   camTo = { x, y, scale }
   camStart = performance.now()
   camT = 0
+  camEase = ease
+  camDur = duration
   if (!raf) raf = requestAnimationFrame(tick)
 }
 
+let camDur = CAM_DUR
+
 const stepCamera = (now: number) => {
   if (camT >= 1) return false
-  camT = Math.min(1, (now - camStart) / CAM_DUR)
-  const ease = easeOutCubic(camT)
+  camT = Math.min(1, (now - camStart) / camDur)
+  const ease = camEase === 'back' ? easeOutBack(camT) : easeOutCubic(camT)
   camera.x = camFrom.x + (camTo.x - camFrom.x) * ease
   camera.y = camFrom.y + (camTo.y - camFrom.y) * ease
   camera.scale = camFrom.scale + (camTo.scale - camFrom.scale) * ease
@@ -144,14 +214,40 @@ const boundsOf = (nodes: ForceNode[], useHome = false) => {
   }
 }
 
-const lookAt = (nodes: ForceNode[], fill = 0.76, useHome = false) => {
+const lookAt = (nodes: ForceNode[], fill = 0.76, useHome = false, instant = false) => {
   const wrap = wrapRef.value
   if (!wrap || !nodes.length) return
   const box = boundsOf(nodes, useHome)
   const width = wrap.clientWidth
   const height = wrap.clientHeight
+  if (width < 40 || height < 40) return
   const scale = Math.min(4.2, Math.max(0.55, Math.min(width / box.w, height / box.h) * fill))
-  animateCamera(width / 2 - box.cx * scale, height * 0.48 - box.cy * scale, scale)
+  const x = width / 2 - box.cx * scale
+  const y = height * 0.48 - box.cy * scale
+  if (instant) {
+    stopCamera()
+    camera.x = x
+    camera.y = y
+    camera.scale = scale
+    draw()
+    return
+  }
+  animateCamera(x, y, scale)
+}
+
+const cameraFor = (nodes: ForceNode[], fill: number, useHome = false) => {
+  const wrap = wrapRef.value
+  if (!wrap || !nodes.length) return null
+  const box = boundsOf(nodes, useHome)
+  const width = wrap.clientWidth
+  const height = wrap.clientHeight
+  if (width < 40 || height < 40) return null
+  const scale = Math.min(4.2, Math.max(0.45, Math.min(width / box.w, height / box.h) * fill))
+  return {
+    x: width / 2 - box.cx * scale,
+    y: height * 0.48 - box.cy * scale,
+    scale,
+  }
 }
 
 const childrenOf = (id: string) => {
@@ -173,10 +269,61 @@ const subtreeOf = (id: string) => {
   return sim.nodes.filter((item) => ids.has(item.id))
 }
 
-const focusNode = (node: ForceNode) => {
+const focusNode = (node: ForceNode, instant = false) => {
   const group = subtreeOf(node.id)
-  lookAt(group.length ? group : [node], node.depth === 0 ? 0.8 : 0.78, true)
+  lookAt(group.length ? group : [node], node.depth === 0 ? 0.8 : 0.78, true, instant)
 }
+
+const focusByName = (name: string, instant = false) => {
+  const query = String(name || '').trim()
+  if (!query) {
+    if (sim.nodes.length) lookAt(sim.nodes, 0.82, true, instant)
+    return Boolean(sim.nodes.length)
+  }
+  const exact = sim.nodes.find((node) => node.name === query || node.id === query)
+  const fuzzy = exact || sim.nodes.find((node) => node.name.includes(query) || query.includes(node.name))
+  if (!fuzzy) return false
+  focusNode(fuzzy, instant)
+  return true
+}
+
+let userPanned = false
+let framedGraphId = ''
+
+const frameView = (instant = false) => {
+  const wrap = wrapRef.value
+  if (!wrap || wrap.clientWidth < 40 || wrap.clientHeight < 40 || !sim.nodes.length) return false
+  const name = String(props.selectedName || '').trim()
+  if (name) focusByName(name, instant)
+  else lookAt(sim.nodes, 0.82, true, instant)
+  framedGraphId = viewGraph.value?.id || ''
+  return true
+}
+
+const settleView = () => {
+  const wrap = wrapRef.value
+  if (!wrap || wrap.clientWidth < 40 || wrap.clientHeight < 40 || !sim.nodes.length) return false
+  const id = viewGraph.value?.id || ''
+  const name = String(props.selectedName || '').trim()
+  const hit = name
+    ? sim.nodes.find((node) => node.name === name || node.id === name)
+      || sim.nodes.find((node) => node.name.includes(name) || name.includes(node.name))
+    : null
+  const group = hit ? subtreeOf(hit.id) : sim.nodes
+  const end = cameraFor(group, hit ? (hit.depth === 0 ? 0.8 : 0.78) : 0.82, true)
+  if (!end) return false
+  const start = cameraFor(group, 0.46, true)
+  stopCamera()
+  camera.x = start?.x ?? end.x
+  camera.y = start?.y ?? end.y
+  camera.scale = Math.max(0.28, (start?.scale ?? end.scale) * 0.62)
+  framedGraphId = id
+  draw()
+  animateCamera(end.x, end.y, end.scale, 'back', SETTLE_DUR)
+  return true
+}
+
+defineExpose({ focusByName, fitView: () => frameView(true) })
 
 const worldPoint = (clientX: number, clientY: number) => {
   const wrap = wrapRef.value
@@ -227,11 +374,13 @@ const draw = () => {
   ctx.scale(camera.scale, camera.scale)
 
   const now = performance.now()
+  const wallNow = Date.now()
   const focus = hoverId || (props.selectedName
     ? sim.nodes.find((node) => node.name === props.selectedName)?.id || ''
     : '')
   const near = focus ? neighborsOf(focus) : null
   const byId = new Map(sim.nodes.map((node) => [node.id, node]))
+  const kids = childrenByParent(sim.nodes)
 
   for (const link of sim.links) {
     const from = byId.get(link.from)
@@ -263,15 +412,23 @@ const draw = () => {
     const fade = t >= 1 ? 1 : easeOutCubic(Math.min(1, t / 0.55))
     const active = !near || near.has(node.id)
     const selected = node.name === props.selectedName
-    const color = nodeColor(node)
+    const color = nodeColor(node, wallNow, kids)
     const radius = node.r * pop
     ctx.globalAlpha = fade
+    if (selected && active) {
+      ctx.beginPath()
+      ctx.arc(node.x, node.y, radius + 3.6 / camera.scale, 0, Math.PI * 2)
+      ctx.fillStyle = color.fill
+      ctx.globalAlpha = fade * 0.28
+      ctx.fill()
+      ctx.globalAlpha = fade
+    }
     ctx.beginPath()
     ctx.arc(node.x, node.y, radius, 0, Math.PI * 2)
     ctx.fillStyle = active ? color.fill : 'rgba(241, 245, 249, 0.35)'
     ctx.fill()
-    ctx.lineWidth = (selected ? 2.2 : 1.25) * (SIZE_RATIO ** Math.min(node.depth, 6)) / camera.scale
-    ctx.strokeStyle = selected ? '#2563eb' : (active ? color.stroke : 'rgba(148, 163, 184, 0.25)')
+    ctx.lineWidth = Math.max(0.75, 1.2 / camera.scale)
+    ctx.strokeStyle = active ? color.stroke : 'rgba(148, 163, 184, 0.35)'
     ctx.stroke()
     const font = fontForDepth(node.depth, camera.scale)
     if (font * camera.scale >= 4.2 && fade > 0.35) {
@@ -319,16 +476,39 @@ const kick = (heat = 0.9) => {
 
 const rebuild = () => {
   const wrap = wrapRef.value
-  if (!viewGraph.value || !wrap) {
-    sim = { nodes: [], links: [] }
-    bodies.clear()
-    draw()
-    return
+  if (!viewGraph.value || !wrap || wrap.clientWidth < 40 || wrap.clientHeight < 40) {
+    if (!viewGraph.value) {
+      sim = { nodes: [], links: [] }
+      bodies.clear()
+      layoutW = 0
+      layoutH = 0
+      draw()
+    }
+    return false
   }
-  sim = syncForceGraph(viewGraph.value, bodies, wrap.clientWidth, wrap.clientHeight, props.streaming)
+  const first = framedGraphId !== viewGraph.value.id
+  const width = wrap.clientWidth
+  const height = wrap.clientHeight
+  sim = syncForceGraph(
+    viewGraph.value,
+    bodies,
+    width,
+    height,
+    props.streaming,
+    layoutW > 40 && layoutH > 40 ? { width: layoutW, height: layoutH } : undefined,
+  )
+  layoutW = width
+  layoutH = height
   bodies.clear()
   for (const node of sim.nodes) bodies.set(node.id, node)
-  kick(props.streaming ? 0.7 : 1)
+  if (first) {
+    userPanned = false
+    settleView()
+  }
+  if (props.streaming) kick(0.7)
+  else if (!raf) raf = requestAnimationFrame(tick)
+  else draw()
+  return first
 }
 
 const onPointerDown = (event: PointerEvent) => {
@@ -376,6 +556,7 @@ const onPointerMove = (event: PointerEvent) => {
     return
   }
   panning.value = true
+  userPanned = true
   stopCamera()
   camera.x += dx
   camera.y += dy
@@ -388,9 +569,11 @@ const onPointerUp = (event: PointerEvent) => {
   if (node) node.pinned = false
   if (!dragMoved) {
     if (node) {
-      emit('select', node.name)
+      userPanned = false
+      emit('select', node.name, node.id)
       focusNode(node)
     } else {
+      userPanned = false
       emit('select', '')
       if (sim.nodes.length) lookAt(sim.nodes, 0.82, true)
     }
@@ -410,6 +593,7 @@ const onWheel = (event: WheelEvent) => {
   const sy = event.clientY - rect.top
   const worldX = (sx - camera.x) / camera.scale
   const worldY = (sy - camera.y) / camera.scale
+  userPanned = true
   stopCamera()
   const next = Math.min(4.2, Math.max(0.25, camera.scale * (event.deltaY > 0 ? 0.92 : 1.08)))
   camera.scale = next
@@ -420,28 +604,61 @@ const onWheel = (event: WheelEvent) => {
 
 watch(viewGraph, rebuild, { deep: true })
 
+watch(() => viewGraph.value?.id, (id, prev) => {
+  userPanned = false
+  framedGraphId = ''
+  if (!id || id === prev) return
+  void nextTick(() => {
+    if (viewGraph.value?.id !== id) return
+    if (sim.nodes.length) settleView()
+    else rebuild()
+  })
+})
+
+watch(
+  () => props.selectedName,
+  async (name, prev) => {
+    if (prev == null && !String(name || '').trim()) return
+    await nextTick()
+    if (userPanned || camT < 1) return
+    if (String(name || '').trim()) focusByName(name || '')
+    else if (sim.nodes.length) lookAt(sim.nodes, 0.82, true)
+  },
+)
+
 onMounted(() => {
-  rebuild()
+  clockTimer = window.setInterval(() => {
+    nowTick.value = Date.now()
+    draw()
+  }, 30000)
   let lastW = 0
   let lastH = 0
   resize = new ResizeObserver(() => {
     const wrap = wrapRef.value
     const w = wrap?.clientWidth || 0
     const h = wrap?.clientHeight || 0
-    if (w >= 40 && h >= 40 && (Math.abs(w - lastW) > 2 || Math.abs(h - lastH) > 2)) {
+    if (w < 40 || h < 40) return
+    if (Math.abs(w - lastW) > 2 || Math.abs(h - lastH) > 2) {
       lastW = w
       lastH = h
-      rebuild()
+      const first = rebuild()
+      if (first || userPanned || camT < 1) return
+      if (resizeFrameTimer) window.clearTimeout(resizeFrameTimer)
+      resizeFrameTimer = window.setTimeout(() => {
+        resizeFrameTimer = 0
+        if (!userPanned && camT >= 1) frameView(true)
+      }, 140)
       return
     }
     draw()
-    kick(0.25)
   })
   if (wrapRef.value) resize.observe(wrapRef.value)
 })
 
 onBeforeUnmount(() => {
   resize?.disconnect()
+  if (clockTimer != null) window.clearInterval(clockTimer)
+  if (resizeFrameTimer) window.clearTimeout(resizeFrameTimer)
   if (raf) cancelAnimationFrame(raf)
 })
 </script>
@@ -456,7 +673,7 @@ onBeforeUnmount(() => {
   cursor: grab;
   touch-action: none;
   background:
-    radial-gradient(circle at 50% 46%, color-mix(in srgb, #93c5fd 14%, transparent), transparent 42%),
+    radial-gradient(circle at 50% 46%, color-mix(in srgb, #2F6F78 10%, transparent), transparent 42%),
     var(--bg-secondary, #fff);
 }
 
@@ -466,6 +683,8 @@ onBeforeUnmount(() => {
 }
 
 .study-net {
+  position: relative;
+  z-index: 0;
   width: 100%;
   height: 100%;
   display: block;
@@ -491,5 +710,112 @@ onBeforeUnmount(() => {
 
 @keyframes study-mermaid-pulse {
   50% { opacity: 0.45; }
+}
+
+.study-dash {
+  position: absolute;
+  left: 12px;
+  top: 12px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: max-content;
+  max-width: calc(100% - 24px);
+  padding: 6px 10px 6px 6px;
+  border-radius: 16px;
+  background: color-mix(in srgb, #fff 42%, transparent);
+  border: none;
+  box-shadow: 0 8px 24px color-mix(in srgb, #000 7%, transparent);
+  backdrop-filter: blur(22px) saturate(180%);
+  -webkit-backdrop-filter: blur(22px) saturate(180%);
+  pointer-events: auto;
+  -webkit-app-region: no-drag;
+}
+
+.study-dash-meters {
+  display: flex;
+  flex-shrink: 0;
+}
+
+.study-dash-meter {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  padding: 0;
+  border: none;
+  border-radius: 12px;
+  background: transparent;
+  pointer-events: none;
+}
+
+.study-dash-meter svg {
+  width: 56px;
+  height: 56px;
+  transform: rotate(-90deg);
+}
+
+.study-dash-track,
+.study-dash-arc {
+  fill: none;
+  stroke-width: 6;
+  stroke-linecap: round;
+}
+
+.study-dash-track {
+  stroke: color-mix(in srgb, var(--text-secondary, #718096) 16%, transparent);
+}
+
+.study-dash-arc.is-mastery {
+  stroke: #2F6F78;
+}
+
+.study-dash-readout {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+}
+
+.study-dash-readout strong {
+  font-size: 13px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary, #2d3748);
+  line-height: 1;
+}
+
+.study-dash-legend {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 5px;
+  margin: 0;
+  padding: 0 2px;
+  border: none;
+}
+
+.study-dash-swatch {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--text-secondary, #718096);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.study-dash-swatch i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
 }
 </style>

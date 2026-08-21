@@ -1,4 +1,5 @@
 import { flattenGraph, type StudyGraphNode } from './studyGraph'
+import { retentionScore } from './studyForgetting'
 
 export interface ForceNode {
   id: string
@@ -17,6 +18,9 @@ export interface ForceNode {
   depth: number
   degree: number
   mastery?: number
+  importance?: number
+  forgetting_stage?: number
+  last_reviewed_at?: string | null
   progress: number
   pinned: boolean
   bornAt: number
@@ -33,15 +37,79 @@ export interface ForceGraph {
   links: ForceLink[]
 }
 
-const colorFor = (node: ForceNode) => {
-  if (node.depth === 0) return { fill: '#dbeafe', stroke: '#3b82f6' }
-  if (node.mastery === 3) return { fill: '#dcfce7', stroke: '#16a34a' }
-  if (node.mastery === 2) return { fill: '#fef3c7', stroke: '#d97706' }
-  if (node.mastery === 1) return { fill: '#ffedd5', stroke: '#ea580c' }
-  return { fill: '#f1f5f9', stroke: '#94a3b8' }
+export const MASTERY_COLORS = [
+  { fill: '#E8EEF1', stroke: '#B8C5CC' }, // 0 未评估
+  { fill: '#B7D4D8', stroke: '#6FA0A8' }, // 1 未掌握
+  { fill: '#5E9AA3', stroke: '#3D7A84' }, // 2 一般
+  { fill: '#2F6F78', stroke: '#1F4F56' }, // 3 已掌握
+] as const
+
+/** @deprecated 图谱节点不再用重要程度着色，保留常量以免旧引用报错 */
+export const IMPORTANCE_COLORS = ['#D7DCE6', '#B7C0E0', '#7B87C7', '#3D4A9F'] as const
+
+export const inferImportance = (depth: number, stored?: number) => {
+  const value = Number(stored)
+  if (value === 1 || value === 2 || value === 3) return value
+  if (depth <= 1) return 3
+  if (depth === 2) return 2
+  return 1
 }
 
-export const nodeColor = colorFor
+const hexRgb = (hex: string): [number, number, number] => {
+  const n = parseInt(hex.slice(1), 16)
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255]
+}
+
+const mixColor = (a: string, b: string, t: number) => {
+  const pa = hexRgb(a)
+  const pb = hexRgb(b)
+  const c = pa.map((v, i) => Math.round(v + (pb[i] - v) * t))
+  return `rgb(${c[0]}, ${c[1]}, ${c[2]})`
+}
+
+// 保持率 0–1 映射到 未掌握→一般→已掌握 的连续色带；null 为未评估灰
+export const retentionColor = (retention: number | null | undefined) => {
+  if (retention == null) return MASTERY_COLORS[0]
+  const stops = [MASTERY_COLORS[1], MASTERY_COLORS[2], MASTERY_COLORS[3]]
+  const pos = Math.max(0, Math.min(1, retention)) * (stops.length - 1)
+  const i = Math.min(stops.length - 2, Math.floor(pos))
+  const t = pos - i
+  return {
+    fill: mixColor(stops[i].fill, stops[i + 1].fill, t),
+    stroke: mixColor(stops[i].stroke, stops[i + 1].stroke, t),
+  }
+}
+
+export const childrenByParent = (nodes: ForceNode[]) => {
+  const map = new Map<string, ForceNode[]>()
+  for (const node of nodes) {
+    if (!node.parentId) continue
+    const list = map.get(node.parentId)
+    if (list) list.push(node)
+    else map.set(node.parentId, [node])
+  }
+  return map
+}
+
+export const forceRetention = (
+  node: ForceNode,
+  now = Date.now(),
+  kids: Map<string, ForceNode[]> = new Map(),
+): number | null => {
+  const children = kids.get(node.id) || []
+  if (children.length) {
+    const scores = children.map((child) => forceRetention(child, now, kids))
+    if (scores.every((score) => score == null)) return null
+    return scores.reduce((sum, score) => sum + (score ?? 0), 0) / scores.length
+  }
+  return retentionScore(node, now)
+}
+
+export const nodeColor = (
+  node: ForceNode,
+  now = Date.now(),
+  kids?: Map<string, ForceNode[]>,
+) => retentionColor(kids ? forceRetention(node, now, kids) : retentionScore(node, now))
 
 const TWO_PI = Math.PI * 2
 export const SIZE_RATIO = 0.5
@@ -173,6 +241,7 @@ export const syncForceGraph = (
   width: number,
   height: number,
   streaming = false,
+  prevSize?: { width: number; height: number },
 ): ForceGraph => {
   const { nodes, links } = flattenGraph(root)
   const degree = new Map<string, number>()
@@ -193,16 +262,20 @@ export const syncForceGraph = (
   const next = new Map<string, ForceNode>()
   const cx = width / 2
   const cy = height / 2
+  const shiftX = prevSize && prevSize.width > 40 ? cx - prevSize.width / 2 : 0
+  const shiftY = prevSize && prevSize.height > 40 ? cy - prevSize.height / 2 : 0
   const radial = placeRadialTree(root, width, height)
   const now = performance.now()
   let stagger = 0
   const prevByName = new Map<string, ForceNode>()
-  for (const item of prev.values()) {
-    if (item.name && !prevByName.has(item.name)) prevByName.set(item.name, item)
+  if (streaming) {
+    for (const item of prev.values()) {
+      if (item.name && !prevByName.has(item.name)) prevByName.set(item.name, item)
+    }
   }
-  const incremental = streaming || nodes.some((node) => prev.has(node.id) || prevByName.has(node.name))
+  const incremental = streaming || nodes.some((node) => prev.has(node.id))
   nodes.forEach((node) => {
-    const old = prev.get(node.id) || prevByName.get(node.name)
+    const old = prev.get(node.id) || (streaming ? prevByName.get(node.name) : undefined)
     const placed = radial.get(node.id)
     const parent = parentOf.get(node.id)
     const parentBody = parent ? next.get(parent) || prev.get(parent) : null
@@ -213,10 +286,10 @@ export const syncForceGraph = (
     const fromY = parentBody?.y ?? cy
     const popIn = isNew && incremental
     const x = old
-      ? (streaming || old.pinned ? old.x : (placed?.x ?? cx))
+      ? old.x + shiftX
       : (popIn ? fromX : (placed?.x ?? cx))
     const y = old
-      ? (streaming || old.pinned ? old.y : (placed?.y ?? cy))
+      ? old.y + shiftY
       : (popIn ? fromY : (placed?.y ?? cy))
     next.set(node.id, {
       id: node.id,
@@ -235,6 +308,9 @@ export const syncForceGraph = (
       depth,
       degree: degree.get(node.id) || 1,
       mastery: node.mastery,
+      importance: inferImportance(depth, node.importance),
+      forgetting_stage: node.forgetting_stage,
+      last_reviewed_at: node.last_reviewed_at,
       progress: node.stats.progress,
       pinned: old?.pinned ?? false,
       bornAt: old?.bornAt ?? (popIn ? now + stagger : 0),
@@ -263,12 +339,20 @@ export const stepForceGraph = (
   if (nodes.length < 2) return
   const now = performance.now()
   const byId = new Map(nodes.map((node) => [node.id, node]))
+  const hub = (node: ForceNode) => node.depth === 0 && !node.pinned
+  for (const node of nodes) {
+    if (!hub(node)) continue
+    node.x = node.tx
+    node.y = node.ty
+    node.vx = 0
+    node.vy = 0
+  }
   const appearing = new Set<string>()
   for (const node of nodes) {
     if (node.pinned) continue
     if (advanceAppear(node, byId, now)) appearing.add(node.id)
   }
-  const locked = (node: ForceNode) => node.pinned || appearing.has(node.id)
+  const locked = (node: ForceNode) => node.pinned || appearing.has(node.id) || hub(node)
   if (streaming) {
     const pull = 0.16 * Math.max(alpha, 0.45)
     for (const node of nodes) {
@@ -290,6 +374,8 @@ export const stepForceGraph = (
   const cy = height / 2
   const k = 72 + 520 / Math.sqrt(nodes.length)
   const charge = 1400 + nodes.length * 28
+  const maxForce = 12
+  const maxSpeed = 18
   const dragging = nodes.some((node) => node.pinned)
   const loose = nodes.filter((node) => !locked(node))
   let comX = 0
@@ -310,12 +396,13 @@ export const stepForceGraph = (
       let dx = b.x - a.x
       let dy = b.y - a.y
       let dist = Math.hypot(dx, dy)
+      if (appearing.has(a.id) || appearing.has(b.id)) continue
       if (dist < 0.01) {
         dx = (Math.random() - 0.5) * 0.4
         dy = (Math.random() - 0.5) * 0.4
         dist = Math.hypot(dx, dy)
       }
-      const force = (charge * alpha) / (dist * dist)
+      const force = Math.min(maxForce, (charge * alpha) / (dist * dist))
       const ux = dx / dist
       const uy = dy / dist
       if (!locked(a)) {
@@ -345,6 +432,7 @@ export const stepForceGraph = (
     const a = byId.get(link.from)
     const b = byId.get(link.to)
     if (!a || !b) continue
+    if (appearing.has(a.id) || appearing.has(b.id)) continue
     const dx = b.x - a.x
     const dy = b.y - a.y
     const dist = Math.hypot(dx, dy) || 0.01
@@ -378,8 +466,8 @@ export const stepForceGraph = (
       node.vx += (cx - node.x) * 0.004 * alpha
       node.vy += (cy - node.y) * 0.004 * alpha
     }
-    node.vx *= 0.82
-    node.vy *= 0.82
+    node.vx = Math.max(-maxSpeed, Math.min(maxSpeed, node.vx * 0.82))
+    node.vy = Math.max(-maxSpeed, Math.min(maxSpeed, node.vy * 0.82))
     node.x += node.vx
     node.y += node.vy
   }

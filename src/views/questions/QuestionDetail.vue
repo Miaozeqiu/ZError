@@ -92,18 +92,17 @@
               <span class="meta-pill-label">创建</span>
               <span class="meta-pill-value">{{ formatCompactTime(question?.create_time) }}</span>
             </div>
-            <div class="meta-pill">
-              <span class="meta-pill-label">重要性</span>
-              <span class="meta-pill-value">{{ importanceLabel(question?.importance) }}</span>
-            </div>
-            <div class="meta-pill">
-              <span class="meta-pill-label">掌握程度</span>
-              <span class="meta-pill-value">{{ masteryLabel(question?.mastery) }}</span>
-            </div>
-            <div class="meta-pill">
-              <span class="meta-pill-label">难度</span>
-              <span class="meta-pill-value">{{ difficultyLabel(question?.difficulty) }}</span>
-            </div>
+            <button
+              v-for="link in knowledgeLinks"
+              :key="link.node_id"
+              class="meta-pill meta-pill-knowledge"
+              type="button"
+              :title="`${link.subject_name} · ${link.node_name}`"
+              @click="openKnowledge(link)"
+            >
+              <span class="meta-pill-label">知识点</span>
+              <span class="meta-pill-value">{{ link.node_name }}</span>
+            </button>
           </div>
         </div>
         <div class="detail-item">
@@ -166,45 +165,6 @@
             placeholder="请输入题目类型..."
           />
         </div>
-        <div class="form-group">
-          <label>重要性:</label>
-          <div class="metric-selector">
-            <button
-              v-for="level in importanceLevels"
-              :key="`imp-${level.value}`"
-              type="button"
-              class="metric-btn"
-              :class="{ active: editImportance === level.value }"
-              @click="$emit('update:editImportance', level.value)"
-            >{{ level.label }}</button>
-          </div>
-        </div>
-        <div class="form-group">
-          <label>掌握程度:</label>
-          <div class="metric-selector">
-            <button
-              v-for="level in masteryLevels"
-              :key="`mas-${level.value}`"
-              type="button"
-              class="metric-btn"
-              :class="{ active: editMastery === level.value }"
-              @click="$emit('update:editMastery', level.value)"
-            >{{ level.label }}</button>
-          </div>
-        </div>
-        <div class="form-group">
-          <label>难度:</label>
-          <div class="metric-selector">
-            <button
-              v-for="level in difficultyLevels"
-              :key="`dif-${level.value}`"
-              type="button"
-              class="metric-btn"
-              :class="{ active: editDifficulty === level.value }"
-              @click="$emit('update:editDifficulty', level.value)"
-            >{{ level.label }}</button>
-          </div>
-        </div>
         <div class="edit-actions">
           <button @click="$emit('cancel-edit')" class="cancel-btn" :disabled="isSavingEdit">取消</button>
           <button @click="$emit('save-edit')" class="save-btn" :disabled="!isEditFormValid || isSavingEdit">
@@ -222,18 +182,10 @@
 
 <script setup lang="ts">
 import { computed, ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
-import { databaseService, type AIResponse, type PracticeRecord } from '../../services/database'
+import { databaseService, type AIResponse, type PracticeRecord, type QuestionKnowledgeLink } from '../../services/database'
+import { openKnowledgeInStudy } from '../../services/questionKnowledge'
 import { splitQuestionImageParts, fetchQuestionImageBase64, shouldInvertTransparentDarkImage } from '../../utils/questionImage'
 import type { QuestionImagePart as Part } from '../../utils/questionImage'
-import {
-  DIFFICULTY_LEVELS,
-  IMPORTANCE_LEVELS,
-  MASTERY_LEVELS,
-  difficultyLabel,
-  importanceLabel,
-  masteryLabel,
-  type QuestionMetricValue,
-} from '../../utils/questionMetrics'
 
 interface Props {
   question: AIResponse | null
@@ -244,9 +196,6 @@ interface Props {
   editOptions: string
   editAnswer: string
   editType: string
-  editImportance: QuestionMetricValue
-  editMastery: QuestionMetricValue
-  editDifficulty: QuestionMetricValue
   isEditFormValid: boolean
   isSavingEdit: boolean
   isResizing: boolean
@@ -267,18 +216,30 @@ const emit = defineEmits<{
   (e: 'update:editOptions', v: string): void
   (e: 'update:editAnswer', v: string): void
   (e: 'update:editType', v: string): void
-  (e: 'update:editImportance', v: QuestionMetricValue): void
-  (e: 'update:editMastery', v: QuestionMetricValue): void
-  (e: 'update:editDifficulty', v: QuestionMetricValue): void
 }>()
 
-const importanceLevels = IMPORTANCE_LEVELS
-const masteryLevels = MASTERY_LEVELS
-const difficultyLevels = DIFFICULTY_LEVELS
 const imageSrcMap = ref<Record<string, string>>({})
 const blackOnlyMap = ref<Record<string, boolean>>({})
 
 const practiceHistory = ref<PracticeRecord[]>([])
+const knowledgeLinks = ref<QuestionKnowledgeLink[]>([])
+
+const openKnowledge = (link: QuestionKnowledgeLink) => {
+  openKnowledgeInStudy(link)
+}
+
+const loadKnowledgeLinks = async () => {
+  const id = props.question?.id
+  if (!id) {
+    knowledgeLinks.value = []
+    return
+  }
+  try {
+    knowledgeLinks.value = await databaseService.listQuestionKnowledge([id])
+  } catch {
+    knowledgeLinks.value = []
+  }
+}
 
 const loadPracticeHistory = async () => {
   const id = props.question?.id
@@ -295,6 +256,7 @@ const loadPracticeHistory = async () => {
 
 watch(() => props.question?.id, () => {
   void loadPracticeHistory()
+  void loadKnowledgeLinks()
 }, { immediate: true })
 
 const contentParts = computed<Part[]>(() => splitQuestionImageParts(props.question?.question || ''))
@@ -846,6 +808,13 @@ onUnmounted(() => {
   background: transparent;
 }
 
+.meta-pill-knowledge {
+  border: none;
+  background: color-mix(in srgb, #2F6F78 10%, transparent);
+  color: inherit;
+  cursor: pointer;
+}
+
 .meta-pill-folder {
   flex: 1 1 220px;
   min-width: 0;
@@ -946,29 +915,6 @@ onUnmounted(() => {
 .edit-textarea:hover {
   background-color: var(--form-input-hover-bg, #f0f0f0);
   border-color: var(--form-input-hover-border, transparent);
-}
-
-.metric-selector {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.metric-btn {
-  padding: 7px 14px;
-  border: 1px solid var(--platform-config-dialog-header-border);
-  border-radius: 20px;
-  background: transparent;
-  color: var(--platform-config-form-label-text);
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-}
-
-.metric-btn.active {
-  background: var(--question-editor-submit-bg);
-  border-color: var(--question-editor-submit-bg);
-  color: var(--question-editor-submit-text);
 }
 
 .edit-input:focus,

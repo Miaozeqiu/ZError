@@ -77,15 +77,6 @@
             <span>已记录选择 {{ stateOf(current).selected.join('') }}</span>
           </div>
           <div v-if="stateOf(current).submitted && current.explanation" class="quiz-explain">{{ current.explanation }}</div>
-          <div v-if="stateOf(current).submitted && current.question_id" class="quiz-note">
-            <textarea
-              class="quiz-note-input"
-              rows="2"
-              :value="stateOf(current).note"
-              placeholder="备注，下次出题时会给 Agent 参考"
-              @input="onNote(current, ($event.target as HTMLTextAreaElement).value)"
-            />
-          </div>
         </div>
       </Transition>
     </div>
@@ -221,7 +212,7 @@ const persist = (card: QuizCard) => {
   setQuizAnswer(props.stepId, card.uid, { ...stateOf(card) })
 }
 
-const attemptPayload = (card: QuizCard, kind: 'submit' | 'note' = 'submit') => {
+const attemptPayload = (card: QuizCard) => {
   const state = stateOf(card)
   const index = props.cards.findIndex((item) => item.uid === card.uid)
   return {
@@ -233,17 +224,16 @@ const attemptPayload = (card: QuizCard, kind: 'submit' | 'note' = 'submit') => {
     selected: formatAnswerLabel(state.selected.join(''), card.options, card.question_type) || state.selected.join(''),
     answer: formatAnswerLabel(card.answer, card.options, card.question_type) || card.answer,
     correct: state.correct,
-    note: state.note,
     explanation: card.explanation,
     index: index >= 0 ? index + 1 : undefined,
     total: props.cards.length,
-    kind,
+    kind: 'submit' as const,
   }
 }
 
 const notifyProgress = (card: QuizCard) => {
-  emit('attempt', attemptPayload(card, 'submit'))
-  const attempts = props.cards.filter((item) => stateOf(item).submitted).map((item) => attemptPayload(item, 'submit'))
+  emit('attempt', attemptPayload(card))
+  const attempts = props.cards.filter((item) => stateOf(item).submitted).map((item) => attemptPayload(item))
   if (attempts.length === props.cards.length) emit('complete', attempts)
 }
 
@@ -306,7 +296,6 @@ const submitCard = async (card: QuizCard) => {
       questionId: card.question_id,
       userAnswer: state.selected.join(''),
       isCorrect: Boolean(state.correct),
-      note: state.note,
       source: 'agent',
     })
     state.recordId = record.id
@@ -319,23 +308,6 @@ const submitCard = async (card: QuizCard) => {
   } catch {
     // keep local result
   }
-}
-
-let noteTimer = 0
-const onNote = (card: QuizCard, note: string) => {
-  const state = stateOf(card)
-  state.note = note
-  persist(card)
-  emit('attempt', attemptPayload(card, 'note'))
-  window.clearTimeout(noteTimer)
-  noteTimer = window.setTimeout(async () => {
-    if (!state.recordId) return
-    try {
-      await databaseService.updatePracticeNote(state.recordId, note)
-    } catch {
-      // ignore
-    }
-  }, 400)
 }
 
 const dotClass = (card: QuizCard, index: number) => {
@@ -383,8 +355,6 @@ const dotClass = (card: QuizCard, index: number) => {
 
 .quiz-card {
   padding: 12px 14px;
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--text-primary, #2d3748) 4%, #fff);
 }
 
 .quiz-top {
@@ -437,36 +407,27 @@ const dotClass = (card: QuizCard, index: number) => {
   align-items: flex-start;
   gap: 8px;
   width: 100%;
-  border: 1px solid color-mix(in srgb, var(--text-primary, #2d3748) 8%, transparent);
+  border: none;
   border-radius: 8px;
   padding: 8px 10px;
-  background: transparent;
+  background: color-mix(in srgb, var(--text-primary, #2d3748) 6%, transparent);
   color: var(--text-primary, #2d3748);
   text-align: left;
   cursor: pointer;
 }
 
 .quiz-option:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--text-primary, #2d3748) 5%, transparent);
+  background: color-mix(in srgb, var(--text-primary, #2d3748) 9%, transparent);
 }
 
 .quiz-option:active:not(:disabled) {
   transform: scale(0.985);
 }
 
-.quiz-option.picked {
-  border-color: color-mix(in srgb, #3b82f6 45%, transparent);
-  background: color-mix(in srgb, #3b82f6 8%, transparent);
-}
-
-.quiz-option.correct {
-  border-color: color-mix(in srgb, #16a34a 50%, transparent);
-  background: color-mix(in srgb, #16a34a 10%, transparent);
-}
-
+.quiz-option.picked,
+.quiz-option.correct,
 .quiz-option.wrong {
-  border-color: color-mix(in srgb, #dc2626 45%, transparent);
-  background: color-mix(in srgb, #dc2626 8%, transparent);
+  background: color-mix(in srgb, var(--text-primary, #2d3748) 12%, transparent);
 }
 
 .quiz-option:disabled {
@@ -492,8 +453,7 @@ const dotClass = (card: QuizCard, index: number) => {
   margin-top: 10px;
 }
 
-.quiz-input,
-.quiz-note-input {
+.quiz-input {
   flex: 1;
   border: 1px solid color-mix(in srgb, var(--text-primary, #2d3748) 10%, transparent);
   border-radius: 8px;
@@ -552,16 +512,6 @@ const dotClass = (card: QuizCard, index: number) => {
   line-height: 1.5;
   color: var(--text-secondary, #4a5568);
   white-space: pre-wrap;
-}
-
-.quiz-note {
-  margin-top: 8px;
-}
-
-.quiz-note-input {
-  width: 100%;
-  resize: vertical;
-  min-height: 44px;
 }
 
 .quiz-nav {
