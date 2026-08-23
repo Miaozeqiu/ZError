@@ -10,6 +10,7 @@
     @wheel.prevent="onWheel"
   >
     <canvas v-show="viewGraph" ref="canvasRef" class="study-net" />
+    <div v-show="viewGraph" ref="labelLayerRef" class="study-net-labels" />
     <div v-if="!viewGraph" class="study-mermaid-empty">{{ emptyText }}</div>
     <div v-if="streaming && viewGraph" class="study-mermaid-live">正在绘制</div>
   </div>
@@ -50,6 +51,8 @@ const emit = defineEmits<{
 
 const wrapRef = ref<HTMLElement | null>(null)
 const canvasRef = ref<HTMLCanvasElement | null>(null)
+const labelLayerRef = ref<HTMLElement | null>(null)
+const labelEls = new Map<string, HTMLSpanElement>()
 const panning = ref(false)
 const dragging = ref(false)
 const emptyText = computed(() => props.emptyText || '选择左侧科目查看知识图谱')
@@ -64,6 +67,7 @@ const viewGraph = computed(() => {
 })
 
 let clockTimer: number | null = null
+let onDisplayChange: (() => void) | null = null
 
 const camera = { x: 0, y: 0, scale: 1 }
 const bodies = new Map<string, ForceNode>()
@@ -91,8 +95,9 @@ const SETTLE_DUR = 560
 
 const graphChrome = {
   dark: false,
-  label: '#334155',
-  labelDim: 'rgba(51, 65, 85, 0.28)',
+  label: '#1f2937',
+  labelDim: '#64748b',
+  halo: '#ffffff',
   nodeDim: 'rgba(241, 245, 249, 0.35)',
   strokeDim: 'rgba(148, 163, 184, 0.35)',
   link: 'rgba(148, 163, 184, 0.55)',
@@ -104,8 +109,9 @@ const syncGraphChrome = () => {
   const dark = document.documentElement.getAttribute('data-theme') === 'dark'
   graphChrome.dark = dark
   if (dark) {
-    graphChrome.label = '#e8eaed'
-    graphChrome.labelDim = 'rgba(232, 234, 237, 0.34)'
+    graphChrome.label = '#f2f4f7'
+    graphChrome.labelDim = '#94a3b8'
+    graphChrome.halo = '#2c2c2e'
     graphChrome.nodeDim = 'rgba(58, 58, 60, 0.62)'
     graphChrome.strokeDim = 'rgba(174, 184, 198, 0.28)'
     graphChrome.link = 'rgba(174, 184, 198, 0.42)'
@@ -113,8 +119,9 @@ const syncGraphChrome = () => {
     graphChrome.linkDim = 'rgba(174, 184, 198, 0.08)'
     return
   }
-  graphChrome.label = '#334155'
-  graphChrome.labelDim = 'rgba(51, 65, 85, 0.28)'
+  graphChrome.label = '#1f2937'
+  graphChrome.labelDim = '#64748b'
+  graphChrome.halo = '#ffffff'
   graphChrome.nodeDim = 'rgba(241, 245, 249, 0.35)'
   graphChrome.strokeDim = 'rgba(148, 163, 184, 0.35)'
   graphChrome.link = 'rgba(148, 163, 184, 0.55)'
@@ -328,22 +335,73 @@ const neighborsOf = (id: string) => {
   return set
 }
 
+const canvasScale = () => {
+  const viewportScale = window.visualViewport?.scale || 1
+  return Math.max(1, (window.devicePixelRatio || 1) * viewportScale)
+}
+
+const syncCanvasSize = (canvas: HTMLCanvasElement, wrap: HTMLElement) => {
+  const dpr = canvasScale()
+  const w = wrap.clientWidth
+  const h = wrap.clientHeight
+  const bw = Math.max(1, Math.round(w * dpr))
+  const bh = Math.max(1, Math.round(h * dpr))
+  if (canvas.width !== bw || canvas.height !== bh) {
+    canvas.width = bw
+    canvas.height = bh
+  }
+  canvas.style.width = `${w}px`
+  canvas.style.height = `${h}px`
+  return { w, h, sx: bw / w, sy: bh / h }
+}
+
+const clearLabels = () => {
+  for (const el of labelEls.values()) el.remove()
+  labelEls.clear()
+}
+
+const paintLabels = (
+  labels: Array<{ id: string; x: number; y: number; size: number; text: string; dim: boolean; alpha: number }>,
+) => {
+  const layer = labelLayerRef.value
+  if (!layer) return
+  layer.style.setProperty('--label-color', graphChrome.label)
+  layer.style.setProperty('--label-dim', graphChrome.labelDim)
+  layer.style.setProperty('--label-halo', graphChrome.halo)
+  const seen = new Set<string>()
+  for (const item of labels) {
+    seen.add(item.id)
+    let el = labelEls.get(item.id)
+    if (!el) {
+      el = document.createElement('span')
+      el.className = 'study-net-label'
+      layer.appendChild(el)
+      labelEls.set(item.id, el)
+    }
+    if (el.textContent !== item.text) el.textContent = item.text
+    el.classList.toggle('is-dim', item.dim)
+    el.style.fontSize = `${item.size}px`
+    el.style.opacity = item.alpha >= 1 ? '1' : String(item.alpha)
+    const x = Math.round(item.x * camera.scale + camera.x)
+    const y = Math.round(item.y * camera.scale + camera.y)
+    el.style.transform = `translate(${x}px, ${y}px) translate(-50%, 0)`
+  }
+  for (const [id, el] of labelEls) {
+    if (seen.has(id)) continue
+    el.remove()
+    labelEls.delete(id)
+  }
+}
+
 const draw = () => {
   const canvas = canvasRef.value
   const wrap = wrapRef.value
   if (!canvas || !wrap) return
-  const dpr = Math.min(window.devicePixelRatio || 1, 2)
-  const w = wrap.clientWidth
-  const h = wrap.clientHeight
-  if (canvas.width !== Math.floor(w * dpr) || canvas.height !== Math.floor(h * dpr)) {
-    canvas.width = Math.floor(w * dpr)
-    canvas.height = Math.floor(h * dpr)
-    canvas.style.width = `${w}px`
-    canvas.style.height = `${h}px`
-  }
+  const { w, h, sx, sy } = syncCanvasSize(canvas, wrap)
   const ctx = canvas.getContext('2d')
   if (!ctx) return
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+  ctx.setTransform(sx, 0, 0, sy, 0, 0)
+  ctx.imageSmoothingEnabled = false
   ctx.clearRect(0, 0, w, h)
   ctx.save()
   ctx.translate(camera.x, camera.y)
@@ -357,6 +415,15 @@ const draw = () => {
   const near = focus ? neighborsOf(focus) : null
   const byId = new Map(sim.nodes.map((node) => [node.id, node]))
   const kids = childrenByParent(sim.nodes)
+  const labels: Array<{
+    id: string
+    x: number
+    y: number
+    size: number
+    text: string
+    dim: boolean
+    alpha: number
+  }> = []
 
   for (const link of sim.links) {
     const from = byId.get(link.from)
@@ -407,18 +474,23 @@ const draw = () => {
     ctx.strokeStyle = active ? color.stroke : graphChrome.strokeDim
     ctx.stroke()
     const font = fontForDepth(node.depth, camera.scale)
-    if (font * camera.scale >= 4.2 && fade > 0.35) {
-      ctx.font = `${font}px ui-sans-serif, system-ui, sans-serif`
-      ctx.textAlign = 'center'
-      ctx.textBaseline = 'top'
-      ctx.fillStyle = active ? graphChrome.label : graphChrome.labelDim
+    const size = Math.max(12, Math.round(font * camera.scale))
+    if (size >= 12 && fade > 0.35) {
       const max = labelLimitForDepth(node.depth)
-      const label = node.name.length > max ? `${node.name.slice(0, max)}…` : node.name
-      ctx.fillText(label, node.x, node.y + radius + Math.max(2, radius * 0.45))
+      labels.push({
+        id: node.id,
+        x: node.x,
+        y: node.y + radius + Math.max(2, radius * 0.45),
+        size,
+        text: node.name.length > max ? `${node.name.slice(0, max)}…` : node.name,
+        dim: !active,
+        alpha: fade >= 0.85 ? 1 : fade,
+      })
     }
   }
   ctx.globalAlpha = 1
   ctx.restore()
+  paintLabels(labels)
 }
 
 const tick = () => {
@@ -458,6 +530,7 @@ const rebuild = () => {
       bodies.clear()
       layoutW = 0
       layoutH = 0
+      clearLabels()
       draw()
     }
     return false
@@ -636,15 +709,24 @@ onMounted(() => {
     draw()
   })
   if (wrapRef.value) resize.observe(wrapRef.value)
+  onDisplayChange = () => draw()
+  window.addEventListener('resize', onDisplayChange)
+  window.visualViewport?.addEventListener('resize', onDisplayChange)
 })
 
 onBeforeUnmount(() => {
   themeObserver?.disconnect()
   themeObserver = null
   resize?.disconnect()
+  if (onDisplayChange) {
+    window.removeEventListener('resize', onDisplayChange)
+    window.visualViewport?.removeEventListener('resize', onDisplayChange)
+    onDisplayChange = null
+  }
   if (clockTimer != null) window.clearInterval(clockTimer)
   if (resizeFrameTimer) window.clearTimeout(resizeFrameTimer)
   if (raf) cancelAnimationFrame(raf)
+  clearLabels()
 })
 </script>
 
@@ -670,9 +752,37 @@ onBeforeUnmount(() => {
 .study-net {
   position: relative;
   z-index: 0;
-  width: 100%;
-  height: 100%;
   display: block;
+}
+
+.study-net-labels {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.study-net-labels :deep(.study-net-label) {
+  position: absolute;
+  left: 0;
+  top: 0;
+  white-space: nowrap;
+  font-weight: 400;
+  font-family: "Microsoft YaHei UI", "PingFang SC", "Segoe UI", "Microsoft YaHei", sans-serif;
+  color: var(--label-color, #1f2937);
+  line-height: 1.2;
+  letter-spacing: 0.02em;
+  text-rendering: optimizeLegibility;
+  text-shadow:
+    -1px 0 0 var(--label-halo, #fff),
+    1px 0 0 var(--label-halo, #fff),
+    0 -1px 0 var(--label-halo, #fff),
+    0 1px 0 var(--label-halo, #fff);
+}
+
+.study-net-labels :deep(.study-net-label.is-dim) {
+  color: var(--label-dim, #64748b);
 }
 
 .study-mermaid-empty {
