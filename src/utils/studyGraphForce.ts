@@ -119,9 +119,9 @@ const MIN_RADIUS = 2.2
 export const radiusForDepth = (depth: number) =>
   Math.max(MIN_RADIUS, ROOT_RADIUS * SIZE_RATIO ** Math.max(0, depth))
 
-const FONT_BASE = 15
-const FONT_RATIO = 0.88
-const MIN_FONT = 10
+const FONT_BASE = 13
+const FONT_RATIO = 0.62
+const MIN_FONT = 3.5
 
 export const fontForDepth = (depth: number, cameraScale = 1) =>
   Math.max(MIN_FONT, FONT_BASE * FONT_RATIO ** Math.max(0, depth))
