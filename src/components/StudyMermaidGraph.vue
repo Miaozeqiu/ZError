@@ -12,31 +12,6 @@
     <canvas v-show="viewGraph" ref="canvasRef" class="study-net" />
     <div v-if="!viewGraph" class="study-mermaid-empty">{{ emptyText }}</div>
     <div v-if="streaming && viewGraph" class="study-mermaid-live">正在绘制</div>
-    <div v-if="dash && viewGraph" class="study-dash" @pointerdown.stop @click.stop>
-      <div class="study-dash-meters">
-        <div class="study-dash-meter">
-          <svg viewBox="0 0 64 64" aria-hidden="true">
-            <circle class="study-dash-track" cx="32" cy="32" r="22" />
-            <circle
-              class="study-dash-arc is-mastery"
-              cx="32"
-              cy="32"
-              r="22"
-              :stroke-dasharray="arcDash(dash.mastery)"
-            />
-          </svg>
-          <div class="study-dash-readout">
-            <strong>{{ dash.masteryPct }}%</strong>
-          </div>
-        </div>
-      </div>
-      <div class="study-dash-legend" aria-hidden="true">
-        <span v-for="item in masteryLegend" :key="item.label" class="study-dash-swatch">
-          <i :style="{ background: item.color }" />
-          {{ item.label }}
-        </span>
-      </div>
-    </div>
   </div>
 </template>
 
@@ -51,18 +26,15 @@ import {
   fontForDepth,
   hitSlop,
   labelLimitForDepth,
-  MASTERY_COLORS,
   childrenByParent,
   nodeColor,
   POP_MS,
-  retentionColor,
   SIZE_RATIO,
   stepForceGraph,
   syncForceGraph,
   type ForceGraph,
   type ForceNode,
 } from '../utils/studyGraphForce'
-import { rolledRetention } from '../utils/studyForgetting'
 
 const props = defineProps<{
   source?: string
@@ -91,37 +63,7 @@ const viewGraph = computed(() => {
   return props.graph || null
 })
 
-const ARC = 2 * Math.PI * 22
-
-type MasteryBand = 'unset' | 'weak' | 'fair' | 'solid'
-
-const nowTick = ref(Date.now())
 let clockTimer: number | null = null
-
-const BAND_META: Record<MasteryBand, { label: string; color: string }> = {
-  unset: { label: '未评估', color: MASTERY_COLORS[0].fill },
-  weak: { label: '遗忘中', color: retentionColor(0.2).fill },
-  fair: { label: '记忆中', color: retentionColor(0.6).fill },
-  solid: { label: '牢固', color: retentionColor(1).fill },
-}
-
-const masteryLegend = (['unset', 'weak', 'fair', 'solid'] as MasteryBand[])
-  .map((band) => ({ label: BAND_META[band].label, color: BAND_META[band].color }))
-
-const dash = computed(() => {
-  const root = viewGraph.value
-  if (!root?.children.length) return null
-  const mastery = rolledRetention(root, nowTick.value) ?? 0
-  return {
-    mastery,
-    masteryPct: Math.round(mastery * 100),
-  }
-})
-
-const arcDash = (t: number) => {
-  const value = Math.max(0, Math.min(1, t)) * ARC
-  return `${value} ${ARC}`
-}
 
 const camera = { x: 0, y: 0, scale: 1 }
 const bodies = new Map<string, ForceNode>()
@@ -146,6 +88,39 @@ let camT = 1
 let camEase: 'cubic' | 'back' = 'cubic'
 const CAM_DUR = 420
 const SETTLE_DUR = 560
+
+const graphChrome = {
+  dark: false,
+  label: '#334155',
+  labelDim: 'rgba(51, 65, 85, 0.28)',
+  nodeDim: 'rgba(241, 245, 249, 0.35)',
+  strokeDim: 'rgba(148, 163, 184, 0.35)',
+  link: 'rgba(148, 163, 184, 0.55)',
+  linkExtra: 'rgba(148, 163, 184, 0.28)',
+  linkDim: 'rgba(148, 163, 184, 0.08)',
+}
+
+const syncGraphChrome = () => {
+  const dark = document.documentElement.getAttribute('data-theme') === 'dark'
+  graphChrome.dark = dark
+  if (dark) {
+    graphChrome.label = '#e8eaed'
+    graphChrome.labelDim = 'rgba(232, 234, 237, 0.34)'
+    graphChrome.nodeDim = 'rgba(58, 58, 60, 0.62)'
+    graphChrome.strokeDim = 'rgba(174, 184, 198, 0.28)'
+    graphChrome.link = 'rgba(174, 184, 198, 0.42)'
+    graphChrome.linkExtra = 'rgba(174, 184, 198, 0.22)'
+    graphChrome.linkDim = 'rgba(174, 184, 198, 0.08)'
+    return
+  }
+  graphChrome.label = '#334155'
+  graphChrome.labelDim = 'rgba(51, 65, 85, 0.28)'
+  graphChrome.nodeDim = 'rgba(241, 245, 249, 0.35)'
+  graphChrome.strokeDim = 'rgba(148, 163, 184, 0.35)'
+  graphChrome.link = 'rgba(148, 163, 184, 0.55)'
+  graphChrome.linkExtra = 'rgba(148, 163, 184, 0.28)'
+  graphChrome.linkDim = 'rgba(148, 163, 184, 0.08)'
+}
 
 const easeOutCubic = (t: number) => 1 - (1 - t) ** 3
 
@@ -275,12 +250,13 @@ const focusNode = (node: ForceNode, instant = false) => {
 }
 
 const focusByName = (name: string, instant = false) => {
+  userPanned = false
   const query = String(name || '').trim()
   if (!query) {
     if (sim.nodes.length) lookAt(sim.nodes, 0.82, true, instant)
     return Boolean(sim.nodes.length)
   }
-  const exact = sim.nodes.find((node) => node.name === query || node.id === query)
+  const exact = sim.nodes.find((node) => node.name === query || node.id === query || node.id === `node:${query}`)
   const fuzzy = exact || sim.nodes.find((node) => node.name.includes(query) || query.includes(node.name))
   if (!fuzzy) return false
   focusNode(fuzzy, instant)
@@ -394,8 +370,8 @@ const draw = () => {
     ctx.moveTo(from.x, from.y)
     ctx.lineTo(to.x, to.y)
     ctx.strokeStyle = active
-      ? (link.extra ? 'rgba(148, 163, 184, 0.28)' : 'rgba(148, 163, 184, 0.55)')
-      : 'rgba(148, 163, 184, 0.08)'
+      ? (link.extra ? graphChrome.linkExtra : graphChrome.link)
+      : graphChrome.linkDim
     const depth = Math.min(from.depth, to.depth)
     ctx.lineWidth = (active ? 1.15 : 0.75) * (SIZE_RATIO ** Math.min(depth, 6)) / camera.scale
     if (link.extra) ctx.setLineDash([4 / camera.scale, 3 / camera.scale])
@@ -425,17 +401,17 @@ const draw = () => {
     }
     ctx.beginPath()
     ctx.arc(node.x, node.y, radius, 0, Math.PI * 2)
-    ctx.fillStyle = active ? color.fill : 'rgba(241, 245, 249, 0.35)'
+    ctx.fillStyle = active ? color.fill : graphChrome.nodeDim
     ctx.fill()
     ctx.lineWidth = Math.max(0.75, 1.2 / camera.scale)
-    ctx.strokeStyle = active ? color.stroke : 'rgba(148, 163, 184, 0.35)'
+    ctx.strokeStyle = active ? color.stroke : graphChrome.strokeDim
     ctx.stroke()
     const font = fontForDepth(node.depth, camera.scale)
     if (font * camera.scale >= 4.2 && fade > 0.35) {
       ctx.font = `${font}px ui-sans-serif, system-ui, sans-serif`
       ctx.textAlign = 'center'
       ctx.textBaseline = 'top'
-      ctx.fillStyle = active ? '#334155' : 'rgba(51, 65, 85, 0.28)'
+      ctx.fillStyle = active ? graphChrome.label : graphChrome.labelDim
       const max = labelLimitForDepth(node.depth)
       const label = node.name.length > max ? `${node.name.slice(0, max)}…` : node.name
       ctx.fillText(label, node.x, node.y + radius + Math.max(2, radius * 0.45))
@@ -618,17 +594,24 @@ watch(() => viewGraph.value?.id, (id, prev) => {
 watch(
   () => props.selectedName,
   async (name, prev) => {
+    if (name === prev) return
     if (prev == null && !String(name || '').trim()) return
     await nextTick()
-    if (userPanned || camT < 1) return
     if (String(name || '').trim()) focusByName(name || '')
     else if (sim.nodes.length) lookAt(sim.nodes, 0.82, true)
   },
 )
 
+let themeObserver: MutationObserver | null = null
+
 onMounted(() => {
+  syncGraphChrome()
+  themeObserver = new MutationObserver(() => {
+    syncGraphChrome()
+    draw()
+  })
+  themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
   clockTimer = window.setInterval(() => {
-    nowTick.value = Date.now()
     draw()
   }, 30000)
   let lastW = 0
@@ -656,6 +639,8 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  themeObserver?.disconnect()
+  themeObserver = null
   resize?.disconnect()
   if (clockTimer != null) window.clearInterval(clockTimer)
   if (resizeFrameTimer) window.clearTimeout(resizeFrameTimer)
@@ -673,7 +658,7 @@ onBeforeUnmount(() => {
   cursor: grab;
   touch-action: none;
   background:
-    radial-gradient(circle at 50% 46%, color-mix(in srgb, #2F6F78 10%, transparent), transparent 42%),
+    radial-gradient(circle at 50% 46%, color-mix(in srgb, #2F6F78 14%, transparent), transparent 42%),
     var(--bg-secondary, #fff);
 }
 
@@ -702,9 +687,9 @@ onBeforeUnmount(() => {
 .study-mermaid-live {
   position: absolute;
   top: 12px;
-  right: 16px;
+  left: 16px;
   font-size: 11px;
-  color: #2563eb;
+  color: var(--color-primary, #2563eb);
   animation: study-mermaid-pulse 1.2s ease-in-out infinite;
 }
 
@@ -712,110 +697,9 @@ onBeforeUnmount(() => {
   50% { opacity: 0.45; }
 }
 
-.study-dash {
-  position: absolute;
-  left: 12px;
-  top: 12px;
-  z-index: 5;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: max-content;
-  max-width: calc(100% - 24px);
-  padding: 6px 10px 6px 6px;
-  border-radius: 16px;
-  background: color-mix(in srgb, #fff 42%, transparent);
-  border: none;
-  box-shadow: 0 8px 24px color-mix(in srgb, #000 7%, transparent);
-  backdrop-filter: blur(22px) saturate(180%);
-  -webkit-backdrop-filter: blur(22px) saturate(180%);
-  pointer-events: auto;
-  -webkit-app-region: no-drag;
-}
-
-.study-dash-meters {
-  display: flex;
-  flex-shrink: 0;
-}
-
-.study-dash-meter {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 56px;
-  height: 56px;
-  padding: 0;
-  border: none;
-  border-radius: 12px;
-  background: transparent;
-  pointer-events: none;
-}
-
-.study-dash-meter svg {
-  width: 56px;
-  height: 56px;
-  transform: rotate(-90deg);
-}
-
-.study-dash-track,
-.study-dash-arc {
-  fill: none;
-  stroke-width: 6;
-  stroke-linecap: round;
-}
-
-.study-dash-track {
-  stroke: color-mix(in srgb, var(--text-secondary, #718096) 16%, transparent);
-}
-
-.study-dash-arc.is-mastery {
-  stroke: #2F6F78;
-}
-
-.study-dash-readout {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 1px;
-}
-
-.study-dash-readout strong {
-  font-size: 13px;
-  font-weight: 650;
-  font-variant-numeric: tabular-nums;
-  color: var(--text-primary, #2d3748);
-  line-height: 1;
-}
-
-.study-dash-legend {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  justify-content: center;
-  gap: 5px;
-  margin: 0;
-  padding: 0 2px;
-  border: none;
-}
-
-.study-dash-swatch {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 11px;
-  color: var(--text-secondary, #718096);
-  line-height: 1;
-  white-space: nowrap;
-}
-
-.study-dash-swatch i {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
+[data-theme="dark"] .study-mermaid {
+  background:
+    radial-gradient(circle at 50% 46%, color-mix(in srgb, #5e9aa3 16%, transparent), transparent 46%),
+    var(--bg-secondary, #2c2c2e);
 }
 </style>

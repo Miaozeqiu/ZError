@@ -15,11 +15,11 @@ pub use commands::open_text_window;
 pub use commands::{
     can_native_updater_install, clear_macos_quarantine, clear_request_logs, convert_doc_to_docx, create_directory,
     fetch_image_as_base64, file_exists, get_daily_request_counts, get_request_logs, get_username,
-    greet, open_cache_dir, open_devtools, open_url_content_window, read_config, read_doc_range,
+    greet, load_cjk_system_font, open_cache_dir, open_devtools, open_url_content_window, read_config, read_doc_range,
     reveal_in_file_manager,
     read_docx_range, read_excel_headers, read_excel_range, read_file_bytes, read_file_range,
-    read_file_text, read_model_config, request_admin_elevation, segment_text, stat_local_file, write_config,
-    write_model_config
+    read_auth, read_file_text, read_model_config, request_admin_elevation, segment_text, stat_local_file,
+    write_auth, write_config, write_model_config
 };
 pub use database::*;
 pub use database::{
@@ -240,6 +240,7 @@ pub fn run() {
     builder
         .invoke_handler(tauri::generate_handler![
             greet,
+            load_cjk_system_font,
             can_native_updater_install,
             clear_macos_quarantine,
             create_directory,
@@ -270,6 +271,8 @@ pub fn run() {
             write_config,
             read_model_config,
             write_model_config,
+            read_auth,
+            write_auth,
             open_cache_dir,
             reveal_in_file_manager,
             search_questions_fuzzy,
@@ -288,6 +291,8 @@ pub fn run() {
             update_practice_note,
             get_practice_history,
             get_practice_summaries,
+            get_recent_practice_marks,
+            list_recent_wrong_questions,
             list_study_subjects,
             create_study_subject,
             rename_study_subject,
@@ -297,10 +302,13 @@ pub fn run() {
             patch_study_graph,
             apply_study_progress,
             list_study_activity,
+            list_study_activity_between,
+            list_study_heatmap,
             link_questions_to_node,
             unlink_question_knowledge,
             list_question_knowledge,
             list_node_questions,
+            list_subject_questions,
             merge_study_subjects,
             split_study_subject,
             add_question,

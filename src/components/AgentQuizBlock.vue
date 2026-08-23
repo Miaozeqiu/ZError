@@ -11,7 +11,28 @@
           </div>
           <div class="quiz-stem">{{ current.question }}</div>
 
-          <div v-if="kindOf(current) === 'fill'" class="quiz-fill">
+          <template v-if="isBrowse">
+            <div v-if="kindOf(current) === 'fill'" class="quiz-fill-answer">
+              {{ showAnswer ? (formatAnswerLabel(current.answer, current.options, current.question_type) || current.answer || '暂无答案') : '填空题' }}
+            </div>
+            <div v-else class="quiz-options">
+              <div
+                v-for="option in browseOptions(current)"
+                :key="option.key || option.text"
+                class="quiz-option is-static"
+                :class="{ correct: showAnswer && option.correct }"
+              >
+                <span v-if="option.key" class="quiz-opt-key">{{ option.key }}</span>
+                <span class="quiz-opt-text">{{ option.text }}</span>
+              </div>
+            </div>
+            <button class="quiz-submit" type="button" @click="showAnswer = !showAnswer">
+              {{ showAnswer ? '隐藏答案' : '显示答案' }}
+            </button>
+            <div v-if="showAnswer && current.explanation" class="quiz-explain">{{ current.explanation }}</div>
+          </template>
+
+          <div v-else-if="kindOf(current) === 'fill'" class="quiz-fill">
             <input
               v-if="!stateOf(current).submitted"
               class="quiz-input"
@@ -61,14 +82,14 @@
           </div>
 
           <button
-            v-if="kindOf(current) === 'multiple' && !stateOf(current).submitted"
+            v-if="!isBrowse && kindOf(current) === 'multiple' && !stateOf(current).submitted"
             class="quiz-submit"
             type="button"
             :disabled="!stateOf(current).selected.length"
             @click="submitCard(current)"
           >提交</button>
 
-          <div v-if="stateOf(current).submitted && current.answer" class="quiz-result" :class="stateOf(current).correct ? 'is-ok' : 'is-bad'">
+          <div v-if="!isBrowse && stateOf(current).submitted && current.answer" class="quiz-result" :class="stateOf(current).correct ? 'is-ok' : 'is-bad'">
             <span>{{ stateOf(current).correct ? '回答正确' : '回答错误' }}</span>
             <span class="quiz-result-answer">答案 {{ formatAnswerLabel(current.answer, current.options, current.question_type) }}</span>
             <span v-if="stateOf(current).mastery != null" class="quiz-result-answer">掌握程度 {{ masteryText(stateOf(current).mastery) }}</span>
@@ -130,9 +151,12 @@ const props = defineProps<{
   cards: QuizCard[]
   stepId: string
   layout?: 'chat' | 'pane'
+  mode?: 'practice' | 'browse'
 }>()
 
 const isPane = computed(() => props.layout === 'pane')
+const isBrowse = computed(() => props.mode === 'browse')
+const showAnswer = ref(true)
 
 const emit = defineEmits<{
   attempt: [payload: {
@@ -203,7 +227,8 @@ const firstUnanswered = () => {
 watch(
   () => `${props.stepId}:${props.cards.map((card) => card.uid).join(',')}`,
   () => {
-    currentIndex.value = firstUnanswered()
+    currentIndex.value = isBrowse.value ? 0 : firstUnanswered()
+    if (isBrowse.value) showAnswer.value = true
   },
   { immediate: true },
 )
@@ -252,6 +277,24 @@ const optionClass = (card: QuizCard, key: string) => {
     correct: isRight,
     wrong: picked && !isRight,
   }
+}
+
+const browseOptions = (card: QuizCard) => {
+  const expected = resolveAnswerKeys(card.answer, card.options, card.question_type)
+  const options = optionsOf(card)
+  if (options.length) {
+    return options.map((option) => ({
+      ...option,
+      correct: expected.includes(option.key || option.text),
+    }))
+  }
+  if (kindOf(card) === 'judgement') {
+    return judgementChoices.map((choice) => ({
+      ...choice,
+      correct: expected.includes(choice.key),
+    }))
+  }
+  return []
 }
 
 const goTo = (index: number) => {
@@ -416,7 +459,11 @@ const dotClass = (card: QuizCard, index: number) => {
   cursor: pointer;
 }
 
-.quiz-option:hover:not(:disabled) {
+.quiz-option.is-static {
+  cursor: default;
+}
+
+.quiz-option:hover:not(:disabled):not(.is-static) {
   background: color-mix(in srgb, var(--text-primary, #2d3748) 9%, transparent);
 }
 
@@ -425,9 +472,12 @@ const dotClass = (card: QuizCard, index: number) => {
 }
 
 .quiz-option.picked,
-.quiz-option.correct,
 .quiz-option.wrong {
   background: color-mix(in srgb, var(--text-primary, #2d3748) 12%, transparent);
+}
+
+.quiz-option.correct {
+  background: color-mix(in srgb, #16a34a 16%, transparent);
 }
 
 .quiz-option:disabled {
@@ -458,7 +508,7 @@ const dotClass = (card: QuizCard, index: number) => {
   border: 1px solid color-mix(in srgb, var(--text-primary, #2d3748) 10%, transparent);
   border-radius: 8px;
   padding: 8px 10px;
-  background: #fff;
+  background: var(--bg-secondary, #fff);
   color: var(--text-primary, #2d3748);
   font: inherit;
   font-size: 13px;

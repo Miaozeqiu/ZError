@@ -43,48 +43,6 @@
               >{{ t.label }}</button>
             </div>
           </div>
-
-          <div class="form-group">
-            <label class="form-label">重要性</label>
-            <div class="type-selector">
-              <button
-                v-for="level in importanceLevels"
-                :key="`imp-${level.value}`"
-                type="button"
-                class="type-btn"
-                :class="{ active: formData.importance === level.value }"
-                @click="formData.importance = level.value"
-              >{{ level.label }}</button>
-            </div>
-          </div>
-
-          <div class="form-group">
-            <label class="form-label">掌握程度</label>
-            <div class="type-selector">
-              <button
-                v-for="level in masteryLevels"
-                :key="`mas-${level.value}`"
-                type="button"
-                class="type-btn"
-                :class="{ active: formData.mastery === level.value }"
-                @click="formData.mastery = level.value"
-              >{{ level.label }}</button>
-            </div>
-          </div>
-
-          <div class="form-group">
-            <label class="form-label">难度</label>
-            <div class="type-selector">
-              <button
-                v-for="level in difficultyLevels"
-                :key="`dif-${level.value}`"
-                type="button"
-                class="type-btn"
-                :class="{ active: formData.difficulty === level.value }"
-                @click="formData.difficulty = level.value"
-              >{{ level.label }}</button>
-            </div>
-          </div>
         </form>
       </div>
     </div>
@@ -93,12 +51,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
-import {
-  DIFFICULTY_LEVELS,
-  IMPORTANCE_LEVELS,
-  MASTERY_LEVELS,
-  type QuestionMetricValue,
-} from '../../utils/questionMetrics';
+import { type QuestionMetricValue } from '../../utils/questionMetrics';
 
 interface Props {
   visible: boolean;
@@ -120,10 +73,6 @@ const emit = defineEmits<{
     difficulty: QuestionMetricValue;
   }];
 }>();
-
-const importanceLevels = IMPORTANCE_LEVELS;
-const masteryLevels = MASTERY_LEVELS;
-const difficultyLevels = DIFFICULTY_LEVELS;
 
 const questionTypes = [
   { label: '单选', value: '单选' },

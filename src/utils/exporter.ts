@@ -1,9 +1,24 @@
+import { invoke } from '@tauri-apps/api/core';
 import * as XLSX from 'xlsx';
 import { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, WidthType, AlignmentType } from 'docx';
 import { AIResponse } from '../services/database';
 import { difficultyLabel, importanceLabel, masteryLabel } from './questionMetrics';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+
+type SystemCjkFont = { family: string; data: string };
+
+let systemCjkFontPromise: Promise<SystemCjkFont> | null = null;
+
+const loadSystemCjkFont = () => {
+  if (!systemCjkFontPromise) {
+    systemCjkFontPromise = invoke<SystemCjkFont>('load_cjk_system_font').catch((error) => {
+      systemCjkFontPromise = null;
+      throw error;
+    });
+  }
+  return systemCjkFontPromise;
+};
 
 export type ExportFormat = 'csv' | 'xlsx' | 'docx' | 'pdf' | 'txt';
 
@@ -153,33 +168,12 @@ const generateDOCX = async (questions: AIResponse[]): Promise<Uint8Array> => {
 
 const generatePDF = async (questions: AIResponse[]): Promise<Uint8Array> => {
   try {
-    // 1. 读取字体文件 (从 public 目录获取)
-    const response = await fetch('/fonts/AlibabaPuHuiTi-3-35-Thin.ttf');
-    if (!response.ok) {
-      throw new Error(`无法加载字体文件: ${response.statusText}`);
-    }
-    const buffer = await response.arrayBuffer();
-    const fontData = new Uint8Array(buffer);
-
-    // 2. 将 Uint8Array 转换为 Base64 字符串
-    const fontBase64 = await new Promise<string>((resolve) => {
-      const blob = new Blob([fontData]);
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const result = e.target?.result as string;
-        resolve(result.split(',')[1]);
-      };
-      reader.readAsDataURL(blob);
-    });
-
+    const systemFont = await loadSystemCjkFont();
     const doc = new jsPDF();
+    doc.addFileToVFS('SystemCJK.ttf', systemFont.data);
+    doc.addFont('SystemCJK.ttf', 'SystemCJK', 'normal');
+    doc.setFont('SystemCJK');
 
-    // 3. 添加字体
-    doc.addFileToVFS('AlibabaPuHuiTi.ttf', fontBase64);
-    doc.addFont('AlibabaPuHuiTi.ttf', 'AlibabaPuHuiTi', 'normal');
-    doc.setFont('AlibabaPuHuiTi');
-
-    // 4. 生成表格
     const head = [['ID', '题目', '选项', '答案', '类型', '重要性', '掌握程度', '难度', '创建时间']];
     const body = questions.map((q, index) => [
       (index + 1).toString(),
@@ -193,7 +187,6 @@ const generatePDF = async (questions: AIResponse[]): Promise<Uint8Array> => {
       q.create_time || ''
     ]);
 
-    // 添加标题
     doc.setFontSize(18);
     doc.text('题目列表', 105, 15, { align: 'center' });
 
@@ -201,8 +194,8 @@ const generatePDF = async (questions: AIResponse[]): Promise<Uint8Array> => {
       head: head,
       body: body,
       startY: 25,
-      styles: { 
-        font: 'AlibabaPuHuiTi', 
+      styles: {
+        font: 'SystemCJK',
         fontStyle: 'normal',
         overflow: 'linebreak',
         cellWidth: 'wrap'
@@ -249,6 +242,6 @@ const generatePDF = async (questions: AIResponse[]): Promise<Uint8Array> => {
     return new Uint8Array(doc.output('arraybuffer'));
   } catch (error) {
     console.error('生成 PDF 失败:', error);
-    throw new Error(`生成 PDF 失败: ${(error as Error).message}。请确保字体文件存在于 public/fonts/AlibabaPuHuiTi-3-35-Thin.ttf`);
+    throw new Error(`生成 PDF 失败: ${(error as Error).message}`);
   }
 };

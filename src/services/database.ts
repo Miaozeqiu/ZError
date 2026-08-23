@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { initializationService } from './initialization';
-import { applyForgettingToNode, clampForgettingStage, effectiveMastery, reviewedAtFromDaysAgo, rolledRetentionForest } from '../utils/studyForgetting';
+import { applyForgettingToNode, clampForgettingStage, effectiveMastery, nextForgettingStage, parseStudyQuality, reviewedAtForQuality, reviewedAtFromDaysAgo, rolledRetentionForest } from '../utils/studyForgetting';
 
 export interface Folder {
   id: number;
@@ -54,6 +54,19 @@ export interface PracticeSummary {
   last_correct: boolean;
   last_note: string;
   last_time?: string;
+}
+
+export interface PracticeMarks {
+  question_id: number;
+  results: boolean[];
+}
+
+export interface RecentWrongQuestion {
+  question_id: number;
+  last_wrong_answer: string;
+  last_wrong_note: string;
+  last_wrong_time?: string;
+  wrong_count: number;
 }
 
 export interface StudySubject {
@@ -118,6 +131,9 @@ export interface StudyProgressUpdate {
   last_reviewed_at?: string
   mastery?: number
   days_ago?: number
+  quality?: string
+  kind?: string
+  remembered?: boolean
 }
 
 export interface QuestionKnowledgeLink {
@@ -159,6 +175,31 @@ const mockStudyGraphs = new Map<number, { nodes: StudyGraphNodeRow[]; edges: Stu
 let mockQuestionKnowledge: { question_id: number; node_id: number }[] = []
 let mockStudyActivity: StudyActivity[] = []
 let mockActivityId = 1
+
+const descendantNodeIds = (nodeId: number) => {
+  const ids = new Set<number>([nodeId])
+  for (const graph of mockStudyGraphs.values()) {
+    if (!graph.nodes.some((node) => node.id === nodeId)) continue
+    const kids = new Map<number, number[]>()
+    for (const node of graph.nodes) {
+      const parentId = node.parent_id
+      if (parentId == null || parentId === node.id) continue
+      const list = kids.get(parentId)
+      if (list) list.push(node.id)
+      else kids.set(parentId, [node.id])
+    }
+    const walk = (id: number) => {
+      for (const child of kids.get(id) || []) {
+        if (ids.has(child)) continue
+        ids.add(child)
+        walk(child)
+      }
+    }
+    walk(nodeId)
+    break
+  }
+  return ids
+}
 
 const emitStudyActivityUpdated = (subjectId?: number) => {
   if (typeof window === 'undefined') return
@@ -907,6 +948,32 @@ class DatabaseService {
     return invoke<PracticeRecord[]>('get_practice_history', { questionId, limit })
   }
 
+  async listRecentWrongQuestions(input: {
+    subjectId?: number
+    nodeId?: number
+    folderId?: number
+    days?: number
+    limit?: number
+    unresolvedOnly?: boolean
+  } = {}): Promise<RecentWrongQuestion[]> {
+    if (!this.isTauri) return []
+    return invoke<RecentWrongQuestion[]>('list_recent_wrong_questions', {
+      subjectId: input.subjectId,
+      nodeId: input.nodeId,
+      folderId: input.folderId,
+      days: input.days,
+      limit: input.limit,
+      unresolvedOnly: input.unresolvedOnly,
+    })
+  }
+
+  async getRecentPracticeMarks(ids: number[], limit = 5): Promise<PracticeMarks[]> {
+    const unique = [...new Set(ids.filter((id) => Number.isFinite(id) && id > 0))]
+    if (!unique.length) return []
+    if (!this.isTauri) return unique.map((id) => ({ question_id: id, results: [] }))
+    return invoke<PracticeMarks[]>('get_recent_practice_marks', { ids: unique, limit })
+  }
+
   async getPracticeSummaries(ids: number[]): Promise<PracticeSummary[]> {
     const unique = [...new Set(ids.filter((id) => Number.isFinite(id) && id > 0))]
     if (!unique.length) return []
@@ -1075,7 +1142,11 @@ class DatabaseService {
       id: Number(item.id) > 0 ? Number(item.id) : undefined,
       name: String(item.name || '').trim() || undefined,
       forgetting_stage: item.forgetting_stage == null ? undefined : clampForgettingStage(item.forgetting_stage),
-      last_reviewed_at: item.last_reviewed_at || reviewedAtFromDaysAgo(item.days_ago),
+      last_reviewed_at: item.last_reviewed_at,
+      days_ago: item.days_ago,
+      quality: item.quality ? parseStudyQuality(item.quality) : undefined,
+      kind: item.kind,
+      remembered: item.remembered,
       mastery: item.mastery,
     }))
     if (!this.isTauri) {
@@ -1093,12 +1164,20 @@ class DatabaseService {
         if (graph.nodes.some((row) => row.parent_id === node.id)) continue
         const hadReview = Boolean(String(node.last_reviewed_at || '').trim())
         const prevStage = Number(node.forgetting_stage) || 0
-        if (item.forgetting_stage != null) node.forgetting_stage = item.forgetting_stage
-        node.last_reviewed_at = item.last_reviewed_at
+        const quality = item.quality || (item.forgetting_stage != null && item.forgetting_stage < prevStage ? 'poor' : 'good')
+        const remembered = item.remembered ?? quality !== 'poor'
+        const now = Date.now()
+        node.forgetting_stage = nextForgettingStage(node, { remembered, at: now })
+        const historical = Number(item.days_ago)
+        const storedAt = item.last_reviewed_at
+          || (Number.isFinite(historical) && historical > 0.05 && !item.quality
+            ? reviewedAtFromDaysAgo(historical)
+            : reviewedAtForQuality(node.forgetting_stage, quality, now))
+        node.last_reviewed_at = storedAt
         node.mastery = item.mastery == null
-          ? effectiveMastery({ ...node, last_reviewed_at: item.last_reviewed_at, forgetting_stage: item.forgetting_stage ?? node.forgetting_stage })
+          ? effectiveMastery({ ...node, last_reviewed_at: storedAt, forgetting_stage: node.forgetting_stage })
           : item.mastery
-        if (!hadReview && prevStage <= 0) learned.push(node.name)
+        if (item.kind === 'learn' || (!hadReview && prevStage <= 0)) learned.push(node.name)
         else reviewed.push(node.name)
       }
       const now = new Date().toISOString()
@@ -1125,6 +1204,32 @@ class DatabaseService {
         .map((item) => ({ ...item, names: [...item.names] }))
     }
     return invoke<StudyActivity[]>('list_study_activity', { subjectId, limit })
+  }
+
+  async listStudyActivityBetween(subjectId: number, startMs: number, endMs: number): Promise<StudyActivity[]> {
+    if (!Number.isFinite(subjectId) || subjectId <= 0 || !Number.isFinite(startMs) || !Number.isFinite(endMs) || startMs >= endMs) {
+      return []
+    }
+    if (!this.isTauri) {
+      return mockStudyActivity
+        .filter((item) => {
+          if (item.subject_id !== subjectId) return false
+          const stamp = Date.parse(item.create_time)
+          return Number.isFinite(stamp) && stamp >= startMs && stamp < endMs
+        })
+        .map((item) => ({ ...item, names: [...item.names] }))
+    }
+    return invoke<StudyActivity[]>('list_study_activity_between', { subjectId, startMs, endMs })
+  }
+
+  async listStudyHeatmap(subjectId: number): Promise<Array<{ names: string[]; create_time: string }>> {
+    if (!Number.isFinite(subjectId) || subjectId <= 0) return []
+    if (!this.isTauri) {
+      return mockStudyActivity
+        .filter((item) => item.subject_id === subjectId && (item.kind === 'learn' || item.kind === 'review'))
+        .map((item) => ({ names: [...item.names], create_time: item.create_time }))
+    }
+    return invoke('list_study_heatmap', { subjectId })
   }
 
   async linkQuestionsToNode(questionIds: number[], nodeId: number): Promise<number> {
@@ -1178,9 +1283,37 @@ class DatabaseService {
 
   async listNodeQuestions(nodeId: number): Promise<number[]> {
     if (!this.isTauri) {
-      return mockQuestionKnowledge.filter((item) => item.node_id === nodeId).map((item) => item.question_id)
+      const ids = descendantNodeIds(nodeId)
+      return [...new Set(
+        mockQuestionKnowledge
+          .filter((item) => ids.has(item.node_id))
+          .map((item) => item.question_id),
+      )]
     }
     return invoke<number[]>('list_node_questions', { nodeId })
+  }
+
+  async listSubjectQuestions(subjectId: number): Promise<number[]> {
+    if (!Number.isFinite(subjectId) || subjectId <= 0) return []
+    if (!this.isTauri) {
+      const graph = mockStudyGraphs.get(subjectId)
+      const nodeIds = new Set((graph?.nodes || []).map((item) => item.id))
+      return [...new Set(
+        mockQuestionKnowledge
+          .filter((item) => nodeIds.has(item.node_id))
+          .map((item) => item.question_id),
+      )]
+    }
+    try {
+      return await invoke<number[]>('list_subject_questions', { subjectId })
+    } catch {
+      const graph = await this.getStudyGraph(subjectId)
+      const ids = new Set<number>()
+      for (const node of graph.nodes) {
+        for (const questionId of await this.listNodeQuestions(node.id)) ids.add(questionId)
+      }
+      return [...ids]
+    }
   }
 
   async mergeStudySubjects(targetId: number, sourceIds: number[]): Promise<StudySubject> {

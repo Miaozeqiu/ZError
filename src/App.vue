@@ -7,8 +7,11 @@ import UpdateDialog from "./components/UpdateDialog.vue";
 import Home from "./views/Home.vue";
 import Settings from "./views/Settings.vue";
 import QuestionBank from "./views/QuestionBank.vue";
+import CampusBank from "./views/CampusBank.vue";
 import Study from "./views/Study.vue";
 import Agent from "./views/Agent.vue";
+import LoginDialog from "./components/LoginDialog.vue";
+import { restoreAuthSession } from "./services/auth";
 import FileTree from "./views/questions/FileTree.vue";
 import { databaseService } from "./services/database";
 import { parseDifficulty, parseImportance, parseMastery } from "./utils/questionMetrics";
@@ -23,6 +26,15 @@ const activeTab = ref('home');
 const collapseTrigger = ref(0);
 const questionBankFocusFolderId = ref<number | null>(null);
 const questionBankFocusRequestKey = ref(0);
+const loginDialogVisible = ref(false);
+
+const openLoginDialog = () => {
+  loginDialogVisible.value = true
+}
+
+const closeLoginDialog = () => {
+  loginDialogVisible.value = false
+}
 
 const {
   showUpdateDialog,
@@ -380,6 +392,7 @@ onMounted(async () => {
   }
   (window as any).__appImportDialogReady = true;
   window.addEventListener('navigate-tab', handleNavigateTab as EventListener)
+  window.addEventListener('open-login', openLoginDialog)
   document.addEventListener('contextmenu', handleGlobalContextMenu, true)
   document.addEventListener('mousedown', handleGlobalPointerDown, true)
   document.addEventListener('keydown', handleGlobalKeydown, true)
@@ -393,9 +406,11 @@ onMounted(async () => {
     console.log('开始应用初始化...');
     await initGlobalTheme();
     console.log('主题系统初始化完成');
+    const authRestore = restoreAuthSession();
     await initializationService.initialize();
     console.log('应用初始化完成');
-    
+    await authRestore;
+
     await checkForUpdates();
   } catch (error) {
     console.error('应用初始化失败:', error);
@@ -404,6 +419,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   window.removeEventListener('navigate-tab', handleNavigateTab as EventListener)
+  window.removeEventListener('open-login', openLoginDialog)
   document.removeEventListener('contextmenu', handleGlobalContextMenu, true)
   document.removeEventListener('mousedown', handleGlobalPointerDown, true)
   document.removeEventListener('keydown', handleGlobalKeydown, true)
@@ -440,6 +456,10 @@ onUnmounted(() => {
           />
         </div>
 
+        <div v-show="activeTab === 'campus'" class="content-view">
+          <CampusBank />
+        </div>
+
         <div v-show="activeTab === 'study'" class="content-view">
           <Study />
         </div>
@@ -454,6 +474,12 @@ onUnmounted(() => {
       </div>
     </div>
     
+    <LoginDialog
+      :visible="loginDialogVisible"
+      @close="closeLoginDialog"
+      @success="closeLoginDialog"
+    />
+
     <!-- 版本更新对话框 -->
     <UpdateDialog
       :visible="showUpdateDialog"

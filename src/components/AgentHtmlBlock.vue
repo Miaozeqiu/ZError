@@ -144,7 +144,7 @@ onBeforeUnmount(() => {
   margin: 0 0 10px;
   overflow: hidden;
   border-radius: 8px;
-  background: color-mix(in srgb, var(--text-primary, #2d3748) 5%, #fff);
+  background: color-mix(in srgb, var(--text-primary, #2d3748) 5.5%, var(--bg-secondary, #fff));
 }
 
 .agent-html-bar {

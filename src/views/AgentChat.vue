@@ -233,7 +233,7 @@
                   <p v-if="step.status === 'failed' && step.detail" class="activity-detail">{{ step.detail }}</p>
 
                   <div
-                    v-if="step.name === 'present_quiz' && step.status === 'done' && quizCardsFor(step).length"
+                    v-if="isQuizStep(step)"
                     class="write-block is-quiz"
                     :class="{ 'is-open': isQuizOpen(message.id, step.id) }"
                   >
@@ -244,9 +244,9 @@
                           <path d="M9.5 9.5a2.5 2.5 0 1 1 3.6 2.25c-.7.4-1.1.9-1.1 1.75" />
                           <path d="M12 17h.01" />
                         </svg>
-                        练习
+                        <span class="write-file-name">{{ quizTitleFor(step) }}</span>
                       </span>
-                      <span class="write-stat">{{ quizStatFor(message, step.id, quizCardsFor(step)) }}</span>
+                      <span class="write-stat">{{ quizStatFor(message, step.id, quizCardsFor(step), isBrowseQuizStep(step)) }}</span>
                     </button>
                   </div>
 
@@ -321,7 +321,7 @@
                         <path d="M9.5 9.5a2.5 2.5 0 1 1 3.6 2.25c-.7.4-1.1.9-1.1 1.75" />
                         <path d="M12 17h.01" />
                       </svg>
-                      练习
+                      <span class="write-file-name">{{ quizTitleFor(undefined, `${message.id}-md`) }}</span>
                     </span>
                     <span class="write-stat">{{ quizStatFor(message, `${message.id}-md`, fallbackQuizCards(message)) }}</span>
                   </button>
@@ -330,6 +330,7 @@
                 <div
                   v-if="displayAssistantContent(message)"
                   class="assistant-text"
+                  :class="{ dark: themeState.isDark }"
                 >
                   <MarkdownRender
                     :key="message.id"
@@ -349,6 +350,13 @@
                 </div>
                 <div v-if="isThinking(message)" class="assistant-thinking">
                   正在思考
+                </div>
+                <div
+                  v-if="message.studyEval?.text"
+                  class="study-eval-note"
+                  :class="[`is-${message.studyEval.status}`]"
+                >
+                  {{ message.studyEval.text }}
                 </div>
                 <div v-if="message.status === 'stopped'" class="chat-stopped">已停止生成</div>
                 <div v-if="message.error" class="chat-error">{{ message.error }}</div>
@@ -527,15 +535,16 @@
                   <path d="M9.5 9.5a2.5 2.5 0 1 1 3.6 2.25c-.7.4-1.1.9-1.1 1.75" />
                   <path d="M12 17h.01" />
                 </svg>
-                练习
+                <span class="write-file-name">{{ openedQuiz.title }}</span>
               </div>
-              <span class="write-stat">{{ quizStatFor(openedQuiz.message, openedQuiz.stepId, openedQuiz.cards) }}</span>
+              <span class="write-stat">{{ quizStatFor(openedQuiz.message, openedQuiz.stepId, openedQuiz.cards, openedQuiz.mode === 'browse') }}</span>
               <button class="header-action" type="button" @click="openedQuizKey = null">关闭</button>
             </div>
             <div class="write-pane-body-wrap">
               <div ref="writePaneBodyRef" class="write-pane-body is-quiz-page">
                 <AgentQuizBlock
                   layout="pane"
+                  :mode="openedQuiz.mode"
                   :step-id="openedQuiz.stepId"
                   :cards="openedQuiz.cards"
                   @attempt="onQuizAttempt(openedQuiz.messageId, $event)"
@@ -765,6 +774,7 @@ import { readFileBase64 } from '../utils/fileReader'
 import type { ImportStepPreview, ImportTaskStep } from '../services/importTasks'
 import ModelSelectorDialog from './home/ModelSelectorDialog.vue'
 import { isTauriEnvironment } from '../services/environmentDetector'
+import { themeState } from '../composables/useTheme'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
 import MarkdownRender, {
@@ -779,7 +789,7 @@ import AgentQuizBlock from '../components/AgentQuizBlock.vue'
 import StudyMermaidGraph from '../components/StudyMermaidGraph.vue'
 import { finishStudyGraphStream, studyGraphStream } from '../services/studyGraphStream'
 import { graphFromPayload, type StudyGraphNode } from '../utils/studyGraph'
-import { getQuizCards, parseMarkdownQuizzes, parseOptions, parseQuizCards, stripMarkdownQuizzes, type QuizCard } from '../utils/quizPractice'
+import { getQuizCards, getQuizTitle, parseMarkdownQuizzes, parseOptions, parseQuizCards, stripMarkdownQuizzes, type QuizCard } from '../utils/quizPractice'
 import '../services/markstream'
 import hljs from 'highlight.js/lib/core'
 import bash from 'highlight.js/lib/languages/bash'
@@ -1133,7 +1143,7 @@ const startExplainFromCard = () => {
 }
 
 const startQuizFromCard = () => {
-  void fillComposer('请从题库出几道选择题练习。先看掌握度和练习记录，优先出未掌握或最近答错的，然后用 present_quiz 出示可点选的题目，不要把选项写成普通列表。')
+  void fillComposer('请从题库出几道选择题练习。先看掌握度和练习记录，优先出未掌握或最近答错的，然后用 present_quiz 出示可点选的题目，给这次练习起个短标题，不要把选项写成普通列表。')
 }
 
 const startGraphFromCard = () => {
@@ -1676,16 +1686,32 @@ const quizCardsFor = (step: ImportTaskStep): QuizCard[] => {
   return parseQuizCards(step.preview || [])
 }
 
+const quizTitleFor = (step?: ImportTaskStep, stepId?: string) =>
+  getQuizTitle(step?.id || stepId || '', '') || step?.title || '练习'
+
+const isBrowseQuizStep = (step?: ImportTaskStep) =>
+  step?.name === 'list_campus_questions'
+  || step?.name === 'search_campus_questions'
+  || step?.name === 'save_campus_questions'
+  || step?.name === 'update_campus_question'
+
+const isQuizStep = (step: ImportTaskStep) =>
+  (step.name === 'present_quiz' || isBrowseQuizStep(step))
+  && step.status === 'done'
+  && quizCardsFor(step).length > 0
+
 const mdQuizCache = ref<Record<string, QuizCard[]>>({})
 
 const stepQuizCards = (message: AgentChatMessage) =>
   (message.steps || [])
-    .filter((step) => step.name === 'present_quiz' && step.status === 'done')
+    .filter((step) => isQuizStep(step))
     .flatMap((step) => quizCardsFor(step))
 
 const fallbackQuizCards = (message: AgentChatMessage) => {
   if (stepQuizCards(message).length) return []
-  return mdQuizCache.value[message.id] || parseMarkdownQuizzes(message.content)
+  const parsed = parseMarkdownQuizzes(message.content)
+  if (!parsed.length) return []
+  return mdQuizCache.value[message.id] || parsed
 }
 
 const displayAssistantContent = (message: AgentChatMessage) => {
@@ -1747,7 +1773,8 @@ const quizKeyOf = (messageId: string, stepId: string) => `${messageId}\t${stepId
 const isQuizOpen = (messageId: string, stepId: string) =>
   openedQuizKey.value === quizKeyOf(messageId, stepId)
 
-const quizStatFor = (message: AgentChatMessage, stepId: string, cards: QuizCard[]) => {
+const quizStatFor = (message: AgentChatMessage, stepId: string, cards: QuizCard[], browse = false) => {
+  if (browse) return `${cards.length} 题`
   const done = new Set((message.quizAttempts || []).map((item) => item.uid))
   const answered = cards.filter((card) => done.has(card.uid)).length
   if (message.quizReported || (cards.length && answered >= cards.length)) return `已完成 ${cards.length}`
@@ -1760,9 +1787,7 @@ const latestQuizKey = computed(() => {
   for (const message of messages) {
     if (message.role !== 'assistant') continue
     for (const step of [...(message.steps || [])].reverse()) {
-      if (step.name === 'present_quiz' && step.status === 'done' && quizCardsFor(step).length) {
-        return quizKeyOf(message.id, step.id)
-      }
+      if (isQuizStep(step)) return quizKeyOf(message.id, step.id)
     }
     if (fallbackQuizCards(message).length) return quizKeyOf(message.id, `${message.id}-md`)
   }
@@ -1781,7 +1806,14 @@ const openedQuiz = computed(() => {
       ? quizCardsFor(step)
       : getQuizCards(stepId)
   if (!cards.length) return null
-  return { messageId, stepId, cards, message }
+  return {
+    messageId,
+    stepId,
+    cards,
+    message,
+    title: quizTitleFor(step, stepId),
+    mode: isBrowseQuizStep(step) ? 'browse' as const : 'practice' as const,
+  }
 })
 
 const PANE_WIDTH_KEY = 'zerror-agent-pane-width'
@@ -1968,6 +2000,20 @@ const iconPaths = (name: string) => {
   if (name === 'list_questions' || name === 'search_questions') {
     return ['M4 6h16', 'M4 12h16', 'M4 18h10']
   }
+  if (
+    name === 'get_campus_status'
+    || name === 'list_campus_courses'
+    || name === 'list_campus_papers'
+    || name === 'list_campus_questions'
+    || name === 'search_campus_questions'
+    || name === 'list_campus_tags'
+    || name === 'create_campus_paper'
+    || name === 'update_campus_paper'
+    || name === 'save_campus_questions'
+    || name === 'update_campus_question'
+  ) {
+    return ['M4 4h16v6H4z', 'M4 14h7v6H4z', 'M13 14h7v6h-7z']
+  }
   if (name === 'move_questions') {
     return ['M4 6h10', 'M4 12h10', 'M4 18h7', 'M14 15l4 3-4 3', 'M18 18H9']
   }
@@ -1977,7 +2023,7 @@ const iconPaths = (name: string) => {
   if (name === 'update_question_metrics') {
     return ['M4 7h16', 'M4 12h10', 'M4 17h7']
   }
-  if (name === 'get_practice_history' || name === 'add_practice_note') {
+  if (name === 'list_recent_wrong_questions' || name === 'get_practice_history' || name === 'add_practice_note') {
     return ['M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z', 'M14 2v6h6', 'M8 13h8', 'M8 17h5']
   }
   if (name === 'present_quiz') {
@@ -3167,7 +3213,7 @@ onUnmounted(() => {
 }
 
 .chat-item.is-selected {
-  background: #e8e8ed;
+  background: var(--model-item-active-bg, var(--bg-tertiary, #e8e8ed));
 }
 
 .chat-item-main {
@@ -3267,7 +3313,7 @@ onUnmounted(() => {
   max-width: 100%;
   padding: 5px 10px;
   border-radius: 8px;
-  background: color-mix(in srgb, var(--bg-primary, #fff) 70%, #eef0f3);
+  background: color-mix(in srgb, var(--bg-primary, #fff) 70%, var(--bg-tertiary, #eef0f3));
   font-size: 12px;
   color: var(--text-secondary, #718096);
 }
@@ -3589,7 +3635,7 @@ onUnmounted(() => {
   max-width: 100%;
   padding: 8px 12px;
   border-radius: 12px;
-  background: #e8e8ed;
+  background: var(--bg-tertiary, #e8e8ed);
   font-size: 13px;
   line-height: 1.55;
   color: var(--text-primary, #2d3748);
@@ -3685,7 +3731,7 @@ onUnmounted(() => {
   --ms-flow-codeblock-y: 0.55em;
   --ms-flow-hr-y: 0.7em;
   --hr-border: color-mix(in srgb, var(--border-primary, #e2e8f0) 88%, transparent);
-  --code-bg: color-mix(in srgb, var(--text-primary, #2d3748) 5%, #fff);
+  --code-bg: color-mix(in srgb, var(--text-primary, #2d3748) 5.5%, var(--bg-secondary, #fff));
   --code-fg: var(--text-primary, #2d3748);
   --code-border: transparent;
   --diagram-bg: var(--code-bg);
@@ -3701,14 +3747,14 @@ onUnmounted(() => {
 }
 
 .activity-line.is-failed .activity-text {
-  color: #c2410c;
+  color: var(--color-warning, #c2410c);
 }
 
 .activity-detail {
   margin: 0 0 0 24px;
   font-size: 12px;
   line-height: 1.5;
-  color: #c2410c;
+  color: var(--color-warning, #c2410c);
   white-space: pre-wrap;
 }
 
@@ -3828,8 +3874,8 @@ onUnmounted(() => {
   box-shadow: none !important;
   -webkit-appearance: none;
   border-radius: 8px;
-  background: color-mix(in srgb, var(--text-primary, #2d3748) 5%, #fff);
-  color: var(--text-primary, #2d3748);
+  background: var(--code-bg, color-mix(in srgb, var(--text-primary, #2d3748) 5.5%, var(--bg-secondary, #fff)));
+  color: var(--code-fg, var(--text-primary, #2d3748));
   font-size: 12px;
   line-height: 1.55;
   white-space: pre;
@@ -3918,6 +3964,32 @@ onUnmounted(() => {
   animation: chat-think-pulse 1.2s ease-in-out infinite;
 }
 
+.study-eval-note {
+  max-width: 36em;
+  padding: 8px 10px;
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: color-mix(in srgb, var(--text-primary, #2d3748) 78%, transparent);
+  background: color-mix(in srgb, var(--color-primary, #0a84ff) 8%, var(--bg-secondary, #fff));
+  border: 1px solid color-mix(in srgb, var(--color-primary, #0a84ff) 16%, transparent);
+}
+
+.study-eval-note.is-running {
+  color: var(--text-secondary, #718096);
+  animation: chat-think-pulse 1.2s ease-in-out infinite;
+}
+
+.study-eval-note.is-failed,
+.study-eval-note.is-empty {
+  background: color-mix(in srgb, var(--text-primary, #2d3748) 4%, var(--bg-secondary, #fff));
+  border-color: color-mix(in srgb, var(--border-primary, #e2e8f0) 80%, transparent);
+}
+
+.study-eval-note.is-failed {
+  color: var(--color-warning, #c2410c);
+}
+
 .write-pane {
   --write-pane-width: 380px;
   position: relative;
@@ -3965,11 +4037,11 @@ onUnmounted(() => {
 }
 
 .write-pane.is-graph .write-stat {
-  color: #2563eb;
+  color: var(--color-primary, #2563eb);
 }
 
 .write-pane.is-quiz .write-stat {
-  color: #2563eb;
+  color: var(--color-primary, #2563eb);
 }
 
 .write-pane-inner {
@@ -4040,19 +4112,19 @@ onUnmounted(() => {
   border: 1px solid color-mix(in srgb, var(--border-primary, #e2e8f0) 80%, transparent);
   border-radius: 8px;
   overflow: hidden;
-  background: color-mix(in srgb, var(--bg-primary, #fff) 92%, #f3f4f6);
+  background: color-mix(in srgb, var(--bg-primary, #fff) 55%, var(--bg-secondary, #fff));
 }
 
 .write-block.is-open {
-  border-color: color-mix(in srgb, #16a34a 35%, var(--border-primary, #e2e8f0));
+  border-color: color-mix(in srgb, var(--color-success, #16a34a) 35%, var(--border-primary, #e2e8f0));
 }
 
 .write-block.is-quiz.is-open {
-  border-color: color-mix(in srgb, #3b82f6 35%, var(--border-primary, #e2e8f0));
+  border-color: color-mix(in srgb, var(--color-primary, #3b82f6) 35%, var(--border-primary, #e2e8f0));
 }
 
 .write-block.is-quiz .write-stat {
-  color: #2563eb;
+  color: var(--color-primary, #2563eb);
 }
 
 .write-head {
@@ -4063,12 +4135,12 @@ onUnmounted(() => {
   gap: 10px;
   padding: 6px 10px;
   border: none;
-  background: color-mix(in srgb, var(--bg-primary, #fff) 70%, #eef0f3);
+  background: color-mix(in srgb, var(--bg-primary, #fff) 58%, var(--bg-tertiary, #e8e8ed));
   cursor: pointer;
 }
 
 .write-head:hover {
-  background: color-mix(in srgb, var(--bg-primary, #fff) 40%, #e8eaed);
+  background: color-mix(in srgb, var(--bg-primary, #fff) 28%, var(--bg-tertiary, #e8e8ed));
 }
 
 .write-file {
@@ -4083,11 +4155,22 @@ onUnmounted(() => {
   white-space: nowrap;
 }
 
+.write-file svg {
+  flex-shrink: 0;
+}
+
+.write-file-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .write-stat {
   flex-shrink: 0;
   font-size: 12px;
   font-variant-numeric: tabular-nums;
-  color: #16a34a;
+  color: var(--color-success, #16a34a);
 }
 
 .write-body {
@@ -4105,8 +4188,8 @@ onUnmounted(() => {
   background: linear-gradient(
     to bottom,
     transparent 0%,
-    color-mix(in srgb, var(--bg-primary, #fff) 55%, #f3f4f6) 42%,
-    color-mix(in srgb, var(--bg-primary, #fff) 92%, #f3f4f6) 100%
+    color-mix(in srgb, var(--bg-secondary, #fff) 55%, transparent) 42%,
+    var(--bg-secondary, #fff) 100%
   );
   pointer-events: none;
 }
@@ -4130,7 +4213,7 @@ onUnmounted(() => {
   text-align: center;
   font-size: 12px;
   line-height: 1.4;
-  color: #16a34a;
+  color: var(--color-success, #16a34a);
 }
 
 .write-question {
@@ -4215,8 +4298,8 @@ onUnmounted(() => {
   justify-content: center;
   font-size: 10px;
   font-weight: 600;
-  color: #2563eb;
-  background: #edf4ff;
+  color: var(--ql-type-tag-single-text, #2563eb);
+  background: var(--ql-type-tag-single-bg, #edf4ff);
 }
 
 .write-opt-text {
@@ -4237,12 +4320,12 @@ onUnmounted(() => {
   border-radius: 4px;
   font-size: 10px;
   font-weight: 600;
-  color: #15803d;
-  background: rgba(22, 163, 74, 0.14);
+  color: var(--color-success, #15803d);
+  background: color-mix(in srgb, var(--color-success, #16a34a) 16%, transparent);
 }
 
 .write-answer-text {
-  color: #166534;
+  color: var(--color-success, #166534);
 }
 
 .write-more {
@@ -4258,12 +4341,12 @@ onUnmounted(() => {
 }
 
 .write-more:hover {
-  color: #166534;
+  color: var(--color-success, #166534);
 }
 
 .chat-error {
   font-size: 12px;
-  color: #dc2626;
+  color: var(--color-error, #dc2626);
 }
 
 .chat-stopped {
@@ -4585,7 +4668,7 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   background: var(--text-primary, #2d3748);
-  color: #fff;
+  color: var(--bg-secondary, #fff);
   cursor: pointer;
 }
 
@@ -4595,12 +4678,145 @@ onUnmounted(() => {
 
 .composer-send:disabled {
   background: color-mix(in srgb, var(--text-primary, #2d3748) 18%, transparent);
-  color: #fff;
+  color: var(--bg-secondary, #fff);
   cursor: default;
 }
 
 .composer-send.is-stop:hover {
   transform: scale(0.97);
+}
+
+[data-theme="dark"] :deep(.folder-mention) {
+  background: color-mix(in srgb, var(--color-warning, #ff9f0a) 20%, var(--bg-tertiary, #3a3a3c));
+  color: #f0c674;
+}
+
+[data-theme="dark"] .assistant-text :deep(.markstream-vue) {
+  --code-bg: color-mix(in srgb, var(--text-primary, #f5f5f7) 7%, var(--bg-primary, #1c1c1e));
+  --code-fg: var(--text-primary, #f5f5f7);
+  --code-header-bg: color-mix(in srgb, var(--text-primary, #f5f5f7) 5%, var(--bg-secondary, #2c2c2e));
+  --tooltip-bg: var(--bg-tertiary, #3a3a3c);
+  --tooltip-fg: var(--text-secondary, #98989d);
+}
+
+[data-theme="dark"] .assistant-text :deep(.hljs),
+[data-theme="dark"] .assistant-text :deep(pre code.hljs) {
+  color: #c9d1d9;
+  background: transparent;
+}
+
+[data-theme="dark"] .assistant-text :deep(.hljs-comment),
+[data-theme="dark"] .assistant-text :deep(.hljs-code),
+[data-theme="dark"] .assistant-text :deep(.hljs-formula) {
+  color: #8b949e;
+}
+
+[data-theme="dark"] .assistant-text :deep(.hljs-keyword),
+[data-theme="dark"] .assistant-text :deep(.hljs-doctag),
+[data-theme="dark"] .assistant-text :deep(.hljs-type),
+[data-theme="dark"] .assistant-text :deep(.hljs-template-tag),
+[data-theme="dark"] .assistant-text :deep(.hljs-template-variable),
+[data-theme="dark"] .assistant-text :deep(.hljs-variable.language_) {
+  color: #ff7b72;
+}
+
+[data-theme="dark"] .assistant-text :deep(.hljs-title),
+[data-theme="dark"] .assistant-text :deep(.hljs-title.class_),
+[data-theme="dark"] .assistant-text :deep(.hljs-title.function_) {
+  color: #d2a8ff;
+}
+
+[data-theme="dark"] .assistant-text :deep(.hljs-attr),
+[data-theme="dark"] .assistant-text :deep(.hljs-attribute),
+[data-theme="dark"] .assistant-text :deep(.hljs-literal),
+[data-theme="dark"] .assistant-text :deep(.hljs-meta),
+[data-theme="dark"] .assistant-text :deep(.hljs-number),
+[data-theme="dark"] .assistant-text :deep(.hljs-operator),
+[data-theme="dark"] .assistant-text :deep(.hljs-variable),
+[data-theme="dark"] .assistant-text :deep(.hljs-selector-attr),
+[data-theme="dark"] .assistant-text :deep(.hljs-selector-class),
+[data-theme="dark"] .assistant-text :deep(.hljs-selector-id) {
+  color: #79c0ff;
+}
+
+[data-theme="dark"] .assistant-text :deep(.hljs-string),
+[data-theme="dark"] .assistant-text :deep(.hljs-regexp),
+[data-theme="dark"] .assistant-text :deep(.hljs-meta .hljs-string) {
+  color: #a5d6ff;
+}
+
+[data-theme="dark"] .assistant-text :deep(.hljs-built_in),
+[data-theme="dark"] .assistant-text :deep(.hljs-symbol) {
+  color: #ffa657;
+}
+
+[data-theme="dark"] .assistant-text :deep(.hljs-name),
+[data-theme="dark"] .assistant-text :deep(.hljs-quote),
+[data-theme="dark"] .assistant-text :deep(.hljs-selector-tag),
+[data-theme="dark"] .assistant-text :deep(.hljs-selector-pseudo) {
+  color: #7ee787;
+}
+
+[data-theme="dark"] .assistant-text :deep(.hljs-section) {
+  color: #409cff;
+}
+
+[data-theme="dark"] .assistant-text :deep(.hljs-bullet) {
+  color: #f2cc60;
+}
+
+[data-theme="dark"] .assistant-text :deep(.hljs-addition) {
+  color: #aff5b4;
+  background-color: #033a16;
+}
+
+[data-theme="dark"] .assistant-text :deep(.hljs-deletion) {
+  color: #ffdcd7;
+  background-color: #67060c;
+}
+
+[data-theme="dark"] .assistant-text :deep(a) {
+  color: var(--color-primary, #409cff);
+}
+
+[data-theme="dark"] .assistant-text :deep(blockquote),
+[data-theme="dark"] .assistant-text :deep(.blockquote-node) {
+  border-left-color: color-mix(in srgb, var(--text-primary, #f5f5f7) 22%, transparent);
+  color: var(--text-secondary, #98989d);
+}
+
+[data-theme="dark"] .feature-study-menu {
+  box-shadow: 0 12px 32px color-mix(in srgb, #000 42%, transparent);
+}
+
+[data-theme="dark"] .study-eval-note {
+  background: color-mix(in srgb, var(--color-primary, #0a84ff) 14%, var(--bg-tertiary, #3a3a3c));
+  border-color: color-mix(in srgb, var(--color-primary, #0a84ff) 28%, transparent);
+  color: color-mix(in srgb, var(--text-primary, #f5f5f7) 86%, transparent);
+}
+
+[data-theme="dark"] .study-eval-note.is-failed,
+[data-theme="dark"] .study-eval-note.is-empty {
+  background: color-mix(in srgb, var(--bg-tertiary, #3a3a3c) 88%, transparent);
+  border-color: color-mix(in srgb, var(--border-primary, #3d3d3f) 88%, transparent);
+}
+
+[data-theme="dark"] .composer-box {
+  border-color: color-mix(in srgb, var(--border-primary, #3d3d3f) 88%, transparent);
+  background: color-mix(in srgb, var(--bg-tertiary, #3a3a3c) 82%, transparent);
+  box-shadow:
+    0 1px 2px color-mix(in srgb, #000 28%, transparent),
+    0 8px 24px color-mix(in srgb, #000 22%, transparent);
+}
+
+[data-theme="dark"] .composer-box:focus-within {
+  border-color: color-mix(in srgb, var(--text-primary, #f5f5f7) 16%, var(--border-primary, #3d3d3f));
+}
+
+[data-theme="dark"] .thread-jump {
+  box-shadow:
+    0 1px 2px color-mix(in srgb, #000 28%, transparent),
+    0 8px 20px color-mix(in srgb, #000 20%, transparent);
 }
 
 @keyframes chat-think-pulse {
@@ -4610,7 +4826,8 @@ onUnmounted(() => {
 
 @media (prefers-reduced-motion: reduce) {
   .activity-text.is-live,
-  .assistant-thinking {
+  .assistant-thinking,
+  .study-eval-note.is-running {
     animation: none;
     opacity: 1;
   }

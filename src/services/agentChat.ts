@@ -4,12 +4,35 @@ import { inspectLocalFile, parseQuestions, normalizeType, readLocalFileRange, ty
 import { isModelStopped, runTextModel, type ModelToolCall } from './modelRunner'
 import type { ImportStepPreview, ImportTaskStep } from './importTasks'
 import { parseDifficulty, parseImportance, parseMastery } from '../utils/questionMetrics'
-import { getQuizCards, parseQuizCards, saveQuizCards, type QuizCard } from '../utils/quizPractice'
+import { getQuizCards, parseQuizCards, resolveQuizTitle, saveQuizCards, saveQuizTitle, type QuizCard } from '../utils/quizPractice'
 import { collectGraphNodes, extractMermaidSource, graphFromPayload, graphToMermaid, parseGraphEdgeInputs, parseGraphNodeInputs } from '../utils/studyGraph'
+import { isLoggedIn } from './auth'
+import {
+  campusApiType,
+  campusQuestionTypeLabel,
+  createCampusPaper,
+  createCampusQuestion,
+  encodeCampusAnswer,
+  encodeCampusOptions,
+  formatCampusOptions,
+  getCampusCourse,
+  getUserCampus,
+  listCampusCourses,
+  listCampusTags,
+  listFolderQuestions,
+  searchCampusQuestions,
+  updateCampusPaper,
+  updateCampusQuestion,
+  withFolderQuestionCounts,
+  type CampusCourse,
+  type CampusFolder,
+  type CampusQuestion,
+} from './campus'
 import { clipAgentDebug, logAgentDebug } from './agentDebugLog'
+import { RemoteApiError } from './remoteHttp'
 import { emitStudyGraphStream, finishStudyGraphStream } from './studyGraphStream'
-import { runStudyProgressEvaluation } from './studyProgressAgent'
-import { associateQuestionsToKnowledge } from './questionKnowledge'
+import { formatEvalNotice, runStudyProgressEvaluation } from './studyProgressAgent'
+import { associateQuestionsToKnowledge, notifyQuestionKnowledgeUpdated, type QuestionKnowledgeHint } from './questionKnowledge'
 import { clampForgettingStage, forgettingStageLabel, retentionScore } from '../utils/studyForgetting'
 
 export interface AgentQuizAttempt {
@@ -28,6 +51,12 @@ export interface AgentQuizAttempt {
   kind?: 'submit' | 'note'
 }
 
+export interface AgentStudyEvalNote {
+  status: 'running' | 'done' | 'empty' | 'failed'
+  text: string
+  updated?: number
+}
+
 export interface AgentChatMessage {
   id: string
   role: 'user' | 'assistant'
@@ -36,6 +65,7 @@ export interface AgentChatMessage {
   steps: ImportTaskStep[]
   quizAttempts?: AgentQuizAttempt[]
   quizReported?: boolean
+  studyEval?: AgentStudyEvalNote
   status: 'streaming' | 'done' | 'failed' | 'stopped'
   waiting?: boolean
   error?: string
@@ -194,6 +224,9 @@ const loadPersisted = () => {
         ...message,
         attachments: Array.isArray(message.attachments) ? message.attachments : undefined,
         steps: Array.isArray(message.steps) ? message.steps : [],
+        studyEval: message.studyEval?.status === 'running'
+          ? { status: 'empty', text: '上次评估在关闭前中断了。' }
+          : message.studyEval,
         status: message.status === 'streaming' ? 'failed' : message.status,
         error: message.status === 'streaming' ? '应用关闭时对话中断' : message.error,
       })),
@@ -415,6 +448,197 @@ const CHAT_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'get_campus_status',
+      description: '查看校园题库登录和学校绑定。用户问校园题、学校课、试卷或同学分享的题时先调用。',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_campus_courses',
+      description: '列出当前学校的校园课程。可用 name 按课名筛选。看校园题前先调用。',
+      parameters: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: '课程名关键词，可省略' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_campus_papers',
+      description: '列出某门校园课下的试卷/文件夹。必须用 course_id 或 course_name。',
+      parameters: {
+        type: 'object',
+        properties: {
+          course_id: { type: 'integer' },
+          course_name: { type: 'string' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_campus_questions',
+      description: '查看某份校园试卷里的题目。必须用 paper_id / folder_id，或同时提供课程和试卷名。返回 campus_question_id，不是本地题库 Id。一次最多 40 道，多的翻页。',
+      parameters: {
+        type: 'object',
+        properties: {
+          paper_id: { type: 'integer', description: '试卷/文件夹 Id' },
+          folder_id: { type: 'integer' },
+          paper_name: { type: 'string' },
+          course_id: { type: 'integer' },
+          course_name: { type: 'string' },
+          page: { type: 'integer', description: '页码，从 1 开始，默认 1' },
+          page_size: { type: 'integer', description: '每页数量，默认 20，最大 40' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'search_campus_questions',
+      description: '在当前学校的校园题库里按题干搜索。返回 campus_question_id，不是本地题库 Id。',
+      parameters: {
+        type: 'object',
+        properties: {
+          keyword: { type: 'string', description: '题干关键词' },
+          page: { type: 'integer' },
+          page_size: { type: 'integer' },
+        },
+        required: ['keyword'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_campus_tags',
+      description: '列出校园试卷可用的平台/标签，如学习通、智慧树。改平台或新建试卷前可调用。',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'create_campus_paper',
+      description: '在校园课下新建试卷/文件夹。必须已登录、绑定学校并完成校园认证。必须用 course_id 或 course_name，以及试卷名 name。平台用 tag（学习通、智慧树等）。',
+      parameters: {
+        type: 'object',
+        properties: {
+          course_id: { type: 'integer' },
+          course_name: { type: 'string' },
+          name: { type: 'string', description: '试卷名称' },
+          tag: { type: 'string', description: '平台/标签名，如学习通、智慧树' },
+          tag_name: { type: 'string' },
+          platform: { type: 'string', description: '与 tag 相同，学习通/智慧树等' },
+          tag_id: { type: 'integer' },
+        },
+        required: ['name'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'update_campus_paper',
+      description: '修改已有校园试卷的名称或平台标签（学习通、智慧树等）。用户说把试卷改成某平台、改试卷名时必须调用，不要新建一份再复制题目。只能改自己创建的试卷。',
+      parameters: {
+        type: 'object',
+        properties: {
+          paper_id: { type: 'integer' },
+          folder_id: { type: 'integer' },
+          paper_name: { type: 'string' },
+          course_id: { type: 'integer' },
+          course_name: { type: 'string' },
+          name: { type: 'string', description: '新的试卷名，不改名可省略' },
+          tag: { type: 'string', description: '平台/标签名，如智慧树、学习通' },
+          tag_name: { type: 'string' },
+          platform: { type: 'string', description: '与 tag 相同' },
+          tag_id: { type: 'integer' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'save_campus_questions',
+      description: '把题目上传到校园试卷。用户要求上传、收录到校园题库时调用，不要用 save_questions。必须已认证。必须指定课程和试卷。可手写题目，或用本地 question_ids 复制已有本地题。一次最多 20 道。',
+      parameters: {
+        type: 'object',
+        properties: {
+          course_id: { type: 'integer' },
+          course_name: { type: 'string' },
+          paper_id: { type: 'integer', description: '校园试卷 Id' },
+          folder_id: { type: 'integer' },
+          paper_name: { type: 'string', description: '试卷名，没有就按 create_paper 决定是否新建' },
+          folder_name: { type: 'string' },
+          create_paper: { type: 'boolean', description: '试卷不存在时是否新建，默认 true' },
+          tag: { type: 'string', description: '新建试卷时的标签名' },
+          tag_name: { type: 'string' },
+          tag_id: { type: 'integer' },
+          question_ids: { type: 'array', items: { type: 'integer' }, description: '本地题库 Id，会按原文复制到校园试卷' },
+          question_id: { type: 'integer' },
+          questions: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                question: { type: 'string' },
+                options: { description: '选项，写成 "A. xx\\nB. xx" 或字符串数组' },
+                answer: { type: 'string', description: '选择题优先写 A/B/C/D，判断写 T/F 或对/错' },
+                question_type: { type: 'string', description: '单选/多选/判断/填空/简答，或 single_choice 等' },
+              },
+              required: ['question', 'answer'],
+            },
+          },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'update_campus_question',
+      description: '修改已有校园题的题干、选项、答案、题型，或移到另一份试卷。必须用 campus_question_id（来自 list/search/save），不是本地 question_id。必须已认证。一次最多 10 道。',
+      parameters: {
+        type: 'object',
+        properties: {
+          campus_question_id: { type: 'integer' },
+          campus_question_ids: { type: 'array', items: { type: 'integer' } },
+          question: { type: 'string' },
+          options: { description: '选项，写成 "A. xx\\nB. xx" 或字符串数组' },
+          answer: { type: 'string' },
+          question_type: { type: 'string' },
+          paper_id: { type: 'integer', description: '要移到的试卷 Id；改内容时也尽量带上当前试卷，避免题目被移出试卷' },
+          questions: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                campus_question_id: { type: 'integer' },
+                question: { type: 'string' },
+                options: { description: '选项' },
+                answer: { type: 'string' },
+                question_type: { type: 'string' },
+                paper_id: { type: 'integer' },
+              },
+              required: ['campus_question_id'],
+            },
+          },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'move_questions',
       description: '把指定题目移到另一个文件夹。必须用 question_ids（来自 list_questions / search_questions），或用 keyword 在源文件夹里匹配。不要用这个工具移动整个文件夹，移动文件夹请用 move_folder。一次最多 50 道。',
       parameters: {
@@ -491,6 +715,27 @@ const CHAT_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'list_recent_wrong_questions',
+      description: '查看最近答错的题目。用户问错题、要订正、复习刚错过的题时调用。可按科目、知识点或文件夹筛选，返回题干、上次错选、错了几次、最近 5 次对错。',
+      parameters: {
+        type: 'object',
+        properties: {
+          subject_id: { type: 'integer', description: '学习科目 Id，挂着学习状态时可省略' },
+          subject_name: { type: 'string' },
+          node_id: { type: 'integer', description: '只看某个知识点及其子节点' },
+          node_name: { type: 'string' },
+          folder_id: { type: 'integer' },
+          folder_name: { type: 'string' },
+          days: { type: 'integer', description: '最近几天，默认 30' },
+          limit: { type: 'integer', description: '最多返回多少道，默认 20，最大 40' },
+          unresolved_only: { type: 'boolean', description: '只看最后一次仍是错的题，默认 false' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'get_practice_history',
       description: '查看某道题的历史作答和备注，出题或讲评前可调用，避免重复出刚错过的题或忽略用户备注。',
       parameters: {
@@ -522,21 +767,30 @@ const CHAT_TOOLS = [
     type: 'function',
     function: {
       name: 'present_quiz',
-      description: '向用户出示可点选的练习题。选择题必须用这个工具，不要把选项写成普通 Markdown。优先传 question_ids。也可以只传 count，系统会从未掌握的题里抽。一次最多 10 道。',
+      description: '向用户出示可点选的练习题。选择题必须用这个工具，不要把选项写成普通 Markdown。必须用 title 给这次练习起短名字。本地题用 question_ids；校园题用 campus_question_ids 或 paper_id，系统会按校园题库原文出题，不要抄选项。订正错题时先 list_recent_wrong_questions。也可以只传 count，从未掌握的本地题里抽。一次最多 10 道。',
       parameters: {
         type: 'object',
         properties: {
-          question_ids: { type: 'array', items: { type: 'integer' }, description: '题库题目 Id 列表' },
+          title: { type: 'string', description: '这次练习的短标题，例如「考试1」「劳动需求 错题订正」。会显示在练习卡片上，不要只用「练习」。' },
+          question_ids: { type: 'array', items: { type: 'integer' }, description: '本地题库题目 Id 列表' },
+          campus_question_ids: { type: 'array', items: { type: 'integer' }, description: '校园题 Id，来自 list_campus_questions。系统按原文出题。' },
+          paper_id: { type: 'integer', description: '校园试卷 Id，出示这份试卷里的题' },
+          paper_name: { type: 'string' },
           count: { type: 'integer', description: '未指定题目时自动抽取的数量，默认 5' },
           folder_id: { type: 'integer' },
+          node_id: { type: 'integer', description: '这批题默认挂到的知识点 Id' },
+          node_name: { type: 'string', description: '这批题默认挂到的知识点或节名' },
+          knowledge_point: { type: 'string' },
+          parent_name: { type: 'string' },
           questions: {
             type: 'array',
             items: {
               type: 'object',
               properties: {
-                question_id: { type: 'integer', description: '题库题目 Id' },
+                question_id: { type: 'integer', description: '本地题库题目 Id' },
+                campus_question_id: { type: 'integer', description: '校园题 Id，有这个就不要再手写 options' },
                 question: { type: 'string' },
-                options: { type: 'string', description: 'A. ...\\nB. ...' },
+                options: { type: 'string', description: 'A. ...\\nB. ...。校园题不要填这个字段' },
                 answer: { type: 'string' },
                 question_type: { type: 'string', description: '单选/多选/判断/填空' },
                 explanation: { type: 'string' },
@@ -878,7 +1132,7 @@ const CHAT_TOOLS = [
     type: 'function',
     function: {
       name: 'evaluate_study_progress',
-      description: '把遗忘曲线评估交给后台。按 7 个复习点（刚学→1天→2天→4天→7天→15天→30天）更新叶子节点。再次讲解已学过的点是复习（阶段上移），不是打回刚学。讲解完、练完、用户说学过/忘了/复习过时调用。立刻返回，不要自己打分或改 mastery。',
+      description: '立刻把学习/复习效果评估交给后台。系统讲完或练完后也会自动评估；用户明确问进度、说学过/忘了/复习过时仍应调用。不要自己打分或改 mastery。',
       parameters: {
         type: 'object',
         properties: {
@@ -891,21 +1145,21 @@ const CHAT_TOOLS = [
   },
 ]
 
-const SYSTEM_PROMPT = `你是题库与学习助手。可以讲解、出题、整理题目，也可以管理学习页的科目和知识图谱，以及查看用户附带的本地文件。
+const SYSTEM_PROMPT = `你是题库与学习助手。可以讲解、出题、整理题目，也可以管理学习页的科目和知识图谱，查看、上传和编辑校园题库，以及查看用户附带的本地文件。
 
 规则：
-1. 用户附带文件不等于要导入。先按用户的问题处理：问内容就 get_file_info 一次，再按需 read_range 后回答；闲聊或无关问题直接回答。同一个文件不要重复 get_file_info。只有用户明确要求导入、识别题目、保存、收录或写入题库时，才分段 read_range 并 save_questions。不要一次读完全文。文件较大时按 nextHint 继续读，直到说已经到末尾。一次写入不要超过 20 道。不要编造文件里没有的题目。用户消息里如果带了图片，按图中内容回答、讲解或识别题目。
-2. 普通提问先直接回答。用户要求保存、收录、写入题库时，调用 save_questions。用户文本里如果出现「名称（folder_id=…，路径=…）」，必须使用这个 folder_id，不要按名称猜测或另选。用户只用语言指定文件夹（例如「存到错题本」）时，先 list_folders 或 get_folder_info 对应，不要自己另选。不确定文件夹时先问一句。
+1. 用户附带文件不等于要导入。先按用户的问题处理：问内容就 get_file_info 一次，再按需 read_range 后回答；闲聊或无关问题直接回答。同一个文件不要重复 get_file_info。只有用户明确要求导入、识别题目、保存、收录或写入题库时，才分段 read_range 再写入。写入本地题库用 save_questions，写入校园题库用 save_campus_questions。不要一次读完全文。文件较大时按 nextHint 继续读，直到说已经到末尾。一次写入不要超过 20 道。不要编造文件里没有的题目。用户消息里如果带了图片，按图中内容回答、讲解或识别题目。
+2. 普通提问先直接回答。用户要求保存、收录、写入本地题库时，调用 save_questions。用户文本里如果出现「名称（folder_id=…，路径=…）」，必须使用这个 folder_id，不要按名称猜测或另选。用户只用语言指定文件夹（例如「存到错题本」）时，先 list_folders 或 get_folder_info 对应，不要自己另选。不确定文件夹时先问一句。用户说上传到校园、放到校园试卷、改校园题时，不要用 save_questions。
 3. 用户要求新建、重命名、移动、删除文件夹时，使用对应工具。默认文件夹（Id=0）不能重命名、移动或删除。不确定文件夹时先 list_folders。
 4. 用户要求把某几道题、某一类题挪到别的文件夹时，先 list_questions 或 search_questions 确认题目 Id，再 move_questions。不要把整个文件夹当题目移动；挪文件夹用 move_folder。一次不要超过 50 道。
 5. 删除文件夹必须用户说清楚要删，并且说明题目是一起删还是留着。
 6. 题目字段：question、options（写成 "A. xxx\\nB. xxx"）、answer、question_type（单选/多选/判断/填空）、importance/mastery/difficulty（0–3，或低/中/高、未掌握/一般/已掌握、简单/中等/困难）。能看出考点就写 knowledge_point / node_name，能看出章节就写 parent_name。
-7. 出选择题或判断题练习时，必须调用 present_quiz，题目会出现在右侧练习页供点选。不要把选项写成普通列表让用户在输入框回答。题库里的题只传 question_id；自己出的题带上题干、选项、答案、解析，以及 knowledge_point 或 node_name。挂着学习状态时，新出的题会自动关联知识点，没有对应节点就生成。
-8. 出题前用 list_questions 看掌握度、练习记录和已关联知识点，优先出未掌握、掌握度为 /、或最近答错的题。需要细节时 get_practice_history。按某节出题可先 list_knowledge_questions。
+7. 出选择题或判断题练习时，必须调用 present_quiz，题目会出现在右侧练习页供点选。不要把选项写成普通列表让用户在输入框回答。必须用 title 给这次练习起一个短名字（试卷名、知识点、错题订正等），不要只用「练习」。题库里的题只传 question_id；自己出的题带上题干、选项、答案、解析，以及 knowledge_point 或 node_name。整批同一节时也可在 present_quiz 顶层传 node_name。新出的题会自动写入题库；挂着学习状态时再挂到对应知识点，作答会记到该节点。没有对应节点就生成。
+8. 出题前用 list_questions 看掌握度、练习记录和已关联知识点，优先出未掌握、掌握度为 /、或最近答错的题。用户问错题、要订正或复习刚错过的题时，调用 list_recent_wrong_questions；挂着学习状态就带这个科目。需要某一题的细节时 get_practice_history。按某节出题可先 list_knowledge_questions。
 9. 用户要求改重要性、掌握度、难度时用 update_question_metrics。保存新题时可在 save_questions 里一并写入这些指标和知识点。用户说整理题目、把题挂到某节时，调用 link_questions_to_knowledge。
 10. 用户要求记下易错点或复习提示时，用 add_practice_note。
 11. 不要编造用户没有给出或没有确认的题目。
-12. 同一工具、相同参数只调用一次。list_questions 已含练习摘要，不要再对每道题 get_practice_history，除非用户点名某一题。present_quiz 成功后立刻停止调用工具，只用一两句话收尾，不要再 list_questions 或再次 present_quiz。patch_knowledge_graph 例外：空图从零画时必须多次调用，每批 3–8 个不同节点，先写全章再补节；已有图谱只改用户点名的部分，不要为凑 28–45 个而继续加。
+12. 同一工具、相同参数只调用一次。list_questions 已含练习摘要，不要再对每道题 get_practice_history，除非用户点名某一题。list_recent_wrong_questions 已经是错题列表，不要再对每道错题 get_practice_history。present_quiz 成功后立刻停止调用工具，只用一两句话收尾，不要再 list_questions 或再次 present_quiz。patch_knowledge_graph 例外：空图从零画时必须多次调用，每批 3–8 个不同节点，先写全章再补节；已有图谱只改用户点名的部分，不要为凑 28–45 个而继续加。
 13. 用户每做完一题就会发来该题的选择。立刻只讲评这一题：判断对错、解释原因、点出易错点。不要装作没看到，不要一次讲评整套题，也不要再出新题，除非用户要求继续。
 14. 操作完成后用一两句话说明结果。出题后提醒用户看右侧练习页。不要重复列出 present_quiz 已经出示的选项。
 15. 学习页的科目和知识图谱独立于题库文件夹。改图前先 get_knowledge_graph。已有节点时按用户这句话做事：说补、加、改名、删某一章/节就 patch；说重画、推倒重来、全部重做才 set_knowledge_graph（必须 replace=true）。没说重画就不要清空。空图才从零分批画：先加 8–12 个章名，再给每章加 2–4 个节名。到节为止，不要拆定理、模型、公式、论文名。禁止学科基础、核心概念、方法与应用、基础知识、综合应用、概述、其他。不要先问用户确认。若工具返回 error，修正后再调用。画完用一两句话说明改了什么。
@@ -913,8 +1167,11 @@ const SYSTEM_PROMPT = `你是题库与学习助手。可以讲解、出题、整
 17. 用户说想学某科、开始学某科、或点名某科目时：先 list_subjects。有同名就 attach_study_subject；没有就 create_subject，再 attach_study_subject。挂上后右上角会显示「正在学习」。用户说撤下、不学了或取消学习状态时，调用 detach_study_subject。
 18. 讲解或点名图谱里的某一章、某一节时，调用 focus_knowledge_graph，右侧图谱会聚焦到该节点。用户说「看某某」「讲这一章」「聚焦某某」时必须调用。node_name 用 get_knowledge_graph 里的中文名。不要在分批画图时对每个新节点都 focus。
 19. 用户说打开/展开思维导图、看知识图谱时，调用 open_knowledge_graph。用户问有哪些学习科目时调用 list_subjects。用户说查看某一科、打开某一科时调用 get_subject。用户说新建科目时调用 create_subject。这些操作会在右侧展开对应界面，不要只口头描述。
-20. 挂着学习状态时，在这些时机调用 evaluate_study_progress：已经讲完或讲评完之后、用户说以前学过/忘了/复习过某块、用户问进度。hint 只写这次真正讲到、练到或用户点名的节名（叶子），不要写章名，不要写「基础/入门」。图谱进度是 7 段遗忘曲线，不是题目那种掌握度 0–3。再次讲解已学过的节是复习。不要用 patch_knowledge_graph 改 mastery，不要自己口头打分。画图谱、只列出目录、只 focus 某一章、动笔讲解之前、只闲聊、或刚评估过同一批内容时不要调用。
-21. 导入或保存题目时尽量带上 knowledge_point / parent_name。对应不上现有节点就自动生成，不要为此先问用户。用户要把几门课合成一门时用 merge_subjects；要把某几章拆成新科目时用 split_subject。拆分前先 get_knowledge_graph 拿到 node_id 或准确章名。`
+20. 挂着学习状态时，系统会在讲完、练完后自动后台评估新学/复习效果，评估完会告诉用户，你不必每次都调用 evaluate_study_progress。用户明确问进度，或主动说以前学过/忘了/复习过某块时仍要调用，hint 只写这次真正讲到、练到或用户点名的节名（叶子），不要写章名，不要写「基础/入门」。图谱进度是 7 段遗忘曲线，不是题目那种掌握度 0–3。再次讲解已学过的节是复习。不要用 patch_knowledge_graph 改 mastery，不要自己口头打分。画图谱、只列出目录、只 focus 某一章、动笔讲解之前、只闲聊时不要调用。
+21. 导入或保存题目时尽量带上 knowledge_point / parent_name。对应不上现有节点就自动生成，不要为此先问用户。用户要把几门课合成一门时用 merge_subjects；要把某几章拆成新科目时用 split_subject。拆分前先 get_knowledge_graph 拿到 node_id 或准确章名。
+22. 用户问校园题、学校课、试卷、同学分享的题时，用校园题库工具：先 get_campus_status，再 list_campus_courses → list_campus_papers → list_campus_questions，或 search_campus_questions。有试卷就必须 list_campus_questions，不能只看数量就说没题。list_campus_questions / search_campus_questions 会弹出浏览卡片，只供看题，不是作答。成功后不要再列出选项，也不要 present_quiz，除非用户明确说要练习、做题或订正。练习时 present_quiz 只传 campus_question_ids 或 paper_id 和 title。campus_question_id 不是本地题库 Id，不能传给 get_practice_history、move_questions、save_questions。没登录或没绑定学校时据实说明，不要编造校园题目。
+23. 用户要求往校园题库上传、收录、新建试卷或改校园题时，用 create_campus_paper / save_campus_questions / update_campus_question。先 get_campus_status 确认已登录、已绑定、verified=true；未认证就说明需要先完成校园认证，不要假装已上传。上传必须指定课程和试卷（course_id/course_name + paper_id/paper_name）；试卷不存在且用户要新建时 create_paper=true 或先 create_campus_paper。一次最多 20 道。改题必须用 campus_question_id，不要把本地 question_id 当成校园题 Id。改内容时尽量带上当前 paper_id。上传或改完会弹出浏览卡片，不要再列出选项，也不要 present_quiz，除非用户要练习。
+24. 用户说把试卷改成学习通、智慧树或其他平台，或改试卷名时，调用 update_campus_paper。先 list_campus_papers 或 list_campus_tags 确认 paper_id 和标签名。不要因为没有现成工具就新建一份再复制，也不要在没调用工具时声称已经改好。`
 
 const unescapeJsonString = (value: string) => {
   try {
@@ -1009,13 +1266,26 @@ const pickSubjectRef = (args: Record<string, unknown> | any) => {
   }
 }
 
-const openStudyGraphPane = (subjectId: number, nodeName?: string) => {
+const lastStudyFocus = new Map<number, { nodeName: string; nodeId?: number }>()
+
+const rememberStudyFocus = (subjectId: number, nodeName?: string, nodeId?: number) => {
+  const name = String(nodeName || '').trim()
+  if (!(Number.isFinite(subjectId) && subjectId > 0) || !name) return
+  lastStudyFocus.set(subjectId, {
+    nodeName: name,
+    nodeId: Number(nodeId) > 0 ? Number(nodeId) : undefined,
+  })
+}
+
+const openStudyGraphPane = (subjectId: number, nodeName?: string, nodeId?: number) => {
   if (!Number.isFinite(subjectId) || subjectId <= 0) return
+  rememberStudyFocus(subjectId, nodeName, nodeId)
   window.dispatchEvent(new CustomEvent('open-study-graph', {
     detail: {
       subjectId,
       expand: true,
       ...(String(nodeName || '').trim() ? { nodeName: String(nodeName).trim() } : {}),
+      ...(Number(nodeId) > 0 ? { nodeId: Number(nodeId) } : {}),
     },
   }))
 }
@@ -1051,6 +1321,199 @@ const graphSubjectHint = (name: string) => {
 }
 
 const clipToolResult = (text: string) => (text.length > 12000 ? `${text.slice(0, 11999)}…` : text)
+
+const campusFail = (err: unknown, fallback: string) => {
+  if (err instanceof RemoteApiError) {
+    if (err.status === 401) return '校园登录已失效，请先在顶栏重新登录。'
+    if (err.status === 403) {
+      const msg = String(err.message || '')
+      if (/not verified|未认证/i.test(msg)) return '需要先完成校园认证才能上传或改题。'
+      if (/not the creator/i.test(msg)) return '只能改自己创建的试卷。'
+      if (/archived/i.test(msg)) return '这份试卷已归档，不能再改。'
+      return msg || '没有权限做这个操作。'
+    }
+  }
+  return err instanceof Error && err.message ? err.message : fallback
+}
+
+const loadCampusContext = async (opts?: { requireVerified?: boolean }) => {
+  if (!isLoggedIn.value) {
+    return { error: '还没有登录校园账号。请先在顶栏用微信登录，再到校园题库页绑定学校。' }
+  }
+  try {
+    const identity = await getUserCampus()
+    if (!identity.campus) {
+      return { error: '还没有绑定学校。请先打开校园题库页选择学校。' }
+    }
+    if (opts?.requireVerified && identity.status !== 'verified') {
+      return { error: '需要先完成校园认证才能上传或改题。请先在校园题库页完成认证。' }
+    }
+    return { identity }
+  } catch (err) {
+    return { error: campusFail(err, '读取校园账号失败') }
+  }
+}
+
+const summarizeCampusCourse = (item: CampusCourse) => ({
+  course_id: item.id,
+  name: item.name,
+  ...(item.folder_count != null ? { folder_count: item.folder_count } : {}),
+  ...(item.question_count != null ? { question_count: item.question_count } : {}),
+})
+
+const summarizeCampusPaper = (item: CampusFolder) => ({
+  paper_id: item.id,
+  name: item.name,
+  tag: item.tag_name || '',
+  year: item.year || null,
+  ...(item.question_count != null ? { question_count: item.question_count } : {}),
+})
+
+const resolveCampusCourse = async (campusId: number, id?: number, name?: string) => {
+  const keyword = String(name || '').trim()
+  const courses = await listCampusCourses(campusId, keyword)
+  if (Number(id) > 0) {
+    const found = courses.find((item) => item.id === Number(id))
+    if (found) return found
+    try {
+      return (await getCampusCourse(Number(id))).course
+    } catch {
+      throw new Error(`没有找到课程 ${id}`)
+    }
+  }
+  if (!keyword) return null
+  const exact = courses.filter((item) => item.name === keyword)
+  if (exact.length === 1) return exact[0]
+  const fuzzy = courses.filter((item) => item.name.includes(keyword))
+  if (fuzzy.length === 1) return fuzzy[0]
+  if (fuzzy.length > 1 || exact.length > 1) {
+    const list = (exact.length > 1 ? exact : fuzzy).slice(0, 8)
+    throw new Error(`有多门课程叫「${keyword}」，请改用 course_id：${list.map((item) => `${item.name}(${item.id})`).join('、')}`)
+  }
+  throw new Error(`没有找到课程「${keyword}」`)
+}
+
+const resolveCampusPaper = async (courseId: number, id?: number, name?: string) => {
+  const detail = await getCampusCourse(courseId)
+  const papers = detail.folders.filter((item) => !item.archived)
+  if (Number(id) > 0) {
+    const found = papers.find((item) => item.id === Number(id))
+    if (found) return { course: detail.course, paper: found, papers }
+    throw new Error(`这门课里没有试卷 ${id}`)
+  }
+  const keyword = String(name || '').trim()
+  if (!keyword) return { course: detail.course, paper: null, papers }
+  const exact = papers.filter((item) => item.name === keyword)
+  if (exact.length === 1) return { course: detail.course, paper: exact[0], papers }
+  const fuzzy = papers.filter((item) => item.name.includes(keyword))
+  if (fuzzy.length === 1) return { course: detail.course, paper: fuzzy[0], papers }
+  if (fuzzy.length > 1 || exact.length > 1) {
+    const list = (exact.length > 1 ? exact : fuzzy).slice(0, 8)
+    throw new Error(`有多份试卷叫「${keyword}」，请改用 paper_id：${list.map((item) => `${item.name}(${item.id})`).join('、')}`)
+  }
+  throw new Error(`这门课里没有试卷「${keyword}」`)
+}
+
+const resolveCampusTagId = async (id?: number, name?: string) => {
+  if (Number(id) > 0) return Number(id)
+  const keyword = String(name || '').trim()
+  if (!keyword) return undefined
+  const tags = await listCampusTags()
+  const exact = tags.filter((item) => item.name === keyword)
+  if (exact.length === 1) return exact[0].id
+  const fuzzy = tags.filter((item) => item.name.includes(keyword))
+  if (fuzzy.length === 1) return fuzzy[0].id
+  if (exact.length > 1 || fuzzy.length > 1) {
+    const list = (exact.length > 1 ? exact : fuzzy).slice(0, 8)
+    throw new Error(`有多个标签叫「${keyword}」，请改用 tag_id：${list.map((item) => `${item.name}(${item.id})`).join('、')}`)
+  }
+  throw new Error(`没有找到标签「${keyword}」`)
+}
+
+const parseCampusDrafts = (raw: unknown) => {
+  if (!Array.isArray(raw)) return []
+  return raw
+    .map((item) => ({
+      question: String(item?.question || item?.content || '').trim(),
+      options: item?.options,
+      answer: String(item?.answer || '').trim(),
+      question_type: String(item?.question_type || item?.type || '').trim(),
+    }))
+    .filter((item) => item.question && item.answer)
+}
+
+const campusTagArg = (args: any) =>
+  String(args?.tag || args?.tag_name || args?.platform || '').trim()
+
+const resolveCampusWriteTarget = async (
+  sessionId: string,
+  campusId: number,
+  args: any,
+  opts?: { createPaper?: boolean; paperName?: string },
+) => {
+  const cache = campusCacheOf(sessionId)
+  let paperId = Number(args.paper_id ?? args.folder_id)
+  let paperName = String(opts?.paperName || args.paper_name || args.folder_name || '').trim()
+  if (!(Number.isFinite(paperId) && paperId > 0) && !paperName && cache.papers.length === 1) {
+    paperId = cache.papers[0].id
+    paperName = cache.papers[0].name
+  }
+  const known = Number.isFinite(paperId) && paperId > 0
+    ? cache.papers.find((item) => item.id === paperId)
+    : paperName
+      ? cache.papers.find((item) => item.name === paperName)
+      : undefined
+  const course = await resolveCampusCourse(
+    campusId,
+    Number(args.course_id) || known?.courseId || undefined,
+    String(args.course_name || '').trim() || known?.courseName || undefined,
+  )
+  if (!course) {
+    return { error: '请提供 course_id 或 course_name，或先 list_campus_papers' as const }
+  }
+  const remember = (paper: { id: number; name: string }) => {
+    rememberCampusPapers(sessionId, [{
+      id: paper.id,
+      name: paper.name,
+      courseName: course.name,
+      courseId: course.id,
+    }])
+  }
+  if (Number.isFinite(paperId) && paperId > 0) {
+    try {
+      const resolved = await resolveCampusPaper(course.id, paperId)
+      remember(resolved.paper)
+      return { course, paper: resolved.paper, createdPaper: false }
+    } catch {
+      const paper = { id: paperId, name: paperName || known?.name || `试卷 ${paperId}` }
+      remember(paper)
+      return { course, paper, createdPaper: false }
+    }
+  }
+  if (!paperName) return { error: '请提供 paper_id 或 paper_name' as const }
+  try {
+    const resolved = await resolveCampusPaper(course.id, undefined, paperName)
+    if (resolved.paper) {
+      remember(resolved.paper)
+      return { course, paper: resolved.paper, createdPaper: false }
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : ''
+    if (opts?.createPaper === false || /有多/.test(msg)) {
+      return { error: campusFail(err, msg || `没有找到试卷「${paperName}」`), course }
+    }
+  }
+  if (opts?.createPaper === false) {
+    return { error: `没有找到试卷「${paperName}」` as const, course }
+  }
+  const tagId = await resolveCampusTagId(
+    Number(args.tag_id) || undefined,
+    campusTagArg(args) || undefined,
+  )
+  const paper = await createCampusPaper(course.id, paperName, tagId)
+  remember(paper)
+  return { course, paper, createdPaper: true }
+}
 
 const firstFileAttachment = (items?: AgentChatAttachment[]) =>
   items?.find(isFileAttachment) || null
@@ -1102,7 +1565,7 @@ const studyStatePrefix = async (sessionId: string) => {
     const subject = subjects.find((item) => item.id === id)
     if (!subject) return ''
     const pct = Math.round((Number(subject.progress) || 0) * 100)
-    return `【学习状态】当前对话挂着科目「${subject.name}」（subject_id=${subject.id}）。掌握进度 ${pct}%，约 ${subject.node_count || 0} 个知识点。讲解、出题、改图谱时默认用这个科目，不要另建同名科目。\n\n`
+    return `【学习状态】当前对话挂着科目「${subject.name}」（subject_id=${subject.id}）。掌握进度 ${pct}%，约 ${subject.node_count || 0} 个知识点。讲解、出题、改图谱时默认用这个科目，不要另建同名科目。订正或复习错题时调用 list_recent_wrong_questions。\n\n`
   } catch {
     return ''
   }
@@ -1134,6 +1597,10 @@ const toMultimodalUserContent = (text: string, items?: AgentChatAttachment[]) =>
 
 const notifyFoldersChanged = (folderId?: number) => {
   window.dispatchEvent(new CustomEvent('questions-imported', { detail: { folderId } }))
+}
+
+const notifyCampusUpdated = (detail?: { courseId?: number; paperId?: number }) => {
+  window.dispatchEvent(new CustomEvent('campus-updated', { detail: detail || {} }))
 }
 
 const describeActivity = (name: string, args: any, status: ImportTaskStep['status'], extra?: any) => {
@@ -1274,6 +1741,151 @@ const describeActivity = (name: string, args: any, status: ImportTaskStep['statu
               : `搜索了「${keyword}」`,
     }
   }
+  if (name === 'get_campus_status') {
+    const school = extra?.campus || extra?.name || '校园题库'
+    return {
+      target: school,
+      label:
+        status === 'running'
+          ? '正在查看校园账号'
+          : status === 'failed'
+            ? '查看校园账号失败'
+            : extra?.loggedIn === false
+              ? '还没有登录校园账号'
+              : extra?.campus
+                ? `查看了校园账号「${school}」`
+                : '查看了校园账号',
+    }
+  }
+  if (name === 'list_campus_courses') {
+    const count = extra?.count ?? extra?.courses?.length
+    const school = extra?.campus || '校园'
+    return {
+      target: school,
+      label:
+        status === 'running'
+          ? '正在查看校园课程'
+          : status === 'failed'
+            ? '查看校园课程失败'
+            : count != null
+              ? `查看了 ${count} 门校园课`
+              : '查看了校园课程',
+    }
+  }
+  if (name === 'list_campus_papers') {
+    const course = extra?.course || args?.course_name || '课程'
+    const count = extra?.count ?? extra?.papers?.length
+    return {
+      target: course,
+      label:
+        status === 'running'
+          ? `正在查看「${course}」的试卷`
+          : status === 'failed'
+            ? `查看「${course}」试卷失败`
+            : count != null
+              ? `查看了「${course}」的 ${count} 份试卷`
+              : `查看了「${course}」的试卷`,
+    }
+  }
+  if (name === 'list_campus_questions') {
+    const paper = extra?.paper || args?.paper_name || '试卷'
+    const count = extra?.count ?? extra?.questions?.length
+    return {
+      target: paper,
+      label:
+        status === 'running'
+          ? `正在查看校园试卷「${paper}」`
+          : status === 'failed'
+            ? `查看校园试卷「${paper}」失败`
+            : count != null
+              ? `查看了「${paper}」里的 ${count} 道校园题`
+              : `查看了「${paper}」里的校园题`,
+    }
+  }
+  if (name === 'search_campus_questions') {
+    const keyword = extra?.keyword || args?.keyword || '校园题'
+    const count = extra?.count ?? extra?.questions?.length
+    return {
+      target: keyword,
+      label:
+        status === 'running'
+          ? `正在搜索校园题「${keyword}」`
+          : status === 'failed'
+            ? `搜索校园题失败`
+            : count != null
+              ? `找到 ${count} 道校园题`
+              : `搜索了校园题「${keyword}」`,
+    }
+  }
+  if (name === 'list_campus_tags') {
+    const count = extra?.count ?? extra?.tags?.length
+    return {
+      target: '平台标签',
+      label:
+        status === 'running'
+          ? '正在查看校园平台标签'
+          : status === 'failed'
+            ? '查看校园平台标签失败'
+            : count != null
+              ? `查看了 ${count} 个校园平台标签`
+              : '查看了校园平台标签',
+    }
+  }
+  if (name === 'update_campus_paper') {
+    const paper = extra?.paper || args?.paper_name || args?.name || '试卷'
+    const tag = extra?.tag || args?.tag || args?.platform || args?.tag_name
+    return {
+      target: paper,
+      label:
+        status === 'running'
+          ? `正在修改校园试卷「${paper}」`
+          : status === 'failed'
+            ? `修改校园试卷失败`
+            : tag
+              ? `把「${paper}」改成了「${tag}」`
+              : `修改了校园试卷「${paper}」`,
+    }
+  }
+  if (name === 'create_campus_paper') {
+    const paper = extra?.paper || extra?.name || args?.name || '试卷'
+    return {
+      target: paper,
+      label:
+        status === 'running'
+          ? `正在创建校园试卷「${paper}」`
+          : status === 'failed'
+            ? `创建校园试卷失败`
+            : extra?.already
+              ? `校园试卷「${paper}」已存在`
+              : `创建了校园试卷「${paper}」`,
+    }
+  }
+  if (name === 'save_campus_questions') {
+    const count = extra?.saved ?? extra?.count ?? (Array.isArray(args?.questions) ? args.questions.length : 0)
+    const paper = extra?.paper || args?.paper_name || '校园试卷'
+    const target = count ? `${count} 道题目` : '题目'
+    return {
+      target,
+      label:
+        status === 'running'
+          ? `正在上传${target}到「${paper}」`
+          : status === 'failed'
+            ? `上传校园题失败`
+            : `上传了${target}到「${paper}」`,
+    }
+  }
+  if (name === 'update_campus_question') {
+    const count = extra?.updated ?? extra?.count ?? (Array.isArray(args?.questions) ? args.questions.length : args?.campus_question_id ? 1 : 0)
+    return {
+      target: count ? `${count} 道校园题` : '校园题',
+      label:
+        status === 'running'
+          ? '正在修改校园题'
+          : status === 'failed'
+            ? '修改校园题失败'
+            : `修改了 ${count || 0} 道校园题`,
+    }
+  }
   if (name === 'move_questions') {
     const count = extra?.moved ?? (Array.isArray(args?.question_ids) ? args.question_ids.length : args?.question_id ? 1 : 0)
     const folder = extra?.targetName || args?.folder_name || '文件夹'
@@ -1314,6 +1926,20 @@ const describeActivity = (name: string, args: any, status: ImportTaskStep['statu
             : `更新了 ${count || 0} 道题目的指标`,
     }
   }
+  if (name === 'list_recent_wrong_questions') {
+    const count = extra?.count ?? extra?.questions?.length
+    return {
+      target: extra?.scope || '错题',
+      label:
+        status === 'running'
+          ? '正在查看最近错题'
+          : status === 'failed'
+            ? '查看最近错题失败'
+            : count != null
+              ? `查看了 ${count} 道最近错题`
+              : '查看了最近错题',
+    }
+  }
   if (name === 'get_practice_history') {
     const count = extra?.count ?? extra?.records?.length
     return {
@@ -1341,14 +1967,17 @@ const describeActivity = (name: string, args: any, status: ImportTaskStep['statu
   }
   if (name === 'present_quiz') {
     const count = extra?.presented ?? (Array.isArray(args?.questions) ? args.questions.length : 0)
+    const title = resolveQuizTitle(args) || extra?.title
     return {
-      target: count ? `${count} 道练习` : '练习',
+      target: title && title !== '练习' ? title : (count ? `${count} 道练习` : '练习'),
       label:
         status === 'running'
-          ? '正在出题'
+          ? title && title !== '练习' ? `正在出「${title}」` : '正在出题'
           : status === 'failed'
-            ? '出题失败'
-            : `出示了 ${count} 道可点选练习`,
+            ? title && title !== '练习' ? `「${title}」出题失败` : '出题失败'
+            : title && title !== '练习'
+              ? `出示了「${title}」${count} 道可点选练习`
+              : `出示了 ${count} 道可点选练习`,
     }
   }
   if (name === 'link_questions_to_knowledge') {
@@ -1427,10 +2056,10 @@ const describeActivity = (name: string, args: any, status: ImportTaskStep['statu
         : status === 'failed'
           ? '评估掌握度失败'
           : extra?.started && count == null
-            ? '已交给评估助手'
+            ? '正在后台评估学习效果'
             : count
-              ? `按遗忘曲线更新了 ${count} 个知识点`
-              : extra?.message || '完成了掌握度评估',
+              ? `评估完这次的学习效果，更新了 ${count} 个知识点`
+              : extra?.message || '完成了学习效果评估',
     }
   }
   if (name === 'create_subject') {
@@ -1564,6 +2193,16 @@ const patchStep = (sessionId: string, messageId: string, stepId: string, patch: 
   }))
 }
 
+const dropStep = (sessionId: string, messageId: string, stepId: string) => {
+  patchSession(sessionId, (session) => ({
+    ...session,
+    messages: session.messages.map((message) => {
+      if (message.id !== messageId) return message
+      return { ...message, steps: message.steps.filter((step) => step.id !== stepId) }
+    }),
+  }))
+}
+
 const resolveFolder = async (id?: number, name?: string) => {
   const folders = await databaseService.getFolders()
   if (Number.isFinite(id)) {
@@ -1610,9 +2249,14 @@ const summarizeQuestion = (item: {
 })
 
 const withPractice = async <T extends { id: number }>(items: T[]) => {
-  const summaries = await databaseService.getPracticeSummaries(items.map((item) => item.id))
-  const links = await databaseService.listQuestionKnowledge(items.map((item) => item.id)).catch(() => [])
+  const ids = items.map((item) => item.id)
+  const [summaries, marks, links] = await Promise.all([
+    databaseService.getPracticeSummaries(ids),
+    databaseService.getRecentPracticeMarks(ids, 5).catch(() => []),
+    databaseService.listQuestionKnowledge(ids).catch(() => []),
+  ])
   const map = new Map(summaries.map((item) => [item.question_id, item]))
+  const markMap = new Map(marks.map((item) => [item.question_id, item.results || []]))
   const byQuestion = new Map<number, { node_id: number; node_name: string; subject_id: number; subject_name: string }[]>()
   for (const item of links) {
     const list = byQuestion.get(item.question_id) || []
@@ -1624,11 +2268,16 @@ const withPractice = async <T extends { id: number }>(items: T[]) => {
     })
     byQuestion.set(item.question_id, list)
   }
-  return items.map((item) => ({
-    ...summarizeQuestion(item as any),
-    practice: map.get(item.id) || { count: 0 },
-    knowledge: byQuestion.get(item.id) || [],
-  }))
+  return items.map((item) => {
+    const practice = map.get(item.id)
+    return {
+      ...summarizeQuestion(item as any),
+      practice: practice
+        ? { ...practice, recent: markMap.get(item.id) || [] }
+        : { count: 0, recent: markMap.get(item.id) || [] },
+      knowledge: byQuestion.get(item.id) || [],
+    }
+  })
 }
 
 const parseQuestionIds = (args: any) => {
@@ -1641,6 +2290,110 @@ const listedBySession = new Map<string, { id: number; mastery?: number; question
 
 const rememberListed = (sessionId: string, items: { id: number; mastery?: number; question_type?: string; folder_id?: number }[]) => {
   listedBySession.set(sessionId, items.filter((item) => item.id > 0))
+}
+
+type CampusPaperCache = { id: number; name: string; courseName?: string; courseId?: number }
+
+type CampusSessionCache = {
+  questions: CampusQuestion[]
+  papers: CampusPaperCache[]
+}
+
+const campusBySession = new Map<string, CampusSessionCache>()
+
+const campusCacheOf = (sessionId: string): CampusSessionCache => {
+  const current = campusBySession.get(sessionId)
+  if (current) return current
+  const created = { questions: [] as CampusQuestion[], papers: [] as CampusSessionCache['papers'] }
+  campusBySession.set(sessionId, created)
+  return created
+}
+
+const rememberCampusPapers = (sessionId: string, papers: CampusPaperCache[]) => {
+  const cache = campusCacheOf(sessionId)
+  for (const paper of papers) {
+    const index = cache.papers.findIndex((item) => item.id === paper.id)
+    if (index >= 0) cache.papers[index] = { ...cache.papers[index], ...paper }
+    else cache.papers.push(paper)
+  }
+}
+
+const rememberCampusQuestions = (sessionId: string, questions: CampusQuestion[], paper?: CampusPaperCache) => {
+  const cache = campusCacheOf(sessionId)
+  const seen = new Set(questions.map((item) => item.id))
+  cache.questions = [...questions, ...cache.questions.filter((item) => !seen.has(item.id))]
+  if (paper?.id) rememberCampusPapers(sessionId, [paper])
+}
+
+const parseCampusQuestionIds = (args: any) => {
+  const fromArgs = args?.campus_question_ids ?? args?.campus_question_id
+  const list = Array.isArray(fromArgs) ? fromArgs : fromArgs != null ? [fromArgs] : []
+  if (Array.isArray(args?.questions)) {
+    for (const item of args.questions) {
+      const id = Number(item?.campus_question_id)
+      if (Number.isFinite(id) && id > 0) list.push(id)
+    }
+  }
+  return [...new Set(list.map((value) => Number(value)).filter((id) => Number.isFinite(id) && id > 0))]
+}
+
+const campusQuestionToCard = (item: CampusQuestion): QuizCard => ({
+  uid: `c-${item.id}`,
+  question: item.content,
+  options: formatCampusOptions(item.options),
+  answer: item.answer,
+  question_type: campusQuestionTypeLabel(item.type),
+})
+
+const publishCampusQuestionCards = (stepId: string, questions: CampusQuestion[], title: string) => {
+  const cards = questions.slice(0, 10).map(campusQuestionToCard)
+  if (!cards.length) return []
+  saveQuizCards(stepId, cards)
+  saveQuizTitle(stepId, title || '校园题')
+  return cards
+}
+
+const resolveCampusQuizCards = async (sessionId: string, args: any): Promise<{ cards: QuizCard[]; title: string }> => {
+  const ids = parseCampusQuestionIds(args)
+  const paperId = Number(args.paper_id)
+  const cache = campusCacheOf(sessionId)
+  let questions: CampusQuestion[] = []
+  let paperName = String(args.paper_name || args.title || '').trim()
+  let courseName = String(args.course_name || '').trim()
+
+  if (Number.isFinite(paperId) && paperId > 0) {
+    questions = await listFolderQuestions(paperId)
+    const known = cache.papers.find((item) => item.id === paperId)
+    paperName = paperName || known?.name || ''
+    courseName = courseName || known?.courseName || ''
+    rememberCampusQuestions(sessionId, questions, { id: paperId, name: paperName || `试卷 ${paperId}`, courseName })
+  } else if (ids.length) {
+    const byId = new Map(cache.questions.map((item) => [item.id, item]))
+    questions = ids.map((id) => byId.get(id)).filter((item): item is CampusQuestion => Boolean(item))
+    if (questions.length < ids.length && cache.papers.length === 1) {
+      const only = cache.papers[0]
+      const fetched = await listFolderQuestions(only.id)
+      rememberCampusQuestions(sessionId, fetched, only)
+      const next = new Map(campusCacheOf(sessionId).questions.map((item) => [item.id, item]))
+      questions = ids.map((id) => next.get(id)).filter((item): item is CampusQuestion => Boolean(item))
+      paperName = paperName || only.name
+      courseName = courseName || only.courseName || ''
+    }
+  }
+
+  if (ids.length) {
+    const want = new Set(ids)
+    questions = questions.filter((item) => want.has(item.id))
+  }
+
+  const knownPaper = cache.papers.find((item) => questions.some((question) => question.question_bank_id === item.id))
+  paperName = paperName || knownPaper?.name || ''
+  courseName = courseName || knownPaper?.courseName || ''
+  const title = paperName || (courseName ? `${courseName}校园题` : '')
+  return {
+    cards: questions.slice(0, 10).map(campusQuestionToCard),
+    title,
+  }
 }
 
 const isChoiceType = (type?: string) => {
@@ -1753,6 +2506,11 @@ const resolveQuizCards = async (raw: unknown): Promise<QuizCard[]> => {
       importance: item.importance ?? fromBank?.importance,
       mastery: item.mastery ?? fromBank?.mastery,
       difficulty: item.difficulty ?? fromBank?.difficulty,
+      knowledge_point: item.knowledge_point,
+      node_name: item.node_name,
+      node_id: item.node_id,
+      parent_name: item.parent_name,
+      subject_id: item.subject_id,
     })
   })
   for (const id of extraIds) {
@@ -2156,17 +2914,206 @@ const isGraphCatalogMessage = (item: AgentChatMessage) => {
   return drew && /知识图谱|共\s*\d+\s*章|覆盖从/.test(text)
 }
 
+const formatQuizEvidence = (item: AgentChatMessage) =>
+  (item.quizAttempts || [])
+    .filter((attempt) => attempt.kind !== 'note')
+    .map((attempt) => {
+      const mark = attempt.correct === true ? '对' : attempt.correct === false ? '错' : '已答'
+      const n = attempt.index && attempt.total ? `第${attempt.index}/${attempt.total}题` : '练习'
+      return `${n}「${String(attempt.question || '').slice(0, 80)}」答${mark}（选${attempt.selected || '未选'}，答案${attempt.answer || ''}）`
+    })
+    .join('；')
+
 const collectRecentTurns = (sessionId: string, limit = 8) => {
   const messages = sessions.value.find((item) => item.id === sessionId)?.messages || []
-  const usable = messages.filter((item) => String(item.content || '').trim() && !isGraphCatalogMessage(item))
-  return usable
+  const usable = messages.filter((item) => (
+    String(item.content || '').trim()
+    || formatQuizEvidence(item)
+  ) && !isGraphCatalogMessage(item))
+  const turns = usable
     .slice(-limit)
     .map((item, index, items) => {
       const latestTeach = index === items.length - 1 && item.role === 'assistant'
       const max = latestTeach ? 1800 : 500
-      return `${item.role === 'user' ? '用户' : '助手'}：${String(item.content).slice(0, max)}`
+      const quiz = formatQuizEvidence(item)
+      return [
+        `${item.role === 'user' ? '用户' : '助手'}：${String(item.content || '').slice(0, max)}`,
+        quiz ? `作答记录：${quiz}` : '',
+      ].filter(Boolean).join('\n')
     })
     .join('\n')
+  const quizLog = messages
+    .flatMap((item) => item.quizAttempts || [])
+    .filter((attempt) => attempt.kind !== 'note')
+    .slice(-12)
+    .map((attempt) => {
+      const mark = attempt.correct === true ? '对' : attempt.correct === false ? '错' : '已答'
+      const n = attempt.index && attempt.total ? `第${attempt.index}/${attempt.total}题` : '练习'
+      return `${n}「${String(attempt.question || '').slice(0, 80)}」答${mark}`
+    })
+    .join('；')
+  return [turns, quizLog ? `本轮作答摘要：${quizLog}` : ''].filter(Boolean).join('\n')
+}
+
+const EVAL_COOLDOWN_MS = 16_000
+const evalStartedAt = new Map<string, number>()
+const evalInFlight = new Set<string>()
+
+const NAV_EVAL_TOOLS = new Set([
+  'open_knowledge_graph',
+  'focus_knowledge_graph',
+  'list_subjects',
+  'get_subject',
+  'attach_study_subject',
+  'detach_study_subject',
+  'create_subject',
+  'rename_subject',
+  'delete_subject',
+  'set_knowledge_graph',
+  'patch_knowledge_graph',
+  'get_knowledge_graph',
+  'list_folders',
+  'get_folder_info',
+  'get_file_info',
+  'list_questions',
+  'search_questions',
+  'list_recent_wrong_questions',
+  'get_practice_history',
+  'list_knowledge_questions',
+  'present_quiz',
+  'get_campus_status',
+  'list_campus_courses',
+  'list_campus_papers',
+  'list_campus_questions',
+  'search_campus_questions',
+  'list_campus_tags',
+])
+
+const lastUserText = (sessionId: string) => {
+  const messages = sessions.value.find((item) => item.id === sessionId)?.messages || []
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === 'user' && String(messages[i].content || '').trim()) {
+      return String(messages[i].content)
+    }
+  }
+  return ''
+}
+
+const shouldAutoEvalStudy = (sessionId: string, message: AgentChatMessage) => {
+  const session = sessions.value.find((item) => item.id === sessionId)
+  const subjectId = Number(session?.studySubjectId)
+  if (!Number.isFinite(subjectId) || subjectId <= 0) return { yes: false, force: false, subjectId: 0 }
+  if (message.status !== 'done') return { yes: false, force: false, subjectId }
+  if (isGraphCatalogMessage(message)) return { yes: false, force: false, subjectId }
+  if ((message.steps || []).some((step) => step.name === 'evaluate_study_progress')) {
+    return { yes: false, force: false, subjectId }
+  }
+
+  const userText = lastUserText(sessionId)
+  const asked = /学过|复习过|复习了|忘了|忘记|不记得|记得|进度|掌握|保持率|不会|生疏|印象/.test(userText)
+  const quizTurn = /第\s*\d+\s*题|答对了|答错了|我选[：:]/.test(userText)
+  const lastQuiz = /这是本轮最后一题/.test(userText)
+  const tools = (message.steps || []).map((step) => step.name)
+  const presentedQuiz = tools.includes('present_quiz')
+  const onlyNav = tools.length > 0 && tools.every((name) => NAV_EVAL_TOOLS.has(name))
+  const content = String(message.content || '').trim()
+  const substantial = content.length >= 180 && !presentedQuiz
+
+  if (asked) return { yes: true, force: true, subjectId }
+  if (lastQuiz || (quizTurn && lastQuiz)) return { yes: true, force: false, subjectId }
+  if (quizTurn && !lastQuiz) return { yes: false, force: false, subjectId }
+  if (presentedQuiz) return { yes: false, force: false, subjectId }
+  if (onlyNav && !substantial) return { yes: false, force: false, subjectId }
+  if (substantial) return { yes: true, force: false, subjectId }
+  return { yes: false, force: false, subjectId }
+}
+
+const applyEvalNotice = (
+  sessionId: string,
+  messageId: string,
+  stepId: string,
+  args: Record<string, unknown>,
+  result: Awaited<ReturnType<typeof runStudyProgressEvaluation>>,
+  force: boolean,
+) => {
+  const status = result.error ? 'failed' : 'done'
+  const activity = describeActivity('evaluate_study_progress', args, status, result)
+  patchStep(sessionId, messageId, stepId, {
+    status,
+    label: activity.label,
+    target: activity.target,
+    detail: result.error,
+    finishedAt: Date.now(),
+  })
+  if (!force && !result.updated && !result.error) {
+    dropStep(sessionId, messageId, stepId)
+    patchMessage(sessionId, messageId, { studyEval: undefined })
+    return
+  }
+  patchMessage(sessionId, messageId, {
+    studyEval: {
+      status: result.error ? 'failed' : result.updated ? 'done' : 'empty',
+      text: formatEvalNotice(result),
+      updated: result.updated,
+    },
+  })
+}
+
+const scheduleStudyProgressEval = (input: {
+  sessionId: string
+  messageId: string
+  subjectId: number
+  hint?: string
+  force?: boolean
+  stepId?: string
+}) => {
+  const sessionKey = input.sessionId
+  if (evalInFlight.has(sessionKey)) return
+  const last = evalStartedAt.get(sessionKey) || 0
+  if (!input.force && Date.now() - last < EVAL_COOLDOWN_MS) return
+  evalStartedAt.set(sessionKey, Date.now())
+  evalInFlight.add(sessionKey)
+
+  const stepId = input.stepId || `auto-eval-${input.messageId}`
+  const args = {
+    subject_id: input.subjectId,
+    hint: input.hint,
+  }
+  if (!input.stepId) {
+    const activity = describeActivity('evaluate_study_progress', args, 'running')
+    addStep(input.sessionId, input.messageId, {
+      id: stepId,
+      kind: 'tool',
+      name: 'evaluate_study_progress',
+      label: activity.label,
+      target: activity.target,
+      status: 'running',
+      startedAt: Date.now(),
+    })
+  }
+  patchMessage(input.sessionId, input.messageId, {
+    studyEval: {
+      status: 'running',
+      text: '正在后台评估这次的学习效果…',
+    },
+  })
+
+  void runStudyProgressEvaluation({
+    subjectId: input.subjectId,
+    hint: input.hint,
+    recentTurns: collectRecentTurns(input.sessionId),
+  }).then((result) => {
+    applyEvalNotice(input.sessionId, input.messageId, stepId, args, result, Boolean(input.force))
+  }).catch((error) => {
+    applyEvalNotice(input.sessionId, input.messageId, stepId, args, {
+      updated: 0,
+      subject_id: input.subjectId,
+      message: error instanceof Error ? error.message : String(error),
+      error: error instanceof Error ? error.message : String(error),
+    }, true)
+  }).finally(() => {
+    evalInFlight.delete(sessionKey)
+  })
 }
 
 export const sendChatMessage = async (text: string, files?: AgentChatAttachment[]) => {
@@ -2481,6 +3428,501 @@ export const sendChatMessage = async (text: string, files?: AgentChatAttachment[
           }))
         }
 
+        if (call.name === 'get_campus_status') {
+          if (!isLoggedIn.value) {
+            return JSON.stringify({
+              loggedIn: false,
+              campus: null,
+              message: '还没有登录校园账号。请先在顶栏用微信登录，再到校园题库页绑定学校。',
+            })
+          }
+          try {
+            const identity = await getUserCampus()
+            return JSON.stringify({
+              loggedIn: true,
+              campus: identity.campus?.name || null,
+              campus_id: identity.campus?.id || null,
+              enrollment_year: identity.enrollment_year || null,
+              class_name: identity.class_name || null,
+              verified: identity.status === 'verified',
+              message: identity.campus
+                ? identity.status === 'verified'
+                  ? `当前学校「${identity.campus.name}」，已认证。用 list_campus_courses 看课，save_campus_questions 上传，update_campus_question 改题。`
+                  : `当前学校「${identity.campus.name}」。可以看题；上传或改题需要先完成校园认证。`
+                : '已登录，但还没有绑定学校。请先打开校园题库页选择学校。',
+            })
+          } catch (err) {
+            return JSON.stringify({ error: campusFail(err, '读取校园账号失败') })
+          }
+        }
+
+        if (call.name === 'list_campus_courses') {
+          const ctx = await loadCampusContext()
+          if ('error' in ctx) return JSON.stringify(ctx)
+          try {
+            const keyword = String(args.name || '').trim()
+            const courses = await listCampusCourses(ctx.identity.campus!.id, keyword)
+            return clipToolResult(JSON.stringify({
+              campus: ctx.identity.campus!.name,
+              campus_id: ctx.identity.campus!.id,
+              count: courses.length,
+              courses: courses.map(summarizeCampusCourse),
+              message: courses.length
+                ? '用 course_id 调用 list_campus_papers 查看试卷。不要根据课程上的数量判断有没有试卷或题目。'
+                : keyword
+                  ? `没有找到名称包含「${keyword}」的课程。`
+                  : '这所学校还没有课程。',
+            }))
+          } catch (err) {
+            return JSON.stringify({ error: campusFail(err, '查看校园课程失败') })
+          }
+        }
+
+        if (call.name === 'list_campus_papers') {
+          const ctx = await loadCampusContext()
+          if ('error' in ctx) return JSON.stringify(ctx)
+          try {
+            const course = await resolveCampusCourse(
+              ctx.identity.campus!.id,
+              Number(args.course_id) || undefined,
+              String(args.course_name || '').trim() || undefined,
+            )
+            if (!course) return JSON.stringify({ error: '请提供 course_id 或 course_name' })
+            const detail = await getCampusCourse(course.id)
+            const papers = await withFolderQuestionCounts(detail.folders.filter((item) => !item.archived))
+            rememberCampusPapers(sessionId, papers.map((item) => ({
+              id: item.id,
+              name: item.name,
+              courseName: course.name,
+              courseId: course.id,
+            })))
+            return clipToolResult(JSON.stringify({
+              campus: ctx.identity.campus!.name,
+              course: course.name,
+              course_id: course.id,
+              count: papers.length,
+              papers: papers.map(summarizeCampusPaper),
+              message: papers.length
+                ? '用 paper_id 调用 list_campus_questions 查看题目。改平台或改名用 update_campus_paper，不要新建一份再复制。campus_question_id 不是本地题库 Id。'
+                : '这门课还没有试卷。',
+            }))
+          } catch (err) {
+            return JSON.stringify({ error: campusFail(err, '查看校园试卷失败') })
+          }
+        }
+
+        if (call.name === 'list_campus_questions') {
+          const ctx = await loadCampusContext()
+          if ('error' in ctx) return JSON.stringify(ctx)
+          try {
+            const paperId = Number(args.paper_id ?? args.folder_id)
+            const paperName = String(args.paper_name || args.folder_name || '').trim()
+            let paper: CampusFolder | null = null
+            let courseName = ''
+            let courseId = 0
+            if (Number.isFinite(paperId) && paperId > 0) {
+              const known = campusCacheOf(sessionId).papers.find((item) => item.id === paperId)
+              paper = { id: paperId, name: paperName || known?.name || `试卷 ${paperId}` }
+              courseName = known?.courseName || ''
+              courseId = known?.courseId || 0
+            } else {
+              const course = await resolveCampusCourse(
+                ctx.identity.campus!.id,
+                Number(args.course_id) || undefined,
+                String(args.course_name || '').trim() || undefined,
+              )
+              if (!course) return JSON.stringify({ error: '请提供 paper_id，或同时提供课程和试卷名' })
+              const resolved = await resolveCampusPaper(course.id, undefined, paperName || undefined)
+              paper = resolved.paper
+              courseName = resolved.course.name
+              courseId = resolved.course.id
+              if (!paper) {
+                return JSON.stringify({
+                  error: paperName ? `没有找到试卷「${paperName}」` : '请提供 paper_id 或 paper_name',
+                  course: course.name,
+                  course_id: course.id,
+                  papers: resolved.papers.map(summarizeCampusPaper),
+                })
+              }
+            }
+            const all = await listFolderQuestions(paper.id)
+            rememberCampusQuestions(sessionId, all, {
+              id: paper.id,
+              name: paper.name,
+              courseName,
+              courseId: courseId || undefined,
+            })
+            const page = Math.max(1, Number(args.page) || 1)
+            const pageSize = Math.min(40, Math.max(1, Number(args.page_size) || 20))
+            const start = (page - 1) * pageSize
+            const items = all.slice(start, start + pageSize)
+            const title = paper.name || '校园题'
+            publishCampusQuestionCards(call.id, items, title)
+            return clipToolResult(JSON.stringify({
+              campus: ctx.identity.campus!.name,
+              course: courseName || undefined,
+              paper: paper.name,
+              paper_id: paper.id,
+              title,
+              page,
+              pageSize,
+              total: all.length,
+              count: items.length,
+              hasMore: start + items.length < all.length,
+              questions: items.map((item) => ({
+                campus_question_id: item.id,
+                question: String(item.content || '').slice(0, 80),
+                question_type: campusQuestionTypeLabel(item.type),
+              })),
+              message: `已在右侧弹出「${title}」${items.length} 道浏览卡片，只供看题。不要再列出选项。用户没说练习就不要 present_quiz。`,
+            }))
+          } catch (err) {
+            return JSON.stringify({ error: campusFail(err, '查看校园题目失败') })
+          }
+        }
+
+        if (call.name === 'search_campus_questions') {
+          const ctx = await loadCampusContext()
+          if ('error' in ctx) return JSON.stringify(ctx)
+          const keyword = String(args.keyword || '').trim()
+          if (!keyword) return JSON.stringify({ error: '关键词不能为空' })
+          try {
+            const page = Math.max(1, Number(args.page) || 1)
+            const pageSize = Math.min(40, Math.max(1, Number(args.page_size) || 20))
+            const items = await searchCampusQuestions(keyword, page, pageSize)
+            rememberCampusQuestions(sessionId, items)
+            const title = `搜索「${keyword}」`
+            if (items.length) publishCampusQuestionCards(call.id, items, title)
+            return clipToolResult(JSON.stringify({
+              campus: ctx.identity.campus!.name,
+              keyword,
+              title: items.length ? title : undefined,
+              page,
+              pageSize,
+              count: items.length,
+              questions: items.map((item) => ({
+                campus_question_id: item.id,
+                question: String(item.content || '').slice(0, 80),
+                question_type: campusQuestionTypeLabel(item.type),
+              })),
+              message: items.length
+                ? `已在右侧弹出「${title}」${items.length} 道浏览卡片，只供看题。不要再列出选项。用户没说练习就不要 present_quiz。`
+                : `校园题库里没有找到「${keyword}」。`,
+            }))
+          } catch (err) {
+            return JSON.stringify({ error: campusFail(err, '搜索校园题失败') })
+          }
+        }
+
+        if (call.name === 'list_campus_tags') {
+          try {
+            const tags = await listCampusTags()
+            return JSON.stringify({
+              count: tags.length,
+              tags: tags.map((item) => ({ tag_id: item.id, name: item.name })),
+              message: '改平台用 update_campus_paper，传 tag 或 tag_id。不要新建试卷再复制。',
+            })
+          } catch (err) {
+            return JSON.stringify({ error: campusFail(err, '查看校园平台标签失败') })
+          }
+        }
+
+        if (call.name === 'update_campus_paper') {
+          const ctx = await loadCampusContext({ requireVerified: true })
+          if ('error' in ctx) return JSON.stringify(ctx)
+          try {
+            const target = await resolveCampusWriteTarget(sessionId, ctx.identity.campus!.id, args, {
+              createPaper: false,
+            })
+            if ('error' in target) return JSON.stringify(target)
+            const nextName = String(args.name || '').trim() || target.paper.name
+            const tagName = campusTagArg(args)
+            const tagId = await resolveCampusTagId(Number(args.tag_id) || undefined, tagName || undefined)
+            if (!String(args.name || '').trim() && tagId == null) {
+              return JSON.stringify({ error: '请提供要改的试卷名 name，或平台 tag（如智慧树、学习通）' })
+            }
+            const paper = await updateCampusPaper(target.paper.id, {
+              name: nextName,
+              tag_id: tagId,
+            })
+            rememberCampusPapers(sessionId, [{
+              id: paper.id,
+              name: paper.name,
+              courseName: target.course.name,
+              courseId: target.course.id,
+            }])
+            notifyCampusUpdated({ courseId: target.course.id, paperId: paper.id })
+            const tag = paper.tag_name || tagName || undefined
+            return JSON.stringify({
+              campus: ctx.identity.campus!.name,
+              course: target.course.name,
+              course_id: target.course.id,
+              paper: paper.name,
+              paper_id: paper.id,
+              tag,
+              message: tag
+                ? `已把「${paper.name}」的平台改为「${tag}」。不要再新建试卷。`
+                : `已把试卷改名为「${paper.name}」。`,
+            })
+          } catch (err) {
+            return JSON.stringify({ error: campusFail(err, '修改校园试卷失败') })
+          }
+        }
+
+        if (call.name === 'create_campus_paper') {
+          const ctx = await loadCampusContext({ requireVerified: true })
+          if ('error' in ctx) return JSON.stringify(ctx)
+          const name = String(args.name || args.paper_name || '').trim()
+          if (!name) return JSON.stringify({ error: '请提供试卷名称 name' })
+          try {
+            const course = await resolveCampusCourse(
+              ctx.identity.campus!.id,
+              Number(args.course_id) || undefined,
+              String(args.course_name || '').trim() || undefined,
+            )
+            if (!course) return JSON.stringify({ error: '请提供 course_id 或 course_name' })
+            try {
+              const resolved = await resolveCampusPaper(course.id, undefined, name)
+              if (resolved.paper) {
+                rememberCampusPapers(sessionId, [{
+                  id: resolved.paper.id,
+                  name: resolved.paper.name,
+                  courseName: course.name,
+                  courseId: course.id,
+                }])
+                return JSON.stringify({
+                  already: true,
+                  campus: ctx.identity.campus!.name,
+                  course: course.name,
+                  course_id: course.id,
+                  paper: resolved.paper.name,
+                  paper_id: resolved.paper.id,
+                  message: `试卷「${resolved.paper.name}」已存在，paper_id=${resolved.paper.id}。上传题目用 save_campus_questions。`,
+                })
+              }
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : ''
+              if (/有多/.test(msg)) return JSON.stringify({ error: msg })
+            }
+            const tagId = await resolveCampusTagId(
+              Number(args.tag_id) || undefined,
+              campusTagArg(args) || undefined,
+            )
+            const paper = await createCampusPaper(course.id, name, tagId)
+            rememberCampusPapers(sessionId, [{
+              id: paper.id,
+              name: paper.name,
+              courseName: course.name,
+              courseId: course.id,
+            }])
+            notifyCampusUpdated({ courseId: course.id, paperId: paper.id })
+            return JSON.stringify({
+              campus: ctx.identity.campus!.name,
+              course: course.name,
+              course_id: course.id,
+              paper: paper.name,
+              paper_id: paper.id,
+              tag: paper.tag_name || undefined,
+              message: `已创建试卷「${paper.name}」，paper_id=${paper.id}。接下来用 save_campus_questions 上传题目。`,
+            })
+          } catch (err) {
+            return JSON.stringify({ error: campusFail(err, '创建校园试卷失败') })
+          }
+        }
+
+        if (call.name === 'save_campus_questions') {
+          const ctx = await loadCampusContext({ requireVerified: true })
+          if ('error' in ctx) return JSON.stringify(ctx)
+          try {
+            const localIds = parseQuestionIds(args)
+            const fromLocal = localIds.length ? await databaseService.getQuestionsByIds(localIds) : []
+            const drafts = [
+              ...fromLocal.map((item) => ({
+                question: String(item.question || '').trim(),
+                options: item.options,
+                answer: String(item.answer || '').trim(),
+                question_type: String(item.question_type || '').trim(),
+              })),
+              ...parseCampusDrafts(args.questions),
+            ].filter((item) => item.question && item.answer)
+            if (!drafts.length) {
+              return JSON.stringify({ error: '没有有效题目。请提供 questions，或本地 question_ids。每道需要题干和答案。' })
+            }
+            const pending = drafts.slice(0, 20)
+            const target = await resolveCampusWriteTarget(sessionId, ctx.identity.campus!.id, args, {
+              createPaper: args.create_paper !== false,
+            })
+            if ('error' in target) return JSON.stringify(target)
+            const created: CampusQuestion[] = []
+            const failed: Array<{ question: string; error: string }> = []
+            for (const item of pending) {
+              const type = campusApiType(item.question_type, item.options)
+              const options = encodeCampusOptions(item.options)
+              const answer = encodeCampusAnswer(item.answer, item.options, type)
+              if (!answer) {
+                failed.push({ question: item.question.slice(0, 80), error: '答案为空' })
+                continue
+              }
+              try {
+                created.push(await createCampusQuestion(target.course.id, {
+                  type,
+                  content: item.question,
+                  options,
+                  answer,
+                  question_bank_id: target.paper.id,
+                }))
+              } catch (err) {
+                const message = campusFail(err, '上传失败')
+                failed.push({ question: item.question.slice(0, 80), error: message })
+                if (/认证|登录已失效/.test(message)) break
+              }
+            }
+            rememberCampusQuestions(sessionId, created, {
+              id: target.paper.id,
+              name: target.paper.name,
+              courseName: target.course.name,
+              courseId: target.course.id,
+            })
+            const title = target.paper.name || '校园题'
+            if (created.length) publishCampusQuestionCards(call.id, created, title)
+            if (created.length || target.createdPaper) {
+              notifyCampusUpdated({ courseId: target.course.id, paperId: target.paper.id })
+            }
+            return clipToolResult(JSON.stringify({
+              campus: ctx.identity.campus!.name,
+              course: target.course.name,
+              course_id: target.course.id,
+              paper: target.paper.name,
+              paper_id: target.paper.id,
+              created_paper: target.createdPaper || undefined,
+              title: created.length ? title : undefined,
+              saved: created.length,
+              failed: failed.length || undefined,
+              errors: failed.length ? failed.slice(0, 8) : undefined,
+              skipped: drafts.length > pending.length ? drafts.length - pending.length : undefined,
+              questions: created.map((item) => ({
+                campus_question_id: item.id,
+                question: String(item.content || '').slice(0, 80),
+                question_type: campusQuestionTypeLabel(item.type),
+              })),
+              message: created.length
+                ? `已上传 ${created.length} 道到「${target.paper.name}」，并弹出浏览卡片。不要再列出选项。用户没说练习就不要 present_quiz。`
+                : failed[0]?.error || '没有成功上传的题目',
+            }))
+          } catch (err) {
+            return JSON.stringify({ error: campusFail(err, '上传校园题失败') })
+          }
+        }
+
+        if (call.name === 'update_campus_question') {
+          const ctx = await loadCampusContext({ requireVerified: true })
+          if ('error' in ctx) return JSON.stringify(ctx)
+          try {
+            const shared = {
+              question: args.question,
+              options: args.options,
+              answer: args.answer,
+              question_type: args.question_type,
+              paper_id: args.paper_id,
+            }
+            const patches = Array.isArray(args.questions) && args.questions.length
+              ? args.questions
+              : parseCampusQuestionIds({ ...args, questions: undefined }).map((id) => ({
+                campus_question_id: id,
+                ...shared,
+              }))
+            const items = patches.slice(0, 10).map((item: any) => ({
+              campus_question_id: Number(Array.isArray(item?.campus_question_id) ? item.campus_question_id[0] : item?.campus_question_id),
+              question: item?.question != null ? String(item.question).trim() : undefined,
+              options: item?.options,
+              answer: item?.answer != null ? String(item.answer).trim() : undefined,
+              question_type: item?.question_type != null ? String(item.question_type).trim() : undefined,
+              paper_id: Number(item?.paper_id || args.paper_id) || 0,
+            })).filter((item: { campus_question_id: number }) => Number.isFinite(item.campus_question_id) && item.campus_question_id > 0)
+            if (!items.length) {
+              return JSON.stringify({ error: '请提供 campus_question_id。这是校园题 Id，不是本地题库 Id。先 list_campus_questions 或 search_campus_questions。' })
+            }
+            const cache = campusCacheOf(sessionId)
+            const updated: CampusQuestion[] = []
+            const failed: Array<{ campus_question_id: number; error: string }> = []
+            for (const item of items) {
+              let current = cache.questions.find((question) => question.id === item.campus_question_id) || null
+              const paperId = item.paper_id || current?.question_bank_id || 0
+              if (!current && paperId) {
+                try {
+                  const listed = await listFolderQuestions(paperId)
+                  rememberCampusQuestions(sessionId, listed, { id: paperId, name: `试卷 ${paperId}` })
+                  current = listed.find((question) => question.id === item.campus_question_id) || null
+                } catch {
+                  // keep going
+                }
+              }
+              if (!paperId) {
+                failed.push({ campus_question_id: item.campus_question_id, error: '改题必须带上 paper_id，或先 list_campus_questions 再改，以免题目被移出试卷' })
+                continue
+              }
+              const nextType = item.question_type
+                ? campusApiType(item.question_type, item.options ?? current?.options)
+                : undefined
+              const nextOptions = item.options != null ? encodeCampusOptions(item.options) : undefined
+              const nextAnswer = item.answer
+                ? encodeCampusAnswer(item.answer, item.options ?? current?.options, nextType || current?.type)
+                : undefined
+              if (!item.question && !nextOptions && !nextAnswer && !nextType && paperId === current?.question_bank_id) {
+                failed.push({ campus_question_id: item.campus_question_id, error: '没有要改的字段' })
+                continue
+              }
+              try {
+                const saved = await updateCampusQuestion(item.campus_question_id, {
+                  type: nextType,
+                  content: item.question,
+                  options: nextOptions,
+                  answer: nextAnswer,
+                  question_bank_id: paperId,
+                })
+                const next = saved || {
+                  id: item.campus_question_id,
+                  type: nextType || current?.type || 'short_answer',
+                  content: item.question || current?.content || `题目 ${item.campus_question_id}`,
+                  options: nextOptions || current?.options || '',
+                  answer: nextAnswer || current?.answer || '',
+                  question_bank_id: paperId,
+                }
+                updated.push(next)
+                rememberCampusQuestions(sessionId, [next], {
+                  id: paperId,
+                  name: cache.papers.find((paper) => paper.id === paperId)?.name || `试卷 ${paperId}`,
+                  courseId: cache.papers.find((paper) => paper.id === paperId)?.courseId,
+                  courseName: cache.papers.find((paper) => paper.id === paperId)?.courseName,
+                })
+              } catch (err) {
+                const message = campusFail(err, '修改失败')
+                failed.push({ campus_question_id: item.campus_question_id, error: message })
+                if (/认证|登录已失效/.test(message)) break
+              }
+            }
+            const title = '已修改的校园题'
+            if (updated.length) publishCampusQuestionCards(call.id, updated, title)
+            return clipToolResult(JSON.stringify({
+              campus: ctx.identity.campus!.name,
+              updated: updated.length,
+              failed: failed.length || undefined,
+              errors: failed.length ? failed.slice(0, 8) : undefined,
+              title: updated.length ? title : undefined,
+              questions: updated.map((item) => ({
+                campus_question_id: item.id,
+                question: String(item.content || '').slice(0, 80),
+                question_type: campusQuestionTypeLabel(item.type),
+              })),
+              message: updated.length
+                ? `已修改 ${updated.length} 道校园题，并弹出浏览卡片。不要再列出选项。用户没说练习就不要 present_quiz。`
+                : failed[0]?.error || '没有改成功的题目',
+            }))
+          } catch (err) {
+            return JSON.stringify({ error: campusFail(err, '修改校园题失败') })
+          }
+        }
+
         if (call.name === 'search_questions') {
           const keyword = String(args.keyword || '').trim()
           if (!keyword) return JSON.stringify({ error: '关键词不能为空' })
@@ -2659,19 +4101,37 @@ export const sendChatMessage = async (text: string, files?: AgentChatAttachment[
         }
 
         if (call.name === 'present_quiz') {
-          let cards = await resolveQuizCards(args)
+          const campusQuiz = await resolveCampusQuizCards(sessionId, args)
+          let cards = campusQuiz.cards
+          if (!cards.length) cards = await resolveQuizCards(args)
           if (!cards.length) {
             const count = Math.min(10, Math.max(1, Number(args.count) || 5))
             const folder = args.folder_id != null ? await resolveFolder(args.folder_id, args.folder_name) : null
             cards = await pickPracticeCards(sessionId, count, folder?.id)
           }
           if (!cards.length) {
-            return JSON.stringify({ error: '没有可出示的题目。请先 list_questions，或传入 question_ids。' })
+            return JSON.stringify({
+              error: parseCampusQuestionIds(args).length || args.paper_id
+                ? '没有找到这些校园题。先 list_campus_questions，再把 campus_question_ids 或 paper_id 传给 present_quiz。'
+                : '没有可出示的题目。请先 list_questions，或传入 question_ids。',
+            })
           }
           const attachedSubject = Number(sessions.value.find((item) => item.id === sessionId)?.studySubjectId)
           const subjectId = attachedSubject > 0 ? attachedSubject : undefined
+          const focus = subjectId ? lastStudyFocus.get(subjectId) : undefined
+          const defaultNodeId = Number(args.node_id) > 0 ? Number(args.node_id) : focus?.nodeId
+          const defaultNodeName = String(args.node_name || args.knowledge_point || focus?.nodeName || '').trim()
+          const defaultParent = String(args.parent_name || '').trim()
+          cards = cards.map((card) => ({
+            ...card,
+            node_id: card.node_id || defaultNodeId,
+            node_name: card.node_name || defaultNodeName || undefined,
+            knowledge_point: card.knowledge_point || defaultNodeName || undefined,
+            parent_name: card.parent_name || defaultParent || undefined,
+            subject_id: card.subject_id || subjectId,
+          }))
           const folder = args.folder_id != null ? await resolveFolder(args.folder_id, args.folder_name) : null
-          const existingHints = []
+          const existingHints: QuestionKnowledgeHint[] = []
           for (let index = 0; index < cards.length; index += 1) {
             const card = cards[index]
             if (card.question_id) {
@@ -2683,13 +4143,12 @@ export const sendChatMessage = async (text: string, files?: AgentChatAttachment[
                   node_name: card.node_name,
                   node_id: card.node_id,
                   parent_name: card.parent_name,
-                  subject_id: card.subject_id,
+                  subject_id: card.subject_id || subjectId,
                 })
               }
               continue
             }
             if (!card.question || !card.answer) continue
-            if (!(card.node_id || card.node_name || card.knowledge_point || subjectId)) continue
             const saved = await saveQuestions([{
               question: card.question,
               options: card.options,
@@ -2699,17 +4158,55 @@ export const sendChatMessage = async (text: string, files?: AgentChatAttachment[
               node_name: card.node_name,
               node_id: card.node_id,
               parent_name: card.parent_name,
-              subject_id: card.subject_id,
+              subject_id: card.subject_id || subjectId,
             }], folder?.id ?? 0, subjectId)
             const id = saved.questionIds[0]
             if (id) cards[index] = { ...card, uid: `q-${id}`, question_id: id }
           }
-          if (existingHints.length) {
-            await associateQuestionsToKnowledge(existingHints, { subjectId, createMissing: true })
+          const presentedIds = cards.map((card) => card.question_id).filter((id): id is number => Number(id) > 0)
+          const existingLinks = presentedIds.length
+            ? await databaseService.listQuestionKnowledge(presentedIds).catch(() => [])
+            : []
+          const linkedIds = new Set(existingLinks.map((item) => item.question_id))
+          for (const card of cards) {
+            if (!card.question_id || linkedIds.has(card.question_id)) continue
+            if (!(card.node_id || card.node_name || card.knowledge_point || card.parent_name)) continue
+            existingHints.push({
+              questionId: card.question_id,
+              question: card.question,
+              knowledge_point: card.knowledge_point,
+              node_name: card.node_name,
+              node_id: card.node_id,
+              parent_name: card.parent_name,
+              subject_id: card.subject_id || subjectId,
+            })
           }
+          if (existingHints.length) {
+            const associated = await associateQuestionsToKnowledge(existingHints, { subjectId, createMissing: true })
+            if (associated.linked || associated.created) {
+              notifyQuestionKnowledgeUpdated({ subjectId })
+              window.dispatchEvent(new CustomEvent('study-graph-updated', { detail: { subjectId } }))
+            }
+          }
+          const links = presentedIds.length
+            ? await databaseService.listQuestionKnowledge(presentedIds).catch(() => [])
+            : []
+          const knowledgeByQuestion = new Map<number, string[]>()
+          for (const item of links) {
+            const names = knowledgeByQuestion.get(item.question_id) || []
+            if (item.node_name && !names.includes(item.node_name)) names.push(item.node_name)
+            knowledgeByQuestion.set(item.question_id, names)
+          }
+          const title = resolveQuizTitle({
+            ...args,
+            title: args.title || campusQuiz.title,
+            paper_name: args.paper_name || campusQuiz.title,
+          }, cards)
           saveQuizCards(call.id, cards)
+          saveQuizTitle(call.id, title)
           return JSON.stringify({
             presented: cards.length,
+            title,
             questions: cards.map((card) => ({
               question_id: card.question_id,
               question: card.question.slice(0, 180),
@@ -2717,9 +4214,11 @@ export const sendChatMessage = async (text: string, files?: AgentChatAttachment[
               importance: card.importance,
               mastery: card.mastery,
               difficulty: card.difficulty,
-              knowledge_point: card.node_name || card.knowledge_point,
+              knowledge_point: (card.question_id && knowledgeByQuestion.get(card.question_id)?.join('、'))
+                || card.node_name
+                || card.knowledge_point,
             })),
-            message: `已出示 ${cards.length} 道可点选练习。现在直接用一两句话收尾，不要再调用任何工具，也不要再列出选项。`,
+            message: `已出示 ${cards.length} 道可点选练习，作答会记到关联知识点。现在直接用一两句话收尾，不要再调用任何工具，也不要再列出选项。`,
           })
         }
 
@@ -3072,7 +4571,7 @@ export const sendChatMessage = async (text: string, files?: AgentChatAttachment[
               candidates,
             })
           }
-          openStudyGraphPane(subject.id, matched.name)
+          openStudyGraphPane(subject.id, matched.name, matched.id)
           return JSON.stringify({
             focused: true,
             subject: { id: subject.id, name: subject.name },
@@ -3153,6 +4652,72 @@ export const sendChatMessage = async (text: string, files?: AgentChatAttachment[
               ? `已把 ${result.linked} 道题目关联到知识点${result.created ? `，并新建了 ${result.created} 个节点` : ''}`
               : '没有关联成功。请先挂上学习状态或指定 subject_id / node_name。',
           })
+        }
+
+        if (call.name === 'list_recent_wrong_questions') {
+          const subject = await resolveSubjectFromArgs(args).catch(() => null)
+          const folder = args.folder_id != null || args.folder_name
+            ? await resolveFolder(args.folder_id, args.folder_name)
+            : null
+          let nodeId = Number(args.node_id)
+          let nodeName = String(args.node_name || '').trim()
+          if ((!Number.isFinite(nodeId) || nodeId <= 0) && nodeName) {
+            if (!subject) return JSON.stringify({ error: '按知识点筛选时请提供 node_id，或同时提供科目和 node_name' })
+            const payload = await databaseService.getStudyGraph(subject.id)
+            const matched = payload.nodes.filter((item) => item.name === nodeName || item.name.includes(nodeName) || nodeName.includes(item.name))
+            const node = matched.find((item) => item.name === nodeName)
+              || (matched.length === 1 ? matched[0] : matched.find((item) => item.name.startsWith(nodeName)) || null)
+            if (!node) {
+              return JSON.stringify({
+                error: `图谱里没有「${nodeName}」`,
+                candidates: payload.nodes.map((item) => item.name).slice(0, 20),
+              })
+            }
+            nodeId = node.id
+            nodeName = node.name
+          }
+          const days = Math.min(365, Math.max(1, Number(args.days) || 30))
+          const limit = Math.min(40, Math.max(1, Number(args.limit) || 20))
+          const items = await databaseService.listRecentWrongQuestions({
+            subjectId: Number.isFinite(nodeId) && nodeId > 0 ? undefined : subject?.id,
+            nodeId: Number.isFinite(nodeId) && nodeId > 0 ? nodeId : undefined,
+            folderId: folder?.id,
+            days,
+            limit,
+            unresolvedOnly: args.unresolved_only === true,
+          })
+          const questions = items.length
+            ? await databaseService.getQuestionsByIds(items.map((item) => item.question_id))
+            : []
+          const byId = new Map(questions.map((item) => [item.id, item]))
+          const hydrated = await withPractice(items.map((item) => byId.get(item.question_id)).filter(Boolean) as typeof questions)
+          const extra = new Map(items.map((item) => [item.question_id, item]))
+          const scope = nodeName
+            ? `「${nodeName}」`
+            : subject
+              ? `「${subject.name}」`
+              : folder
+                ? `「${folder.name}」`
+                : '全部题库'
+          rememberListed(sessionId, hydrated)
+          return clipToolResult(JSON.stringify({
+            scope,
+            days,
+            count: hydrated.length,
+            questions: hydrated.map((item) => {
+              const wrong = extra.get(item.id)
+              return {
+                ...item,
+                lastWrongAnswer: wrong?.last_wrong_answer || '',
+                lastWrongNote: wrong?.last_wrong_note || '',
+                lastWrongTime: wrong?.last_wrong_time || '',
+                wrongCount: wrong?.wrong_count || 0,
+              }
+            }),
+            message: hydrated.length
+              ? `最近 ${days} 天${scope}有 ${hydrated.length} 道答错过的题。recent 从早到晚，true=对，false=错。`
+              : `最近 ${days} 天${scope}没有答错过的题。`,
+          }))
         }
 
         if (call.name === 'list_knowledge_questions') {
@@ -3269,26 +4834,19 @@ export const sendChatMessage = async (text: string, files?: AgentChatAttachment[
             return JSON.stringify({ error: '找不到科目，请先挂上学习状态或指定 subject_id' })
           }
           const hint = String(args.hint || args.notes || args.topic || '').trim()
-          void runStudyProgressEvaluation({
+          scheduleStudyProgressEval({
+            sessionId,
+            messageId: assistantId,
             subjectId: subject.id,
             hint,
-            recentTurns: collectRecentTurns(sessionId),
-          }).then((result) => {
-            const status = result.error ? 'failed' : 'done'
-            const activity = describeActivity('evaluate_study_progress', args, status, result)
-            patchStep(sessionId, assistantId, call.id, {
-              status,
-              label: activity.label,
-              target: activity.target,
-              detail: result.error,
-              finishedAt: Date.now(),
-            })
+            force: true,
+            stepId: call.id,
           })
           return JSON.stringify({
             started: true,
             subject_id: subject.id,
             name: subject.name,
-            message: '掌握度评估已交给后台助手，继续和用户对话即可，不要等待评估结束。',
+            message: '掌握度评估已交给后台助手，评估完会告诉用户。继续对话即可，不要等待评估结束，也不要口头打分。',
           })
         }
 
@@ -3328,6 +4886,7 @@ export const sendChatMessage = async (text: string, files?: AgentChatAttachment[
             name: event.name,
             label: activity.label,
             target: activity.target,
+            title: event.name === 'present_quiz' ? resolveQuizTitle(args) : undefined,
             preview: event.name === 'save_questions'
               ? parseQuestions(args.questions) as ImportStepPreview[]
               : event.name === 'present_quiz'
@@ -3360,11 +4919,22 @@ export const sendChatMessage = async (text: string, files?: AgentChatAttachment[
             error: event.error || parsedError,
           })
           const activity = describeActivity(event.name, extra, status, extra)
-          const quizCards = event.name === 'present_quiz' ? getQuizCards(event.id) : []
+          const quizCards = event.name === 'present_quiz'
+            || event.name === 'list_campus_questions'
+            || event.name === 'search_campus_questions'
+            || event.name === 'save_campus_questions'
+            || event.name === 'update_campus_question'
+            ? getQuizCards(event.id)
+            : []
+          const quizTitle = quizCards.length
+            ? String(extra?.title || resolveQuizTitle(extra) || '').trim()
+            : ''
+          if (quizTitle) saveQuizTitle(event.id, quizTitle)
           patchStep(sessionId, assistantId, event.id, {
             status,
             label: activity.label,
             target: activity.target,
+            title: quizTitle || undefined,
             detail: event.error || (typeof parsedError === 'string' ? parsedError : parsedError ? JSON.stringify(parsedError) : undefined),
             finishedAt: Date.now(),
             ...(quizCards.length ? {
@@ -3401,6 +4971,20 @@ export const sendChatMessage = async (text: string, files?: AgentChatAttachment[
       content: assistantContent,
       status: 'done',
     })
+    const finished = sessions.value
+      .find((item) => item.id === sessionId)
+      ?.messages.find((message) => message.id === assistantId)
+    if (finished) {
+      const auto = shouldAutoEvalStudy(sessionId, finished)
+      if (auto.yes) {
+        scheduleStudyProgressEval({
+          sessionId,
+          messageId: assistantId,
+          subjectId: auto.subjectId,
+          force: auto.force,
+        })
+      }
+    }
   } catch (error) {
     if (abort.signal.aborted || isModelStopped(error)) {
       const current = sessions.value.find((item) => item.id === sessionId)

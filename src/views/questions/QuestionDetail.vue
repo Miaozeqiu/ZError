@@ -3,7 +3,9 @@
        class="question-detail-overlay" 
        :class="{ show }" 
        :style="{ width: width + 'px' }">
-    <div class="resizer" 
+    <div
+         v-if="!readonly"
+         class="resizer" 
          :class="{ active: isResizing }"
          @mousedown="$emit('resize-start', $event)"
          @mouseover="$emit('resize-over')"
@@ -14,7 +16,7 @@
         <svg t="1760584170728" class="icon" viewBox="0 0 1536 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="13220" width="20" height="20"><path d="M981.418667 71.893333A60.245333 60.245333 0 0 1 1070.506667 152.746667l-3.925334 4.309333L711.594667 512l354.986666 354.944c22.186667 22.144 23.466667 57.216 3.925334 80.896l-3.925334 4.266667a60.245333 60.245333 0 0 1-80.896 3.925333l-4.266666-3.925333-368.298667-368.213334a101.632 101.632 0 0 1-4.565333-138.88l4.565333-4.864 368.298667-368.256z" fill="#838B9F" opacity=".25" p-id="13221"></path><path d="M469.418667 71.893333A60.245333 60.245333 0 0 1 558.506667 152.746667l-3.925334 4.309333L199.594667 512l354.986666 354.944c22.186667 22.144 23.466667 57.216 3.925334 80.896l-3.925334 4.266667a60.245333 60.245333 0 0 1-80.896 3.925333l-4.266666-3.925333-368.298667-368.213334a101.632 101.632 0 0 1-4.565333-138.88l4.565333-4.864 368.298667-368.256z" fill="#838B9F" p-id="13222"></path></svg>
       </button>
       <h4>题目详情</h4>
-      <button class="edit-btn" @click="$emit('toggle-edit')" :title="isEditMode ? '取消编辑' : '编辑题目'">
+      <button v-if="!readonly" class="edit-btn" @click="$emit('toggle-edit')" :title="isEditMode ? '取消编辑' : '编辑题目'">
         <svg v-if="!isEditMode" width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
           <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
           <path d="m18.5 2.5 3 3L12 15l-4 1 1-4 9.5-9.5z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -92,17 +94,32 @@
               <span class="meta-pill-label">创建</span>
               <span class="meta-pill-value">{{ formatCompactTime(question?.create_time) }}</span>
             </div>
-            <button
-              v-for="link in knowledgeLinks"
-              :key="link.node_id"
-              class="meta-pill meta-pill-knowledge"
-              type="button"
-              :title="`${link.subject_name} · ${link.node_name}`"
-              @click="openKnowledge(link)"
-            >
-              <span class="meta-pill-label">知识点</span>
-              <span class="meta-pill-value">{{ link.node_name }}</span>
-            </button>
+          </div>
+        </div>
+        <div class="detail-item">
+          <label>知识点:</label>
+          <div class="knowledge-box">
+            <div class="knowledge-chips">
+              <button
+                v-for="link in knowledgeLinks"
+                :key="link.node_id"
+                class="knowledge-chip"
+                type="button"
+                :title="`${link.subject_name} · ${link.node_name}`"
+                @click="openKnowledge(link)"
+              >
+                <span>{{ link.node_name }}</span>
+                <span class="knowledge-chip-x" title="取消关联" @click.stop="unlinkKnowledge(link)">×</span>
+              </button>
+              <button type="button" class="knowledge-add" @click="pickerOpen = !pickerOpen">
+                {{ pickerOpen ? '收起' : '关联知识点' }}
+              </button>
+            </div>
+            <KnowledgeNodePicker
+              v-if="pickerOpen"
+              class="knowledge-picker"
+              @pick="linkKnowledge"
+            />
           </div>
         </div>
         <div class="detail-item">
@@ -129,8 +146,8 @@
             :value="editQuestion"
             @input="onQuestionInput"
             ref="questionTextarea"
-            class="edit-textarea"
-            rows="4"
+            class="edit-textarea is-compact"
+            rows="1"
             placeholder="请输入题目内容..."
           ></textarea>
         </div>
@@ -140,8 +157,8 @@
             :value="editOptions"
             @input="onOptionsInput"
             ref="optionsTextarea"
-            class="edit-textarea"
-            rows="4"
+            class="edit-textarea is-compact"
+            rows="1"
             placeholder="请输入选项..."
           ></textarea>
         </div>
@@ -151,8 +168,8 @@
             :value="editAnswer"
             @input="onAnswerInput"
             ref="answerTextarea"
-            class="edit-textarea"
-            rows="6"
+            class="edit-textarea is-compact"
+            rows="1"
             placeholder="请输入答案..."
           ></textarea>
         </div>
@@ -183,7 +200,8 @@
 <script setup lang="ts">
 import { computed, ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { databaseService, type AIResponse, type PracticeRecord, type QuestionKnowledgeLink } from '../../services/database'
-import { openKnowledgeInStudy } from '../../services/questionKnowledge'
+import KnowledgeNodePicker, { type KnowledgePick } from '../../components/KnowledgeNodePicker.vue'
+import { notifyQuestionKnowledgeUpdated, openKnowledgeInStudy } from '../../services/questionKnowledge'
 import { splitQuestionImageParts, fetchQuestionImageBase64, shouldInvertTransparentDarkImage } from '../../utils/questionImage'
 import type { QuestionImagePart as Part } from '../../utils/questionImage'
 
@@ -200,6 +218,7 @@ interface Props {
   isSavingEdit: boolean
   isResizing: boolean
   formatTime: (t?: string) => string
+  readonly?: boolean
 }
 
 const props = defineProps<Props>()
@@ -223,9 +242,27 @@ const blackOnlyMap = ref<Record<string, boolean>>({})
 
 const practiceHistory = ref<PracticeRecord[]>([])
 const knowledgeLinks = ref<QuestionKnowledgeLink[]>([])
+const pickerOpen = ref(false)
 
 const openKnowledge = (link: QuestionKnowledgeLink) => {
   openKnowledgeInStudy(link)
+}
+
+const linkKnowledge = async (node: KnowledgePick) => {
+  const id = props.question?.id
+  if (!id) return
+  await databaseService.linkQuestionsToNode([id], node.id)
+  pickerOpen.value = false
+  notifyQuestionKnowledgeUpdated({ subjectId: node.subjectId, nodeId: node.id, questionId: id })
+  await loadKnowledgeLinks()
+}
+
+const unlinkKnowledge = async (link: QuestionKnowledgeLink) => {
+  const id = props.question?.id
+  if (!id) return
+  await databaseService.unlinkQuestionKnowledge(id, link.node_id)
+  notifyQuestionKnowledgeUpdated({ subjectId: link.subject_id, nodeId: link.node_id, questionId: id })
+  await loadKnowledgeLinks()
 }
 
 const loadKnowledgeLinks = async () => {
@@ -255,6 +292,7 @@ const loadPracticeHistory = async () => {
 }
 
 watch(() => props.question?.id, () => {
+  pickerOpen.value = false
   void loadPracticeHistory()
   void loadKnowledgeLinks()
 }, { immediate: true })
@@ -440,8 +478,8 @@ const initCustomScrollbar = async () => {
 }
 
 const autoResize = (el: HTMLTextAreaElement) => {
-  el.style.height = 'auto'
-  el.style.height = el.scrollHeight + 'px'
+  el.style.height = '0px'
+  el.style.height = `${el.scrollHeight}px`
   requestAnimationFrame(() => updateScrollbarThumb())
 }
 
@@ -808,11 +846,46 @@ onUnmounted(() => {
   background: transparent;
 }
 
-.meta-pill-knowledge {
+.knowledge-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.knowledge-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.knowledge-chip,
+.knowledge-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
   border: none;
+  border-radius: 6px;
   background: color-mix(in srgb, #2F6F78 10%, transparent);
-  color: inherit;
+  color: #1F4F56;
+  font-size: 12px;
   cursor: pointer;
+}
+
+.knowledge-chip-x {
+  color: var(--text-secondary, #94a3b8);
+}
+
+.knowledge-add {
+  background: color-mix(in srgb, var(--text-primary, #2d3748) 6%, transparent);
+  color: var(--text-secondary, #718096);
+}
+
+.knowledge-picker {
+  padding: 8px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text-primary, #2d3748) 4%, transparent);
 }
 
 .meta-pill-folder {
@@ -907,8 +980,13 @@ onUnmounted(() => {
 .edit-textarea {
   min-height: 96px;
   height: auto;
+  line-height: 1.5;
   overflow-y: hidden;
   resize: none;
+}
+
+.edit-textarea.is-compact {
+  min-height: 0;
 }
 
 .edit-input:hover,

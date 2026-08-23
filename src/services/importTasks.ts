@@ -22,6 +22,7 @@ export interface ImportTaskStep {
   name: string
   label: string
   target?: string
+  title?: string
   detail?: string
   preview?: ImportStepPreview[]
   previewCount?: number

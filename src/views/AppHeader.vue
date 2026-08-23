@@ -24,7 +24,7 @@
     </button>
     
     <div class="header-center">
-      <div v-if="props.activeTab !== 'questions' && props.activeTab !== 'import-tasks' && props.activeTab !== 'agent' && props.activeTab !== 'study'" class="tutorial-stepper">
+      <div v-if="props.activeTab !== 'questions' && props.activeTab !== 'import-tasks' && props.activeTab !== 'agent' && props.activeTab !== 'study' && props.activeTab !== 'campus'" class="tutorial-stepper">
         <div class="step" :class="{ completed: isStep1Completed, active: !isStep1Completed }" @click="$emit('guide-to', 'model-settings')">
           <div class="step-indicator">
             <svg v-if="isStep1Completed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="12" height="12"><polyline points="20 6 9 17 4 12"></polyline></svg>
@@ -70,14 +70,11 @@
         class="campus-entry"
         type="button"
         title="打开校园题库"
-        @click="openCampusBank"
+        @click="$emit('navigate', 'campus')"
       >
-        <svg t="1774676033971" class="campus-entry-icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="13992" aria-hidden="true">
-          <path d="M711.64369225 373.38084187m-146.83947615 0a146.83947615 146.83947615 0 1 0 293.67895229 0 146.83947615 146.83947615 0 1 0-293.67895229 0Z" fill="#FED16C" p-id="13993"></path>
-          <path d="M952.5443192 863.53186765H470.7301199c-34.3829365 0-62.25434548-27.87140898-62.25434548-62.25434548v-95.0449999c0-69.4260875 56.27357867-125.69966617 125.69966617-125.69966617h354.89766716c69.4260875 0 125.69966617 56.27357867 125.69966617 125.69966617v95.0449999c0.02589076 34.3829365-27.84551822 62.25434548-62.22845472 62.25434548z" fill="#FED16C" p-id="13994"></path>
-          <path d="M392.26815525 295.72149097m-185.01540977 0a185.01540978 185.01540978 0 1 0 370.03081955 0 185.01540978 185.01540978 0 1 0-370.03081955 0Z" fill="#F9A214" p-id="13995"></path>
-          <path d="M676.21217975 913.30686419H108.32413076c-54.13759052 0-98.02243792-43.88484741-98.02243793-98.02243792v-80.89569658c0-98.11305561 79.53643141-177.66243239 177.66243241-177.66243241h408.63395081c98.11305561 0 177.66243239 79.53643141 177.6624324 177.66243241v80.89569658c-0.01294539 54.12464514-43.8977928 98.02243792-98.0483287 98.02243792z" fill="#F9A214" p-id="13996"></path>
-          <path d="M392.28110064 381.12218075c-42.991616 0-81.49118419-22.21427675-102.9805195-59.45814283-8.18148187-14.14930331-3.32696336-32.24694835 10.82233995-40.40253945 14.09752178-8.20737264 32.24694835-3.35285413 40.40253944 10.82233995 10.82233995 18.70607803 30.16274173 29.86499792 51.75564011 29.86499793 21.59289837 0 40.93330015-11.1589199 51.71680395-29.86499793 8.20737264-14.17519408 26.26618153-18.97793106 40.42843023-10.84823072 14.14930331 8.18148187 19.00382183 26.27912691 10.84823071 40.42843022-21.50228069 37.21797531-59.9889035 59.45814282-102.96757412 59.45814283h-0.02589077z" fill="#FFFFFF" p-id="13997"></path>
+        <svg class="campus-entry-icon" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <path d="M309.312 384a32 32 0 0 1 32-32h128a32 32 0 1 1 0 64h-128a32 32 0 0 1-32-32zM309.312 554.688a32 32 0 0 1 32-32h128a32 32 0 1 1 0 64h-128a32 32 0 0 1-32-32z" fill="currentColor"/>
+          <path d="M568.704 147.776L351.04 84.48C303.488 70.784 264.32 59.392 232.832 55.168c-32.96-4.416-64.192-1.92-90.88 19.008-26.368 20.8-36.736 50.688-41.408 84.16C96 190.656 96 232.64 96 284.096v622.592h-10.688a32 32 0 0 0 0 64h853.376a32 32 0 1 0 0-64H928V615.808c0-28.992 0-53.504-2.304-73.536-2.496-21.184-7.872-40.64-20.928-58.176-12.992-17.472-30.08-28.224-49.728-36.672-18.432-8-41.92-15.04-69.76-23.36l-70.592-21.184v-56.192c0-30.72 0-56.512-2.368-77.44-2.56-22.144-8-42.24-21.12-60.352-13.312-18.112-30.784-29.184-51.008-37.76-18.944-8.128-43.008-15.104-71.488-23.36z m145.92 321.92l50.56 15.104c30.016 9.024 49.92 15.04 64.512 21.376 13.888 5.952 19.904 10.944 23.744 16.128 3.84 5.184 6.912 12.352 8.64 27.392 1.92 15.872 1.92 36.608 1.92 67.968v289.024h-149.312V469.696z m-64 436.992H544v-97.92c0-18.496 0-35.392-1.856-49.216-2.048-15.104-6.848-31.168-20.032-44.352-13.184-13.184-29.184-17.984-44.352-20.032a395.904 395.904 0 0 0-49.216-1.856H382.08c-18.432 0-35.392 0-49.152 1.92-15.168 1.984-31.232 6.784-44.416 19.968-13.184 13.184-17.92 29.248-20.032 44.352-1.792 13.824-1.792 30.72-1.792 49.216v97.92H160V286.592c0-54.528 0.064-92.032 3.904-119.424 3.776-26.688 10.24-36.864 17.664-42.688 7.04-5.568 17.536-9.216 42.752-5.888 26.112 3.52 60.672 13.44 111.36 28.16l213.376 61.952c30.72 8.96 51.072 14.848 66.048 21.248 14.08 6.016 20.288 11.136 24.32 16.768 4.224 5.696 7.424 13.568 9.28 29.696 1.92 16.896 1.92 39.04 1.92 72.128v558.08z m-170.624 0H330.688v-96c0-21.056 0-33.6 1.28-42.56a30.08 30.08 0 0 1 1.536-7.104l0.192-0.32v-0.128l0.064-0.128h0.128a30.592 30.592 0 0 1 7.552-1.792c8.96-1.28 21.568-1.28 42.56-1.28h42.688c20.992 0 33.536 0 42.56 1.28a30.592 30.592 0 0 1 7.552 1.728l0.128 0.192 0.064 0.128 0.128 0.32a30.016 30.016 0 0 1 1.6 7.04c1.216 9.024 1.28 21.568 1.28 42.624v96z" fill="currentColor"/>
         </svg>
         <span class="campus-entry-text">想将题库分享给同学？试试校园题库吧</span>
       </button>
@@ -161,6 +158,38 @@
         </button>
       </div>
 
+      <div class="user-entry" data-tauri-drag-region-exclude>
+        <button
+          class="user-chip"
+          type="button"
+          :title="isLoggedIn ? userDisplayName() : '登录校园账号'"
+          @click="onUserChipClick"
+        >
+          <img v-if="isLoggedIn && avatarSrc" class="user-avatar user-avatar-img" :src="avatarSrc" alt="" />
+          <span v-else class="user-avatar">
+            <svg class="user-avatar-icon" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+              <path d="M512 447.223c-88.224 0-160-71.776-160-160s71.776-160 160-160c88.225 0 160 71.776 160 160s-71.775 160-160 160z m0-256c-52.935 0-96 43.065-96 96s43.065 96 96 96 96-43.065 96-96-43.065-96-96-96zM454.901 870.594c-96.594 0-184.933-3.802-231.263-49.955C203.308 800.386 193 774.164 193 742.701c0-31.629 10.247-62.812 30.457-92.686 17.978-26.573 42.908-50.741 74.098-71.833C359.256 536.46 437.418 512.53 512 512.53c74.55 0 152.55 23.943 214.002 65.691 31.05 21.094 55.861 45.273 73.746 71.867C819.822 679.937 830 711.096 830 742.701c0 31.552-10.317 57.827-30.664 78.097-50.714 50.521-151.822 50.128-258.88 49.723a7395.45 7395.45 0 0 0-56.914-0.001c-9.605 0.037-19.163 0.074-28.641 0.074zM512 806.447c9.567 0 19.149 0.037 28.701 0.073 49.52 0.191 96.284 0.37 135.808-4.396 38.418-4.633 64.546-13.604 77.659-26.668 5.079-5.06 11.832-13.96 11.832-32.755 0-38.089-27.688-78.744-75.963-111.54C638.933 596.442 574.04 576.53 512 576.53c-126.309 0-255 83.862-255 166.171 0 18.675 6.738 27.547 11.807 32.596 32.045 31.922 128.975 31.55 214.491 31.224 9.556-0.037 19.139-0.074 28.702-0.074z" fill="currentColor"/>
+            </svg>
+          </span>
+          <span class="user-chip-text">{{ isLoggedIn ? userDisplayName() : '登录' }}</span>
+        </button>
+        <div v-if="userMenuOpen && isLoggedIn" class="user-menu">
+          <div class="user-menu-name">{{ userDisplayName() }}</div>
+          <div v-if="authUser?.campus_name" class="user-menu-meta">{{ authUser.campus_name }}</div>
+          <div class="user-menu-divider" aria-hidden="true"></div>
+          <button class="user-menu-item" type="button" @click="pickAvatar">{{ avatarUploading ? '上传中…' : '更换头像' }}</button>
+          <button class="user-menu-item" type="button" @click="goCampus">校园题库</button>
+          <button class="user-menu-item is-danger" type="button" @click="handleLogout">退出登录</button>
+        </div>
+        <input
+          ref="avatarInput"
+          class="avatar-file-input"
+          type="file"
+          accept="image/jpeg,image/png,image/webp"
+          @change="onAvatarPicked"
+        />
+      </div>
+
       <template v-if="!isMacOS">
         <button
           class="window-control minimize"
@@ -208,8 +237,10 @@ import { serverRunning } from '../services/serverState'
 import { activeChat, chatListCollapsed, setChatListCollapsed } from '../services/agentChat'
 import { listen, UnlistenFn } from '@tauri-apps/api/event'
 import { useAppUpdate } from '../composables/useAppUpdate'
+import { useExclusiveMenu } from '../composables/useExclusiveMenu'
 import { databaseService, type StudySubject } from '../services/database'
 import { progressColor } from '../utils/studyGraph'
+import { authUser, isLoggedIn, logoutAuth, openLoginDialog, uploadAuthAvatar, userAvatarSrc, userDisplayName } from '../services/auth'
 
 const STUDY_STORAGE_KEY = 'zerror-study-subject'
 
@@ -248,6 +279,11 @@ const isMacOS = ref(false)
 const { settings: modelSettings, platforms: computedPlatforms, selectedTextModels, selectedTextModel } = useModelConfig()
 
 const studySubjects = ref<StudySubject[]>([])
+const userMenuOpen = ref(false)
+const avatarInput = ref<HTMLInputElement | null>(null)
+const avatarUploading = ref(false)
+const avatarSrc = computed(() => userAvatarSrc())
+useExclusiveMenu('header-user-menu', userMenuOpen)
 
 const showStudyChip = computed(() => {
   const tab = props.activeTab || ''
@@ -330,6 +366,12 @@ const isStep2Completed = computed(() => {
 const isStep3Completed = ref(false)
 let unlistenHeadEvent: UnlistenFn | null = null;
 
+const closeUserMenu = (event: Event) => {
+  const target = event.target as HTMLElement | null
+  if (target?.closest('.user-entry')) return
+  userMenuOpen.value = false
+}
+
 onMounted(async () => {
   unlistenHeadEvent = await listen('ocs-head-received', () => {
     console.log('--- 接收到来自后端的 OCS HEAD 请求事件，步骤 3 已完成 ---');
@@ -337,6 +379,7 @@ onMounted(async () => {
   });
   void loadStudySubjects()
   window.addEventListener('study-graph-updated', loadStudySubjects)
+  document.addEventListener('mousedown', closeUserMenu, true)
 })
 
 onUnmounted(() => {
@@ -344,6 +387,7 @@ onUnmounted(() => {
     unlistenHeadEvent();
   }
   window.removeEventListener('study-graph-updated', loadStudySubjects)
+  document.removeEventListener('mousedown', closeUserMenu, true)
 })
 
 const minimizeWindow = async () => {
@@ -412,21 +456,51 @@ const closeWindow = async () => {
   }
 }
 
-const openCampusBank = async () => {
-  const url = 'https://tiku.zerror.cc/campus'
-
-  try {
-    if (isTauri.value) {
-      const { openUrl } = await import('@tauri-apps/plugin-opener')
-      await openUrl(url)
-      return
-    }
-
-    window.open(url, '_blank', 'noopener,noreferrer')
-  } catch (error) {
-    console.error('打开校园题库失败:', error)
-    window.open(url, '_blank', 'noopener,noreferrer')
+const onUserChipClick = () => {
+  if (!isLoggedIn.value) {
+    openLoginDialog()
+    return
   }
+  userMenuOpen.value = !userMenuOpen.value
+}
+
+const goCampus = () => {
+  userMenuOpen.value = false
+  emit('navigate', 'campus')
+}
+
+const pickAvatar = () => {
+  if (avatarUploading.value) return
+  avatarInput.value?.click()
+}
+
+const onAvatarPicked = async (event: Event) => {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+    window.alert('请选择 JPG、PNG 或 WebP 图片')
+    return
+  }
+  if (file.size > 5 * 1024 * 1024) {
+    window.alert('图片不能超过 5MB')
+    return
+  }
+  avatarUploading.value = true
+  try {
+    await uploadAuthAvatar(file)
+    userMenuOpen.value = false
+  } catch (error) {
+    window.alert(error instanceof Error ? error.message : '上传头像失败')
+  } finally {
+    avatarUploading.value = false
+  }
+}
+
+const handleLogout = async () => {
+  userMenuOpen.value = false
+  await logoutAuth()
 }
 
 // 检测是否在Tauri环境中运行
@@ -747,6 +821,163 @@ onMounted(async () => {
   padding-right: 4px;
   -webkit-app-region: no-drag;
   pointer-events: auto;
+}
+
+.user-entry {
+  position: relative;
+  margin-left: 6px;
+  margin-right: 2px;
+  flex: 0 0 auto;
+  -webkit-app-region: no-drag;
+}
+
+.user-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 148px;
+  height: 26px;
+  padding: 0 8px 0 3px;
+  border: 1px solid color-mix(in srgb, var(--border-primary, #d2d2d7) 72%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-secondary, #fff) 82%, transparent);
+  color: var(--text-primary, #2d3748);
+  cursor: pointer;
+}
+
+.user-chip:hover {
+  background: color-mix(in srgb, var(--text-primary, #2d3748) 6%, var(--bg-secondary, #fff));
+}
+
+.user-chip:active {
+  transform: scale(0.97);
+}
+
+.user-avatar {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, #f5b942 22%, var(--bg-secondary, #fff));
+  color: #8a5a00;
+  font-size: 11px;
+  font-weight: 650;
+  flex: 0 0 auto;
+}
+
+.user-avatar-img {
+  object-fit: cover;
+  background: color-mix(in srgb, var(--text-primary, #2d3748) 8%, transparent);
+}
+
+.user-avatar-icon {
+  width: 14px;
+  height: 14px;
+  display: block;
+}
+
+.avatar-file-input {
+  display: none;
+}
+
+.user-chip-text {
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  width: 180px;
+  padding: 8px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--border-primary, #e2e8f0) 80%, transparent);
+  background: color-mix(in srgb, var(--bg-secondary, #fff) 94%, transparent);
+  box-shadow: 0 10px 28px color-mix(in srgb, #000 12%, transparent);
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+}
+
+.user-menu-name {
+  padding: 4px 8px 2px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary, #2d3748);
+}
+
+.user-menu-meta,
+.user-menu-item {
+  padding: 6px 8px;
+  font-size: 12px;
+  color: var(--text-secondary, #718096);
+}
+
+.user-menu-divider {
+  height: 1px;
+  margin: 6px 4px;
+  background: color-mix(in srgb, var(--border-primary, #e2e8f0) 80%, transparent);
+}
+
+.user-menu-item {
+  width: 100%;
+  display: block;
+  text-align: left;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.user-menu-item:hover {
+  color: var(--text-primary, #2d3748);
+  background: color-mix(in srgb, var(--text-primary, #2d3748) 6%, transparent);
+}
+
+.user-menu-item.is-danger {
+  color: var(--color-error, #ff3b30);
+}
+
+.user-menu-item.is-danger:hover {
+  color: var(--color-error, #ff3b30);
+  background: color-mix(in srgb, var(--color-error, #ff3b30) 10%, transparent);
+}
+
+[data-theme="dark"] .user-chip {
+  border-color: color-mix(in srgb, var(--border-primary, #3d3d3f) 88%, transparent);
+  background: color-mix(in srgb, var(--bg-tertiary, #3a3a3c) 82%, transparent);
+}
+
+[data-theme="dark"] .user-chip:hover {
+  background: color-mix(in srgb, var(--bg-tertiary, #3a3a3c) 96%, transparent);
+}
+
+[data-theme="dark"] .user-avatar {
+  background: color-mix(in srgb, #f5d08a 20%, var(--bg-tertiary, #3a3a3c));
+  color: #f0c674;
+}
+
+[data-theme="dark"] .user-menu {
+  border-color: color-mix(in srgb, var(--border-primary, #3d3d3f) 90%, transparent);
+  background: color-mix(in srgb, var(--bg-tertiary, #3a3a3c) 88%, var(--bg-secondary, #2c2c2e));
+  box-shadow:
+    0 1px 2px color-mix(in srgb, #000 28%, transparent),
+    0 12px 32px color-mix(in srgb, #000 42%, transparent);
+}
+
+[data-theme="dark"] .user-menu-item:hover {
+  background: color-mix(in srgb, var(--text-primary, #f5f5f7) 8%, transparent);
+}
+
+[data-theme="dark"] .user-menu-item.is-danger:hover {
+  background: color-mix(in srgb, var(--color-error, #ff453a) 14%, transparent);
 }
 
 .header-right--macos {

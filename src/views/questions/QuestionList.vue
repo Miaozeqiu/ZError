@@ -173,9 +173,6 @@
                   类型
                 </span>
               </th>
-              <th class="col-metric">重要性</th>
-              <th class="col-metric">掌握程度</th>
-              <th class="col-metric">难度</th>
               <th class="col-time sortable" @click="toggleCreateTimeSort">
                 <span class="th-header">
                   <svg class="th-icon" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" width="14"
@@ -263,33 +260,6 @@
                   :class="`type-tag--${typeTagKind(question.question_type)}`"
                 >{{ question.question_type }}</span>
                 <span v-else class="no-type">-</span>
-              </td>
-              <td class="col-metric">
-                <button
-                  type="button"
-                  class="metric-pill"
-                  :class="'is-importance-' + normalizeMetric(question.importance)"
-                  :title="'点击切换重要性'"
-                  @click.stop="cycleQuestionMetric(question, 'importance')"
-                >{{ importanceLabel(question.importance) }}</button>
-              </td>
-              <td class="col-metric">
-                <button
-                  type="button"
-                  class="metric-pill"
-                  :class="'is-mastery-' + normalizeMetric(question.mastery)"
-                  :title="'点击切换掌握程度'"
-                  @click.stop="cycleQuestionMetric(question, 'mastery')"
-                >{{ masteryLabel(question.mastery) }}</button>
-              </td>
-              <td class="col-metric">
-                <button
-                  type="button"
-                  class="metric-pill"
-                  :class="'is-difficulty-' + normalizeMetric(question.difficulty)"
-                  :title="'点击切换难度'"
-                  @click.stop="cycleQuestionMetric(question, 'difficulty')"
-                >{{ difficultyLabel(question.difficulty) }}</button>
               </td>
               <td class="col-time">{{ formatTime(question.create_time) }}</td>
             </tr>
@@ -381,12 +351,7 @@ import { startFileImportChat } from '../../services/agentChat';
 import { modelConfigManager } from '../../services/modelConfig';
 import { settingsManager } from '../../services/settings';
 import {
-  cycleMetric,
-  difficultyLabel,
-  importanceLabel,
-  masteryLabel,
   normalizeMetric,
-  type QuestionMetricKey,
   type QuestionMetricValue,
 } from '../../utils/questionMetrics';
 
@@ -931,28 +896,6 @@ const toggleCreateTimeSort = () => {
 
   if (!isSearchMode.value) {
     loadQuestions(props.selectedFolderId, currentPage.value);
-  }
-};
-
-const cycleQuestionMetric = async (question: AIResponse, field: QuestionMetricKey) => {
-  const previous = normalizeMetric(question[field]);
-  const next = cycleMetric(previous);
-  question[field] = next;
-
-  if (selectedQuestionDetails.value?.id === question.id) {
-    selectedQuestionDetails.value = { ...selectedQuestionDetails.value, [field]: next };
-    editFormData.value[field] = next;
-  }
-
-  try {
-    await databaseService.updateQuestion(question.id, { [field]: next });
-  } catch (error) {
-    question[field] = previous;
-    if (selectedQuestionDetails.value?.id === question.id) {
-      selectedQuestionDetails.value = { ...selectedQuestionDetails.value, [field]: previous };
-      editFormData.value[field] = previous;
-    }
-    console.error('更新题目指标失败:', error);
   }
 };
 
@@ -1811,12 +1754,18 @@ const handleQuestionSubmit = async (questionData: any) => {
 };
 
 // 生命周期钩子
+const onKnowledgeUpdated = () => {
+  void loadKnowledgeLinks(questions.value)
+}
+
 onMounted(() => {
   document.addEventListener('click', handleClickOutside);
+  window.addEventListener('question-knowledge-updated', onKnowledgeUpdated)
 });
 
 onUnmounted(() => {
   document.removeEventListener('click', handleClickOutside);
+  window.removeEventListener('question-knowledge-updated', onKnowledgeUpdated)
 });
 </script>
 
@@ -2523,100 +2472,6 @@ onUnmounted(() => {
 
 .col-type {
   width: 88px;
-}
-
-.col-metric {
-  width: 78px;
-}
-
-.metric-pill {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 52px;
-  padding: 3px 8px;
-  border: none;
-  border-radius: 999px;
-  background: var(--ql-type-tag-bg);
-  color: var(--ql-type-tag-text);
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 1.2;
-  cursor: pointer;
-}
-
-.metric-pill.is-importance-0,
-.metric-pill.is-mastery-0,
-.metric-pill.is-difficulty-0 {
-  background: color-mix(in srgb, var(--text-secondary) 12%, transparent);
-  color: var(--text-secondary);
-  font-weight: 500;
-}
-
-.metric-pill.is-importance-1 {
-  background: color-mix(in srgb, #64748b 16%, transparent);
-  color: #475569;
-}
-
-.metric-pill.is-importance-2 {
-  background: color-mix(in srgb, #d97706 16%, transparent);
-  color: #b45309;
-}
-
-.metric-pill.is-importance-3 {
-  background: color-mix(in srgb, #e11d48 16%, transparent);
-  color: #be123c;
-}
-
-.metric-pill.is-mastery-1 {
-  background: color-mix(in srgb, #e11d48 16%, transparent);
-  color: #be123c;
-}
-
-.metric-pill.is-mastery-2 {
-  background: color-mix(in srgb, #d97706 16%, transparent);
-  color: #b45309;
-}
-
-.metric-pill.is-mastery-3 {
-  background: color-mix(in srgb, #059669 16%, transparent);
-  color: #047857;
-}
-
-.metric-pill.is-difficulty-1 {
-  background: color-mix(in srgb, #059669 16%, transparent);
-  color: #047857;
-}
-
-.metric-pill.is-difficulty-2 {
-  background: color-mix(in srgb, #d97706 16%, transparent);
-  color: #b45309;
-}
-
-.metric-pill.is-difficulty-3 {
-  background: color-mix(in srgb, #e11d48 16%, transparent);
-  color: #be123c;
-}
-
-:root[data-theme="dark"] .metric-pill.is-importance-1 {
-  color: #cbd5e1;
-}
-
-:root[data-theme="dark"] .metric-pill.is-importance-2,
-:root[data-theme="dark"] .metric-pill.is-mastery-2,
-:root[data-theme="dark"] .metric-pill.is-difficulty-2 {
-  color: #fbbf24;
-}
-
-:root[data-theme="dark"] .metric-pill.is-importance-3,
-:root[data-theme="dark"] .metric-pill.is-mastery-1,
-:root[data-theme="dark"] .metric-pill.is-difficulty-3 {
-  color: #fb7185;
-}
-
-:root[data-theme="dark"] .metric-pill.is-mastery-3,
-:root[data-theme="dark"] .metric-pill.is-difficulty-1 {
-  color: #34d399;
 }
 
 .col-type span {

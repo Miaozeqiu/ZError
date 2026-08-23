@@ -34,9 +34,11 @@ export interface QuizAnswerState {
 
 const QUIZ_CARDS_KEY = 'zerror-agent-quiz-cards'
 const QUIZ_ANSWERS_KEY = 'zerror-agent-quiz-answers'
+const QUIZ_TITLES_KEY = 'zerror-agent-quiz-titles'
 
 const cardsByStep = new Map<string, QuizCard[]>()
 const answersByKey = new Map<string, QuizAnswerState>()
+const titlesByStep = new Map<string, string>()
 
 const loadMap = <T>(key: string, target: Map<string, T>) => {
   try {
@@ -59,18 +61,42 @@ const persistMap = <T>(key: string, source: Map<string, T>) => {
 
 loadMap(QUIZ_CARDS_KEY, cardsByStep)
 loadMap(QUIZ_ANSWERS_KEY, answersByKey)
+loadMap(QUIZ_TITLES_KEY, titlesByStep)
 
-export const parseOptions = (raw?: string): QuizOption[] => {
-  if (!raw?.trim()) return []
-  return raw
-    .split(/\n+/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => {
-      const match = line.match(/^([A-Ha-h])[\.、.\)\s]\s*(.*)$/)
-      if (match) return { key: match[1].toUpperCase(), text: match[2] || '' }
-      return { key: '', text: line }
-    })
+const optionLineText = (item: unknown): string => {
+  if (item == null) return ''
+  if (typeof item === 'string' || typeof item === 'number') return String(item).trim()
+  if (typeof item === 'object') {
+    const record = item as Record<string, unknown>
+    return String(record.text ?? record.Content ?? record.content ?? record.key ?? '').trim()
+  }
+  return String(item).trim()
+}
+
+const splitOptionSource = (raw?: unknown): string[] => {
+  if (raw == null) return []
+  if (Array.isArray(raw)) return raw.map(optionLineText).filter(Boolean)
+  const text = String(raw).trim()
+  if (!text) return []
+  if (text.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(text)
+      if (Array.isArray(parsed)) return parsed.map(optionLineText).filter(Boolean)
+    } catch {
+      // fall through
+    }
+  }
+  if (text.includes('\n')) return text.split(/\n+/).map((line) => line.trim()).filter(Boolean)
+  const inline = text.split(/\s+(?=[A-Ha-h](?:[\.、.)]|\s)\s*)/).map((line) => line.trim()).filter(Boolean)
+  return inline.length > 1 ? inline : [text]
+}
+
+export const parseOptions = (raw?: unknown): QuizOption[] => {
+  return splitOptionSource(raw).map((line, index) => {
+    const match = line.match(/^([A-Ha-h])(?:[\.、.)]|\s)\s*(.*)$/)
+    if (match) return { key: match[1].toUpperCase(), text: match[2] || '' }
+    return { key: String.fromCharCode(65 + index), text: line }
+  }).filter((item) => item.key || item.text)
 }
 
 export const quizKind = (type?: string, options?: string) => {
@@ -154,12 +180,45 @@ export const nextMastery = (current: number | undefined, correct: boolean) => {
   return 1
 }
 
+export const sanitizeQuizTitle = (raw?: unknown, fallback = '练习') => {
+  const text = String(raw ?? '').replace(/\s+/g, ' ').trim()
+  if (!text) return fallback
+  return text.slice(0, 40)
+}
+
+export const resolveQuizTitle = (args?: Record<string, unknown> | null, cards?: QuizCard[]) => {
+  const explicit = sanitizeQuizTitle(
+    args?.title ?? args?.name ?? args?.quiz_title ?? args?.quiz_name,
+    '',
+  )
+  if (explicit) return explicit
+  const hint = sanitizeQuizTitle(
+    args?.node_name
+      ?? args?.knowledge_point
+      ?? args?.paper_name
+      ?? cards?.[0]?.node_name
+      ?? cards?.[0]?.knowledge_point,
+    '',
+  )
+  return hint || '练习'
+}
+
 export const saveQuizCards = (stepId: string, cards: QuizCard[]) => {
   cardsByStep.set(stepId, cards)
   persistMap(QUIZ_CARDS_KEY, cardsByStep)
 }
 
 export const getQuizCards = (stepId: string) => cardsByStep.get(stepId) || []
+
+export const saveQuizTitle = (stepId: string, title?: string) => {
+  const next = sanitizeQuizTitle(title, '')
+  if (!next) return
+  titlesByStep.set(stepId, next)
+  persistMap(QUIZ_TITLES_KEY, titlesByStep)
+}
+
+export const getQuizTitle = (stepId: string, fallback = '练习') =>
+  titlesByStep.get(stepId) || fallback
 
 export const answerKey = (stepId: string, uid: string) => `${stepId}:${uid}`
 
@@ -180,7 +239,16 @@ export const toQuizCard = (item: Record<string, unknown>, index: number): QuizCa
     uid: Number.isFinite(questionId) && questionId > 0 ? `q-${questionId}` : `g-${index}`,
     question_id: Number.isFinite(questionId) && questionId > 0 ? questionId : undefined,
     question,
-    options: String(item.options || '').trim(),
+    options: Array.isArray(item.choices)
+      ? (item.choices as unknown[]).map((choice, index) => {
+        const record = choice && typeof choice === 'object' ? choice as Record<string, unknown> : {}
+        const key = String(record.key || String.fromCharCode(65 + index)).toUpperCase()
+        const text = optionLineText(record.text ?? choice)
+        return `${key}. ${text.replace(/^[A-Ha-h](?:[\.、.)]|\s)\s*/, '')}`
+      }).join('\n')
+      : Array.isArray(item.options)
+        ? item.options.map(optionLineText).filter(Boolean).map((text, index) => `${String.fromCharCode(65 + index)}. ${text.replace(/^[A-Ha-h](?:[\.、.)]|\s)\s*/, '')}`).join('\n')
+        : String(item.options || '').trim(),
     answer,
     question_type: String(item.question_type || item.type || '').trim() || undefined,
     explanation: String(item.explanation || item.analysis || '').trim() || undefined,
@@ -238,8 +306,13 @@ export const parseMarkdownQuizzes = (text: string): QuizCard[] => {
       }
     }
     if (options.length < 2 || !stem.length) return
+    const keys = options.map((item) => item.key)
+    if (new Set(keys).size < 2) return
+    if (options.some((item) => /\s[B-Hb-h](?:[\.、.)]|\s)/.test(item.text))) return
     const question = stem.join('\n').replace(/请在卡片上点选答案[。.]?/g, '').trim()
     if (!question) return
+    if (/共\s*\d+\s*道|答案[：:]/.test(question)) return
+    if (/(?:^|\n)\s*2[\.、)]/.test(question) || /1[\.、)]\s*\*\*/.test(question)) return
     cards.push({
       uid: `md-${index}-${question.slice(0, 24)}`,
       question,

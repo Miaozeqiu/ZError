@@ -10,6 +10,8 @@ export type ProgressEvidenceUpdate = {
   name?: string
   forgetting_stage: number
   last_reviewed_at?: string
+  quality?: string
+  kind?: string
 }
 
 const GENERIC_TOKENS = new Set([

@@ -2,7 +2,7 @@ use jieba_rs::Jieba;
 use regex::Regex;
 use rusqlite::{Connection, OptionalExtension};
 use crate::logger::RequestLog;
-use chrono::{DateTime, NaiveDateTime, Utc};
+use chrono::{DateTime, Duration, NaiveDateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::env;
@@ -291,6 +291,12 @@ pub struct PracticeSummary {
     pub last_time: Option<String>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PracticeMarks {
+    pub question_id: i64,
+    pub results: Vec<bool>,
+}
+
 fn map_ai_response_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AIResponse> {
     Ok(AIResponse {
         id: row.get(0)?,
@@ -437,6 +443,12 @@ pub struct StudyActivity {
     pub create_time: String,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct StudyHeatmapPoint {
+    pub names: Vec<String>,
+    pub create_time: String,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct SplitSubjectPart {
     pub name: String,
@@ -460,6 +472,14 @@ pub struct StudyProgressUpdate {
     pub last_reviewed_at: Option<String>,
     #[serde(default)]
     pub mastery: Option<i64>,
+    #[serde(default)]
+    pub quality: Option<String>,
+    #[serde(default)]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub remembered: Option<bool>,
+    #[serde(default)]
+    pub days_ago: Option<f64>,
 }
 
 fn get_db_path() -> String {
@@ -1561,6 +1581,159 @@ pub async fn get_practice_summaries(ids: Vec<i64>) -> Result<Vec<PracticeSummary
     Ok(items)
 }
 
+#[tauri::command]
+pub async fn get_recent_practice_marks(
+    ids: Vec<i64>,
+    limit: Option<i64>,
+) -> Result<Vec<PracticeMarks>, String> {
+    let conn = get_conn()?;
+    let limit = limit.unwrap_or(5).clamp(1, 10) as usize;
+    let unique: Vec<i64> = ids
+        .into_iter()
+        .filter(|id| *id > 0)
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+    if unique.is_empty() {
+        return Ok(vec![]);
+    }
+    let placeholders = unique.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+    let sql = format!(
+        "SELECT QuestionId, IsCorrect
+         FROM QuestionPracticeHistory
+         WHERE QuestionId IN ({placeholders})
+         ORDER BY QuestionId, Id DESC"
+    );
+    let mut stmt = conn.prepare(&sql).map_err(|e| format!("{}", e))?;
+    let rows = stmt
+        .query_map(rusqlite::params_from_iter(unique.iter().copied()), |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)? != 0))
+        })
+        .map_err(|e| format!("{}", e))?;
+    let mut grouped = std::collections::HashMap::<i64, Vec<bool>>::new();
+    for row in rows {
+        let (question_id, is_correct) = row.map_err(|e| format!("{}", e))?;
+        let list = grouped.entry(question_id).or_default();
+        if list.len() < limit {
+            list.push(is_correct);
+        }
+    }
+    Ok(unique
+        .into_iter()
+        .map(|question_id| {
+            let mut results = grouped.remove(&question_id).unwrap_or_default();
+            results.reverse();
+            PracticeMarks {
+                question_id,
+                results,
+            }
+        })
+        .collect())
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RecentWrongQuestion {
+    pub question_id: i64,
+    pub last_wrong_answer: String,
+    pub last_wrong_note: String,
+    pub last_wrong_time: Option<String>,
+    pub wrong_count: i64,
+}
+
+#[tauri::command]
+pub async fn list_recent_wrong_questions(
+    subject_id: Option<i64>,
+    node_id: Option<i64>,
+    folder_id: Option<i64>,
+    days: Option<i64>,
+    limit: Option<i64>,
+    unresolved_only: Option<bool>,
+) -> Result<Vec<RecentWrongQuestion>, String> {
+    let conn = get_conn()?;
+    let limit = limit.unwrap_or(20).clamp(1, 40);
+    let mut sql = String::from(
+        "SELECT p.QuestionId, p.UserAnswer, p.Note, p.CreateTime,
+                (SELECT COUNT(1) FROM QuestionPracticeHistory w
+                 WHERE w.QuestionId = p.QuestionId
+                   AND w.IsCorrect = 0
+                   AND length(trim(w.UserAnswer)) > 0) AS wrong_count
+         FROM QuestionPracticeHistory p
+         WHERE p.IsCorrect = 0
+           AND length(trim(p.UserAnswer)) > 0
+           AND p.Id = (
+             SELECT MAX(x.Id) FROM QuestionPracticeHistory x
+             WHERE x.QuestionId = p.QuestionId
+               AND x.IsCorrect = 0
+               AND length(trim(x.UserAnswer)) > 0
+           )",
+    );
+    let mut params: Vec<rusqlite::types::Value> = Vec::new();
+    if let Some(days) = days.filter(|value| *value > 0) {
+        sql.push_str(" AND datetime(p.CreateTime) >= datetime('now', ?)");
+        params.push(rusqlite::types::Value::Text(format!("-{} days", days.clamp(1, 365))));
+    }
+    if let Some(node_id) = node_id.filter(|value| *value > 0) {
+        sql.push_str(
+            " AND p.QuestionId IN (
+                WITH RECURSIVE subtree(Id) AS (
+                    SELECT Id FROM StudyGraphNodes WHERE Id = ?
+                    UNION ALL
+                    SELECT n.Id
+                    FROM StudyGraphNodes n
+                    JOIN subtree s ON n.ParentId = s.Id
+                    WHERE n.Id != s.Id
+                )
+                SELECT DISTINCT q.QuestionId
+                FROM QuestionKnowledgeNodes q
+                JOIN subtree s ON s.Id = q.NodeId
+             )",
+        );
+        params.push(rusqlite::types::Value::Integer(node_id));
+    } else if let Some(subject_id) = subject_id.filter(|value| *value > 0) {
+        sql.push_str(
+            " AND p.QuestionId IN (
+                SELECT DISTINCT q.QuestionId
+                FROM QuestionKnowledgeNodes q
+                JOIN StudyGraphNodes n ON n.Id = q.NodeId
+                WHERE n.SubjectId = ?
+             )",
+        );
+        params.push(rusqlite::types::Value::Integer(subject_id));
+    }
+    if let Some(folder_id) = folder_id.filter(|value| *value >= 0) {
+        sql.push_str(" AND EXISTS (SELECT 1 FROM AIResponses a WHERE a.Id = p.QuestionId AND a.FolderId = ?)");
+        params.push(rusqlite::types::Value::Integer(folder_id));
+    }
+    if unresolved_only.unwrap_or(false) {
+        sql.push_str(
+            " AND (
+                SELECT y.IsCorrect FROM QuestionPracticeHistory y
+                WHERE y.QuestionId = p.QuestionId AND length(trim(y.UserAnswer)) > 0
+                ORDER BY y.Id DESC LIMIT 1
+              ) = 0",
+        );
+    }
+    sql.push_str(" ORDER BY p.Id DESC LIMIT ?");
+    params.push(rusqlite::types::Value::Integer(limit));
+    let mut stmt = conn.prepare(&sql).map_err(|e| format!("{}", e))?;
+    let rows = stmt
+        .query_map(rusqlite::params_from_iter(params), |row| {
+            Ok(RecentWrongQuestion {
+                question_id: row.get(0)?,
+                last_wrong_answer: row.get(1)?,
+                last_wrong_note: row.get(2)?,
+                last_wrong_time: row.get(3)?,
+                wrong_count: row.get(4)?,
+            })
+        })
+        .map_err(|e| format!("{}", e))?;
+    let mut items = Vec::new();
+    for row in rows {
+        items.push(row.map_err(|e| format!("{}", e))?);
+    }
+    Ok(items)
+}
+
 fn clamp_mastery(value: i64) -> i64 {
     if value < 0 {
         0
@@ -1587,6 +1760,34 @@ fn forgetting_strength_days(stage: i64) -> f64 {
     }
 }
 
+fn parse_study_quality(raw: Option<&str>) -> &'static str {
+    let text = raw.unwrap_or("").trim().to_ascii_lowercase();
+    if matches!(
+        text.as_str(),
+        "poor" | "bad" | "weak" | "差" | "生疏" | "忘" | "不会"
+    ) {
+        "poor"
+    } else if matches!(
+        text.as_str(),
+        "fair" | "ok" | "okay" | "medium" | "一般" | "还行" | "半对" | "有印象"
+    ) {
+        "fair"
+    } else {
+        "good"
+    }
+}
+
+fn reviewed_at_for_quality(stage: i64, quality: &str, now: DateTime<Utc>) -> String {
+    let target = match quality {
+        "poor" => 0.4_f64,
+        "fair" => 0.72_f64,
+        _ => return now.to_rfc3339(),
+    };
+    let days = -target.ln() * forgetting_strength_days(stage).max(0.25);
+    let millis = (days * 86_400_000.0).round() as i64;
+    (now - Duration::milliseconds(millis)).to_rfc3339()
+}
+
 fn stage_base_mastery(stage: i64) -> i64 {
     match clamp_forgetting_stage(stage) {
         0 => 1,
@@ -1608,6 +1809,18 @@ fn parse_reviewed_at(raw: &str) -> Option<DateTime<Utc>> {
         .map(|value| value.and_utc())
 }
 
+fn lapse_forgetting(mut stage: i64, mut days: f64) -> (i64, f64, f64) {
+    stage = clamp_forgetting_stage(stage);
+    let mut retention = 1.0;
+    while stage > 0 && days > forgetting_strength_days(stage) {
+        retention *= (-1.0_f64).exp();
+        days -= forgetting_strength_days(stage);
+        stage -= 1;
+    }
+    retention *= (-days / forgetting_strength_days(stage)).exp();
+    (stage, days, retention)
+}
+
 fn days_since_reviewed(raw: Option<&str>) -> f64 {
     let Some(at) = raw.and_then(parse_reviewed_at) else {
         return 0.0;
@@ -1616,13 +1829,50 @@ fn days_since_reviewed(raw: Option<&str>) -> f64 {
     secs / 86_400.0
 }
 
+fn days_between_reviewed(from: Option<&str>, to: &str) -> f64 {
+    let Some(start) = from.and_then(parse_reviewed_at) else {
+        return 0.0;
+    };
+    let end = parse_reviewed_at(to).unwrap_or_else(Utc::now);
+    (end - start).num_seconds().max(0) as f64 / 86_400.0
+}
+
+fn next_forgetting_stage(
+    prev_stage: i64,
+    prev_reviewed: Option<&str>,
+    remembered: bool,
+    at: &str,
+) -> i64 {
+    let had_review = prev_reviewed
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_some();
+    if !had_review && clamp_forgetting_stage(prev_stage) <= 0 {
+        return 0;
+    }
+    let days = days_between_reviewed(prev_reviewed, at);
+    let (stage, _days, retention) = lapse_forgetting(prev_stage, days);
+    if !remembered {
+        return (stage - 1).max(0);
+    }
+    let too_soon = days < forgetting_strength_days(prev_stage) * 0.35 && days < 0.75;
+    if too_soon && retention >= 0.85 {
+        return stage;
+    }
+    if retention >= 0.3 {
+        return (stage + 1).min(6);
+    }
+    (stage - 1).max(0)
+}
+
 fn effective_mastery(stored: i64, stage: i64, last_reviewed: Option<&str>) -> i64 {
     let reviewed = last_reviewed.map(str::trim).filter(|value| !value.is_empty());
     if stored == 0 && clamp_forgetting_stage(stage) == 0 && reviewed.is_none() {
         return 0;
     }
-    let base = stage_base_mastery(stage);
-    let retention = (-days_since_reviewed(reviewed) / forgetting_strength_days(stage)).exp();
+    let (lapsed_stage, _days, retention) =
+        lapse_forgetting(stage, days_since_reviewed(reviewed));
+    let base = stage_base_mastery(lapsed_stage);
     if retention >= 0.7 {
         base
     } else if retention >= 0.4 {
@@ -1652,7 +1902,9 @@ fn node_retention(mastery: i64, stage: i64, last_reviewed: Option<&str>) -> Opti
     if mastery == 0 && clamp_forgetting_stage(stage) == 0 && reviewed.is_none() {
         None
     } else {
-        Some((-days_since_reviewed(reviewed) / forgetting_strength_days(stage)).exp())
+        let (_lapsed_stage, _days, retention) =
+            lapse_forgetting(stage, days_since_reviewed(reviewed));
+        Some(retention)
     }
 }
 
@@ -2254,16 +2506,45 @@ pub async fn apply_study_progress(
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .unwrap_or((0, None, String::new()));
-        let stage = item
-            .forgetting_stage
-            .map(clamp_forgetting_stage)
-            .unwrap_or(prev_stage);
+        let now = Utc::now();
+        let quality = parse_study_quality(item.quality.as_deref());
+        let had_review = prev_reviewed
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .is_some();
+        let remembered = item.remembered.unwrap_or_else(|| {
+            if item.quality.as_deref().map(str::trim).filter(|v| !v.is_empty()).is_some() {
+                quality != "poor"
+            } else {
+                item.forgetting_stage
+                    .map(|value| clamp_forgetting_stage(value) >= prev_stage)
+                    .unwrap_or(true)
+            }
+        });
+        let stage = next_forgetting_stage(
+            prev_stage,
+            prev_reviewed.as_deref(),
+            remembered,
+            &now.to_rfc3339(),
+        );
+        let historical = item.days_ago.filter(|days| *days > 0.05);
         let reviewed_at = item
             .last_reviewed_at
             .as_ref()
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| Utc::now().to_rfc3339());
+            .or_else(|| {
+                if item.quality.is_none() {
+                    historical.map(|days| {
+                        (now - Duration::milliseconds((days * 86_400_000.0).round() as i64))
+                            .to_rfc3339()
+                    })
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_else(|| reviewed_at_for_quality(stage, quality, now));
         let child_count: i64 = conn
             .query_row(
                 "SELECT COUNT(1) FROM StudyGraphNodes WHERE ParentId = ?",
@@ -2288,20 +2569,93 @@ pub async fn apply_study_progress(
         if name.is_empty() {
             continue;
         }
-        let had_review = prev_reviewed
+        let kind = item
+            .kind
             .as_deref()
             .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .is_some();
-        if !had_review && prev_stage <= 0 {
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if kind == "learn" || (!had_review && prev_stage <= 0) {
             learned.push(name);
         } else {
             reviewed.push(name);
         }
     }
+    let learned = collapse_activity_names_to_parents(&conn, subject_id, &learned)?;
+    let reviewed = collapse_activity_names_to_parents(&conn, subject_id, &reviewed)?;
     insert_study_activity(&conn, subject_id, "learn", &learned, 0, 0, None)?;
     insert_study_activity(&conn, subject_id, "review", &reviewed, 0, 0, None)?;
     load_study_graph(&conn, subject_id)
+}
+
+fn collapse_activity_names_to_parents(
+    conn: &Connection,
+    subject_id: i64,
+    names: &[String],
+) -> Result<Vec<String>, String> {
+    if names.len() < 2 {
+        return Ok(names.to_vec());
+    }
+    let mut stmt = conn
+        .prepare("SELECT Id, Name, ParentId FROM StudyGraphNodes WHERE SubjectId = ?")
+        .map_err(|e| format!("{}", e))?;
+    let rows = stmt
+        .query_map([subject_id], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<i64>>(2)?,
+            ))
+        })
+        .map_err(|e| format!("{}", e))?;
+    let mut name_of = HashMap::new();
+    let mut children: HashMap<i64, Vec<String>> = HashMap::new();
+    for row in rows {
+        let (id, name, parent_id) = row.map_err(|e| format!("{}", e))?;
+        let name = name.trim().to_string();
+        if name.is_empty() {
+            continue;
+        }
+        name_of.insert(id, name.clone());
+        if let Some(parent_id) = parent_id {
+            children.entry(parent_id).or_default().push(name);
+        }
+    }
+    let mut current: HashSet<String> = names
+        .iter()
+        .map(|item| item.trim().to_string())
+        .filter(|item| !item.is_empty())
+        .collect();
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for (parent_id, kids) in &children {
+            let parent_name = match name_of.get(parent_id) {
+                Some(name) if !name.is_empty() => name,
+                _ => continue,
+            };
+            if kids.is_empty() || kids.iter().any(|kid| kid == parent_name) {
+                continue;
+            }
+            if !kids.iter().all(|kid| current.contains(kid)) {
+                continue;
+            }
+            for kid in kids {
+                current.remove(kid);
+            }
+            current.insert(parent_name.clone());
+            changed = true;
+        }
+    }
+    let mut ordered = Vec::new();
+    for item in names {
+        let name = item.trim();
+        if current.remove(name) {
+            ordered.push(name.to_string());
+        }
+    }
+    ordered.extend(current);
+    Ok(ordered)
 }
 
 fn insert_study_activity(
@@ -2461,7 +2815,7 @@ pub async fn list_study_activity(subject_id: i64, limit: Option<i64>) -> Result<
     let conn = get_conn()?;
     load_study_subject(&conn, subject_id)?;
     backfill_study_activity(&conn, subject_id)?;
-    let cap = limit.unwrap_or(80).clamp(1, 200);
+    let cap = limit.unwrap_or(80).clamp(1, 5000);
     let mut stmt = conn
         .prepare(
             "SELECT Id, SubjectId, Kind, Names, QuestionCount, CorrectCount, CreateTime
@@ -2473,6 +2827,88 @@ pub async fn list_study_activity(subject_id: i64, limit: Option<i64>) -> Result<
         .map_err(|e| format!("{}", e))?;
     let rows = stmt
         .query_map(rusqlite::params![subject_id, cap], map_activity_row)
+        .map_err(|e| format!("{}", e))?;
+    let mut items = Vec::new();
+    for row in rows {
+        items.push(row.map_err(|e| format!("{}", e))?);
+    }
+    Ok(items)
+}
+
+fn activity_time_ms(raw: &str) -> Option<i64> {
+    parse_reviewed_at(raw).map(|value| value.timestamp_millis())
+}
+
+#[tauri::command]
+pub async fn list_study_activity_between(
+    subject_id: i64,
+    start_ms: i64,
+    end_ms: i64,
+) -> Result<Vec<StudyActivity>, String> {
+    if start_ms >= end_ms {
+        return Ok(Vec::new());
+    }
+    let conn = get_conn()?;
+    load_study_subject(&conn, subject_id)?;
+    let pad_start = start_ms.saturating_sub(86_400_000);
+    let pad_end = end_ms.saturating_add(86_400_000);
+    let from = DateTime::from_timestamp_millis(pad_start)
+        .unwrap_or_else(Utc::now)
+        .format("%Y-%m-%d")
+        .to_string();
+    let to = DateTime::from_timestamp_millis(pad_end)
+        .unwrap_or_else(Utc::now)
+        .format("%Y-%m-%d")
+        .to_string();
+    let mut stmt = conn
+        .prepare(
+            "SELECT Id, SubjectId, Kind, Names, QuestionCount, CorrectCount, CreateTime
+             FROM StudyActivity
+             WHERE SubjectId = ?
+               AND substr(CreateTime, 1, 10) >= ?
+               AND substr(CreateTime, 1, 10) <= ?
+             ORDER BY datetime(CreateTime) DESC, Id DESC",
+        )
+        .map_err(|e| format!("{}", e))?;
+    let rows = stmt
+        .query_map(rusqlite::params![subject_id, from, to], map_activity_row)
+        .map_err(|e| format!("{}", e))?;
+    let mut items = Vec::new();
+    for row in rows {
+        let item = row.map_err(|e| format!("{}", e))?;
+        let Some(ms) = activity_time_ms(&item.create_time) else {
+            continue;
+        };
+        if ms >= start_ms && ms < end_ms {
+            items.push(item);
+        }
+    }
+    Ok(items)
+}
+
+#[tauri::command]
+pub async fn list_study_heatmap(subject_id: i64) -> Result<Vec<StudyHeatmapPoint>, String> {
+    let conn = get_conn()?;
+    load_study_subject(&conn, subject_id)?;
+    backfill_study_activity(&conn, subject_id)?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT Names, CreateTime
+             FROM StudyActivity
+             WHERE SubjectId = ?
+               AND Kind IN ('learn', 'review')
+             ORDER BY datetime(CreateTime) DESC
+             LIMIT 8000",
+        )
+        .map_err(|e| format!("{}", e))?;
+    let rows = stmt
+        .query_map([subject_id], |row| {
+            let raw: String = row.get(0)?;
+            Ok(StudyHeatmapPoint {
+                names: parse_activity_names(&raw),
+                create_time: row.get(1)?,
+            })
+        })
         .map_err(|e| format!("{}", e))?;
     let mut items = Vec::new();
     for row in rows {
@@ -2700,10 +3136,46 @@ pub async fn list_question_knowledge(question_ids: Vec<i64>) -> Result<Vec<Quest
 pub async fn list_node_questions(node_id: i64) -> Result<Vec<i64>, String> {
     let conn = get_conn()?;
     let mut stmt = conn
-        .prepare("SELECT QuestionId FROM QuestionKnowledgeNodes WHERE NodeId = ? ORDER BY QuestionId")
+        .prepare(
+            "WITH RECURSIVE subtree(Id) AS (
+                SELECT Id FROM StudyGraphNodes WHERE Id = ?
+                UNION ALL
+                SELECT n.Id
+                FROM StudyGraphNodes n
+                JOIN subtree s ON n.ParentId = s.Id
+                WHERE n.Id != s.Id
+            )
+            SELECT DISTINCT q.QuestionId
+            FROM QuestionKnowledgeNodes q
+            JOIN subtree s ON s.Id = q.NodeId
+            ORDER BY q.QuestionId",
+        )
         .map_err(|e| format!("{}", e))?;
     let rows = stmt
         .query_map([node_id], |row| row.get::<_, i64>(0))
+        .map_err(|e| format!("{}", e))?;
+    let mut ids = Vec::new();
+    for row in rows {
+        ids.push(row.map_err(|e| format!("{}", e))?);
+    }
+    Ok(ids)
+}
+
+#[tauri::command]
+pub async fn list_subject_questions(subject_id: i64) -> Result<Vec<i64>, String> {
+    let conn = get_conn()?;
+    load_study_subject(&conn, subject_id)?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT DISTINCT q.QuestionId
+             FROM QuestionKnowledgeNodes q
+             JOIN StudyGraphNodes n ON n.Id = q.NodeId
+             WHERE n.SubjectId = ?
+             ORDER BY q.QuestionId DESC",
+        )
+        .map_err(|e| format!("{}", e))?;
+    let rows = stmt
+        .query_map([subject_id], |row| row.get::<_, i64>(0))
         .map_err(|e| format!("{}", e))?;
     let mut ids = Vec::new();
     for row in rows {

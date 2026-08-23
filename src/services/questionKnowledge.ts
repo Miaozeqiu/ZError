@@ -187,9 +187,14 @@ export const associateQuestionsToKnowledge = async (
   return { linked, created, skipped, links }
 }
 
-export const openKnowledgeInStudy = (link: Pick<QuestionKnowledgeLink, 'subject_id' | 'node_name'>) => {
+export const openKnowledgeInStudy = (link: Pick<QuestionKnowledgeLink, 'subject_id' | 'node_name' | 'node_id'>) => {
   window.dispatchEvent(new CustomEvent('navigate-tab', { detail: 'study' }))
   window.dispatchEvent(new CustomEvent('open-study-graph', {
-    detail: { subjectId: link.subject_id, nodeName: link.node_name },
+    detail: { subjectId: link.subject_id, nodeName: link.node_name, nodeId: link.node_id },
   }))
+}
+
+export const notifyQuestionKnowledgeUpdated = (detail?: { subjectId?: number; nodeId?: number; questionId?: number }) => {
+  if (typeof window === 'undefined') return
+  window.dispatchEvent(new CustomEvent('question-knowledge-updated', { detail }))
 }
