@@ -181,8 +181,8 @@
 
 <script setup lang="ts">
 import { ref, watch, computed, nextTick, onMounted, onUnmounted } from 'vue'
-import { fetchRemoteModelsCatalog, type AIPlatform, type ApiProtocol } from '../../../services/modelConfig'
-import { getPlatformIconDisplayUrl, isImageIconValue, resolvePlatformIconUrl } from '../../../services/iconCache'
+import { fetchRemoteModelsCatalog, type AIPlatform, type ApiProtocol } from '../../../services/model/config'
+import { getPlatformIconDisplayUrl, isImageIconValue, resolvePlatformIconUrl } from '../../../services/app/iconCache'
 import { useExclusiveMenu } from '../../../composables/useExclusiveMenu'
 
 interface Props {

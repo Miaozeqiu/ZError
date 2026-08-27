@@ -132,7 +132,7 @@
 
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
-import { databaseService } from '../services/database'
+import { databaseService } from '../services/app/database'
 import { masteryLabel } from '../utils/questionMetrics'
 import {
   formatAnswerLabel,

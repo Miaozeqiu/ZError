@@ -39,7 +39,7 @@
 import MarkdownRender from 'markstream-vue'
 import 'markstream-vue/index.css'
 import 'katex/dist/katex.min.css'
-import '../services/markstream'
+import '../services/model/markstream'
 
 defineProps<{
   reasoningContent?: string

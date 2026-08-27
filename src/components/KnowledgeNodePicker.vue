@@ -28,7 +28,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { databaseService, type StudySubject } from '../services/database'
+import { databaseService, type StudySubject } from '../services/app/database'
 import { flattenGraph, graphFromPayload, type StudyGraphNode } from '../utils/studyGraph'
 
 export type KnowledgePick = {

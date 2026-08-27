@@ -1,5 +1,5 @@
 import { ref, computed, watch, onMounted, readonly } from 'vue'
-import { settingsManager } from '../services/settings'
+import { settingsManager } from '../services/app/settings'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import type { UnlistenFn } from '@tauri-apps/api/event'
 

@@ -84,7 +84,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import StudyForgettingCurve from './StudyForgettingCurve.vue'
-import { databaseService, type StudyActivity } from '../services/database'
+import { databaseService, type StudyActivity } from '../services/app/database'
 import { MASTERY_COLORS, retentionColor } from '../utils/studyGraphForce'
 import {
   classifyQuestionStats,

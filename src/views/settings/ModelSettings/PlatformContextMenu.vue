@@ -13,7 +13,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import UnifiedContextMenu, { type MenuItem } from '../../../components/UnifiedContextMenu.vue'
-import type { AIPlatform } from '../../../services/modelConfig'
+import type { AIPlatform } from '../../../services/model/config'
 
 interface Props {
   visible: boolean

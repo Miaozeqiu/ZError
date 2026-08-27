@@ -1,5 +1,5 @@
 import { shallowRef } from 'vue'
-import { fetchRemoteModelsCatalog } from '../services/modelConfig'
+import { fetchRemoteModelsCatalog } from '../services/model/config'
 
 export interface QuestionImagePart {
   type: 'text' | 'image'

@@ -100,7 +100,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref, triggerRef, watch } from 'vue'
-import { campusOptionRows, campusQuestionTypeLabel, type CampusQuestion } from '../services/campus'
+import { campusOptionRows, campusQuestionTypeLabel, type CampusQuestion } from '../services/app/campus'
 
 const props = defineProps<{
   question: CampusQuestion | null

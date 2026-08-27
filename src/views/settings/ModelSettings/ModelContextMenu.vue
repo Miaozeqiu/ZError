@@ -13,8 +13,8 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import UnifiedContextMenu, { type MenuItem } from '../../../components/UnifiedContextMenu.vue'
-import type { AIModel } from '../../../services/modelConfig'
-import { modelHasVision } from '../../../services/modelConfig'
+import type { AIModel } from '../../../services/model/config'
+import { modelHasVision } from '../../../services/model/config'
 
 interface Props {
   visible: boolean

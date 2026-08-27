@@ -1,5 +1,5 @@
 import * as XLSX from 'xlsx';
-import { databaseService } from '../services/database';
+import { databaseService } from '../services/app/database';
 import mammoth from 'mammoth';
 import { readFile } from '@tauri-apps/plugin-fs';
 import * as pdfjsLib from 'pdfjs-dist';

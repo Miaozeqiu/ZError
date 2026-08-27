@@ -132,10 +132,10 @@ import StudyQuestionBank from '../components/StudyQuestionBank.vue'
 import StudyTimeline from '../components/StudyTimeline.vue'
 import CreateFormDialog, { type CreateFormField } from '../components/CreateFormDialog.vue'
 import UnifiedContextMenu, { type MenuItem } from '../components/UnifiedContextMenu.vue'
-import { databaseService, type QuestionKnowledgeLink, type StudyActivity, type StudySubject, type StudyTimelineSummary } from '../services/database'
-import { isChatBusy, startStudyGraphChat, startStudySubjectChat } from '../services/agentChat'
-import { backfillClosedStudySessions } from '../services/studyTimelineSummary'
-import { studyGraphStream } from '../services/studyGraphStream'
+import { databaseService, type QuestionKnowledgeLink, type StudyActivity, type StudySubject, type StudyTimelineSummary } from '../services/app/database'
+import { isChatBusy, startStudyGraphChat, startStudySubjectChat } from '../services/agent/chat'
+import { backfillClosedStudySessions } from '../services/study/timelineSummary'
+import { studyGraphStream } from '../services/study/graphStream'
 import {
   flattenGraph,
   graphFromPayload,

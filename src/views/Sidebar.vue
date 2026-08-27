@@ -96,7 +96,7 @@
 </template>
 
 <script setup lang="ts">
-import { serverRunning } from '../services/serverState'
+import { serverRunning } from '../services/app/serverState'
 
 interface Props {
   activeTab: string

@@ -105,22 +105,22 @@ import {
   removeAppBrowser,
   upsertAppBrowser,
   type AppBrowser,
-} from '../services/appBrowser'
-import { clearBrowserChat } from '../services/agentChat'
-import { isChaoxingCourseUrl, startChaoxingChapterParser, stopChaoxingChapterParser } from '../services/chaoxingChapters'
+} from '../services/browser/appBrowser'
+import { clearBrowserChat } from '../services/agent/chat'
+import { isChaoxingCourseUrl, startChaoxingChapterParser, stopChaoxingChapterParser } from '../services/chaoxing/chapters'
 import {
   applyHomeworkLiveState,
   inspectChaoxingHomework,
   installHomeworkLiveSync,
   readHomeworkLiveState,
-} from '../services/chaoxingHomework'
+} from '../services/chaoxing/homework'
 import {
   abstractionMenuOpen,
   abstractionParsing,
   isHomeworkUrl,
   lastHomeworkCard,
   setCurrentBrowserPage,
-} from '../services/browserAbstractions'
+} from '../services/browser/abstractions'
 
 const props = defineProps<{
   active?: boolean

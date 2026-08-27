@@ -101,10 +101,10 @@ import {
   lastHomeworkCard,
   lastHomeworkPickDebug,
   primaryAbstraction,
-} from '../services/browserAbstractions'
-import { chapterStateFor } from '../services/chaoxingChapters'
-import { pickHomeworkOption } from '../services/chaoxingHomework'
-import { cachedHwImage, normalizeHwImageUrl, resolveHwImage } from '../services/homeworkImages'
+} from '../services/browser/abstractions'
+import { chapterStateFor } from '../services/chaoxing/chapters'
+import { pickHomeworkOption } from '../services/chaoxing/homework'
+import { cachedHwImage, normalizeHwImageUrl, resolveHwImage } from '../services/chaoxing/homeworkImages'
 
 const props = defineProps<{
   browserId?: string

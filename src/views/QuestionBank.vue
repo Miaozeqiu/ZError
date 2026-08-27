@@ -2,10 +2,10 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import FileTree from "./questions/FileTree.vue";
 import QuestionList from "./questions/QuestionList.vue";
-import type { AIResponse } from "../services/database";
+import type { AIResponse } from "../services/app/database";
 import { useSettingsManager } from "../composables/useSettingsManager";
-import { startFolderOrganizeChat } from "../services/agentChat";
-import { modelConfigManager } from "../services/modelConfig";
+import { startFolderOrganizeChat } from "../services/agent/chat";
+import { modelConfigManager } from "../services/model/config";
 
 // 接收来自顶层 App 的折叠触发器，用于在切换 tab 时收起题目详情
 const props = defineProps<{

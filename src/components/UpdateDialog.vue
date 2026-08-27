@@ -39,8 +39,8 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { VersionInfo } from '../services/versionCheck'
-import { VersionCheckService } from '../services/versionCheck'
+import type { VersionInfo } from '../services/app/versionCheck'
+import { VersionCheckService } from '../services/app/versionCheck'
 
 interface Props {
   visible: boolean

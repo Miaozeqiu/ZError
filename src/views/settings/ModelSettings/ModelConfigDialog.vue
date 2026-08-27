@@ -269,8 +269,8 @@ import { defaultHighlightStyle, syntaxHighlighting } from '@codemirror/language'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { linter, lintGutter } from '@codemirror/lint'
 import * as acorn from 'acorn'
-import { modelHasVision, type AIModel, type ThinkingEffort, type ThinkingOffResponsesEffort } from '../../../services/modelConfig'
-import { buildPresetProcessModelJsCode, normalizeApiProtocol, readModelIdFromJsCode, resolveExecutableModelJsCode } from '../../../services/modelProtocol'
+import { modelHasVision, type AIModel, type ThinkingEffort, type ThinkingOffResponsesEffort } from '../../../services/model/config'
+import { buildPresetProcessModelJsCode, normalizeApiProtocol, readModelIdFromJsCode, resolveExecutableModelJsCode } from '../../../services/model/protocol'
 import { useExclusiveMenu } from '../../../composables/useExclusiveMenu'
 
 const thinkingEffortOptions: { value: ThinkingEffort; label: string }[] = [

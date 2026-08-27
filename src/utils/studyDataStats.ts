@@ -1,5 +1,5 @@
-import type { QuestionPracticeStats, StudyActivity } from '../services/database'
-import { groupActivitiesIntoSessions, sessionTimeRange } from '../services/studyTimelineAgent'
+import type { QuestionPracticeStats, StudyActivity } from '../services/app/database'
+import { groupActivitiesIntoSessions, sessionTimeRange } from '../services/study/timelineAgent'
 import type { StudyGraphNode } from './studyGraph'
 
 export type StudyQuestionCounts = {

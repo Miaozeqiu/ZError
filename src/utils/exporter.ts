@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import * as XLSX from 'xlsx';
 import { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, WidthType, AlignmentType } from 'docx';
-import { AIResponse } from '../services/database';
+import { AIResponse } from '../services/app/database';
 import { difficultyLabel, importanceLabel, masteryLabel } from './questionMetrics';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';

@@ -2,7 +2,7 @@ import { createApp } from "vue";
 import "./styles/themes.css";
 import App from "./App.vue";
 import { initGlobalTheme } from "./composables/useTheme";
-import "./services/markstream";
+import "./services/model/markstream";
 
 // 等待Tauri初始化完成
 async function initApp() {

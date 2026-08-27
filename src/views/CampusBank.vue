@@ -1,201 +1,69 @@
 <template>
   <div class="campus-page">
-    <aside class="campus-col campus-sidebar">
-      <div class="pane-header">
-        <div class="header-title">{{ sidebarTitle }}</div>
-        <button
-          v-if="isLoggedIn && identity?.campus"
-          class="header-action"
-          type="button"
-          @click="reload"
-        >刷新</button>
-      </div>
+    <CampusSidebar
+      :sidebar-title="sidebarTitle"
+      :is-logged-in="isLoggedIn"
+      :identity="identity"
+      :school-query="schoolQuery"
+      :filtered-schools="filteredSchools"
+      :schools-loading="schoolsLoading"
+      :binding-id="bindingId"
+      :courses="courses"
+      :selected-course-id="selectedCourseId"
+      :courses-loading="coursesLoading"
+      @reload="reload"
+      @update:school-query="schoolQuery = $event"
+      @choose-school="chooseSchool"
+      @select-course="selectCourse"
+    />
 
-      <div v-if="!isLoggedIn" class="list-empty">登录后查看本校课程</div>
+    <CampusPaperList
+      v-if="showPaperCol"
+      :visible-paper-count="visiblePaperCount"
+      :platform-options="platformOptions"
+      :platform-filter="platformFilter"
+      :platform-filter-open="platformFilterOpen"
+      :papers-loading="papersLoading"
+      :visible-papers="visiblePapers"
+      :selected-paper-id="selectedPaperId"
+      @toggle-filter="platformFilterOpen = !platformFilterOpen"
+      @set-platform-filter="setPlatformFilter"
+      @select-paper="selectPaper"
+    />
 
-      <template v-else-if="!identity?.campus">
-        <input
-          v-model="schoolQuery"
-          class="search-input"
-          placeholder="搜索学校"
-        />
-        <div class="item-list">
-          <button
-            v-for="school in filteredSchools"
-            :key="school.id"
-            class="list-item"
-            type="button"
-            :disabled="bindingId != null"
-            @click="chooseSchool(school)"
-          >
-            <div class="item-name">{{ school.name }}</div>
-          </button>
-          <div v-if="!schoolsLoading && !filteredSchools.length" class="list-empty">没有匹配的学校</div>
-          <div v-if="schoolsLoading" class="list-empty">加载学校中…</div>
-        </div>
-      </template>
-
-      <template v-else>
-        <div class="item-list">
-          <button
-            v-for="course in courses"
-            :key="course.id"
-            class="list-item"
-            type="button"
-            :class="{ 'is-selected': course.id === selectedCourseId }"
-            @click="selectCourse(course.id)"
-          >
-            <div class="item-name">{{ course.name }}</div>
-            <div v-if="course.status === 'pending'" class="item-meta">待审核</div>
-          </button>
-          <div v-if="!coursesLoading && !courses.length" class="list-empty">还没有课程</div>
-          <div v-if="coursesLoading" class="list-empty">加载课程中…</div>
-        </div>
-      </template>
-    </aside>
-
-    <aside v-if="showPaperCol" class="campus-col campus-papers">
-      <div class="pane-header">
-        <div class="header-title">试卷</div>
-        <div v-if="visiblePaperCount" class="header-meta">{{ visiblePaperCount }}</div>
-        <div v-if="platformOptions.length" class="platform-filter" @mousedown.stop>
-          <button
-            class="platform-select-trigger"
-            type="button"
-            :class="{ open: platformFilterOpen }"
-            title="筛选平台"
-            aria-haspopup="listbox"
-            :aria-expanded="platformFilterOpen"
-            @click="platformFilterOpen = !platformFilterOpen"
-          >
-            <CampusPlatformIcon v-if="platformFilter" :name="platformFilter" />
-            <span class="platform-select-label">{{ platformFilter || '全部' }}</span>
-            <svg class="platform-select-arrow" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
-              <path d="M4.2 6.2a.75.75 0 0 1 1.06 0L8 8.94l2.74-2.74a.75.75 0 1 1 1.06 1.06l-3.27 3.27a.75.75 0 0 1-1.06 0L4.2 7.26a.75.75 0 0 1 0-1.06z" fill="currentColor"/>
-            </svg>
-          </button>
-          <Transition name="dropdown-pop">
-            <div v-if="platformFilterOpen" class="platform-filter-menu" role="listbox" aria-label="筛选平台">
-              <button
-                class="platform-filter-item"
-                type="button"
-                :class="{ active: !platformFilter }"
-                role="option"
-                :aria-selected="!platformFilter"
-                @click="setPlatformFilter('')"
-              >全部</button>
-              <button
-                v-for="name in platformOptions"
-                :key="name"
-                class="platform-filter-item"
-                type="button"
-                :class="{ active: platformFilter === name }"
-                role="option"
-                :aria-selected="platformFilter === name"
-                @click="setPlatformFilter(name)"
-              >
-                <CampusPlatformIcon :name="name" />
-                <span>{{ name }}</span>
-              </button>
-            </div>
-          </Transition>
-        </div>
-      </div>
-      <div v-if="papersLoading && !visiblePapers.length" class="list-empty">加载试卷中…</div>
-      <div v-else-if="!visiblePapers.length" class="list-empty">{{ platformFilter ? '这个平台没有试卷' : '这门课还没有试卷' }}</div>
-      <div v-else class="item-list">
-        <button
-          v-for="paper in visiblePapers"
-          :key="paper.id"
-          class="list-item paper-item"
-          type="button"
-          :class="{ 'is-selected': selectedPaperId === paper.id }"
-          @click="selectPaper(paper.id)"
-        >
-          <CampusPlatformIcon :name="paper.platform" />
-          <div class="item-name">{{ paper.name }}</div>
-          <div v-if="paper.question_count != null" class="item-count">{{ paper.question_count }}</div>
-        </button>
-      </div>
-    </aside>
-
-    <section class="campus-col campus-main">
-      <div class="pane-header">
-        <div class="header-title">{{ mainTitle }}</div>
-        <div v-if="identity?.campus && !showBrowse" class="header-meta">{{ identity.campus.name }}</div>
-      </div>
-
-      <div class="main-body">
-        <div v-if="!isLoggedIn" class="empty-state">
-          <div class="empty-title">先登录校园账号</div>
-          <p class="empty-text">校园题库和网页题库共用同一个微信登录。关注公众号「未耕之地」，发送验证码即可。</p>
-          <button class="primary-btn" type="button" @click="openLoginDialog">登录</button>
-        </div>
-
-        <div v-else-if="pageLoading" class="empty-state">正在同步账号…</div>
-
-        <div v-else-if="error" class="empty-state">
-          <div class="empty-title">加载失败</div>
-          <p class="empty-text">{{ error }}</p>
-          <button class="primary-btn" type="button" @click="reload">重试</button>
-        </div>
-
-        <div v-else-if="!identity?.campus" class="empty-state">
-          <div class="empty-title">选择你的学校</div>
-          <p class="empty-text">每人只能绑定一所学校。绑定后即可查看本校课程和题目。</p>
-        </div>
-
-        <div v-else-if="!identity.enrollment_year" class="empty-state">
-          <div class="empty-title">补上入学年份</div>
-          <p class="empty-text">新建试卷时会带上这个年份。</p>
-          <div class="year-row">
-            <select v-model.number="draftYear" class="year-select">
-              <option v-for="year in yearOptions" :key="year" :value="year">{{ year }} 级</option>
-            </select>
-            <button class="primary-btn" type="button" :disabled="savingYear" @click="saveYear">
-              {{ savingYear ? '保存中…' : '保存' }}
-            </button>
-          </div>
-        </div>
-
-        <div v-else-if="!selectedCourseId" class="empty-state">
-          <div class="empty-title">从左侧选一门课</div>
-          <p class="empty-text">选课后会列出试卷，右侧按题切换查看。</p>
-        </div>
-
-        <div v-else-if="papersLoading && !visiblePapers.length" class="empty-state">
-          <div class="empty-title">正在打开课程…</div>
-        </div>
-
-        <div v-else-if="!selectedPaperId" class="empty-state">
-          <div class="empty-title">这门课还没有试卷</div>
-          <p class="empty-text">有试卷后即可按题查看。</p>
-        </div>
-
-        <div v-else-if="questionsLoading && !activeQuestions.length" class="empty-state">
-          <div class="empty-title">正在打开试卷…</div>
-        </div>
-
-        <CampusQuestionPane
-          v-else
-          :question="selectedQuestion"
-          :index="currentIndex"
-          :total="activeQuestions.length"
-          @prev="goPrev"
-          @next="goNext"
-          @goto="showQuestion"
-        />
-      </div>
-    </section>
+    <CampusMainPane
+      :main-title="mainTitle"
+      :identity="identity"
+      :show-browse="showBrowse"
+      :is-logged-in="isLoggedIn"
+      :page-loading="pageLoading"
+      :error="error"
+      :draft-year="draftYear"
+      :year-options="yearOptions"
+      :saving-year="savingYear"
+      :selected-course-id="selectedCourseId"
+      :papers-loading="papersLoading"
+      :visible-paper-count="visiblePaperCount"
+      :selected-paper-id="selectedPaperId"
+      :questions-loading="questionsLoading"
+      :active-questions="activeQuestions"
+      :selected-question="selectedQuestion"
+      :current-index="currentIndex"
+      @open-login="openLoginDialog"
+      @reload="reload"
+      @update:draft-year="draftYear = $event"
+      @save-year="saveYear"
+      @prev="goPrev"
+      @next="goNext"
+      @goto="showQuestion"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import CampusQuestionPane from '../components/CampusQuestionPane.vue'
-import CampusPlatformIcon from '../components/campus/CampusPlatformIcon.vue'
 import { useExclusiveMenu } from '../composables/useExclusiveMenu'
-import { isLoggedIn, openLoginDialog } from '../services/auth'
+import { isLoggedIn, openLoginDialog } from '../services/app/auth'
 import {
   bindCampus,
   enrollmentYearOptions,
@@ -213,8 +81,11 @@ import {
   type CampusQuestion,
   type CampusSchool,
   type CampusTag,
-} from '../services/campus'
-import { RemoteApiError } from '../services/remoteHttp'
+} from '../services/app/campus'
+import { RemoteApiError } from '../services/app/remoteHttp'
+import CampusMainPane from './campus/CampusMainPane.vue'
+import CampusPaperList from './campus/CampusPaperList.vue'
+import CampusSidebar from './campus/CampusSidebar.vue'
 
 interface PaperItem {
   id: number
@@ -607,321 +478,5 @@ onUnmounted(() => {
   display: flex;
   gap: 4px;
   background: var(--bg-primary, #f5f5f7);
-}
-
-.campus-col {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
-  background: var(--bg-secondary, #fff);
-  border-radius: 4px;
-  margin-bottom: 5px;
-}
-
-.campus-sidebar,
-.campus-papers {
-  width: 240px;
-  flex-shrink: 0;
-}
-
-.campus-main {
-  flex: 1;
-  margin-right: 5px;
-}
-
-.pane-header {
-  position: relative;
-  height: 36px;
-  min-height: 36px;
-  padding: 0 12px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-shrink: 0;
-}
-
-.pane-header::after {
-  content: '';
-  position: absolute;
-  left: 10px;
-  right: 10px;
-  bottom: 0;
-  height: 1px;
-  background: color-mix(in srgb, var(--border-primary, #e2e8f0) 42%, transparent);
-  transform: scaleY(0.5);
-}
-
-.header-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-primary, #2d3748);
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.header-meta {
-  font-size: 12px;
-  color: var(--text-secondary, #718096);
-  font-variant-numeric: tabular-nums;
-}
-
-.header-action {
-  border: none;
-  background: transparent;
-  color: var(--text-secondary, #718096);
-  font-size: 12px;
-  cursor: pointer;
-  padding: 4px 6px;
-  border-radius: 6px;
-}
-
-.header-action:hover:not(:disabled) {
-  color: var(--text-primary, #2d3748);
-  background: var(--hover-bg, rgba(0, 0, 0, 0.04));
-}
-
-.platform-filter {
-  position: relative;
-  margin-left: auto;
-}
-
-.platform-select-trigger {
-  box-sizing: border-box;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  max-width: 148px;
-  min-height: 24px;
-  padding: 0 6px 0 8px;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: var(--form-input-bg, #F7F7F7);
-  color: var(--text-primary, #2d3748);
-  font-size: 12px;
-  cursor: pointer;
-  transition: border-color 0.2s ease, background-color 0.2s ease, transform 0.12s ease;
-}
-
-.platform-select-trigger:hover,
-.platform-select-trigger.open {
-  background: var(--form-input-hover-bg, #f0f0f0);
-  border-color: var(--form-input-hover-border, transparent);
-}
-
-.platform-select-trigger:active {
-  transform: scale(0.97);
-}
-
-.platform-select-label {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.platform-select-arrow {
-  flex-shrink: 0;
-  color: var(--text-secondary, #718096);
-  transition: transform 0.16s ease;
-}
-
-.platform-select-trigger.open .platform-select-arrow {
-  transform: rotate(180deg);
-}
-
-.platform-filter-menu {
-  position: absolute;
-  top: calc(100% + 4px);
-  right: 0;
-  z-index: 8;
-  min-width: 148px;
-  padding: 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  border-radius: 12px;
-  background: var(--context-menu-bg, rgba(255, 255, 255, 0.4));
-  backdrop-filter: blur(40px) saturate(180%);
-  -webkit-backdrop-filter: blur(40px) saturate(180%);
-  border: 1px solid var(--context-menu-border, rgba(255, 255, 255, 0.55));
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.22), 0 4px 12px rgba(0, 0, 0, 0.12), inset 0 0.5px 0 rgba(255, 255, 255, 0.5);
-}
-
-.platform-filter-item {
-  appearance: none;
-  box-sizing: border-box;
-  width: 100%;
-  min-height: 32px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 8px;
-  border: none;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--context-menu-item-text, #2d3748);
-  font-size: 13px;
-  text-align: left;
-  cursor: pointer;
-}
-
-.platform-filter-item:hover,
-.platform-filter-item.active {
-  background-color: var(--context-menu-item-hover-bg, rgba(0, 0, 0, 0.06));
-}
-
-.dropdown-pop-enter-active,
-.dropdown-pop-leave-active {
-  transition: opacity 0.14s ease, transform 0.16s cubic-bezier(0.2, 0.8, 0.2, 1);
-  transform-origin: top right;
-}
-
-.dropdown-pop-enter-from,
-.dropdown-pop-leave-to {
-  opacity: 0;
-  transform: translateY(-4px) scale(0.96);
-}
-
-.search-input,
-.year-select {
-  box-sizing: border-box;
-  width: calc(100% - 16px);
-  margin: 8px;
-  padding: 7px 10px;
-  border: none;
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--text-primary, #2d3748) 6%, transparent);
-  color: inherit;
-  font-size: 12px;
-}
-
-.item-list {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
-  padding: 6px 8px 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.list-item {
-  width: 100%;
-  display: block;
-  text-align: left;
-  border: none;
-  background: transparent;
-  color: inherit;
-  padding: 8px 10px;
-  border-radius: 8px;
-  cursor: pointer;
-}
-
-.list-item:hover,
-.list-item.is-selected {
-  background: color-mix(in srgb, var(--text-primary, #2d3748) 6%, transparent);
-}
-
-.paper-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.paper-item .item-name {
-  flex: 1;
-  min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.item-count {
-  flex: 0 0 auto;
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-  color: var(--text-secondary, #718096);
-}
-
-.item-name {
-  font-size: 13px;
-  line-height: 1.4;
-}
-
-.item-meta,
-.list-empty {
-  font-size: 12px;
-  color: var(--text-secondary, #718096);
-}
-
-.list-empty {
-  padding: 16px 12px;
-}
-
-.main-body {
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
-  display: flex;
-}
-
-.empty-state {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  justify-content: center;
-  padding: 0 48px;
-  max-width: 520px;
-}
-
-.empty-title {
-  font-size: 20px;
-  font-weight: 650;
-}
-
-.empty-text {
-  margin: 8px 0 16px;
-  font-size: 13px;
-  line-height: 1.6;
-  color: var(--text-secondary, #718096);
-}
-
-.primary-btn {
-  border: none;
-  border-radius: 999px;
-  padding: 7px 14px;
-  background: #F8B62B;
-  color: #fff;
-  font-size: 13px;
-  cursor: pointer;
-}
-
-.primary-btn:hover:not(:disabled) {
-  opacity: 0.88;
-}
-
-.primary-btn:active:not(:disabled) {
-  transform: scale(0.97);
-}
-
-.primary-btn:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-.year-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.year-select {
-  width: 140px;
-  margin: 0;
 }
 </style>

@@ -4,7 +4,7 @@ import type {
   StudyGraphNodeRow,
   StudyGraphPayload,
   StudySubject,
-} from '../services/database'
+} from '../services/app/database'
 import { masteryLabel, normalizeMetric } from './questionMetrics'
 import { rolledRetention } from './studyForgetting'
 
@@ -225,7 +225,8 @@ export const parseGraphNodeInputs = (raw: unknown): StudyGraphNodeInput[] => {
           n += 1
         }
         seen.add(unique)
-        return { key: unique, name, summary: '', mastery: 0 }
+        const node: StudyGraphNodeInput = { key: unique, name, summary: '', mastery: 0 }
+        return node
       }
       const rec = asRecord(parsed)
       if (!rec) return null
@@ -243,13 +244,14 @@ export const parseGraphNodeInputs = (raw: unknown): StudyGraphNodeInput[] => {
       const parent = rec.parent_key ?? rec.parent ?? rec.parentKey
       const masteryRaw = rec.mastery ?? rec.level
       const mastery = typeof masteryRaw === 'number' ? masteryRaw : Number(masteryRaw)
-      return {
+      const node: StudyGraphNodeInput = {
         key: unique,
         name,
         summary: String(rec.summary || rec.desc || rec.description || rec.note || '').trim(),
         parent_key: parent == null || parent === '' ? undefined : String(parent),
         mastery: Number.isFinite(mastery) ? Math.max(0, Math.min(3, Math.round(mastery))) : 0,
       }
+      return node
     })
     .filter((item): item is StudyGraphNodeInput => Boolean(item))
     .slice(0, 60)

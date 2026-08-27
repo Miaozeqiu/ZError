@@ -29,7 +29,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import FileTree from '../views/questions/FileTree.vue'
-import { databaseService } from '../services/database'
+import { databaseService } from '../services/app/database'
 
 const props = withDefaults(defineProps<{
   visible: boolean

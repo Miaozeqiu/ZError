@@ -65,8 +65,8 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import type { AIModel, AIPlatform, RemoteModelIconMapping } from '../../services/modelConfig'
-import { fetchRemoteModelsCatalog, modelHasVision } from '../../services/modelConfig'
+import type { AIModel, AIPlatform, RemoteModelIconMapping } from '../../services/model/config'
+import { fetchRemoteModelsCatalog, modelHasVision } from '../../services/model/config'
 import ModelCategorySwitch from '../settings/ModelSettings/ModelCategorySwitch.vue'
 
 interface Props {

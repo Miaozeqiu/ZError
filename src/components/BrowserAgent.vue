@@ -144,7 +144,7 @@
               :max-live-nodes="0"
               :fade="false"
               :smooth-streaming="message.status === 'streaming'"
-              typewriter="off"
+              :typewriter="false"
               html-policy="safe"
               :render-code-blocks-as-pre="true"
             />
@@ -204,7 +204,7 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import MarkdownRender from 'markstream-vue'
 import 'markstream-vue/index.css'
-import '../services/markstream'
+import '../services/model/markstream'
 import { themeState } from '../composables/useTheme'
 import AgentQuizBlock from './AgentQuizBlock.vue'
 import {
@@ -217,13 +217,13 @@ import {
   stopChat,
   type AgentChatMessage,
   type AgentQuizAttempt,
-} from '../services/agentChat'
-import { hostnameOf } from '../services/appBrowser'
-import { browserChapterStates } from '../services/chaoxingChapters'
-import { browserVideoWatches, formatVideoClock } from '../services/chaoxingWatch'
+} from '../services/agent/chat'
+import { hostnameOf } from '../services/browser/appBrowser'
+import { browserChapterStates } from '../services/chaoxing/chapters'
+import { browserVideoWatches, formatVideoClock } from '../services/chaoxing/watch'
 import { shouldSubmitComposerEnter } from '../utils/composerEnter'
 import { getQuizCards, getQuizTitle, parseMarkdownQuizzes, parseQuizCards, stripMarkdownQuizzes, type QuizCard } from '../utils/quizPractice'
-import type { ImportTaskStep } from '../services/importTasks'
+import type { ImportTaskStep } from '../services/app/importTasks'
 
 const props = defineProps<{
   browserId?: string

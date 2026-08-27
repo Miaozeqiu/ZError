@@ -101,8 +101,8 @@ const props = defineProps<{
 import ContextMenu from './ContextMenu.vue';
 import ClearFolderQuestionsConfirmDialog from './ClearFolderQuestionsConfirmDialog.vue';
 import DeleteConfirmDialog from './DeleteConfirmDialog.vue';
-import { databaseService, type Folder } from '../../services/database';
-import { settingsManager } from '../../services/settings';
+import { databaseService, type Folder } from '../../services/app/database';
+import { settingsManager } from '../../services/app/settings';
 import { claimExclusiveMenu } from '../../composables/useExclusiveMenu';
 
 interface TreeNode {

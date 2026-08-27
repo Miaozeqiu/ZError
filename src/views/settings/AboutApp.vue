@@ -199,7 +199,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 
 type CSSProperties = Record<string, string>
-import { environmentDetector } from '../../services/environmentDetector'
+import { environmentDetector } from '../../services/app/environmentDetector'
 import { useAppUpdate } from '../../composables/useAppUpdate'
 
 

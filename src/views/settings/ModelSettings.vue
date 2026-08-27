@@ -417,11 +417,11 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, computed, nextTick } from 'vue'
-import { useModelConfig, fetchRemoteModelsCatalog, modelHasVision } from '../../services/modelConfig'
-import type { AIPlatform, AIModel, ApiProtocol, RemoteModelIconMapping } from '../../services/modelConfig'
-import { resolveExecutableModelJsCode, resolveRuntimeModelId } from '../../services/modelProtocol'
-import { environmentDetector } from '../../services/environmentDetector'
-import { getPlatformIconDisplayUrl, resolvePlatformIconUrl } from '../../services/iconCache'
+import { useModelConfig, fetchRemoteModelsCatalog, modelHasVision } from '../../services/model/config'
+import type { AIPlatform, AIModel, ApiProtocol, RemoteModelIconMapping } from '../../services/model/config'
+import { resolveExecutableModelJsCode, resolveRuntimeModelId } from '../../services/model/protocol'
+import { environmentDetector } from '../../services/app/environmentDetector'
+import { getPlatformIconDisplayUrl, resolvePlatformIconUrl } from '../../services/app/iconCache'
 import PlatformConfigDialog from './ModelSettings/PlatformConfigDialog.vue'
 import PlatformContextMenu from './ModelSettings/PlatformContextMenu.vue'
 import ModelContextMenu from './ModelSettings/ModelContextMenu.vue'

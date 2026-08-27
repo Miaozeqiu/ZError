@@ -329,9 +329,9 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue';
-import { databaseService, type AIResponse, type QuestionKnowledgeLink } from '../../services/database';
-import { openKnowledgeInStudy } from '../../services/questionKnowledge';
-import { isTauriEnvironment } from '../../services/environmentDetector';
+import { databaseService, type AIResponse, type QuestionKnowledgeLink } from '../../services/app/database';
+import { openKnowledgeInStudy } from '../../services/study/questionKnowledge';
+import { isTauriEnvironment } from '../../services/app/environmentDetector';
 import { invoke } from '@tauri-apps/api/core';
 import { save, open } from '@tauri-apps/plugin-dialog';
 import { writeFile } from '@tauri-apps/plugin-fs';
@@ -347,9 +347,9 @@ import QuestionDetail from './QuestionDetail.vue';
 import UnifiedContextMenu, { type MenuItem } from '../../components/UnifiedContextMenu.vue';
 import FolderPickerDialog from '../../components/FolderPickerDialog.vue';
 import { claimExclusiveMenu } from '../../composables/useExclusiveMenu';
-import { startFileImportChat } from '../../services/agentChat';
-import { modelConfigManager } from '../../services/modelConfig';
-import { settingsManager } from '../../services/settings';
+import { startFileImportChat } from '../../services/agent/chat';
+import { modelConfigManager } from '../../services/model/config';
+import { settingsManager } from '../../services/app/settings';
 import {
   normalizeMetric,
   type QuestionMetricValue,

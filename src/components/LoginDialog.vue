@@ -60,7 +60,7 @@
 import { computed, onUnmounted, ref, watch } from 'vue'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import wechatQr from '../assets/wechat-oa-qr.jpg'
-import { pollWechatLogin, triggerWechatLogin } from '../services/auth'
+import { pollWechatLogin, triggerWechatLogin } from '../services/app/auth'
 
 const props = defineProps<{
   visible: boolean

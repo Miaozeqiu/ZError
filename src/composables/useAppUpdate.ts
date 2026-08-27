@@ -1,12 +1,12 @@
 import { computed, ref } from 'vue'
-import { VersionCheckService, type VersionInfo } from '../services/versionCheck'
+import { VersionCheckService, type VersionInfo } from '../services/app/versionCheck'
 import {
   downloadUpdatePackage,
   openDownloadedUpdate,
   resolveDownloadFileName,
   resolvePlatformDownloadUrl,
-} from '../services/updateDownload'
-import { environmentDetector } from '../services/environmentDetector'
+} from '../services/app/updateDownload'
+import { environmentDetector } from '../services/app/environmentDetector'
 
 export type HeaderUpdateStatus =
   | 'idle'
