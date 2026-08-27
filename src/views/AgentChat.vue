@@ -56,7 +56,7 @@
             ref="threadRef"
             class="chat-thread"
             @scroll.passive="updateThreadPinned"
-            @wheel.passive="cancelThreadJump"
+            @wheel.passive="onThreadWheel"
             @pointerdown="onThreadPointerDown"
             @contextmenu.prevent="onThreadContextMenu"
           >
@@ -351,13 +351,6 @@
                 <div v-if="isThinking(message)" class="assistant-thinking">
                   正在思考
                 </div>
-                <div
-                  v-if="message.studyEval?.text"
-                  class="study-eval-note"
-                  :class="[`is-${message.studyEval.status}`]"
-                >
-                  {{ message.studyEval.text }}
-                </div>
                 <div v-if="message.status === 'stopped'" class="chat-stopped">已停止生成</div>
                 <div v-if="message.error" class="chat-error">{{ message.error }}</div>
               </div>
@@ -495,6 +488,32 @@
                 <button class="composer-model" type="button" @click="showModelSelector = true" :title="agentModelLabel">
                   {{ agentModelLabel }}
                 </button>
+                <div
+                  ref="contextMeterRef"
+                  class="context-meter"
+                  :class="{
+                    'is-warn': contextUsage.percent >= 70,
+                    'is-alert': contextUsage.percent >= 90,
+                    'is-compacting': contextCompacting,
+                  }"
+                  tabindex="0"
+                  :aria-label="contextCompacting ? '正在压缩上下文' : `上下文已用 ${contextUsageLabel}`"
+                  @pointerenter="openContextTip"
+                  @pointerleave="closeContextTip"
+                  @focus="openContextTip"
+                  @blur="closeContextTip"
+                >
+                  <svg class="context-meter-ring" viewBox="0 0 20 20" aria-hidden="true">
+                    <circle class="context-meter-track" cx="10" cy="10" r="7.2" />
+                    <circle
+                      class="context-meter-arc"
+                      cx="10"
+                      cy="10"
+                      r="7.2"
+                      :stroke-dasharray="contextRingDash"
+                    />
+                  </svg>
+                </div>
                 <button
                   v-if="sending"
                   class="composer-send is-stop"
@@ -703,6 +722,35 @@
     />
 
     <Teleport to="body">
+      <Transition name="context-meter-tip">
+        <div
+          v-if="contextTipOpen"
+          class="context-meter-tip"
+          role="tooltip"
+          :style="{ left: `${contextTipPos.x}px`, top: `${contextTipPos.y}px` }"
+        >
+          <div class="context-meter-tip-card">
+            <div class="context-meter-tip-head">
+              <span>上下文</span>
+              <span>{{ contextUsageLabel }}</span>
+            </div>
+            <div class="context-meter-tip-row" v-for="row in contextUsageRows" :key="row.label">
+              <span>{{ row.label }}</span>
+              <span>{{ row.value }}</span>
+            </div>
+            <div
+              v-if="contextTipNote"
+              class="context-meter-tip-note"
+              :class="{ 'is-live': contextCompacting }"
+            >
+              {{ contextTipNote }}
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
+
+    <Teleport to="body">
       <Transition name="image-preview">
         <div
           v-if="previewImage"
@@ -756,6 +804,8 @@ import {
   selectChat,
   sendChatMessage,
   setChatStudySubject,
+  estimateAgentContext,
+  contextCompacting,
   stopChat,
   isChatBusy,
   hydrateQuizCards,
@@ -788,6 +838,7 @@ import AgentCodeBlock from '../components/AgentCodeBlock.vue'
 import AgentQuizBlock from '../components/AgentQuizBlock.vue'
 import StudyMermaidGraph from '../components/StudyMermaidGraph.vue'
 import { finishStudyGraphStream, studyGraphStream } from '../services/studyGraphStream'
+import { composerEnterAction } from '../utils/composerEnter'
 import { graphFromPayload, type StudyGraphNode } from '../utils/studyGraph'
 import { getQuizCards, getQuizTitle, parseMarkdownQuizzes, parseOptions, parseQuizCards, stripMarkdownQuizzes, type QuizCard } from '../utils/quizPractice'
 import '../services/markstream'
@@ -1166,6 +1217,88 @@ const draft = ref('')
 const composerRef = ref<HTMLElement | null>(null)
 const composerFiles = computed(() => composerAttachments.value.filter(isFileAttachment))
 const composerImages = computed(() => composerAttachments.value.filter(isImageAttachment))
+const CONTEXT_RING = 2 * Math.PI * 7.2
+
+const formatContextTokens = (value: number) => {
+  const amount = Math.max(0, Math.round(value))
+  if (amount >= 1024) {
+    const k = amount / 1024
+    return `${k >= 10 ? Math.round(k) : k.toFixed(1).replace(/\.0$/, '')}k`
+  }
+  return String(amount)
+}
+
+const contextUsage = computed(() => estimateAgentContext(
+  activeChat.value,
+  draft.value,
+  composerImages.value.length,
+))
+
+const contextUsageLabel = computed(() => {
+  const usage = contextUsage.value
+  return `${formatContextTokens(usage.used)} / 256k · ${usage.percent < 1 && usage.used > 0 ? usage.percent.toFixed(1) : Math.round(usage.percent)}%`
+})
+
+const contextRingDash = computed(() => {
+  const filled = Math.max(0.8, (contextUsage.value.percent / 100) * CONTEXT_RING)
+  return `${filled} ${CONTEXT_RING}`
+})
+
+const contextMeterRef = ref<HTMLElement | null>(null)
+const contextTipOpen = ref(false)
+const contextTipPos = ref({ x: 0, y: 0 })
+
+const syncContextTipPos = () => {
+  const el = contextMeterRef.value
+  if (!el) return
+  const rect = el.getBoundingClientRect()
+  contextTipPos.value = {
+    x: Math.min(rect.right, window.innerWidth - 12),
+    y: Math.max(rect.top - 8, 12),
+  }
+}
+
+const openContextTip = () => {
+  syncContextTipPos()
+  contextTipOpen.value = true
+}
+
+const closeContextTip = () => {
+  contextTipOpen.value = false
+}
+
+onMounted(() => {
+  window.addEventListener('resize', closeContextTip)
+  window.addEventListener('scroll', closeContextTip, true)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('resize', closeContextTip)
+  window.removeEventListener('scroll', closeContextTip, true)
+})
+
+const contextUsageRows = computed(() => {
+  const usage = contextUsage.value
+  const rows = [
+    { label: '系统提示', value: usage.system },
+    { label: '工具定义', value: usage.tools },
+    { label: '前文摘要', value: usage.summary },
+    { label: '历史对话', value: usage.history },
+    { label: '学习状态', value: usage.study },
+    { label: '当前输入', value: usage.draft },
+    { label: '图片', value: usage.images },
+    { label: '剩余', value: usage.remain },
+  ]
+  return rows
+    .filter((row) => row.label === '剩余' || row.value > 0)
+    .map((row) => ({ label: row.label, value: formatContextTokens(row.value) }))
+})
+
+const contextTipNote = computed(() => {
+  if (contextCompacting.value) return '正在后台压缩前文…'
+  const count = contextUsage.value.compactedCount
+  return count ? `早期 ${count} 条已归档成摘要` : ''
+})
 
 const isDiskPath = (path?: string) => {
   const value = String(path || '').trim()
@@ -1741,6 +1874,7 @@ const typeTagKind = (type?: string) => {
 const visibleSteps = (steps: ImportTaskStep[]) => {
   const items: ImportTaskStep[] = []
   for (const step of steps) {
+    if (step.name === 'evaluate_study_progress') continue
     const dup = items.find((item) => {
       if (item.name !== step.name) return false
       if (item.name === 'get_file_info' || item.name === 'list_folders') return true
@@ -2072,6 +2206,7 @@ const imagesForMessage = (message: AgentChatSession['messages'][number], _index:
   attachmentsForMessage(message).filter(isImageAttachment)
 
 const composing = ref(false)
+let compositionEndedAt = 0
 
 const onComposerCompositionStart = () => {
   composing.value = true
@@ -2080,6 +2215,7 @@ const onComposerCompositionStart = () => {
 
 const onComposerCompositionEnd = () => {
   composing.value = false
+  compositionEndedAt = Date.now()
   syncDraftFromComposer()
   resizeComposer()
 }
@@ -2105,8 +2241,7 @@ const onComposerKeydown = (event: KeyboardEvent) => {
       return
     }
   }
-  if (event.key !== 'Enter' || event.shiftKey) return
-  if (event.isComposing || event.keyCode === 229 || composing.value) return
+  if (!shouldSubmitComposerEnter(event, composing.value, compositionEndedAt)) return
   event.preventDefault()
   submit()
 }
@@ -2180,6 +2315,8 @@ const threadPinned = ref(true)
 let threadScrollFrame = 0
 let threadJumping = false
 let threadJumpAnim = 0
+let threadSettleAnim = 0
+let threadSettleDeadline = 0
 const selectionBoxes = ref<{ left: number; top: number; width: number; height: number }[]>([])
 let customSelectionRange: Range | null = null
 let selectionAnchor: Range | null = null
@@ -2797,6 +2934,45 @@ const scrollThreadToBottom = () => {
   snapThreadToBottom()
 }
 
+const cancelThreadSettle = () => {
+  threadSettleDeadline = 0
+  if (!threadSettleAnim) return
+  cancelAnimationFrame(threadSettleAnim)
+  threadSettleAnim = 0
+}
+
+// 历史会话的 Markdown、代码高亮、图片会在挂载后继续撑高内容，
+// 只贴底一次会停在半空，所以持续贴底直到高度不再变化。
+const settleThreadToBottom = (duration = 900) => {
+  if (!threadRef.value) return
+  threadSettleDeadline = performance.now() + duration
+  if (threadSettleAnim) return
+  let lastHeight = -1
+  const step = () => {
+    threadSettleAnim = 0
+    const pane = threadRef.value
+    if (!pane || !threadPinned.value) {
+      threadSettleDeadline = 0
+      return
+    }
+    if (pane.scrollHeight !== lastHeight) {
+      lastHeight = pane.scrollHeight
+      snapThreadToBottom()
+    }
+    if (performance.now() >= threadSettleDeadline) {
+      threadSettleDeadline = 0
+      return
+    }
+    threadSettleAnim = requestAnimationFrame(step)
+  }
+  threadSettleAnim = requestAnimationFrame(step)
+}
+
+const onThreadWheel = () => {
+  cancelThreadJump()
+  cancelThreadSettle()
+}
+
 const scheduleThreadFollow = () => {
   if (!threadPinned.value || threadScrollFrame) return
   threadScrollFrame = requestAnimationFrame(() => {
@@ -2902,13 +3078,16 @@ watch(sending, (busy) => {
 
 watch(activeChatId, async () => {
   openedWriteStepId.value = null
+  cancelThreadJump()
+  cancelThreadSettle()
   threadPinned.value = true
   clearCustomSelection()
   clearComposer()
   await nextTick()
   bindPaneScrollbar('thread')
   scheduleHighlight()
-  scrollThreadToBottom()
+  snapThreadToBottom()
+  settleThreadToBottom()
 })
 
 watch(latestQuizKey, (key) => {
@@ -2964,6 +3143,11 @@ onMounted(() => {
   bindPaneScrollbar('thread')
   bindSelectionLayout()
   scheduleHighlight()
+  // 恢复的会话在挂载前就已是激活状态，activeChatId 的 watch 不会触发
+  void nextTick(() => {
+    snapThreadToBottom()
+    settleThreadToBottom()
+  })
   document.addEventListener('pointermove', onThreadPointerMove)
   document.addEventListener('pointerup', onThreadPointerUp)
   document.addEventListener('pointerdown', onSelectionMenuPointerDown, true)
@@ -2978,6 +3162,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  cancelThreadSettle()
   if (threadScrollFrame) cancelAnimationFrame(threadScrollFrame)
   if (selectionPaintFrame) cancelAnimationFrame(selectionPaintFrame)
   selectionResizeObs?.disconnect()
@@ -4657,6 +4842,146 @@ onUnmounted(() => {
   background: color-mix(in srgb, var(--text-primary, #2d3748) 6%, transparent);
 }
 
+.context-meter {
+  position: relative;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  color: var(--text-secondary, #718096);
+  outline: none;
+}
+
+.context-meter:hover,
+.context-meter:focus-visible {
+  background: color-mix(in srgb, var(--text-primary, #2d3748) 6%, transparent);
+}
+
+.context-meter-ring {
+  width: 16px;
+  height: 16px;
+  transform: rotate(-90deg);
+}
+
+.context-meter-track,
+.context-meter-arc {
+  fill: none;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+}
+
+.context-meter-track {
+  stroke: color-mix(in srgb, var(--text-primary, #2d3748) 12%, transparent);
+}
+
+.context-meter-arc {
+  stroke: #2F6F78;
+  transition: stroke-dasharray 180ms ease-out, stroke 180ms ease-out;
+}
+
+.context-meter.is-warn .context-meter-arc {
+  stroke: #d97706;
+}
+
+.context-meter.is-alert .context-meter-arc {
+  stroke: #dc2626;
+}
+
+.context-meter-tip {
+  position: fixed;
+  left: 0;
+  top: 0;
+  transform: translate(-100%, -100%);
+  pointer-events: none;
+  z-index: 100001;
+}
+
+.context-meter-tip-card {
+  min-width: 184px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--context-menu-bg, rgba(255, 255, 255, 0.42));
+  backdrop-filter: blur(40px) saturate(180%);
+  -webkit-backdrop-filter: blur(40px) saturate(180%);
+  border: 1px solid var(--context-menu-border, rgba(255, 255, 255, 0.55));
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.22), 0 4px 12px rgba(0, 0, 0, 0.12), inset 0 0.5px 0 rgba(255, 255, 255, 0.5);
+  transform-origin: bottom right;
+}
+
+.context-meter-tip-enter-active .context-meter-tip-card,
+.context-meter-tip-leave-active .context-meter-tip-card {
+  transition: opacity 0.14s ease, transform 0.16s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.context-meter-tip-enter-from .context-meter-tip-card,
+.context-meter-tip-leave-to .context-meter-tip-card {
+  opacity: 0;
+  transform: translateY(4px) scale(0.96);
+}
+
+.context-meter-tip-head,
+.context-meter-tip-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  font-variant-numeric: tabular-nums;
+}
+
+.context-meter-tip-head {
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary, #2d3748);
+}
+
+.context-meter-tip-row {
+  font-size: 11px;
+  line-height: 18px;
+  color: var(--text-secondary, #718096);
+}
+
+.context-meter-tip-note {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--text-primary, #2d3748) 10%, transparent);
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--text-secondary, #718096);
+}
+
+.context-meter-tip-note.is-live {
+  animation: context-compact-pulse 1.4s ease-in-out infinite;
+}
+
+.context-meter.is-compacting .context-meter-arc {
+  animation: context-compact-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes context-compact-pulse {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 1; }
+}
+
+[data-theme="dark"] .context-meter.is-warn .context-meter-arc {
+  stroke: #f0c674;
+}
+
+[data-theme="dark"] .context-meter.is-alert .context-meter-arc {
+  stroke: #f87171;
+}
+
+[data-theme="dark"] .context-meter-arc {
+  stroke: #7ab8c0;
+}
+
+[data-theme="dark"] .context-meter-tip-card {
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.44), 0 4px 12px rgba(0, 0, 0, 0.28), inset 0 0.5px 0 rgba(255, 255, 255, 0.08);
+}
+
 .composer-send {
   flex-shrink: 0;
   width: 28px;
@@ -4827,9 +5152,17 @@ onUnmounted(() => {
 @media (prefers-reduced-motion: reduce) {
   .activity-text.is-live,
   .assistant-thinking,
-  .study-eval-note.is-running {
+  .study-eval-note.is-running,
+  .context-meter-tip-note.is-live,
+  .context-meter.is-compacting .context-meter-arc {
     animation: none;
     opacity: 1;
+  }
+
+  .context-meter-arc,
+  .context-meter-tip-enter-active .context-meter-tip-card,
+  .context-meter-tip-leave-active .context-meter-tip-card {
+    transition: none;
   }
 
   .write-pane-enter-active,

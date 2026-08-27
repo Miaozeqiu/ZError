@@ -992,7 +992,10 @@ pub async fn clear_request_logs(state: State<'_, ServerState>) -> Result<String,
 
 #[tauri::command]
 pub async fn open_devtools(app: tauri::AppHandle) -> Result<String, String> {
-    if let Some(window) = app.get_webview_window("main") {
+    if let Some(webview) = app.get_webview("main") {
+        webview.open_devtools();
+        Ok("开发者工具已打开".to_string())
+    } else if let Some(window) = app.get_webview_window("main") {
         window.open_devtools();
         Ok("开发者工具已打开".to_string())
     } else {

@@ -18,7 +18,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2.0", features = [] }
 
 [dependencies]
-tauri = { version = "2.0", features = [ "macos-private-api", "devtools", "tray-icon", "webview-data-url", "image-png"] }
+tauri = { version = "2.0", features = [ "macos-private-api", "devtools", "tray-icon", "webview-data-url", "image-png", "unstable"] }
 tauri-plugin-opener = "2.0"
 # tauri-plugin-sql removed - using rusqlite directly
 # tauri-plugin-sql = { version = "2.0", features = ["sqlite"] }
@@ -60,3 +60,8 @@ objc2-foundation = { version = "0.3", features = ["NSProcessInfo", "NSString", "
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-process = "2.0"
 tauri-plugin-updater = "2.0"
+
+# macOS 上子 webview 与宿主 webview 会互抢鼠标光标，链接和输入框上的指针持续闪烁。
+# 上游 https://github.com/tauri-apps/wry/issues/1763 尚未修复，这里用本地打过补丁的 wry。
+[patch.crates-io]
+wry = { path = "vendor/wry" }

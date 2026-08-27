@@ -3,9 +3,11 @@
     <Transition name="context-menu-pop">
       <div
         v-if="visible"
+        ref="menuRef"
         class="context-menu"
         :style="menuStyle"
         @click.stop
+        @pointerdown.stop
       >
         <div class="context-menu-body">
           <!-- 菜单头部（可选） -->
@@ -97,7 +99,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, onUnmounted, ref, watch } from 'vue';
 import { createExclusiveMenuId, useExclusiveMenuProp } from '../composables/useExclusiveMenu';
 
 export interface MenuIcon {
@@ -172,6 +174,62 @@ const emit = defineEmits<{
 
 const menuId = props.exclusiveKey || createExclusiveMenuId('context');
 useExclusiveMenuProp(menuId, () => props.visible, () => emit('close'));
+
+const menuRef = ref<HTMLElement | null>(null);
+let outsideBound = false;
+
+const isInsideMenu = (event: Event) => {
+  const el = menuRef.value;
+  if (!el) return false;
+  const path = typeof event.composedPath === 'function' ? event.composedPath() : [];
+  if (path.includes(el)) return true;
+  return event.target instanceof Node && el.contains(event.target);
+};
+
+const close = () => emit('close');
+
+const onDocumentPointerDown = (event: Event) => {
+  if (isInsideMenu(event)) return;
+  close();
+};
+
+const onKeydown = (event: KeyboardEvent) => {
+  if (event.key === 'Escape') close();
+};
+
+const unbindOutside = () => {
+  if (!outsideBound) return;
+  outsideBound = false;
+  document.removeEventListener('pointerdown', onDocumentPointerDown, true);
+  document.removeEventListener('contextmenu', onDocumentPointerDown, true);
+  window.removeEventListener('keydown', onKeydown, true);
+  window.removeEventListener('blur', close);
+  window.removeEventListener('resize', close);
+};
+
+const bindOutside = () => {
+  if (outsideBound) return;
+  outsideBound = true;
+  document.addEventListener('pointerdown', onDocumentPointerDown, true);
+  document.addEventListener('contextmenu', onDocumentPointerDown, true);
+  window.addEventListener('keydown', onKeydown, true);
+  window.addEventListener('blur', close);
+  window.addEventListener('resize', close);
+};
+
+watch(
+  () => props.visible,
+  (visible) => {
+    if (visible) {
+      window.setTimeout(bindOutside, 0);
+      return;
+    }
+    unbindOutside();
+  },
+  { flush: 'post' },
+);
+
+onUnmounted(unbindOutside);
 
 // 处理菜单项点击
 const handleItemClick = (item: MenuItem) => {

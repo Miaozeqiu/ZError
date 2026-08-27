@@ -78,7 +78,7 @@
           <span>{{ leafChart.startLabel }}</span>
           <span>{{ leafChart.endLabel }}</span>
         </div>
-        <div v-else class="study-leaf-empty">还没有足够的学习记录</div>
+        <div v-else class="study-leaf-empty">还没有学习时长记录</div>
       </div>
       <div v-else class="study-heatmap">
       <div ref="heatmapScroll" class="study-heatmap-scroll">
@@ -137,8 +137,21 @@
           :class="`is-${item.kind}`"
           @click="onSelect(item)"
         >
-          <span class="study-timeline-dot" aria-hidden="true" />
-          <span class="study-timeline-time">{{ item.time }}</span>
+          <span
+            class="study-timeline-rail"
+            :class="{ 'is-instant': item.startTime === item.endTime }"
+            aria-hidden="true"
+          >
+            <span class="study-timeline-rail-node">
+              <span class="study-timeline-dot" />
+              <span class="study-timeline-time">{{ item.startTime }}</span>
+            </span>
+            <span v-if="item.startTime !== item.endTime" class="study-timeline-rail-line" />
+            <span v-if="item.startTime !== item.endTime" class="study-timeline-rail-node">
+              <span class="study-timeline-dot is-end" />
+              <span class="study-timeline-time">{{ item.endTime }}</span>
+            </span>
+          </span>
           <span class="study-timeline-copy">
             <span class="study-timeline-action" :class="`is-${item.kind}`">{{ item.action }}</span>
             <span v-if="item.detail">{{ item.detail }}</span>
@@ -151,12 +164,13 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { databaseService, type StudyActivity } from '../services/database'
+import type { StudyActivity, StudyTimelineSummary } from '../services/database'
 import type { StudyGraphNode } from '../utils/studyGraph'
 
 const props = defineProps<{
   subjectId?: number | null
   items: StudyActivity[]
+  summaries?: StudyTimelineSummary[]
   graph?: StudyGraphNode | null
   emptyText?: string
 }>()
@@ -178,41 +192,49 @@ const weekdayIndex = (date: Date) => {
   return day === 0 ? 6 : day - 1
 }
 
-const leafIndex = computed(() => {
-  const leavesOf = new Map<string, string[]>()
-  const allLeaves: string[] = []
-  const walk = (node: StudyGraphNode, isRoot = false) => {
-    const name = node.name.trim()
-    const kids = node.children.filter((child) => child.name.trim())
-    if (!kids.length) {
-      if (!isRoot && name) {
-        leavesOf.set(name, [name])
-        if (!allLeaves.includes(name)) allLeaves.push(name)
-      }
-      return
-    }
-    kids.forEach((child) => walk(child))
-    if (!isRoot && name) {
-      const leaves = kids.flatMap((child) => leavesOf.get(child.name.trim()) || [])
-      leavesOf.set(name, [...new Set(leaves)])
-    }
-  }
-  if (props.graph) walk(props.graph, true)
-  return { leavesOf, allLeaves }
-})
-
-const resolveLeaves = (names: string[]) => {
-  const { leavesOf } = leafIndex.value
-  const resolved: string[] = []
-  for (const raw of names) {
-    const name = raw.trim()
-    if (!name) continue
-    const leaves = leavesOf.get(name)
-    if (leaves?.length) leaves.forEach((leaf) => resolved.push(leaf))
-    else resolved.push(name)
-  }
-  return [...new Set(resolved)]
+const formatDuration = (minutes: number) => {
+  const total = Math.max(1, Math.round(minutes))
+  if (total < 60) return `${total} 分钟`
+  const hours = Math.floor(total / 60)
+  const rest = total % 60
+  return rest ? `${hours} 小时 ${rest} 分钟` : `${hours} 小时`
 }
+
+const sessionSpans = computed(() => (
+  (props.summaries || [])
+    .map((summary) => {
+      const start = parseStamp(summary.start_time)
+      const end = parseStamp(summary.end_time)
+      const minutes = Math.max(1, Math.round((end - start) / 60000))
+      return { ...summary, start, end, minutes }
+    })
+    .filter((item) => item.start > 0 && item.end > 0)
+    .sort((a, b) => a.start - b.start)
+))
+
+const addSessionMinutesToDays = (
+  startMs: number,
+  endMs: number,
+  byDay: Map<string, number>,
+) => {
+  let cursor = startMs
+  while (cursor < endMs) {
+    const dayEnd = dayStart(cursor) + 86400000
+    const sliceEnd = Math.min(endMs, dayEnd)
+    const minutes = (sliceEnd - cursor) / 60000
+    const key = dateKey(new Date(cursor))
+    byDay.set(key, (byDay.get(key) || 0) + minutes)
+    cursor = sliceEnd
+  }
+}
+
+const dailyStudyMinutes = computed(() => {
+  const byDay = new Map<string, number>()
+  for (const session of sessionSpans.value) {
+    addSessionMinutesToDays(session.start, session.end, byDay)
+  }
+  return byDay
+})
 
 const HEATMAP_LABEL_W = 12
 const HEATMAP_HEAD_H = 18
@@ -255,34 +277,11 @@ const lineHover = ref<{
 } | null>(null)
 const chartMode = ref<'line' | 'heat'>(readChartMode())
 const chartYear = ref(new Date().getFullYear())
-const extraItems = ref<StudyActivity[]>([])
-const heatmapPoints = ref<Array<{ names: string[]; create_time: string }>>([])
 const loadedDays = new Set<string>()
 const inflightDays = new Map<string, Promise<void>>()
 const dayOffset = new Map<string, number>()
 
-const mergedItems = computed(() => {
-  const map = new Map<number, StudyActivity>()
-  for (const item of props.items) map.set(item.id, item)
-  for (const item of extraItems.value) map.set(item.id, item)
-  return [...map.values()]
-})
-
-const dailyLeaves = computed(() => {
-  const byDay = new Map<string, Set<string>>()
-  const rows = heatmapPoints.value.length
-    ? heatmapPoints.value
-    : mergedItems.value.filter((item) => item.kind === 'learn' || item.kind === 'review')
-  for (const item of rows) {
-    const stamp = parseStamp(item.create_time)
-    if (!stamp) continue
-    const key = dateKey(new Date(stamp))
-    const set = byDay.get(key) || new Set<string>()
-    resolveLeaves(item.names).forEach((leaf) => set.add(leaf))
-    byDay.set(key, set)
-  }
-  return { byDay }
-})
+const dailyLeaves = computed(() => ({ byDay: dailyStudyMinutes.value }))
 
 const heatmapRange = computed(() => {
   const year = chartYear.value
@@ -294,7 +293,7 @@ const heatmapRange = computed(() => {
   const cursor = new Date(start)
   while (cursor <= end) {
     const key = dateKey(cursor)
-    data.push([key, dailyLeaves.value.byDay.get(key)?.size || 0])
+    data.push([key, Math.round(dailyLeaves.value.byDay.get(key) || 0)])
     cursor.setDate(cursor.getDate() + 1)
   }
   const offset = weekdayIndex(start)
@@ -353,7 +352,7 @@ const heatmapCells = computed(() => {
       key,
       count,
       placeholder: false,
-      title: count > 0 ? `${label}，${count} 个最小知识点` : `${label} 还没学`,
+      title: count > 0 ? `${label}，学习 ${formatDuration(count)}` : `${label} 未学习`,
       label,
       style: {
         gridColumn: `${column}`,
@@ -423,13 +422,22 @@ watch(() => props.items.length, () => {
 type TimelineItem = {
   key: string
   kind: string
-  time: string
+  startTime: string
+  endTime: string
   stamp: number
+  startStamp?: number
+  endStamp?: number
+  minutes?: number
   action: string
   detail: string
   names: string[]
   question_count: number
   correct_count: number
+}
+
+const formatClock = (stamp: number) => {
+  const date = new Date(stamp)
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
 }
 
 const parseStamp = (value: string) => {
@@ -438,64 +446,6 @@ const parseStamp = (value: string) => {
   const normalized = raw.includes('T') ? raw : raw.replace(' ', 'T')
   const ms = Date.parse(normalized)
   return Number.isFinite(ms) ? ms : Date.parse(`${normalized}Z`) || 0
-}
-
-const LEARN_CLUSTER_MS = 30 * 60 * 1000
-
-const parentFamilies = computed(() => {
-  const families: { parent: string; children: string[] }[] = []
-  const walk = (node: StudyGraphNode, isRoot = false) => {
-    const kids = node.children.filter((child) => child.name.trim())
-    if (!isRoot && node.name.trim() && kids.length) {
-      families.push({
-        parent: node.name.trim(),
-        children: kids.map((child) => child.name.trim()),
-      })
-    }
-    kids.forEach((child) => walk(child))
-  }
-  if (props.graph) walk(props.graph, true)
-  return families
-})
-
-const collapseNames = (names: string[]) => {
-  const families = parentFamilies.value
-  if (!families.length) return [...new Set(names.map((item) => item.trim()).filter(Boolean))]
-  let current = [...new Set(names.map((item) => item.trim()).filter(Boolean))]
-  let changed = true
-  while (changed) {
-    changed = false
-    for (const family of families) {
-      if (!family.children.length || family.children.includes(family.parent)) continue
-      if (!family.children.every((child) => current.includes(child))) continue
-      current = current.filter((name) => !family.children.includes(name))
-      if (!current.includes(family.parent)) current.push(family.parent)
-      changed = true
-    }
-  }
-  return current
-}
-
-const joinNames = (names: string[]) => {
-  const unique = [...new Set(names.map((item) => item.trim()).filter(Boolean))]
-  if (!unique.length) return ''
-  if (unique.length <= 3) return unique.join('、')
-  return `${unique.slice(0, 3).join('、')} 等 ${unique.length} 个`
-}
-
-const itemParts = (item: StudyActivity) => {
-  const names = joinNames(item.names)
-  if (item.kind === 'practice') {
-    const total = Math.max(1, Number(item.question_count) || 0)
-    const correct = Math.max(0, Number(item.correct_count) || 0)
-    const rate = Math.round((correct / total) * 100)
-    return {
-      action: '练习',
-      detail: names ? ` ${total} 道，正确率 ${rate}% · ${names}` : ` ${total} 道，正确率 ${rate}%`,
-    }
-  }
-  if (item.kind === 'review') return { action: '复习', detail: names ? ` ${names}` : ' 知识点' }
-  return { action: '学习', detail: names ? ` ${names}` : ' 知识点' }
 }
 
 const dayLabel = (stamp: number) => {
@@ -509,103 +459,27 @@ const dayLabel = (stamp: number) => {
   return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日`
 }
 
-const clock = (stamp: number) => {
-  const date = new Date(stamp)
-  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
-}
+const summaryTimelineItems = computed<TimelineItem[]>(() => (
+  sessionSpans.value.map((summary) => ({
+    key: `summary-${summary.id}`,
+    kind: 'summary',
+    startTime: formatClock(summary.start),
+    endTime: formatClock(summary.end),
+    stamp: summary.end,
+    startStamp: summary.start,
+    endStamp: summary.end,
+    action: '学习',
+    detail: ` ${summary.text}`,
+    names: [],
+    question_count: 0,
+    correct_count: 0,
+    minutes: summary.minutes,
+  }))
+))
 
-const groupedItems = computed(() => {
-  const rows = [...mergedItems.value]
-    .map((item) => ({ item, stamp: parseStamp(item.create_time) }))
-    .sort((a, b) => b.stamp - a.stamp || b.item.id - a.item.id)
-  const merged: TimelineItem[] = []
-  for (const row of rows) {
-    const prev = merged[merged.length - 1]
-    if (
-      row.item.kind === 'practice'
-      && prev?.kind === 'practice'
-      && Math.abs(prev.stamp - row.stamp) <= 20 * 60 * 1000
-    ) {
-      prev.question_count += row.item.question_count || 1
-      prev.correct_count += row.item.correct_count || 0
-      prev.names = [...new Set([...prev.names, ...row.item.names])]
-      prev.stamp = Math.max(prev.stamp, row.stamp)
-      prev.time = clock(prev.stamp)
-      prev.key = `${prev.key}+${row.item.id}`
-      const parts = itemParts({
-        ...row.item,
-        names: prev.names,
-        question_count: prev.question_count,
-        correct_count: prev.correct_count,
-      })
-      prev.action = parts.action
-      prev.detail = parts.detail
-      continue
-    }
-    const names = row.item.kind === 'learn' ? collapseNames(row.item.names) : [...row.item.names]
-    const parts = itemParts({ ...row.item, names })
-    merged.push({
-      key: String(row.item.id),
-      kind: row.item.kind,
-      time: clock(row.stamp),
-      stamp: row.stamp,
-      action: parts.action,
-      detail: parts.detail,
-      names,
-      question_count: row.item.question_count || 0,
-      correct_count: row.item.correct_count || 0,
-    })
-  }
-  return collapseLearnClusters(merged)
-})
-
-const collapseLearnClusters = (items: TimelineItem[]) => {
-  const learns = items
-    .filter((item) => item.kind === 'learn')
-    .sort((a, b) => b.stamp - a.stamp)
-  if (learns.length < 2) return items
-  const clusters: TimelineItem[][] = []
-  for (const item of learns) {
-    const prev = clusters[clusters.length - 1]
-    if (prev && Math.abs(prev[prev.length - 1].stamp - item.stamp) <= LEARN_CLUSTER_MS) {
-      prev.push(item)
-    } else {
-      clusters.push([item])
-    }
-  }
-  const replace = new Map<string, TimelineItem>()
-  const drop = new Set<string>()
-  for (const cluster of clusters) {
-    if (cluster.length < 2) continue
-    const names = collapseNames(cluster.flatMap((item) => item.names))
-    const original = [...new Set(cluster.flatMap((item) => item.names))]
-    if (names.length >= original.length && names.every((name) => original.includes(name))) continue
-    const latest = cluster.reduce((best, item) => (item.stamp > best.stamp ? item : best), cluster[0])
-    const parts = itemParts({
-      id: 0,
-      subject_id: 0,
-      kind: 'learn',
-      names,
-      question_count: 0,
-      correct_count: 0,
-      create_time: '',
-    })
-    replace.set(latest.key, {
-      ...latest,
-      key: cluster.map((item) => item.key).join('+'),
-      names,
-      action: parts.action,
-      detail: parts.detail,
-    })
-    cluster.forEach((item) => {
-      if (item.key !== latest.key) drop.add(item.key)
-    })
-  }
-  if (!replace.size) return items
-  return items
-    .filter((item) => !drop.has(item.key))
-    .map((item) => replace.get(item.key) || item)
-}
+const displayItems = computed(() => (
+  [...summaryTimelineItems.value].sort((a, b) => b.stamp - a.stamp || b.key.localeCompare(a.key))
+))
 
 const dayStart = (stamp: number) => {
   const date = new Date(stamp)
@@ -630,20 +504,11 @@ const smoothPath = (points: Array<{ x: number; y: number }>) => {
   return d
 }
 
-const chartEventRows = computed(() => {
-  const rows = heatmapPoints.value.length
-    ? heatmapPoints.value
-    : mergedItems.value.filter((item) => item.kind === 'learn' || item.kind === 'review')
-  return rows
-    .map((item) => ({ stamp: parseStamp(item.create_time), leaves: resolveLeaves(item.names) }))
-    .filter((item) => item.stamp && item.leaves.length)
-    .sort((a, b) => a.stamp - b.stamp)
-})
-
 const chartYears = computed(() => {
   const years = new Set<number>([new Date().getFullYear()])
-  for (const item of chartEventRows.value) {
-    years.add(new Date(item.stamp).getFullYear())
+  for (const session of sessionSpans.value) {
+    years.add(new Date(session.start).getFullYear())
+    years.add(new Date(session.end).getFullYear())
   }
   return [...years].sort((a, b) => a - b)
 })
@@ -663,46 +528,40 @@ const leafChart = computed(() => {
     startLabel: '',
     endLabel: '',
   }
-  const events = chartEventRows.value
   const year = chartYear.value
   const yearStart = new Date(year, 0, 1).getTime()
   const yearLimit = Math.min(new Date(year, 11, 31).getTime(), dayStart(Date.now()))
-  const firstInYear = events.find((item) => {
-    const date = new Date(item.stamp)
-    return date.getFullYear() === year
-  })
-  if (!firstInYear || yearLimit < yearStart) return empty
-  const start = new Date(year, new Date(firstInYear.stamp).getMonth(), 1).getTime()
+  const sessions = sessionSpans.value.filter((item) => (
+    new Date(item.start).getFullYear() === year || new Date(item.end).getFullYear() === year
+  ))
+  if (!sessions.length || yearLimit < yearStart) return empty
+
   const days: number[] = []
-  const cursorDate = new Date(start)
+  const cursorDate = new Date(yearStart)
   const lastDay = new Date(yearLimit)
   while (cursorDate <= lastDay) {
     days.push(cursorDate.getTime())
     cursorDate.setDate(cursorDate.getDate() + 1)
   }
   if (!days.length) return empty
-  const seen = new Set<string>()
-  let cursor = 0
-  while (cursor < events.length && events[cursor].stamp < start) {
-    events[cursor].leaves.forEach((leaf) => seen.add(leaf))
-    cursor += 1
-  }
+
+  const daily = dailyStudyMinutes.value
+  let cumulative = 0
   const series = days.map((day) => {
-    const next = new Date(day)
-    next.setDate(next.getDate() + 1)
-    const limit = next.getTime()
-    while (cursor < events.length && events[cursor].stamp < limit) {
-      events[cursor].leaves.forEach((leaf) => seen.add(leaf))
-      cursor += 1
-    }
-    return { day, value: seen.size }
+    const key = dateKey(new Date(day))
+    cumulative += daily.get(key) || 0
+    return { day, value: cumulative }
   })
   const recorded = new Set<string>()
-  for (const item of events) {
-    if (item.stamp < start || item.stamp >= yearLimit + 86400000) continue
-    recorded.add(dateKey(new Date(item.stamp)))
+  for (const session of sessions) {
+    let cursor = Math.max(session.start, yearStart)
+    const end = Math.min(session.end, yearLimit + 86400000)
+    while (cursor < end) {
+      recorded.add(dateKey(new Date(cursor)))
+      cursor = dayStart(cursor) + 86400000
+    }
   }
-  const max = Math.max(leafIndex.value.allLeaves.length, seen.size, 1)
+  const max = Math.max(...series.map((item) => item.value), 1)
   const innerW = width - pad.l - pad.r
   const innerH = height - pad.t - pad.b
   const xAt = (index: number) => pad.l + (series.length === 1 ? innerW / 2 : (index / (series.length - 1)) * innerW)
@@ -778,7 +637,7 @@ const pointFromClientX = (clientX: number, el: HTMLElement) => {
     y: best.y,
     left: (best.x / chart.width) * 100,
     top: (best.y / chart.height) * 100,
-    label: dayPointLabel(best.day),
+    label: `${dayPointLabel(best.day)} · 累计 ${formatDuration(best.value)}`,
     dayKey: best.dayKey,
     nearKey,
   }
@@ -809,7 +668,7 @@ const setChartMode = (mode: 'line' | 'heat') => {
 
 const groups = computed(() => {
   const map = new Map<string, TimelineItem[]>()
-  for (const item of groupedItems.value) {
+  for (const item of displayItems.value) {
     const key = dateKey(new Date(item.stamp))
     const list = map.get(key)
     if (list) list.push(item)
@@ -824,10 +683,8 @@ const groups = computed(() => {
 
 const oldestLoadedKey = computed(() => {
   let oldest = ''
-  for (const item of mergedItems.value) {
-    const stamp = parseStamp(item.create_time)
-    if (!stamp) continue
-    const key = dateKey(new Date(stamp))
+  for (const item of sessionSpans.value) {
+    const key = dateKey(new Date(item.start))
     if (!oldest || key < oldest) oldest = key
   }
   return oldest
@@ -906,38 +763,11 @@ const dayNeedsFetch = (key: string) => {
 }
 
 const fetchDay = async (key: string) => {
-  const id = Number(props.subjectId)
-  if (!Number.isFinite(id) || id <= 0) {
-    loadedDays.add(key)
-    return
-  }
-  const pending = inflightDays.get(key)
-  if (pending) {
-    await pending
-    return
-  }
-  const task = (async () => {
-    const { start, end } = dayBounds(key)
-    try {
-      const rows = await databaseService.listStudyActivityBetween(id, start, end)
-      if (rows.length) {
-        const seen = new Set(extraItems.value.map((item) => item.id))
-        const next = rows.filter((item) => !seen.has(item.id) && !props.items.some((row) => row.id === item.id))
-        if (next.length) extraItems.value = [...extraItems.value, ...next]
-      }
-    } catch {
-      // keep the already-loaded timeline if one day fails
-    }
-    loadedDays.add(key)
-    inflightDays.delete(key)
-  })()
-  inflightDays.set(key, task)
-  await task
+  loadedDays.add(key)
 }
 
 const warmupDay = async (key: string) => {
-  if (dayNeedsFetch(key)) await fetchDay(key)
-  else loadedDays.add(key)
+  loadedDays.add(key)
   await nextTick()
   measureDay(key)
 }
@@ -960,43 +790,20 @@ const selectDay = async (cell: { key: string; placeholder: boolean }) => {
   jumpToDay(cell.key)
 }
 
-const loadHeatmap = async () => {
-  const id = Number(props.subjectId)
-  if (!Number.isFinite(id) || id <= 0) {
-    heatmapPoints.value = []
-    return
-  }
-  try {
-    heatmapPoints.value = await databaseService.listStudyHeatmap(id)
-  } catch {
-    heatmapPoints.value = []
-  }
-}
-
 watch(
   () => props.subjectId,
   () => {
-    extraItems.value = []
     loadedDays.clear()
     inflightDays.clear()
     dayOffset.clear()
     selectedDay.value = ''
     chartYear.value = new Date().getFullYear()
-    void loadHeatmap()
   },
   { immediate: true },
 )
 
 watch(
-  () => [props.items[0]?.id, props.items.length] as const,
-  () => {
-    dayOffset.clear()
-    void loadHeatmap()
-  },
-)
-
-watch(
-  () => extraItems.value.length,
+  () => props.summaries?.length,
   () => {
     dayOffset.clear()
   },
@@ -1011,6 +818,7 @@ watch(chartYear, () => {
 })
 
 const onSelect = (item: TimelineItem) => {
+  if (item.kind === 'summary') return
   const name = item.names[0]
   if (name) emit('select', name)
 }
@@ -1328,7 +1136,7 @@ const onSelect = (item: TimelineItem) => {
 
 .study-timeline-item {
   display: flex;
-  align-items: flex-start;
+  align-items: stretch;
   gap: 8px;
   width: 100%;
   padding: 5px 4px;
@@ -1348,13 +1156,44 @@ const onSelect = (item: TimelineItem) => {
   transform: scale(0.99);
 }
 
+.study-timeline-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  flex: 0 0 auto;
+  min-width: 44px;
+}
+
+.study-timeline-rail.is-instant {
+  justify-content: flex-start;
+  padding-top: 3px;
+}
+
+.study-timeline-rail-node {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.study-timeline-rail-line {
+  flex: 1 1 auto;
+  width: 1.5px;
+  min-height: 8px;
+  margin: 2px 0 2px 2.75px;
+  border-radius: 1px;
+  background: color-mix(in srgb, #64748b 38%, transparent);
+}
+
 .study-timeline-dot {
   flex: 0 0 7px;
   width: 7px;
   height: 7px;
-  margin-top: 5px;
   border-radius: 50%;
   background: #94a3b8;
+}
+
+.study-timeline-dot.is-end {
+  background: #64748b;
 }
 
 .study-timeline-item.is-learn .study-timeline-dot {
@@ -1369,11 +1208,24 @@ const onSelect = (item: TimelineItem) => {
   background: #d97706;
 }
 
+.study-timeline-item.is-summary .study-timeline-dot {
+  background: #64748b;
+}
+
+.study-timeline-action.is-summary {
+  color: #64748b;
+}
+
+.study-timeline-item.is-summary .study-timeline-copy {
+  padding-top: 1px;
+  white-space: normal;
+  line-height: 1.45;
+}
+
 .study-timeline-time {
-  flex: 0 0 36px;
-  margin-top: 1px;
   font-size: 11px;
   font-variant-numeric: tabular-nums;
+  line-height: 1;
   color: var(--text-secondary, #94a3b8);
 }
 

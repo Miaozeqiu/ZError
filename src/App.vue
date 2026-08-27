@@ -9,6 +9,7 @@ import Settings from "./views/Settings.vue";
 import QuestionBank from "./views/QuestionBank.vue";
 import CampusBank from "./views/CampusBank.vue";
 import Study from "./views/Study.vue";
+import Browser from "./views/Browser.vue";
 import Agent from "./views/Agent.vue";
 import LoginDialog from "./components/LoginDialog.vue";
 import { restoreAuthSession } from "./services/auth";
@@ -464,6 +465,10 @@ onUnmounted(() => {
           <Study />
         </div>
 
+        <div v-show="activeTab === 'browser'" class="content-view">
+          <Browser :active="activeTab === 'browser'" />
+        </div>
+
         <div v-show="activeTab === 'agent' || activeTab === 'import-tasks'" class="content-view">
           <Agent @open-folder="handleOpenQuestionFolder" />
         </div>
@@ -590,6 +595,20 @@ body {
   overflow: hidden;
   background-color: var(--bg-primary, #f4f4f4);
   position: relative;
+}
+
+html.abs-over-page,
+html.abs-over-page body,
+html.abs-over-page #app,
+html.abs-over-page .app-container,
+html.abs-over-page .main-content,
+html.abs-over-page .content-area,
+html.abs-over-page .content-view,
+html.abs-over-page .browser-page,
+html.abs-over-page .browser-main,
+html.abs-over-page .browser-host {
+  background: transparent !important;
+  background-color: transparent !important;
 }
 
 /* 确保所有页面组件占满容器并正确定位 */

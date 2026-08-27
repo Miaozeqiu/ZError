@@ -8,6 +8,35 @@ import { getQuizCards, parseQuizCards, resolveQuizTitle, saveQuizCards, saveQuiz
 import { collectGraphNodes, extractMermaidSource, graphFromPayload, graphToMermaid, parseGraphEdgeInputs, parseGraphNodeInputs } from '../utils/studyGraph'
 import { isLoggedIn } from './auth'
 import {
+  clickBrowserElement,
+  clickBrowserText,
+  evalBrowserView,
+  fillChaoxingCaptcha,
+  fillChaoxingHomework,
+  getBrowserState,
+  inspectChaoxingHomework,
+  openChaoxingHomeworkItem,
+  openChaoxingHomeworkList,
+  saveChaoxingHomework,
+  submitChaoxingHomework,
+  goBackBrowserView,
+  goForwardBrowserView,
+  hostnameOf,
+  listAppBrowsers,
+  navigateBrowserView,
+  openChaoxingChapters,
+  openNextChaoxingChapter,
+  playChaoxingVideo,
+  readBrowserPage,
+  readChaoxingVideo,
+  reloadBrowserView,
+  scrollBrowserView,
+  studyChaoxingUnfinished,
+  typeBrowserElement,
+  videoIsPlaying,
+} from './appBrowser'
+import { solveChaoxingCaptcha } from './chaoxingCaptcha'
+import {
   campusApiType,
   campusQuestionTypeLabel,
   createCampusPaper,
@@ -28,12 +57,29 @@ import {
   type CampusFolder,
   type CampusQuestion,
 } from './campus'
-import { clipAgentDebug, logAgentDebug } from './agentDebugLog'
+import { clipAgentDebug, logAgentDebug, writeBrowserTranscript } from './agentDebugLog'
 import { RemoteApiError } from './remoteHttp'
-import { emitStudyGraphStream, finishStudyGraphStream } from './studyGraphStream'
-import { formatEvalNotice, runStudyProgressEvaluation } from './studyProgressAgent'
+import { emitStudyGraphStream, finishStudyGraphStream, studyGraphStream } from './studyGraphStream'
+import { runStudyProgressEvaluation } from './studyProgressAgent'
+import { finalizeStudySessionSummary } from './studyTimelineSummary'
 import { associateQuestionsToKnowledge, notifyQuestionKnowledgeUpdated, type QuestionKnowledgeHint } from './questionKnowledge'
 import { clampForgettingStage, forgettingStageLabel, retentionScore } from '../utils/studyForgetting'
+import { CHAOXING_LOGIN_PROMPT } from './browserSkills/chaoxingLogin'
+import { CHAOXING_HOMEWORK_PROMPT } from './browserSkills/chaoxingHomework'
+import { CHAOXING_STUDY_PROMPT } from './browserSkills/chaoxingStudy'
+import {
+  chapterStateFor,
+  startChaoxingChapterParser,
+  waitForChapterState,
+} from './chaoxingChapters'
+import {
+  formatVideoClock,
+  setChaoxingWatchHandler,
+  startChaoxingWatch,
+  stopChaoxingWatch,
+  videoWatchFor,
+  type VideoWatchCheck,
+} from './chaoxingWatch'
 
 export interface AgentQuizAttempt {
   stepId: string
@@ -61,6 +107,7 @@ export interface AgentChatMessage {
   id: string
   role: 'user' | 'assistant'
   content: string
+  kind?: 'watch'
   attachments?: AgentChatAttachment[]
   steps: ImportTaskStep[]
   quizAttempts?: AgentQuizAttempt[]
@@ -178,12 +225,23 @@ export const expandFolderTokens = (text: string, items?: AgentChatAttachment[]) 
   })
 }
 
+export interface AgentContextSummary {
+  text: string
+  // 摘要覆盖到哪条消息（含）。用 id 而不是下标，避免消息增删后错位
+  coveredThrough: string
+  coveredCount: number
+  tokens: number
+  updatedAt: number
+}
+
 export interface AgentChatSession {
   id: string
   title: string
   messages: AgentChatMessage[]
   attachments?: AgentChatAttachment[]
   studySubjectId?: number
+  browserId?: string
+  contextSummary?: AgentContextSummary
   createdAt: number
   updatedAt: number
 }
@@ -220,6 +278,10 @@ const loadPersisted = () => {
       ...session,
       attachments: Array.isArray(session.attachments) ? session.attachments : undefined,
       studySubjectId: Number(session.studySubjectId) > 0 ? Number(session.studySubjectId) : undefined,
+      browserId: String(session.browserId || '').trim() || undefined,
+      contextSummary: session.contextSummary?.text && session.contextSummary.coveredThrough
+        ? session.contextSummary
+        : undefined,
       messages: (session.messages || []).map((message) => ({
         ...message,
         attachments: Array.isArray(message.attachments) ? message.attachments : undefined,
@@ -231,7 +293,7 @@ const loadPersisted = () => {
         error: message.status === 'streaming' ? '应用关闭时对话中断' : message.error,
       })),
     }))
-    activeId.value = sessions.value[0]?.id || null
+    activeId.value = sessions.value.find((session) => !session.browserId)?.id || null
   } catch {
     sessions.value = []
   }
@@ -277,11 +339,16 @@ const persist = () => {
       // ignore quota
     }
   }
+  const latestBrowser = sessions.value
+    .filter((session) => session.browserId)
+    .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))[0]
+  writeBrowserTranscript(latestBrowser)
 }
 
 loadPersisted()
 
-export const chatSessions = computed(() => sessions.value)
+export const chatSessions = computed(() => sessions.value.filter((session) => !session.browserId))
+export const browserChatSessions = computed(() => sessions.value.filter((session) => session.browserId))
 export const activeChatId = computed(() => activeId.value)
 export const activeChat = computed(
   () => sessions.value.find((session) => session.id === activeId.value) || null
@@ -1145,6 +1212,241 @@ const CHAT_TOOLS = [
   },
 ]
 
+const BROWSER_TOOLS = [
+  {
+    type: 'function',
+    function: {
+      name: 'browser_get_state',
+      description: '查看当前浏览器的网址和标题。',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_get_page',
+      description: '读取当前网页的可见正文、标题和主要链接。操作页面前先调用。',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_navigate',
+      description: '打开指定网址。学习通课程里不要打开 iframe 的 src（studentcourse / knowledge/cards / ananas），留在当前课页操作。',
+      parameters: {
+        type: 'object',
+        properties: { url: { type: 'string', description: 'http/https 网址' } },
+        required: ['url'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_reload',
+      description: '刷新当前网页。',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_go_back',
+      description: '后退到上一页。',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_go_forward',
+      description: '前进到下一页。',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_click',
+      description: '点击页面上的元素，selector 用合法 CSS。同域 iframe 里也能点。不要用 :contains()。',
+      parameters: {
+        type: 'object',
+        properties: { selector: { type: 'string' } },
+        required: ['selector'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_click_text',
+      description: '按可见文案点击，如「章节」「开始学习」。学习通导航请用这个，不要点「课程门户链接」。',
+      parameters: {
+        type: 'object',
+        properties: { text: { type: 'string', description: '按钮或链接上的文字，尽量短且精确' } },
+        required: ['text'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_type',
+      description: '向输入框填写文字。',
+      parameters: {
+        type: 'object',
+        properties: {
+          selector: { type: 'string' },
+          text: { type: 'string' },
+        },
+        required: ['selector', 'text'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_scroll',
+      description: '滚动页面。正数向下，负数向上。',
+      parameters: {
+        type: 'object',
+        properties: { amount: { type: 'integer', description: '像素，默认 600' } },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_eval',
+      description: '在当前网页执行一段 JavaScript，并返回结果。用于读取 DOM 或做选择器无法覆盖的操作。',
+      parameters: {
+        type: 'object',
+        properties: { script: { type: 'string' } },
+        required: ['script'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_chaoxing_study',
+      description: '学习通：打开未完成节并播放。done=true 且任务点 n/n 才算全部完成。解析失败或空时不要放弃，用 get_page / eval 自己读目录再带 title 重试。',
+      parameters: {
+        type: 'object',
+        properties: {
+          title: { type: 'string', description: '可选。干净节名，如「维护网络安全」。不要带 (1)。省略则播第一个未完成。' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_chaoxing_chapters',
+      description: '读取后台章节解析器的当前结果。一般不用，刷课直接 browser_chaoxing_study。',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_chaoxing_play',
+      description: '学习通播放页点播放。播放器在 #iframe 再套一层 video iframe，顶层没有 video。到了 studentstudy 直接用这个，不要自己找播放器。成功后会自动开始进度监控。',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_chaoxing_watch',
+      description: '监控学习通当前视频进度，并显示在 Agent 面板。会定时和按进度叫你核对。不要用 browser_wait 空等整节。',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_chaoxing_next',
+      description: '当前视频播完后先切本章下一个视频，没有了再打开下一节。资料/PDF 会自动跳过。不要只点「下一节」就停，必须用这个。',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_chaoxing_homework',
+      description: '学习通作业抽象层。只在这张题卡上工作：list / open / inspect / fill / save / submit。不要 eval、不要 click 选项。inspect 返回 questions。一题一题作答：每答出一道就立刻 fill 这一道（answers 只放一项），不要攒到最后一次性填。',
+      parameters: {
+        type: 'object',
+        properties: {
+          action: {
+            type: 'string',
+            enum: ['list', 'open', 'inspect', 'fill', 'save', 'submit'],
+            description: 'list 列表，open 打开，inspect 读题卡，fill 填答案，save 暂存，submit 提交',
+          },
+          title: { type: 'string', description: 'open 时的作业名' },
+          answers: {
+            type: 'array',
+            description: 'fill 时的答案，一次只填一道题（数组只放一项）。每项 id 或 index、type、answer。单选填 A，多选填 AC，填空多空用分号。',
+            items: {
+              type: 'object',
+              properties: {
+                id: { type: 'string' },
+                index: { type: 'integer' },
+                type: { type: 'string' },
+                answer: { type: 'string' },
+              },
+            },
+          },
+        },
+        required: ['action'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_chaoxing_captcha',
+      description: '学习通【9010】图片验证码：把认出的 4 位字母或数字填进 #ucode 并提交。不要问用户。提交后再 study 或 play。',
+      parameters: {
+        type: 'object',
+        properties: {
+          code: { type: 'string', description: '图中 4 位字母或数字' },
+        },
+        required: ['code'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_wait',
+      description: '等待若干秒，再继续看页面。学习通视频请用 browser_chaoxing_watch，不要用这个空等整节。',
+      parameters: {
+        type: 'object',
+        properties: {
+          seconds: { type: 'integer', description: '等待秒数，1–60，默认 20' },
+        },
+      },
+    },
+  },
+]
+
+const BROWSER_SYSTEM_PROMPT = `你是独立的网页助手，只服务当前浏览器窗口，不处理学习科目、题库或校园题。
+
+规则：
+1. 先 browser_get_page 或 browser_get_state 看清页面，再动手。不要假装已经点过或填过。
+2. 打开新网址用 browser_navigate。刷新、后退、前进用对应工具。学习通课程里不要把 iframe 的 src（studentcourse、knowledge/cards、ananas）当顶层网址打开。
+3. 点击优先 browser_click_text（按可见文案）。有稳定 CSS 再用 browser_click。不要用 :contains()，不要点「课程门户链接」。
+4. 选择器找不到时，再 browser_get_page 或 browser_eval 查找，不要连续盲点。本窗口能读、点所有 iframe（含跨域），不要说跨域读不了。
+5. browser_eval 只用来读页面或完成上述工具做不到的操作。脚本必须是表达式或包在函数里，不要在顶层写 return。不要注入恶意脚本。
+6. 用户要看课、播视频、做未完成任务时，进到课程页还不算完成。必须继续点「章节」、打开具体节、点播放，直到视频在播或任务点完成。不要停下来问「要不要我继续」。
+7. 操作完成后用一两句话说明做了什么、页面现在怎样。不要编造页面上没有的内容。
+8. 用户要登录学习通、打开超星或操作学习通课程时，按下面流程做。${CHAOXING_LOGIN_PROMPT}
+9. 用户要播章节、刷未完成任务、自动播放学习通视频时，按下面流程做。只点页面上的播放并等任务点完成，不要伪造进度。${CHAOXING_STUDY_PROMPT}
+10. 用户要做学习通作业、答题、写应用高等数学作业时，按下面流程做。${CHAOXING_HOMEWORK_PROMPT}`
+
 const SYSTEM_PROMPT = `你是题库与学习助手。可以讲解、出题、整理题目，也可以管理学习页的科目和知识图谱，查看、上传和编辑校园题库，以及查看用户附带的本地文件。
 
 规则：
@@ -1154,7 +1456,7 @@ const SYSTEM_PROMPT = `你是题库与学习助手。可以讲解、出题、整
 4. 用户要求把某几道题、某一类题挪到别的文件夹时，先 list_questions 或 search_questions 确认题目 Id，再 move_questions。不要把整个文件夹当题目移动；挪文件夹用 move_folder。一次不要超过 50 道。
 5. 删除文件夹必须用户说清楚要删，并且说明题目是一起删还是留着。
 6. 题目字段：question、options（写成 "A. xxx\\nB. xxx"）、answer、question_type（单选/多选/判断/填空）、importance/mastery/difficulty（0–3，或低/中/高、未掌握/一般/已掌握、简单/中等/困难）。能看出考点就写 knowledge_point / node_name，能看出章节就写 parent_name。
-7. 出选择题或判断题练习时，必须调用 present_quiz，题目会出现在右侧练习页供点选。不要把选项写成普通列表让用户在输入框回答。必须用 title 给这次练习起一个短名字（试卷名、知识点、错题订正等），不要只用「练习」。题库里的题只传 question_id；自己出的题带上题干、选项、答案、解析，以及 knowledge_point 或 node_name。整批同一节时也可在 present_quiz 顶层传 node_name。新出的题会自动写入题库；挂着学习状态时再挂到对应知识点，作答会记到该节点。没有对应节点就生成。
+7. 出选择题或判断题练习时，必须调用 present_quiz，题目会出现在右侧练习页供点选。不要把选项写成普通列表让用户在输入框回答。没有成功的 present_quiz 之前，禁止说「已出示」「请看右侧练习页」或假装题已经出来。必须用 title 给这次练习起一个短名字（试卷名、知识点、错题订正等），不要只用「练习」。题库里的题只传 question_id；自己出的题带上题干、选项、答案、解析，以及 knowledge_point 或 node_name。整批同一节时也可在 present_quiz 顶层传 node_name。新出的题会自动写入题库；挂着学习状态时再挂到对应知识点，作答会记到该节点。没有对应节点就生成。用户说继续下一节、再出题、巩固练习时，也必须再次调用 present_quiz，不能只口头说已出题。
 8. 出题前用 list_questions 看掌握度、练习记录和已关联知识点，优先出未掌握、掌握度为 /、或最近答错的题。用户问错题、要订正或复习刚错过的题时，调用 list_recent_wrong_questions；挂着学习状态就带这个科目。需要某一题的细节时 get_practice_history。按某节出题可先 list_knowledge_questions。
 9. 用户要求改重要性、掌握度、难度时用 update_question_metrics。保存新题时可在 save_questions 里一并写入这些指标和知识点。用户说整理题目、把题挂到某节时，调用 link_questions_to_knowledge。
 10. 用户要求记下易错点或复习提示时，用 add_practice_note。
@@ -1172,6 +1474,117 @@ const SYSTEM_PROMPT = `你是题库与学习助手。可以讲解、出题、整
 22. 用户问校园题、学校课、试卷、同学分享的题时，用校园题库工具：先 get_campus_status，再 list_campus_courses → list_campus_papers → list_campus_questions，或 search_campus_questions。有试卷就必须 list_campus_questions，不能只看数量就说没题。list_campus_questions / search_campus_questions 会弹出浏览卡片，只供看题，不是作答。成功后不要再列出选项，也不要 present_quiz，除非用户明确说要练习、做题或订正。练习时 present_quiz 只传 campus_question_ids 或 paper_id 和 title。campus_question_id 不是本地题库 Id，不能传给 get_practice_history、move_questions、save_questions。没登录或没绑定学校时据实说明，不要编造校园题目。
 23. 用户要求往校园题库上传、收录、新建试卷或改校园题时，用 create_campus_paper / save_campus_questions / update_campus_question。先 get_campus_status 确认已登录、已绑定、verified=true；未认证就说明需要先完成校园认证，不要假装已上传。上传必须指定课程和试卷（course_id/course_name + paper_id/paper_name）；试卷不存在且用户要新建时 create_paper=true 或先 create_campus_paper。一次最多 20 道。改题必须用 campus_question_id，不要把本地 question_id 当成校园题 Id。改内容时尽量带上当前 paper_id。上传或改完会弹出浏览卡片，不要再列出选项，也不要 present_quiz，除非用户要练习。
 24. 用户说把试卷改成学习通、智慧树或其他平台，或改试卷名时，调用 update_campus_paper。先 list_campus_papers 或 list_campus_tags 确认 paper_id 和标签名。不要因为没有现成工具就新建一份再复制，也不要在没调用工具时声称已经改好。`
+
+export const AGENT_CONTEXT_LIMIT = 256 * 1024
+// 达到这个用量就在后台把早期对话压成摘要
+export const AGENT_CONTEXT_COMPACT_AT = 192 * 1024
+// 压缩后保留的近期原文预算，留足空间让摘要 + 近况都能进请求
+const CONTEXT_KEEP_TOKENS = 48 * 1024
+const CONTEXT_KEEP_MIN_MESSAGES = 4
+const CONTEXT_COMPACT_MIN_MESSAGES = 4
+const CONTEXT_COMPACT_INPUT_TOKENS = 100 * 1024
+const CONTEXT_COMPACT_MSG_CHARS = 2400
+const IMAGE_CONTEXT_TOKENS = 765
+const STUDY_PREFIX_SAMPLE = '【学习状态】当前对话挂着科目（subject_id=000）。掌握进度 00%，约 00 个知识点。讲解、出题、改图谱时默认用这个科目，不要另建同名科目。订正或复习错题时调用 list_recent_wrong_questions。\n\n'
+
+export type AgentContextUsage = {
+  limit: number
+  used: number
+  remain: number
+  percent: number
+  system: number
+  tools: number
+  summary: number
+  history: number
+  study: number
+  draft: number
+  images: number
+  compactedCount: number
+}
+
+const estimateTextTokens = (text: string) => {
+  const raw = String(text || '')
+  if (!raw) return 0
+  let cjk = 0
+  let other = 0
+  for (const ch of raw) {
+    const code = ch.codePointAt(0) || 0
+    if (code >= 0x2e80 && code <= 0x9fff || code >= 0xf900 && code <= 0xfaff || code >= 0xff00 && code <= 0xffef) {
+      cjk += 1
+    } else {
+      other += 1
+    }
+  }
+  return cjk + Math.ceil(other / 4)
+}
+
+const messagePlainText = (content: unknown) => {
+  if (typeof content === 'string') return content
+  if (Array.isArray(content)) {
+    return content.map((part) => {
+      if (typeof part === 'string') return part
+      if (part && typeof part === 'object' && 'text' in part) return String((part as { text?: unknown }).text || '')
+      return ''
+    }).join('\n')
+  }
+  return content == null ? '' : String(content)
+}
+
+let cachedSystemTokens = 0
+let cachedToolTokens = 0
+
+// 摘要之后的消息才会原文进请求，摘要之前的只由摘要代表。
+// 摘要里的 coveredThrough 找不到时视为失效，退回全量原文。
+const splitCompactedHistory = (session?: AgentChatSession | null) => {
+  const messages = session?.messages || []
+  const summary = session?.contextSummary
+  if (!summary?.text) return { summary: null, kept: messages, compactedCount: 0 }
+  const index = messages.findIndex((item) => item.id === summary.coveredThrough)
+  if (index < 0) return { summary: null, kept: messages, compactedCount: 0 }
+  return { summary, kept: messages.slice(index + 1), compactedCount: index + 1 }
+}
+
+const contextSummaryPrompt = (summary?: AgentContextSummary | null) => (
+  summary?.text
+    ? `\n\n【前文摘要】这轮对话早期的 ${summary.coveredCount} 条消息已归档成下面的摘要，原文不再随请求发送。把它当作已经发生过的事实，需要更早的细节就直接说不记得并请用户补充，不要编造。\n${summary.text}`
+    : ''
+)
+
+export const estimateAgentContext = (
+  session?: AgentChatSession | null,
+  draftText = '',
+  pendingImages = 0,
+): AgentContextUsage => {
+  if (!cachedSystemTokens) cachedSystemTokens = estimateTextTokens(SYSTEM_PROMPT)
+  if (!cachedToolTokens) cachedToolTokens = estimateTextTokens(JSON.stringify(CHAT_TOOLS))
+  const { summary, kept, compactedCount } = splitCompactedHistory(session)
+  const summaryTokens = summary ? estimateTextTokens(contextSummaryPrompt(summary)) : 0
+  const history = estimateTextTokens(kept.map((item) => messagePlainText(item.content)).join('\n'))
+  const study = session?.studySubjectId ? estimateTextTokens(STUDY_PREFIX_SAMPLE) : 0
+  const draft = estimateTextTokens(draftText)
+  const imageCount = kept.reduce((sum, item) => (
+    sum + (item.attachments || []).filter(isImageAttachment).length
+  ), Math.max(0, pendingImages))
+  const images = imageCount * IMAGE_CONTEXT_TOKENS
+  const used = Math.min(
+    AGENT_CONTEXT_LIMIT,
+    cachedSystemTokens + cachedToolTokens + summaryTokens + history + study + draft + images,
+  )
+  return {
+    limit: AGENT_CONTEXT_LIMIT,
+    used,
+    remain: Math.max(0, AGENT_CONTEXT_LIMIT - used),
+    percent: Math.min(100, (used / AGENT_CONTEXT_LIMIT) * 100),
+    system: cachedSystemTokens,
+    tools: cachedToolTokens,
+    summary: summaryTokens,
+    history,
+    study,
+    draft,
+    images,
+    compactedCount,
+  }
+}
 
 const unescapeJsonString = (value: string) => {
   try {
@@ -1557,6 +1970,58 @@ const describeFolders = (items?: AgentChatAttachment[]) => {
   return `\n\n指定文件夹：\n${lines.join('\n')}`
 }
 
+const browserStatePrefix = async (sessionId: string, light = false) => {
+  const browserId = String(sessions.value.find((item) => item.id === sessionId)?.browserId || '').trim()
+  if (!browserId) return ''
+  const item = listAppBrowsers().find((browser) => browser.id === browserId)
+  const name = item?.name || item?.title || hostnameOf(item?.url || '')
+  const url = item?.url || ''
+  let playLine = '当前没有确认在播的视频。禁止说「正在播放」「视频仍在后台播放」。'
+  const chapters = chapterStateFor(browserId)
+  const chapterLine = chapters
+    ? (chapters.unfinished.length
+      ? `章节解析：未完成 ${chapters.unfinishedCount}${chapters.progress ? `（任务点 ${chapters.progress.done}/${chapters.progress.total}）` : ''}：${chapters.unfinished.slice(0, 6).join('、')}。`
+      : chapters.progress
+        ? (chapters.progress.total > chapters.progress.done
+          ? `章节解析：已完成任务点 ${chapters.progress.done}/${chapters.progress.total}，还没对上节名。不要说全部完成，自己 get_page 解析。`
+          : `章节解析：已完成任务点 ${chapters.progress.done}/${chapters.progress.total}。`)
+        : '章节解析器还没读到目录。这不等于做完，必须自己 get_page / eval 解析，不要说全部完成。')
+    : ''
+  const watch = videoWatchFor(browserId)
+  if (light && watch) {
+    const clock = `${formatVideoClock(watch.current)} / ${formatVideoClock(watch.duration)}`
+    const videos = watch.videoCount > 1
+      ? ` 本章视频 ${watch.videoIndex || 1}/${watch.videoCount}${watch.moreVideos ? '，后面还有' : ''}`
+      : ''
+    playLine = watch.paused
+      ? `监控中「${watch.title || '当前节'}」已暂停 ${clock}。${videos}`
+      : `监控中「${watch.title || '当前节'}」在播 ${clock}。${videos}不要再点播放或读目录。`
+    return `【网页状态】当前对话挂着浏览器「${name}」（browser_id=${browserId}）${url ? `，网址 ${url}` : ''}。${playLine}${chapterLine ? ` ${chapterLine}` : ''}\n\n`
+  }
+  try {
+    const info = await readChaoxingVideo(browserId)
+    if (info?.captcha) {
+      playLine = '学习通弹出图片验证码（9010）。自己认图读出 4 位，立刻 browser_chaoxing_captcha 提交，然后继续刷课。不要问用户。'
+    } else if (info?.quiz) {
+      playLine = `当前是测验/作业（${info.step || info.current || ''}）。停下让用户自己做，不要点播放。`
+    } else if (info?.video) {
+      const clock = `${formatVideoClock(info.video.current)} / ${formatVideoClock(info.video.duration)}`
+      const title = info.current || '当前节'
+      const videos = Number(info.videoCount) > 1
+        ? ` 本章视频 ${info.videoIndex || 1}/${info.videoCount}${info.moreVideos ? '，后面还有视频' : ''}`
+        : ''
+      if (info.video.paused || info.video.ended) {
+        playLine = `当前节「${title}」视频没有在播（paused=${info.video.paused} ended=${info.video.ended} ${clock}）。${videos}禁止说正在播放。用户要看课就立刻 browser_chaoxing_play。`
+      } else {
+        playLine = `当前节「${title}」视频确认在播 ${clock}。${videos}`
+      }
+    }
+  } catch {
+    // keep default
+  }
+  return `【网页状态】当前对话挂着浏览器「${name}」（browser_id=${browserId}）${url ? `，网址 ${url}` : ''}。${playLine}${chapterLine ? ` ${chapterLine}` : ''} 读页面、点击、填写、跳转都必须调用工具，不要只口头说已经操作。\n\n`
+}
+
 const studyStatePrefix = async (sessionId: string) => {
   const id = Number(sessions.value.find((item) => item.id === sessionId)?.studySubjectId)
   if (!Number.isFinite(id) || id <= 0) return ''
@@ -1604,6 +2069,44 @@ const notifyCampusUpdated = (detail?: { courseId?: number; paperId?: number }) =
 }
 
 const describeActivity = (name: string, args: any, status: ImportTaskStep['status'], extra?: any) => {
+  const browserLabels: Record<string, [string, string, string]> = {
+    browser_get_state: ['正在查看网页', '查看网页失败', '查看了当前网页'],
+    browser_get_page: ['正在读取网页', '读取网页失败', '读取了当前网页'],
+    browser_navigate: ['正在打开网页', '打开网页失败', extra?.url || args?.url ? `打开了 ${extra?.url || args?.url}` : '打开了网页'],
+    browser_reload: ['正在刷新', '刷新失败', '刷新了网页'],
+    browser_go_back: ['正在后退', '后退失败', '后退了一页'],
+    browser_go_forward: ['正在前进', '前进失败', '前进了一页'],
+    browser_click: ['正在点击', '点击失败', args?.selector ? `点击了 ${args.selector}` : '点击了元素'],
+    browser_click_text: ['正在点击', '点击失败', args?.text ? `点击了「${args.text}」` : '点击了文案'],
+    browser_type: ['正在填写', '填写失败', args?.selector ? `填写了 ${args.selector}` : '填写了输入框'],
+    browser_scroll: ['正在滚动', '滚动失败', '滚动了页面'],
+    browser_eval: ['正在执行脚本', '执行脚本失败', '在网页上执行了脚本'],
+    browser_wait: ['正在等待', '等待失败', args?.seconds ? `等了 ${args.seconds} 秒` : '等待了一会儿'],
+    browser_chaoxing_study: ['正在学习通刷课', '刷课失败', '打开并播放了未完成章节'],
+    browser_chaoxing_chapters: ['正在读取章节', '读取章节失败', '读取了章节目录'],
+    browser_chaoxing_play: ['正在播放视频', '播放失败', '点了学习通播放'],
+    browser_chaoxing_watch: ['正在监控进度', '监控失败', '开始监控视频进度'],
+    browser_chaoxing_next: ['正在打开下一节', '打开下一节失败', '打开了下一节视频'],
+    browser_chaoxing_homework: [
+      args?.action === 'inspect' ? '正在读题卡' : '正在处理作业',
+      '作业操作失败',
+      extra?.questionCount
+        ? `读到 ${extra.questionCount} 道题`
+        : extra?.pendingCount
+          ? `待做 ${extra.pendingCount} 份`
+          : extra?.title || args?.title
+            ? `处理了作业「${extra?.title || args?.title}」`
+            : '处理了学习通作业',
+    ],
+    browser_chaoxing_captcha: ['正在填写验证码', '验证码提交失败', '已提交验证码'],
+  }
+  if (browserLabels[name]) {
+    const [running, failed, done] = browserLabels[name]
+    return {
+      target: extra?.url || args?.url || args?.selector || '网页',
+      label: status === 'running' ? running : status === 'failed' ? failed : done,
+    }
+  }
   if (name === 'get_file_info') {
     const summary = extra?.type ? `${extra.type}，共 ${extra.total} ${extra.unit}` : ''
     return {
@@ -2638,7 +3141,8 @@ const matchSubjectInText = <T extends { id: number; name: string }>(text: string
 }
 
 const attachStudyFromUserText = async (sessionId: string, text: string) => {
-  if (sessions.value.find((item) => item.id === sessionId)?.studySubjectId) return
+  const session = sessions.value.find((item) => item.id === sessionId)
+  if (session?.studySubjectId || session?.browserId) return
   try {
     const hit = matchSubjectInText(text, await databaseService.listStudySubjects())
     if (hit) setChatStudySubject(hit.id, sessionId)
@@ -2661,19 +3165,20 @@ export const setChatStudySubject = (subjectId?: number | null, sessionId?: strin
   }))
 }
 
-export const createChat = (init?: Partial<Pick<AgentChatSession, 'title' | 'attachments' | 'studySubjectId'>>) => {
-  composerAttachments.value = []
+export const createChat = (init?: Partial<Pick<AgentChatSession, 'title' | 'attachments' | 'studySubjectId' | 'browserId'>> & { activate?: boolean }) => {
+  if (init?.activate !== false) composerAttachments.value = []
   const session: AgentChatSession = {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     title: init?.title || '新对话',
     messages: [],
     attachments: init?.attachments,
     studySubjectId: Number(init?.studySubjectId) > 0 ? Number(init?.studySubjectId) : undefined,
+    browserId: String(init?.browserId || '').trim() || undefined,
     createdAt: Date.now(),
     updatedAt: Date.now(),
   }
-  sessions.value = [session, ...sessions.value].slice(0, 30)
-  activeId.value = session.id
+  sessions.value = [session, ...sessions.value].slice(0, 40)
+  if (init?.activate !== false) activeId.value = session.id
   persist()
   return session
 }
@@ -2749,6 +3254,30 @@ export const startFolderOrganizeChat = async (input: {
   )
 }
 
+export const startStudySubjectChat = async (input: {
+  subjectId: number
+  subjectName?: string
+}) => {
+  const id = Number(input.subjectId)
+  const name = String(input.subjectName || '').trim()
+  if (!Number.isFinite(id) || id <= 0) return
+  try {
+    localStorage.setItem('zerror-study-subject', String(id))
+  } catch {
+    // ignore
+  }
+  window.dispatchEvent(new CustomEvent('navigate-tab', { detail: 'agent' }))
+  createChat({
+    title: name ? `学习 ${name}` : '学习',
+    studySubjectId: id,
+  })
+  await sendChatMessage(
+    name
+      ? `我现在开始学习「${name}」。根据我的学习进度学习。`
+      : '根据我的学习进度学习。',
+  )
+}
+
 export const startStudyGraphChat = async (input?: {
   subjectId?: number
   subjectName?: string
@@ -2800,6 +3329,18 @@ ${graphSubjectHint(name)}
 已有图谱就按用户要求 patch，不要重画。没有科目或图谱为空再 create_subject 并从零画。
 ${GRAPH_QUALITY}`,
   )
+}
+
+export const ensureBrowserChat = (input: { browserId: string; title?: string }) => {
+  const browserId = String(input.browserId || '').trim()
+  if (!browserId) return null
+  const existing = sessions.value.find((item) => item.browserId === browserId)
+  if (existing) return existing
+  return createChat({
+    title: input.title || '网页助手',
+    browserId,
+    activate: false,
+  })
 }
 
 export const startFileImportChat = async (input: {
@@ -2860,6 +3401,8 @@ export const stopChat = (id?: string) => {
   if (session && message) finalizeStopped(session.id, message.id)
   if (abort && !abort.signal.aborted) abort.abort()
   chatAborts.delete(sessionId)
+  queuedWatchChecks.delete(sessionId)
+  if (session?.browserId) stopChaoxingWatch(session.browserId)
 }
 
 export const removeChat = (id: string) => {
@@ -2867,8 +3410,23 @@ export const removeChat = (id: string) => {
     stopChat(id)
   }
   sessions.value = sessions.value.filter((session) => session.id !== id)
-  if (activeId.value === id) activeId.value = sessions.value[0]?.id || null
+  if (activeId.value === id) activeId.value = sessions.value.find((session) => !session.browserId)?.id || null
   persist()
+}
+
+export const clearBrowserChat = (browserId: string) => {
+  const id = String(browserId || '').trim()
+  if (!id) return
+  stopChaoxingWatch(id)
+  const session = sessions.value.find((item) => item.browserId === id)
+  if (!session) return
+  if (sessionIsStreaming(session)) stopChat(session.id)
+  patchSession(session.id, (current) => ({
+    ...current,
+    messages: [],
+    contextSummary: undefined,
+    updatedAt: Date.now(),
+  }))
 }
 
 export const formatQuizAttempt = (attempt: AgentQuizAttempt) => {
@@ -2955,9 +3513,137 @@ const collectRecentTurns = (sessionId: string, limit = 8) => {
   return [turns, quizLog ? `本轮作答摘要：${quizLog}` : ''].filter(Boolean).join('\n')
 }
 
+const COMPACT_SYSTEM = '你是对话归档员。把给定的对话压成结构化中文摘要，只保留后续对话还需要用到的信息。不要评论，不要写开场白。'
+
+const compactPrompt = (previous: string, transcript: string) => [
+  previous ? `已有摘要（要和新内容合并，别丢掉里面的结论）：\n${previous}\n` : '',
+  `需要归档的对话：\n${transcript}\n`,
+  '输出合并后的摘要，1200 字以内，按下面的小标题分段，没有内容的标题写「无」：',
+  '【用户背景与目标】',
+  '【已讲解的知识点】',
+  '【出过的题与作答情况】',
+  '【已完成的操作】（导入题目、改图谱、建科目等，带上关键 id 或名称）',
+  '【待办与约定】',
+  '只输出摘要正文。',
+].filter(Boolean).join('\n')
+
+// 从后往前留够近期原文，剩下的交给摘要。返回第一条保留原文的下标。
+const pickCompactBoundary = (kept: AgentChatMessage[]) => {
+  let tokens = 0
+  let start = kept.length
+  for (let i = kept.length - 1; i >= 0; i -= 1) {
+    const size = estimateTextTokens(messagePlainText(kept[i].content))
+    const overMin = kept.length - i > CONTEXT_KEEP_MIN_MESSAGES
+    if (overMin && tokens + size > CONTEXT_KEEP_TOKENS) break
+    tokens += size
+    start = i
+  }
+  // 保留段以用户提问开头，模型看到的对话不会从助手发言开始
+  if (start < kept.length && kept[start].role !== 'user') start += 1
+  return start
+}
+
+const buildCompactTranscript = (messages: AgentChatMessage[]) => {
+  const items = messages.flatMap((message) => {
+    const text = messagePlainText(message.content).trim()
+    const quiz = formatQuizEvidence(message)
+    if (!text && !quiz) return []
+    const line = [
+      `${message.role === 'user' ? '用户' : '助手'}：${text.slice(0, CONTEXT_COMPACT_MSG_CHARS)}`,
+      quiz ? `作答记录：${quiz}` : '',
+    ].filter(Boolean).join('\n')
+    return [{ line, tokens: estimateTextTokens(line) }]
+  })
+  // 超出单次归档预算就丢最早的，那部分通常已被上一版摘要覆盖
+  let total = items.reduce((sum, item) => sum + item.tokens, 0)
+  let from = 0
+  while (from < items.length - 1 && total > CONTEXT_COMPACT_INPUT_TOKENS) {
+    total -= items[from].tokens
+    from += 1
+  }
+  return items.slice(from).map((item) => item.line).join('\n\n')
+}
+
+const compactInFlightIds = ref<string[]>([])
+
+export const contextCompacting = computed(() => {
+  const id = activeChat.value?.id
+  return Boolean(id && compactInFlightIds.value.includes(id))
+})
+
+const runContextCompaction = async (sessionId: string) => {
+  const session = sessions.value.find((item) => item.id === sessionId)
+  if (!session) return
+  const { summary, kept } = splitCompactedHistory(session)
+  const start = pickCompactBoundary(kept)
+  if (start < CONTEXT_COMPACT_MIN_MESSAGES) return
+  const archived = kept.slice(0, start)
+  if (archived.some((item) => item.status === 'streaming')) return
+  const transcript = buildCompactTranscript(archived)
+  if (!transcript) return
+  const text = await runTextModel(
+    compactPrompt(summary?.text || '', transcript),
+    () => undefined,
+    {
+      timeoutMs: 4 * 60 * 1000,
+      tools: [],
+      systemPrompt: COMPACT_SYSTEM,
+      useAgentModel: true,
+      maxRounds: 1,
+    },
+  )
+  const clean = String(text || '').trim()
+  if (!clean) return
+  const coveredThrough = archived[archived.length - 1].id
+  patchSession(sessionId, (current) => {
+    // 压缩期间可能又聊了几轮，只要边界消息还在，摘要就仍然对得上
+    if (!current.messages.some((item) => item.id === coveredThrough)) return current
+    return {
+      ...current,
+      contextSummary: {
+        text: clean,
+        coveredThrough,
+        coveredCount: (summary?.coveredCount || 0) + archived.length,
+        tokens: estimateTextTokens(clean),
+        updatedAt: Date.now(),
+      },
+    }
+  })
+}
+
+export const maybeCompactContext = (sessionId: string) => {
+  const session = sessions.value.find((item) => item.id === sessionId)
+  if (!session || compactInFlightIds.value.includes(sessionId)) return
+  if (sessionIsStreaming(session)) return
+  if (estimateAgentContext(session).used < AGENT_CONTEXT_COMPACT_AT) return
+  compactInFlightIds.value = [...compactInFlightIds.value, sessionId]
+  void runContextCompaction(sessionId)
+    .catch((error) => {
+      console.warn('[agent] 上下文压缩失败', error)
+    })
+    .finally(() => {
+      compactInFlightIds.value = compactInFlightIds.value.filter((id) => id !== sessionId)
+    })
+}
+
 const EVAL_COOLDOWN_MS = 16_000
 const evalStartedAt = new Map<string, number>()
-const evalInFlight = new Set<string>()
+const evalInFlightIds = ref<string[]>([])
+
+export const studyEvalRunning = computed(() => {
+  const id = activeChat.value?.id
+  return Boolean(id && evalInFlightIds.value.includes(id))
+})
+
+const markEvalStart = (sessionId: string) => {
+  if (evalInFlightIds.value.includes(sessionId)) return
+  evalInFlightIds.value = [...evalInFlightIds.value, sessionId]
+}
+
+const markEvalEnd = (sessionId: string) => {
+  if (!evalInFlightIds.value.includes(sessionId)) return
+  evalInFlightIds.value = evalInFlightIds.value.filter((id) => id !== sessionId)
+}
 
 const NAV_EVAL_TOOLS = new Set([
   'open_knowledge_graph',
@@ -3045,18 +3731,8 @@ const applyEvalNotice = (
     detail: result.error,
     finishedAt: Date.now(),
   })
-  if (!force && !result.updated && !result.error) {
-    dropStep(sessionId, messageId, stepId)
-    patchMessage(sessionId, messageId, { studyEval: undefined })
-    return
-  }
-  patchMessage(sessionId, messageId, {
-    studyEval: {
-      status: result.error ? 'failed' : result.updated ? 'done' : 'empty',
-      text: formatEvalNotice(result),
-      updated: result.updated,
-    },
-  })
+  if (!result.error) dropStep(sessionId, messageId, stepId)
+  patchMessage(sessionId, messageId, { studyEval: undefined })
 }
 
 const scheduleStudyProgressEval = (input: {
@@ -3068,35 +3744,17 @@ const scheduleStudyProgressEval = (input: {
   stepId?: string
 }) => {
   const sessionKey = input.sessionId
-  if (evalInFlight.has(sessionKey)) return
+  if (evalInFlightIds.value.includes(sessionKey)) return
   const last = evalStartedAt.get(sessionKey) || 0
   if (!input.force && Date.now() - last < EVAL_COOLDOWN_MS) return
   evalStartedAt.set(sessionKey, Date.now())
-  evalInFlight.add(sessionKey)
+  markEvalStart(sessionKey)
 
   const stepId = input.stepId || `auto-eval-${input.messageId}`
   const args = {
     subject_id: input.subjectId,
     hint: input.hint,
   }
-  if (!input.stepId) {
-    const activity = describeActivity('evaluate_study_progress', args, 'running')
-    addStep(input.sessionId, input.messageId, {
-      id: stepId,
-      kind: 'tool',
-      name: 'evaluate_study_progress',
-      label: activity.label,
-      target: activity.target,
-      status: 'running',
-      startedAt: Date.now(),
-    })
-  }
-  patchMessage(input.sessionId, input.messageId, {
-    studyEval: {
-      status: 'running',
-      text: '正在后台评估这次的学习效果…',
-    },
-  })
 
   void runStudyProgressEvaluation({
     subjectId: input.subjectId,
@@ -3112,19 +3770,337 @@ const scheduleStudyProgressEval = (input: {
       error: error instanceof Error ? error.message : String(error),
     }, true)
   }).finally(() => {
-    evalInFlight.delete(sessionKey)
+    markEvalEnd(sessionKey)
   })
 }
 
-export const sendChatMessage = async (text: string, files?: AgentChatAttachment[]) => {
+const pendingCaptchaNotices = new Map<string, string>()
+const queuedWatchChecks = new Map<string, VideoWatchCheck>()
+const watchCheckRank: Record<VideoWatchCheck['kind'], number> = {
+  progress: 1,
+  heartbeat: 1,
+  stalled: 2,
+  lost: 3,
+  quiz: 4,
+  done: 5,
+  captcha: 6,
+}
+
+const watchVideoLine = (state: VideoWatchCheck['status']) => {
+  if (!(state.videoCount > 1)) return ''
+  const index = state.videoIndex || 1
+  return ` 本章视频 ${index}/${state.videoCount}${state.moreVideos ? '，后面还有视频' : '，这是最后一个'}`
+}
+
+const formatWatchDisplay = (check: VideoWatchCheck) => {
+  const title = check.status.title || '当前节'
+  if (check.kind === 'done') return `进度检查 · ${title} 已完成`
+  if (check.kind === 'captcha') return `进度检查 · 遇到验证码`
+  if (check.kind === 'quiz') return `进度检查 · 遇到测验`
+  if (check.kind === 'lost') return `进度检查 · ${title} 找不到播放器`
+  if (check.kind === 'stalled') return `进度检查 · ${title} 进度卡住`
+  if (check.kind === 'heartbeat') return `进度检查 · ${title} 定时核对`
+  const clock = `${formatVideoClock(check.status.current)} / ${formatVideoClock(check.status.duration)}`
+  return `进度检查 · ${title} ${check.percent}%（${clock}）`
+}
+
+const formatWatchPrompt = (check: VideoWatchCheck) => {
+  const state = check.status
+  const clock = `${formatVideoClock(state.current)} / ${formatVideoClock(state.duration)}`
+  const base = `【播放监控】${state.title || '当前节'} ${clock}（${state.percent}%）paused=${state.paused} ended=${state.ended} jobDone=${state.jobDone}${watchVideoLine(state)}`
+  if (check.kind === 'captcha') {
+    return `${base}\n学习通弹出图片验证码（9010）。图会附上或页面上有 #ccc。立刻认出 4 位并 browser_chaoxing_captcha。不要问用户，不要 browser_wait。提交后再 play 或 study。`
+  }
+  if (check.kind === 'quiz') {
+    return `${base}\n当前是测验/作业。停下让用户自己做，不要点下一节，不要作答。一句话说明即可。`
+  }
+  if (check.kind === 'done') {
+    return `${base}\n这个视频已经结束。系统会先切本章下一个视频，没有了再切下一章。一句话即可，不要再点下一节。`
+  }
+  if (check.kind === 'lost') {
+    return `${base}\n播放器丢了或页面不对。立刻 browser_chaoxing_play；还不行就 browser_chaoxing_study 回到当前未完成节。不要问用户，不要 browser_wait。`
+  }
+  if (check.kind === 'stalled') {
+    return `${base}\n进度卡住或暂停了。立刻 browser_chaoxing_play 继续播。不要 browser_wait 空等。`
+  }
+  if (state.paused || state.status === 'stalled') {
+    return `${base}\n视频是暂停或卡住的，没有在播。立刻 browser_chaoxing_play。禁止说正在播放。`
+  }
+  return `${base}\n定时核对：paused 必须是 false，进度要在走，页面不能弹窗卡住，也不能变成测验。暂停/卡住立刻 browser_chaoxing_play；播放器没了就 browser_chaoxing_study；测验停下。确认正常就一句话回报进度，不要 browser_wait，监控还会再叫你。`
+}
+
+const advancingBrowsers = new Set<string>()
+const recoveringBrowsers = new Set<string>()
+const recoverAttempts = new Map<string, number>()
+
+const notifyWatch = (sessionId: string, display: string, modelText: string) => {
+  void sendChatMessage(display, undefined, { sessionId, kind: 'watch', modelText })
+}
+
+const captchaImageFile = (image?: string) => {
+  const url = String(image || '').trim()
+  if (!url.startsWith('data:image/')) return undefined
+  return [{
+    kind: 'image' as const,
+    filePath: `image:captcha-${Date.now()}`,
+    fileName: '验证码.jpg',
+    imageUrl: url,
+    mimeType: url.startsWith('data:image/png') ? 'image/png' : 'image/jpeg',
+  }]
+}
+
+const notifyCaptchaWithImage = (sessionId: string, image?: string, error?: string) => {
+  pendingCaptchaNotices.delete(sessionId)
+  void sendChatMessage(
+    '进度检查 · 遇到验证码',
+    captchaImageFile(image),
+    {
+      sessionId,
+      kind: 'watch',
+      modelText: `学习通弹出图片验证码（9010）。${error ? `自动识别失败：${error}。` : ''}图已附上。立刻认出 4 位字母或数字，调用 browser_chaoxing_captcha。不要问用户，不要 browser_wait。提交后再 study 或 play。`,
+    },
+  )
+}
+
+const runAfterCaptcha = async <T extends { captcha?: boolean; hint?: string }>(
+  sessionId: string,
+  browserId: string,
+  action: () => Promise<T>,
+): Promise<T & { captchaSolved?: boolean; filled?: boolean }> => {
+  let result = await action()
+  if (!result?.captcha) return result
+  const solved = await solveChaoxingCaptcha(browserId)
+  if (solved.ok) {
+    pendingCaptchaNotices.delete(sessionId)
+    result = await action()
+    if (!result?.captcha) return { ...result, captchaSolved: true }
+  }
+  if (solved.image) pendingCaptchaNotices.set(sessionId, solved.image)
+  return {
+    ...result,
+    captcha: true,
+    filled: false,
+    hint: solved.ok
+      ? result.hint
+      : `${solved.error || '验证码没自动认出来'}。图会随后附上，立刻认出 4 位并 browser_chaoxing_captcha，然后继续 study。不要问用户。`,
+  }
+}
+
+const seedFromPlayed = (played: Record<string, unknown>, fallback?: VideoWatchCheck['status']) => ({
+  current: Number(played.current) || 0,
+  duration: Number(played.duration) || 0,
+  paused: Boolean(played.paused),
+  ended: Boolean(played.ended),
+  title: String(played.opened || played.title || fallback?.title || '').trim(),
+  next: String(played.next || fallback?.next || ''),
+  step: String(played.step || fallback?.step || ''),
+  moreVideos: Boolean(played.moreVideos),
+  videoCount: Number(played.videoCount) || fallback?.videoCount || 0,
+  videoIndex: Number(played.videoIndex) || fallback?.videoIndex || 0,
+})
+
+const recoverPlayback = async (check: VideoWatchCheck) => {
+  const { browserId, sessionId } = check
+  if (!browserId || recoveringBrowsers.has(browserId) || advancingBrowsers.has(browserId)) return
+  recoveringBrowsers.add(browserId)
+  const attempts = (recoverAttempts.get(browserId) || 0) + 1
+  recoverAttempts.set(browserId, attempts)
+  try {
+    const snap = await readChaoxingVideo(browserId).catch(() => null)
+    if (snap?.captcha) {
+      void handleCaptchaWatch({ ...check, kind: 'captcha' })
+      return
+    }
+    if (snap?.quiz) {
+      notifyWatch(sessionId, '进度检查 · 遇到测验', `当前是测验/作业（${snap.step || snap.current || ''}）。停下让用户自己做，不要点下一节，不要作答。`)
+      return
+    }
+    const played = await playChaoxingVideo(browserId) as Record<string, unknown>
+    if (videoIsPlaying(played)) {
+      recoverAttempts.set(browserId, 0)
+      startChaoxingWatch(browserId, sessionId, seedFromPlayed({
+        ...played,
+        title: played.title || check.status.title,
+      }, check.status), { resume: true })
+      notifyWatch(
+        sessionId,
+        `进度检查 · 已自动继续「${check.status.title || '当前节'}」`,
+        `刚才${check.kind === 'lost' ? '找不到播放器' : '进度卡住'}，系统已经重新点了播放，现在 paused=false。确认还在播就一句话回报，不要再空等。`,
+      )
+      return
+    }
+    notifyWatch(
+      sessionId,
+      formatWatchDisplay(check),
+      `${formatWatchPrompt(check)}\n系统已自动点过播放仍没起来（第 ${attempts} 次）。立刻再 browser_chaoxing_play；页面不对就 browser_chaoxing_study。不要问用户。`,
+    )
+  } catch (error) {
+    notifyWatch(
+      sessionId,
+      formatWatchDisplay(check),
+      `${formatWatchPrompt(check)}\n自动恢复失败：${error instanceof Error ? error.message : String(error)}。立刻 browser_chaoxing_play 或 browser_chaoxing_study。`,
+    )
+  } finally {
+    recoveringBrowsers.delete(browserId)
+  }
+}
+
+const handleCaptchaWatch = async (check: VideoWatchCheck) => {
+  const { browserId, sessionId } = check
+  if (!browserId) return
+  const solved = await solveChaoxingCaptcha(browserId)
+  if (solved.ok) {
+    pendingCaptchaNotices.delete(sessionId)
+    const played = await playChaoxingVideo(browserId) as Record<string, unknown>
+    if (played?.captcha) {
+      notifyCaptchaWithImage(sessionId, solved.image, '提交后验证码还在')
+      return
+    }
+    if (videoIsPlaying(played)) {
+      recoverAttempts.set(browserId, 0)
+      startChaoxingWatch(browserId, sessionId, seedFromPlayed({
+        ...played,
+        title: played.title || check.status.title,
+      }, check.status))
+      notifyWatch(
+        sessionId,
+        `进度检查 · 已填写验证码并继续「${check.status.title || '当前节'}」`,
+        '验证码已自动填写并提交，视频已在播。一句话回报即可，不要再问用户。',
+      )
+      return
+    }
+    notifyWatch(
+      sessionId,
+      '进度检查 · 已填写验证码',
+      '验证码已自动填写并提交。立刻 browser_chaoxing_play；页面不对就 browser_chaoxing_study。不要问用户。',
+    )
+    return
+  }
+  notifyCaptchaWithImage(sessionId, solved.image, solved.error)
+}
+
+const advanceToNextVideo = async (check: VideoWatchCheck) => {
+  const { browserId, sessionId } = check
+  if (!browserId || advancingBrowsers.has(browserId)) return
+  advancingBrowsers.add(browserId)
+  try {
+    const next = await openNextChaoxingChapter(browserId) as {
+      hasVideo?: boolean
+      quiz?: boolean
+      opened?: string
+      title?: string
+      next?: string
+      current?: number
+      duration?: number
+      paused?: boolean
+      ended?: boolean
+      skipped?: string[]
+      hint?: string
+      step?: string
+      sameChapter?: boolean
+      moreVideos?: boolean
+      videoCount?: number
+      videoIndex?: number
+    }
+    if (next?.quiz) {
+      notifyWatch(sessionId, '进度检查 · 遇到测验', `当前是测验/作业（${next.step || next.title || ''}）。停下让用户自己做，不要点下一节，不要作答。`)
+      return
+    }
+    if (next?.hasVideo && Number(next.duration) > 1) {
+      let played = next
+      if (!videoIsPlaying(played)) {
+        played = await playChaoxingVideo(browserId) as typeof next
+      }
+      const title = String(played.opened || played.title || next.opened || next.title || '下一节').trim()
+      const playing = videoIsPlaying(played)
+      const sameChapter = Boolean(next.sameChapter)
+      recoverAttempts.set(browserId, 0)
+      startChaoxingWatch(browserId, sessionId, seedFromPlayed({
+        ...played,
+        opened: title,
+        next: played.next || next.next || '',
+        moreVideos: played.moreVideos ?? next.moreVideos,
+        videoCount: played.videoCount || next.videoCount,
+        videoIndex: played.videoIndex || next.videoIndex,
+      }, check.status))
+      if (playing) {
+        notifyWatch(
+          sessionId,
+          `进度检查 · 已打开「${title}」`,
+          sameChapter
+            ? `本章下一个视频「${title}」已确认在播（paused=false）。一句话告诉用户即可。后面若还有视频，播完再切，不要直接跳下一章。`
+            : `下一节「${title}」已确认在播（paused=false）。一句话告诉用户即可。不要再说正在播放以外的套话，不要再 browser_chaoxing_next。`,
+        )
+      } else {
+        notifyWatch(
+          sessionId,
+          `进度检查 · 已打开「${title}」但未播放`,
+          `${sameChapter ? '本章下一个视频' : '下一节'}「${title}」已经打开，但视频是暂停的。立刻 browser_chaoxing_play。禁止说正在播放、视频仍在后台播放。`,
+        )
+      }
+      return
+    }
+    notifyWatch(
+      sessionId,
+      '进度检查 · 下一节没有打开',
+      `自动打开下一节失败。${next?.hint || ''} 跳过了：${(next?.skipped || []).join('、') || '无'}。调用 browser_chaoxing_next 再试一次。不要问用户手动点。`,
+    )
+  } catch (error) {
+    notifyWatch(
+      sessionId,
+      '进度检查 · 切换下一节失败',
+      `打开下一节出错：${error instanceof Error ? error.message : String(error)}。调用 browser_chaoxing_next 再试。`,
+    )
+  } finally {
+    advancingBrowsers.delete(browserId)
+  }
+}
+
+const enqueueWatchCheck = (check: VideoWatchCheck) => {
+  const session = sessions.value.find((item) => item.id === check.sessionId)
+  if (!session) return
+  if (sessionIsStreaming(session) || chatAborts.has(check.sessionId)) {
+    const prev = queuedWatchChecks.get(check.sessionId)
+    if (!prev || watchCheckRank[check.kind] >= watchCheckRank[prev.kind]) {
+      queuedWatchChecks.set(check.sessionId, check)
+    }
+    return
+  }
+  if (check.kind === 'done') {
+    void advanceToNextVideo(check)
+    return
+  }
+  if (check.kind === 'captcha') {
+    void handleCaptchaWatch(check)
+    return
+  }
+  if (check.kind === 'stalled' || check.kind === 'lost') {
+    void recoverPlayback(check)
+    return
+  }
+  // 播着且进度在走：只更新面板，不要再叫 Agent，避免反复 study
+}
+
+setChaoxingWatchHandler(enqueueWatchCheck)
+
+export const sendChatMessage = async (
+  text: string,
+  files?: AgentChatAttachment[],
+  options?: { sessionId?: string; kind?: 'watch'; modelText?: string },
+) => {
   const content = text.trim()
   if (!content) return
 
-  let session = activeChat.value
-  if (!session) session = createChat()
+  let session = options?.sessionId
+    ? sessions.value.find((item) => item.id === options.sessionId)
+    : activeChat.value
+  if (!session && !options?.sessionId) session = createChat()
+  if (!session) return
   const sessionId = session.id
   if (sessionIsStreaming(sessions.value.find((item) => item.id === sessionId))) return
-  await attachStudyFromUserText(sessionId, content)
+  const debug = (entry: Record<string, unknown>) =>
+    logAgentDebug(sessionId, { kind: session.browserId ? 'browser' : 'study', ...entry })
+  if (options?.kind !== 'watch') await attachStudyFromUserText(sessionId, content)
 
   const abort = new AbortController()
   chatAborts.set(sessionId, abort)
@@ -3134,6 +4110,7 @@ export const sendChatMessage = async (text: string, files?: AgentChatAttachment[
     id: `user-${Date.now()}`,
     role: 'user',
     content,
+    kind: options?.kind,
     attachments,
     steps: [],
     status: 'done',
@@ -3148,7 +4125,7 @@ export const sendChatMessage = async (text: string, files?: AgentChatAttachment[
     waiting: true,
   }
 
-  logAgentDebug(sessionId, {
+  debug({
     type: 'user',
     content: clipAgentDebug(content, 8000),
     attachments: attachments?.map((item) => item.fileName || item.folderPath || item.filePath),
@@ -3169,8 +4146,9 @@ export const sendChatMessage = async (text: string, files?: AgentChatAttachment[
     messages: [...current.messages, userMessage, assistantMessage],
   }))
 
+  const compacted = splitCompactedHistory(sessions.value.find((item) => item.id === sessionId))
   const history: { role: string; content: unknown }[] = []
-  for (const message of sessions.value.find((item) => item.id === sessionId)?.messages || []) {
+  for (const message of compacted.kept) {
     if (message.id === assistantId || message.id === userMessage.id) continue
     if (message.content) {
       history.push({
@@ -3181,6 +4159,9 @@ export const sendChatMessage = async (text: string, files?: AgentChatAttachment[
       })
     }
   }
+  const browserId = String(sessions.value.find((item) => item.id === sessionId)?.browserId || '').trim()
+  const isBrowserChat = Boolean(browserId)
+  const turnSystemPrompt = `${isBrowserChat ? BROWSER_SYSTEM_PROMPT : SYSTEM_PROMPT}${contextSummaryPrompt(compacted.summary)}`
   const hasFile = Boolean(sessionAttachment(sessionId))
   const promptFolders = (() => {
     const seen = new Set<number>()
@@ -3192,8 +4173,14 @@ export const sendChatMessage = async (text: string, files?: AgentChatAttachment[
     }
     return folders
   })()
-  const studyPrefix = await studyStatePrefix(sessionId)
-  const modelPrompt = `${studyPrefix}${modelUserContent(content, promptFolders)}`
+  const studyPrefix = isBrowserChat ? await browserStatePrefix(sessionId, options?.kind === 'watch') : await studyStatePrefix(sessionId)
+  const isQuizReviewTurn = /^第\s*\d+/.test(content)
+  const wantsNewQuiz = !isQuizReviewTurn && /出题|练习|巩固|继续下一|下一[章节]|^继续$|^接着|^再来|^再出/.test(content.trim())
+  const quizNudge = wantsNewQuiz
+    ? '\n\n【出题】用户这句话是要继续学并出可点选练习。必须调用 present_quiz，自己出 3–5 道选择题（带题干、选项、答案、解析和 node_name）。调用成功前禁止说已出示、请看右侧或假装题已经出来。'
+    : ''
+  const promptBody = String(options?.modelText || '').trim() || content
+  const modelPrompt = `${studyPrefix}${modelUserContent(promptBody, promptFolders)}${quizNudge}`
   const images = (attachments || []).filter((item) => isImageAttachment(item) && item.imageUrl)
   const userContent = images.length
     ? [
@@ -3218,13 +4205,34 @@ export const sendChatMessage = async (text: string, files?: AgentChatAttachment[
 
     const visibleText = (text?: string) => Boolean(String(text || '').replace(/\u200B/g, '').trim())
     let awaitingTool = false
+    let spokenText = ''
+    const liveContent = () => String(liveMessage()?.content || '')
+    const joinSpoken = (text: string) => {
+      const piece = String(text || '').replace(/\u200B/g, '')
+      if (!spokenText) return piece
+      if (!piece.trim()) return spokenText
+      if (piece === spokenText || piece.startsWith(spokenText)) return piece
+      return `${spokenText}\n\n${piece}`
+    }
+    const keepSpoken = () => {
+      const current = liveContent().trim()
+      if (current) spokenText = current
+    }
     const streamText = (text: string) => {
+      const next = joinSpoken(text)
+      if (!String(text || '').trim() && visibleText(liveContent())) {
+        patchMessage(sessionId, assistantId, {
+          waiting: awaitingTool,
+          status: 'streaming',
+        })
+        return
+      }
       patchMessage(sessionId, assistantId, {
-        content: text,
-        waiting: awaitingTool || !visibleText(text),
+        content: next,
+        waiting: awaitingTool || !visibleText(next),
         status: 'streaming',
       })
-      const mermaid = extractMermaidSource(text)
+      const mermaid = extractMermaidSource(next)
       if (mermaid) {
         emitStudyGraphStream({
           subjectId: Number.isFinite(streamSubjectId) ? streamSubjectId : undefined,
@@ -3233,7 +4241,8 @@ export const sendChatMessage = async (text: string, files?: AgentChatAttachment[
         })
       }
     }
-    const waitForFirstToken = (clearContent = true) => {
+    const waitForFirstToken = (clearContent = false) => {
+      if (!clearContent) keepSpoken()
       patchMessage(sessionId, assistantId, {
         ...(clearContent ? { content: '' } : {}),
         waiting: true,
@@ -3241,21 +4250,339 @@ export const sendChatMessage = async (text: string, files?: AgentChatAttachment[
       })
     }
 
-    const finalText = await runTextModel(modelPrompt, (delta) => {
+    const onDelta = (delta: string) => {
       if (abort.signal.aborted || liveMessage()?.status !== 'streaming') return
       streamText(delta)
-    }, {
-      timeoutMs: hasFile || images.length ? 15 * 60 * 1000 : 5 * 60 * 1000,
+    }
+    const runOptions = {
+      timeoutMs: isBrowserChat || hasFile || images.length ? 15 * 60 * 1000 : 5 * 60 * 1000,
       userContent,
       signal: abort.signal,
-      tools: CHAT_TOOLS,
-      systemPrompt: SYSTEM_PROMPT,
+      tools: isBrowserChat ? BROWSER_TOOLS : CHAT_TOOLS,
+      systemPrompt: turnSystemPrompt,
       useAgentModel: true,
       history,
-      maxRounds: hasFile || images.length ? 80 : 32,
+      maxRounds: isBrowserChat || hasFile || images.length ? 80 : 32,
       executeTool: async (call: ModelToolCall) => {
+        if (abort.signal.aborted) throw new DOMException('已停止', 'AbortError')
         const args = parseToolArgs(call.arguments)
         const attachment = sessionAttachment(sessionId)
+        const browserId = String(sessions.value.find((item) => item.id === sessionId)?.browserId || '').trim()
+
+        if (browserId && call.name.startsWith('browser_')) {
+          const wait = (ms: number) => new Promise<void>((resolve, reject) => {
+            if (abort.signal.aborted) {
+              reject(new DOMException('已停止', 'AbortError'))
+              return
+            }
+            const timer = window.setTimeout(() => {
+              abort.signal.removeEventListener('abort', onAbort)
+              resolve()
+            }, ms)
+            const onAbort = () => {
+              window.clearTimeout(timer)
+              reject(new DOMException('已停止', 'AbortError'))
+            }
+            abort.signal.addEventListener('abort', onAbort, { once: true })
+          })
+          try {
+            // 作业答题页只允许走题卡：读页面/点选项一律挡回，题卡和网页自动双向同步
+            if (['browser_get_page', 'browser_eval', 'browser_click', 'browser_type'].includes(call.name)) {
+              const { isHomeworkUrl } = await import('./browserAbstractions')
+              const state = await getBrowserState(browserId).catch(() => null)
+              const nowUrl = String(state?.url || listAppBrowsers().find((b) => b.id === browserId)?.url || '')
+              if (isHomeworkUrl(nowUrl) && /dowork|doHomeWork/i.test(nowUrl)) {
+                return JSON.stringify({
+                  error: '作业页禁止读网页或直接点页面',
+                  hint: '题卡和网页是自动双向同步的：browser_chaoxing_homework action=fill 会同步到网页，网页状态会自动回到题卡。题干/选项还没读出的题先跳过答其他题，稍后 inspect 一次抽象层会自动补读，不要猜答案。',
+                })
+              }
+            }
+            if (call.name === 'browser_get_state') {
+              const state = await getBrowserState(browserId).catch(() => null)
+              const item = listAppBrowsers().find((browser) => browser.id === browserId)
+              return JSON.stringify({
+                id: browserId,
+                url: state?.url || item?.url || '',
+                title: state?.title || item?.title || item?.name || '',
+              })
+            }
+            if (call.name === 'browser_get_page') {
+              const page = await readBrowserPage(browserId)
+              if (page == null) {
+                return JSON.stringify({
+                  error: '页面读取失败',
+                  hint: '不要再 get_page 或 eval iframe。立刻 browser_chaoxing_study。',
+                })
+              }
+              return JSON.stringify(page)
+            }
+            if (call.name === 'browser_navigate') {
+              const url = String(args.url || '').trim()
+              if (!url) return JSON.stringify({ error: '缺少网址' })
+              const current = String((await getBrowserState(browserId).catch(() => null))?.url || '')
+              const iframePage = /studentcourse|\/knowledge\/cards|ananas\/modules/.test(url)
+              const alreadyInCourse = /chaoxing\.com/.test(current) && /mycourse|studentstudy|studentcourse/.test(current)
+              if (iframePage && alreadyInCourse) {
+                return JSON.stringify({
+                  ok: false,
+                  error: '不要把 iframe 地址当顶层网页打开。留在当前课页，用 browser_chaoxing_study 在页面里点章节。',
+                })
+              }
+              await navigateBrowserView(browserId, url)
+              await wait(800)
+              return JSON.stringify({ ok: true, url })
+            }
+            if (call.name === 'browser_reload') {
+              await reloadBrowserView(browserId)
+              await wait(500)
+              return JSON.stringify({ ok: true })
+            }
+            if (call.name === 'browser_go_back') {
+              await goBackBrowserView(browserId)
+              await wait(400)
+              return JSON.stringify({ ok: true })
+            }
+            if (call.name === 'browser_go_forward') {
+              await goForwardBrowserView(browserId)
+              await wait(400)
+              return JSON.stringify({ ok: true })
+            }
+            if (call.name === 'browser_click') {
+              const selector = String(args.selector || '').trim()
+              if (!selector) return JSON.stringify({ error: '缺少 selector' })
+              return JSON.stringify(await clickBrowserElement(browserId, selector))
+            }
+            if (call.name === 'browser_click_text') {
+              const text = String(args.text || '').trim()
+              if (!text) return JSON.stringify({ error: '缺少 text' })
+              return JSON.stringify(await clickBrowserText(browserId, text))
+            }
+            if (call.name === 'browser_type') {
+              const selector = String(args.selector || '').trim()
+              if (!selector) return JSON.stringify({ error: '缺少 selector' })
+              return JSON.stringify(await typeBrowserElement(browserId, selector, String(args.text ?? '')))
+            }
+            if (call.name === 'browser_scroll') {
+              const amount = Number(args.amount)
+              return JSON.stringify(await scrollBrowserView(browserId, Number.isFinite(amount) ? amount : 600))
+            }
+            if (call.name === 'browser_eval') {
+              const script = String(args.script || '').trim()
+              if (!script) return JSON.stringify({ error: '缺少 script' })
+              return JSON.stringify({ result: await evalBrowserView(browserId, script) })
+            }
+            if (call.name === 'browser_chaoxing_study') {
+              startChaoxingChapterParser(browserId)
+              await waitForChapterState(browserId, 3500).catch(() => null)
+              const studied = await runAfterCaptcha(sessionId, browserId, () =>
+                studyChaoxingUnfinished(browserId, String(args.title || '').trim()) as Promise<{
+                  hasVideo?: boolean
+                  playing?: boolean
+                  current?: number
+                  duration?: number
+                  paused?: boolean
+                  ended?: boolean
+                  opened?: string
+                  next?: string
+                  quiz?: boolean
+                  captcha?: boolean
+                  done?: boolean
+                  unfinishedCount?: number
+                  hint?: string
+                }>,
+              )
+              if (studied?.captcha || studied?.quiz) return JSON.stringify(studied)
+              if (studied?.done && !(Number(studied.unfinishedCount) > 0)) return JSON.stringify(studied)
+              if (studied?.hasVideo) {
+                const playing = videoIsPlaying(studied) || Boolean(studied.playing)
+                startChaoxingWatch(
+                  browserId,
+                  sessionId,
+                  {
+                    current: studied.current,
+                    duration: studied.duration,
+                    paused: !playing,
+                    ended: studied.ended,
+                    title: studied.opened,
+                    next: studied.next,
+                    moreVideos: Boolean((studied as { moreVideos?: boolean }).moreVideos),
+                    videoCount: Number((studied as { videoCount?: number }).videoCount) || 0,
+                    videoIndex: Number((studied as { videoIndex?: number }).videoIndex) || 0,
+                  },
+                  { resume: Boolean(videoWatchFor(browserId)) },
+                )
+                return JSON.stringify({ ...studied, playing, watching: playing })
+              }
+              return JSON.stringify(studied)
+            }
+            if (call.name === 'browser_chaoxing_chapters') {
+              return JSON.stringify(await openChaoxingChapters(browserId))
+            }
+            if (call.name === 'browser_chaoxing_play') {
+              const played = await runAfterCaptcha(sessionId, browserId, () =>
+                playChaoxingVideo(browserId) as Promise<{
+                  hasVideo?: boolean
+                  playing?: boolean
+                  current?: number
+                  duration?: number
+                  paused?: boolean
+                  ended?: boolean
+                  captcha?: boolean
+                  hint?: string
+                }>,
+              )
+              if (played?.captcha) return JSON.stringify(played)
+              if (played?.hasVideo) {
+                const playing = videoIsPlaying(played)
+                startChaoxingWatch(
+                  browserId,
+                  sessionId,
+                  { ...played, paused: !playing },
+                  { resume: Boolean(videoWatchFor(browserId)) },
+                )
+                return JSON.stringify({
+                  ...played,
+                  playing,
+                  watching: playing,
+                  hint: playing
+                    ? '已确认在播。进度在 Agent 面板。系统会定时和按进度叫你核对，不要 browser_wait 空等整节。'
+                    : '播放器在，但视频没有播起来。不要说正在播放，再点一次播放或告诉用户没播起来。',
+                })
+              }
+              return JSON.stringify(played)
+            }
+            if (call.name === 'browser_chaoxing_watch') {
+              const existing = videoWatchFor(browserId)
+              if (existing && (existing.status === 'watching' || existing.status === 'paused' || existing.status === 'stalled')) {
+                return JSON.stringify({
+                  watching: true,
+                  already: true,
+                  title: existing.title,
+                  hint: '已经在监控，进度在 Agent 面板。不要重复调用，不要 browser_wait。',
+                })
+              }
+              let snap = await readChaoxingVideo(browserId)
+              if (snap?.captcha) {
+                const solved = await runAfterCaptcha(sessionId, browserId, async () => {
+                  snap = await readChaoxingVideo(browserId)
+                  return { captcha: Boolean(snap?.captcha), hint: snap?.hint }
+                })
+                if (solved.captcha) return JSON.stringify({ captcha: true, watching: false, hint: solved.hint })
+              }
+              startChaoxingWatch(browserId, sessionId, snap?.video
+                ? { ...snap.video, title: snap.current, next: snap.next }
+                : { title: snap?.current, next: snap?.next })
+              return JSON.stringify({
+                watching: true,
+                title: snap?.current || '',
+                next: snap?.next || '',
+                jobDone: snap?.jobDone ?? null,
+                quiz: Boolean(snap?.quiz),
+                video: snap?.video || null,
+                hint: '进度在 Agent 面板。系统会定时叫你核对。这个视频结束了会先切本章下一个视频。',
+              })
+            }
+            if (call.name === 'browser_chaoxing_captcha') {
+              const code = String(args.code || '').trim()
+              if (!code) return JSON.stringify({ error: '缺少 code，填图中 4 位字母或数字' })
+              const filled = await fillChaoxingCaptcha(browserId, code)
+              if (filled.ok) pendingCaptchaNotices.delete(sessionId)
+              return JSON.stringify({
+                ...filled,
+                hint: filled.ok
+                  ? '验证码已提交。立刻 browser_chaoxing_study 或 browser_chaoxing_play 继续。'
+                  : `${filled.error || '没填上'}。再看图读一次，或换一张再填。不要问用户。`,
+              })
+            }
+            if (call.name === 'browser_chaoxing_next') {
+              const next = await runAfterCaptcha(sessionId, browserId, () =>
+                openNextChaoxingChapter(browserId) as Promise<{
+                  hasVideo?: boolean
+                  quiz?: boolean
+                  captcha?: boolean
+                  opened?: string
+                  title?: string
+                  next?: string
+                  current?: number
+                  duration?: number
+                  paused?: boolean
+                  ended?: boolean
+                  skipped?: string[]
+                  hint?: string
+                }>,
+              )
+              if (next?.captcha || next?.quiz) return JSON.stringify(next)
+              if (next?.hasVideo && Number(next.duration) > 1) {
+                const playing = videoIsPlaying(next)
+                startChaoxingWatch(browserId, sessionId, {
+                  ...next,
+                  paused: !playing,
+                  title: next.opened || next.title,
+                  moreVideos: Boolean((next as { moreVideos?: boolean }).moreVideos),
+                  videoCount: Number((next as { videoCount?: number }).videoCount) || 0,
+                  videoIndex: Number((next as { videoIndex?: number }).videoIndex) || 0,
+                })
+                return JSON.stringify({
+                  ...next,
+                  playing,
+                  watching: playing,
+                  hint: playing
+                    ? (next as { sameChapter?: boolean }).sameChapter
+                      ? '已打开本章下一个视频并确认在播。不要停。'
+                      : '已打开下一节视频并确认在播。不要停。'
+                    : '已打开下一个视频，但还是暂停的。立刻 browser_chaoxing_play，不要说正在播放。',
+                })
+              }
+              return JSON.stringify(next)
+            }
+            if (call.name === 'browser_chaoxing_homework') {
+              const action = String(args.action || 'list').trim()
+              // 题卡里的 data URL 图只给面板看，回给模型前换成短标记，避免撑爆上下文
+              const stripHwImages = (card: Awaited<ReturnType<typeof inspectChaoxingHomework>>) => {
+                const brief = (src?: string) => {
+                  const s = String(src || '')
+                  return s.startsWith('data:') ? '［图，已由视觉读成文字］' : s
+                }
+                return JSON.stringify({
+                  ...card,
+                  questions: (card.questions || []).map((q) => ({
+                    ...q,
+                    images: (q.images || []).map(brief),
+                    options: (q.options || []).map((opt) => ({
+                      ...opt,
+                      image: brief(opt.image),
+                      images: (opt.images || []).map(brief),
+                    })),
+                  })),
+                })
+              }
+              if (action === 'list') return JSON.stringify(await openChaoxingHomeworkList(browserId))
+              if (action === 'inspect') return stripHwImages(await inspectChaoxingHomework(browserId))
+              if (action === 'open') {
+                const title = String(args.title || '').trim()
+                if (!title) return JSON.stringify({ error: 'open 需要 title' })
+                return JSON.stringify(await openChaoxingHomeworkItem(browserId, title))
+              }
+              if (action === 'fill') {
+                // fill 只回进度摘要（内部只做一次轻量状态检查，不全量重读）
+                return JSON.stringify(await fillChaoxingHomework(browserId, args.answers))
+              }
+              if (action === 'save') return stripHwImages(await saveChaoxingHomework(browserId))
+              if (action === 'submit') return stripHwImages(await submitChaoxingHomework(browserId))
+              return JSON.stringify({ error: 'action 必须是 list / open / inspect / fill / save / submit' })
+            }
+            if (call.name === 'browser_wait') {
+              const seconds = Math.min(60, Math.max(1, Number(args.seconds) || 20))
+              await wait(seconds * 1000)
+              const state = await getBrowserState(browserId).catch(() => null)
+              return JSON.stringify({ ok: true, waited: seconds, url: state?.url || '' })
+            }
+          } catch (error) {
+            if (abort.signal.aborted || isModelStopped(error)) throw error
+            return JSON.stringify({ error: error instanceof Error ? error.message : String(error) })
+          }
+        }
 
         if (call.name === 'get_file_info') {
           const path = String(args.path || attachment?.filePath || '')
@@ -4420,6 +5747,9 @@ export const sendChatMessage = async (text: string, files?: AgentChatAttachment[
           const currentId = sessions.value.find((item) => item.id === sessionId)?.studySubjectId
           const subjects = currentId ? await databaseService.listStudySubjects().catch(() => []) : []
           const current = subjects.find((item) => item.id === currentId)
+          if (currentId && current) {
+            finalizeStudySessionSummary({ subjectId: currentId, subjectName: current.name })
+          }
           setChatStudySubject(null, sessionId)
           return JSON.stringify({
             attached: false,
@@ -4856,7 +6186,7 @@ export const sendChatMessage = async (text: string, files?: AgentChatAttachment[
         if (abort.signal.aborted || liveMessage()?.status !== 'streaming') return
         if (event.type === 'round_start') {
           awaitingTool = false
-          waitForFirstToken()
+          waitForFirstToken(false)
           return
         }
         if (event.type === 'text') {
@@ -4870,9 +6200,9 @@ export const sendChatMessage = async (text: string, files?: AgentChatAttachment[
         }
         if (event.type === 'tool_start') {
           awaitingTool = true
-          waitForFirstToken()
+          waitForFirstToken(false)
           const args = parseToolArgs(event.arguments)
-          logAgentDebug(sessionId, {
+          debug({
             type: 'tool_start',
             name: event.name,
             arguments: clipAgentDebug(event.arguments),
@@ -4911,7 +6241,7 @@ export const sendChatMessage = async (text: string, files?: AgentChatAttachment[
           }
           const parsedError = extra && typeof extra === 'object' ? extra.error : null
           const status = event.error || parsedError ? 'failed' : 'done'
-          logAgentDebug(sessionId, {
+          debug({
             type: 'tool_end',
             name: event.name,
             status,
@@ -4942,10 +6272,330 @@ export const sendChatMessage = async (text: string, files?: AgentChatAttachment[
               previewCount: quizCards.length,
             } : {}),
           })
-          waitForFirstToken()
+          waitForFirstToken(false)
         }
       },
-    })
+    }
+
+    let finalText = await runTextModel(modelPrompt, onDelta, runOptions)
+    if (isBrowserChat && !abort.signal.aborted && liveMessage()?.status === 'streaming') {
+      const wantsHomework = /作业|答题|作答|应用高等数学/.test(content) && !/刷课|播完|播放视频/.test(content)
+      const wantsCourse = /播放|视频|章节|未完成|刷课|看完|看一下.*课|这个课程|国家安全|进度检查|已完成/.test(content)
+      const spoken = spokenText || liveContent()
+      const steps = liveMessage()?.steps || []
+      const usedNext = steps.some((step) => step.name === 'browser_chaoxing_next' && step.status === 'done')
+      const usedStudy = steps.some((step) => step.name === 'browser_chaoxing_study' && step.status === 'done')
+      const usedPlay = steps.some((step) => step.name === 'browser_chaoxing_play' && step.status === 'done')
+      const usedWatch = steps.some((step) => step.name === 'browser_chaoxing_watch' && step.status === 'done')
+      const claimedPlaying = /正在播放|仍在播放|后台播放/.test(spoken)
+      const watchDoneTurn = options?.kind === 'watch' && /已完成|已经结束/.test(`${content}\n${options?.modelText || ''}`)
+      const leftAfterSkip = /没有视频|学习资料|正在打开下一节|已切换到下一节/.test(spoken)
+      const stoppedMid = /让我查看|已进入|下一步|章节目录|正在打开下一节/.test(spoken)
+        && !/正在播放|任务点已完成|遇到测验|开始监控|已确认在播|打开并播放/.test(spoken)
+      const liveWatch = videoWatchFor(browserId)
+      const actuallyWatching = Boolean(liveWatch && (liveWatch.status === 'watching' || liveWatch.status === 'paused' || liveWatch.status === 'stalled'))
+      // study 工具调用成功 ≠ 已在播放；失败时仍要自动重试
+      const alreadyWatching = actuallyWatching || ((usedPlay || usedWatch) && !/没有|失败|无法/.test(spoken))
+      const studyFailedAskUser = wantsCourse && usedStudy && !alreadyWatching && options?.kind !== 'watch'
+        && /请手动|建议您|建议：|无法自动|无法读取|无法定位|告诉我|提供具体|请先手动|跨域/.test(spoken)
+      const askedCaptcha = /请.*(输入|填写).*验证码|让用户.*验证码|停下.*验证码|用户看图|用户说填完/.test(spoken)
+      const claimedAllDone = wantsCourse && !alreadyWatching && options?.kind !== 'watch'
+        && /全部完成|没有未完成|无未完成|暂无任务|学习任务已全部完成|无需继续播放|章节列表为空|没有任何需要播放|已完成检查|跨域|无法读取|无法直接读取|无法继续操作|我将等待|等待您提供/.test(spoken)
+      const fakePlaying = wantsCourse && claimedPlaying && !alreadyWatching && options?.kind !== 'watch'
+      if (watchDoneTurn && !usedNext && (leftAfterSkip || stoppedMid || !steps.some((step) => step.name === 'browser_chaoxing_watch'))) {
+        keepSpoken()
+        debug({ type: 'browser_continue', reason: 'stopped before next video' })
+        finalText = await runTextModel(
+          '这节已经结束，但还没播上下一节视频。立刻 browser_chaoxing_next。资料/PDF 会自动跳过。不要只点「下一节」就停，不要再解释。',
+          onDelta,
+          {
+            ...runOptions,
+            maxRounds: 48,
+            history: [
+              ...history,
+              { role: 'user', content: modelPrompt },
+              { role: 'assistant', content: spoken },
+            ],
+          },
+        )
+      } else if (fakePlaying) {
+        keepSpoken()
+        debug({ type: 'browser_continue', reason: 'claimed playing without play' })
+        finalText = await runTextModel(
+          '当前并没有在播放。立刻 browser_chaoxing_play 确认 paused=false，不要再口头说正在播放或视频仍在后台播放。',
+          onDelta,
+          {
+            ...runOptions,
+            maxRounds: 48,
+            history: [
+              ...history,
+              { role: 'user', content: modelPrompt },
+              { role: 'assistant', content: spoken },
+            ],
+          },
+        )
+      } else if (studyFailedAskUser) {
+        keepSpoken()
+        debug({ type: 'browser_continue', reason: 'study failed then asked user' })
+        finalText = await runTextModel(
+          '不要问用户，不要让用户手动点。立刻再调一次 browser_chaoxing_study。若已在目录页会直接解析未完成节并播放。不要 click_text「xxx(1)」。',
+          onDelta,
+          {
+            ...runOptions,
+            maxRounds: 48,
+            history: [
+              ...history,
+              { role: 'user', content: modelPrompt },
+              { role: 'assistant', content: spoken },
+            ],
+          },
+        )
+      } else if (wantsCourse && !alreadyWatching && options?.kind !== 'watch' && /请确认|您可以提供|无法自动定位|无法找到|建议：|请手动|告诉我具体|请告诉我|截图|配合提供|无法直接看到|请提供当前页面/.test(spoken)) {
+        keepSpoken()
+        debug({ type: 'browser_continue', reason: 'asked user instead of play' })
+        finalText = await runTextModel(
+          '不要问用户，不要要截图。立刻 browser_chaoxing_study，title 填目录里未完成的第一节（如维护网络安全）。不要再 get_page，不要再点「章节」。',
+          onDelta,
+          {
+            ...runOptions,
+            maxRounds: 48,
+            history: [
+              ...history,
+              { role: 'user', content: modelPrompt },
+              { role: 'assistant', content: spoken },
+            ],
+          },
+        )
+      } else if (askedCaptcha) {
+        keepSpoken()
+        debug({ type: 'browser_continue', reason: 'asked user to fill captcha' })
+        finalText = await runTextModel(
+          '不要让用户填验证码。立刻看页面 #ccc 图认出 4 位，调用 browser_chaoxing_captcha。提交后再 browser_chaoxing_study。不要问用户，不要 browser_wait。',
+          onDelta,
+          {
+            ...runOptions,
+            maxRounds: 48,
+            history: [
+              ...history,
+              { role: 'user', content: modelPrompt },
+              { role: 'assistant', content: spoken },
+            ],
+          },
+        )
+      } else if (claimedAllDone) {
+        keepSpoken()
+        debug({ type: 'browser_continue', reason: 'claimed all done without catalog' })
+        finalText = await runTextModel(
+          '跨域不是借口。不要再 get_page / eval / 打开 iframe。立刻只调 browser_chaoxing_study。不要问用户，不要说全部完成。',
+          onDelta,
+          {
+            ...runOptions,
+            maxRounds: 48,
+            history: [
+              ...history,
+              { role: 'user', content: modelPrompt },
+              { role: 'assistant', content: spoken },
+            ],
+          },
+        )
+      } else if (wantsCourse && stoppedMid && !alreadyWatching && options?.kind !== 'watch') {
+        keepSpoken()
+        debug({ type: 'browser_continue', reason: 'stopped before play' })
+        finalText = await runTextModel(
+          '任务还没做完。立刻只调 browser_chaoxing_study。不要 get_page，不要 eval iframe，不要打开 iframe 网址，不要问用户。',
+          onDelta,
+          {
+            ...runOptions,
+            maxRounds: 48,
+            history: [
+              ...history,
+              { role: 'user', content: modelPrompt },
+              { role: 'assistant', content: spoken },
+            ],
+          },
+        )
+      }
+      const usedHomework = (liveMessage()?.steps || []).some((step) => step.name === 'browser_chaoxing_homework')
+      const alreadyInspected = (liveMessage()?.steps || []).some((step) => step.name === 'browser_chaoxing_homework' && step.status === 'done')
+      const homeworkTalk = /作业|题目|选项|作答|选上|开始|继续/.test(content)
+        || /作业|单选题|题卡|questions|next/.test(spoken)
+      const filledHomework = steps.some((step) => step.name === 'browser_chaoxing_homework' && step.status === 'done' && /fill|已填|暂时保存/.test(`${step.label || ''}${step.detail || ''}`))
+      const homeworkUnfinished = (wantsHomework || homeworkTalk || usedHomework)
+        && options?.kind !== 'watch'
+        && (
+          /请确认|需要你允许|现在提交|全部识别|让我继续查看|没有选中|取消选择|并没有选|看不清|是图像/.test(spoken)
+          || (usedHomework && !filledHomework && !alreadyInspected && /inspect|读题|单选题/.test(spoken))
+        )
+        && !/已暂时保存|已提交|next":"done"/.test(spoken)
+      const stillNoStudy = wantsCourse && !wantsHomework && !alreadyWatching && options?.kind !== 'watch'
+        && !(liveMessage()?.steps || []).some((step) => step.name === 'browser_chaoxing_study')
+      const sawCatalog = wantsCourse && !alreadyWatching && options?.kind !== 'watch'
+        && /已完成任务点|需要开始播放未完成|【章节目录】/.test(spokenText || liveContent())
+        && !/正在播放|已确认在播|进度正常/.test(spokenText || liveContent())
+      if (stillNoStudy) {
+        keepSpoken()
+        debug({ type: 'browser_continue', reason: 'never called study' })
+        finalText = await runTextModel(
+          '这一轮还没调用 browser_chaoxing_study。立刻只调这一次，不要 get_page，不要 eval，不要打开 iframe 网址，不要问用户。',
+          onDelta,
+          {
+            ...runOptions,
+            maxRounds: 24,
+            history: [
+              ...history,
+              { role: 'user', content: modelPrompt },
+              { role: 'assistant', content: spokenText || liveContent() },
+            ],
+          },
+        )
+      } else if (homeworkUnfinished) {
+        keepSpoken()
+        debug({ type: 'browser_continue', reason: 'homework unfinished' })
+        finalText = await runTextModel(
+          '作业还没做完。只许用 browser_chaoxing_homework：有题卡就一题一题作答，答出一道立刻 fill 这一道（answers 只放一项），再做下一道；没有题卡就 inspect。题干没读出的题先跳过等 inspect 补读，不要猜。不要 eval，不要 click，不要读网页，不要出练习题，不要问用户确认。已选中的题 fill 会跳过。',
+          onDelta,
+          {
+            ...runOptions,
+            maxRounds: 48,
+            history: [
+              ...history,
+              { role: 'user', content: modelPrompt },
+              { role: 'assistant', content: spokenText || liveContent() },
+            ],
+          },
+        )
+      } else if (wantsHomework && !usedHomework && options?.kind !== 'watch') {
+        keepSpoken()
+        debug({ type: 'browser_continue', reason: 'homework without tool' })
+        finalText = await runTextModel(
+          '用户要写作业。立刻 browser_chaoxing_homework action=inspect 或 list。读到题卡后一题一题作答，每答出一道就 fill 一道，不要攒到最后。不要 eval，不要 click，不要问用户。',
+          onDelta,
+          {
+            ...runOptions,
+            maxRounds: 48,
+            history: [
+              ...history,
+              { role: 'user', content: modelPrompt },
+              { role: 'assistant', content: spokenText || liveContent() },
+            ],
+          },
+        )
+      } else if (sawCatalog && !wantsHomework) {
+        keepSpoken()
+        debug({ type: 'browser_continue', reason: 'had catalog but did not play' })
+        finalText = await runTextModel(
+          '目录已经读到未完成节。立刻 browser_chaoxing_study，title 填「维护网络安全」。不要要截图，不要再点「章节」，不要再 get_page。',
+          onDelta,
+          {
+            ...runOptions,
+            maxRounds: 24,
+            history: [
+              ...history,
+              { role: 'user', content: modelPrompt },
+              { role: 'assistant', content: spokenText || liveContent() },
+            ],
+          },
+        )
+      }
+    }
+    const hasPresentedQuiz = () =>
+      (liveMessage()?.steps || []).some((step) => step.name === 'present_quiz' && step.status === 'done')
+    const quizTopicOf = (text: string) => {
+      const names = [...String(text || '').matchAll(/「([^」]+)」/g)]
+        .map((item) => String(item[1] || '').replace(/\s*(入门)?练习$/, '').trim())
+        .filter(Boolean)
+      return names[names.length - 1] || ''
+    }
+    const claimedQuiz = () => /出示|练习页|点选|作答会|入门练习|\d+\s*道题/.test(liveContent())
+    const needsForcedQuiz = () => {
+      if (hasPresentedQuiz() || isQuizReviewTurn) return false
+      return claimedQuiz() || wantsNewQuiz
+    }
+    const parseDraftedQuestions = (text: string) => {
+      const raw = String(text || '').trim()
+      const start = raw.indexOf('[')
+      const end = raw.lastIndexOf(']')
+      if (start < 0 || end <= start) return []
+      try {
+        const items = JSON.parse(raw.slice(start, end + 1))
+        if (!Array.isArray(items)) return []
+        return items
+          .filter((item) => item && item.question && item.answer)
+          .slice(0, 5)
+      } catch {
+        return []
+      }
+    }
+    const forcePresentQuiz = async (topic: string, questions?: unknown[]) => {
+      const id = `auto-quiz-${Date.now()}`
+      const title = topic ? `${topic} 练习` : '练习'
+      const raw = JSON.stringify({
+        title,
+        node_name: topic || undefined,
+        ...(questions?.length ? { questions } : { count: 5 }),
+      })
+      runOptions.onEvent?.({ type: 'tool_start', id, name: 'present_quiz', arguments: raw })
+      let result = ''
+      let error: string | undefined
+      try {
+        result = await runOptions.executeTool({ id, name: 'present_quiz', arguments: raw })
+      } catch (caught) {
+        error = caught instanceof Error ? caught.message : String(caught)
+        result = `Error: ${error}`
+      }
+      runOptions.onEvent?.({ type: 'tool_end', id, name: 'present_quiz', result, error })
+    }
+    if (!isBrowserChat && !abort.signal.aborted && liveMessage()?.status === 'streaming' && needsForcedQuiz()) {
+      keepSpoken()
+      const topic = quizTopicOf(spokenText || liveContent())
+        || lastStudyFocus.get(Number(sessions.value.find((item) => item.id === sessionId)?.studySubjectId))?.nodeName
+        || ''
+      debug({ type: 'quiz_followup', topic, reason: claimedQuiz() ? 'claimed without present_quiz' : 'asked without present_quiz' })
+      const quizTools = CHAT_TOOLS.filter((item) =>
+        ['present_quiz', 'focus_knowledge_graph', 'list_knowledge_questions'].includes(item.function.name),
+      )
+      finalText = await runTextModel(
+        topic
+          ? `右侧练习页现在是空的。立刻调用 present_quiz，自己出 3–5 道「${topic}」的选择题，title 用「${topic} 练习」，每题带 question、options、answer、explanation、node_name。不要只口头说已出示，不要再讲一遍。`
+          : '右侧练习页现在是空的。立刻调用 present_quiz，自己出 3–5 道选择题，每题带 question、options、answer、explanation。不要只口头说已出示。',
+        onDelta,
+        {
+          ...runOptions,
+          tools: quizTools,
+          userContent: undefined,
+          history: [
+            ...history,
+            { role: 'user', content: modelPrompt },
+            { role: 'assistant', content: spokenText || liveContent() },
+          ],
+          maxRounds: 4,
+        },
+      )
+      if (!hasPresentedQuiz() && !abort.signal.aborted) {
+        const drafted = await runTextModel(
+          topic
+            ? `只输出 JSON 数组，不要其他文字。为「${topic}」出 5 道单选题，每项含 question、options（A. …\\nB. …）、answer（如 A）、explanation、question_type（单选）、node_name。`
+            : '只输出 JSON 数组，不要其他文字。出 5 道当前进度相关的单选题，每项含 question、options、answer、explanation、question_type（单选）。',
+          () => undefined,
+          {
+            timeoutMs: runOptions.timeoutMs,
+            signal: abort.signal,
+            tools: [],
+            systemPrompt: '你只输出 JSON 数组，不要解释。',
+            useAgentModel: true,
+            history: [
+              ...history,
+              { role: 'user', content: modelPrompt },
+              { role: 'assistant', content: spokenText || liveContent() },
+            ],
+            maxRounds: 1,
+          },
+        )
+        const questions = parseDraftedQuestions(drafted)
+        debug({ type: 'quiz_fallback', topic, count: questions.length })
+        if (questions.length) await forcePresentQuiz(topic, questions)
+      }
+    }
 
     if (abort.signal.aborted) {
       const current = sessions.value.find((item) => item.id === sessionId)
@@ -4953,11 +6603,14 @@ export const sendChatMessage = async (text: string, files?: AgentChatAttachment[
       if (current?.status === 'streaming') finalizeStopped(sessionId, assistantId)
       return
     }
-    const assistantContent = finalText || sessions.value.find((item) => item.id === sessionId)
+    const liveNow = sessions.value.find((item) => item.id === sessionId)
       ?.messages.find((message) => message.id === assistantId)?.content || ''
+    const assistantContent = visibleText(liveNow)
+      ? liveNow
+      : joinSpoken(finalText || '')
     const assistantSteps = sessions.value.find((item) => item.id === sessionId)
       ?.messages.find((message) => message.id === assistantId)?.steps || []
-    logAgentDebug(sessionId, {
+    debug({
       type: 'assistant',
       content: clipAgentDebug(assistantContent, 8000),
       steps: assistantSteps.map((step) => ({
@@ -4974,7 +6627,7 @@ export const sendChatMessage = async (text: string, files?: AgentChatAttachment[
     const finished = sessions.value
       .find((item) => item.id === sessionId)
       ?.messages.find((message) => message.id === assistantId)
-    if (finished) {
+    if (finished && !sessions.value.find((item) => item.id === sessionId)?.browserId) {
       const auto = shouldAutoEvalStudy(sessionId, finished)
       if (auto.yes) {
         scheduleStudyProgressEval({
@@ -4983,8 +6636,14 @@ export const sendChatMessage = async (text: string, files?: AgentChatAttachment[
           subjectId: auto.subjectId,
           force: auto.force,
         })
+      } else if (/这是本轮最后一题/.test(lastUserText(sessionId))) {
+        const subjectId = Number(sessions.value.find((item) => item.id === sessionId)?.studySubjectId)
+        if (Number.isFinite(subjectId) && subjectId > 0) {
+          finalizeStudySessionSummary({ subjectId })
+        }
       }
     }
+    maybeCompactContext(sessionId)
   } catch (error) {
     if (abort.signal.aborted || isModelStopped(error)) {
       const current = sessions.value.find((item) => item.id === sessionId)
@@ -5003,5 +6662,15 @@ export const sendChatMessage = async (text: string, files?: AgentChatAttachment[
       if (liveId == null || id == null || liveId === id) finishStudyGraphStream(id)
     }
     if (chatAborts.get(sessionId) === abort) chatAborts.delete(sessionId)
+    const queued = queuedWatchChecks.get(sessionId)
+    const pendingImage = pendingCaptchaNotices.get(sessionId)
+    if (pendingImage && (!queued || queued.kind !== 'captcha')) {
+      pendingCaptchaNotices.delete(sessionId)
+      window.setTimeout(() => notifyCaptchaWithImage(sessionId, pendingImage), 0)
+    }
+    if (queued) {
+      queuedWatchChecks.delete(sessionId)
+      window.setTimeout(() => enqueueWatchCheck(queued), 0)
+    }
   }
 }

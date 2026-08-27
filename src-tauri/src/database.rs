@@ -444,6 +444,18 @@ pub struct StudyActivity {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct StudyTimelineSummary {
+    pub id: i64,
+    pub subject_id: i64,
+    pub text: String,
+    pub start_time: String,
+    pub end_time: String,
+    pub covered_through_id: i64,
+    pub activity_count: i64,
+    pub create_time: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct StudyHeatmapPoint {
     pub names: Vec<String>,
     pub create_time: String,
@@ -1629,6 +1641,86 @@ pub async fn get_recent_practice_marks(
             }
         })
         .collect())
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct QuestionPracticeStats {
+    pub question_id: i64,
+    pub attempted: i64,
+    pub last_correct: bool,
+    pub ever_wrong: bool,
+}
+
+#[tauri::command]
+pub async fn get_question_practice_stats(ids: Vec<i64>) -> Result<Vec<QuestionPracticeStats>, String> {
+    let conn = get_conn()?;
+    let unique: Vec<i64> = ids
+        .into_iter()
+        .filter(|id| *id > 0)
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    if unique.is_empty() {
+        return Ok(vec![]);
+    }
+    let mut by_id: HashMap<i64, QuestionPracticeStats> = HashMap::new();
+    for chunk in unique.chunks(400) {
+        let placeholders = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let agg_sql = format!(
+            "SELECT QuestionId,
+                    SUM(CASE WHEN length(trim(UserAnswer)) > 0 THEN 1 ELSE 0 END) AS attempted,
+                    MAX(CASE WHEN IsCorrect = 0 AND length(trim(UserAnswer)) > 0 THEN 1 ELSE 0 END) AS ever_wrong
+             FROM QuestionPracticeHistory
+             WHERE QuestionId IN ({placeholders})
+             GROUP BY QuestionId"
+        );
+        let mut stmt = conn.prepare(&agg_sql).map_err(|e| format!("{}", e))?;
+        let rows = stmt
+            .query_map(rusqlite::params_from_iter(chunk.iter()), |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)? != 0,
+                ))
+            })
+            .map_err(|e| format!("{}", e))?;
+        for row in rows {
+            let (question_id, attempted, ever_wrong) = row.map_err(|e| format!("{}", e))?;
+            by_id.insert(
+                question_id,
+                QuestionPracticeStats {
+                    question_id,
+                    attempted,
+                    last_correct: false,
+                    ever_wrong,
+                },
+            );
+        }
+        let last_sql = format!(
+            "SELECT h.QuestionId, h.IsCorrect
+             FROM QuestionPracticeHistory h
+             INNER JOIN (
+                SELECT QuestionId, MAX(Id) AS MaxId
+                FROM QuestionPracticeHistory
+                WHERE QuestionId IN ({placeholders})
+                  AND length(trim(UserAnswer)) > 0
+                GROUP BY QuestionId
+             ) t ON t.MaxId = h.Id"
+        );
+        let mut last_stmt = conn.prepare(&last_sql).map_err(|e| format!("{}", e))?;
+        let last_rows = last_stmt
+            .query_map(rusqlite::params_from_iter(chunk.iter()), |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)? != 0))
+            })
+            .map_err(|e| format!("{}", e))?;
+        for row in last_rows {
+            let (question_id, last_correct) = row.map_err(|e| format!("{}", e))?;
+            if let Some(item) = by_id.get_mut(&question_id) {
+                item.last_correct = last_correct;
+            }
+        }
+    }
+    Ok(by_id.into_values().collect())
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -2917,6 +3009,132 @@ pub async fn list_study_heatmap(subject_id: i64) -> Result<Vec<StudyHeatmapPoint
     Ok(items)
 }
 
+fn map_timeline_summary_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StudyTimelineSummary> {
+    Ok(StudyTimelineSummary {
+        id: row.get(0)?,
+        subject_id: row.get(1)?,
+        text: row.get(2)?,
+        start_time: row.get(3)?,
+        end_time: row.get(4)?,
+        covered_through_id: row.get(5)?,
+        activity_count: row.get(6)?,
+        create_time: row.get(7)?,
+    })
+}
+
+#[tauri::command]
+pub async fn list_study_timeline_summaries(
+    subject_id: i64,
+    limit: Option<i64>,
+) -> Result<Vec<StudyTimelineSummary>, String> {
+    let conn = get_conn()?;
+    load_study_subject(&conn, subject_id)?;
+    let cap = limit.unwrap_or(120).clamp(1, 500);
+    let mut stmt = conn
+        .prepare(
+            "SELECT Id, SubjectId, Text, StartTime, EndTime, CoveredThroughId, ActivityCount, CreateTime
+             FROM StudyTimelineSummary
+             WHERE SubjectId = ?
+             ORDER BY datetime(EndTime) DESC, Id DESC
+             LIMIT ?",
+        )
+        .map_err(|e| format!("{}", e))?;
+    let rows = stmt
+        .query_map(rusqlite::params![subject_id, cap], map_timeline_summary_row)
+        .map_err(|e| format!("{}", e))?;
+    let mut items = Vec::new();
+    for row in rows {
+        items.push(row.map_err(|e| format!("{}", e))?);
+    }
+    Ok(items)
+}
+
+#[tauri::command]
+pub async fn get_study_timeline_summary_cursor(subject_id: i64) -> Result<i64, String> {
+    let conn = get_conn()?;
+    load_study_subject(&conn, subject_id)?;
+    let value: Option<i64> = conn
+        .query_row(
+            "SELECT CoveredThroughId FROM StudyTimelineSummary
+             WHERE SubjectId = ?
+             ORDER BY CoveredThroughId DESC, Id DESC
+             LIMIT 1",
+            [subject_id],
+            |row| row.get(0),
+        )
+        .ok();
+    Ok(value.unwrap_or(0))
+}
+
+#[tauri::command]
+pub async fn list_unsummarized_study_activity(
+    subject_id: i64,
+    after_id: i64,
+    limit: Option<i64>,
+) -> Result<Vec<StudyActivity>, String> {
+    let conn = get_conn()?;
+    load_study_subject(&conn, subject_id)?;
+    let cap = limit.unwrap_or(200).clamp(1, 500);
+    let mut stmt = conn
+        .prepare(
+            "SELECT Id, SubjectId, Kind, Names, QuestionCount, CorrectCount, CreateTime
+             FROM StudyActivity
+             WHERE SubjectId = ? AND Id > ?
+             ORDER BY Id ASC
+             LIMIT ?",
+        )
+        .map_err(|e| format!("{}", e))?;
+    let rows = stmt
+        .query_map(rusqlite::params![subject_id, after_id.max(0), cap], map_activity_row)
+        .map_err(|e| format!("{}", e))?;
+    let mut items = Vec::new();
+    for row in rows {
+        items.push(row.map_err(|e| format!("{}", e))?);
+    }
+    Ok(items)
+}
+
+#[tauri::command]
+pub async fn insert_study_timeline_summary(
+    subject_id: i64,
+    text: String,
+    start_time: String,
+    end_time: String,
+    covered_through_id: i64,
+    activity_count: i64,
+) -> Result<StudyTimelineSummary, String> {
+    let conn = get_conn()?;
+    load_study_subject(&conn, subject_id)?;
+    let clean = text.trim();
+    if clean.is_empty() {
+        return Err("摘要不能为空".into());
+    }
+    if covered_through_id <= 0 || activity_count <= 0 {
+        return Err("摘要范围无效".into());
+    }
+    conn.execute(
+        "INSERT INTO StudyTimelineSummary (SubjectId, Text, StartTime, EndTime, CoveredThroughId, ActivityCount, CreateTime)
+         VALUES (?, ?, ?, ?, ?, ?, datetime('now'))",
+        rusqlite::params![
+            subject_id,
+            clean,
+            start_time,
+            end_time,
+            covered_through_id,
+            activity_count.max(1),
+        ],
+    )
+    .map_err(|e| format!("{}", e))?;
+    let id = conn.last_insert_rowid();
+    conn.query_row(
+        "SELECT Id, SubjectId, Text, StartTime, EndTime, CoveredThroughId, ActivityCount, CreateTime
+         FROM StudyTimelineSummary WHERE Id = ?",
+        [id],
+        map_timeline_summary_row,
+    )
+    .map_err(|e| format!("{}", e))
+}
+
 fn delete_knowledge_links_for_subject(conn: &Connection, subject_id: i64) -> Result<(), String> {
     conn.execute(
         "DELETE FROM QuestionKnowledgeNodes WHERE NodeId IN (SELECT Id FROM StudyGraphNodes WHERE SubjectId = ?)",
@@ -4191,6 +4409,26 @@ pub fn init_database_schema(db_path: &str) -> Result<(), String> {
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_study_activity_subject
          ON StudyActivity (SubjectId, CreateTime DESC, Id DESC)",
+        [],
+    )
+    .map_err(|e| format!("{}", e))?;
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS StudyTimelineSummary (
+          Id INTEGER PRIMARY KEY AUTOINCREMENT,
+          SubjectId INTEGER NOT NULL,
+          Text TEXT NOT NULL,
+          StartTime TEXT NOT NULL,
+          EndTime TEXT NOT NULL,
+          CoveredThroughId INTEGER NOT NULL,
+          ActivityCount INTEGER DEFAULT 0,
+          CreateTime TEXT NOT NULL
+        )",
+        [],
+    )
+    .map_err(|e| format!("{}", e))?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_study_timeline_summary_subject
+         ON StudyTimelineSummary (SubjectId, EndTime DESC, Id DESC)",
         [],
     )
     .map_err(|e| format!("{}", e))?;

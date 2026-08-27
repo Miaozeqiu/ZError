@@ -1,7 +1,7 @@
 import { defineConfig, type Plugin } from "vite";
 import vue from "@vitejs/plugin-vue";
 import { resolve } from 'path';
-import { appendFileSync, mkdirSync } from 'fs';
+import { appendFileSync, mkdirSync, writeFileSync } from 'fs';
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
@@ -22,13 +22,33 @@ const agentDebugLogPlugin = (): Plugin => ({
           const body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}') as {
             file?: string
             entry?: Record<string, unknown>
+            replace?: boolean
+            ext?: string
+            text?: string
           }
-          const file = String(body.file || 'session').replace(/[^\w.-]+/g, '_').slice(0, 80)
+          const ext = body.ext === 'md' ? 'md' : body.ext === 'html' ? 'html' : body.ext === 'json' ? 'json' : 'txt'
+          const rawFile = String(body.file || 'session')
+          const dumpRel = rawFile.startsWith('chaoxing-parse/')
+            ? rawFile.replace(/\.\./g, '').replace(/[^a-zA-Z0-9/._-]+/g, '_').slice(0, 180)
+            : ''
+          if (dumpRel) {
+            const dest = resolve(__dirname, 'logs', `${dumpRel}.${ext}`)
+            mkdirSync(resolve(dest, '..'), { recursive: true })
+            writeFileSync(dest, typeof body.text === 'string' ? body.text : '')
+            res.statusCode = 204
+            res.end()
+            return
+          }
+          const file = rawFile.replace(/[^\w.-]+/g, '_').slice(0, 80)
           mkdirSync(dir, { recursive: true })
-          appendFileSync(
-            resolve(dir, `${file}.jsonl`),
-            `${JSON.stringify({ ts: new Date().toISOString(), ...body.entry })}\n`,
-          )
+          if (body.replace && typeof body.text === 'string') {
+            writeFileSync(resolve(dir, `${file}.${ext === 'md' ? 'md' : 'txt'}`), body.text)
+          } else {
+            appendFileSync(
+              resolve(dir, `${file}.jsonl`),
+              `${JSON.stringify({ ts: new Date().toISOString(), ...body.entry })}\n`,
+            )
+          }
           res.statusCode = 204
           res.end()
         } catch (error) {

@@ -256,10 +256,16 @@ export type ForgettingCurveView = {
   bandLabel: string
 }
 
-export const findGraphNode = (root: RetentionTreeNode | null | undefined, name: string) => {
+/** 树节点自身的类型，用于让查找函数保留调用方传入的具体节点类型 */
+type RetentionTree<T> = RetentionTreeNode & { children?: T[] }
+
+export const findGraphNode = <T extends RetentionTree<T>>(
+  root: T | null | undefined,
+  name: string,
+): T | null => {
   const needle = String(name || '').trim()
   if (!root || !needle) return null
-  const walk = (node: RetentionTreeNode): RetentionTreeNode | null => {
+  const walk = (node: T): T | null => {
     if (String(node.name || '').trim() === needle) return node
     for (const child of node.children || []) {
       const found = walk(child)
@@ -270,9 +276,12 @@ export const findGraphNode = (root: RetentionTreeNode | null | undefined, name: 
   return walk(root)
 }
 
-export const findGraphNodeById = (root: RetentionTreeNode | null | undefined, nodeId: number) => {
+export const findGraphNodeById = <T extends RetentionTree<T>>(
+  root: T | null | undefined,
+  nodeId: number,
+): T | null => {
   if (!root || !Number.isFinite(nodeId)) return null
-  const walk = (node: RetentionTreeNode): RetentionTreeNode | null => {
+  const walk = (node: T): T | null => {
     if (Number(node.nodeId) === nodeId) return node
     for (const child of node.children || []) {
       const found = walk(child)
@@ -285,10 +294,10 @@ export const findGraphNodeById = (root: RetentionTreeNode | null | undefined, no
 
 export const isLeafNode = (node: RetentionTreeNode | null | undefined) => !node?.children?.length
 
-export const resolveCurveNode = (
-  node: RetentionTreeNode,
-  graph?: RetentionTreeNode | null,
-) => {
+export const resolveCurveNode = <T extends RetentionTree<T>>(
+  node: T,
+  graph?: T | null,
+): T => {
   const nodeId = Number(node.nodeId)
   if (Number.isFinite(nodeId) && nodeId > 0) return findGraphNodeById(graph, nodeId) || node
   return findGraphNode(graph, node.name || '') || node

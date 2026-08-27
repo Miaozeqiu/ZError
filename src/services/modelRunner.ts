@@ -1,6 +1,7 @@
 import { resolveExecutableModelJsCode, resolveRuntimeModelId } from './modelProtocol'
-import { modelConfigManager } from './modelConfig'
+import { modelConfigManager, modelHasVision } from './modelConfig'
 import { settingsManager } from './settings'
+import { logAgentDebug } from './agentDebugLog'
 
 export interface ModelToolCall {
   id: string
@@ -39,6 +40,7 @@ export interface RunTextModelOptions {
   userContent?: unknown
   maxRounds?: number
   useAgentModel?: boolean
+  useVisionModel?: boolean
   signal?: AbortSignal
   executeTool?: (call: ModelToolCall) => Promise<string>
   onEvent?: (event: ModelRunEvent) => void
@@ -220,11 +222,28 @@ export async function runTextModel(
   onDelta?: (text: string) => void,
   options?: RunTextModelOptions
 ): Promise<string> {
-  const model = options?.useAgentModel
-    ? (modelConfigManager.getSelectedAgentModel() || modelConfigManager.getSelectedTextModel())
-    : (modelConfigManager.getSelectedTextModel() || modelConfigManager.getSelectedModel())
+  const pickVisionModel = () => {
+    const vision = modelConfigManager.getSelectedVisionModel()
+    if (vision) return vision
+    const agent = modelConfigManager.getSelectedAgentModel()
+    if (agent && modelHasVision(agent)) return agent
+    const text = modelConfigManager.getSelectedTextModel()
+    if (text && modelHasVision(text)) return text
+    return agent || text || modelConfigManager.getSelectedModel()
+  }
+  const model = options?.useVisionModel
+    ? pickVisionModel()
+    : options?.useAgentModel
+      ? (modelConfigManager.getSelectedAgentModel() || modelConfigManager.getSelectedTextModel())
+      : (modelConfigManager.getSelectedTextModel() || modelConfigManager.getSelectedModel())
   if (!model) {
-    throw new Error(options?.useAgentModel ? '请先在模型设置的 agent 里选择一个模型' : '请先在设置里选择一个文本模型')
+    throw new Error(
+      options?.useVisionModel
+        ? '请先在模型设置里选择一个能看图的模型'
+        : options?.useAgentModel
+          ? '请先在模型设置的 agent 里选择一个模型'
+          : '请先在设置里选择一个文本模型',
+    )
   }
 
   const platform = modelConfigManager.getSettings().platforms.find((item) =>
@@ -270,7 +289,10 @@ export async function runTextModel(
   }
 
   const configuredMs = Number(settingsManager.get('modelResponseTimeout') ?? 40) * 1000
-  const timeoutMs = Math.max(options?.timeoutMs ?? 0, configuredMs > 0 ? configuredMs : 40000, 180000)
+  // 调用方显式给了超时就照用（视觉转写等短任务不能被 180s 下限拖死）
+  const timeoutMs = options?.timeoutMs
+    ? Math.max(options.timeoutMs, 5000)
+    : Math.max(configuredMs > 0 ? configuredMs : 40000, 180000)
   const abortController = new AbortController()
   const throwIfStopped = () => {
     if (options?.signal?.aborted) throw new ModelStoppedError()
@@ -324,6 +346,26 @@ export async function runTextModel(
   const seenToolCalls = new Set<string>()
   let toolsDisabled = false
 
+  // 开发模式把每轮发给模型的原始 messages / 回复落盘，方便排查 agent 行为
+  const ioSafeMessages = (list: any[]) => list.map((item) => {
+    const body = typeof item?.content === 'string' ? item.content : JSON.stringify(item?.content ?? '')
+    const cut = String(body || '')
+      .replace(/data:image\/[A-Za-z0-9+/=;,._-]+/g, (s) => `[图 ${s.length}b]`)
+    return {
+      role: item?.role,
+      name: item?.name,
+      tool_calls: Array.isArray(item?.tool_calls)
+        ? item.tool_calls.map((tc: any) => ({ name: tc?.function?.name, args: String(tc?.function?.arguments || '').slice(0, 600) }))
+        : undefined,
+      content: cut.length > 4000 ? `${cut.slice(0, 4000)}…(${cut.length})` : cut,
+    }
+  })
+  const logModelIo = (entry: Record<string, unknown>) => {
+    try {
+      logAgentDebug('model-io', { label: prompt.slice(0, 60), model: runtimeModelId, ...entry })
+    } catch { /* 日志失败不影响主流程 */ }
+  }
+
   try {
     for (let round = 0; round < maxRounds; round += 1) {
       throwIfStopped()
@@ -331,6 +373,7 @@ export async function runTextModel(
       fullResponse = ''
       onDelta?.('')
       options?.onEvent?.({ type: 'round_start' })
+      logModelIo({ kind: 'model_request', round, messages: ioSafeMessages(input.messages) })
       let result: any
       try {
         result = await processModel(input, config, tauriFetch, abortController.signal)
@@ -381,6 +424,12 @@ export async function runTextModel(
       }
 
       toolCalls = finalizeToolCalls(toolCalls)
+      logModelIo({
+        kind: 'model_response',
+        round,
+        text: fullResponse.slice(0, 4000),
+        toolCalls: toolCalls.map((tc) => ({ name: tc?.function?.name, args: String(tc?.function?.arguments || '').slice(0, 600) })),
+      })
       if (toolCalls.length && options?.executeTool && !toolsDisabled) {
         const fresh = toolCalls.filter((tc) => {
           const name = tc.function?.name || ''
@@ -425,9 +474,11 @@ export async function runTextModel(
         try {
           toolResult = await options.executeTool(call)
         } catch (error) {
+          if (options?.signal?.aborted || isModelStopped(error)) throw error
           toolError = error instanceof Error ? error.message : String(error)
           toolResult = `Error: ${toolError}`
         }
+        throwIfStopped()
         options.onEvent?.({
           type: 'tool_end',
           id: call.id,
@@ -451,6 +502,7 @@ export async function runTextModel(
 
     throw new Error('工具调用次数过多，已停止')
   } catch (error) {
+    logModelIo({ kind: 'model_error', error: error instanceof Error ? error.message : String(error) })
     if (options?.signal?.aborted || isModelStopped(error)) {
       throw new ModelStoppedError()
     }

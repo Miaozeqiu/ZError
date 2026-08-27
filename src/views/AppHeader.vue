@@ -24,7 +24,7 @@
     </button>
     
     <div class="header-center">
-      <div v-if="props.activeTab !== 'questions' && props.activeTab !== 'import-tasks' && props.activeTab !== 'agent' && props.activeTab !== 'study' && props.activeTab !== 'campus'" class="tutorial-stepper">
+      <div v-if="props.activeTab !== 'questions' && props.activeTab !== 'import-tasks' && props.activeTab !== 'agent' && props.activeTab !== 'study' && props.activeTab !== 'campus' && props.activeTab !== 'browser'" class="tutorial-stepper">
         <div class="step" :class="{ completed: isStep1Completed, active: !isStep1Completed }" @click="$emit('guide-to', 'model-settings')">
           <div class="step-indicator">
             <svg v-if="isStep1Completed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="12" height="12"><polyline points="20 6 9 17 4 12"></polyline></svg>
@@ -64,6 +64,36 @@
             在OCS题库配置中，配置题库
           </div>
         </div>
+      </div>
+      <div
+        v-if="props.activeTab === 'browser'"
+        class="abstraction-entry"
+        data-tauri-drag-region-exclude
+      >
+        <button
+          class="abstraction-btn"
+          type="button"
+          title="查看当前页的抽象层"
+          :class="{ 'is-open': abstractionMenuOpen }"
+          @click="abstractionMenuOpen = !abstractionMenuOpen"
+        >
+          <svg class="abstraction-icon" viewBox="0 0 16 16" aria-hidden="true">
+            <rect x="2.4" y="3" width="11.2" height="3.2" rx="1" />
+            <rect x="2.4" y="7.4" width="11.2" height="2.2" rx="0.9" />
+            <rect x="2.4" y="10.8" width="7.4" height="2.2" rx="0.9" />
+          </svg>
+          <span>{{ abstractionButtonLabel }}</span>
+          <svg class="abstraction-chevron" :class="{ 'is-open': abstractionMenuOpen }" viewBox="0 0 12 12" aria-hidden="true">
+            <path d="M2.6 4.4 6 7.6 9.4 4.4" />
+          </svg>
+        </button>
+        <BrowserAbstractionPanel
+          v-if="abstractionMenuOpen"
+          class="abstraction-menu"
+          :style="abstractionMenuStyle"
+          :browser-id="currentBrowserId"
+          :url="currentBrowserUrl"
+        />
       </div>
       <button
         v-if="props.activeTab === 'questions'"
@@ -128,13 +158,18 @@
       <div
         v-if="showStudyChip && linkedSubject"
         class="study-status"
+        :class="{ 'is-evaluating': studyEvalRunning }"
         data-tauri-drag-region-exclude
       >
         <div
           class="study-status-main"
-          :title="`正在学习 ${linkedSubject.name}，Agent 能看到掌握进度`"
+          :title="studyEvalRunning
+            ? `正在评估 ${linkedSubject.name} 的学习效果`
+            : `正在学习 ${linkedSubject.name}，Agent 能看到掌握进度`"
         >
-          <span class="study-status-kicker">正在学习</span>
+          <span class="study-status-kicker" :class="{ 'is-eval': studyEvalRunning }">
+            {{ studyEvalRunning ? '正在评估' : '正在学习' }}
+          </span>
           <span class="study-status-name">{{ linkedSubject.name }}</span>
           <span class="study-status-progress">{{ subjectProgress(linkedSubject) }}%</span>
           <span class="study-status-bar" aria-hidden="true">
@@ -231,16 +266,23 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed, onUnmounted } from 'vue'
+import { ref, onMounted, computed, onUnmounted, watch, nextTick } from 'vue'
+import BrowserAbstractionPanel from '../components/BrowserAbstractionPanel.vue'
 import { useModelConfig } from '../services/modelConfig'
 import { serverRunning } from '../services/serverState'
-import { activeChat, chatListCollapsed, setChatListCollapsed } from '../services/agentChat'
+import { activeChat, chatListCollapsed, setChatListCollapsed, studyEvalRunning } from '../services/agentChat'
 import { listen, UnlistenFn } from '@tauri-apps/api/event'
 import { useAppUpdate } from '../composables/useAppUpdate'
 import { useExclusiveMenu } from '../composables/useExclusiveMenu'
 import { databaseService, type StudySubject } from '../services/database'
 import { progressColor } from '../utils/studyGraph'
 import { authUser, isLoggedIn, logoutAuth, openLoginDialog, uploadAuthAvatar, userAvatarSrc, userDisplayName } from '../services/auth'
+import {
+  abstractionButtonLabel,
+  abstractionMenuOpen,
+  currentBrowserId,
+  currentBrowserUrl,
+} from '../services/browserAbstractions'
 
 const STUDY_STORAGE_KEY = 'zerror-study-subject'
 
@@ -284,6 +326,48 @@ const avatarInput = ref<HTMLInputElement | null>(null)
 const avatarUploading = ref(false)
 const avatarSrc = computed(() => userAvatarSrc())
 useExclusiveMenu('header-user-menu', userMenuOpen)
+useExclusiveMenu('header-abstraction-menu', abstractionMenuOpen)
+
+watch(
+  () => props.activeTab,
+  (tab) => {
+    if (tab !== 'browser') abstractionMenuOpen.value = false
+  },
+)
+
+const abstractionMenuStyle = ref<Record<string, string>>({})
+
+const placeAbstractionMenu = () => {
+  const btn = document.querySelector('.abstraction-btn') as HTMLElement | null
+  const rect = btn?.getBoundingClientRect()
+  const width = Math.min(520, Math.max(360, window.innerWidth - 48))
+  const left = rect
+    ? Math.max(12, Math.min(rect.left + rect.width / 2 - width / 2, window.innerWidth - width - 12))
+    : Math.max(12, (window.innerWidth - width) / 2)
+  abstractionMenuStyle.value = {
+    top: `${rect ? rect.bottom + 8 : 48}px`,
+    left: `${left}px`,
+    width: `${width}px`,
+  }
+}
+
+const onAbsDocClick = (event: MouseEvent) => {
+  const root = document.querySelector('.abstraction-entry')
+  const target = event.target as Node | null
+  if (root && target && !root.contains(target)) abstractionMenuOpen.value = false
+}
+
+watch(abstractionMenuOpen, async (open) => {
+  if (open) {
+    await nextTick()
+    placeAbstractionMenu()
+    document.addEventListener('mousedown', onAbsDocClick, true)
+    window.addEventListener('resize', placeAbstractionMenu)
+    return
+  }
+  document.removeEventListener('mousedown', onAbsDocClick, true)
+  window.removeEventListener('resize', placeAbstractionMenu)
+})
 
 const showStudyChip = computed(() => {
   const tab = props.activeTab || ''
@@ -388,6 +472,8 @@ onUnmounted(() => {
   }
   window.removeEventListener('study-graph-updated', loadStudySubjects)
   document.removeEventListener('mousedown', closeUserMenu, true)
+  document.removeEventListener('mousedown', onAbsDocClick, true)
+  window.removeEventListener('resize', placeAbstractionMenu)
 })
 
 const minimizeWindow = async () => {
@@ -560,6 +646,7 @@ onMounted(async () => {
   align-items: center;
   justify-content: space-between;
   height: 40px;
+  overflow: visible;
   background: var(--bg-primary, #f4f4f4);
   color: var(--text-primary, #2d3748);
   user-select: none;
@@ -615,6 +702,7 @@ onMounted(async () => {
   justify-content: right;
   align-items: center;
   min-width: 0;
+  overflow: visible;
   pointer-events: none;
 }
 
@@ -647,6 +735,71 @@ onMounted(async () => {
 
 .expand-chats:active {
   transform: scale(0.98);
+}
+
+.abstraction-entry {
+  display: flex;
+  justify-content: center;
+  margin: 0 auto;
+  pointer-events: auto;
+  -webkit-app-region: no-drag;
+}
+
+.abstraction-menu {
+  position: fixed;
+  z-index: 40;
+  pointer-events: auto;
+}
+
+.abstraction-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px 0 8px;
+  border: 1px solid color-mix(in srgb, var(--text-secondary, #718096) 18%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-primary, #fff) 78%, transparent);
+  color: var(--text-primary, #2d3748);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.abstraction-btn:hover {
+  background: color-mix(in srgb, var(--text-primary, #2d3748) 6%, var(--bg-secondary, #fff));
+}
+
+.abstraction-btn:active {
+  transform: scale(0.97);
+}
+
+.abstraction-btn.is-open {
+  background: color-mix(in srgb, var(--color-primary, #667eea) 10%, var(--bg-secondary, #fff));
+  border-color: color-mix(in srgb, var(--color-primary, #667eea) 28%, transparent);
+}
+
+.abstraction-icon {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+}
+
+.abstraction-chevron {
+  width: 10px;
+  height: 10px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform 160ms ease-out;
+}
+
+.abstraction-chevron.is-open {
+  transform: rotate(180deg);
 }
 
 .campus-entry {
@@ -727,6 +880,27 @@ onMounted(async () => {
   font-size: 11px;
   color: var(--text-secondary, #718096);
   line-height: 1;
+}
+
+.study-status-kicker.is-eval {
+  color: var(--color-primary, #2563eb);
+  animation: study-eval-pulse 1.15s ease-in-out infinite;
+}
+
+.study-status.is-evaluating {
+  border-color: color-mix(in srgb, var(--color-primary, #2563eb) 28%, transparent);
+}
+
+@keyframes study-eval-pulse {
+  0%, 100% { opacity: 0.38; }
+  50% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .study-status-kicker.is-eval {
+    animation: none;
+    opacity: 1;
+  }
 }
 
 .study-status-name {

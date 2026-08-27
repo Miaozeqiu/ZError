@@ -61,6 +61,13 @@ export interface PracticeMarks {
   results: boolean[];
 }
 
+export interface QuestionPracticeStats {
+  question_id: number;
+  attempted: number;
+  last_correct: boolean;
+  ever_wrong: boolean;
+}
+
 export interface RecentWrongQuestion {
   question_id: number;
   last_wrong_answer: string;
@@ -154,6 +161,17 @@ export interface StudyActivity {
   create_time: string
 }
 
+export interface StudyTimelineSummary {
+  id: number
+  subject_id: number
+  text: string
+  start_time: string
+  end_time: string
+  covered_through_id: number
+  activity_count: number
+  create_time: string
+}
+
 export interface SplitSubjectPart {
   name: string
   description?: string
@@ -174,6 +192,7 @@ let mockStudySubjects: StudySubject[] = []
 const mockStudyGraphs = new Map<number, { nodes: StudyGraphNodeRow[]; edges: StudyGraphEdgeRow[] }>()
 let mockQuestionKnowledge: { question_id: number; node_id: number }[] = []
 let mockStudyActivity: StudyActivity[] = []
+let mockStudyTimelineSummaries: StudyTimelineSummary[] = []
 let mockActivityId = 1
 
 const descendantNodeIds = (nodeId: number) => {
@@ -974,6 +993,13 @@ class DatabaseService {
     return invoke<PracticeMarks[]>('get_recent_practice_marks', { ids: unique, limit })
   }
 
+  async getQuestionPracticeStats(ids: number[]): Promise<QuestionPracticeStats[]> {
+    const unique = [...new Set(ids.filter((id) => Number.isFinite(id) && id > 0))]
+    if (!unique.length) return []
+    if (!this.isTauri) return []
+    return invoke<QuestionPracticeStats[]>('get_question_practice_stats', { ids: unique })
+  }
+
   async getPracticeSummaries(ids: number[]): Promise<PracticeSummary[]> {
     const unique = [...new Set(ids.filter((id) => Number.isFinite(id) && id > 0))]
     if (!unique.length) return []
@@ -1230,6 +1256,72 @@ class DatabaseService {
         .map((item) => ({ names: [...item.names], create_time: item.create_time }))
     }
     return invoke('list_study_heatmap', { subjectId })
+  }
+
+  async listStudyTimelineSummaries(subjectId: number, limit = 120): Promise<StudyTimelineSummary[]> {
+    if (!Number.isFinite(subjectId) || subjectId <= 0) return []
+    if (!this.isTauri) {
+      return mockStudyTimelineSummaries
+        .filter((item) => item.subject_id === subjectId)
+        .slice(0, Math.max(1, limit))
+        .map((item) => ({ ...item }))
+    }
+    return invoke<StudyTimelineSummary[]>('list_study_timeline_summaries', { subjectId, limit })
+  }
+
+  async getStudyTimelineSummaryCursor(subjectId: number): Promise<number> {
+    if (!Number.isFinite(subjectId) || subjectId <= 0) return 0
+    if (!this.isTauri) {
+      return mockStudyTimelineSummaries
+        .filter((item) => item.subject_id === subjectId)
+        .reduce((max, item) => Math.max(max, item.covered_through_id), 0)
+    }
+    return invoke<number>('get_study_timeline_summary_cursor', { subjectId })
+  }
+
+  async listUnsummarizedStudyActivity(subjectId: number, afterId = 0, limit = 200): Promise<StudyActivity[]> {
+    if (!Number.isFinite(subjectId) || subjectId <= 0) return []
+    if (!this.isTauri) {
+      return mockStudyActivity
+        .filter((item) => item.subject_id === subjectId && item.id > afterId)
+        .slice(0, Math.max(1, limit))
+        .map((item) => ({ ...item, names: [...item.names] }))
+    }
+    return invoke<StudyActivity[]>('list_unsummarized_study_activity', { subjectId, afterId, limit })
+  }
+
+  async insertStudyTimelineSummary(input: {
+    subjectId: number
+    text: string
+    startTime: string
+    endTime: string
+    coveredThroughId: number
+    activityCount: number
+  }): Promise<StudyTimelineSummary> {
+    if (!this.isTauri) {
+      const row: StudyTimelineSummary = {
+        id: mockStudyTimelineSummaries.length + 1,
+        subject_id: input.subjectId,
+        text: input.text.trim(),
+        start_time: input.startTime,
+        end_time: input.endTime,
+        covered_through_id: input.coveredThroughId,
+        activity_count: input.activityCount,
+        create_time: new Date().toISOString(),
+      }
+      mockStudyTimelineSummaries.unshift(row)
+      return row
+    }
+    const row = await invoke<StudyTimelineSummary>('insert_study_timeline_summary', {
+      subjectId: input.subjectId,
+      text: input.text,
+      startTime: input.startTime,
+      endTime: input.endTime,
+      coveredThroughId: input.coveredThroughId,
+      activityCount: input.activityCount,
+    })
+    emitStudyActivityUpdated(input.subjectId)
+    return row
   }
 
   async linkQuestionsToNode(questionIds: number[], nodeId: number): Promise<number> {

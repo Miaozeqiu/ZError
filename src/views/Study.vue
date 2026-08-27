@@ -5,16 +5,6 @@
         <div class="header-title">科目</div>
         <button class="header-action" type="button" @click="startCreate">新建</button>
       </div>
-      <form v-if="creating" class="create-row" @submit.prevent="confirmCreate">
-        <input
-          ref="createInputRef"
-          v-model="createName"
-          class="create-input"
-          placeholder="科目名称"
-          @keydown.escape="creating = false"
-        />
-        <button class="header-action" type="submit" :disabled="!createName.trim()">添加</button>
-      </form>
       <div class="subject-list">
         <button
           v-for="subject in subjects"
@@ -90,6 +80,7 @@
               v-if="rightPane === 'timeline'"
               :subject-id="selectedId"
               :items="timeline"
+              :summaries="timelineSummaries"
               :graph="graph"
               :empty-text="timelineEmpty"
               @select="selectByName"
@@ -105,7 +96,8 @@
               v-else
               :graph="graph"
               :node="activeNode"
-              :subject-name="selected?.name"
+              :subject-id="selectedId"
+              :activities="timeline"
               :questions="relatedQuestions"
               @open-question="openBankQuestion"
             />
@@ -123,6 +115,13 @@
     @item-click="onSubjectMenuClick"
     @close="closeSubjectMenu"
   />
+  <CreateFormDialog
+    :visible="creating"
+    title="新建科目"
+    :fields="createFields"
+    @close="creating = false"
+    @submit="confirmCreate"
+  />
 </template>
 
 <script setup lang="ts">
@@ -131,9 +130,11 @@ import StudyData from '../components/StudyData.vue'
 import StudyMermaidGraph from '../components/StudyMermaidGraph.vue'
 import StudyQuestionBank from '../components/StudyQuestionBank.vue'
 import StudyTimeline from '../components/StudyTimeline.vue'
+import CreateFormDialog, { type CreateFormField } from '../components/CreateFormDialog.vue'
 import UnifiedContextMenu, { type MenuItem } from '../components/UnifiedContextMenu.vue'
-import { databaseService, type QuestionKnowledgeLink, type StudyActivity, type StudySubject } from '../services/database'
-import { isChatBusy, startStudyGraphChat } from '../services/agentChat'
+import { databaseService, type QuestionKnowledgeLink, type StudyActivity, type StudySubject, type StudyTimelineSummary } from '../services/database'
+import { isChatBusy, startStudyGraphChat, startStudySubjectChat } from '../services/agentChat'
+import { backfillClosedStudySessions } from '../services/studyTimelineSummary'
 import { studyGraphStream } from '../services/studyGraphStream'
 import {
   flattenGraph,
@@ -146,8 +147,9 @@ const STORAGE_KEY = 'zerror-study-subject'
 
 const loading = ref(true)
 const creating = ref(false)
-const createName = ref('')
-const createInputRef = ref<HTMLInputElement | null>(null)
+const createFields: CreateFormField[] = [
+  { key: 'name', label: '科目名称', placeholder: '例如 劳动经济学', required: true },
+]
 const subjects = ref<StudySubject[]>([])
 const selectedId = ref<number | null>(null)
 const graph = ref<StudyGraphNode | null>(null)
@@ -157,11 +159,14 @@ const rightPane = ref<'timeline' | 'bank' | 'data'>('timeline')
 const openQuestionId = ref<number | null>(null)
 const relatedQuestions = ref<{ id: number; question: string }[]>([])
 const timeline = ref<StudyActivity[]>([])
+const timelineSummaries = ref<StudyTimelineSummary[]>([])
 const lastFocusBySubject = new Map<number, string>()
 const graphView = ref<{ focusByName: (name: string, instant?: boolean) => boolean } | null>(null)
 const RING = 2 * Math.PI * 11
 const subjectMenu = ref({ visible: false, x: 0, y: 0, subject: null as StudySubject | null })
 const subjectMenuItems: MenuItem[] = [
+  { id: 'start', label: '开始学习', action: 'start' },
+  { id: 'divider', type: 'divider' },
   { id: 'delete', label: '删除科目', action: 'delete', danger: true },
 ]
 
@@ -183,12 +188,23 @@ const timelineEmpty = computed(() => {
 const loadTimeline = async (id: number | null) => {
   if (id == null) {
     timeline.value = []
+    timelineSummaries.value = []
     return
   }
   try {
-    timeline.value = await databaseService.listStudyActivity(id, 2000)
+    const [items, summaries] = await Promise.all([
+      databaseService.listStudyActivity(id, 2000),
+      databaseService.listStudyTimelineSummaries(id, 120),
+    ])
+    timeline.value = items
+    timelineSummaries.value = summaries
+    backfillClosedStudySessions({
+      subjectId: id,
+      subjectName: selected.value?.name,
+    })
   } catch {
     timeline.value = []
+    timelineSummaries.value = []
   }
 }
 
@@ -216,8 +232,12 @@ const closeSubjectMenu = () => {
 const onSubjectMenuClick = async (item: MenuItem) => {
   const subject = subjectMenu.value.subject
   closeSubjectMenu()
-  if (!subject || item.action !== 'delete') return
-  await removeSubject(subject.id)
+  if (!subject) return
+  if (item.action === 'start') {
+    void startStudySubjectChat({ subjectId: subject.id, subjectName: subject.name })
+    return
+  }
+  if (item.action === 'delete') await removeSubject(subject.id)
 }
 
 const loadGraph = async (id: number | null) => {
@@ -249,19 +269,15 @@ const load = async () => {
   }
 }
 
-const startCreate = async () => {
+const startCreate = () => {
   creating.value = true
-  createName.value = ''
-  await nextTick()
-  createInputRef.value?.focus()
 }
 
-const confirmCreate = async () => {
-  const name = createName.value.trim()
+const confirmCreate = async (values: Record<string, string>) => {
+  const name = String(values.name || '').trim()
   if (!name) return
   const subject = await databaseService.createStudySubject(name)
   creating.value = false
-  createName.value = ''
   await load()
   selectedId.value = subject.id
 }
@@ -520,26 +536,6 @@ onUnmounted(() => {
 [data-theme="dark"] .header-action.is-on {
   color: #7ab8c0;
   background: color-mix(in srgb, #5e9aa3 16%, transparent);
-}
-
-.create-row {
-  display: flex;
-  gap: 6px;
-  padding: 8px 10px 0;
-}
-
-.create-input {
-  flex: 1;
-  min-width: 0;
-  height: 28px;
-  border: 1px solid color-mix(in srgb, var(--text-primary, #2d3748) 10%, transparent);
-  border-radius: 8px;
-  padding: 0 8px;
-  font: inherit;
-  font-size: 12px;
-  color: var(--text-primary, #2d3748);
-  background: var(--bg-tertiary, #f5f5f7);
-  outline: none;
 }
 
 .subject-list {

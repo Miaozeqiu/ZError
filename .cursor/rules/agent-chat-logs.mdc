@@ -1,0 +1,16 @@
+---
+description: 读学习 Agent / 浏览器 Agent 的本地对话记录
+alwaysApply: true
+---
+
+# Agent 对话记录
+
+开发模式下，应用会把 Agent 对话写到仓库的 `logs/agent-chat/`。用户问浏览器 Agent 或学习 Agent「刚才说了什么 / 卡在哪」时，先读这些文件，不要说看不到。
+
+- 浏览器 Agent 最新全文：`logs/agent-chat/browser-latest.md`
+- 浏览器 Agent 按会话：`logs/agent-chat/browser-*.md` 与 `browser-*.jsonl`
+- 学习 Agent：`logs/agent-chat/YYYY-MM-DD-<sessionId>.jsonl`（文件名不以 `browser-` 开头）
+- 学习通作业抽象层实时数据：`logs/agent-chat/cx-homework-live.md`（每次打开/刷新抽象层覆盖写入）
+- 学习通作业题卡 JSON：`logs/agent-chat/cx-homework-latest.txt`
+
+`browser-latest.md` 在每次浏览器对话更新后覆盖写入。jsonl 是逐条事件（user / tool_start / tool_end / assistant）。

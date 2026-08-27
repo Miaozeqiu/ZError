@@ -3,6 +3,7 @@
 
 // 模块声明
 pub mod app_activity;
+pub mod app_browser;
 pub mod commands;
 pub mod database;
 pub mod logger;
@@ -187,23 +188,25 @@ fn apply_windows_taskbar_icons(window: &tauri::WebviewWindow) {
 }
 
 fn show_main_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    let Some(window) = app
+        .get_webview("main")
+        .map(|webview| webview.window())
+    else {
+        return;
+    };
     #[cfg(target_os = "macos")]
     {
-        if let Some(window) = app.get_webview_window("main") {
-            let _ = window.show();
-            let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
-            let _ = window.set_focus();
-        }
+        let _ = window.show();
+        let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
+        let _ = window.set_focus();
     }
     #[cfg(not(target_os = "macos"))]
     {
-        if let Some(window) = app.get_webview_window("main") {
-            if window.is_minimized().unwrap_or(false) {
-                let _ = window.unminimize();
-            }
-            let _ = window.show();
-            let _ = window.set_focus();
+        if window.is_minimized().unwrap_or(false) {
+            let _ = window.unminimize();
         }
+        let _ = window.show();
+        let _ = window.set_focus();
     }
 }
 
@@ -292,6 +295,7 @@ pub fn run() {
             get_practice_history,
             get_practice_summaries,
             get_recent_practice_marks,
+            get_question_practice_stats,
             list_recent_wrong_questions,
             list_study_subjects,
             create_study_subject,
@@ -304,6 +308,10 @@ pub fn run() {
             list_study_activity,
             list_study_activity_between,
             list_study_heatmap,
+            list_study_timeline_summaries,
+            get_study_timeline_summary_cursor,
+            list_unsummarized_study_activity,
+            insert_study_timeline_summary,
             link_questions_to_node,
             unlink_question_knowledge,
             list_question_knowledge,
@@ -322,7 +330,21 @@ pub fn run() {
             clear_folder_questions,
             delete_folder,
             rename_folder,
-            move_folder
+            move_folder,
+            crate::app_browser::browser_open,
+            crate::app_browser::browser_set_bounds,
+            crate::app_browser::browser_show,
+            crate::app_browser::browser_hide,
+            crate::app_browser::browser_hide_all,
+            crate::app_browser::browser_close,
+            crate::app_browser::browser_navigate,
+            crate::app_browser::browser_reload,
+            crate::app_browser::browser_go_back,
+            crate::app_browser::browser_go_forward,
+            crate::app_browser::browser_get_state,
+            crate::app_browser::browser_set_zoom,
+            crate::app_browser::browser_eval,
+            crate::app_browser::browser_set_app_above_page,
         ])
         .setup(|app| {
             // 初始化 ServerState 并注入 app_handle
