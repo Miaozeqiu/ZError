@@ -64,6 +64,22 @@ pub(crate) fn navigation_policy(
     let request = action.request();
     let url = request.URL().unwrap().absoluteString().unwrap();
 
+    // 子 frame 里不要再开整页播放器或讨论模块。主 frame / 视频照常放行。
+    let target_is_main = action
+      .targetFrame()
+      .map(|frame| frame.isMainFrame())
+      .unwrap_or(true);
+    if !target_is_main {
+      let lower = url.to_string().to_ascii_lowercase();
+      if lower.contains("/mycourse/studentstudy")
+        || lower.contains("/ananas/modules/insertbbs")
+        || lower.contains("/mooc-ans/bbscircle/")
+      {
+        (*handler).call((WKNavigationActionPolicy::Cancel,));
+        return;
+      }
+    }
+
     if should_download {
       let has_download_handler = this.ivars().has_download_handler;
       if has_download_handler {

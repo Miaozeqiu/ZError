@@ -1,6 +1,6 @@
 import { databaseService, type StudyGraphNodeRow } from '../app/database'
 import { runTextModel, type ModelToolCall } from '../model/runner'
-import { filterProgressUpdates } from '../../utils/studyProgressEvidence'
+import { filterProgressUpdates } from '../../utils/study/studyProgressEvidence'
 import {
   clampForgettingStage,
   daysSinceReviewed,
@@ -10,7 +10,7 @@ import {
   retentionScore,
   type StudyEvalKind,
   type StudyEvalQuality,
-} from '../../utils/studyForgetting'
+} from '../../utils/study/studyForgetting'
 
 export type StudyProgressEvalStage = {
   name: string

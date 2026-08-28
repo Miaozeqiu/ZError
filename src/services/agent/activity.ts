@@ -1,5 +1,5 @@
 import type { ImportTaskStep } from '../app/importTasks'
-import { resolveQuizTitle } from '../../utils/quizPractice'
+import { resolveQuizTitle } from '../../utils/question/quizPractice'
 
 export const describeActivity = (name: string, args: any, status: ImportTaskStep['status'], extra?: any) => {
   const browserLabels: Record<string, [string, string, string]> = {

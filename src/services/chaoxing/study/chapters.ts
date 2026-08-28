@@ -1,16 +1,20 @@
 import {
   CHAOXING_CHAPTER_HOOK,
+  CHAOXING_CHAPTER_INSTALL,
+  CHAOXING_CHAPTER_REFRESH,
   CHAOXING_CHAPTER_TICK,
   CHAOXING_CLICK_CHAPTER_TAB,
   CHAOXING_NEXT_STEP,
   CHAOXING_OPEN_CHAPTER,
-  CHAOXING_PARSE_CHAPTERS,
 } from '../../browser/skills/chaoxingStudy'
 import { askFrames, asObject, evalBrowserView, waitMs } from '../../browser/eval'
 import { CAPTCHA_HINT, readChaoxingCaptcha } from './captcha'
 import { dumpChaoxingParseHtml } from './dump'
 import type { ChaoxingChapterSnap } from './types'
 import { playChaoxingVideo, readChaoxingVideo, videoIsPlaying } from './video'
+
+/** 排查 webview / 题卡问题时可先关掉章节解析。 */
+export const CHAPTER_PARSER_ENABLED = true
 
 const browserView = () => import('../../browser/appBrowser')
 
@@ -67,48 +71,73 @@ const catalogReadySnap = (id: string) =>
     sample?: string
   } | null>
 
-const waitForChaoxingCatalog = async (id: string, maxMs = 10000) => {
+const hasChapterData = (snap: ChaoxingChapterSnap | null | undefined) => Boolean(
+  snap
+  && (
+    (snap.chapters || []).length
+    || (snap.unfinished || []).length
+    || snap.progress
+  )
+)
+
+const waitForChaoxingCatalog = async (id: string, maxMs = 1500) => {
   const started = Date.now()
   let last: Awaited<ReturnType<typeof catalogReadySnap>> = null
   while (Date.now() - started < maxMs) {
-    await askFrames(id, 'snap')
     last = await catalogReadySnap(id).catch(() => null)
     if (last?.onCatalog && (last.hasProgress || last.hasDir)) return last
-    await waitMs(400)
+    await waitMs(120)
   }
   return last
 }
 
 export const openChaoxingChapters = async (id: string) => {
+  if (!CHAPTER_PARSER_ENABLED) return null
+  const parsed = await parseChaoxingChapters(id).catch(() => null)
+  if (hasChapterData(parsed)) return parsed
   const probe = await evalBrowserView(id, `(function(){
     var href = location.href || '';
-    var text = '';
-    try { text = (document.body && document.body.innerText) || ''; } catch (e) {}
     return {
-      url: href,
-      already: /已完成任务点/.test(text) || !!document.querySelector('.catalog_title, #coursetree'),
-      onStudent: /\\/mycourse\\/stu/.test(href),
+      onCourse: /\\/mycourse\\/stu|stucoursemiddle/.test(href) && !/studentstudy/.test(href),
+      hasTab: !!document.querySelector('a[data-url*="studentcourse"], [data-url*="studentcourse"]'),
     };
-  })()`) as { url?: string; already?: boolean; onStudent?: boolean }
-  // 只点页内「章节」标签，不要把 iframe src 当顶层网页打开
-  if (probe?.onStudent && !probe?.already) {
+  })()`) as { onCourse?: boolean; hasTab?: boolean }
+  if (probe?.onCourse && probe.hasTab) {
     await evalBrowserView(id, CHAOXING_CLICK_CHAPTER_TAB).catch(() => null)
-    await waitMs(400)
+    await waitForChaoxingCatalog(id, 800)
+    const again = asObject(await evalBrowserView(id, CHAOXING_CHAPTER_REFRESH).catch(() => null)) as ChaoxingChapterSnap
+    if (hasChapterData(again)) return again
+    return parseChaoxingChapters(id).catch(() => parsed)
   }
-  return readChaoxingChapterSnap(id)
+  return parsed
 }
 
-const bareChapterTitle = (value: unknown) =>
-  String(value || '')
+const catalogIndex = (value: unknown) => {
+  const hit = String(value || '').trim().match(/^(\d+(?:\.\d+)+)\b/)
+  return hit?.[1] || ''
+}
+
+const keepChapterTitle = (value: unknown) =>
+  String(value || '').replace(/\s+/g, ' ').trim()
+
+const bareChapterTitle = (value: unknown) => {
+  const raw = String(value || '')
     .replace(/[（(]\s*\d+\s*[）)]\s*$/g, '')
-    .replace(/^\d+(?:\.\d+)+\s*/, '')
     .replace(/\s+/g, ' ')
     .trim()
+  const index = catalogIndex(raw)
+  const bare = raw.replace(/^\d+(?:\.\d+)+\s*/, '').trim()
+  return bare || index
+}
 
 const titlesMatch = (a: unknown, b: unknown) => {
+  const ia = catalogIndex(a)
+  const ib = catalogIndex(b)
+  if (ia && ib && ia !== ib) return false
   const left = bareChapterTitle(a)
   const right = bareChapterTitle(b)
-  if (!left || !right) return false
+  if (!left || !right) return ia && ib && ia === ib
+  if (ia && ib) return left === right
   return left === right || left.includes(right) || right.includes(left)
 }
 
@@ -129,7 +158,7 @@ const unfinishedFromCatalogText = (text: string) => {
     if (/^\d{1,2}$/.test(line) && /^第/.test(next)) continue
     if (/已完成任务点|^目录$|^第/.test(line)) continue
     if (/^\d{1,2}$/.test(next) && !/^第/.test(line) && line.length > 1 && !/资料|测验|考试|作业|讨论|问卷/.test(line) && !/^第/.test(lines[i + 2] || '')) {
-      const title = bareChapterTitle(line) || line
+      const title = keepChapterTitle(line) || bareChapterTitle(line) || line
       if (title && !unfinished.some((item) => titlesMatch(item, title))) unfinished.push(title)
     }
   }
@@ -160,85 +189,174 @@ const unfinishedFromFrameSnaps = async (id: string) => {
 }
 
 export const installChaoxingChapterHook = async (id: string) => {
-  await askFrames(id, 'snap')
+  if (!CHAPTER_PARSER_ENABLED) return null
   return evalBrowserView(id, CHAOXING_CHAPTER_HOOK) as Promise<ChaoxingChapterSnap | null>
 }
 
-export const readChaoxingChapterTick = (id: string) =>
-  evalBrowserView(id, CHAOXING_CHAPTER_TICK) as Promise<ChaoxingChapterSnap | null>
+export const readChaoxingChapterTick = (id: string) => {
+  if (!CHAPTER_PARSER_ENABLED) return Promise.resolve(null)
+  return evalBrowserView(id, CHAOXING_CHAPTER_TICK) as Promise<ChaoxingChapterSnap | null>
+}
 
 export const readChaoxingChapterSnap = async (id: string) => {
+  if (!CHAPTER_PARSER_ENABLED) return null
   const first = await installChaoxingChapterHook(id).catch(() => null)
-  if ((first?.unfinished || []).length || (first?.progress && first.progress.total > first.progress.done)) {
-    return first
-  }
-  for (let i = 0; i < 8; i += 1) {
-    await waitMs(500)
+  if (hasChapterData(first)) return first
+  for (let i = 0; i < 3; i += 1) {
+    await waitMs(160)
     const tick = await readChaoxingChapterTick(id).catch(() => null)
-    if ((tick?.unfinished || []).length || (tick?.progress && tick.progress.total > tick.progress.done)) {
-      return tick
-    }
-    if (i === 3 || i === 6) await installChaoxingChapterHook(id).catch(() => null)
+    if (hasChapterData(tick)) return tick
   }
-  const last = (await readChaoxingChapterTick(id).catch(() => null)) || first
-  if ((last?.unfinished || []).length || (last?.progress && last.progress.total > last.progress.done)) return last
-  return (await unfinishedFromFrameSnaps(id)) || last
+  return (await unfinishedFromFrameSnaps(id)) || first
 }
 
 export const parseChaoxingChapters = async (id: string) => {
-  const snap = await readChaoxingChapterSnap(id).catch(() => null)
-  if (snap && ((snap.unfinished || []).length || snap.progress)) return snap
+  if (!CHAPTER_PARSER_ENABLED) return null
   try {
-    return await evalBrowserView(id, CHAOXING_PARSE_CHAPTERS) as ChaoxingChapterSnap | null
+    const cached = await readChaoxingChapterTick(id).catch(() => null)
+    if (hasChapterData(cached)) return cached
+    const fresh = asObject(await evalBrowserView(id, CHAOXING_CHAPTER_REFRESH).catch(() => null)) as ChaoxingChapterSnap
+    if (hasChapterData(fresh) && !fresh.needInstall) return fresh
+    return await evalBrowserView(id, CHAOXING_CHAPTER_INSTALL) as ChaoxingChapterSnap | null
   } catch (error) {
     await dumpChaoxingParseHtml(id, 'parse-error').catch(() => null)
     throw error
   }
 }
 
-export const openChaoxingChapter = async (id: string, title: string) => {
-  const want = bareChapterTitle(title)
-  if (!want) return { ok: false, error: '缺少节名' }
-  const opened = asObject(await evalBrowserView(id, `${CHAOXING_OPEN_CHAPTER}(${JSON.stringify(want)})`))
-  if (opened.ok) {
-    await waitMs(1000)
-    return opened
+export type OpenChapterHint = {
+  chapterId?: string
+  href?: string
+  studyHref?: string
+  index?: string
+}
+
+const playerHrefOf = (href?: string, studyHref?: string) => {
+  const study = String(studyHref || '')
+  const raw = String(href || '')
+  if (study.includes('studentstudy')) return study
+  if (raw.includes('studentstudy')) return raw
+  return ''
+}
+
+const playerUrlForChapterId = async (id: string, chapterId: string, pageUrl?: string) => {
+  const wantId = String(chapterId || '').replace(/\D/g, '')
+  if (!wantId) return ''
+  const state = await getBrowserState(id).catch(() => null)
+  try {
+    const current = new URL(String(state?.url || pageUrl || ''))
+    const courseId = current.searchParams.get('courseid') || current.searchParams.get('courseId') || ''
+    const clazzid = current.searchParams.get('clazzid') || current.searchParams.get('clazzId') || ''
+    const cpi = current.searchParams.get('cpi') || ''
+    const enc = current.searchParams.get('enc') || current.searchParams.get('stuenc') || ''
+    if (!courseId || !clazzid) return ''
+    return `https://mooc1.chaoxing.com/mycourse/studentstudy?chapterId=${wantId}&courseId=${courseId}&clazzid=${clazzid}${cpi ? `&cpi=${cpi}` : ''}${enc ? `&enc=${enc}` : ''}&mooc2=1`
+  } catch {
+    return ''
   }
-  const parsed = await parseChaoxingChapters(id).catch(() => null)
-  const hit = (parsed?.chapters || []).find((item) => titlesMatch(item.title, want))
-  const studyHref = String(hit?.studyHref || '')
-  const href = String(hit?.href || '')
-  const playerHref = studyHref.includes('studentstudy')
-    ? studyHref
-    : (href.includes('studentstudy') ? href : '')
-  if (playerHref) {
-    await navigateBrowserView(id, playerHref)
-    await waitMs(1200)
-    return { ok: true, title: hit?.title || want, via: 'player' }
-  }
-  const chapterId = String(hit?.chapterId || '')
-  if (chapterId) {
-    const state = await getBrowserState(id).catch(() => null)
-    try {
-      const current = new URL(String(state?.url || parsed?.url || ''))
-      const courseId = current.searchParams.get('courseid') || current.searchParams.get('courseId') || ''
-      const clazzid = current.searchParams.get('clazzid') || current.searchParams.get('clazzId') || ''
-      const cpi = current.searchParams.get('cpi') || ''
-      const enc = current.searchParams.get('enc') || current.searchParams.get('stuenc') || ''
-      if (courseId && clazzid) {
-        const player = `https://mooc1.chaoxing.com/mycourse/studentstudy?chapterId=${chapterId}&courseId=${courseId}&clazzid=${clazzid}${cpi ? `&cpi=${cpi}` : ''}${enc ? `&enc=${enc}` : ''}&mooc2=1`
-        await navigateBrowserView(id, player)
-        await waitMs(1200)
-        return { ok: true, title: hit?.title || want, via: 'chapterId' }
+}
+
+const clickChapterById = async (id: string, chapterId: string, title: string) => {
+  const wantId = String(chapterId || '').replace(/\D/g, '')
+  if (!wantId) return { ok: false as const }
+  const opened = asObject(await evalBrowserView(id, `(function(){
+    var wantId = ${JSON.stringify(wantId)};
+    var find = function(win, depth){
+      if ((depth || 0) > 4) return null;
+      try {
+        var el = win.document.getElementById('cur' + wantId) || win.document.getElementById(wantId);
+        if (el) return el;
+        var list = win.document.querySelectorAll('iframe');
+        for (var i = 0; i < list.length; i++) {
+          try {
+            var hit = find(list[i].contentWindow, (depth || 0) + 1);
+            if (hit) return hit;
+          } catch (e) {}
+        }
+      } catch (e2) {}
+      return null;
+    };
+    var el = find(window, 0);
+    if (!el) return { ok: false };
+    var name = (el.querySelector && (el.querySelector('.posCatalog_name, a.clicktitle, a') || el)) || el;
+    try { name.click(); } catch (e3) { try { el.click(); } catch (e4) {} }
+    return { ok: true, title: ${JSON.stringify(title)}, via: 'id' };
+  })()`))
+  return opened.ok ? { ok: true as const, title, via: 'id' } : { ok: false as const }
+}
+
+const goPlayer = async (id: string, url: string, title: string, via: string) => {
+  const state = await getBrowserState(id).catch(() => null)
+  const current = String(state?.url || '')
+  if (/studentstudy/i.test(current) && /studentstudy/i.test(url)) {
+    const chapterId = (url.match(/chapterId=(\d+)/i) || [])[1] || ''
+    if (chapterId) {
+      const clicked = await clickChapterById(id, chapterId, title)
+      if (clicked.ok) {
+        await waitMs(400)
+        return { ok: true, title, via: `${via}-inplace` }
       }
-    } catch {
-      // ignore
+    }
+    return { ok: true, title, via: `${via}-stay` }
+  }
+  await navigateBrowserView(id, url)
+  await waitMs(1200)
+  return { ok: true, title, via }
+}
+
+export const openChaoxingChapter = async (id: string, title: string, hint?: OpenChapterHint) => {
+  const want = keepChapterTitle(title) || bareChapterTitle(title) || String(hint?.index || '').trim()
+  const chapterId = String(hint?.chapterId || '').replace(/\D/g, '')
+  if (!want && !chapterId) return { ok: false, error: '缺少节名' }
+  const state = await getBrowserState(id).catch(() => null)
+  const onPlayer = /studentstudy/i.test(String(state?.url || ''))
+  if (chapterId) {
+    const clicked = await clickChapterById(id, chapterId, want)
+    if (clicked.ok) {
+      await waitMs(400)
+      return clicked
     }
   }
-  const fallback = await clickBrowserText(id, want).catch(() => null) as { ok?: boolean; text?: string } | null
-  if (fallback?.ok) {
-    await waitMs(1000)
-    return { ok: true, title: want, via: 'click_text', text: fallback.text }
+  if (!onPlayer) {
+    const knownPlayer = playerHrefOf(hint?.href, hint?.studyHref)
+    if (knownPlayer) return goPlayer(id, knownPlayer, want, 'player')
+    if (chapterId) {
+      const built = await playerUrlForChapterId(id, chapterId)
+      if (built) return goPlayer(id, built, want, 'chapterId')
+    }
+  }
+  const opened = asObject(await evalBrowserView(
+    id,
+    `${CHAOXING_OPEN_CHAPTER}(${JSON.stringify(want)}, ${JSON.stringify(chapterId)})`,
+  ))
+  if (opened.ok) {
+    await waitMs(400)
+    return opened
+  }
+  if (!CHAPTER_PARSER_ENABLED) {
+    return { ok: false, error: String(opened.error || `目录里没有「${want}」`), want }
+  }
+  const parsed = await parseChaoxingChapters(id).catch(() => null)
+  const wantIndex = catalogIndex(want) || String(hint?.index || '').trim()
+  const hit = (parsed?.chapters || []).find((item) => (
+    (wantIndex && (item.index === wantIndex || catalogIndex(item.title) === wantIndex))
+    || titlesMatch(item.title, want)
+    || titlesMatch(item.index, want)
+    || (chapterId && item.chapterId === chapterId)
+  ))
+  const playerHref = playerHrefOf(hit?.href, hit?.studyHref)
+  if (playerHref && !onPlayer) return goPlayer(id, playerHref, hit?.title || want, 'player')
+  const parsedId = String(hit?.chapterId || chapterId)
+  if (parsedId) {
+    const clicked = await clickChapterById(id, parsedId, hit?.title || want)
+    if (clicked.ok) {
+      await waitMs(400)
+      return clicked
+    }
+    if (!onPlayer) {
+      const built = await playerUrlForChapterId(id, parsedId, parsed?.url)
+      if (built) return goPlayer(id, built, hit?.title || want, 'chapterId')
+    }
   }
   return { ok: false, error: String(opened.error || `目录里没有「${want}」`), want }
 }
@@ -351,32 +469,38 @@ export const studyChaoxingUnfinished = async (id: string, title?: string) => {
     return { ok: false, captcha: true, done: false, hint: CAPTCHA_HINT }
   }
   let parseError = ''
-  const onStudent = await evalBrowserView(id, `(function(){ return /\\/mycourse\\/stu/.test(location.href || ''); })()`).catch(() => false)
-  if (onStudent) {
-    await evalBrowserView(id, CHAOXING_CLICK_CHAPTER_TAB).catch(() => null)
-    await waitForChaoxingCatalog(id, 5000)
-  }
-  let parsed = await readChaoxingChapterSnap(id).catch((error) => {
+  let parsed = await parseChaoxingChapters(id).catch((error) => {
     parseError = String(error?.message || error || '')
     return null
   })
-  if (!(parsed?.unfinished || []).length && !parsed?.progress) {
-    await evalBrowserView(id, CHAOXING_CLICK_CHAPTER_TAB).catch(() => null)
-    await waitForChaoxingCatalog(id, 4000)
-    parsed = await readChaoxingChapterSnap(id).catch((error) => {
-      parseError = String(error?.message || error || parseError)
-      return parsed
-    })
+  if (!hasChapterData(parsed)) {
+    const onStudent = await evalBrowserView(id, `(function(){ return /\\/mycourse\\/stu/.test(location.href || ''); })()`).catch(() => false)
+    if (onStudent) {
+      await evalBrowserView(id, CHAOXING_CLICK_CHAPTER_TAB).catch(() => null)
+      await waitForChaoxingCatalog(id, 1500)
+      parsed = await parseChaoxingChapters(id).catch((error) => {
+        parseError = String(error?.message || error || parseError)
+        return parsed
+      })
+    }
   }
-  if (!(parsed?.unfinished || []).length) {
+  if (!hasChapterData(parsed)) {
     parsed = (await unfinishedFromFrameSnaps(id)) || parsed
   }
-  const unfinished = (parsed?.unfinished || []).map(bareChapterTitle).filter(Boolean)
+  const unfinished = (parsed?.unfinished || [])
+    .map(keepChapterTitle)
+    .filter(Boolean)
+    .filter((item, _, list) => {
+      const idx = catalogIndex(item)
+      if (!idx) return true
+      const prefix = `${idx}.`
+      return !list.some((other) => catalogIndex(other).startsWith(prefix))
+    })
   const progress = parsed?.progress || null
   const progressLeft = progress && progress.total > progress.done
     ? progress.total - progress.done
     : 0
-  const preferred = bareChapterTitle(title)
+  const preferred = keepChapterTitle(title) || bareChapterTitle(title)
   const queue = preferred
     ? [preferred, ...unfinished.filter((item) => !titlesMatch(item, preferred))]
     : unfinished

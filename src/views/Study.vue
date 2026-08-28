@@ -126,12 +126,12 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import StudyData from '../components/StudyData.vue'
-import StudyMermaidGraph from '../components/StudyMermaidGraph.vue'
-import StudyQuestionBank from '../components/StudyQuestionBank.vue'
-import StudyTimeline from '../components/StudyTimeline.vue'
-import CreateFormDialog, { type CreateFormField } from '../components/CreateFormDialog.vue'
-import UnifiedContextMenu, { type MenuItem } from '../components/UnifiedContextMenu.vue'
+import StudyData from '../components/study/StudyData.vue'
+import StudyMermaidGraph from '../components/study/StudyMermaidGraph.vue'
+import StudyQuestionBank from '../components/study/StudyQuestionBank.vue'
+import StudyTimeline from '../components/study/StudyTimeline.vue'
+import CreateFormDialog, { type CreateFormField } from '../components/ui/CreateFormDialog.vue'
+import UnifiedContextMenu, { type MenuItem } from '../components/ui/UnifiedContextMenu.vue'
 import { databaseService, type QuestionKnowledgeLink, type StudyActivity, type StudySubject, type StudyTimelineSummary } from '../services/app/database'
 import { isChatBusy, startStudyGraphChat, startStudySubjectChat } from '../services/agent/chat'
 import { backfillClosedStudySessions } from '../services/study/timelineSummary'
@@ -141,7 +141,7 @@ import {
   graphFromPayload,
   progressColor,
   type StudyGraphNode,
-} from '../utils/studyGraph'
+} from '../utils/study/studyGraph'
 
 const STORAGE_KEY = 'zerror-study-subject'
 

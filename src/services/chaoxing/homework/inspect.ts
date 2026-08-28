@@ -73,28 +73,35 @@ const formatHomeworkLive = (
   return lines.join('\n')
 }
 
+const rowsFromStash = (stash: Record<string, unknown>) => {
+  if (Array.isArray(stash.questions)) {
+    return stash.questions as NonNullable<ChaoxingHomeworkInfo['questions']>
+  }
+  return []
+}
+
 const readStashedHomework = async (
   id: string,
   onPartial?: (questions: NonNullable<ChaoxingHomeworkInfo['questions']>) => void,
-  options?: { harvest?: boolean },
+  options?: { harvest?: boolean; hydrate?: boolean },
 ) => {
   const stash = asObject(await evalBrowserView(id, STASH_HOMEWORK).catch(() => ({ error: 'stash failed' })))
-  const total = Number(stash.questions || 0)
-  const rows: NonNullable<ChaoxingHomeworkInfo['questions']> = []
-  for (let i = 0; i < Math.min(total, 40); i += 1) {
-    // eval 偶发超时会丢题，重试到读到为止（最多 3 次）
-    for (let attempt = 0; attempt < 3; attempt += 1) {
+  let rows = rowsFromStash(stash)
+  if (!rows.length && Number(stash.questions) > 0) {
+    const total = Math.min(Number(stash.questions) || 0, 40)
+    for (let i = 0; i < total; i += 1) {
       const row = asObject(await evalBrowserView(id, `(function(){ return (window.__ZE_HW_CARD__ || [])[${i}] || null; })()`).catch(() => null))
       if (row.index || row.stem || row.options) {
         rows.push(row as NonNullable<ChaoxingHomeworkInfo['questions']>[number])
-        break
       }
-      await waitMs(150)
     }
   }
   const ready = applyHwImageMap(rows, {})
   if (ready.length) onPartial?.(ready)
-  const { hydrateHomeworkImages } = await import('../homeworkImages')
+  if (options?.hydrate === false) {
+    return { stash, questions: ready, imageGot: 0 }
+  }
+  const { hydrateHomeworkImages } = await import('./homeworkImages')
   // 图片一律由本机带完整浏览器头拉取（Rust 端有磁盘缓存），页面内逐块搬运只留作兜底
   const hydrated = await hydrateHomeworkImages(ready, 40)
   const hydratedGot = hydrated.filter((item) => (item.images || []).some((src) => src.startsWith('data:'))).length
@@ -139,42 +146,68 @@ const readStashedHomework = async (
   }
 }
 
+const applyStashedQuestions = (
+  info: ChaoxingHomeworkInfo,
+  questions: NonNullable<ChaoxingHomeworkInfo['questions']>,
+) => ({
+  ...info,
+  page: info.page === 'other' || !info.page ? 'do' : info.page,
+  questions: questions.map(rebalanceHomeworkQuestion),
+  questionCount: questions.length,
+  filledCount: questions.filter((item) => item.filled).length,
+})
+
 export const inspectChaoxingHomework = async (id: string, options?: { vision?: boolean }) => {
-  await askFrames(id, 'snap')
-  let snap = asObject(await evalBrowserView(id, READ_HOMEWORK_SNAPS).catch((err) => ({ error: String(err) })))
-  let info = cardFromSnaps(snap)
-  if (!homeworkReady(info)) {
-    await waitMs(600)
-    await askFrames(id, 'snap')
-    snap = asObject(await evalBrowserView(id, READ_HOMEWORK_SNAPS).catch((err) => ({ error: String(err) })))
-    info = cardFromSnaps(snap)
-  }
+  let snap: Record<string, unknown> = {}
+  let info: ChaoxingHomeworkInfo = { page: 'other' }
   let boxedError = ''
   let imageRows = 0
+  const publishPartial = (partial: NonNullable<ChaoxingHomeworkInfo['questions']>) => {
+    info = applyStashedQuestions(info, partial)
+    publishHomeworkCard(toHomeworkCard(info))
+  }
   try {
-    const stashed = await readStashedHomework(id, (partial) => {
-      info = {
-        ...info,
-        page: info.page === 'other' ? 'do' : info.page,
-        questions: partial.map(rebalanceHomeworkQuestion),
-        questionCount: partial.length,
-        filledCount: partial.filter((item) => item.filled).length,
-      }
-      publishHomeworkCard(toHomeworkCard(info))
-    }, { harvest: options?.vision !== false })
+    const stashed = await readStashedHomework(id, publishPartial, {
+      harvest: false,
+      hydrate: false,
+    })
     boxedError = stashed.stash.error ? String(stashed.stash.error) : ''
-    imageRows = stashed.imageGot
     if (stashed.questions.length) {
-      info = {
-        ...info,
-        page: info.page === 'other' ? 'do' : info.page,
-        questions: stashed.questions.map(rebalanceHomeworkQuestion),
-        questionCount: stashed.questions.length,
-        filledCount: stashed.questions.filter((item) => item.filled).length,
-      }
+      info = applyStashedQuestions(info, stashed.questions)
     }
   } catch (err) {
     boxedError = String(err)
+  }
+  if (!homeworkReady(info)) {
+    await askFrames(id, 'snap')
+    snap = asObject(await evalBrowserView(id, READ_HOMEWORK_SNAPS).catch((err) => ({ error: String(err) })))
+    info = cardFromSnaps(snap)
+    if (!homeworkReady(info)) {
+      await waitMs(400)
+      await askFrames(id, 'snap')
+      snap = asObject(await evalBrowserView(id, READ_HOMEWORK_SNAPS).catch((err) => ({ error: String(err) })))
+      info = cardFromSnaps(snap)
+    }
+  }
+  if (!(info.questions || []).length) {
+    try {
+      const stashed = await readStashedHomework(id, publishPartial, {
+        harvest: options?.vision !== false,
+        hydrate: options?.vision !== false,
+      })
+      boxedError = boxedError || (stashed.stash.error ? String(stashed.stash.error) : '')
+      imageRows = stashed.imageGot
+      if (stashed.questions.length) info = applyStashedQuestions(info, stashed.questions)
+    } catch (err) {
+      boxedError = boxedError || String(err)
+    }
+  } else {
+    void import('./homeworkImages').then(async ({ hydrateHomeworkImages }) => {
+      const hydrated = await hydrateHomeworkImages(info.questions || [], 40)
+      if (!hydrated.length) return
+      info = applyStashedQuestions(info, hydrated)
+      publishHomeworkCard(toHomeworkCard(info))
+    }).catch(() => undefined)
   }
   if (!(info.questions || []).length) {
     const liveFallback = asObject(await evalBrowserView(id, READ_HOMEWORK_LIVE).catch(() => ({})))
@@ -201,7 +234,7 @@ export const inspectChaoxingHomework = async (id: string, options?: { vision?: b
       || /（图像）|\(图像\)|公式图|显示不全/.test(String(item.stem || ''))
       || (item.options || []).some((opt) => !String(opt.text || '').trim() && (opt.image || opt.images?.length))
     ))
-  const { enrichHomeworkWithVision, applyHomeworkVisionCache } = await import('../homeworkVision')
+  const { enrichHomeworkWithVision, applyHomeworkVisionCache } = await import('./homeworkVision')
   // 已转写过的题直接用缓存文字，面板无视觉刷新也能补上
   info = applyHomeworkVisionCache(info)
   if (needVision) {

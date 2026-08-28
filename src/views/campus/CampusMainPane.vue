@@ -70,7 +70,7 @@
 </template>
 
 <script setup lang="ts">
-import CampusQuestionPane from '../../components/CampusQuestionPane.vue'
+import CampusQuestionPane from '../../components/campus/CampusQuestionPane.vue'
 import type { CampusIdentity, CampusQuestion } from '../../services/app/campus'
 
 defineProps<{

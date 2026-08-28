@@ -9,6 +9,10 @@ export type ChaoxingChapterSnap = {
   progress?: { done: number; total: number } | null
   chapters?: Array<{
     title: string
+    index?: string
+    depth?: number
+    parent?: string
+    kind?: 'chapter' | 'section'
     jobs: number
     unfinished: boolean
     active?: boolean
@@ -19,6 +23,8 @@ export type ChaoxingChapterSnap = {
   hint?: string
   via?: string
   ts?: number
+  live?: boolean
+  needInstall?: boolean
 }
 
 export type ChaoxingVideoInfo = {

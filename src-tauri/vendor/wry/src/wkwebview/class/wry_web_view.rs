@@ -66,6 +66,16 @@ define_class!(
       self.ivars().accept_first_mouse
     }
 
+    #[cfg(target_os = "macos")]
+    #[unsafe(method(viewDidEndLiveResize))]
+    fn view_did_end_live_resize(&self) {
+      unsafe { objc2::msg_send![super(self), viewDidEndLiveResize] }
+      self.setNeedsDisplay(true);
+      if let Some(layer) = self.layer() {
+        layer.setNeedsDisplay();
+      }
+    }
+
     #[cfg(target_os = "ios")]
     #[unsafe(method_id(inputAccessoryView))]
     fn input_accessory_view(&self) -> Option<Retained<objc2_ui_kit::UIView>> {

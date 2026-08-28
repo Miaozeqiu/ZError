@@ -150,6 +150,25 @@ function __cxCatalogProgress(text){
   var hit = String(text || '').match(/已完成任务点\\s*[:：]?\\s*(\\d+)\\s*\\/\\s*(\\d+)/);
   return hit ? { done: parseInt(hit[1], 10), total: parseInt(hit[2], 10) } : null;
 }
+function __cxCatalogProgressFromDoc(doc){
+  if (!doc || !doc.querySelector) return null;
+  var sels = ['.jobCompleteness', '.chapter_head', '.left', '#main', '.content'];
+  for (var i = 0; i < sels.length; i++) {
+    var el = doc.querySelector(sels[i]);
+    if (!el) continue;
+    var found = __cxCatalogProgress(__cxCatalogText(el));
+    if (found) return found;
+  }
+  var text = __cxCatalogText(doc);
+  if (text.length > 5000) text = text.slice(0, 5000);
+  return __cxCatalogProgress(text);
+}
+function __cxSkipParseFrame(href, doc){
+  if (!doc) return true;
+  if (doc.querySelector('#coursetree, .posCatalog_select, .catalog_title, .posCatalog_name, a.clicktitle')) return false;
+  if (/studentcourse|studentstudy|stucoursemiddle|\\/mycourse\\/stu/.test(href || '')) return false;
+  return /ananas|insertvideo|modules\\/video|knowledge\\/cards|about:blank/.test(href || '');
+}
 function __cxJobsFromText(text){
   var jobs = {};
   var raw = String(text || '').replace(/\\r/g, '\\n');
@@ -177,12 +196,15 @@ function __cxJobsForTitle(title, jobs){
   title = __cxClean(title);
   if (!title || !jobs) return 0;
   if (jobs[title] != null) return jobs[title];
-  var bareTitle = title.replace(/^\\d+\\.\\d+\\s*/, '');
+  var wantIndex = __cxCatalogIndex(title);
+  var bareTitle = __cxBareTitle(title);
   for (var key in jobs) {
     if (!jobs.hasOwnProperty(key)) continue;
-    var bareKey = key.replace(/^\\d+\\.\\d+\\s*/, '');
+    var keyIndex = __cxCatalogIndex(key);
+    if (wantIndex && keyIndex && wantIndex !== keyIndex) continue;
+    var bareKey = __cxBareTitle(key);
     if (key === title || bareKey === title || bareKey === bareTitle) return jobs[key];
-    if (bareTitle && (__cxHas(key, bareTitle) || __cxHas(bareTitle, bareKey))) return jobs[key];
+    if (!wantIndex && !keyIndex && bareTitle && (__cxHas(key, bareTitle) || __cxHas(bareTitle, bareKey))) return jobs[key];
   }
   return 0;
 }
@@ -230,57 +252,182 @@ function __cxSkipTitle(title){
   if (/^第.+部分/.test(title) || /^\\d+$/.test(title) || title === '目录') return true;
   return false;
 }
+function __cxCatalogIndex(title){
+  var hit = String(title || '').trim().match(/^(\\d+(?:\\.\\d+)+)\\b/);
+  return hit ? hit[1] : '';
+}
 function __cxBareTitle(title){
-  return __cxClean(String(title || '').replace(/[（(]\\s*\\d+\\s*[）)]\\s*$/g, '').replace(/^\\d+(?:\\.\\d+)+\\s*/, ''));
+  var raw = __cxClean(String(title || '').replace(/[（(]\\s*\\d+\\s*[）)]\\s*$/g, ''));
+  var index = __cxCatalogIndex(raw);
+  var bare = __cxClean(raw.replace(/^\\d+(?:\\.\\d+)+\\s*/, ''));
+  return bare || index;
 }
 function __cxTitleMatch(a, b){
+  var ia = __cxCatalogIndex(a);
+  var ib = __cxCatalogIndex(b);
+  if (ia && ib && ia !== ib) return false;
   a = __cxBareTitle(a);
   b = __cxBareTitle(b);
-  if (!a || !b) return false;
+  if (!a || !b) return ia && ib && ia === ib;
+  if (ia && ib) return a === b;
   return a === b || __cxHas(a, b) || __cxHas(b, a);
+}
+function __cxHasUnfinishedChild(items, item){
+  var idx = (item && (item.index || __cxCatalogIndex(item.title))) || '';
+  var depth = item && item.depth;
+  if (idx) {
+    var prefix = idx + '.';
+    for (var i = 0; i < items.length; i++) {
+      if (items[i] === item || !items[i].unfinished) continue;
+      var other = items[i].index || __cxCatalogIndex(items[i].title);
+      if (other && other.indexOf(prefix) === 0) return true;
+    }
+  }
+  if (typeof depth === 'number') {
+    var start = -1;
+    for (var s = 0; s < items.length; s++) if (items[s] === item) { start = s; break; }
+    if (start >= 0) {
+      for (var n = start + 1; n < items.length; n++) {
+        if ((items[n].depth || 0) <= depth) break;
+        if (items[n].unfinished) return true;
+      }
+    }
+  }
+  return false;
+}
+function __cxClearParentUnfinished(items){
+  for (var i = 0; i < items.length; i++) {
+    if (__cxHasUnfinishedChild(items, items[i])) items[i].unfinished = false;
+  }
+  return items;
 }
 function __cxSkipDocTitle(title){
   return __cxHas(title, '资料') || __cxHas(title, '测验') || __cxHas(title, '考试')
     || __cxHas(title, '作业') || __cxHas(title, '讨论') || __cxHas(title, '问卷');
 }
+function __cxOwnJobs(box){
+  if (!box) return 0;
+  var nested = box.querySelectorAll ? box.querySelectorAll('.posCatalog_select') : [];
+  var hasChildSelect = false;
+  for (var c = 0; c < nested.length; c++) {
+    if (nested[c] !== box) { hasChildSelect = true; break; }
+  }
+  var kids = box.children || [];
+  for (var i = 0; i < kids.length; i++) {
+    var el = kids[i];
+    if (!el || !el.className) continue;
+    if (__cxHas(el.className, 'jobUnfinishCount')) {
+      if (hasChildSelect) continue;
+      var fromVal = parseInt(el.value || el.getAttribute('value') || el.textContent || '', 10);
+      if (isFinite(fromVal) && fromVal >= 0) return fromVal;
+    }
+  }
+  var oranges = box.querySelectorAll('.orangeNew');
+  for (var o = 0; o < oranges.length; o++) {
+    var wrap = oranges[o].closest ? oranges[o].closest('.posCatalog_select') : null;
+    if (wrap && wrap !== box) continue;
+    var n = parseInt(__cxClean(oranges[o].textContent || ''), 10);
+    if (isFinite(n) && n >= 0) return n;
+  }
+  return 0;
+}
+function __cxOwnNameEl(box, isChapter){
+  if (!box) return null;
+  var want = isChapter ? 'posCatalog_title' : 'posCatalog_name';
+  var kids = box.children || [];
+  for (var i = 0; i < kids.length; i++) {
+    if (kids[i] && __cxHas(kids[i].className, want)) return kids[i];
+  }
+  var all = box.querySelectorAll ? box.querySelectorAll('.' + want) : [];
+  for (var j = 0; j < all.length; j++) {
+    var wrap = all[j].closest ? all[j].closest('.posCatalog_select') : box;
+    if (wrap === box) return all[j];
+  }
+  return null;
+}
+function __cxTreeDepth(box, tree){
+  var depth = 0;
+  var p = box && box.parentElement;
+  while (p && p !== tree) {
+    if (String(p.tagName || '').toLowerCase() === 'ul') depth += 1;
+    p = p.parentElement;
+  }
+  return Math.max(0, depth - 1);
+}
+function __cxNodeId(box){
+  if (!box) return '';
+  var id = String(box.id || '');
+  if (id.indexOf('cur') === 0) return id.slice(3);
+  if (/^\\d{5,}$/.test(id)) return id;
+  try {
+    var click = String(box.getAttribute('onclick') || '') + (box.innerHTML || '');
+    var hit = click.match(/getTeacherAjax\\s*\\(\\s*['\"]\\d+['\"]\\s*,\\s*['\"]\\d+['\"]\\s*,\\s*['\"](\\d+)['\"]/i);
+    if (hit) return hit[1];
+  } catch (e) {}
+  return '';
+}
+function __cxStudyJobsLeft(doc){
+  try {
+    var el = doc.querySelector('#_studystate');
+    var raw = el ? String(el.value || el.getAttribute('value') || '') : '';
+    var hit = raw.match(/unfinishCount\\s*:\\s*(\\d+)/);
+    return hit ? parseInt(hit[1], 10) : 0;
+  } catch (e) { return 0; }
+}
 function __cxParsePlayerTree(root){
   var doc = root || document;
+  var tree = doc.querySelector('#coursetree') || doc;
   var items = [];
-  var nodes = doc.querySelectorAll('#coursetree .posCatalog_select');
-  for (var i = 0; i < nodes.length && items.length < 100; i++) {
+  var nodes = tree.querySelectorAll('.posCatalog_select');
+  var lastByDepth = {};
+  for (var i = 0; i < nodes.length && items.length < 240; i++) {
     var box = nodes[i];
-    if (__cxHas(box.className, 'firstLayer')) continue;
-    var name = box.querySelector('.posCatalog_name');
+    var isChapter = __cxHas(box.className, 'firstLayer');
+    var name = __cxOwnNameEl(box, isChapter);
     if (!name) continue;
-    var title = __cxChapterLabel(name.getAttribute('title') || name.textContent || '');
-    if (__cxSkipTitle(title)) continue;
-    var jobs = __cxJobCount(box) || __cxJobCount(box.parentElement);
-    var chapterId = '';
-    try {
-      var html = box.outerHTML || '';
-      var hit = html.match(/knowledgeid[=\\"']+(\\d+)/i) || html.match(/chapterId[=\\"']+(\\d+)/i) || html.match(/id[=\\"']+(?:\\w*-)?(\\d{6,})/i);
-      if (hit) chapterId = hit[1];
-    } catch (e) {}
+    var raw = name.getAttribute('title') || name.textContent || '';
+    var bar = name.querySelector('.posCatalog_sbar');
+    var index = bar ? __cxClean(bar.textContent || '') : __cxCatalogIndex(raw);
+    var nameOnly = __cxChapterLabel(raw);
+    if (index && nameOnly) nameOnly = nameOnly.replace(new RegExp('^' + index.replace(/\\./g, '\\\\.') + '\\\\s*'), '');
+    if (!nameOnly) nameOnly = index;
+    if (__cxSkipTitle(nameOnly) && !index) continue;
+    var title = index && nameOnly && nameOnly !== index ? (index + ' ' + nameOnly) : (nameOnly || index);
+    if (!title) continue;
+    var depth = isChapter ? 0 : __cxTreeDepth(box, tree);
+    if (!isChapter && index) depth = Math.max(depth, String(index).split('.').length - 1);
+    var parent = '';
+    for (var d = depth - 1; d >= 0; d--) {
+      if (lastByDepth[d]) { parent = lastByDepth[d]; break; }
+    }
+    var jobs = __cxOwnJobs(box);
     items.push({
       title: title,
+      index: index,
+      depth: depth,
+      parent: parent,
+      kind: isChapter ? 'chapter' : 'section',
       jobs: jobs,
       unfinished: jobs > 0,
       active: __cxHas(box.className, 'posCatalog_active'),
-      chapterId: chapterId,
+      chapterId: __cxNodeId(box),
       href: '',
       source: 'player',
     });
+    lastByDepth[depth] = title;
   }
-  var treeJobs = __cxJobsFromText(__cxCatalogText(doc.querySelector('#coursetree') || doc.body));
-  for (var t = 0; t < items.length; t++) {
-    if (items[t].jobs) continue;
-    var extra = __cxJobsForTitle(items[t].title, treeJobs);
-    if (extra > 0) {
-      items[t].jobs = extra;
-      items[t].unfinished = true;
+  for (var c = 0; c < items.length; c++) {
+    if (items[c].kind !== 'chapter') continue;
+    var sum = 0;
+    for (var n = c + 1; n < items.length && items[n].kind !== 'chapter'; n++) {
+      var nxt = items[n + 1];
+      var leaf = !nxt || nxt.kind === 'chapter' || (nxt.depth || 0) <= (items[n].depth || 0);
+      if (leaf) sum += items[n].jobs || 0;
     }
+    items[c].jobs = sum;
+    items[c].unfinished = sum > 0;
   }
-  return items;
+  return __cxClearParentUnfinished(items);
 }
 function __cxParseCourseCatalog(root){
   var doc = root || document;
@@ -290,7 +437,8 @@ function __cxParseCourseCatalog(root){
   var seen = {};
   var pushItem = function(title, href, box, source){
     title = __cxChapterLabel(title);
-    if (__cxSkipTitle(title)) return;
+    var index = __cxCatalogIndex(title);
+    if (__cxSkipTitle(title) && !index) return;
     href = href || '';
     if (href.indexOf('javascript:') === 0) href = '';
     var jobs = __cxJobCount(box) || __cxJobCount(box && box.parentElement) || __cxJobsForTitle(title, textJobs);
@@ -306,14 +454,13 @@ function __cxParseCourseCatalog(root){
         }
       }
     }
-    var key = __cxBareTitle(title) + '|' + href;
+    var key = (index || __cxBareTitle(title)) + '|' + href;
     if (seen[key]) {
       if (jobs > 0) {
         for (var s = 0; s < items.length; s++) {
-          if (__cxBareTitle(items[s].title) === __cxBareTitle(title) && !items[s].jobs) {
-            items[s].jobs = jobs;
-            items[s].unfinished = true;
-          }
+          if (!__cxTitleMatch(items[s].title, title) || items[s].jobs) continue;
+          items[s].jobs = jobs;
+          items[s].unfinished = true;
         }
       }
       return;
@@ -328,6 +475,7 @@ function __cxParseCourseCatalog(root){
     } catch (e) {}
     items.push({
       title: title,
+      index: index,
       jobs: jobs,
       unfinished: jobs > 0,
       active: false,
@@ -349,9 +497,15 @@ function __cxParseCourseCatalog(root){
   var titles = doc.querySelectorAll('.catalog_title');
   for (var t = 0; t < titles.length && items.length < 120; t++) {
     var titleRoot = titles[t];
+    var indexEl = titleRoot.querySelector('div:nth-child(1), .catalog_sbar, .posCatalog_sbar');
     var nameEl = titleRoot.querySelector('div:nth-child(2), .catalog_name, a, span') || titleRoot;
+    var indexText = __cxClean((indexEl && (indexEl.getAttribute('title') || indexEl.textContent)) || '');
+    var nameText = __cxClean((nameEl.getAttribute('title') || nameEl.textContent || titleRoot.textContent || ''));
+    var fullTitle = __cxCatalogIndex(indexText)
+      ? (indexText + (nameText && nameText !== indexText ? ' ' + nameText : ''))
+      : (nameEl.getAttribute('title') || nameEl.textContent || titleRoot.textContent || '');
     var wrap = titleRoot.closest ? (titleRoot.closest('.catalog_rep, .chapter_unit, li, .catalog_item') || titleRoot.parentElement) : titleRoot.parentElement;
-    pushItem(nameEl.getAttribute('title') || nameEl.textContent || titleRoot.textContent || '', '', wrap || titleRoot, 'mooc2');
+    pushItem(fullTitle, '', wrap || titleRoot, 'mooc2');
   }
   // 正文「节名\\n数字」兜底补齐未完成
   if (!items.some(function(item){ return item.unfinished; })) {
@@ -360,7 +514,7 @@ function __cxParseCourseCatalog(root){
       pushItem(jk, '', null, 'text');
     }
   }
-  return { items: items, progress: __cxCatalogProgress(pageText) };
+  return { items: __cxClearParentUnfinished(items), progress: __cxCatalogProgress(pageText) };
 }
 function __cxCatalogFetchUrl(){
   var list = document.querySelectorAll('a[data-url*="studentcourse"], [data-url*="studentcourse"], iframe[src*="studentcourse"], iframe[src], [data-url]');
@@ -545,20 +699,23 @@ export const CHAOXING_STUDY_INSPECT = `(function(){
   } catch (e) {}
   var stepEl = document.querySelector('.prev_title');
   var step = stepEl ? __cxClean(stepEl.getAttribute('title') || stepEl.textContent || '') : '';
-  var chapters = [];
-  var nodes = document.querySelectorAll('#coursetree .posCatalog_select');
-  for (var j = 0; j < nodes.length && chapters.length < 80; j++) {
-    if (__cxHas(nodes[j].className, 'firstLayer')) continue;
-    var name = nodes[j].querySelector('.posCatalog_name');
-    var title = name ? __cxClean(name.getAttribute('title') || name.textContent || '') : '';
-    if (!title) continue;
-    var jobs = __cxJobCount(nodes[j]);
-    chapters.push({
-      title: title.slice(0, 80),
-      jobs: jobs,
-      unfinished: jobs > 0,
-      active: __cxHas(nodes[j].className, 'posCatalog_active'),
-    });
+  var chapters = __cxParsePlayerTree(document);
+  if (!chapters.length) {
+    var nodes = document.querySelectorAll('#coursetree .posCatalog_select');
+    for (var j = 0; j < nodes.length && chapters.length < 80; j++) {
+      if (__cxHas(nodes[j].className, 'firstLayer')) continue;
+      var name = nodes[j].querySelector('.posCatalog_name');
+      var title = name ? __cxClean(name.getAttribute('title') || name.textContent || '') : '';
+      if (!title) continue;
+      var jobs = __cxJobCount(nodes[j]);
+      chapters.push({
+        title: title.slice(0, 80),
+        index: __cxCatalogIndex(title),
+        jobs: jobs,
+        unfinished: jobs > 0,
+        active: __cxHas(nodes[j].className, 'posCatalog_active'),
+      });
+    }
   }
   var treeJobs = __cxJobsFromText(__cxCatalogText(document.querySelector('#coursetree') || document.body));
   for (var t = 0; t < chapters.length; t++) {
@@ -569,6 +726,7 @@ export const CHAOXING_STUDY_INSPECT = `(function(){
       chapters[t].unfinished = true;
     }
   }
+  chapters = __cxClearParentUnfinished(chapters);
   var path = location.pathname;
   var href = location.href;
   var page = 'other';
@@ -640,19 +798,21 @@ export const CHAOXING_STUDY_INSPECT = `(function(){
       return __cxChapterLabel(active && active.title) || __cxChapterTitle();
     })(),
     next: (function(){
-      var skip = function(title){
+      var skip = function(item){
+        var title = item && item.title || '';
         return __cxHas(title, '资料') || __cxHas(title, '测验') || __cxHas(title, '考试')
-          || __cxHas(title, '作业') || __cxHas(title, '讨论') || __cxHas(title, '问卷');
+          || __cxHas(title, '作业') || __cxHas(title, '讨论') || __cxHas(title, '问卷')
+          || __cxHasUnfinishedChild(chapters, item);
       };
       var start = -1;
       for (var i = 0; i < chapters.length; i++) {
         if (chapters[i].active) { start = i; break; }
       }
       for (var k = start + 1; k < chapters.length; k++) {
-        if (chapters[k].unfinished && !skip(chapters[k].title)) return chapters[k].title;
+        if (chapters[k].unfinished && !skip(chapters[k])) return chapters[k].title;
       }
       for (var n = 0; n < chapters.length; n++) {
-        if (chapters[n].unfinished && !chapters[n].active && !skip(chapters[n].title)) return chapters[n].title;
+        if (chapters[n].unfinished && !chapters[n].active && !skip(chapters[n])) return chapters[n].title;
       }
       return '';
     })(),
@@ -672,10 +832,8 @@ export const CHAOXING_STUDY_INSPECT = `(function(){
   };
 })()`
 
-export const CHAOXING_PARSE_CHAPTERS = `(function(){
-  ${cleanJs}
-  var __cxFetchedCatalog = null;
-  function __cxParseOne(win){
+const chapterWatchJs = `
+function __zeScanOne(win){
     var href = '';
     var path = '';
     var doc = null;
@@ -684,63 +842,40 @@ export const CHAOXING_PARSE_CHAPTERS = `(function(){
       path = (win.location && win.location.pathname) || '';
       doc = win.document;
     } catch (e) { return null; }
-    if (!doc) return null;
+    if (!doc || __cxSkipParseFrame(href, doc)) return null;
     var page = 'other';
     if (__cxHas(path, '/studentcourse') || __cxHas(href, 'studentcourse')) page = 'chapters';
     else if (__cxHas(href, 'studentstudy') || doc.querySelector('#coursetree')) page = 'player';
     else if (__cxHas(path, '/mycourse/stu')) page = 'student';
-    var pageText = __cxCatalogText(doc);
-    var progress = __cxCatalogProgress(pageText);
+    var hasTree = !!doc.querySelector('#coursetree, .posCatalog_select');
     var items = [];
-    if (page === 'player') {
+    var progress = __cxCatalogProgressFromDoc(doc);
+    if (hasTree || page === 'player') {
       items = __cxParsePlayerTree(doc);
-    } else {
+      if (items.length && page === 'other') page = 'player';
+      var leftJobs = __cxStudyJobsLeft(doc);
+      if (leftJobs && !progress) {
+        var jobTotal = 0;
+        for (var jt = 0; jt < items.length; jt++) {
+          if (items[jt].kind !== 'chapter') jobTotal += items[jt].jobs || 0;
+        }
+        if (jobTotal >= leftJobs) progress = { done: jobTotal - leftJobs, total: jobTotal };
+      }
+    } else if (doc.querySelector('.catalog_title, a.clicktitle, .catalog_name, .chapter_item')) {
       var catalog = __cxParseCourseCatalog(doc);
       items = catalog.items;
       progress = catalog.progress || progress;
     }
-    var unfinishedItems = items.filter(function(item){ return item.unfinished && !__cxSkipDocTitle(item.title); });
+    items = __cxClearParentUnfinished(items);
+    var unfinishedItems = items.filter(function(item){
+      return item.unfinished && item.kind !== 'chapter' && !__cxSkipDocTitle(item.title) && !__cxHasUnfinishedChild(items, item);
+    });
     var unfinished = unfinishedItems.map(function(item){ return item.title; });
-    if (!unfinished.length) {
-      var pageJobs = __cxJobsFromText(pageText);
-      for (var jk in pageJobs) {
-        if (!pageJobs.hasOwnProperty(jk)) continue;
-        if (!(pageJobs[jk] > 0)) continue;
-        var jt = __cxBareTitle(jk);
-        if (!jt || __cxSkipDocTitle(jt) || __cxSkipTitle(jt)) continue;
-        unfinished.push(jt);
-        unfinishedItems.push({ title: jt, jobs: pageJobs[jk], unfinished: true, active: false, href: '', source: 'text' });
-      }
-    }
-    var current = '';
-    try { current = __cxChapterTitle(); } catch (e) {}
-    if (!current) {
-      var active = items.filter(function(item){ return item.active; })[0];
-      current = active ? active.title : '';
-    }
+    var active = items.filter(function(item){ return item.active; })[0];
+    var current = active ? active.title : '';
     var onUnfinished = unfinishedItems.some(function(item){ return item.active || __cxTitleMatch(item.title, current); });
     var first = unfinishedItems[0] || null;
     var left = progress && progress.total > progress.done ? progress.total - progress.done : unfinished.length;
-    var fetched = null;
-    if (!unfinished.length && page !== 'player') {
-      if (!__cxFetchedCatalog) __cxFetchedCatalog = __cxLoadCatalogHtml();
-      fetched = __cxFetchedCatalog;
-      if (fetched && fetched.html) {
-        try {
-          var parsedDoc = new DOMParser().parseFromString(fetched.html, 'text/html');
-          var remote = __cxParseCourseCatalog(parsedDoc);
-          if (remote.progress) progress = remote.progress;
-          if (remote.items && remote.items.length) {
-            items = remote.items;
-            unfinishedItems = items.filter(function(item){ return item.unfinished && !__cxSkipDocTitle(item.title); });
-            unfinished = unfinishedItems.map(function(item){ return item.title; });
-            first = unfinishedItems[0] || null;
-            left = progress && progress.total > progress.done ? progress.total - progress.done : unfinished.length;
-            page = 'chapters';
-          }
-        } catch (e) {}
-      }
-    }
     return {
       url: href,
       page: page,
@@ -752,19 +887,18 @@ export const CHAOXING_PARSE_CHAPTERS = `(function(){
       firstUnfinished: first ? first.title : '',
       onUnfinished: onUnfinished,
       chapters: items.length ? items : unfinishedItems,
-      fetchUrl: fetched && fetched.url || '',
-      fetchError: fetched && fetched.error || '',
       score: (unfinished.length * 20) + (progress ? 8 : 0) + items.length + (page === 'chapters' || page === 'player' ? 3 : 0),
     };
   }
+function __zeScanChapters(){
   var frames = __cxFrames(window, 0);
   var best = null;
   for (var f = 0; f < frames.length; f++) {
-    var one = __cxParseOne(frames[f]);
+    var one = __zeScanOne(frames[f]);
     if (!one) continue;
     if (!best || one.score > best.score) best = one;
   }
-  if (!best) best = __cxParseOne(window) || {
+  if (!best) best = {
     url: location.href,
     page: 'other',
     unfinished: [],
@@ -773,6 +907,8 @@ export const CHAOXING_PARSE_CHAPTERS = `(function(){
     progress: null,
   };
   var left = best.unfinishedCount || 0;
+  best.live = true;
+  best.ts = Date.now();
   best.hint = left > 0
     ? (best.onUnfinished
       ? ('当前就在未完成节「' + (best.current || best.firstUnfinished || '') + '」。调用 browser_chaoxing_study 会直接播放，不要 click_text。')
@@ -781,50 +917,160 @@ export const CHAOXING_PARSE_CHAPTERS = `(function(){
       ? ('已完成任务点 ' + best.progress.done + '/' + best.progress.total + '。')
       : '没有读到未完成章节。');
   return best;
+}
+function __zePublishChapters(){
+  var snap = __zeScanChapters();
+  window.__ZE_CHAPTERS__ = snap;
+  try { if (window.top) window.top.__ZE_CHAPTERS__ = snap; } catch (e) {}
+  return snap;
+}
+function __zeWatchDoc(doc){
+  if (!doc || !doc.querySelector) return false;
+  var root = doc.querySelector('#coursetree')
+    || doc.querySelector('.chapterList, .catalog_list, .chapter_unit, .navdiv')
+    || (doc.querySelector('.catalog_title, .posCatalog_select') ? doc.body : null);
+  if (!root || root.__ZE_CH_OBS__) return false;
+  var timer = 0;
+  var obs = new MutationObserver(function(){
+    if (timer) return;
+    timer = setTimeout(function(){
+      timer = 0;
+      __zePublishChapters();
+    }, 80);
+  });
+  obs.observe(root, {
+    subtree: true,
+    childList: true,
+    attributes: true,
+    attributeFilter: ['class', 'value'],
+  });
+  root.__ZE_CH_OBS__ = 1;
+  return true;
+}
+function __zeBindChapters(){
+  var frames = __cxFrames(window, 0);
+  for (var i = 0; i < frames.length; i++) {
+    try { __zeWatchDoc(frames[i].document); } catch (e) {}
+  }
+  window.__ZE_CH_LIVE__ = 1;
+  window.__ZE_PUBLISH_CHAPTERS__ = __zePublishChapters;
+  if (!window.__ZE_CH_RETRY__) {
+    window.__ZE_CH_RETRY__ = setInterval(function(){
+      var again = __cxFrames(window, 0);
+      var added = false;
+      for (var r = 0; r < again.length; r++) {
+        try { if (__zeWatchDoc(again[r].document)) added = true; } catch (e) {}
+      }
+      if (added) __zePublishChapters();
+      if (window.__ZE_CHAPTERS__ && window.__ZE_CHAPTERS__.chapters && window.__ZE_CHAPTERS__.chapters.length) {
+        clearInterval(window.__ZE_CH_RETRY__);
+        window.__ZE_CH_RETRY__ = 0;
+      }
+    }, 900);
+  }
+  if (window.__ZE_CHAPTERS__ && window.__ZE_CHAPTERS__.chapters && window.__ZE_CHAPTERS__.chapters.length) {
+    return window.__ZE_CHAPTERS__;
+  }
+  return __zePublishChapters();
+}
+`
+
+export const CHAOXING_CHAPTER_INSTALL = `(function(){
+  ${cleanJs}
+  ${chapterWatchJs}
+  return __zeBindChapters();
 })()`
 
-export const CHAOXING_LIST_CHAPTERS = CHAOXING_PARSE_CHAPTERS
+export const CHAOXING_CHAPTER_READ = `(function(){
+  try { if (window.__ZE_CHAPTERS__) return window.__ZE_CHAPTERS__; } catch (e) {}
+  try { if (window.top && window.top.__ZE_CHAPTERS__) return window.top.__ZE_CHAPTERS__; } catch (e) {}
+  return null;
+})()`
+
+export const CHAOXING_CHAPTER_REFRESH = `(function(){
+  if (typeof window.__ZE_PUBLISH_CHAPTERS__ === 'function') return window.__ZE_PUBLISH_CHAPTERS__();
+  return window.__ZE_CHAPTERS__ || { needInstall: true };
+})()`
+
+export const CHAOXING_PARSE_CHAPTERS = CHAOXING_CHAPTER_INSTALL
+export const CHAOXING_LIST_CHAPTERS = CHAOXING_CHAPTER_INSTALL
 
 export const CHAOXING_CLICK_CHAPTER_TAB = `(function(){
   ${cleanJs}
   return __cxClickChapterTab();
 })()`
 
-export const CHAOXING_OPEN_CHAPTER = `(function(rawTitle){
+export const CHAOXING_OPEN_CHAPTER = `(function(rawTitle, rawId){
   ${cleanJs}
-  var want = __cxBareTitle(rawTitle);
-  if (!want) return { ok: false, error: '缺少节名' };
+  var wantRaw = __cxClean(rawTitle);
+  var wantIndex = __cxCatalogIndex(wantRaw);
+  var want = __cxBareTitle(wantRaw);
+  var wantId = String(rawId || '').replace(/\\D/g, '');
+  if (!want && !wantIndex && !wantId) return { ok: false, error: '缺少节名' };
   var frames = __cxFrames(window, 0);
+  var clickName = function(el, via){
+    if (!el) return null;
+    var name = el;
+    if (el.querySelector) {
+      name = el.querySelector('.posCatalog_name, .posCatalog_title, a.clicktitle, a') || el;
+    }
+    var box = name.closest ? name.closest('.posCatalog_select, li, .chapter_item, .catalog_item') : el;
+    __cxClick(name);
+    return {
+      ok: true,
+      title: __cxChapterLabel((name.getAttribute && name.getAttribute('title')) || name.textContent || ''),
+      active: box ? __cxHas(box.className, 'posCatalog_active') : false,
+      via: via,
+    };
+  };
+  if (wantId) {
+    for (var f = 0; f < frames.length; f++) {
+      var doc = null;
+      try { doc = frames[f].document; } catch (e) { continue; }
+      if (!doc) continue;
+      var byId = doc.getElementById('cur' + wantId) || doc.getElementById(wantId);
+      if (byId) return clickName(byId, 'id');
+      var idNodes = doc.querySelectorAll('#coursetree .posCatalog_select, a.clicktitle, .catalog_title, a[href*="chapterId"], a[href*="knowledgeid"]');
+      for (var n = 0; n < idNodes.length; n++) {
+        var html = '';
+        try { html = idNodes[n].outerHTML || ''; } catch (e) {}
+        if (html.indexOf('cur' + wantId) >= 0 || /chapterId=/.test(html) && html.indexOf(wantId) >= 0) {
+          return clickName(idNodes[n], 'id-html');
+        }
+        var click = String(idNodes[n].getAttribute && idNodes[n].getAttribute('onclick') || '');
+        if (click.indexOf(wantId) >= 0 && /getTeacherAjax/.test(click)) return clickName(idNodes[n], 'id-ajax');
+      }
+    }
+  }
+  var exactIndex = null;
   var exact = null;
   var fuzzy = null;
-  for (var f = 0; f < frames.length; f++) {
-    var doc = null;
-    try { doc = frames[f].document; } catch (e) { continue; }
-    if (!doc) continue;
-    var prefer = doc.querySelectorAll('#coursetree .posCatalog_select .posCatalog_name, #coursetree .posCatalog_name');
+  for (var f2 = 0; f2 < frames.length; f2++) {
+    var doc2 = null;
+    try { doc2 = frames[f2].document; } catch (e) { continue; }
+    if (!doc2) continue;
+    var prefer = doc2.querySelectorAll('#coursetree .posCatalog_select .posCatalog_name, #coursetree .posCatalog_name');
     var nodes = prefer.length
       ? prefer
-      : doc.querySelectorAll('a.clicktitle, .posCatalog_name, a.chapter_item, .catalog_name a, .chapter_Td a, .catalog_title a, .catalog_title, .catalog_title div, li.chapter a');
+      : doc2.querySelectorAll('a.clicktitle, .posCatalog_name, a.chapter_item, .catalog_name a, .chapter_Td a, .catalog_title a, .catalog_title, .catalog_title div, li.chapter a');
     for (var i = 0; i < nodes.length; i++) {
       var el = nodes[i];
       var title = __cxChapterLabel(el.getAttribute('title') || el.textContent || '');
-      if (!title || __cxSkipTitle(title)) continue;
-      var bare = __cxBareTitle(title);
-      if (bare === want && !exact) exact = el;
-      else if (!fuzzy && (__cxHas(bare, want) || __cxHas(want, bare))) fuzzy = el;
+      var bar = el.querySelector ? el.querySelector('.posCatalog_sbar') : null;
+      var index = (bar ? __cxClean(bar.textContent || '') : '') || __cxCatalogIndex(title);
+      if (!title && !index) continue;
+      if (__cxSkipTitle(title || index) && !index) continue;
+      if (wantIndex && index === wantIndex && !exactIndex) exactIndex = el;
+      var bare = __cxBareTitle(title || index);
+      if (wantIndex && index && wantIndex !== index) continue;
+      if (want && bare === want && !exact) exact = el;
+      else if (!wantIndex && want && !fuzzy && (__cxHas(bare, want) || __cxHas(want, bare))) fuzzy = el;
     }
-    if (exact) break;
+    if (exactIndex || exact) break;
   }
-  var hit = exact || fuzzy;
-  if (!hit) return { ok: false, error: '目录里没有「' + want + '」', want: want };
-  var box = hit.closest ? hit.closest('.posCatalog_select, li, .chapter_item, .catalog_item') : null;
-  __cxClick(hit);
-  return {
-    ok: true,
-    title: __cxChapterLabel(hit.getAttribute('title') || hit.textContent || ''),
-    active: box ? __cxHas(box.className, 'posCatalog_active') : false,
-    via: 'click',
-  };
+  var hit = exactIndex || exact || fuzzy;
+  if (!hit) return { ok: false, error: '目录里没有「' + (want || wantIndex) + '」', want: want };
+  return clickName(hit, wantIndex && hit === exactIndex ? 'index' : 'click');
 })`
 
 export const CHAOXING_PLAY_SCRIPT = `(function(){
@@ -1010,11 +1256,19 @@ export const CHAOXING_CHAPTER_HOOK = `(function(){
   }
   function skip(title){
     title = clean(title);
-    return !title || title.length < 2 || /^ZRRESULT:/.test(title) || /^第.+部分/.test(title) || /^\\d+$/.test(title) || title === '目录'
+    var index = String(title || '').trim().match(/^(\\d+(?:\\.\\d+)+)\\b/);
+    return !title || (title.length < 2 && !index) || /^ZRRESULT:/.test(title) || /^第.+部分/.test(title) || /^\\d+$/.test(title) || title === '目录'
       || /资料|测验|考试|作业|讨论|问卷/.test(title);
   }
+  function catalogIndex(title){
+    var hit = String(title || '').trim().match(/^(\\d+(?:\\.\\d+)+)\\b/);
+    return hit ? hit[1] : '';
+  }
   function bare(title){
-    return clean(String(title || '').replace(/[（(]\\s*\\d+\\s*[）)]\\s*$/g, '').replace(/^\\d+(?:\\.\\d+)+\\s*/, ''));
+    var raw = clean(String(title || '').replace(/[（(]\\s*\\d+\\s*[）)]\\s*$/g, ''));
+    var index = catalogIndex(raw);
+    var name = clean(raw.replace(/^\\d+(?:\\.\\d+)+\\s*/, ''));
+    return name || index;
   }
   function jobsOfBox(box){
     if (!box) return 0;
@@ -1036,7 +1290,7 @@ export const CHAOXING_CHAPTER_HOOK = `(function(){
       if (skip(title)) continue;
       var wrap = el.closest ? (el.closest('.catalog_rep, .chapter_unit, .posCatalog_select, .catalog_item, li') || el.parentElement) : el.parentElement;
       var n = jobsOfBox(wrap) || jobs[title] || jobs[bare(title)] || 0;
-      if (n > 0) jobs[bare(title) || title] = n;
+      if (n > 0) jobs[catalogIndex(title) ? title : (bare(title) || title)] = n;
     }
   }
   function isTaskOnly(text){
@@ -1071,8 +1325,18 @@ export const CHAOXING_CHAPTER_HOOK = `(function(){
   for (var d = 0; d < docs.length; d++) catalogFromDoc(docs[d], jobs);
   var unfinished = [];
   for (var key in jobs) {
-    if (jobs[key] > 0 && !skip(key)) unfinished.push(bare(key) || key);
+    if (jobs[key] > 0 && !skip(key)) unfinished.push(catalogIndex(key) ? key : (bare(key) || key));
   }
+  unfinished = unfinished.filter(function(title){
+    var idx = catalogIndex(title);
+    if (!idx) return true;
+    var prefix = idx + '.';
+    for (var u = 0; u < unfinished.length; u++) {
+      var other = catalogIndex(unfinished[u]);
+      if (other && other.indexOf(prefix) === 0) return false;
+    }
+    return true;
+  });
   var href = location.href || '';
   var page = 'other';
   if (/studentcourse/.test(href)) page = 'chapters';
@@ -1094,7 +1358,7 @@ export const CHAOXING_CHAPTER_HOOK = `(function(){
     ts: Date.now(),
   };
   window.__ZE_CHAPTERS__ = snap;
-  if (!unfinished.length && !window.__ZE_CHAPTER_FETCHING__) {
+  if (!unfinished.length && !progress && !document.querySelector('#coursetree, .catalog_title, .posCatalog_select') && !window.__ZE_CHAPTER_FETCHING__) {
     var src = '';
     var frames = document.querySelectorAll('a[data-url*="studentcourse"], [data-url*="studentcourse"], iframe[src*="studentcourse"], iframe[src], [data-url]');
     for (var f = 0; f < frames.length; f++) {
@@ -1126,8 +1390,18 @@ export const CHAOXING_CHAPTER_HOOK = `(function(){
         catalogFromDoc(doc, remoteJobs);
         var names = [];
         for (var k in remoteJobs) {
-          if (remoteJobs[k] > 0 && !skip(k)) names.push(bare(k) || k);
+          if (remoteJobs[k] > 0 && !skip(k)) names.push(catalogIndex(k) ? k : (bare(k) || k));
         }
+        names = names.filter(function(title){
+          var idx = catalogIndex(title);
+          if (!idx) return true;
+          var prefix = idx + '.';
+          for (var n = 0; n < names.length; n++) {
+            var other = catalogIndex(names[n]);
+            if (other && other.indexOf(prefix) === 0) return false;
+          }
+          return true;
+        });
         if (names.length || remoteProgress) {
           window.__ZE_CHAPTERS__ = {
             url: href,
@@ -1148,7 +1422,7 @@ export const CHAOXING_CHAPTER_HOOK = `(function(){
   return snap;
 })()`
 
-export const CHAOXING_CHAPTER_TICK = `(function(){ return window.__ZE_CHAPTERS__ || null; })()`
+export const CHAOXING_CHAPTER_TICK = CHAOXING_CHAPTER_READ
 
 export const CHAOXING_CAPTCHA_CHECK = `(function(){
   var hit = function(doc){
@@ -1255,7 +1529,7 @@ export const CHAOXING_STUDY_PROMPT = `
 - 本窗口能读、点所有 iframe（含跨域）。不要说「跨域无法读取」。get_page 会带【章节目录】；读到节名就 browser_chaoxing_study。
 - 解析器空、失败、或页面只有课程壳（只有「章节/作业」没有节名）时，不要说全部完成，不要问用户。必须自己解析页面：browser_get_page 看【章节目录】和 iframe；没有节名就点「章节」等两秒再读；必要时 browser_eval 扫「已完成任务点 x/y」、.catalog_title、#coursetree。读到未完成节名立刻 browser_chaoxing_study，title 填干净节名。
 - 只有正文明确「已完成任务点 n/n」（分子分母相同）且没有带未完成数字的节，才能说做完。24/29 这种绝对不是做完。解析器 unfinishedCount=0 也不等于做完。
-- 可选 title：干净节名，如「维护网络安全」。不要带 (1)。
+- 可选 title：带编号的节名，如「4.4.1 某某」。父节 4.4 下面还有 4.4.1 时打开 4.4.1，不要停在父节点。不要带 (1)。
 - 不要把 iframe 的 src（studentcourse、knowledge/cards、ananas）当顶层网址打开。
 - 一节经常有多个视频。当前视频播完先切本章下一个视频，全部视频看完再下一章。
 - 播放开始后，进度面板会自己走。视频在播时不要再 study / play，不要每次进度检查都重开当前节。暂停或卡住才 browser_chaoxing_play；播放器丢了才 study。章节测验默认停下；用户明确说写作业/答题再用 browser_chaoxing_homework。

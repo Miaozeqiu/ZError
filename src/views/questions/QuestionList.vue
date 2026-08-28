@@ -335,17 +335,17 @@ import { isTauriEnvironment } from '../../services/app/environmentDetector';
 import { invoke } from '@tauri-apps/api/core';
 import { save, open } from '@tauri-apps/plugin-dialog';
 import { writeFile } from '@tauri-apps/plugin-fs';
-import { generateExportData, type ExportFormat } from '../../utils/exporter';
-import { parseSoftwareExportedFile } from '../../utils/importer';
-import { splitQuestionImageParts, fetchQuestionImageBase64, shouldInvertTransparentDarkImage } from '../../utils/questionImage';
-import type { QuestionImagePart as Part } from '../../utils/questionImage';
+import { generateExportData, type ExportFormat } from '../../utils/question/exporter';
+import { parseSoftwareExportedFile } from '../../utils/question/importer';
+import { splitQuestionImageParts, fetchQuestionImageBase64, shouldInvertTransparentDarkImage } from '../../utils/question/questionImage';
+import type { QuestionImagePart as Part } from '../../utils/question/questionImage';
 import { emit as tauriEmit } from '@tauri-apps/api/event';
 import QuestionContextMenu from './QuestionContextMenu.vue';
 import QuestionBatchDeleteConfirmDialog from './QuestionBatchDeleteConfirmDialog.vue';
 import QuestionEditor from './QuestionEditor.vue';
 import QuestionDetail from './QuestionDetail.vue';
-import UnifiedContextMenu, { type MenuItem } from '../../components/UnifiedContextMenu.vue';
-import FolderPickerDialog from '../../components/FolderPickerDialog.vue';
+import UnifiedContextMenu, { type MenuItem } from '../../components/ui/UnifiedContextMenu.vue';
+import FolderPickerDialog from '../../components/ui/FolderPickerDialog.vue';
 import { claimExclusiveMenu } from '../../composables/useExclusiveMenu';
 import { startFileImportChat } from '../../services/agent/chat';
 import { modelConfigManager } from '../../services/model/config';
@@ -353,7 +353,7 @@ import { settingsManager } from '../../services/app/settings';
 import {
   normalizeMetric,
   type QuestionMetricValue,
-} from '../../utils/questionMetrics';
+} from '../../utils/question/questionMetrics';
 
 interface Props {
   selectedFolderId?: string | null;

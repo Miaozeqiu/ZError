@@ -23,12 +23,12 @@
       展开对话
     </button>
     
-    <div class="header-center">
+    <div class="header-center" :class="{ 'is-browser-tabs': props.activeTab === 'browser' }">
       <HeaderTutorialStepper
         :active-tab="props.activeTab"
         @guide-to="emit('guide-to', $event)"
       />
-      <HeaderAbstractionMenu :active-tab="props.activeTab" />
+      <HeaderBrowserTabs :active-tab="props.activeTab" />
       <button
         v-if="props.activeTab === 'questions'"
         class="campus-entry"
@@ -202,12 +202,12 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, onUnmounted } from 'vue'
 import HeaderTutorialStepper from './appHeader/HeaderTutorialStepper.vue'
-import HeaderAbstractionMenu from './appHeader/HeaderAbstractionMenu.vue'
+import HeaderBrowserTabs from './appHeader/HeaderBrowserTabs.vue'
 import { activeChat, chatListCollapsed, setChatListCollapsed, studyEvalRunning } from '../services/agent/chat'
 import { useAppUpdate } from '../composables/useAppUpdate'
 import { useExclusiveMenu } from '../composables/useExclusiveMenu'
 import { databaseService, type StudySubject } from '../services/app/database'
-import { progressColor } from '../utils/studyGraph'
+import { progressColor } from '../utils/study/studyGraph'
 import { authUser, isLoggedIn, logoutAuth, openLoginDialog, uploadAuthAvatar, userAvatarSrc, userDisplayName } from '../services/app/auth'
 
 const STUDY_STORAGE_KEY = 'zerror-study-subject'
@@ -529,6 +529,10 @@ onMounted(async () => {
   min-width: 0;
   overflow: visible;
   pointer-events: none;
+}
+
+.header-center.is-browser-tabs {
+  justify-content: flex-start;
 }
 
 .expand-chats {

@@ -51,7 +51,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
-import { type QuestionMetricValue } from '../../utils/questionMetrics';
+import { type QuestionMetricValue } from '../../utils/question/questionMetrics';
 
 interface Props {
   visible: boolean;

@@ -110,7 +110,7 @@
 
 <script setup lang="ts">
 import type { AIResponse, QuestionKnowledgeLink } from '../../services/app/database'
-import type { QuestionImagePart } from '../../utils/questionImage'
+import type { QuestionImagePart } from '../../utils/question/questionImage'
 
 export type StudyQuestionOptionRow = {
   id: string

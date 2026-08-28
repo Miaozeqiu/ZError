@@ -41,10 +41,18 @@ export type HomeworkCardSnap = {
 }
 
 const isChaoxing = (url: string) => /chaoxing\.com/i.test(url)
-export const isHomeworkUrl = (url: string) => isChaoxing(url) && /work|doHomeWork|pageHeader=8/i.test(url)
-export const isStudyUrl = (url: string) => (
+export const isPlayerUrl = (url: string) => isChaoxing(url) && /studentstudy/i.test(url)
+export const isCourseUrl = (url: string) => (
   isChaoxing(url)
-  && /mycourse|studentstudy|studentcourse|knowledge/i.test(url)
+  && /\/mycourse\/stu|studentcourse|stucoursemiddle/i.test(url)
+  && !isPlayerUrl(url)
+)
+export const isHomeworkUrl = (url: string) => {
+  if (!isChaoxing(url) || isPlayerUrl(url) || /studentcourse/i.test(url)) return false
+  return /doHomeWork|\/work\/|workId=|workid=|pageHeader=8/i.test(url)
+}
+export const isStudyUrl = (url: string) => (
+  (isPlayerUrl(url) || isCourseUrl(url) || (isChaoxing(url) && /knowledge/i.test(url)))
   && !isHomeworkUrl(url)
 )
 export const isLoginUrl = (url: string) => /passport2\.chaoxing\.com/i.test(url)
@@ -82,7 +90,6 @@ export const BROWSER_ABSTRACTIONS: BrowserAbstraction[] = [
 ]
 
 export const lastHomeworkCard = shallowRef<HomeworkCardSnap | null>(null)
-export const lastHomeworkPickDebug = ref('')
 export const abstractionParsing = ref(false)
 export const abstractionMenuOpen = ref(false)
 export const currentBrowserUrl = ref('')
@@ -145,7 +152,7 @@ export const abstractionRows = (
 
 export const abstractionButtonLabel = computed(() => {
   const hit = primaryAbstraction(currentBrowserUrl.value)
-  return hit ? `抽象层 · ${hit.name.replace(/^学习通/, '')}` : '抽象层'
+  return hit ? `题卡 · ${hit.name.replace(/^学习通/, '')}` : '题卡'
 })
 
 const esc = (value: string) => String(value || '')
@@ -216,7 +223,7 @@ export const abstractionOverlayHtml = (
   const homework = lastHomeworkCard.value
   const parsing = abstractionParsing.value
   if (!layer) {
-    return `<div class="ze-abs-empty">${parsing ? '正在识别当前页…' : '当前页没有可解析的抽象层'}</div>`
+    return `<div class="ze-abs-empty">${parsing ? '正在识别当前页…' : '当前页没有可解析的题卡'}</div>`
   }
 
   if (layer.id === 'chaoxing-homework') {

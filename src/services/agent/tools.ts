@@ -855,7 +855,7 @@ export const BROWSER_TOOLS = [
     type: 'function',
     function: {
       name: 'browser_get_state',
-      description: '查看当前浏览器的网址和标题。',
+      description: '查看当前浏览器的网址、标题和网站图谱（当前路由、可挂解析器、可跳转）。',
       parameters: { type: 'object', properties: {} },
     },
   },
@@ -1014,7 +1014,7 @@ export const BROWSER_TOOLS = [
     type: 'function',
     function: {
       name: 'browser_chaoxing_homework',
-      description: '学习通作业抽象层。只在这张题卡上工作：list / open / inspect / fill / save / submit。不要 eval、不要 click 选项。inspect 返回 questions。一题一题作答：每答出一道就立刻 fill 这一道（answers 只放一项），不要攒到最后一次性填。',
+      description: '学习通作业题卡。只在这张题卡上工作：list / open / inspect / fill / save / submit。不要 eval、不要 click 选项。inspect 返回 questions。一题一题作答：每答出一道就立刻 fill 这一道（answers 只放一项），不要攒到最后一次性填。',
       parameters: {
         type: 'object',
         properties: {

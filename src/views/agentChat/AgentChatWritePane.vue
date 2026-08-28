@@ -137,13 +137,13 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
-import AgentQuizBlock from '../../components/AgentQuizBlock.vue'
-import StudyMermaidGraph from '../../components/StudyMermaidGraph.vue'
+import AgentQuizBlock from '../../components/agent/AgentQuizBlock.vue'
+import StudyMermaidGraph from '../../components/study/StudyMermaidGraph.vue'
 import { useCustomScrollbar } from '../../composables/useCustomScrollbar'
 import type { AgentQuizAttempt } from '../../services/agent/chat'
 import type { ImportTaskStep } from '../../services/app/importTasks'
-import { parseOptions, type QuizCard } from '../../utils/quizPractice'
-import type { StudyGraphNode } from '../../utils/studyGraph'
+import { parseOptions, type QuizCard } from '../../utils/question/quizPractice'
+import type { StudyGraphNode } from '../../utils/study/studyGraph'
 
 export type AgentChatPaneQuiz = {
   messageId: string

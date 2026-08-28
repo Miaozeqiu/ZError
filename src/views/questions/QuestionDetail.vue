@@ -200,10 +200,10 @@
 <script setup lang="ts">
 import { computed, ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { databaseService, type AIResponse, type PracticeRecord, type QuestionKnowledgeLink } from '../../services/app/database'
-import KnowledgeNodePicker, { type KnowledgePick } from '../../components/KnowledgeNodePicker.vue'
+import KnowledgeNodePicker, { type KnowledgePick } from '../../components/study/KnowledgeNodePicker.vue'
 import { notifyQuestionKnowledgeUpdated, openKnowledgeInStudy } from '../../services/study/questionKnowledge'
-import { splitQuestionImageParts, fetchQuestionImageBase64, shouldInvertTransparentDarkImage } from '../../utils/questionImage'
-import type { QuestionImagePart as Part } from '../../utils/questionImage'
+import { splitQuestionImageParts, fetchQuestionImageBase64, shouldInvertTransparentDarkImage } from '../../utils/question/questionImage'
+import type { QuestionImagePart as Part } from '../../utils/question/questionImage'
 
 interface Props {
   question: AIResponse | null

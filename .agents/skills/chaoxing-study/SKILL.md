@@ -34,7 +34,7 @@ description: >-
 | `video` | `{ paused, ended, current, duration }`，没有播放器则为 null |
 | `iframeTree` | 嵌套 iframe：`src` / `video` / `playBtn`。播放器通常在第二层 |
 
-目录节点：`#coursetree .posCatalog_select:not(.firstLayer)`，当前节带 `.posCatalog_active`，节名 `.posCatalog_name`，未完成常见 `.orangeNew` / `.jobUnfinishCount`。
+目录节点：`#coursetree .posCatalog_select:not(.firstLayer)`，当前节带 `.posCatalog_active`，节名 `.posCatalog_name`，未完成常见 `.orangeNew` / `.jobUnfinishCount`。父节（如 4.4）若下面还有未完成知识点（4.4.1），打开子节，不要停在父节点。
 
 ## 播一节
 

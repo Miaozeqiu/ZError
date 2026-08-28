@@ -3,7 +3,7 @@ import { ref, onMounted, onUnmounted, computed } from "vue";
 import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import AppHeader from "./views/AppHeader.vue";
 import Sidebar from "./views/Sidebar.vue";
-import UpdateDialog from "./components/UpdateDialog.vue";
+import UpdateDialog from "./components/ui/UpdateDialog.vue";
 import Home from "./views/Home.vue";
 import Settings from "./views/Settings.vue";
 import QuestionBank from "./views/QuestionBank.vue";
@@ -11,11 +11,11 @@ import CampusBank from "./views/CampusBank.vue";
 import Study from "./views/Study.vue";
 import Browser from "./views/Browser.vue";
 import Agent from "./views/Agent.vue";
-import LoginDialog from "./components/LoginDialog.vue";
+import LoginDialog from "./components/ui/LoginDialog.vue";
 import { restoreAuthSession } from "./services/app/auth";
 import FileTree from "./views/questions/FileTree.vue";
 import { databaseService } from "./services/app/database";
-import { parseDifficulty, parseImportance, parseMastery } from "./utils/questionMetrics";
+import { parseDifficulty, parseImportance, parseMastery } from "./utils/question/questionMetrics";
 import { initializationService } from "./services/app/initialization";
 import { initGlobalTheme } from "./composables/useTheme";
 import { useAppUpdate } from "./composables/useAppUpdate";
@@ -51,13 +51,22 @@ const {
   handleWeekLater,
 } = useAppUpdate();
 
+const pinAppViewport = () => {
+  if (document.documentElement.scrollTop) document.documentElement.scrollTop = 0
+  if (document.documentElement.scrollLeft) document.documentElement.scrollLeft = 0
+  if (document.body.scrollTop) document.body.scrollTop = 0
+  if (document.body.scrollLeft) document.body.scrollLeft = 0
+  const app = document.getElementById('app')
+  if (app?.scrollTop) app.scrollTop = 0
+  if (app?.scrollLeft) app.scrollLeft = 0
+}
+
 // 暴露到全局 window，供开发者控制台调试
 onMounted(() => {
   document.querySelectorAll('.assistant-text style, .agent-html style, .agent-html-preview style')
     .forEach((el) => el.remove())
-  document.documentElement.scrollLeft = 0
-  document.body.scrollLeft = 0
-  document.getElementById('app')?.scrollTo(0, 0)
+  pinAppViewport()
+  document.addEventListener('scroll', pinAppViewport, true)
 
   ;(window as any).startTutorial = () => {
     localStorage.removeItem('tutorial_stepper_finished');
@@ -426,6 +435,7 @@ onUnmounted(() => {
   document.removeEventListener('keydown', handleGlobalKeydown, true)
   window.removeEventListener('resize', hideInputContextMenu)
   window.removeEventListener('blur', hideInputContextMenu)
+  document.removeEventListener('scroll', pinAppViewport, true)
 })
 
 
@@ -465,7 +475,7 @@ onUnmounted(() => {
           <Study />
         </div>
 
-        <div v-show="activeTab === 'browser'" class="content-view">
+        <div v-show="activeTab === 'browser'" class="content-view is-fixed">
           <Browser :active="activeTab === 'browser'" />
         </div>
 
@@ -559,6 +569,8 @@ body {
   background-color: var(--bg-tertiary, #f4f4f4);
   color: var(--text-primary, #2d3748);
   overflow: hidden;
+  overscroll-behavior: none;
+  overflow-anchor: none;
 }
 
 #app {
@@ -597,20 +609,6 @@ body {
   position: relative;
 }
 
-html.abs-over-page,
-html.abs-over-page body,
-html.abs-over-page #app,
-html.abs-over-page .app-container,
-html.abs-over-page .main-content,
-html.abs-over-page .content-area,
-html.abs-over-page .content-view,
-html.abs-over-page .browser-page,
-html.abs-over-page .browser-main,
-html.abs-over-page .browser-host {
-  background: transparent !important;
-  background-color: transparent !important;
-}
-
 /* 确保所有页面组件占满容器并正确定位 */
 .content-view {
   position: absolute;
@@ -619,6 +617,11 @@ html.abs-over-page .browser-host {
   width: 100%;
   height: 100%;
   overflow: auto;
+  overflow-anchor: none;
+}
+
+.content-view.is-fixed {
+  overflow: hidden;
 }
 
 .content-view > * {

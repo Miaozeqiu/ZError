@@ -318,7 +318,7 @@
 
 <script setup lang="ts">
 import { nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import AIOutputRender from '../../components/AIOutputRender.vue'
+import AIOutputRender from '../../components/agent/AIOutputRender.vue'
 import { useCustomScrollbar } from '../../composables/useCustomScrollbar'
 import JsonCodeViewer from './JsonCodeViewer.vue'
 import {

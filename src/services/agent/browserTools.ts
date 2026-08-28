@@ -28,12 +28,12 @@ import {
 import {
   startChaoxingChapterParser,
   waitForChapterState,
-} from '../chaoxing/chapters'
+} from '../chaoxing/browser/chapters'
 import {
   startChaoxingWatch,
   videoWatchFor,
-} from '../chaoxing/watch'
-import { clearPendingCaptcha, runAfterCaptcha } from '../chaoxing/watchAgent'
+} from '../chaoxing/browser/watch'
+import { clearPendingCaptcha, runAfterCaptcha } from '../chaoxing/browser/watchAgent'
 
 export const executeBrowserTool = async (input: {
   name: string
@@ -58,10 +58,13 @@ export const executeBrowserTool = async (input: {
   if (name === 'browser_get_state') {
     const state = await getBrowserState(browserId).catch(() => null)
     const item = listAppBrowsers().find((browser) => browser.id === browserId)
+    const url = state?.url || item?.url || ''
+    const { siteGraphAgentSnap } = await import('../browser/siteGraph')
     return JSON.stringify({
       id: browserId,
-      url: state?.url || item?.url || '',
+      url,
       title: state?.title || item?.title || item?.name || '',
+      siteGraph: siteGraphAgentSnap(url),
     })
   }
   if (name === 'browser_get_page') {

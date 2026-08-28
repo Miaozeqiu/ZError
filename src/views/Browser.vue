@@ -1,26 +1,6 @@
 <template>
   <div class="browser-page">
     <section class="browser-main">
-      <div class="browser-tabs">
-        <div class="tab-list">
-          <button
-            v-for="item in browsers"
-            :key="item.id"
-            class="tab-item"
-            type="button"
-            :class="{ 'is-on': item.id === selectedId }"
-            @click="selectTab(item.id)"
-          >
-            <span class="tab-title">{{ tabLabel(item) }}</span>
-            <span
-              class="tab-close"
-              title="关闭"
-              @click.stop="closeTab(item.id)"
-            >×</span>
-          </button>
-        </div>
-        <button class="tab-new" type="button" title="新标签页" @click="newTab">+</button>
-      </div>
       <div v-if="selected" class="browser-chrome">
         <button class="chrome-btn" type="button" title="后退" @click="goBack">
           <svg viewBox="0 0 16 16"><path d="M10 3.2 5.2 8 10 12.8" /></svg>
@@ -34,7 +14,20 @@
         <button class="chrome-btn" type="button" title="回到导航" @click="goHome">
           <svg viewBox="0 0 16 16"><path d="M2.6 7.2 8 2.8l5.4 4.4" /><path d="M4 7.2V13h8V7.2" /></svg>
         </button>
-        <div class="chrome-place">{{ placeLabel }}</div>
+        <input
+          class="chrome-place"
+          :value="addressText"
+          type="text"
+          spellcheck="false"
+          autocomplete="off"
+          autocapitalize="off"
+          placeholder="输入网址"
+          @focus="focusAddress"
+          @blur="blurAddress"
+          @input="onAddressInput"
+          @keydown.enter.prevent="submitAddress"
+          @keydown.escape.prevent="cancelAddress"
+        >
         <div class="chrome-zoom">
           <button
             class="chrome-btn"
@@ -58,12 +51,27 @@
             <svg viewBox="0 0 16 16"><path d="M8 3.5v9M3.5 8h9" /></svg>
           </button>
         </div>
+        <HeaderSiteGraphMenu />
+        <HeaderAbstractionMenu />
       </div>
-      <div v-if="selected" ref="hostRef" class="browser-host">
-        <div v-if="errorText" class="browser-host-note">{{ errorText }}</div>
-      </div>
+      <div v-if="selected" ref="hostRef" class="browser-host" />
       <div v-else class="browser-empty">正在打开浏览器</div>
     </section>
+    <aside v-if="siteGraphMenuOpen" class="browser-card">
+      <div class="pane-header">
+        <div class="header-title">图谱</div>
+      </div>
+      <BrowserSiteGraphPanel :url="address || selected?.url" />
+    </aside>
+    <aside v-else-if="abstractionMenuOpen" class="browser-card">
+      <div class="pane-header">
+        <div class="header-title">题卡</div>
+      </div>
+      <BrowserAbstractionPanel
+        :browser-id="selected?.id"
+        :url="address || selected?.url"
+      />
+    </aside>
     <BrowserAgent
       :browser-id="selected?.id"
       :name="selected?.name"
@@ -74,7 +82,12 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import BrowserAgent from '../components/BrowserAgent.vue'
+import BrowserAgent from '../components/browser/BrowserAgent.vue'
+import BrowserAbstractionPanel from '../components/browser/BrowserAbstractionPanel.vue'
+import BrowserSiteGraphPanel from '../components/browser/BrowserSiteGraphPanel.vue'
+import HeaderAbstractionMenu from './appHeader/HeaderAbstractionMenu.vue'
+import HeaderSiteGraphMenu from './appHeader/HeaderSiteGraphMenu.vue'
+import { browserTabHandlers, syncBrowserTabBar } from '../services/browser/tabBar'
 import {
   browserHomeUrl,
   closeBrowserView,
@@ -90,6 +103,7 @@ import {
   hostnameOf,
   hostBounds,
   isBrowserHome,
+  normalizeBrowserUrl,
   getSelectedBrowserId,
   listenBrowserOpened,
   listenBrowserState,
@@ -101,26 +115,29 @@ import {
   patchAppBrowser,
   setBrowserBounds,
   setBrowserZoom,
-  setAppAbovePage,
   removeAppBrowser,
   upsertAppBrowser,
   type AppBrowser,
 } from '../services/browser/appBrowser'
 import { clearBrowserChat } from '../services/agent/chat'
-import { isChaoxingCourseUrl, startChaoxingChapterParser, stopChaoxingChapterParser } from '../services/chaoxing/chapters'
 import {
-  applyHomeworkLiveState,
   inspectChaoxingHomework,
-  installHomeworkLiveSync,
-  readHomeworkLiveState,
+  startHomeworkLiveSync,
+  stopHomeworkLiveSync,
 } from '../services/chaoxing/homework'
+import {
+  startChaoxingChapterParser,
+  stopChaoxingChapterParser,
+} from '../services/chaoxing/browser/chapters'
 import {
   abstractionMenuOpen,
   abstractionParsing,
   isHomeworkUrl,
+  isStudyUrl,
   lastHomeworkCard,
   setCurrentBrowserPage,
 } from '../services/browser/abstractions'
+import { siteGraphMenuOpen } from '../services/browser/siteGraph'
 
 const props = defineProps<{
   active?: boolean
@@ -130,11 +147,12 @@ const browsers = ref<AppBrowser[]>([])
 const selectedId = ref('')
 const hostRef = ref<HTMLElement | null>(null)
 const address = ref('')
-const errorText = ref('')
 
 let unlistenState: (() => void) | null = null
 let unlistenOpened: (() => void) | null = null
 let resizeObserver: ResizeObserver | null = null
+let boundsRaf = 0
+let boundsSettle = 0
 /** 已挂上原生视图的窗口，以及它当前的位置尺寸；用于跳过重复的原生调用 */
 let shownId = ''
 let shownBounds = ''
@@ -142,10 +160,57 @@ let shownBounds = ''
 const selected = computed(() => browsers.value.find((item) => item.id === selectedId.value) || null)
 const zoom = computed(() => clampBrowserZoom(selected.value?.zoom))
 const zoomPercent = computed(() => Math.round(zoom.value * 100))
-const placeLabel = computed(() => {
-  if (isBrowserHome(address.value || selected.value?.url || '')) return '导航'
-  return selected.value?.title || hostnameOf(address.value || selected.value?.url || '')
-})
+const addressText = ref('')
+const addressFocused = ref(false)
+
+const visibleUrl = (raw: string) => {
+  if (isBrowserHome(raw)) return ''
+  return raw
+}
+
+const syncAddressText = () => {
+  if (addressFocused.value) return
+  addressText.value = visibleUrl(address.value || selected.value?.url || '')
+}
+
+const onAddressInput = (event: Event) => {
+  addressText.value = (event.target as HTMLInputElement).value
+}
+
+const focusAddress = () => {
+  addressFocused.value = true
+}
+
+const blurAddress = () => {
+  addressFocused.value = false
+  syncAddressText()
+}
+
+const cancelAddress = () => {
+  addressFocused.value = false
+  addressText.value = visibleUrl(address.value || selected.value?.url || '')
+}
+
+const submitAddress = async () => {
+  const current = selected.value
+  if (!current) return
+  const raw = addressText.value.trim()
+  if (!raw) {
+    await goHome()
+    return
+  }
+  const next = normalizeBrowserUrl(raw)
+  address.value = next
+  upsertAppBrowser({ id: current.id, name: current.name, url: next, title: hostnameOf(next) })
+  loadBrowsers()
+  addressFocused.value = false
+  addressText.value = visibleUrl(next)
+  try {
+    await navigateBrowserView(current.id, next)
+  } catch {
+    await syncView()
+  }
+}
 
 const MAX_TABS = 16
 
@@ -162,10 +227,12 @@ const loadBrowsers = (preferId = '') => {
     || browsers.value[0]
     || null
   selectedId.value = current?.id || ''
+  syncBrowserTabBar(browsers.value, selectedId.value)
   if (current) {
     setSelectedBrowserId(current.id)
     address.value = current.url
     setCurrentBrowserPage(current.id, current.url)
+    syncAddressText()
   }
 }
 
@@ -189,6 +256,7 @@ const closeTab = async (id: string) => {
   const index = list.findIndex((item) => item.id === id)
   const fallback = list[index + 1] || list[index - 1] || list[0]
   removeAppBrowser(id)
+  stopChaoxingChapterParser(id)
   void closeBrowserView(id).catch(() => undefined)
   clearBrowserChat(id)
   if (shownId === id) shownId = ''
@@ -222,7 +290,26 @@ const goHome = async () => {
 }
 
 
+let syncing = false
+let syncAgain = false
+
 const syncView = async () => {
+  if (syncing) {
+    syncAgain = true
+    return
+  }
+  syncing = true
+  try {
+    do {
+      syncAgain = false
+      await syncViewNow()
+    } while (syncAgain)
+  } finally {
+    syncing = false
+  }
+}
+
+const syncViewNow = async () => {
   if (!props.active) {
     shownId = ''
     await hideAllBrowserViews().catch(() => undefined)
@@ -237,7 +324,7 @@ const syncView = async () => {
   }
   const key = `${bounds.x},${bounds.y},${bounds.width},${bounds.height}`
   // 原生视图已经在位：位置没变就什么都不做，变了也只挪一下。
-  // 重复调 browser_open 会反复 show/隐藏其他视图，让父子 webview 不停争抢鼠标光标。
+  // 切走的标签只隐藏，满 10 分钟没再打开才休眠回收。
   if (shownId === current.id) {
     if (shownBounds === key) return
     try {
@@ -248,20 +335,38 @@ const syncView = async () => {
       shownId = ''
     }
   }
-  errorText.value = ''
   try {
     await openBrowserView(current.id, current.url, bounds)
     shownId = current.id
     shownBounds = key
     await applyNativeZoom(current.id, current.zoom)
   } catch (error) {
+    const text = String(error || '')
+    if (/already exists/i.test(text)) {
+      shownId = current.id
+      shownBounds = key
+      await setBrowserBounds(current.id, bounds).catch(() => undefined)
+      return
+    }
     shownId = ''
-    errorText.value = error instanceof Error ? error.message : String(error)
+    console.error('[browser]', error)
   }
 }
 
-const updateBounds = async () => {
-  await syncView()
+const flushBounds = () => {
+  boundsRaf = 0
+  void syncView()
+}
+
+const updateBounds = () => {
+  if (!boundsRaf) {
+    boundsRaf = window.requestAnimationFrame(flushBounds)
+  }
+  window.clearTimeout(boundsSettle)
+  boundsSettle = window.setTimeout(() => {
+    boundsSettle = 0
+    void syncView()
+  }, 140)
 }
 
 const goBack = () => {
@@ -326,28 +431,22 @@ watch(
       await syncView()
     } else {
       stopParseLoop()
+      if (selectedId.value) stopChaoxingChapterParser(selectedId.value)
+      stopHomeworkLiveSync()
       abstractionMenuOpen.value = false
-      document.documentElement.classList.remove('abs-over-page')
-      await setAppAbovePage(false, selectedId.value).catch(() => undefined)
+      siteGraphMenuOpen.value = false
       await hideAllBrowserViews().catch(() => undefined)
     }
   },
 )
 
-watch(selectedId, async (id) => {
+watch(selectedId, async (id, prev) => {
+  if (prev && prev !== id) stopChaoxingChapterParser(prev)
   await nextTick()
   bindHost()
   await syncView()
-  const current = browsers.value.find((item) => item.id === id)
-  const url = current?.url || ''
-  if (current && isChaoxingCourseUrl(url)) startChaoxingChapterParser(current.id)
-  if (abstractionMenuOpen.value) void refreshCurrentParse()
+  void refreshCurrentParse()
 })
-
-const syncAppAbovePage = async (open: boolean) => {
-  document.documentElement.classList.toggle('abs-over-page', open)
-  await setAppAbovePage(open, selectedId.value).catch(() => undefined)
-}
 
 let parseTimer = 0
 let liveTimer = 0
@@ -357,10 +456,21 @@ const refreshCurrentParse = async (force = false) => {
   const current = selected.value
   if (!current || parseBusy) return
   const url = address.value || current.url || ''
-  if (!isHomeworkUrl(url)) return
+  if (isStudyUrl(url)) {
+    stopHomeworkLiveSync()
+    startChaoxingChapterParser(current.id)
+    lastInspectUrl = url
+    return
+  }
+  stopChaoxingChapterParser(current.id)
+  if (!isHomeworkUrl(url)) {
+    stopHomeworkLiveSync()
+    return
+  }
+  if (!abstractionMenuOpen.value && !force) return
   const haveCard = Boolean(lastHomeworkCard.value?.questions?.length)
   if (!force && haveCard && lastInspectUrl === url) {
-    await installHomeworkLiveSync(current.id).catch(() => null)
+    await startHomeworkLiveSync(current.id).catch(() => null)
     return
   }
   parseBusy = true
@@ -372,7 +482,7 @@ const refreshCurrentParse = async (force = false) => {
   try {
     lastInspectUrl = url
     await inspectChaoxingHomework(current.id, { vision: false })
-    await installHomeworkLiveSync(current.id).catch(() => null)
+    await startHomeworkLiveSync(current.id).catch(() => null)
   } catch {
     // keep last card
   } finally {
@@ -380,17 +490,6 @@ const refreshCurrentParse = async (force = false) => {
     parseBusy = false
     abstractionParsing.value = false
   }
-}
-
-const refreshLiveState = async () => {
-  const current = selected.value
-  if (!current || !isHomeworkUrl(address.value || current.url || '')) return
-  const state = await readHomeworkLiveState(current.id).catch(() => null)
-  if (!state?.states?.length) {
-    await installHomeworkLiveSync(current.id).catch(() => null)
-    return
-  }
-  applyHomeworkLiveState(state)
 }
 
 const stopParseLoop = () => {
@@ -406,19 +505,24 @@ const stopParseLoop = () => {
 
 watch(abstractionMenuOpen, (open) => {
   stopParseLoop()
-  void syncAppAbovePage(open)
-  if (!open) return
-  void refreshCurrentParse(true)
-  liveTimer = window.setInterval(() => { void refreshLiveState() }, 400)
+  if (!open) {
+    stopHomeworkLiveSync()
+    return
+  }
+  void refreshCurrentParse(false)
 })
 
 const onAbsKey = (event: KeyboardEvent) => {
-  if (event.key === 'Escape' && abstractionMenuOpen.value) {
+  if (event.key !== 'Escape') return
+  if (abstractionMenuOpen.value) {
     abstractionMenuOpen.value = false
+    return
   }
+  if (siteGraphMenuOpen.value) siteGraphMenuOpen.value = false
 }
 
 onMounted(async () => {
+  browserTabHandlers.value = { selectTab, closeTab, newTab, tabLabel }
   loadBrowsers()
   unlistenState = await listenBrowserState((state) => {
     const current = browsers.value.find((item) => item.id === state.id)
@@ -431,16 +535,10 @@ onMounted(async () => {
     if (selectedId.value === state.id && url) {
       address.value = url
       setCurrentBrowserPage(current.id, url)
+      syncAddressText()
     }
     if (!urlChanged) return
-    if (isChaoxingCourseUrl(url)) startChaoxingChapterParser(current.id)
-    else stopChaoxingChapterParser(current.id)
-    if (isHomeworkUrl(url)) {
-      lastInspectUrl = url
-      void inspectChaoxingHomework(current.id, { vision: false })
-        .then(() => installHomeworkLiveSync(current.id))
-        .catch(() => null)
-    }
+    void refreshCurrentParse()
   }).catch(() => null)
   unlistenOpened = await listenBrowserOpened((state) => {
     acceptOpened(state)
@@ -450,22 +548,27 @@ onMounted(async () => {
   window.addEventListener('keydown', onAbsKey)
   await nextTick()
   bindHost()
-  if (props.active) await syncView()
-  for (const item of browsers.value) {
-    if (isChaoxingCourseUrl(item.url)) startChaoxingChapterParser(item.id)
+  if (props.active) {
+    await syncView()
+    void refreshCurrentParse()
   }
 })
 
 onUnmounted(() => {
+  browserTabHandlers.value = null
   unlistenState?.()
   unlistenOpened?.()
   resizeObserver?.disconnect()
+  if (boundsRaf) window.cancelAnimationFrame(boundsRaf)
+  boundsRaf = 0
+  window.clearTimeout(boundsSettle)
+  boundsSettle = 0
   window.removeEventListener('resize', updateBounds)
   window.removeEventListener('keydown', onAbsKey)
   stopParseLoop()
+  stopHomeworkLiveSync()
   abstractionMenuOpen.value = false
-  document.documentElement.classList.remove('abs-over-page')
-  void setAppAbovePage(false, selectedId.value).catch(() => undefined)
+  siteGraphMenuOpen.value = false
   void hideAllBrowserViews().catch(() => undefined)
 })
 </script>
@@ -473,8 +576,10 @@ onUnmounted(() => {
 <style scoped>
 .browser-page {
   height: 100%;
+  min-height: 0;
   display: flex;
   gap: 4px;
+  overflow: hidden;
   background: var(--bg-primary, #f5f5f7);
 }
 
@@ -490,105 +595,53 @@ onUnmounted(() => {
   margin-bottom: 5px;
 }
 
-.browser-tabs {
-  height: 34px;
-  min-height: 34px;
-  padding: 4px 8px 0;
+.browser-card {
+  width: 320px;
+  min-width: 260px;
+  flex: 0 0 320px;
+  min-height: 0;
   display: flex;
-  align-items: flex-end;
-  gap: 4px;
-  flex-shrink: 0;
-  background: var(--bg-primary, #f5f5f7);
-}
-
-.tab-list {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: flex-end;
-  gap: 2px;
-  overflow-x: auto;
-  overflow-y: hidden;
-}
-
-.tab-item {
-  max-width: 180px;
-  min-width: 72px;
-  height: 28px;
-  padding: 0 6px 0 10px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  border: none;
-  border-radius: 8px 8px 0 0;
-  background: transparent;
-  color: var(--text-secondary, #718096);
-  cursor: pointer;
-  -webkit-appearance: none;
-  appearance: none;
-}
-
-.tab-item:hover {
-  background: color-mix(in srgb, var(--bg-secondary, #fff) 70%, transparent);
-  color: var(--text-primary, #2d3748);
-}
-
-.tab-item.is-on {
-  background: var(--bg-secondary, #fff);
-  color: var(--text-primary, #2d3748);
-}
-
-.tab-title {
-  flex: 1;
-  min-width: 0;
+  flex-direction: column;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
-  text-align: left;
+  background: var(--bg-secondary, #fff);
+  border-radius: 4px;
+  margin-bottom: 5px;
 }
 
-.tab-close {
-  flex: 0 0 16px;
-  width: 16px;
-  height: 16px;
-  display: inline-flex;
+.browser-card .pane-header {
+  position: relative;
+  height: 36px;
+  min-height: 36px;
+  padding: 0 12px;
+  display: flex;
   align-items: center;
-  justify-content: center;
-  border-radius: 6px;
+  flex-shrink: 0;
+}
+
+.browser-card .pane-header::after {
+  content: '';
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 0;
+  height: 1px;
+  background: color-mix(in srgb, var(--border-primary, #e2e8f0) 42%, transparent);
+  transform: scaleY(0.5);
+}
+
+.browser-card .header-title {
   font-size: 13px;
-  line-height: 1;
-  color: var(--text-secondary, #94a3b8);
-}
-
-.tab-close:hover {
-  background: var(--hover-bg, rgba(0, 0, 0, 0.06));
+  font-weight: 600;
   color: var(--text-primary, #2d3748);
 }
 
-.tab-new {
-  flex: 0 0 28px;
-  width: 28px;
-  height: 28px;
-  margin-bottom: 0;
-  border: none;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--text-secondary, #718096);
-  font-size: 18px;
-  line-height: 1;
-  cursor: pointer;
-  -webkit-appearance: none;
-  appearance: none;
+.browser-card :deep(.abs-panel),
+.browser-card :deep(.graph-panel) {
+  flex: 1;
+  min-height: 0;
 }
 
-.tab-new:hover {
-  background: var(--hover-bg, rgba(0, 0, 0, 0.04));
-  color: var(--text-primary, #2d3748);
-}
-
-.browser-empty,
-.browser-host-note {
+.browser-empty {
   padding: 24px 16px;
   font-size: 12px;
   color: var(--text-secondary, #94a3b8);
@@ -648,16 +701,22 @@ onUnmounted(() => {
   flex: 1;
   min-width: 0;
   height: 28px;
-  display: flex;
-  align-items: center;
   padding: 0 12px;
+  border: none;
   border-radius: 999px;
   background: var(--bg-tertiary, #f5f5f7);
   font-size: 12px;
-  color: var(--text-secondary, #718096);
+  color: var(--text-primary, #2d3748);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  outline: none;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.chrome-place::placeholder {
+  color: var(--text-secondary, #718096);
 }
 
 .chrome-zoom {
@@ -704,6 +763,7 @@ onUnmounted(() => {
   flex: 1;
   min-height: 0;
   overflow: hidden;
+  pointer-events: none;
 }
 
 .browser-empty {

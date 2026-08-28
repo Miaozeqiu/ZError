@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import * as pdfjsLib from 'pdfjs-dist'
 import { databaseService } from '../app/database'
 import { associateQuestionsToKnowledge } from '../study/questionKnowledge'
-import { parseDifficulty, parseImportance, parseMastery } from '../../utils/questionMetrics'
+import { parseDifficulty, parseImportance, parseMastery } from '../../utils/question/questionMetrics'
 import {
   addImportTaskStep,
   createImportTask,

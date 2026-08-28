@@ -1,5 +1,47 @@
 import { SAME_ORIGIN_FRAMES } from '../../browser/eval'
 
+/** 只认真正的题框，不要把 .TiMu 包裹层或侧栏答题卡算进去。 */
+const HW_QUESTION_HELPERS = `
+function __hwQuestionBoxes(doc){
+  if (!doc || !doc.querySelectorAll) return [];
+  var raw = doc.querySelectorAll('.questionLi');
+  if (!raw.length) raw = doc.querySelectorAll('.singleQuesId');
+  var out = [];
+  for (var i = 0; i < raw.length; i++) {
+    var el = raw[i];
+    var inner = null;
+    try { inner = el.querySelector('.questionLi, .singleQuesId'); } catch (e) {}
+    if (inner && inner !== el) continue;
+    out.push(el);
+  }
+  return out;
+}
+function __hwPickedOf(box){
+  var picked = '';
+  if (!box || !box.querySelectorAll) return picked;
+  var rows = box.querySelectorAll('.stem_answer .answerBg, .answerBg');
+  if (!rows.length) rows = box.querySelectorAll('.answer_item');
+  for (var i = 0; i < rows.length && i < 8; i++) {
+    var row = rows[i];
+    if (row.querySelector && row.querySelector('.answerBg')) continue;
+    var num = row.querySelector ? row.querySelector('.num_option') : null;
+    var on = (row.getAttribute && row.getAttribute('aria-checked') === 'true')
+      || (num && /(^|\\s)check_answer(\\s|$)/.test(String(num.className || '')));
+    if (!on) continue;
+    var letter = String((num && num.getAttribute('data')) || '').toUpperCase();
+    if (!/^[A-H]$/.test(letter)) {
+      var aria = String((row.getAttribute && row.getAttribute('aria-label')) || '');
+      letter = ((aria.match(/^([A-H])/) || [])[1] || '');
+    }
+    if (/^[A-H]$/.test(letter) && picked.indexOf(letter) < 0) picked += letter;
+  }
+  return picked;
+}
+`
+
+const hwFrameScript = (iife: string) =>
+  `(function(){\n${SAME_ORIGIN_FRAMES}\n${HW_QUESTION_HELPERS}\nreturn ${iife.trim()};\n})()`
+
 export const READ_HOMEWORK_SNAPS = `(function(){
   var extras = window.__ZE_FRAME_SNAPS__ || [];
   var out = [];
@@ -63,9 +105,20 @@ export const READ_HOMEWORK_IMAGES = `(function(){
 })()`
 
 export const STASH_HOMEWORK = `(function(){
+  ${SAME_ORIGIN_FRAMES}
   function txt(el){ return String((el && (el.textContent || '')) || '').replace(/\\s+/g, ' ').trim(); }
-  var boxes = document.querySelectorAll('.questionLi');
-  if (!boxes.length) boxes = document.querySelectorAll('.singleQuesId');
+  ${HW_QUESTION_HELPERS}
+  function findBoxes(){
+    var frames = __sameFrames(window, 0);
+    for (var f = 0; f < frames.length; f++) {
+      try {
+        var found = __hwQuestionBoxes(frames[f].document);
+        if (found.length) return found;
+      } catch (e) {}
+    }
+    return [];
+  }
+  var boxes = findBoxes();
   var qs = [];
   var imgs = [];
   function absSrc(src){
@@ -137,7 +190,7 @@ export const STASH_HOMEWORK = `(function(){
   }
   window.__ZE_HW_CARD__ = qs;
   window.__ZE_HW_IMGELS__ = imgs;
-  return { questions: qs.length, images: imgs.length };
+  return { questions: qs, images: imgs.length };
 })()`
 
 export const START_HW_IMG = (index: number) => `(function(){
@@ -313,31 +366,79 @@ export const READ_HOMEWORK_LIVE = `(function(){
   };
 })()`
 
-export const READ_HW_FILL_STATE = `(function(){
-  var boxes = document.querySelectorAll('.questionLi, .singleQuesId, .TiMu');
-  var out = [];
-  for (var i = 0; i < boxes.length && i < 40; i++) {
-    var box = boxes[i];
-    var selected = '';
-    var nodes = box.querySelectorAll('.num_option, [class*="num_option"]');
-    for (var n = 0; n < nodes.length; n++) {
-      var el = nodes[n];
-      var on = /check_answer|checked|active|selected/.test(String(el.className || ''))
-        || el.getAttribute('aria-checked') === 'true'
-        || (el.parentElement && /check_answer|checked/.test(String(el.parentElement.className || '')));
-      if (on) selected += String(el.getAttribute('data') || String.fromCharCode(65 + n)).toUpperCase();
-    }
-    var filled = Boolean(selected);
-    if (!filled) {
-      var ins = box.querySelectorAll('input[type="text"], textarea');
-      for (var k = 0; k < ins.length; k++) {
-        if (String(ins[k].value || '').trim()) { filled = true; break; }
+export const READ_HW_FILL_STATE = hwFrameScript(`(function(){
+  var frames = __sameFrames(window, 0);
+  var best = [];
+  for (var f = 0; f < frames.length; f++) {
+    var doc = null;
+    try { doc = frames[f].document; } catch (e) { continue; }
+    if (!doc) continue;
+    var boxes = __hwQuestionBoxes(doc);
+    if (!boxes.length) continue;
+    var out = [];
+    for (var i = 0; i < boxes.length && i < 40; i++) {
+      var selected = __hwPickedOf(boxes[i]);
+      var filled = Boolean(selected);
+      if (!filled) {
+        var ins = boxes[i].querySelectorAll('input[type="text"], textarea');
+        for (var k = 0; k < ins.length; k++) {
+          if (String(ins[k].value || '').trim()) { filled = true; break; }
+        }
       }
+      out.push({ index: i + 1, selected: selected, filled: filled });
     }
-    out.push({ index: i + 1, selected: selected, filled: filled });
+    if (out.length > best.length) best = out;
   }
-  return { states: out };
-})()`
+  return { states: best };
+})()`)
+
+/** 挂在学习通 addChoice 上，选项变化时只加脏标记，不改 DOM。 */
+export const INSTALL_HW_LIVE_HOOK = hwFrameScript(`(function(){
+  var root = window;
+  if (root.__ZE_HW_LIVE__) {
+    return { ok: true, already: true, dirty: root.__ZE_HW_DIRTY__ || 0, hooked: !!root.__ZE_HW_HOOKED__ };
+  }
+  root.__ZE_HW_LIVE__ = 1;
+  root.__ZE_HW_DIRTY__ = 1;
+  var mark = function(){ root.__ZE_HW_DIRTY__ = (root.__ZE_HW_DIRTY__ || 0) + 1; };
+  var wrapFn = function(win, name){
+    try {
+      var fn = win[name];
+      if (typeof fn !== 'function' || fn.__zeHw) return false;
+      var wrapped = function(){
+        var ret = fn.apply(this, arguments);
+        mark();
+        return ret;
+      };
+      wrapped.__zeHw = 1;
+      win[name] = wrapped;
+      return true;
+    } catch (e) { return false; }
+  };
+  var hookWin = function(win){
+    var hooked = wrapFn(win, 'addChoice') || wrapFn(win, 'addChoiceKeyDown');
+    try {
+      if (win.document && !win.__ZE_HW_CLICK__) {
+        win.__ZE_HW_CLICK__ = 1;
+        win.document.addEventListener('click', function(ev){
+          var t = ev.target;
+          if (!t || !t.closest) return;
+          if (t.closest('.answerBg, .num_option, .answer_item, .workTextWrap')) mark();
+        }, true);
+      }
+    } catch (e2) {}
+    return hooked;
+  };
+  var frames = __sameFrames(window, 0);
+  var hooked = 0;
+  for (var i = 0; i < frames.length; i++) {
+    if (hookWin(frames[i])) hooked += 1;
+  }
+  root.__ZE_HW_HOOKED__ = hooked;
+  return { ok: true, already: false, dirty: root.__ZE_HW_DIRTY__, hooked: hooked, frames: frames.length };
+})()`)
+
+export const READ_HW_DIRTY = `(function(){ return { n: window.__ZE_HW_DIRTY__ || 0, hooked: window.__ZE_HW_HOOKED__ || 0 }; })()`
 
 // fill 点不上时抓题框现场：选项结构、onclick、选中类名，落盘到 cx-fill-debug.json
 export const DEBUG_HW_BOX = (index: number) => `(function(){
@@ -368,32 +469,28 @@ export const DEBUG_HW_BOX = (index: number) => `(function(){
   };
 })()`
 
-export const READ_HW_PICKED = (index: number) => `(function(){
-  var boxes = document.querySelectorAll('.questionLi');
-  if (!boxes.length) boxes = document.querySelectorAll('.singleQuesId');
-  var box = boxes[${Math.max(0, index - 1)}];
-  if (!box) return { picked: '', found: false };
-  var nodes = box.querySelectorAll('.num_option, [class*="num_option"]');
-  var picked = '';
-  for (var i = 0; i < nodes.length; i++) {
-    var el = nodes[i];
-    var on = /check_answer|checked|active|selected/.test(String(el.className || ''))
-      || el.getAttribute('aria-checked') === 'true'
-      || (el.parentElement && el.parentElement.getAttribute('aria-checked') === 'true');
-    if (on) picked += String(el.getAttribute('data') || String.fromCharCode(65 + i)).toUpperCase();
+export const READ_HW_PICKED = (index: number) => hwFrameScript(`(function(){
+  var at = ${Math.max(0, index - 1)};
+  var frames = __sameFrames(window, 0);
+  for (var f = 0; f < frames.length; f++) {
+    var doc = null;
+    try { doc = frames[f].document; } catch (e) { continue; }
+    if (!doc) continue;
+    var boxes = __hwQuestionBoxes(doc);
+    var box = boxes[at];
+    if (!box) continue;
+    return { picked: __hwPickedOf(box), found: true };
   }
-  return { picked: picked, found: true };
-})()`
+  return { picked: '', found: false };
+})()`)
 
-export const DIAGNOSE_HW_FRAMES = `${SAME_ORIGIN_FRAMES}
-(function(){
+export const DIAGNOSE_HW_FRAMES = hwFrameScript(`(function(){
   var frames = __sameFrames(window, 0);
   var out = [];
   for (var i = 0; i < frames.length && out.length < 8; i++) {
     var win = frames[i];
     try {
-      var doc = win.document;
-      var boxes = doc.querySelectorAll('.questionLi, .singleQuesId');
+      var boxes = __hwQuestionBoxes(win.document);
       out.push({
         i: i,
         href: String((win.location && win.location.href) || '').slice(0, 140),
@@ -425,38 +522,22 @@ export const DIAGNOSE_HW_FRAMES = `${SAME_ORIGIN_FRAMES}
     frames: out,
     iframes: iframes
   };
-})()`
+})()`)
 
-export const PICK_HW_IN_FRAMES = (index: number, letter: string) => `${SAME_ORIGIN_FRAMES}
-(function(){
+export const PICK_HW_IN_FRAMES = (index: number, letter: string) => hwFrameScript(`(function(){
   var want = ${JSON.stringify(letter)};
   var index = ${Math.max(1, index)};
   var frames = __sameFrames(window, 0);
   var fire = function(el){
     if (!el) return false;
     try { el.scrollIntoView({ block: 'center' }); } catch (e) {}
-    var view = (el.ownerDocument && el.ownerDocument.defaultView) || window;
-    var rect = { left: 0, top: 0, width: 0, height: 0 };
-    try { rect = el.getBoundingClientRect(); } catch (e2) {}
-    var x = rect.left + (rect.width || 2) / 2;
-    var y = rect.top + (rect.height || 2) / 2;
-    try { el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: view, clientX: x, clientY: y })); } catch (e3) {}
-    try { el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: view, clientX: x, clientY: y })); } catch (e4) {}
     if (typeof el.click === 'function') { try { el.click(); return true; } catch (e5) {} }
-    try { el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: view, clientX: x, clientY: y })); return true; } catch (e6) {}
+    try {
+      var view = (el.ownerDocument && el.ownerDocument.defaultView) || window;
+      el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: view }));
+      return true;
+    } catch (e6) {}
     return false;
-  };
-  var selectedOf = function(box){
-    var picked = '';
-    var nodes = box.querySelectorAll('.num_option, [class*="num_option"]');
-    for (var n = 0; n < nodes.length; n++) {
-      var el = nodes[n];
-      var on = /check_answer|checked|active|selected/.test(String(el.className || ''))
-        || el.getAttribute('aria-checked') === 'true'
-        || (el.parentElement && /check_answer|checked/.test(String(el.parentElement.className || '')));
-      if (on) picked += String(el.getAttribute('data') || String.fromCharCode(65 + n)).toUpperCase();
-    }
-    return picked;
   };
   var tried = [];
   for (var i = 0; i < frames.length; i++) {
@@ -464,7 +545,7 @@ export const PICK_HW_IN_FRAMES = (index: number, letter: string) => `${SAME_ORIG
     var doc = null;
     try { doc = win.document; } catch (e) { continue; }
     if (!doc) continue;
-    var boxes = doc.querySelectorAll('.questionLi, .singleQuesId, .TiMu');
+    var boxes = __hwQuestionBoxes(doc);
     if (!boxes.length) {
       tried.push({ frame: i, boxes: 0 });
       continue;
@@ -474,7 +555,7 @@ export const PICK_HW_IN_FRAMES = (index: number, letter: string) => `${SAME_ORIG
       tried.push({ frame: i, boxes: boxes.length, missingBox: true });
       continue;
     }
-    var before = selectedOf(box);
+    var before = __hwPickedOf(box);
     var rows = box.querySelectorAll('.stem_answer .answerBg, .answerBg, .answer_item');
     var hit = null;
     var opts = [];
@@ -497,17 +578,8 @@ export const PICK_HW_IN_FRAMES = (index: number, letter: string) => `${SAME_ORIG
     if (hit) {
       clicked = fire(hit);
       via = 'answerBg';
-      if (selectedOf(box).indexOf(want) < 0) {
-        var numEl = hit.querySelector && hit.querySelector('.num_option');
-        if (numEl) { fire(numEl); via = 'num_option'; }
-      }
     }
-    if (selectedOf(box).indexOf(want) < 0 && typeof win.addChoice === 'function' && hit) {
-      try { win.addChoice(hit); via = 'addChoice'; clicked = true; } catch (eAdd) {
-        tried.push({ frame: i, addChoiceError: String(eAdd) });
-      }
-    }
-    var after = selectedOf(box);
+    var after = __hwPickedOf(box);
     tried.push({
       frame: i,
       boxes: boxes.length,
@@ -518,8 +590,8 @@ export const PICK_HW_IN_FRAMES = (index: number, letter: string) => `${SAME_ORIG
       via: via,
       opts: opts
     });
-    if (after.indexOf(want) >= 0) {
-      return { ok: true, reason: '已选中 ' + want + '（frame=' + i + ', via=' + via + '）', picked: after, tried: tried };
+    if (clicked) {
+      return { ok: true, reason: '已点击 ' + want + '（frame=' + i + ', via=' + via + '）', picked: after, tried: tried };
     }
   }
   return {
@@ -532,4 +604,4 @@ export const PICK_HW_IN_FRAMES = (index: number, letter: string) => `${SAME_ORIG
     picked: '',
     tried: tried
   };
-})()`
+})()`)

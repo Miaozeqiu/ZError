@@ -398,7 +398,10 @@ export const clickBrowserText = async (id: string, text: string) => {
   if (href) {
     try {
       var win = ((a || hit).ownerDocument && (a || hit).ownerDocument.defaultView) || window;
-      if (win && win.location && win.location.href.indexOf(href) < 0) win.location.assign(href);
+      var cur = '';
+      try { cur = String((win && win.location && win.location.href) || ''); } catch (e0) {}
+      if (/studentstudy/i.test(cur) && /studentstudy|chapterId=/i.test(href)) href = '';
+      else if (win && win.location && win.location.href.indexOf(href) < 0) win.location.assign(href);
     } catch (e) {}
   }
   return {
@@ -412,6 +415,7 @@ export const clickBrowserText = async (id: string, text: string) => {
     const href = String(local.href || '').trim()
     if (/^https?:/i.test(href) && /stucoursemiddle|mycourse|studentstudy|courseid=/.test(href)) {
       const before = String((await getBrowserState(id).catch(() => null))?.url || '')
+      if (/studentstudy/i.test(before) && /studentstudy/i.test(href)) return local
       await waitMs(500)
       const after = String((await getBrowserState(id).catch(() => null))?.url || '')
       const moved = after && before && after.split('#')[0] !== before.split('#')[0]
@@ -426,6 +430,10 @@ export const clickBrowserText = async (id: string, text: string) => {
   const clicked = await evalBrowserView(id, `(function(){ return { ok: !!window.__ZE_CLICKED__, text: window.__ZE_CLICKED__ || '', href: window.__ZE_CLICKED_HREF__ || '' }; })()`).catch(() => null) as { ok?: boolean; text?: string; href?: string } | null
   if (clicked?.ok) {
     const href = String(clicked.href || '').trim()
+    const before = String((await getBrowserState(id).catch(() => null))?.url || '')
+    if (/studentstudy/i.test(before) && /studentstudy/i.test(href)) {
+      return { ok: true, text: clicked.text || want, href, via: 'frame' }
+    }
     if (/^https?:/i.test(href)) {
       await waitMs(400)
       const after = String((await getBrowserState(id).catch(() => null))?.url || '')

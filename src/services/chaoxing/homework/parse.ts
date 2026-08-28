@@ -242,7 +242,7 @@ export const cardFromSnaps = (raw: Record<string, unknown>): ChaoxingHomeworkInf
     hint: questions.length || works.length
       ? undefined
       : raw.asked === false
-        ? '这一页还没接上抽象层，刷新后再看。'
+        ? '这一页还没接上题卡，刷新后再看。'
         : extras.length
           ? '作业框回来了，但还没解析到题目。'
           : '还没读到题目。打开作业后再看。',

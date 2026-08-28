@@ -42,6 +42,10 @@ function __navHref(el){
 }
 `
 
+/** browser_eval 是 `var value = SCRIPT`，前面不能直接写 function 声明。 */
+export const frameScript = (iife: string) =>
+  `(function(){\n${SAME_ORIGIN_FRAMES}\nreturn ${iife.trim()};\n})()`
+
 export const waitMs = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms))
 
 export const asObject = (value: unknown): Record<string, unknown> => {

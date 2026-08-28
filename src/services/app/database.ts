@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { initializationService } from './initialization';
-import { applyForgettingToNode, clampForgettingStage, effectiveMastery, nextForgettingStage, parseStudyQuality, reviewedAtForQuality, reviewedAtFromDaysAgo, rolledRetentionForest } from '../../utils/studyForgetting';
+import { applyForgettingToNode, clampForgettingStage, effectiveMastery, nextForgettingStage, parseStudyQuality, reviewedAtForQuality, reviewedAtFromDaysAgo, rolledRetentionForest } from '../../utils/study/studyForgetting';
 
 export interface Folder {
   id: number;

@@ -1,0 +1,442 @@
+<template>
+  <Teleport to="body">
+    <Transition name="context-menu-pop">
+      <div
+        v-if="visible"
+        ref="menuRef"
+        class="context-menu"
+        :style="menuStyle"
+        @click.stop
+        @pointerdown.stop
+      >
+        <div class="context-menu-body">
+          <!-- 菜单头部（可选） -->
+          <div v-if="header" class="menu-header">
+            {{ header }}
+          </div>
+          <div v-if="header" class="menu-divider"></div>
+          
+          <!-- 菜单项 -->
+          <template v-for="item in menuItems" :key="item.id || item.label">
+            <!-- 分隔线 -->
+            <div v-if="item.type === 'divider'" class="menu-divider"></div>
+            
+            <!-- 标题项 -->
+            <div v-else-if="item.type === 'header'" class="menu-header">
+              {{ item.label }}
+            </div>
+            
+            <!-- 普通菜单项 -->
+            <div 
+              v-else
+              class="menu-item" 
+              :class="{ 
+                disabled: item.disabled, 
+                danger: item.danger 
+              }"
+              @click="handleItemClick(item)"
+            >
+              <!-- 图标 -->
+              <div v-if="item.icon" class="menu-icon">
+                <!-- SVG 图标 -->
+                <svg 
+                  v-if="typeof item.icon === 'object' && item.icon.type === 'svg'" 
+                  width="16" 
+                  height="16" 
+                  :viewBox="item.icon.viewBox || '0 0 24 24'" 
+                  fill="none" 
+                  xmlns="http://www.w3.org/2000/svg"
+                >
+                  <path 
+                    v-for="(path, index) in item.icon.paths" 
+                    :key="`path-${index}`"
+                    :d="path.d"
+                    :fill="path.fill || 'none'"
+                    :stroke="path.stroke || 'currentColor'"
+                    :stroke-width="path.strokeWidth || 2"
+                  />
+                  <rect 
+                    v-for="(rect, index) in item.icon.rects" 
+                    :key="`rect-${index}`"
+                    :x="rect.x"
+                    :y="rect.y"
+                    :width="rect.width"
+                    :height="rect.height"
+                    :rx="rect.rx"
+                    :ry="rect.ry"
+                    :fill="rect.fill || 'none'"
+                    :stroke="rect.stroke || 'currentColor'"
+                    :stroke-width="rect.strokeWidth || 2"
+                  />
+                  <polyline 
+                    v-for="(polyline, index) in item.icon.polylines" 
+                    :key="`polyline-${index}`"
+                    :points="polyline.points"
+                    :fill="polyline.fill || 'none'"
+                    :stroke="polyline.stroke || 'currentColor'"
+                    :stroke-width="polyline.strokeWidth || 2"
+                  />
+                </svg>
+                
+                <!-- Emoji 图标 -->
+                <span v-else-if="typeof item.icon === 'object' && item.icon.type === 'emoji'">{{ item.icon.content }}</span>
+                
+                <!-- 文本图标 -->
+                <span v-else-if="typeof item.icon === 'object' && item.icon.type === 'text'">{{ item.icon.content }}</span>
+                
+                <!-- 纯字符串图标 (如果是字符串) -->
+                <span v-else-if="typeof item.icon === 'string'">{{ item.icon }}</span>
+              </div>
+              
+              <!-- 标签 -->
+              <span class="menu-label">{{ item.label }}</span>
+            </div>
+          </template>
+        </div>
+      </div>
+    </Transition>
+  </Teleport>
+</template>
+
+<script setup lang="ts">
+import { computed, onUnmounted, ref, watch } from 'vue';
+import { createExclusiveMenuId, useExclusiveMenuProp } from '../../composables/useExclusiveMenu';
+
+export interface MenuIcon {
+  type: 'svg' | 'emoji' | 'text'
+  // SVG 图标属性
+  viewBox?: string
+  width?: number
+  height?: number
+  paths?: Array<{
+    d: string
+    fill?: string
+    stroke?: string
+    strokeWidth?: number
+  }>
+  polylines?: Array<{
+    points: string
+    fill?: string
+    stroke?: string
+    strokeWidth?: number
+  }>
+  rects?: Array<{
+    x: number
+    y: number
+    width: number
+    height: number
+    rx?: number
+    ry?: number
+    fill?: string
+    stroke?: string
+    strokeWidth?: number
+  }>
+  // Emoji 图标属性
+  emoji?: string
+  // 文本图标属性
+  text?: string
+  // 通用内容属性
+  content?: string
+}
+
+export interface MenuItem {
+  id?: string;
+  type?: 'item' | 'divider' | 'header';
+  label?: string;
+  icon?: MenuIcon | string;
+  disabled?: boolean;
+  danger?: boolean;
+  className?: string;
+  shortcut?: string;
+  action?: string;
+  data?: any;
+}
+
+interface Props {
+  visible: boolean;
+  x: number;
+  y: number;
+  menuItems: MenuItem[];
+  header?: string;
+  maxHeight?: number;
+  /** 稳定互斥键；同键视为同一菜单，不同键同时只保留一个 */
+  exclusiveKey?: string;
+}
+
+const props = withDefaults(defineProps<Props>(), {
+  maxHeight: 400
+});
+
+const emit = defineEmits<{
+  'item-click': [item: MenuItem];
+  close: [];
+}>();
+
+const menuId = props.exclusiveKey || createExclusiveMenuId('context');
+useExclusiveMenuProp(menuId, () => props.visible, () => emit('close'));
+
+const menuRef = ref<HTMLElement | null>(null);
+let outsideBound = false;
+
+const isInsideMenu = (event: Event) => {
+  const el = menuRef.value;
+  if (!el) return false;
+  const path = typeof event.composedPath === 'function' ? event.composedPath() : [];
+  if (path.includes(el)) return true;
+  return event.target instanceof Node && el.contains(event.target);
+};
+
+const close = () => emit('close');
+
+const onDocumentPointerDown = (event: Event) => {
+  if (isInsideMenu(event)) return;
+  close();
+};
+
+const onKeydown = (event: KeyboardEvent) => {
+  if (event.key === 'Escape') close();
+};
+
+const unbindOutside = () => {
+  if (!outsideBound) return;
+  outsideBound = false;
+  document.removeEventListener('pointerdown', onDocumentPointerDown, true);
+  document.removeEventListener('contextmenu', onDocumentPointerDown, true);
+  window.removeEventListener('keydown', onKeydown, true);
+  window.removeEventListener('blur', close);
+  window.removeEventListener('resize', close);
+};
+
+const bindOutside = () => {
+  if (outsideBound) return;
+  outsideBound = true;
+  document.addEventListener('pointerdown', onDocumentPointerDown, true);
+  document.addEventListener('contextmenu', onDocumentPointerDown, true);
+  window.addEventListener('keydown', onKeydown, true);
+  window.addEventListener('blur', close);
+  window.addEventListener('resize', close);
+};
+
+watch(
+  () => props.visible,
+  (visible) => {
+    if (visible) {
+      window.setTimeout(bindOutside, 0);
+      return;
+    }
+    unbindOutside();
+  },
+  { flush: 'post' },
+);
+
+onUnmounted(unbindOutside);
+
+// 处理菜单项点击
+const handleItemClick = (item: MenuItem) => {
+  if (item.disabled) return;
+  emit('item-click', item);
+};
+
+// 计算菜单位置，防止超出窗口边界
+const menuStyle = computed(() => {
+  if (!props.visible) return {};
+  
+  const menuWidth = 180; // 菜单宽度
+  const itemHeight = 32; // 每个菜单项高度
+  const headerHeight = props.header ? 32 : 0;
+  const padding = 8;
+  const dividerCount = props.menuItems.filter(item => item.type === 'divider').length;
+  const itemCount = props.menuItems.filter(item => item.type !== 'divider').length;
+  
+  let menuHeight = headerHeight + (itemCount * itemHeight) + (dividerCount * 9) + (padding * 2);
+  menuHeight = Math.min(menuHeight, props.maxHeight);
+  
+  const windowPadding = 10; // 距离边界的最小距离
+  
+  let left = props.x;
+  let top = props.y;
+  
+  // 检查右边界
+  if (left + menuWidth + windowPadding > window.innerWidth) {
+    left = window.innerWidth - menuWidth - windowPadding;
+  }
+  
+  // 检查下边界
+  if (top + menuHeight + windowPadding > window.innerHeight) {
+    top = window.innerHeight - menuHeight - windowPadding;
+  }
+  
+  // 检查左边界
+  if (left < windowPadding) {
+    left = windowPadding;
+  }
+  
+  // 检查上边界
+  if (top < windowPadding) {
+    top = windowPadding;
+  }
+  
+  return {
+    left: `${left}px`,
+    top: `${top}px`,
+    maxHeight: `${props.maxHeight}px`
+  };
+});
+</script>
+
+<style scoped>
+.context-menu {
+  position: fixed;
+  background: var(--context-menu-bg, rgba(255, 255, 255, 0.4));
+  backdrop-filter: blur(40px) saturate(180%);
+  -webkit-backdrop-filter: blur(40px) saturate(180%);
+  border: 1px solid var(--context-menu-border, rgba(255, 255, 255, 0.55));
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.22), 0 4px 12px rgba(0, 0, 0, 0.12), inset 0 0.5px 0 rgba(255, 255, 255, 0.5);
+  z-index: 100000;
+  min-width: 160px;
+  padding: 0;
+  font-size: 14px;
+  overflow: visible;
+  transform-origin: top left;
+}
+
+.context-menu-body {
+  padding: 8px;
+  overflow-y: auto;
+  max-height: inherit;
+  border-radius: inherit;
+}
+
+.context-menu-pop-enter-active,
+.context-menu-pop-leave-active {
+  transition: opacity 0.14s ease, transform 0.16s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.context-menu-pop-enter-from,
+.context-menu-pop-leave-to {
+  opacity: 0;
+  transform: translateY(-4px) scale(0.96);
+}
+
+.context-menu-pop-enter-to,
+.context-menu-pop-leave-from {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
+/* 菜单标题样式 */
+.menu-header {
+  padding: 8px 12px 4px;
+  margin-left: 20px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+  background: none;
+}
+
+/* 菜单项样式 */
+
+.menu-item {
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  padding: 4px 8px;
+  color: var(--context-menu-item-text, #2d3748);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  gap: 8px;
+  min-height: 12px;
+}
+
+.menu-item:hover:not(.disabled) {
+  background-color: var(--context-menu-item-hover-bg, #f7fafc);
+}
+
+.menu-item.disabled {
+  color: var(--context-menu-item-disabled-text, #a0aec0);
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.menu-item.danger {
+  color: var(--context-menu-danger-text, #dc2626);
+}
+
+.menu-item.danger:hover:not(.disabled) {
+  background-color: var(--context-menu-danger-hover-bg, #fee2e2);
+}
+
+.menu-icon {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: currentColor;
+}
+
+.menu-text {
+  flex: 1;
+}
+
+.menu-shortcut {
+  font-size: 12px;
+  color: var(--context-menu-shortcut-text, #a0aec0);
+  margin-left: auto;
+}
+
+.menu-divider {
+  height: 1px;
+  background-color: var(--context-menu-divider-bg, #e2e8f0);
+  margin: 4px 0;
+}
+
+/* 深色主题支持 */
+[data-theme="dark"] .context-menu {
+  background: var(--context-menu-bg, #2d3748);
+  border-color: var(--context-menu-border, #4a5568);
+}
+
+[data-theme="dark"] .menu-header {
+  color: var(--context-menu-header-text, #a0aec0);
+}
+
+[data-theme="dark"] .menu-item {
+  color: var(--context-menu-item-text, #e2e8f0);
+}
+
+[data-theme="dark"] .menu-item:hover:not(.disabled) {
+  background-color: var(--context-menu-item-hover-bg, #4a5568);
+}
+
+[data-theme="dark"] .menu-item.disabled {
+  color: var(--context-menu-item-disabled-text, #718096);
+}
+
+
+
+[data-theme="dark"] .menu-shortcut {
+  color: var(--context-menu-shortcut-text, #718096);
+}
+
+[data-theme="dark"] .menu-divider {
+  background-color: var(--context-menu-divider-bg, #4a5568);
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .context-menu {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    background: #ffffff;
+  }
+
+  [data-theme="dark"] .context-menu {
+    background: #2d3748;
+  }
+}
+</style>

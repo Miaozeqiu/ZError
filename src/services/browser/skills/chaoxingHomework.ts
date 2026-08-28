@@ -39,11 +39,17 @@ function __hwLetter(text){
 }
 function __hwBoxes(doc){
   if (!doc || !doc.querySelectorAll) return [];
-  var prefer = doc.querySelectorAll('.questionLi, .singleQuesId, .mark_item');
-  if (prefer.length) return Array.prototype.slice.call(prefer);
-  var timu = doc.querySelectorAll('.TiMu');
-  if (timu.length) return Array.prototype.slice.call(timu);
-  return [];
+  var raw = doc.querySelectorAll('.questionLi');
+  if (!raw.length) raw = doc.querySelectorAll('.singleQuesId');
+  var out = [];
+  for (var i = 0; i < raw.length; i++) {
+    var el = raw[i];
+    var inner = null;
+    try { inner = el.querySelector('.questionLi, .singleQuesId'); } catch (e) {}
+    if (inner && inner !== el) continue;
+    out.push(el);
+  }
+  return out;
 }
 function __hwChoiceNodes(box){
   if (!box || !box.querySelectorAll) return [];

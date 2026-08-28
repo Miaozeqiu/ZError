@@ -12,7 +12,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
-import UnifiedContextMenu from '../../components/UnifiedContextMenu.vue';
+import UnifiedContextMenu from '../../components/ui/UnifiedContextMenu.vue';
 
 interface Props {
   visible: boolean;

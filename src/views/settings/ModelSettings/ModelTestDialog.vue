@@ -81,7 +81,7 @@
 
 <script setup lang="ts">
 import { ref, watch } from 'vue'
-import AIOutputRender from '../../../components/AIOutputRender.vue'
+import AIOutputRender from '../../../components/agent/AIOutputRender.vue'
 import MarkdownRender from 'markstream-vue'
 import 'markstream-vue/index.css'
 

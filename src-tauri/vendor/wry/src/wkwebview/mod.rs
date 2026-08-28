@@ -941,9 +941,13 @@ r#"Object.defineProperty(window, 'ipc', {
           size: CGSize::new(width, height),
         };
         self.webview.setFrame(frame);
+        // 拖窗口时每帧 setFrame 会让 WK 合成层停住，看起来像白屏。
+        // 这里只标脏，等这一帧画完再合成；不要去动底下那层的 tracking area。
+        self.webview.setNeedsDisplay(true);
+        if let Some(layer) = self.webview.layer() {
+          layer.setNeedsDisplay();
+        }
       }
-      // The webviews underneath stop tracking the mouse where this one covers them.
-      self.webview.refresh_covered_siblings();
     }
 
     Ok(())

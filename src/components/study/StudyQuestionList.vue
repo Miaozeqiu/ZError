@@ -40,7 +40,7 @@
 
 <script setup lang="ts">
 import type { AIResponse } from '../../services/app/database'
-import { splitQuestionImageParts } from '../../utils/questionImage'
+import { splitQuestionImageParts } from '../../utils/question/questionImage'
 
 export type PracticeMark = 'ok' | 'bad' | 'empty'
 
