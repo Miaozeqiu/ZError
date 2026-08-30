@@ -14,8 +14,8 @@ description: >-
 ## 怎么进播放页
 
 1. 未登录先按 `chaoxing-login`。
-2. 课表：`https://mooc1-1.chaoxing.com/visit/interaction`，课名在 `li.course a.color1`。跨域 iframe 里用 `browser_eval` 点课名，或取出 `href` 再 `browser_navigate`。
-3. `chaoxing.page`：`teacher` 教师页不要播；`student`（`/mycourse/stu`）先 `browser_click_text`「章节」，再立刻 `browser_chaoxing_chapters`（目录在跨域 iframe，读不到）。不要点「课程门户链接」。`chapters` 是目录页，`player` 才是播放页。
+2. 课表：`https://mooc1-1.chaoxing.com/visit/interaction`，课名在 `li.course a.color1`。iframe 里用 `browser_click_text` / 全 frame 桥点课名；**不要**把 iframe 的 `src` 当顶层 `browser_navigate`。
+3. `chaoxing.page`：`teacher` 教师页不要播；`student`（`/mycourse/stu`）先 `browser_click_text`「章节」，再立刻 `browser_chaoxing_chapters`（目录在 iframe，用桥读，不要打开 studentcourse 顶层）。不要点「课程门户链接」。`chapters` 是目录页，`player` 才是播放页。
 4. 用户没点名课程时，先列出课名问一句，或列出未完成节再开始。
 5. 进到课程壳还不算完成，必须点到具体节并开始播放。
 
@@ -51,9 +51,9 @@ studentstudy / #coursetree
 1. `quiz` 为真：停下来让用户自己做，不要点下一节假装完成。
 2. 到了播放页不要自己找 video、不要写遍历 iframe 的脚本。直接 `browser_chaoxing_play`，再 `browser_chaoxing_watch`。
 3. 不要 `browser_wait` 空等整节。监控会在 Agent 面板显示进度，并定时、按进度叫你核对。
-4. 被叫到时必须处理：暂停或卡住就 `browser_chaoxing_play`；播放器丢了就再 play 或 `browser_chaoxing_study`；还在播就一句话回报。不要开始播了就闭嘴。
+4. 被叫到时必须处理：暂停或卡住就 `browser_chaoxing_play`；播放器丢了就再 play，或回目录点节名再 play；还在播就一句话回报。不要开始播了就闭嘴。
 5. 一节可能有多个视频。当前视频播完先切本章下一个视频，全部看完再下一章。系统会自动切，不要一结束就跳下一章。
-6. 解析器空或失败时不要说全部完成。自己 `browser_get_page` / `browser_eval` 读目录（「已完成任务点 x/y」、节名旁数字、`.catalog_title`），读到节名再 `browser_chaoxing_study`。只有 n/n 才算做完。
+6. 解析器空或失败时不要说全部完成。自己 `browser_get_page` / `browser_eval` 读目录（「已完成任务点 x/y」、节名旁数字、`.catalog_title`），读到节名再 `browser_click_text`，进播放页后 `browser_chaoxing_play`。只有 n/n 才算做完。
 7. 一直没进度就自己恢复，不要死循环，不要问用户手动点。目录在课程壳的 iframe 里，先点「章节」再读。
 
 文档/PPT：不要停在资料节。`browser_chaoxing_next` 会先切本章下一个视频，没有了再跳下一节。测验仍停下让用户做。

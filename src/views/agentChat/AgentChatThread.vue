@@ -68,97 +68,119 @@
                 </div>
               </div>
               <div v-else class="assistant-turn">
-                <div
-                  v-for="step in visibleSteps(message.steps)"
-                  :key="step.id"
-                  class="activity-entry"
-                >
-                  <div class="activity-line" :class="[`is-${step.status}`]">
-                    <span class="activity-icon" aria-hidden="true">
-                      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                        <path v-for="(d, index) in iconPaths(step.name)" :key="index" :d="d" />
-                      </svg>
-                    </span>
-                    <span class="activity-text" :class="{ 'is-live': step.status === 'running' }">{{ step.label }}</span>
-                  </div>
-                  <p v-if="step.status === 'failed' && step.detail" class="activity-detail">{{ step.detail }}</p>
-
+                <template v-for="block in assistantTimeline(message)" :key="block.key">
                   <div
-                    v-if="isQuizStep(step)"
-                    class="write-block is-quiz"
-                    :class="{ 'is-open': isQuizOpen(message.id, step.id) }"
+                    v-if="block.type === 'step'"
+                    class="activity-entry"
                   >
-                    <button class="write-head" type="button" @click="toggleQuiz(message.id, step.id)">
-                      <span class="write-file">
-                        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                          <circle cx="12" cy="12" r="9" />
-                          <path d="M9.5 9.5a2.5 2.5 0 1 1 3.6 2.25c-.7.4-1.1.9-1.1 1.75" />
-                          <path d="M12 17h.01" />
+                    <div class="activity-line" :class="[`is-${block.step.status}`]">
+                      <span class="activity-icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                          <path v-for="(d, index) in iconPaths(block.step.name)" :key="index" :d="d" />
                         </svg>
-                        <span class="write-file-name">{{ quizTitleFor(step) }}</span>
                       </span>
-                      <span class="write-stat">{{ quizStatFor(message, step.id, quizCardsFor(step), isBrowseQuizStep(step)) }}</span>
-                    </button>
-                  </div>
+                      <span class="activity-text" :class="{ 'is-live': block.step.status === 'running' }">{{ block.step.label }}</span>
+                    </div>
+                    <p v-if="block.step.status === 'failed' && block.step.detail" class="activity-detail">{{ block.step.detail }}</p>
 
-                  <div
-                    v-if="step.name === 'save_questions' && step.preview?.length"
-                    class="write-block"
-                    :class="{ 'is-running': step.status === 'running', 'is-open': openedWriteStepId === step.id }"
-                  >
-                    <button class="write-head" type="button" @click="openWrite(step.id)">
-                      <span class="write-file">
-                        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                          <path d="M14 2v6h6" />
-                        </svg>
-                        {{ activeChat.attachments?.[0]?.folderName || '题库' }}
-                      </span>
-                      <span class="write-stat">+{{ step.previewCount || step.preview.length }}</span>
-                    </button>
-                    <div class="write-body">
-                      <div
-                        v-for="(item, index) in visiblePreview(step)"
-                        :key="`${step.id}-${index}`"
-                        class="write-item"
-                      >
-                        <span class="write-gutter">+</span>
-                        <div class="write-question">
-                          <div class="write-q-top">
-                            <span class="write-index">{{ index + 1 }}</span>
-                            <span
-                              v-if="item.question_type"
-                              class="write-type"
-                              :class="`is-${typeTagKind(item.question_type)}`"
-                            >
-                              {{ item.question_type }}
-                            </span>
-                          </div>
-                          <div class="write-stem">{{ item.question }}</div>
-                          <div v-if="parseOptions(item.options).length" class="write-options">
-                            <div
-                              v-for="option in parseOptions(item.options)"
-                              :key="`${step.id}-${index}-${option.key}-${option.text}`"
-                              class="write-option"
-                            >
-                              <span v-if="option.key" class="write-opt-key">{{ option.key }}</span>
-                              <span class="write-opt-text">{{ option.text }}</span>
+                    <div
+                      v-if="isQuizStep(block.step)"
+                      class="write-block is-quiz"
+                      :class="{ 'is-open': isQuizOpen(message.id, block.step.id) }"
+                    >
+                      <button class="write-head" type="button" @click="toggleQuiz(message.id, block.step.id)">
+                        <span class="write-file">
+                          <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="12" cy="12" r="9" />
+                            <path d="M9.5 9.5a2.5 2.5 0 1 1 3.6 2.25c-.7.4-1.1.9-1.1 1.75" />
+                            <path d="M12 17h.01" />
+                          </svg>
+                          <span class="write-file-name">{{ quizTitleFor(block.step) }}</span>
+                        </span>
+                        <span class="write-stat">{{ quizStatFor(message, block.step.id, quizCardsFor(block.step), isBrowseQuizStep(block.step)) }}</span>
+                      </button>
+                    </div>
+
+                    <div
+                      v-if="block.step.name === 'save_questions' && block.step.preview?.length"
+                      class="write-block"
+                      :class="{ 'is-running': block.step.status === 'running', 'is-open': openedWriteStepId === block.step.id }"
+                    >
+                      <button class="write-head" type="button" @click="openWrite(block.step.id)">
+                        <span class="write-file">
+                          <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                            <path d="M14 2v6h6" />
+                          </svg>
+                          {{ activeChat.attachments?.[0]?.folderName || '题库' }}
+                        </span>
+                        <span class="write-stat">+{{ block.step.previewCount || block.step.preview.length }}</span>
+                      </button>
+                      <div class="write-body">
+                        <div
+                          v-for="(item, index) in visiblePreview(block.step)"
+                          :key="`${block.step.id}-${index}`"
+                          class="write-item"
+                        >
+                          <span class="write-gutter">+</span>
+                          <div class="write-question">
+                            <div class="write-q-top">
+                              <span class="write-index">{{ index + 1 }}</span>
+                              <span
+                                v-if="item.question_type"
+                                class="write-type"
+                                :class="`is-${typeTagKind(item.question_type)}`"
+                              >
+                                {{ item.question_type }}
+                              </span>
+                            </div>
+                            <div class="write-stem">{{ item.question }}</div>
+                            <div v-if="parseOptions(item.options).length" class="write-options">
+                              <div
+                                v-for="option in parseOptions(item.options)"
+                                :key="`${block.step.id}-${index}-${option.key}-${option.text}`"
+                                class="write-option"
+                              >
+                                <span v-if="option.key" class="write-opt-key">{{ option.key }}</span>
+                                <span class="write-opt-text">{{ option.text }}</span>
+                              </div>
+                            </div>
+                            <div v-if="item.answer" class="write-answer">
+                              <span class="write-answer-label">答案</span>
+                              <span class="write-answer-text">{{ item.answer }}</span>
                             </div>
                           </div>
-                          <div v-if="item.answer" class="write-answer">
-                            <span class="write-answer-label">答案</span>
-                            <span class="write-answer-text">{{ item.answer }}</span>
-                          </div>
                         </div>
-                      </div>
-                      <div class="write-fade">
-                        <button class="write-more" type="button" @click="openWrite(step.id)">
-                          查看所有 {{ step.previewCount || step.preview.length }} 道
-                        </button>
+                        <div class="write-fade">
+                          <button class="write-more" type="button" @click="openWrite(block.step.id)">
+                            查看所有 {{ block.step.previewCount || block.step.preview.length }} 道
+                          </button>
+                        </div>
                       </div>
                     </div>
                   </div>
-                </div>
+                  <div
+                    v-else-if="block.type === 'text' && block.content.trim()"
+                    class="assistant-text"
+                    :class="{ dark: themeState.isDark }"
+                  >
+                    <MarkdownRender
+                      :key="block.key"
+                      custom-id="agent-chat"
+                      mode="chat"
+                      :content="block.content"
+                      :final="message.status !== 'streaming'"
+                      :index-key="block.key"
+                      :max-live-nodes="0"
+                      :fade="false"
+                      :smooth-streaming="message.status === 'streaming'"
+                      :typewriter="false"
+                      html-policy="safe"
+                      :render-code-blocks-as-pre="true"
+                      :d2-props="{ progressiveRender: true, progressiveIntervalMs: 450 }"
+                    />
+                  </div>
+                </template>
 
                 <div
                   v-if="fallbackQuizCards(message).length"
@@ -178,27 +200,6 @@
                   </button>
                 </div>
 
-                <div
-                  v-if="displayAssistantContent(message)"
-                  class="assistant-text"
-                  :class="{ dark: themeState.isDark }"
-                >
-                  <MarkdownRender
-                    :key="message.id"
-                    custom-id="agent-chat"
-                    mode="chat"
-                    :content="displayAssistantContent(message)"
-                    :final="message.status !== 'streaming'"
-                    :index-key="message.id"
-                    :max-live-nodes="0"
-                    :fade="false"
-                    :smooth-streaming="message.status === 'streaming'"
-                    :typewriter="false"
-                    html-policy="safe"
-                    :render-code-blocks-as-pre="true"
-                    :d2-props="{ progressiveRender: true, progressiveIntervalMs: 450 }"
-                  />
-                </div>
                 <div v-if="isThinking(message)" class="assistant-thinking">
                   正在思考
                 </div>
@@ -255,7 +256,7 @@ import UnifiedContextMenu, { type MenuItem } from '../../components/ui/UnifiedCo
 import MarkdownRender from 'markstream-vue'
 import AgentChatFeatureCards from './AgentChatFeatureCards.vue'
 import {
-  displayAssistantContent,
+  assistantTimeline,
   filesForMessage,
   iconPaths,
   imagesForMessage,
@@ -267,7 +268,6 @@ import {
   quizTitleFor,
   typeTagKind,
   visiblePreview,
-  visibleSteps,
 } from './threadDisplay'
 import {
   fallbackQuizCards,

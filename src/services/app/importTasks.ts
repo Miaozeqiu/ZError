@@ -29,6 +29,8 @@ export interface ImportTaskStep {
   status: ImportTaskStepStatus
   startedAt: number
   finishedAt?: number
+  /** 工具开始时助手正文长度，用于对话里按时间线插入，而不是全部堆在顶部 */
+  atContentLength?: number
 }
 
 export interface ImportTask {

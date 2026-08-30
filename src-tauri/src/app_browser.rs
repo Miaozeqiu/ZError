@@ -266,6 +266,31 @@ fn is_studentstudy(raw: &str) -> bool {
   lower.contains("/mycourse/studentstudy") || lower.contains("studentstudy?")
 }
 
+/// 学习通嵌在 iframe 里的文档地址。整窗由我们控制，也绝不把这些当顶层打开。
+/// 注意：stucoursemiddle / mycourse/stu 是「进课」中间页或课程壳，不是嵌套 iframe，必须能顶层打开。
+fn is_iframe_document_url(raw: &str) -> bool {
+  let lower = raw.to_ascii_lowercase();
+  lower.contains("/mycourse/studentcourse")
+    || lower.contains("studentcourse?")
+    || lower.contains("/knowledge/cards")
+    || lower.contains("ananas/modules")
+    || lower.contains("insertvideo")
+    || lower.contains("insertdoc")
+    || lower.contains("insertaudio")
+    || lower.contains("insertbbs")
+    || lower.contains("insertbook")
+    || lower.contains("insertflash")
+    || lower.contains("/mooc-ans/bbscircle/")
+}
+
+/// 从空间课表点进一门课：中间页或课程壳。应在当前窗口打开，不能吞掉，也不宜另开标签。
+fn is_course_entry_url(raw: &str) -> bool {
+  let lower = raw.to_ascii_lowercase();
+  lower.contains("stucoursemiddle")
+    || lower.contains("/mycourse/stu")
+    || lower.contains("mooc2-ans.chaoxing.com/mooc2-ans/mycourse/stu")
+}
+
 fn defer_off_webview(app: AppHandle, job: impl FnOnce(&AppHandle) + Send + 'static) {
   std::thread::spawn(move || {
     std::thread::sleep(Duration::from_millis(40));
@@ -273,13 +298,149 @@ fn defer_off_webview(app: AppHandle, job: impl FnOnce(&AppHandle) + Send + 'stat
   });
 }
 
-fn handle_deferred_popup(app: &AppHandle, opener_url: &str, raw: &str) {
+fn handle_deferred_popup(app: &AppHandle, opener_id: &str, opener_url: &str, raw: &str) {
   // 播放页自己会原地切节。这里再 navigate 会把当前页盖掉，还可能带错 chapterId。
   if is_studentstudy(opener_url) && is_studentstudy(raw) {
     return;
   }
+  // 进课：在当前浏览器窗口打开，Agent 仍挂着这个 browserId
+  if is_course_entry_url(raw) {
+    if let Ok(target) = parse_url(raw) {
+      if let Ok(webview) = find_browser(app, opener_id) {
+        remember_url(opener_id, raw);
+        let _ = webview.navigate(target);
+      }
+    }
+    return;
+  }
+  // iframe 文档绝不当新标签顶层打开
+  if is_iframe_document_url(raw) {
+    return;
+  }
   emit_opened(app, &new_browser_id(), raw.to_string());
 }
+
+/// 注入到每一个 frame（含跨域）。用 postMessage 把子 frame 文本/点击回传到顶层，
+/// 顶层提供 `__ZE_ASK_FRAMES__` / `__ZE_FRAME_SNAPS__`，供 get_page / click_text 使用。
+const CHAOXING_FRAME_BRIDGE: &str = r#"(function(){
+  if (window.__ZE_FRAME_BRIDGE__) return;
+  window.__ZE_FRAME_BRIDGE__ = true;
+  var isTop = false;
+  try { isTop = window === window.top; } catch (e) { isTop = false; }
+
+  function kindOf(href, text){
+    var h = String(href || '');
+    var t = String(text || '');
+    if (/studentcourse|已完成任务点|#coursetree|posCatalog_/i.test(h + t)) return 'catalog';
+    if (/doHomeWork|dowork|\/work\/|作业列表|待做/i.test(h + t)) return 'work';
+    if (/暂无任务|默认班级/.test(t) && !/已完成任务点/.test(t)) return 'task';
+    if (/ananas|insertvideo|knowledge\/cards/i.test(h)) return 'player';
+    return 'other';
+  }
+
+  function snapSelf(){
+    var text = '';
+    try { text = String((document.body && document.body.innerText) || '').trim(); } catch (e) {}
+    var href = '';
+    try { href = String(location.href || ''); } catch (e2) {}
+    var title = '';
+    try { title = String(document.title || ''); } catch (e3) {}
+    return {
+      href: href.slice(0, 400),
+      title: title.slice(0, 120),
+      text: text.slice(0, 12000),
+      kind: kindOf(href, text)
+    };
+  }
+
+  function postTop(msg){
+    try { window.top.postMessage(msg, '*'); return; } catch (e) {}
+    try { window.parent.postMessage(msg, '*'); } catch (e2) {}
+  }
+
+  function forwardAsk(msg){
+    try {
+      var list = document.querySelectorAll('iframe');
+      for (var i = 0; i < list.length; i++) {
+        try { list[i].contentWindow.postMessage(msg, '*'); } catch (e) {}
+      }
+    } catch (e2) {}
+  }
+
+  function clickByText(want){
+    var target = String(want || '').replace(/\s+/g, '');
+    if (!target) return null;
+    var bare = target.replace(/[（(]\s*\d+\s*[）)]\s*$/g, '');
+    var nodes = document.querySelectorAll('a, button, [role="tab"], [role="button"], span, div, li, h3, h4, label');
+    var exact = null;
+    var fuzzy = null;
+    for (var i = 0; i < nodes.length; i++) {
+      var el = nodes[i];
+      var label = '';
+      try { label = String(el.getAttribute('title') || el.innerText || el.textContent || '').replace(/\s+/g, ''); } catch (e) {}
+      if (!label) continue;
+      if (label === bare || label === target) { exact = el; break; }
+      if (!fuzzy && label.length <= 64 && label.indexOf(bare) >= 0) fuzzy = el;
+    }
+    var hit = exact || fuzzy;
+    if (!hit) return null;
+    try {
+      hit.scrollIntoView({ block: 'center', inline: 'nearest' });
+      var view = (hit.ownerDocument && hit.ownerDocument.defaultView) || window;
+      hit.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: view }));
+      if (typeof hit.click === 'function') hit.click();
+    } catch (e2) {}
+    var text = '';
+    try { text = String(hit.getAttribute('title') || hit.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 80); } catch (e3) {}
+    return { text: text || want };
+  }
+
+  window.addEventListener('message', function(ev){
+    var d = ev && ev.data;
+    if (!d || d.__ze !== 1) return;
+    if (d.type === 'ask') {
+      if (d.op === 'snap' || !d.op) {
+        postTop({ __ze: 1, type: 'snap', req: d.req, snap: snapSelf() });
+      } else if (d.op === 'click') {
+        var want = String((d.extra && d.extra.text) || '');
+        var hit = clickByText(want);
+        if (hit) postTop({ __ze: 1, type: 'clicked', req: d.req, text: hit.text, href: '' });
+      }
+      forwardAsk(d);
+      return;
+    }
+    if (!isTop) return;
+    if (d.type === 'snap' && d.snap) {
+      if (!window.__ZE_FRAME_SNAPS__) window.__ZE_FRAME_SNAPS__ = [];
+      window.__ZE_FRAME_SNAPS__.push(d.snap);
+      return;
+    }
+    if (d.type === 'clicked') {
+      window.__ZE_CLICKED__ = String(d.text || '');
+      window.__ZE_CLICKED_HREF__ = '';
+    }
+  });
+
+  if (isTop) {
+    window.__ZE_FRAME_SNAPS__ = window.__ZE_FRAME_SNAPS__ || [];
+    window.__ZE_ASK_FRAMES__ = function(op, extra){
+      var req = String(Date.now()) + '-' + Math.random().toString(16).slice(2);
+      window.__ZE_FRAME_SNAPS__ = [];
+      window.__ZE_CLICKED__ = '';
+      window.__ZE_CLICKED_HREF__ = '';
+      var msg = { __ze: 1, type: 'ask', op: op || 'snap', req: req, extra: extra || {} };
+      // 顶层自己也记一份（同源子树仍由 __sameFrames 扫；这里补跨域）
+      try { window.__ZE_FRAME_SNAPS__.push(snapSelf()); } catch (e) {}
+      forwardAsk(msg);
+      return true;
+    };
+  } else {
+    // 子 frame 就绪后主动报一次，方便顶层缓存
+    try {
+      postTop({ __ze: 1, type: 'snap', req: 'boot', snap: snapSelf() });
+    } catch (e) {}
+  }
+})();"#;
 
 /// 学习通讨论模块是套了两层 iframe 的卡片。拦掉子 frame 之后，
 /// 在 knowledge/cards 里用附件数据画成同样的卡片，点击仍 window.open。
@@ -453,6 +614,7 @@ pub async fn browser_open(
     .focused(true)
     .accept_first_mouse(true)
     .user_agent(SAFARI_UA)
+    .initialization_script_for_all_frames(CHAOXING_FRAME_BRIDGE)
     .initialization_script_for_all_frames(CHAOXING_BBS_CARDS)
     .on_new_window(move |url, _features| {
       if url.scheme() != "http" && url.scheme() != "https" {
@@ -460,8 +622,9 @@ pub async fn browser_open(
       }
       let raw = url.to_string();
       let opener_url = remembered_url(&popup_id);
+      let opener_id = popup_id.clone();
       defer_off_webview(popup_app.clone(), move |app| {
-        handle_deferred_popup(app, &opener_url, &raw);
+        handle_deferred_popup(app, &opener_id, &opener_url, &raw);
       });
       NewWindowResponse::Deny
     })
@@ -561,10 +724,27 @@ pub async fn browser_close(app: AppHandle, id: String) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn browser_navigate(app: AppHandle, id: String, url: String) -> Result<(), String> {
+  let webview = find_browser(&app, &id)?;
+  let current = remembered_url(&id);
+  let target = parse_url(&url)?;
+  let target_raw = target.to_string();
+  if is_iframe_document_url(&target_raw) {
+    return Err(
+      "这是学习通 iframe 里的页面，不能当顶层打开。留在当前课页，在页面里点章节/作业。"
+        .into(),
+    );
+  }
   remember_url(&id, &url);
-  find_browser(&app, &id)?
-    .navigate(parse_url(&url)?)
-    .map_err(|err| err.to_string())
+  // 导航页跑在 localhost / tauri://localhost。原生 navigate 会带 Referer，
+  // 学习通会跳到「localhost 该域名未授权」。从首页离开时用页内跳转并配合 no-referrer。
+  if is_home(&current) && !is_home(&url) {
+    let js = format!(
+      "(function(){{var m=document.querySelector('meta[name=\"referrer\"]');if(!m){{m=document.createElement('meta');m.name='referrer';document.head.appendChild(m);}}m.content='no-referrer';location.replace({});}})()",
+      serde_json::to_string(&target_raw).unwrap_or_else(|_| format!("\"{target_raw}\""))
+    );
+    return webview.eval(&js).map_err(|err| err.to_string());
+  }
+  webview.navigate(target).map_err(|err| err.to_string())
 }
 
 #[tauri::command]
@@ -624,12 +804,13 @@ pub async fn browser_set_app_above_page(
 
 fn prepare_eval_script(script: &str) -> String {
   let trimmed = script.trim();
+  // 只有整段已是 IIFE 表达式时才原样代入 `var value = …`。
+  // 不能单靠 ends_with(")()")：`function foo(){} (function(){})()` 也会命中，
+  // 导致 function 声明落在赋值外、IIFE 里找不到 __sameFrames。
   let already = trimmed.starts_with("(function")
     || trimmed.starts_with("(()=>")
     || trimmed.starts_with("(() =>")
-    || trimmed.starts_with("(async")
-    || trimmed.ends_with(")()")
-    || trimmed.ends_with(")();");
+    || trimmed.starts_with("(async");
   if already {
     return trimmed.to_string();
   }

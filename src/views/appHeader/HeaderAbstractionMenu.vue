@@ -2,7 +2,7 @@
   <button
     class="abstraction-btn"
     type="button"
-    title="查看当前页的题卡"
+    title="查看当前页的章节或题卡"
     :class="{ 'is-open': abstractionMenuOpen }"
     :aria-pressed="abstractionMenuOpen"
     @click="toggleAbstractionMenu"

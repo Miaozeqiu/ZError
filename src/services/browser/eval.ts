@@ -46,6 +46,9 @@ function __navHref(el){
 export const frameScript = (iife: string) =>
   `(function(){\n${SAME_ORIGIN_FRAMES}\nreturn ${iife.trim()};\n})()`
 
+/** 把「helpers + 尾部 IIFE」收成单表达式，避免 prepare_eval 误判。 */
+export const withSameFrames = (bodyIife: string) => frameScript(bodyIife.trim())
+
 export const waitMs = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms))
 
 export const asObject = (value: unknown): Record<string, unknown> => {

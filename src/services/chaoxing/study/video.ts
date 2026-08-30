@@ -1,4 +1,5 @@
 import {
+  CHAOXING_CHAPTER_JOB_TICK,
   CHAOXING_CLICK_VIDEO_TAB,
   CHAOXING_PLAY_SCRIPT,
   CHAOXING_STUDY_INSPECT,
@@ -125,3 +126,22 @@ export const installChaoxingVideoHook = (id: string) =>
 
 export const readChaoxingVideoTick = (id: string) =>
   evalBrowserView(id, CHAOXING_VIDEO_TICK) as Promise<ChaoxingVideoTick | null>
+
+export const readChaoxingChapterJobTick = (id: string) =>
+  evalBrowserView(id, CHAOXING_CHAPTER_JOB_TICK) as Promise<{
+    jobs?: Array<{
+      mid?: string
+      jobid?: string
+      label: string
+      kind?: string
+      video?: boolean
+      quiz?: boolean
+      doc?: boolean
+      jobDone?: boolean | null
+      passed?: boolean
+      unfinished?: boolean
+      active?: boolean
+    }>
+    video?: ChaoxingVideoTick | null
+    ts?: number
+  } | null>

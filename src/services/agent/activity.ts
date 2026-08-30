@@ -15,7 +15,6 @@ export const describeActivity = (name: string, args: any, status: ImportTaskStep
     browser_scroll: ['正在滚动', '滚动失败', '滚动了页面'],
     browser_eval: ['正在执行脚本', '执行脚本失败', '在网页上执行了脚本'],
     browser_wait: ['正在等待', '等待失败', args?.seconds ? `等了 ${args.seconds} 秒` : '等待了一会儿'],
-    browser_chaoxing_study: ['正在学习通刷课', '刷课失败', '打开并播放了未完成章节'],
     browser_chaoxing_chapters: ['正在读取章节', '读取章节失败', '读取了章节目录'],
     browser_chaoxing_play: ['正在播放视频', '播放失败', '点了学习通播放'],
     browser_chaoxing_watch: ['正在监控进度', '监控失败', '开始监控视频进度'],
@@ -32,6 +31,17 @@ export const describeActivity = (name: string, args: any, status: ImportTaskStep
             : '处理了学习通作业',
     ],
     browser_chaoxing_captcha: ['正在填写验证码', '验证码提交失败', '已提交验证码'],
+    browser_finish: [
+      args?.status === 'blocked' ? '正在等待用户' : args?.status === 'watching' ? '正在交给监控' : '正在收尾',
+      '收尾失败',
+      args?.summary
+        ? String(args.summary).slice(0, 80)
+        : args?.status === 'blocked'
+          ? '需要用户处理'
+          : args?.status === 'watching'
+            ? '已交给后台监控'
+            : '任务已完成',
+    ],
   }
   if (browserLabels[name]) {
     const [running, failed, done] = browserLabels[name]

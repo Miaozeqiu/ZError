@@ -68,9 +68,9 @@ export const BROWSER_ABSTRACTIONS: BrowserAbstraction[] = [
   {
     id: 'chaoxing-study',
     name: '学习通刷课',
-    tool: 'browser_chaoxing_study',
-    extraTools: ['browser_chaoxing_play', 'browser_chaoxing_watch', 'browser_chaoxing_next'],
-    summary: '章节目录、播放、进度、下一节',
+    tool: 'browser_click_text / browser_chaoxing_play',
+    extraTools: ['browser_chaoxing_chapters', 'browser_chaoxing_watch', 'browser_chaoxing_next'],
+    summary: '点章节 → 点节名 → play → watch → next',
     match: isStudyUrl,
   },
   {
@@ -152,7 +152,20 @@ export const abstractionRows = (
 
 export const abstractionButtonLabel = computed(() => {
   const hit = primaryAbstraction(currentBrowserUrl.value)
-  return hit ? `题卡 · ${hit.name.replace(/^学习通/, '')}` : '题卡'
+  if (!hit) return '解析'
+  if (hit.id === 'chaoxing-study') return '章节'
+  if (hit.id === 'chaoxing-homework') return '题卡'
+  return hit.name.replace(/^学习通/, '') || '解析'
+})
+
+export const abstractionPanelTitle = computed(() => {
+  const hit = primaryAbstraction(currentBrowserUrl.value)
+  if (!hit) return '解析'
+  if (hit.id === 'chaoxing-study') return '章节'
+  if (hit.id === 'chaoxing-homework') return '题卡'
+  if (hit.id === 'chaoxing-login') return '登录'
+  if (hit.id === 'chaoxing-captcha') return '验证码'
+  return hit.name.replace(/^学习通/, '') || '解析'
 })
 
 const esc = (value: string) => String(value || '')

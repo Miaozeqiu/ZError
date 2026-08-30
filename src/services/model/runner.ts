@@ -42,6 +42,8 @@ export interface RunTextModelOptions {
   useAgentModel?: boolean
   useVisionModel?: boolean
   signal?: AbortSignal
+  /** 每轮发给模型前刷新（浏览器图谱/解析器等），返回文本会写入独立 system 消息 */
+  liveContext?: () => string | Promise<string>
   executeTool?: (call: ModelToolCall) => Promise<string>
   onEvent?: (event: ModelRunEvent) => void
 }
@@ -70,11 +72,65 @@ const formatRunnerError = (error: unknown) => {
   if (/Repetitive tool calls|相同参数|infinite loops/i.test(message)) {
     return new Error('模型重复调用了同一个工具，已中止。请再试一次，或换个说法继续。')
   }
+  if (/error sending request for url/i.test(message)) {
+    return new Error(
+      `模型接口网络请求失败（连接被中断或暂时不可达，已自动重试）。${message}`,
+    )
+  }
   return error instanceof Error ? error : new Error(message)
 }
 
 const SINGLETON_TOOLS = new Set(['get_file_info', 'list_folders'])
 const REPEAT_NUDGE = '不要再用相同参数重复调用工具。请根据已经得到的结果直接回复用户，不要再调用任何工具。'
+const LIVE_CONTEXT_MARK = '\u200B【实时网页状态】'
+/** 传输层失败时最多再试几次（不含首次）。cheaptokens 等网关常偶发 reset。 */
+const MAX_NETWORK_RETRIES = 10
+
+const waitMs = (ms: number) => new Promise<void>((resolve) => {
+  window.setTimeout(resolve, ms)
+})
+
+const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error))
+
+const isRetryableNetworkError = (error: unknown, aborted: boolean) => {
+  if (aborted || isModelStopped(error)) return false
+  const message = errorText(error)
+  const name = error instanceof Error ? error.name : ''
+  if (name === 'AbortError' || name === 'TimeoutError') return false
+  if (/已终止对话|Request canceled|Request cancelled|模型响应超时|模型请求中断/i.test(message)) return false
+  return /error sending request|failed to fetch|network|connection|reset|broken pipe|timed out|timeout|dns|tls|ssl|eof|closed before|temporarily|unavailable|hyper_util|reqwest|ConnectError|SendRequest/i.test(message)
+}
+
+const isRetryableHttpStatus = (status: number) => (
+  status === 408 || status === 425 || status === 429
+  || status === 500 || status === 502 || status === 503 || status === 504
+)
+
+const networkBackoffMs = (attempt: number) => {
+  const base = Math.min(8000, 400 * (2 ** Math.min(attempt, 4)))
+  return base + Math.floor(Math.random() * 300)
+}
+
+const resolveNetworkRetries = () => MAX_NETWORK_RETRIES
+
+const applyLiveContext = async (
+  messages: any[],
+  liveContext?: () => string | Promise<string>,
+) => {
+  if (!liveContext) return
+  const text = String(await liveContext() || '').trim()
+  if (!text) return
+  const content = `${LIVE_CONTEXT_MARK}\n${text}`
+  const idx = messages.findIndex((item) => (
+    item?.role === 'system' && String(item.content || '').startsWith(LIVE_CONTEXT_MARK)
+  ))
+  if (idx >= 0) {
+    messages[idx] = { role: 'system', content }
+    return
+  }
+  if (messages[0]?.role === 'system') messages.splice(1, 0, { role: 'system', content })
+  else messages.unshift({ role: 'system', content })
+}
 
 const sortJson = (value: unknown): unknown => {
   if (Array.isArray(value)) return value.map(sortJson)
@@ -317,12 +373,53 @@ export async function runTextModel(
   throwIfStopped()
 
   const tauriHttp = await import('@tauri-apps/plugin-http')
+  const networkRetries = resolveNetworkRetries()
   const tauriFetch = async (request: RequestInfo | URL, init: RequestInit = {}) => {
-    return tauriHttp.fetch(request as any, {
-      ...init,
-      credentials: init.credentials ?? 'include',
-      signal: init.signal ?? abortController.signal,
-    } as any)
+    let lastError: unknown
+    for (let attempt = 0; attempt <= networkRetries; attempt += 1) {
+      throwIfStopped()
+      try {
+        const response = await tauriHttp.fetch(request as any, {
+          ...init,
+          // 连接阶段单独加长；默认过短时 CDN 抖一下就会 “error sending request”
+          connectTimeout: typeof (init as { connectTimeout?: number }).connectTimeout === 'number'
+            ? (init as { connectTimeout?: number }).connectTimeout
+            : 30_000,
+          credentials: init.credentials ?? 'include',
+          signal: init.signal ?? abortController.signal,
+        } as any)
+        if (
+          response
+          && isRetryableHttpStatus(response.status)
+          && attempt < networkRetries
+        ) {
+          logModelIo({
+            kind: 'fetch_retry',
+            hop: attempt + 1,
+            retries: networkRetries,
+            status: response.status,
+            url: String(typeof request === 'string' ? request : (request as Request).url || request),
+          })
+          await waitMs(networkBackoffMs(attempt))
+          continue
+        }
+        return response
+      } catch (error) {
+        lastError = error
+        if (!isRetryableNetworkError(error, abortController.signal.aborted) || attempt >= networkRetries) {
+          throw error
+        }
+        logModelIo({
+          kind: 'fetch_retry',
+          hop: attempt + 1,
+          retries: networkRetries,
+          error: errorText(error),
+          url: String(typeof request === 'string' ? request : (request as Request).url || request),
+        })
+        await waitMs(networkBackoffMs(attempt))
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error(String(lastError || '模型网络请求失败'))
   }
 
   let processModel: any
@@ -372,6 +469,7 @@ export async function runTextModel(
       armTimeout()
       fullResponse = ''
       onDelta?.('')
+      await applyLiveContext(input.messages, options?.liveContext)
       options?.onEvent?.({ type: 'round_start' })
       logModelIo({ kind: 'model_request', round, messages: ioSafeMessages(input.messages) })
       let result: any

@@ -24,6 +24,7 @@ export {
 export {
   installChaoxingVideoHook,
   playChaoxingVideo,
+  readChaoxingChapterJobTick,
   readChaoxingVideo,
   readChaoxingVideoTick,
   videoIsPlaying,

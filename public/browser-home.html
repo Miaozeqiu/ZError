@@ -3,6 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- 开发态导航页在 localhost；带 Referer 打开学习通会被拒：localhost 该域名未授权 -->
+  <meta name="referrer" content="no-referrer" />
   <title>导航</title>
   <style>
     :root {
@@ -107,14 +109,14 @@
     <h1>导航</h1>
     <p>选择一个学习平台开始</p>
     <div class="grid">
-      <a class="site" href="https://passport2.chaoxing.com">
+      <a class="site" href="https://passport2.chaoxing.com/login?fid=&newversion=true&refer=https%3A%2F%2Fi.chaoxing.com" rel="noreferrer" referrerpolicy="no-referrer">
         <span class="mark cx">学</span>
         <span class="copy">
           <span class="name">学习通</span>
           <span class="url">passport2.chaoxing.com</span>
         </span>
       </a>
-      <a class="site" href="https://www.zhihuishu.com/">
+      <a class="site" href="https://www.zhihuishu.com/" rel="noreferrer" referrerpolicy="no-referrer">
         <span class="mark zs">智</span>
         <span class="copy">
           <span class="name">智慧树</span>

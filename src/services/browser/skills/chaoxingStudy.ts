@@ -911,8 +911,8 @@ function __zeScanChapters(){
   best.ts = Date.now();
   best.hint = left > 0
     ? (best.onUnfinished
-      ? ('当前就在未完成节「' + (best.current || best.firstUnfinished || '') + '」。调用 browser_chaoxing_study 会直接播放，不要 click_text。')
-      : ('未完成：' + (best.unfinished || []).join('、') + '。调用 browser_chaoxing_study 打开第一节并播放，不要自己点「xxx(1)」，不要打开 iframe 网址。'))
+      ? ('当前就在未完成节「' + (best.current || best.firstUnfinished || '') + '」。到播放页后立刻 browser_chaoxing_play。')
+      : ('未完成：' + (best.unfinished || []).join('、') + '。用 click_text 点第一节干净节名，再 browser_chaoxing_play。不要带 (1)，不要打开 iframe 网址。'))
     : (best.progress
       ? ('已完成任务点 ' + best.progress.done + '/' + best.progress.total + '。')
       : '没有读到未完成章节。');
@@ -1225,6 +1225,122 @@ export const CHAOXING_VIDEO_TICK = `(function(){
   return cached || null;
 })()`
 
+/** 一节里的多个任务点（对齐 ocsjs attachments）+ 当前视频进度 */
+export const CHAOXING_CHAPTER_JOB_TICK = `(function(){
+  ${cleanJs}
+  function __cxAttachments(win){
+    try {
+      var list = win.attachments;
+      if (list && list.length) return list;
+    } catch (e) {}
+    return null;
+  }
+  function __cxJobsFromAttachments(){
+    var frames = __cxFrames(window, 0);
+    for (var f = 0; f < frames.length; f++) {
+      var list = __cxAttachments(frames[f]);
+      if (!list || !list.length) continue;
+      var videoN = 0;
+      var out = [];
+      for (var i = 0; i < list.length; i++) {
+        var a = list[i] || {};
+        var prop = a.property || {};
+        var module = String(prop.module || '');
+        var isVideo = module === 'insertvideo' || module === 'insertaudio';
+        var isQuiz = module === 'work';
+        var isDoc = module === 'insertdoc' || module === 'insertbook' || module === 'insertflash';
+        if (!isVideo && !isQuiz && !isDoc) continue;
+        if (isVideo) videoN += 1;
+        var name = __cxClean(prop.name || prop.title || prop.bookname || '');
+        var passed = a.isPassed === true;
+        var isJob = a.job === true;
+        out.push({
+          mid: String(prop.mid || ''),
+          jobid: String(a.jobid || prop._jobid || ''),
+          label: name || (isVideo ? ('视频' + videoN) : isQuiz ? '测验' : '文档'),
+          kind: isVideo ? 'video' : isQuiz ? 'quiz' : 'doc',
+          video: isVideo,
+          quiz: isQuiz,
+          doc: isDoc,
+          jobDone: passed,
+          passed: passed,
+          unfinished: isJob,
+          active: false,
+        });
+      }
+      if (out.length) return out;
+    }
+    return null;
+  }
+  function __cxMarkActive(jobs){
+    var steps = __cxListSteps();
+    var activeLabel = '';
+    var activeVideoOrd = 0;
+    var videoOrd = 0;
+    for (var s = 0; s < steps.length; s++) {
+      if (steps[s].video) {
+        videoOrd += 1;
+        if (steps[s].active) {
+          activeLabel = steps[s].label;
+          activeVideoOrd = videoOrd;
+        }
+      } else if (steps[s].active) {
+        activeLabel = steps[s].label;
+      }
+    }
+    var videoSeen = 0;
+    for (var j = 0; j < jobs.length; j++) {
+      var job = jobs[j];
+      if (job.video) {
+        videoSeen += 1;
+        job.active = Boolean(
+          (activeVideoOrd && videoSeen === activeVideoOrd)
+          || (activeLabel && job.label === activeLabel)
+        );
+      } else {
+        job.active = Boolean(activeLabel && (job.label === activeLabel || (job.quiz && __cxHas(activeLabel, '测验'))));
+      }
+      if (job.jobDone == null && steps[j] && steps[j].jobDone != null) job.jobDone = steps[j].jobDone === true;
+      if (job.unfinished == null) job.unfinished = job.jobDone !== true;
+    }
+    if (jobs.length && !jobs.some(function(item){ return item.active; })) {
+      var playing = __cxFindVideo();
+      if (playing && playing.paused === false) {
+        for (var k = 0; k < jobs.length; k++) {
+          if (jobs[k].video && jobs[k].jobDone !== true) { jobs[k].active = true; break; }
+        }
+      }
+    }
+    return jobs;
+  }
+  var jobs = __cxJobsFromAttachments();
+  if (!jobs || !jobs.length) {
+    jobs = __cxListSteps().map(function(item){
+      return {
+        mid: '',
+        jobid: '',
+        label: item.label,
+        kind: item.video ? 'video' : item.quiz ? 'quiz' : 'doc',
+        video: !!item.video,
+        quiz: !!item.quiz,
+        doc: !!item.doc,
+        jobDone: item.jobDone === true,
+        passed: item.jobDone === true,
+        unfinished: item.jobDone !== true,
+        active: !!item.active,
+      };
+    });
+  } else {
+    jobs = __cxMarkActive(jobs);
+  }
+  var video = __cxFindVideo();
+  var tick = video ? __cxVideoSnap(video) : null;
+  if (!tick) {
+    try { tick = window.__ZE_VIDEO__ || (window.top && window.top.__ZE_VIDEO__) || null; } catch (e) { tick = window.__ZE_VIDEO__ || null; }
+  }
+  return { jobs: jobs, video: tick, ts: Date.now() };
+})()`
+
 export const CHAOXING_CHAPTER_HOOK = `(function(){
   function clean(s){ return String(s || '').replace(/[\\n\\r\\t]+/g, ' ').replace(/  +/g, ' ').trim(); }
   function textOf(root){
@@ -1521,17 +1637,14 @@ export const CHAOXING_CAPTCHA_FILL = `(function(code){
 })`
 
 export const CHAOXING_STUDY_PROMPT = `
-学习通章节 / 未完成任务：
-- 用户要刷课、播未完成时，第一件事就是 browser_chaoxing_study。不要先 get_page / eval / 点「章节」。study 会自己点章节、读目录、打开未完成节并播放。
-- 禁止向用户要截图、页面文本或「配合提供信息」。目录在 iframe 里也能读。get_page 已经带了【章节目录】和未完成节名时，立刻 study，title 填带数字的第一节（如「维护网络安全」）。
-- 解析器已经读到未完成列表时，直接 browser_chaoxing_study，不要自己点「xxx(1)」，不要打开 iframe 网址。
-- 「暂无任务 / 默认班级」是「任务」页，不是章节目录。先点「章节」，等正文出现「已完成任务点 x/y」再读。不要把任务页当成没有章节。
-- 本窗口能读、点所有 iframe（含跨域）。不要说「跨域无法读取」。get_page 会带【章节目录】；读到节名就 browser_chaoxing_study。
-- 解析器空、失败、或页面只有课程壳（只有「章节/作业」没有节名）时，不要说全部完成，不要问用户。必须自己解析页面：browser_get_page 看【章节目录】和 iframe；没有节名就点「章节」等两秒再读；必要时 browser_eval 扫「已完成任务点 x/y」、.catalog_title、#coursetree。读到未完成节名立刻 browser_chaoxing_study，title 填干净节名。
-- 只有正文明确「已完成任务点 n/n」（分子分母相同）且没有带未完成数字的节，才能说做完。24/29 这种绝对不是做完。解析器 unfinishedCount=0 也不等于做完。
-- 可选 title：带编号的节名，如「4.4.1 某某」。父节 4.4 下面还有 4.4.1 时打开 4.4.1，不要停在父节点。不要带 (1)。
-- 不要把 iframe 的 src（studentcourse、knowledge/cards、ananas）当顶层网址打开。
-- 一节经常有多个视频。当前视频播完先切本章下一个视频，全部视频看完再下一章。
-- 播放开始后，进度面板会自己走。视频在播时不要再 study / play，不要每次进度检查都重开当前节。暂停或卡住才 browser_chaoxing_play；播放器丢了才 study。章节测验默认停下；用户明确说写作业/答题再用 browser_chaoxing_homework。
-- 弹出【9010】图片验证码时自己认图填写：看图读出 4 位字母或数字，调用 browser_chaoxing_captcha（code=那4位）或 browser_type #ucode 再点提交。不要问用户，不要 browser_wait。提交后再 browser_chaoxing_study。
+学习通章节 / 未完成任务（流程，没有一键刷课工具）：
+- 先进入具体课程（mycourse/stu），不要在空间页硬播。点「章节」，等出现「已完成任务点 x/y」。
+- 用 browser_get_page 或 browser_chaoxing_chapters 看未完成节名；再 browser_click_text 点干净节名（如「维护网络安全」），不要带 (1)，不要点「第N章」父标题（会收起子节点）。
+- 进入 studentstudy 播放页后立刻 browser_chaoxing_play；确认在播后交给监控（play 成功会自动 watch）。不要 browser_wait 空等整节。
+- 一节多个视频：当前播完用 browser_chaoxing_next 切本章下一个，没有了再下一节。不要只点页面「下一节」。
+- 「暂无任务 / 默认班级」是任务页不是目录，先点「章节」。
+- 禁止向用户要截图。本窗口有全 frame 桥，不要说跨域读不了。不要把 studentcourse / cards / ananas 当顶层打开。
+- 只有任务点 n/n 且没有未完成节才算做完。暂停/卡住用 browser_chaoxing_play；播放器丢了回到目录再点节名。章节测验默认停下；用户明确说写作业再用 homework。
+- 已开始监控后 browser_finish(status=watching)；整课完成 browser_finish(status=done)。
+- 弹出【9010】验证码：认图后 browser_chaoxing_captcha，提交后再 play。
 `

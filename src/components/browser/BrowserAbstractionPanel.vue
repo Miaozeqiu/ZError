@@ -1,7 +1,7 @@
 <template>
-  <div class="abs-panel" role="region" aria-label="题卡">
+  <div class="abs-panel" role="region" :aria-label="panelLabel">
     <div v-if="!layer" class="abs-empty">
-      {{ parsing ? '正在识别当前页…' : '当前页没有可解析的题卡' }}
+      {{ parsing ? '正在识别当前页…' : emptyHint }}
     </div>
 
     <article v-else-if="layer.id === 'chaoxing-homework'" class="abs-card">
@@ -121,6 +121,20 @@
           <div v-else class="abs-sub">{{ studyStatus }}</div>
         </div>
       </header>
+      <div
+        v-if="orphanWatch"
+        class="abs-ch-watch abs-head-watch"
+        :class="`is-${orphanWatch.status}`"
+      >
+        <div class="abs-ch-watch-bar" aria-hidden="true">
+          <span :style="{ width: `${orphanWatch.percent}%` }" />
+        </div>
+        <div class="abs-ch-watch-meta">
+          <span>{{ orphanWatch.clock }}</span>
+          <span>{{ orphanWatch.label }}</span>
+          <span>{{ orphanWatch.percent }}%</span>
+        </div>
+      </div>
       <ol v-if="chapterTree.length" class="abs-list abs-tree abs-body">
         <li
           v-for="item in chapterTree"
@@ -132,19 +146,70 @@
             'is-open': item.unfinished,
             'is-go': item.kind !== 'chapter',
             'is-busy': openingKey === item.key,
+            'is-watching': Boolean(item.watch),
           }"
-          :style="{ '--depth': item.depth }"
+          :style="{ '--depth': item.depth, '--watch-indent': item.index ? 'calc(5ch + 8px)' : '0px' }"
           :title="item.title"
           :tabindex="item.kind === 'chapter' ? undefined : 0"
           @click="openChapter(item)"
           @keydown.enter.prevent="openChapter(item)"
         >
-          <span class="abs-ch-title">
-            <i v-if="item.index">{{ item.index }}</i>
-            <span>{{ item.name || item.title }}</span>
-          </span>
-          <em v-if="item.active">当前</em>
-          <b v-else-if="item.jobs" class="abs-ch-jobs">{{ item.jobs }}</b>
+          <div class="abs-ch-row">
+            <span class="abs-ch-title">
+              <i v-if="item.index">{{ item.index }}</i>
+              <span>{{ item.name || item.title }}</span>
+            </span>
+            <em v-if="item.active">当前</em>
+            <b v-else-if="item.jobs" class="abs-ch-jobs">{{ item.jobs }}</b>
+          </div>
+          <ul v-if="item.jobList?.length" class="abs-ch-joblist">
+            <li
+              v-for="(job, jobIdx) in item.jobList"
+              :key="`${item.key}-job-${job.mid || job.jobid || job.label}-${jobIdx}`"
+              class="abs-ch-job"
+              :class="{
+                'is-active': job.active,
+                'is-done': job.jobDone,
+                [`is-${job.kind}`]: true,
+              }"
+            >
+              <div class="abs-ch-job-row">
+                <span class="abs-ch-job-label">{{ job.label }}</span>
+                <span v-if="job.jobDone && !job.active" class="abs-ch-job-state">完成</span>
+                <span v-else-if="job.active && job.clock" class="abs-ch-job-state">{{ job.clock }}</span>
+                <span v-else-if="job.kind === 'quiz'" class="abs-ch-job-state">测验</span>
+                <span v-else-if="job.kind === 'doc'" class="abs-ch-job-state">文档</span>
+              </div>
+              <div
+                v-if="job.active && job.duration"
+                class="abs-ch-watch"
+                :class="job.paused ? 'is-paused' : job.jobDone ? 'is-done' : 'is-watching'"
+              >
+                <div class="abs-ch-watch-bar" aria-hidden="true">
+                  <span :style="{ width: `${job.percent || 0}%` }" />
+                </div>
+                <div class="abs-ch-watch-meta">
+                  <span>{{ job.clock }}</span>
+                  <span>{{ job.paused ? '暂停' : '播放中' }}</span>
+                  <span>{{ job.percent || 0 }}%</span>
+                </div>
+              </div>
+            </li>
+          </ul>
+          <div
+            v-else-if="item.watch"
+            class="abs-ch-watch"
+            :class="`is-${item.watch.status}`"
+          >
+            <div class="abs-ch-watch-bar" aria-hidden="true">
+              <span :style="{ width: `${item.watchPercent}%` }" />
+            </div>
+            <div class="abs-ch-watch-meta">
+              <span>{{ item.watchClock }}</span>
+              <span>{{ item.watchLabel }}</span>
+              <span>{{ item.watchPercent }}%</span>
+            </div>
+          </div>
         </li>
       </ol>
       <div v-else class="abs-empty abs-body">{{ studyEmpty }}</div>
@@ -170,6 +235,11 @@ import {
 } from '../../services/browser/abstractions'
 import QuestionIndexSwitcher from '../ui/QuestionIndexSwitcher.vue'
 import { chapterStateFor, openChapterFromCard } from '../../services/chaoxing/browser/chapters'
+import type { ChapterJobItem } from '../../services/chaoxing/browser/chapters'
+import {
+  formatVideoClock,
+  videoWatchFor,
+} from '../../services/chaoxing/browser/watch'
 import { pickHomeworkOption } from '../../services/chaoxing/homework'
 import { cachedHwImage, normalizeHwImageUrl, resolveHwImage } from '../../services/chaoxing/homework/homeworkImages'
 
@@ -180,7 +250,17 @@ const props = defineProps<{
 
 const parsing = abstractionParsing
 const chapter = computed(() => chapterStateFor(props.browserId))
+const videoWatch = computed(() => videoWatchFor(props.browserId))
 const layer = computed(() => primaryAbstraction(props.url || ''))
+const panelLabel = computed(() => {
+  if (layer.value?.id === 'chaoxing-study') return '章节'
+  if (layer.value?.id === 'chaoxing-homework') return '题卡'
+  return layer.value?.name?.replace(/^学习通/, '') || '解析'
+})
+const emptyHint = computed(() => {
+  if (/passport2|login/i.test(props.url || '')) return '当前是登录页，没有章节或题卡'
+  return '当前页没有可解析的章节或题卡'
+})
 const homework = computed(() => lastHomeworkCard.value)
 const homeworkQuestions = computed(() => (homework.value?.questions || []).slice(0, 40))
 const homeworkWorks = computed(() => {
@@ -276,6 +356,81 @@ const catalogIndexOf = (value: string) => {
   return hit?.[1] || ''
 }
 
+const chapterTitlesMatch = (a: unknown, b: unknown) => {
+  const ia = catalogIndexOf(String(a || ''))
+  const ib = catalogIndexOf(String(b || ''))
+  if (ia && ib && ia !== ib) return false
+  const left = String(a || '').replace(/^\d+(?:\.\d+)+\s*/, '').trim() || ia
+  const right = String(b || '').replace(/^\d+(?:\.\d+)+\s*/, '').trim() || ib
+  if (!left || !right) return Boolean(ia && ib && ia === ib)
+  if (ia && ib) return left === right
+  return left === right || left.includes(right) || right.includes(left)
+}
+
+type PanelWatch = {
+  title: string
+  current: number
+  duration: number
+  percent: number
+  status: string
+  videoCount: number
+  videoIndex: number
+}
+
+const panelWatch = computed((): PanelWatch | null => {
+  const agent = videoWatch.value
+  if (agent && (agent.duration > 1 || agent.status === 'quiz' || agent.status === 'captcha' || agent.status === 'done')) {
+    return {
+      title: agent.title || chapter.value?.currentTitle || '',
+      current: agent.current,
+      duration: agent.duration,
+      percent: agent.percent,
+      status: agent.status,
+      videoCount: agent.videoCount,
+      videoIndex: agent.videoIndex,
+    }
+  }
+  const video = chapter.value?.video
+  if (!video || !(video.duration > 1)) return null
+  return {
+    title: video.title || chapter.value?.currentTitle || chapter.value?.current || '',
+    current: video.current,
+    duration: video.duration,
+    percent: video.percent,
+    status: video.ended ? 'done' : video.paused ? 'paused' : 'watching',
+    videoCount: 0,
+    videoIndex: 0,
+  }
+})
+
+const watchMatchesItem = (
+  watch: PanelWatch,
+  item: { title: string; index?: string; name?: string; active?: boolean },
+) => {
+  if (item.active) return true
+  const want = String(watch.title || chapter.value?.currentTitle || '').trim()
+  if (!want) return Boolean(item.active)
+  return chapterTitlesMatch(item.title, want)
+    || chapterTitlesMatch(item.name || '', want)
+    || chapterTitlesMatch(item.index || '', want)
+}
+
+const watchClockOf = (watch: PanelWatch) => {
+  if (!watch.duration) return formatVideoClock(watch.current)
+  return `${formatVideoClock(watch.current)} / ${formatVideoClock(watch.duration)}`
+}
+
+const watchLabelOf = (watch: PanelWatch) => {
+  if (watch.status === 'done') return '已完成'
+  if (watch.status === 'captcha') return '验证码'
+  if (watch.status === 'quiz') return '测验'
+  if (watch.status === 'stalled') return '卡住'
+  if (watch.status === 'paused') return '暂停'
+  if (watch.status === 'lost') return '丢失'
+  if (watch.videoCount > 1) return `${watch.videoIndex || 1}/${watch.videoCount}`
+  return '播放中'
+}
+
 const chapterDepthOf = (item: { kind?: string; depth?: number; index?: string; title?: string }) => {
   if (item.kind === 'chapter') return 0
   if (Number(item.depth) > 0) return Number(item.depth)
@@ -308,20 +463,62 @@ const chapterTree = computed(() => {
       if (item.depth > 0) item.depth = Math.max(1, item.depth - shift)
     }
   }
-  return rows.map((item, i) => ({
-    key: `${item.kind}-${item.index}-${item.title}-${i}`,
-    kind: item.kind || 'section',
-    depth: item.depth,
-    index: item.index,
-    name: item.name,
-    title: item.title,
-    jobs: item.jobs,
-    unfinished: item.unfinished,
-    active: Boolean(item.active),
-    href: item.href,
-    studyHref: item.studyHref,
-    chapterId: item.chapterId,
-  }))
+  const watch = panelWatch.value
+  const chapterJobs = (chapter.value?.jobs || []) as ChapterJobItem[]
+  const watchHit = watch || chapterJobs.length
+    ? (rows.find((item) => item.active)
+      || (watch ? rows.find((item) => watchMatchesItem(watch, item)) : null)
+      || null)
+    : null
+  return rows.map((item, i) => {
+    const row = {
+      key: `${item.kind}-${item.index}-${item.title}-${i}`,
+      kind: item.kind || 'section',
+      depth: item.depth,
+      index: item.index,
+      name: item.name,
+      title: item.title,
+      jobs: item.jobs,
+      unfinished: item.unfinished,
+      active: Boolean(item.active),
+      href: item.href,
+      studyHref: item.studyHref,
+      chapterId: item.chapterId,
+    }
+    const matched = Boolean(watchHit && watchHit === item)
+    const jobList = matched
+      ? chapterJobs.map((job) => ({
+          ...job,
+          clock: job.duration
+            ? `${formatVideoClock(job.current || 0)} / ${formatVideoClock(job.duration)}`
+            : '',
+          percent: Math.round(Number(job.percent) || 0),
+        }))
+      : []
+    const showWatch = matched && watch && !jobList.length
+    return {
+      ...row,
+      jobList,
+      watch: showWatch ? watch : null,
+      watchClock: showWatch && watch ? watchClockOf(watch) : '',
+      watchLabel: showWatch && watch ? watchLabelOf(watch) : '',
+      watchPercent: showWatch && watch ? Math.round(watch.percent) : 0,
+    }
+  })
+})
+
+const orphanWatch = computed(() => {
+  const watch = panelWatch.value
+  const hasJobs = chapterTree.value.some((item) => item.jobList?.length)
+  if (hasJobs) return null
+  if (!watch) return null
+  if (chapterTree.value.some((item) => item.watch)) return null
+  return {
+    status: watch.status,
+    percent: Math.round(watch.percent),
+    clock: watchClockOf(watch),
+    label: watchLabelOf(watch),
+  }
 })
 
 const openingKey = ref('')
@@ -557,11 +754,134 @@ const pickOption = (item: { index: number }, opt: { letter: string }) => {
 
 .abs-ch {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
   min-height: 28px;
   padding: 5px 8px 5px calc(6px + var(--depth, 0) * 12px);
   border-radius: 8px;
+}
+
+.abs-ch-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.abs-ch.is-watching {
+  padding-bottom: 8px;
+}
+
+.abs-ch-watch {
+  margin: 5px 0 0 var(--watch-indent, 0px);
+  min-width: 0;
+}
+
+.abs-head-watch {
+  margin: 0 2px 10px;
+}
+
+.abs-ch-joblist {
+  margin: 4px 0 0 var(--watch-indent, 0px);
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.abs-ch-job {
+  padding: 4px 6px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--text-primary, #000) 3.5%, transparent);
+}
+
+.abs-ch-job.is-active {
+  background: color-mix(in srgb, var(--color-primary, #667eea) 8%, transparent);
+}
+
+.abs-ch-job.is-done:not(.is-active) {
+  opacity: 0.72;
+}
+
+.abs-ch-job-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.abs-ch-job-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 550;
+  color: var(--text-primary, #3a3a3c);
+}
+
+.abs-ch-job-state {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary, #86868b);
+}
+
+.abs-ch-job .abs-ch-watch {
+  margin-left: 0;
+}
+
+.abs-ch.is-chapter .abs-ch-watch {
+  margin-left: calc(1.6ch + 8px);
+}
+
+.abs-ch-watch-bar {
+  height: 3px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-secondary, #86868b) 16%, transparent);
+  overflow: hidden;
+}
+
+.abs-ch-watch-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #2F6F78;
+  transition: width 0.2s linear;
+}
+
+.abs-ch-watch.is-paused .abs-ch-watch-bar > span,
+.abs-ch-watch.is-stalled .abs-ch-watch-bar > span {
+  background: #c9a227;
+}
+
+.abs-ch-watch.is-quiz .abs-ch-watch-bar > span,
+.abs-ch-watch.is-lost .abs-ch-watch-bar > span,
+.abs-ch-watch.is-captcha .abs-ch-watch-bar > span {
+  background: #c2410c;
+}
+
+.abs-ch-watch.is-done .abs-ch-watch-bar > span {
+  background: #248a3d;
+}
+
+.abs-ch-watch-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary, #86868b);
+}
+
+.abs-ch-watch-meta span:first-child {
+  font-weight: 550;
+  color: var(--text-primary, #3a3a3c);
 }
 
 .abs-ch.is-chapter {

@@ -514,7 +514,7 @@ export const studyChaoxingUnfinished = async (id: string, title?: string) => {
         progress,
         page: parsed?.page,
         url: parsed?.url,
-        hint: `页面显示还有 ${progressLeft} 个未完成任务点（已完成 ${progress?.done}/${progress?.total}），但目录项没对上。不要说全部完成。立刻 browser_get_page 看目录正文和 iframe，读到节名就再调 browser_chaoxing_study，title 填干净节名。`,
+        hint: `页面显示还有 ${progressLeft} 个未完成任务点（已完成 ${progress?.done}/${progress?.total}），但目录项没对上。不要说全部完成。立刻 browser_get_page 看目录正文和 iframe，读到节名就 click_text 干净节名，进播放页后 browser_chaoxing_play。`,
       }
     }
     const stillNotCatalog = parsed?.page !== 'chapters' && parsed?.page !== 'player' && !progress
@@ -529,7 +529,7 @@ export const studyChaoxingUnfinished = async (id: string, title?: string) => {
         url: parsed?.url,
         error: parseError || undefined,
         hint: parseError
-          ? `解析目录失败：${parseError}。不要说全部完成。立刻 browser_get_page / browser_eval 自己读页面：找「已完成任务点 x/y」和节名旁的数字，读到未完成节名再 browser_chaoxing_study。`
+          ? `解析目录失败：${parseError}。不要说全部完成。立刻 browser_get_page / browser_eval 自己读页面：找「已完成任务点 x/y」和节名旁的数字，读到未完成节名就 click_text，再 browser_chaoxing_play。`
           : '课程壳或目录 iframe 还没读到未完成节。不要说全部完成。点「章节」后等两秒，再用 browser_get_page 看 iframe 正文，或 browser_eval 扫 .catalog_title / #coursetree。',
       }
     }
@@ -619,7 +619,7 @@ export const studyChaoxingUnfinished = async (id: string, title?: string) => {
       quiz: false,
       hint: playing
         ? `已打开并确认在播「${openedTitle}」。进度在 Agent 面板，系统会定时核对，不要再 click_text。`
-        : `已打开「${openedTitle}」，但还没播起来。再调一次 browser_chaoxing_study 或 browser_chaoxing_play。`,
+        : `已打开「${openedTitle}」，但还没播起来。再 browser_chaoxing_play；不行就回目录重点节名。`,
     }
   }
 
@@ -630,6 +630,6 @@ export const studyChaoxingUnfinished = async (id: string, title?: string) => {
     unfinishedCount: Number(parsed?.unfinishedCount) || unfinished.length || progressLeft,
     progress,
     skipped,
-    hint: `未完成还有：${unfinished.join('、') || `任务点 ${progressLeft}`}。尝试打开失败或都是资料节。不要说全部完成，可再调一次 browser_chaoxing_study。`,
+    hint: `未完成还有：${unfinished.join('、') || `任务点 ${progressLeft}`}。尝试打开失败或都是资料节。不要说全部完成，可再 click_text 下一节或 browser_chaoxing_next。`,
   }
 }

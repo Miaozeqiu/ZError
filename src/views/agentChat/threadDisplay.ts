@@ -66,6 +66,56 @@ export const visibleSteps = (steps: ImportTaskStep[]) => {
   return items
 }
 
+export type AssistantTimelineBlock =
+  | { type: 'text'; key: string; content: string }
+  | { type: 'step'; key: string; step: ImportTaskStep }
+
+/** 按工具调用时的正文位置穿插显示，避免工具全部挤在最前面。 */
+export const assistantTimeline = (message: AgentChatMessage): AssistantTimelineBlock[] => {
+  const content = displayAssistantContent(message)
+  const steps = visibleSteps(message.steps || [])
+  if (!steps.length) {
+    return content ? [{ type: 'text', key: `${message.id}-text`, content }] : []
+  }
+  const hasAnchors = steps.some((step) => typeof step.atContentLength === 'number')
+  if (!hasAnchors) {
+    return [
+      ...steps.map((step) => ({ type: 'step' as const, key: step.id, step })),
+      ...(content ? [{ type: 'text' as const, key: `${message.id}-text`, content }] : []),
+    ]
+  }
+  const sorted = [...steps].sort((a, b) => {
+    const la = a.atContentLength ?? 0
+    const lb = b.atContentLength ?? 0
+    if (la !== lb) return la - lb
+    return (a.startedAt || 0) - (b.startedAt || 0)
+  })
+  const blocks: AssistantTimelineBlock[] = []
+  let cursor = 0
+  let textIndex = 0
+  for (const step of sorted) {
+    const at = Math.min(Math.max(0, step.atContentLength ?? 0), content.length)
+    if (at > cursor) {
+      blocks.push({
+        type: 'text',
+        key: `${message.id}-text-${textIndex}`,
+        content: content.slice(cursor, at),
+      })
+      textIndex += 1
+      cursor = at
+    }
+    blocks.push({ type: 'step', key: step.id, step })
+  }
+  if (cursor < content.length) {
+    blocks.push({
+      type: 'text',
+      key: `${message.id}-text-${textIndex}`,
+      content: content.slice(cursor),
+    })
+  }
+  return blocks
+}
+
 export const isThinking = (message: AgentChatMessage) =>
   message.status === 'streaming' && message.waiting !== false
 

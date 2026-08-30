@@ -14,7 +14,7 @@ description: >-
 
 - 登录页：`https://passport2.chaoxing.com`（会跳到 `/login?fid=&refer=`）
 - 成功后：`https://i.mooc.chaoxing.com/space/index`（标题常是学校名）
-- 课程列表在跨域 iframe `#frame_content`，父页读不到。要看课请再打开 `https://mooc1-1.chaoxing.com/visit/interaction`
+- 课程列表常在 iframe `#frame_content`。已注入全 frame 桥，可直接点；也可打开顶层课表 `https://mooc1-1.chaoxing.com/visit/interaction`。不要打开 `studentcourse` / `knowledge/cards` / `ananas` 等 iframe 文档地址
 
 ## 先看页面
 
@@ -24,7 +24,7 @@ description: >-
 
 ## 账号密码登录
 
-用户必须自己提供手机号/超星号和密码。没有就先问，不要猜。
+优先用【已记账号】里的学习通账号密码，有就直接填，不要再问。用户新说的「账号 … 密码 …」会覆盖记忆；说「忘掉学习通账号」会删掉。都没有才先问。
 
 1. `browser_type` `#phone` ← 手机号/超星号
 2. `browser_type` `#pwd` ← 密码
@@ -97,10 +97,11 @@ description: >-
 - 课名在 `li.course a.color1` 或 `.course-name`
 - 点课名进入课程
 
-跨域 iframe 里的点击，`document.querySelector` 找不到。先 `browser_navigate` 到 iframe 自己的地址，再点。
+iframe 里的点击：用 `browser_click_text` / 全 frame 桥，**不要** `browser_navigate` 进 iframe 自己的地址。
 
 ## 不要做
 
 - 不要把密码写进回复、步骤摘要或 `browser_eval` 以外的地方
 - 不要伪造登录成功
 - 不要自动走微信 / QQ 第三方登录（用户自己点）
+- 不要把学习通 iframe 文档（studentcourse、cards、ananas、insert*）当顶层网址打开

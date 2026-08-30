@@ -65,7 +65,7 @@
     </aside>
     <aside v-else-if="abstractionMenuOpen" class="browser-card">
       <div class="pane-header">
-        <div class="header-title">题卡</div>
+        <div class="header-title">{{ abstractionPanelTitle }}</div>
       </div>
       <BrowserAbstractionPanel
         :browser-id="selected?.id"
@@ -132,6 +132,7 @@ import {
 import {
   abstractionMenuOpen,
   abstractionParsing,
+  abstractionPanelTitle,
   isHomeworkUrl,
   isStudyUrl,
   lastHomeworkCard,

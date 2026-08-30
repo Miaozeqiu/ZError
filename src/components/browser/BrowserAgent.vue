@@ -64,46 +64,67 @@
           <div v-else class="user-bubble">{{ message.content }}</div>
         </div>
         <div v-else class="assistant-turn">
-          <div
-            v-for="step in visibleSteps(message.steps)"
-            :key="step.id"
-            class="activity-entry"
-          >
-            <div class="activity-line" :class="[`is-${step.status}`]">
-              <span class="activity-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                  <path v-for="(d, index) in iconPaths(step.name)" :key="index" :d="d" />
-                </svg>
-              </span>
-              <span class="activity-text" :class="{ 'is-live': step.status === 'running' }">{{ step.label }}</span>
-            </div>
-            <p v-if="step.status === 'failed' && step.detail" class="activity-detail">{{ step.detail }}</p>
+          <template v-for="block in assistantTimeline(message)" :key="block.key">
             <div
-              v-if="isQuizStep(step)"
-              class="write-block is-quiz"
-              :class="{ 'is-open': isQuizOpen(message.id, step.id) }"
+              v-if="block.type === 'step'"
+              class="activity-entry"
             >
-              <button class="write-head" type="button" @click="toggleQuiz(message.id, step.id)">
-                <span class="write-file">
-                  <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                    <circle cx="12" cy="12" r="9" />
-                    <path d="M9.5 9.5a2.5 2.5 0 1 1 3.6 2.25c-.7.4-1.1.9-1.1 1.75" />
-                    <path d="M12 17h.01" />
+              <div class="activity-line" :class="[`is-${block.step.status}`]">
+                <span class="activity-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                    <path v-for="(d, index) in iconPaths(block.step.name)" :key="index" :d="d" />
                   </svg>
-                  <span class="write-file-name">{{ quizTitleFor(step) }}</span>
                 </span>
-                <span class="write-stat">{{ quizStatFor(message, step.id, quizCardsFor(step)) }}</span>
-              </button>
-              <div v-if="isQuizOpen(message.id, step.id)" class="write-quiz">
-                <AgentQuizBlock
-                  layout="chat"
-                  :step-id="step.id"
-                  :cards="quizCardsFor(step)"
-                  @attempt="onQuizAttempt(message.id, $event)"
-                />
+                <span class="activity-text" :class="{ 'is-live': block.step.status === 'running' }">{{ block.step.label }}</span>
+              </div>
+              <p v-if="block.step.status === 'failed' && block.step.detail" class="activity-detail">{{ block.step.detail }}</p>
+              <div
+                v-if="isQuizStep(block.step)"
+                class="write-block is-quiz"
+                :class="{ 'is-open': isQuizOpen(message.id, block.step.id) }"
+              >
+                <button class="write-head" type="button" @click="toggleQuiz(message.id, block.step.id)">
+                  <span class="write-file">
+                    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                      <circle cx="12" cy="12" r="9" />
+                      <path d="M9.5 9.5a2.5 2.5 0 1 1 3.6 2.25c-.7.4-1.1.9-1.1 1.75" />
+                      <path d="M12 17h.01" />
+                    </svg>
+                    <span class="write-file-name">{{ quizTitleFor(block.step) }}</span>
+                  </span>
+                  <span class="write-stat">{{ quizStatFor(message, block.step.id, quizCardsFor(block.step)) }}</span>
+                </button>
+                <div v-if="isQuizOpen(message.id, block.step.id)" class="write-quiz">
+                  <AgentQuizBlock
+                    layout="chat"
+                    :step-id="block.step.id"
+                    :cards="quizCardsFor(block.step)"
+                    @attempt="onQuizAttempt(message.id, $event)"
+                  />
+                </div>
               </div>
             </div>
-          </div>
+            <div
+              v-else-if="block.type === 'text' && block.content.trim()"
+              class="assistant-text"
+              :class="{ dark: themeState.isDark }"
+            >
+              <MarkdownRender
+                :key="block.key"
+                custom-id="browser-agent"
+                mode="chat"
+                :content="block.content"
+                :final="message.status !== 'streaming'"
+                :index-key="block.key"
+                :max-live-nodes="0"
+                :fade="false"
+                :smooth-streaming="message.status === 'streaming'"
+                :typewriter="false"
+                html-policy="safe"
+                :render-code-blocks-as-pre="true"
+              />
+            </div>
+          </template>
           <div
             v-if="fallbackQuizCards(message).length"
             class="write-block is-quiz"
@@ -128,26 +149,6 @@
                 @attempt="onQuizAttempt(message.id, $event)"
               />
             </div>
-          </div>
-          <div
-            v-if="displayAssistantContent(message)"
-            class="assistant-text"
-            :class="{ dark: themeState.isDark }"
-          >
-            <MarkdownRender
-              :key="message.id"
-              custom-id="browser-agent"
-              mode="chat"
-              :content="displayAssistantContent(message)"
-              :final="message.status !== 'streaming'"
-              :index-key="message.id"
-              :max-live-nodes="0"
-              :fade="false"
-              :smooth-streaming="message.status === 'streaming'"
-              :typewriter="false"
-              html-policy="safe"
-              :render-code-blocks-as-pre="true"
-            />
           </div>
           <div v-if="isThinking(message)" class="assistant-thinking">正在思考</div>
           <div v-if="message.status === 'stopped'" class="agent-note">已停止生成</div>
@@ -222,8 +223,9 @@ import { hostnameOf } from '../../services/browser/appBrowser'
 import { browserChapterStates } from '../../services/chaoxing/browser/chapters'
 import { browserVideoWatches, formatVideoClock } from '../../services/chaoxing/browser/watch'
 import { shouldSubmitComposerEnter } from '../../utils/ui/composerEnter'
-import { getQuizCards, getQuizTitle, parseMarkdownQuizzes, parseQuizCards, stripMarkdownQuizzes, type QuizCard } from '../../utils/question/quizPractice'
+import { getQuizCards, getQuizTitle, parseMarkdownQuizzes, parseQuizCards, type QuizCard } from '../../utils/question/quizPractice'
 import type { ImportTaskStep } from '../../services/app/importTasks'
+import { assistantTimeline } from '../../views/agentChat/threadDisplay'
 
 const props = defineProps<{
   browserId?: string
@@ -367,33 +369,12 @@ const fallbackQuizCards = (message: AgentChatMessage) => {
   return parsed.length ? (mdQuizCache.value[message.id] || parsed) : []
 }
 
-const displayAssistantContent = (message: AgentChatMessage) => {
-  const dumped = parseMarkdownQuizzes(message.content)
-  if (!dumped.length) return message.content
-  return stripMarkdownQuizzes(message.content, dumped) || '请在下方练习里作答。'
-}
-
 const quizStatFor = (message: AgentChatMessage, _stepId: string, cards: QuizCard[]) => {
   const done = new Set((message.quizAttempts || []).map((item) => item.uid))
   const answered = cards.filter((card) => done.has(card.uid)).length
   if (message.quizReported || (cards.length && answered >= cards.length)) return `已完成 ${cards.length}`
   if (answered) return `${answered}/${cards.length}`
   return `${cards.length} 题`
-}
-
-const visibleSteps = (steps: ImportTaskStep[]) => {
-  const items: ImportTaskStep[] = []
-  for (const step of steps) {
-    const dup = items.find((item) => item.name === step.name && item.label === step.label)
-    if (!dup) {
-      items.push(step)
-      continue
-    }
-    if (step.status === 'done' || step.status === 'failed') {
-      items[items.indexOf(dup)] = { ...dup, ...step, id: dup.id }
-    }
-  }
-  return items
 }
 
 const isThinking = (message: AgentChatMessage) =>
@@ -423,8 +404,12 @@ const iconPaths = (name: string) => {
   if (name === 'browser_type') return ['M4 7h16v10H4z', 'M8 12h8']
   if (name === 'browser_scroll') return ['M12 5v14', 'M6 11l6-6 6 6', 'M6 13l6 6 6-6']
   if (name === 'browser_eval') return ['M8 8l-4 4 4 4', 'M16 8l4 4-4 4']
-  if (name.startsWith('browser_chaoxing') || name === 'browser_wait') {
-    return name === 'browser_wait' ? ['M12 6v6l4 2', 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z'] : ['M8 6v12l10-6z']
+  if (name.startsWith('browser_chaoxing') || name === 'browser_wait' || name === 'browser_finish') {
+    return name === 'browser_wait'
+      ? ['M12 6v6l4 2', 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z']
+      : name === 'browser_finish'
+        ? ['M20 6L9 17l-5-5']
+        : ['M8 6v12l10-6z']
   }
   if (name === 'present_quiz') return ['M9 11l3 3L22 4', 'M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11']
   return ['M12 3v3', 'M12 18v3', 'M3 12h3', 'M18 12h3']

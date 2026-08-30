@@ -22,7 +22,15 @@ tauri = { version = "2.0", features = [ "macos-private-api", "devtools", "tray-i
 tauri-plugin-opener = "2.0"
 # tauri-plugin-sql removed - using rusqlite directly
 # tauri-plugin-sql = { version = "2.0", features = ["sqlite"] }
-tauri-plugin-http = { version = "2.0", features = ["unsafe-headers"] }
+# 关掉 http2：rustls+h2 对部分国内 CDN/网关（如 EdgeOne）会偶发
+# “error sending request”，HTTP/1.1 更稳。其余沿用插件默认能力。
+tauri-plugin-http = { version = "2.0", default-features = false, features = [
+  "unsafe-headers",
+  "rustls-tls",
+  "charset",
+  "macos-system-configuration",
+  "cookies",
+] }
 tauri-plugin-fs = "2.0"
 tauri-plugin-dialog = "2.0"
 tauri-plugin-clipboard-manager = "2.0"

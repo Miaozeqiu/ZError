@@ -871,7 +871,7 @@ export const BROWSER_TOOLS = [
     type: 'function',
     function: {
       name: 'browser_navigate',
-      description: '打开指定网址。学习通课程里不要打开 iframe 的 src（studentcourse / knowledge/cards / ananas），留在当前课页操作。',
+      description: '打开指定网址。禁止打开目录/视频 iframe（studentcourse / knowledge/cards / ananas / insert*）。进课中间页 stucoursemiddle、课程壳 mycourse/stu 可以打开。',
       parameters: {
         type: 'object',
         properties: { url: { type: 'string', description: 'http/https 网址' } },
@@ -968,21 +968,8 @@ export const BROWSER_TOOLS = [
   {
     type: 'function',
     function: {
-      name: 'browser_chaoxing_study',
-      description: '学习通：打开未完成节并播放。done=true 且任务点 n/n 才算全部完成。解析失败或空时不要放弃，用 get_page / eval 自己读目录再带 title 重试。',
-      parameters: {
-        type: 'object',
-        properties: {
-          title: { type: 'string', description: '可选。干净节名，如「维护网络安全」。不要带 (1)。省略则播第一个未完成。' },
-        },
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
       name: 'browser_chaoxing_chapters',
-      description: '读取后台章节解析器的当前结果。一般不用，刷课直接 browser_chaoxing_study。',
+      description: '读取后台章节解析器的当前结果（未完成节名、任务点进度）。须在课程章节页。刷课流程里用来确认目录，不要代替点击和播放。',
       parameters: { type: 'object', properties: {} },
     },
   },
@@ -990,7 +977,7 @@ export const BROWSER_TOOLS = [
     type: 'function',
     function: {
       name: 'browser_chaoxing_play',
-      description: '学习通播放页点播放。播放器在 #iframe 再套一层 video iframe，顶层没有 video。到了 studentstudy 直接用这个，不要自己找播放器。成功后会自动开始进度监控。',
+      description: '学习通播放页点播放。仅 studentstudy 播放页。播放器在 #iframe 再套一层 video iframe，顶层没有 video。成功后会自动开始进度监控。',
       parameters: { type: 'object', properties: {} },
     },
   },
@@ -998,7 +985,7 @@ export const BROWSER_TOOLS = [
     type: 'function',
     function: {
       name: 'browser_chaoxing_watch',
-      description: '监控学习通当前视频进度，并显示在 Agent 面板。会定时和按进度叫你核对。不要用 browser_wait 空等整节。',
+      description: '监控学习通当前视频进度，并显示在 Agent 面板。仅播放页、视频已打开时用。会定时和按进度叫你核对。不要用 browser_wait 空等整节。',
       parameters: { type: 'object', properties: {} },
     },
   },
@@ -1006,7 +993,7 @@ export const BROWSER_TOOLS = [
     type: 'function',
     function: {
       name: 'browser_chaoxing_next',
-      description: '当前视频播完后先切本章下一个视频，没有了再打开下一节。资料/PDF 会自动跳过。不要只点「下一节」就停，必须用这个。',
+      description: '当前视频播完后先切本章下一个视频，没有了再打开下一节。仅刷课流程里用。资料/PDF 会自动跳过。不要只点「下一节」就停，必须用这个。',
       parameters: { type: 'object', properties: {} },
     },
   },
@@ -1014,14 +1001,14 @@ export const BROWSER_TOOLS = [
     type: 'function',
     function: {
       name: 'browser_chaoxing_homework',
-      description: '学习通作业题卡。只在这张题卡上工作：list / open / inspect / fill / save / submit。不要 eval、不要 click 选项。inspect 返回 questions。一题一题作答：每答出一道就立刻 fill 这一道（answers 只放一项），不要攒到最后一次性填。',
+      description: '学习通作业题卡。必须已在作业相关页才能用：作业列表页用 list/open；作答页（doHomeWork / work）用 inspect/fill/save/submit。空间页、课表、章节页不要调——先点「作业」进作业页。不要 eval、不要 click 选项。一题一题：答出一道立刻 fill（answers 只放一项）。',
       parameters: {
         type: 'object',
         properties: {
           action: {
             type: 'string',
             enum: ['list', 'open', 'inspect', 'fill', 'save', 'submit'],
-            description: 'list 列表，open 打开，inspect 读题卡，fill 填答案，save 暂存，submit 提交',
+            description: 'list/open 仅作业列表页；inspect/fill/save/submit 仅作答页。list 列表，open 打开，inspect 读题卡，fill 填答案，save 暂存，submit 提交',
           },
           title: { type: 'string', description: 'open 时的作业名' },
           answers: {
@@ -1066,6 +1053,25 @@ export const BROWSER_TOOLS = [
         properties: {
           seconds: { type: 'integer', description: '等待秒数，1–60，默认 20' },
         },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_finish',
+      description: '宣告当前用户任务结束。没调用这个工具时，系统不会因为你停嘴就收工。done=已完成；blocked=必须用户动手（滑块/扫码）；watching=已开始监控播放。',
+      parameters: {
+        type: 'object',
+        properties: {
+          status: {
+            type: 'string',
+            enum: ['done', 'blocked', 'watching'],
+            description: 'done 完成；blocked 等人；watching 已交监控',
+          },
+          summary: { type: 'string', description: '一两句说明结果或卡在哪' },
+        },
+        required: ['status', 'summary'],
       },
     },
   },

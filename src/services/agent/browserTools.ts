@@ -21,19 +21,15 @@ import {
   readChaoxingVideo,
   reloadBrowserView,
   scrollBrowserView,
-  studyChaoxingUnfinished,
   typeBrowserElement,
   videoIsPlaying,
 } from '../browser/appBrowser'
-import {
-  startChaoxingChapterParser,
-  waitForChapterState,
-} from '../chaoxing/browser/chapters'
 import {
   startChaoxingWatch,
   videoWatchFor,
 } from '../chaoxing/browser/watch'
 import { clearPendingCaptcha, runAfterCaptcha } from '../chaoxing/browser/watchAgent'
+import { rememberLoginTyped } from './siteAccounts'
 
 export const executeBrowserTool = async (input: {
   name: string
@@ -72,7 +68,7 @@ export const executeBrowserTool = async (input: {
     if (page == null) {
       return JSON.stringify({
         error: '页面读取失败',
-        hint: '不要再 get_page 或 eval iframe。立刻 browser_chaoxing_study。',
+        hint: '不要再 get_page 或 eval iframe。在课程页点「章节」，用 browser_chaoxing_chapters 看未完成，再 click_text 节名，到播放页 browser_chaoxing_play。',
       })
     }
     return JSON.stringify(page)
@@ -80,13 +76,11 @@ export const executeBrowserTool = async (input: {
   if (name === 'browser_navigate') {
     const url = String(args.url || '').trim()
     if (!url) return JSON.stringify({ error: '缺少网址' })
-    const current = String((await getBrowserState(browserId).catch(() => null))?.url || '')
-    const iframePage = /studentcourse|\/knowledge\/cards|ananas\/modules/.test(url)
-    const alreadyInCourse = /chaoxing\.com/.test(current) && /mycourse|studentstudy|studentcourse/.test(current)
-    if (iframePage && alreadyInCourse) {
+    const iframePage = /studentcourse|\/knowledge\/cards|ananas\/modules|insertvideo|insertdoc|insertaudio|insertbbs/i.test(url)
+    if (iframePage) {
       return JSON.stringify({
         ok: false,
-        error: '不要把 iframe 地址当顶层网页打开。留在当前课页，用 browser_chaoxing_study 在页面里点章节。',
+        error: '不要把 iframe 地址当顶层网页打开。留在当前课页，用 click_text / browser_chaoxing_play 在页面里操作。',
       })
     }
     await navigateBrowserView(browserId, url)
@@ -121,7 +115,14 @@ export const executeBrowserTool = async (input: {
   if (name === 'browser_type') {
     const selector = String(args.selector || '').trim()
     if (!selector) return JSON.stringify({ error: '缺少 selector' })
-    return JSON.stringify(await typeBrowserElement(browserId, selector, String(args.text ?? '')))
+    const text = String(args.text ?? '')
+    const nowUrl = String(
+      (await getBrowserState(browserId).catch(() => null))?.url
+      || listAppBrowsers().find((b) => b.id === browserId)?.url
+      || '',
+    )
+    rememberLoginTyped(nowUrl, selector, text)
+    return JSON.stringify(await typeBrowserElement(browserId, selector, text))
   }
   if (name === 'browser_scroll') {
     const amount = Number(args.amount)
@@ -131,50 +132,6 @@ export const executeBrowserTool = async (input: {
     const script = String(args.script || '').trim()
     if (!script) return JSON.stringify({ error: '缺少 script' })
     return JSON.stringify({ result: await evalBrowserView(browserId, script) })
-  }
-  if (name === 'browser_chaoxing_study') {
-    startChaoxingChapterParser(browserId)
-    await waitForChapterState(browserId, 3500).catch(() => null)
-    const studied = await runAfterCaptcha(sessionId, browserId, () =>
-      studyChaoxingUnfinished(browserId, String(args.title || '').trim()) as Promise<{
-        hasVideo?: boolean
-        playing?: boolean
-        current?: number
-        duration?: number
-        paused?: boolean
-        ended?: boolean
-        opened?: string
-        next?: string
-        quiz?: boolean
-        captcha?: boolean
-        done?: boolean
-        unfinishedCount?: number
-        hint?: string
-      }>,
-    )
-    if (studied?.captcha || studied?.quiz) return JSON.stringify(studied)
-    if (studied?.done && !(Number(studied.unfinishedCount) > 0)) return JSON.stringify(studied)
-    if (studied?.hasVideo) {
-      const playing = videoIsPlaying(studied) || Boolean(studied.playing)
-      startChaoxingWatch(
-        browserId,
-        sessionId,
-        {
-          current: studied.current,
-          duration: studied.duration,
-          paused: !playing,
-          ended: studied.ended,
-          title: studied.opened,
-          next: studied.next,
-          moreVideos: Boolean((studied as { moreVideos?: boolean }).moreVideos),
-          videoCount: Number((studied as { videoCount?: number }).videoCount) || 0,
-          videoIndex: Number((studied as { videoIndex?: number }).videoIndex) || 0,
-        },
-        { resume: Boolean(videoWatchFor(browserId)) },
-      )
-      return JSON.stringify({ ...studied, playing, watching: playing })
-    }
-    return JSON.stringify(studied)
   }
   if (name === 'browser_chaoxing_chapters') {
     return JSON.stringify(await openChaoxingChapters(browserId))
@@ -251,7 +208,7 @@ export const executeBrowserTool = async (input: {
     return JSON.stringify({
       ...filled,
       hint: filled.ok
-        ? '验证码已提交。立刻 browser_chaoxing_study 或 browser_chaoxing_play 继续。'
+        ? '验证码已提交。立刻 browser_chaoxing_play 继续；不在播放页就点回章节再进节。'
         : `${filled.error || '没填上'}。再看图读一次，或换一张再填。不要问用户。`,
     })
   }
@@ -337,6 +294,15 @@ export const executeBrowserTool = async (input: {
     await wait(seconds * 1000)
     const state = await getBrowserState(browserId).catch(() => null)
     return JSON.stringify({ ok: true, waited: seconds, url: state?.url || '' })
+  }
+  if (name === 'browser_finish') {
+    const status = String(args.status || '').trim()
+    const summary = String(args.summary || '').trim()
+    if (!/^(done|blocked|watching)$/.test(status)) {
+      return JSON.stringify({ error: 'status 必须是 done / blocked / watching' })
+    }
+    if (!summary) return JSON.stringify({ error: '缺少 summary' })
+    return JSON.stringify({ ok: true, finished: true, status, summary })
   }
 
   return JSON.stringify({ error: `未知浏览器工具：${name}` })

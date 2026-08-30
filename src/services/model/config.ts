@@ -440,7 +440,7 @@ const DEFAULT_MODEL_SETTINGS: ModelSettings = {
   platforms: [],
   globalSettings: {
     timeout: 30000,
-    retryCount: 3,
+    retryCount: 10,
     enableLogging: false
   },
   deletedPredefinedPlatforms: [],

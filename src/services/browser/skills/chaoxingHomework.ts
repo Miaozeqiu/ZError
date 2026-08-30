@@ -596,7 +596,8 @@ export const CHAOXING_HOMEWORK_SUBMIT = `(function(){
 
 export const CHAOXING_HOMEWORK_PROMPT = `
 学习通作业只在题卡 browser_chaoxing_homework 上作答，禁止 browser_eval / click / get_page / type 碰作业页（会被直接挡回）。题卡和网页自动双向同步：fill 会同步到网页，网页勾选状态会自动回流到题卡。
-- list 看待做；open(title) 打开一份；inspect 读题卡；然后一题一题作答：答出第 1 道就立刻 fill 第 1 道，看到返回里 filled 变了再做下一道。不要把全部答案攒到最后一次 fill。
+- 前提：必须先进入作业相关页。还在空间/课表/章节时，先点进课程再点「作业」；不要在非作业页调这个工具。
+- 作业列表页：list 看待做，open(title) 打开一份。作答页：inspect 读题卡；然后一题一题作答：答出第 1 道就立刻 fill 第 1 道，看到返回里 filled 变了再做下一道。不要把全部答案攒到最后一次 fill。
 - inspect 返回的 questions 就是题目卡：id/index/type/stem/options/filled。公式图已读成文字。不要说看不清，不要问用户截图。
 - 题干或选项还没读出的题（hint 会点名）先跳过，答完其他题再 inspect 一次，抽象层会自动补读。绝不允许在没读出题目时猜答案。
 - fill 的 answers 数组一次只放一项：index 或 id、type、answer。单选/判断填 A，多选填 AC，填空多空用分号。已选中的不要再点，fill 会跳过。

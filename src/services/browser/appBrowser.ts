@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { CHAOXING_STUDY_INSPECT } from './skills/chaoxingStudy'
-import { SAME_ORIGIN_FRAMES, askFrames, asObject, evalBrowserView, waitMs } from './eval'
+import { askFrames, asObject, evalBrowserView, waitMs, withSameFrames } from './eval'
 
 export {
   SAME_ORIGIN_FRAMES,
@@ -265,8 +265,7 @@ export const getBrowserState = (id: string) => invoke<BrowserPageState>('browser
 
 export const readBrowserPage = async (id: string) => {
   await askFrames(id, 'snap')
-  return evalBrowserView(id, `${SAME_ORIGIN_FRAMES}
-(function(){
+  return evalBrowserView(id, withSameFrames(`(function(){
   var frames = __sameFrames(window, 0);
   var iframeText = [];
   var catalogText = '';
@@ -345,25 +344,35 @@ export const readBrowserPage = async (id: string) => {
     chaoxing: chaoxing,
     chapters: (typeof window !== 'undefined' && window.__ZE_CHAPTERS__) || null
   };
-})()`)
+})()`))
 }
 
-export const clickBrowserElement = (id: string, selector: string) => evalBrowserView(id, `${SAME_ORIGIN_FRAMES}
-(function(){
+export const clickBrowserElement = (id: string, selector: string) => evalBrowserView(id, withSameFrames(`(function(){
   var el = __findEl(${JSON.stringify(selector)});
   if (!el) return { ok: false, error: '没有找到元素' };
   __clickEl(el);
   return { ok: true, text: ((el.innerText || el.value || el.getAttribute('title') || '') + '').slice(0, 80) };
-})()`)
+})()`))
 
 export const clickBrowserText = async (id: string, text: string) => {
   const want = String(text || '').trim()
-  const localRaw = await evalBrowserView(id, `${SAME_ORIGIN_FRAMES}
-(function(){
+  const isIframeDoc = (href: string) => (
+    /studentcourse|\/knowledge\/cards|ananas\/modules|insertvideo|insertdoc|insertaudio|insertbbs/i.test(href)
+  )
+  const isCourseEntry = (href: string) => (
+    /stucoursemiddle|\/mycourse\/stu|studentstudy|courseid=/i.test(href)
+  )
+  const localRaw = await evalBrowserView(id, withSameFrames(`(function(){
   var want = ${JSON.stringify(want)};
   if (!want) return { ok: false, error: '缺少文案' };
   var compact = function(value){ return String(value || '').replace(/\\s+/g, '') };
   var target = compact(want.replace(/[（(]\\s*\\d+\\s*[）)]\\s*$/g, ''));
+  var iframeDoc = function(href){
+    return /studentcourse|\\/knowledge\\/cards|ananas\\/modules|insertvideo|insertdoc|insertaudio|insertbbs/i.test(String(href || ''));
+  };
+  var courseEntry = function(href){
+    return /stucoursemiddle|\\/mycourse\\/stu|studentstudy|courseid=/i.test(String(href || ''));
+  };
   var frames = __sameFrames(window, 0);
   var exactLink = null;
   var exact = null;
@@ -381,7 +390,8 @@ export const clickBrowserText = async (id: string, text: string) => {
         var isExact = label === target;
         var isFuzzy = !isExact && label.length <= 48 && label.indexOf(target) >= 0;
         if (!isExact && !isFuzzy) continue;
-        if (href && /stucoursemiddle|mycourse|studentstudy|courseid=|work/.test(href)) {
+        // 课名优先点带进课链接的 a（含 stucoursemiddle / mycourse/stu）
+        if (href && (courseEntry(href) || /work/i.test(href)) && !iframeDoc(href)) {
           if (isExact && !exactLink) { exactLink = el; linkHref = href; }
           else if (!fuzzyLink) { fuzzyLink = el; if (!linkHref) linkHref = href; }
         }
@@ -394,26 +404,20 @@ export const clickBrowserText = async (id: string, text: string) => {
   if (!hit) return { ok: false, error: '没有找到「' + want + '」' };
   var a = hit.tagName === 'A' ? hit : (hit.closest ? hit.closest('a') : null);
   var href = linkHref || __navHref(a || hit);
+  // 目录/视频等 iframe 文档只在 frame 里点；进课中间页保留 href 给顶层导航
+  if (iframeDoc(href)) href = '';
   __clickEl(a || hit);
-  if (href) {
-    try {
-      var win = ((a || hit).ownerDocument && (a || hit).ownerDocument.defaultView) || window;
-      var cur = '';
-      try { cur = String((win && win.location && win.location.href) || ''); } catch (e0) {}
-      if (/studentstudy/i.test(cur) && /studentstudy|chapterId=/i.test(href)) href = '';
-      else if (win && win.location && win.location.href.indexOf(href) < 0) win.location.assign(href);
-    } catch (e) {}
-  }
   return {
     ok: true,
     text: ((hit.innerText || hit.getAttribute('title') || '') + '').replace(/\\s+/g, ' ').trim().slice(0, 80),
     href: href || '',
   };
-})()`)
+})()`))
   const local = localRaw && typeof localRaw === 'object' ? localRaw as { ok?: boolean; text?: string; error?: string; href?: string } : {}
   if (local.ok) {
     const href = String(local.href || '').trim()
-    if (/^https?:/i.test(href) && /stucoursemiddle|mycourse|studentstudy|courseid=/.test(href)) {
+    // 进课中间页 / 课程壳 / 播放页：顶层打开（点完没跳就强制 navigate）
+    if (/^https?:/i.test(href) && !isIframeDoc(href) && (isCourseEntry(href) || /\/work\//i.test(href))) {
       const before = String((await getBrowserState(id).catch(() => null))?.url || '')
       if (/studentstudy/i.test(before) && /studentstudy/i.test(href)) return local
       await waitMs(500)
@@ -429,23 +433,12 @@ export const clickBrowserText = async (id: string, text: string) => {
   await askFrames(id, 'click', { text: want })
   const clicked = await evalBrowserView(id, `(function(){ return { ok: !!window.__ZE_CLICKED__, text: window.__ZE_CLICKED__ || '', href: window.__ZE_CLICKED_HREF__ || '' }; })()`).catch(() => null) as { ok?: boolean; text?: string; href?: string } | null
   if (clicked?.ok) {
-    const href = String(clicked.href || '').trim()
-    const before = String((await getBrowserState(id).catch(() => null))?.url || '')
-    if (/studentstudy/i.test(before) && /studentstudy/i.test(href)) {
-      return { ok: true, text: clicked.text || want, href, via: 'frame' }
-    }
-    if (/^https?:/i.test(href)) {
-      await waitMs(400)
-      const after = String((await getBrowserState(id).catch(() => null))?.url || '')
-      if (!after || after.indexOf(href.slice(0, 40)) < 0) await navigateBrowserView(id, href)
-    }
-    return { ok: true, text: clicked.text || want, href, via: 'frame' }
+    return { ok: true, text: clicked.text || want, href: '', via: 'frame' }
   }
   return local
 }
 
-export const typeBrowserElement = (id: string, selector: string, text: string) => evalBrowserView(id, `${SAME_ORIGIN_FRAMES}
-(function(){
+export const typeBrowserElement = (id: string, selector: string, text: string) => evalBrowserView(id, withSameFrames(`(function(){
   var el = __findEl(${JSON.stringify(selector)});
   if (!el) return { ok: false, error: '没有找到输入框' };
   el.focus();
@@ -456,7 +449,7 @@ export const typeBrowserElement = (id: string, selector: string, text: string) =
   el.dispatchEvent(new Event('input', { bubbles: true }));
   el.dispatchEvent(new Event('change', { bubbles: true }));
   return { ok: true };
-})()`)
+})()`))
 
 
 export const scrollBrowserView = (id: string, amount: number) => evalBrowserView(id, `window.scrollBy(0, ${Number(amount) || 0})`)

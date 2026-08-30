@@ -68,7 +68,7 @@ const formatWatchPrompt = (check: VideoWatchCheck) => {
     return `${base}\n这个视频已经结束。系统会先切本章下一个视频，没有了再切下一章。一句话即可，不要再点下一节。`
   }
   if (check.kind === 'lost') {
-    return `${base}\n播放器丢了或页面不对。立刻 browser_chaoxing_play；还不行就 browser_chaoxing_study 回到当前未完成节。不要问用户，不要 browser_wait。`
+    return `${base}\n播放器丢了或页面不对。立刻 browser_chaoxing_play；还不行就回章节目录 click_text 当前节名再 play。不要问用户，不要 browser_wait。`
   }
   if (check.kind === 'stalled') {
     return `${base}\n进度卡住或暂停了。立刻 browser_chaoxing_play 继续播。不要 browser_wait 空等。`
@@ -76,7 +76,7 @@ const formatWatchPrompt = (check: VideoWatchCheck) => {
   if (state.paused || state.status === 'stalled') {
     return `${base}\n视频是暂停或卡住的，没有在播。立刻 browser_chaoxing_play。禁止说正在播放。`
   }
-  return `${base}\n定时核对：paused 必须是 false，进度要在走，页面不能弹窗卡住，也不能变成测验。暂停/卡住立刻 browser_chaoxing_play；播放器没了就 browser_chaoxing_study；测验停下。确认正常就一句话回报进度，不要 browser_wait，监控还会再叫你。`
+  return `${base}\n定时核对：paused 必须是 false，进度要在走，页面不能弹窗卡住，也不能变成测验。暂停/卡住立刻 browser_chaoxing_play；播放器没了就回目录点节名再 play；测验停下。确认正常就一句话回报进度，不要 browser_wait，监控还会再叫你。`
 }
 
 const advancingBrowsers = new Set<string>()
@@ -179,13 +179,13 @@ const recoverPlayback = async (check: VideoWatchCheck) => {
     notifyWatch(
       sessionId,
       formatWatchDisplay(check),
-      `${formatWatchPrompt(check)}\n系统已自动点过播放仍没起来（第 ${attempts} 次）。立刻再 browser_chaoxing_play；页面不对就 browser_chaoxing_study。不要问用户。`,
+      `${formatWatchPrompt(check)}\n系统已自动点过播放仍没起来（第 ${attempts} 次）。立刻再 browser_chaoxing_play；页面不对就回目录 click_text 节名再 play。不要问用户。`,
     )
   } catch (error) {
     notifyWatch(
       sessionId,
       formatWatchDisplay(check),
-      `${formatWatchPrompt(check)}\n自动恢复失败：${error instanceof Error ? error.message : String(error)}。立刻 browser_chaoxing_play 或 browser_chaoxing_study。`,
+      `${formatWatchPrompt(check)}\n自动恢复失败：${error instanceof Error ? error.message : String(error)}。立刻 browser_chaoxing_play；页面不对就回目录点节名。`,
     )
   } finally {
     recoveringBrowsers.delete(browserId)
@@ -219,7 +219,7 @@ const handleCaptchaWatch = async (check: VideoWatchCheck) => {
     notifyWatch(
       sessionId,
       '进度检查 · 已填写验证码',
-      '验证码已自动填写并提交。立刻 browser_chaoxing_play；页面不对就 browser_chaoxing_study。不要问用户。',
+      '验证码已自动填写并提交。立刻 browser_chaoxing_play；页面不对就回目录 click_text 节名再 play。不要问用户。',
     )
     return
   }
