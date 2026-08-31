@@ -3,4 +3,6 @@ export type { ChaoxingHomeworkInfo, HomeworkLiveState, HomeworkQuestion, Homewor
 export { applyHomeworkLiveState, installHomeworkLiveSync, readHomeworkLiveState, startHomeworkLiveSync, stopHomeworkLiveSync } from './live'
 export { pickHomeworkOption } from './pick'
 export { inspectChaoxingHomework, openChaoxingHomeworkItem, openChaoxingHomeworkList } from './inspect'
-export { fillChaoxingHomework, saveChaoxingHomework, submitChaoxingHomework } from './fill'
+export { fillChaoxingHomework, guessChaoxingHomework, saveChaoxingHomework, submitChaoxingHomework } from './fill'
+export { runChaoxingChapterQuiz } from './chapterQuiz'
+export type { ChapterQuizRunResult } from './chapterQuiz'

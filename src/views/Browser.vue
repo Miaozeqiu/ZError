@@ -136,6 +136,7 @@ import {
   isHomeworkUrl,
   isStudyUrl,
   lastHomeworkCard,
+  publishHomeworkCard,
   setCurrentBrowserPage,
 } from '../services/browser/abstractions'
 import { siteGraphMenuOpen } from '../services/browser/siteGraph'
@@ -449,28 +450,62 @@ watch(selectedId, async (id, prev) => {
   void refreshCurrentParse()
 })
 
+/** 学习页：解析器后台轮询，不依赖打开「解析」面板 */
+watch(
+  () => [selectedId.value, address.value] as const,
+  ([id, url]) => {
+    if (!id) return
+    if (isStudyUrl(url || '')) startChaoxingChapterParser(id)
+    else stopChaoxingChapterParser(id)
+  },
+)
+
 let parseTimer = 0
 let liveTimer = 0
 let parseBusy = false
 let lastInspectUrl = ''
+
+const homeworkCardUseful = () => {
+  const card = lastHomeworkCard.value
+  if (!card) return false
+  return Boolean(
+    card.questions?.length
+    || card.works?.length
+    || card.pending?.length
+    || (card.questionCount || 0) > 0
+    || (card.pendingCount || 0) > 0,
+  )
+}
+
+const ensureHomeworkParseLoop = () => {
+  if (parseTimer) return
+  parseTimer = window.setInterval(() => {
+    void refreshCurrentParse(false)
+  }, 2000)
+}
+
 const refreshCurrentParse = async (force = false) => {
   const current = selected.value
   if (!current || parseBusy) return
   const url = address.value || current.url || ''
   if (isStudyUrl(url)) {
+    stopParseLoop()
     stopHomeworkLiveSync()
+    if (lastHomeworkCard.value) publishHomeworkCard(null)
     startChaoxingChapterParser(current.id)
     lastInspectUrl = url
     return
   }
   stopChaoxingChapterParser(current.id)
   if (!isHomeworkUrl(url)) {
+    stopParseLoop()
     stopHomeworkLiveSync()
+    if (lastHomeworkCard.value) publishHomeworkCard(null)
+    lastInspectUrl = ''
     return
   }
-  if (!abstractionMenuOpen.value && !force) return
-  const haveCard = Boolean(lastHomeworkCard.value?.questions?.length)
-  if (!force && haveCard && lastInspectUrl === url) {
+  ensureHomeworkParseLoop()
+  if (!force && homeworkCardUseful() && lastInspectUrl === url) {
     await startHomeworkLiveSync(current.id).catch(() => null)
     return
   }
@@ -505,12 +540,13 @@ const stopParseLoop = () => {
 }
 
 watch(abstractionMenuOpen, (open) => {
-  stopParseLoop()
-  if (!open) {
-    stopHomeworkLiveSync()
-    return
-  }
-  void refreshCurrentParse(false)
+  if (open) void refreshCurrentParse(true)
+  // 侧栏显隐会挤动 webview 区域，立刻重算 bounds，避免原生视图盖住面板导致点不了
+  void nextTick().then(() => updateBounds())
+})
+
+watch(siteGraphMenuOpen, () => {
+  void nextTick().then(() => updateBounds())
 })
 
 const onAbsKey = (event: KeyboardEvent) => {
@@ -538,7 +574,13 @@ onMounted(async () => {
       setCurrentBrowserPage(current.id, url)
       syncAddressText()
     }
-    if (!urlChanged) return
+    if (!urlChanged) {
+      // 同址切章（chapterId 变了有时仍走 state）时也保持解析器
+      if (selectedId.value === state.id && isStudyUrl(url)) {
+        startChaoxingChapterParser(state.id)
+      }
+      return
+    }
     void refreshCurrentParse()
   }).catch(() => null)
   unlistenOpened = await listenBrowserOpened((state) => {

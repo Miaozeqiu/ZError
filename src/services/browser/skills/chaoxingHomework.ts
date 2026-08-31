@@ -595,12 +595,10 @@ export const CHAOXING_HOMEWORK_SUBMIT = `(function(){
 })()`
 
 export const CHAOXING_HOMEWORK_PROMPT = `
-学习通作业只在题卡 browser_chaoxing_homework 上作答，禁止 browser_eval / click / get_page / type 碰作业页（会被直接挡回）。题卡和网页自动双向同步：fill 会同步到网页，网页勾选状态会自动回流到题卡。
-- 前提：必须先进入作业相关页。还在空间/课表/章节时，先点进课程再点「作业」；不要在非作业页调这个工具。
-- 作业列表页：list 看待做，open(title) 打开一份。作答页：inspect 读题卡；然后一题一题作答：答出第 1 道就立刻 fill 第 1 道，看到返回里 filled 变了再做下一道。不要把全部答案攒到最后一次 fill。
-- inspect 返回的 questions 就是题目卡：id/index/type/stem/options/filled。公式图已读成文字。不要说看不清，不要问用户截图。
-- 题干或选项还没读出的题（hint 会点名）先跳过，答完其他题再 inspect 一次，抽象层会自动补读。绝不允许在没读出题目时猜答案。
-- fill 的 answers 数组一次只放一项：index 或 id、type、answer。单选/判断填 A，多选填 AC，填空多空用分号。已选中的不要再点，fill 会跳过。
-- 看 next 字段做事：list / open / inspect / fill / save / submit / done。不要停下来问「要不要开始」。
-- 已完成/待批阅不要再交。不要出练习题。刷课时没说写作业不要抢答测验。
+学习通作业 / 章节测验只在题卡 browser_chaoxing_homework 上作答，禁止 browser_eval / click / get_page / type 碰题面（会被直接挡回）。题卡和网页自动双向同步。
+- 课程作业：先进入作业页。列表 list / open(title)，作答页 inspect → fill → save（用户要交再 submit）。一题一题 fill。
+- 章节测验（刷课里的 work 任务点，对齐 ocsjs）：监控会自动搜本地题库、未命中随机、暂存并继续。只有自动失败时才手动 inspect / fill / guess / save，再 browser_chaoxing_next。
+- inspect 返回 questions：id/index/type/stem/options/filled。公式图已读成文字。
+- fill 的 answers 一次只放一项。单选/判断填 A，多选填 AC，填空多空用分号。guess=剩余题随机选。
+- 已完成/待批阅不要再交。不要出练习题。
 `

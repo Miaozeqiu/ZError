@@ -6,6 +6,8 @@ import {
   parseChaoxingChapters,
   readChaoxingChapterJobTick,
   readChaoxingChapterTick,
+  playChaoxingVideo,
+  clickChaoxingStep,
   type ChaoxingChapterSnap,
   type OpenChapterHint,
 } from '../study'
@@ -68,8 +70,8 @@ export type ChapterParseState = {
 
 export const browserChapterStates = ref<Record<string, ChapterParseState>>({})
 
-const POLL_MS = 4000
-const HOOK_MS = 20000
+const POLL_MS = 2500
+const HOOK_MS = 12000
 const VIDEO_MS = 1000
 const VIDEO_STALE_MS = 10000
 const timers = new Map<string, number[]>()
@@ -270,9 +272,14 @@ const applyVideo = async (browserId: string) => {
     })
 
     if (hasVideo) {
+      const hasMarked = jobs.some((item) => item.active)
       const activeVideo = jobs.find((item) => item.active && item.kind === 'video')
-        || jobs.find((item) => item.kind === 'video' && item.unfinished)
-        || jobs.find((item) => item.kind === 'video')
+        || (!hasMarked
+          ? (
+            jobs.find((item) => item.kind === 'video' && item.unfinished)
+            || jobs.find((item) => item.kind === 'video')
+          )
+          : null)
       if (activeVideo) {
         jobs = jobs.map((item) => (
           item === activeVideo
@@ -449,6 +456,63 @@ export const openChapterFromCard = async (
   if (tick) applySnap(id, tick)
   else await refreshChapterCard(id).catch(() => null)
   return opened
+}
+
+/** 面板点小节：打开该节并尝试播放第一个视频 */
+export const playChapterFromCard = async (
+  browserId: string,
+  target: Pick<ChapterItem, 'title' | 'index' | 'chapterId' | 'href' | 'studyHref'>,
+) => {
+  const id = String(browserId || '').trim()
+  const opened = await openChapterFromCard(id, target)
+  await new Promise((resolve) => window.setTimeout(resolve, 700))
+  const played = await playChaoxingVideo(id).catch(() => null)
+  await applyVideo(id).catch(() => null)
+  return { opened, played }
+}
+
+/** 面板点本节任务点：必要时先切章，再按序号/mid 切标签；视频则播放 */
+export const playChapterJobFromCard = async (
+  browserId: string,
+  chapter: Pick<ChapterItem, 'title' | 'index' | 'chapterId' | 'href' | 'studyHref' | 'active'>,
+  job: Pick<ChapterJobItem, 'label' | 'kind' | 'active' | 'mid' | 'jobid'>,
+  opts?: { videoIndex?: number; stepIndex?: number },
+) => {
+  const id = String(browserId || '').trim()
+  if (!id) return { ok: false, error: '缺少浏览器' }
+  if (!chapter.active) {
+    await openChapterFromCard(id, chapter)
+    await new Promise((resolve) => window.setTimeout(resolve, 700))
+  }
+  const label = String(job.label || '').trim()
+  const videoIndex = Number(opts?.videoIndex) || 0
+  const stepIndex = Number(opts?.stepIndex) || 0
+  const mid = String(job.mid || '').trim()
+  const jobid = String(job.jobid || '').trim()
+  let stepped: Record<string, unknown> | null = null
+  if (label || mid || jobid || videoIndex || stepIndex) {
+    stepped = await clickChaoxingStep(id, {
+      label,
+      mid,
+      jobid,
+      videoIndex,
+      index: stepIndex,
+    }) as Record<string, unknown>
+  }
+  if (job.kind === 'quiz' || stepped?.quiz) {
+    await applyVideo(id).catch(() => null)
+    return { ok: true, quiz: true, stepped, hint: '已打开测验任务点' }
+  }
+  if (job.kind === 'doc' || stepped?.doc) {
+    await applyVideo(id).catch(() => null)
+    return { ok: true, doc: true, stepped }
+  }
+  // 已点过任务点标签，不要再自动点「第一个未完成视频」把切换冲掉
+  const played = await playChaoxingVideo(id, {
+    skipTabClick: Boolean(label || mid || jobid || videoIndex || stepIndex),
+  }).catch(() => null)
+  await applyVideo(id).catch(() => null)
+  return { ok: Boolean(played?.playing || played?.hasVideo), stepped, played }
 }
 
 export const refreshChapterCard = async (browserId: string) => {

@@ -9,27 +9,6 @@
         @click="clear"
       >清空</button>
     </div>
-    <div v-if="chapterState && (chapterState.unfinishedCount || chapterState.progress)" class="chapter-parse" :class="`is-${chapterState.status}`">
-      <div class="chapter-parse-top">
-        <span class="chapter-parse-title">{{ chapterLine }}</span>
-        <span class="chapter-parse-count">{{ chapterCount }}</span>
-      </div>
-      <div v-if="chapterState.unfinished.length" class="chapter-parse-list">{{ chapterState.unfinished.slice(0, 4).join('、') }}</div>
-    </div>
-    <div v-if="videoWatch" class="video-watch" :class="`is-${videoWatch.status}`">
-      <div class="video-watch-top">
-        <span class="video-watch-title">{{ videoWatch.title || '正在播放' }}</span>
-        <span class="video-watch-clock">{{ watchClock }}</span>
-      </div>
-      <div class="video-watch-bar" aria-hidden="true">
-        <span :style="{ width: `${videoWatch.percent}%` }" />
-      </div>
-      <div class="video-watch-meta">
-        <span>{{ watchLabel }}</span>
-        <span v-if="watchVideoIndex">{{ watchVideoIndex }}</span>
-        <span>{{ watchPercent }}</span>
-      </div>
-    </div>
     <div ref="threadRef" class="agent-thread">
       <div v-if="!session?.messages.length" class="feature-panel">
         <div class="feature-kicker">我可以帮你</div>
@@ -64,6 +43,17 @@
           <div v-else class="user-bubble">{{ message.content }}</div>
         </div>
         <div v-else class="assistant-turn">
+          <ul v-if="message.todos?.length" class="todo-list" aria-label="任务清单">
+            <li
+              v-for="(item, index) in message.todos"
+              :key="item.id"
+              class="todo-item"
+              :class="`is-${item.status}`"
+            >
+              <span class="todo-mark" aria-hidden="true">{{ item.status === 'done' ? '✓' : item.status === 'cancelled' ? '–' : String(index + 1) }}</span>
+              <span class="todo-text">{{ item.text }}</span>
+            </li>
+          </ul>
           <template v-for="block in assistantTimeline(message)" :key="block.key">
             <div
               v-if="block.type === 'step'"
@@ -220,8 +210,7 @@ import {
   type AgentQuizAttempt,
 } from '../../services/agent/chat'
 import { hostnameOf } from '../../services/browser/appBrowser'
-import { browserChapterStates } from '../../services/chaoxing/browser/chapters'
-import { browserVideoWatches, formatVideoClock } from '../../services/chaoxing/browser/watch'
+import { browserVideoWatches } from '../../services/chaoxing/browser/watch'
 import { shouldSubmitComposerEnter } from '../../utils/ui/composerEnter'
 import { getQuizCards, getQuizTitle, parseMarkdownQuizzes, parseQuizCards, type QuizCard } from '../../utils/question/quizPractice'
 import type { ImportTaskStep } from '../../services/app/importTasks'
@@ -279,7 +268,7 @@ const session = computed(() => {
   return browserChatSessions.value.find((item) => item.browserId === id) || null
 })
 
-const busy = computed(() => Boolean(session.value?.messages.some((item) => item.status === 'streaming')))
+const streaming = computed(() => Boolean(session.value?.messages.some((item) => item.status === 'streaming')))
 const placeHint = computed(() => hostnameOf(props.url || ''))
 const composerPlaceholder = computed(() =>
   placeHint.value && placeHint.value !== '导航'
@@ -287,63 +276,21 @@ const composerPlaceholder = computed(() =>
     : '问网页，或让我点、填、打开…',
 )
 
-const chapterState = computed(() => {
-  const id = String(props.browserId || '').trim()
-  return id ? browserChapterStates.value[id] || null : null
-})
-
-const chapterLine = computed(() => {
-  const state = chapterState.value
-  if (!state) return ''
-  if (state.current) return state.current
-  if (state.unfinished[0]) return `下一节 ${state.unfinished[0]}`
-  return '章节解析'
-})
-
-const chapterCount = computed(() => {
-  const state = chapterState.value
-  if (!state) return ''
-  if (state.progress) return `${state.progress.done}/${state.progress.total}`
-  if (state.unfinishedCount) return `未完成 ${state.unfinishedCount}`
-  return ''
-})
-
 const videoWatch = computed(() => {
   const id = String(props.browserId || '').trim()
   return id ? browserVideoWatches.value[id] || null : null
 })
 
-const watchClock = computed(() => {
-  const current = videoWatch.value
-  if (!current) return ''
-  if (!current.duration) return formatVideoClock(current.current)
-  return `${formatVideoClock(current.current)} / ${formatVideoClock(current.duration)}`
+/** 播放监控中对话可能已结束，仍视为任务进行中，保留停止按钮。 */
+const watchActive = computed(() => {
+  const status = videoWatch.value?.status
+  return status === 'watching'
+    || status === 'paused'
+    || status === 'stalled'
+    || status === 'captcha'
+    || status === 'quiz'
 })
-
-const watchLabel = computed(() => {
-  const current = videoWatch.value
-  if (!current) return ''
-  if (current.status === 'done') return '已完成'
-  if (current.status === 'captcha') return '正在填验证码'
-  if (current.status === 'quiz') return '遇到测验'
-  if (current.status === 'stalled') return '进度卡住'
-  if (current.status === 'paused') return '已暂停'
-  if (current.status === 'lost') return '找不到播放器'
-  return '播放中'
-})
-
-const watchPercent = computed(() => {
-  const current = videoWatch.value
-  if (!current) return ''
-  const value = current.duration > 0 ? current.percent : 0
-  return `${value < 10 ? value.toFixed(1) : Math.floor(value)}%`
-})
-
-const watchVideoIndex = computed(() => {
-  const current = videoWatch.value
-  if (!current || !(current.videoCount > 1)) return ''
-  return `视频 ${current.videoIndex || 1}/${current.videoCount}`
-})
+const busy = computed(() => streaming.value || watchActive.value)
 
 const quizKeyOf = (messageId: string, stepId: string) => `${messageId}\t${stepId}`
 const isQuizOpen = (messageId: string, stepId: string) => openedQuizKey.value === quizKeyOf(messageId, stepId)
@@ -404,6 +351,8 @@ const iconPaths = (name: string) => {
   if (name === 'browser_type') return ['M4 7h16v10H4z', 'M8 12h8']
   if (name === 'browser_scroll') return ['M12 5v14', 'M6 11l6-6 6 6', 'M6 13l6 6 6-6']
   if (name === 'browser_eval') return ['M8 8l-4 4 4 4', 'M16 8l4 4-4 4']
+  if (name === 'browser_todo') return ['M9 11l3 3L22 4', 'M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11']
+  if (name === 'browser_site_graph') return ['M6 7a2 2 0 1 0 0-4 2 2 0 0 0 0 4z', 'M18 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4z', 'M8 18a2 2 0 1 0 0-4 2 2 0 0 0 0 4z', 'M16 17a2 2 0 1 0 0-4 2 2 0 0 0 0 4z', 'M8 8l8 1', 'M7 9l2 6']
   if (name.startsWith('browser_chaoxing') || name === 'browser_wait' || name === 'browser_finish') {
     return name === 'browser_wait'
       ? ['M12 6v6l4 2', 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z']
@@ -442,7 +391,7 @@ watch(
 )
 
 watch(
-  () => session.value?.messages.map((item) => `${item.id}:${item.status}:${item.content.length}:${item.steps.length}`).join('|'),
+  () => session.value?.messages.map((item) => `${item.id}:${item.status}:${item.content.length}:${item.steps.length}:${item.todos?.length || 0}:${(item.todos || []).map((t) => t.status).join('')}`).join('|'),
   () => { void scrollBottom() },
 )
 
@@ -582,103 +531,6 @@ const onKeydown = (event: KeyboardEvent) => {
   background: var(--hover-bg, rgba(0, 0, 0, 0.04));
 }
 
-.chapter-parse {
-  flex-shrink: 0;
-  margin: 8px 10px 0;
-  padding: 8px 10px 9px;
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--text-primary, #2d3748) 4.5%, transparent);
-}
-
-.chapter-parse-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.chapter-parse-title {
-  min-width: 0;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-primary, #2d3748);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.chapter-parse-count,
-.chapter-parse-list {
-  font-size: 11px;
-  color: var(--text-secondary, #718096);
-}
-
-.chapter-parse-list {
-  margin-top: 4px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.video-watch {
-  flex-shrink: 0;
-  margin: 8px 10px 0;
-  padding: 8px 10px 9px;
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--text-primary, #2d3748) 4.5%, transparent);
-}
-
-.video-watch-top,
-.video-watch-meta {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.video-watch-title {
-  min-width: 0;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-primary, #2d3748);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.video-watch-clock,
-.video-watch-meta {
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  color: var(--text-secondary, #718096);
-}
-
-.video-watch-bar {
-  height: 3px;
-  margin: 7px 0 6px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--text-secondary, #718096) 16%, transparent);
-  overflow: hidden;
-}
-
-.video-watch-bar > span {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: #2F6F78;
-  transition: width 0.2s linear;
-}
-
-.video-watch.is-paused .video-watch-bar > span,
-.video-watch.is-stalled .video-watch-bar > span {
-  background: #c9a227;
-}
-
-.video-watch.is-quiz .video-watch-bar > span,
-.video-watch.is-lost .video-watch-bar > span {
-  background: #c2410c;
-}
-
 .agent-thread {
   flex: 1;
   min-height: 0;
@@ -803,6 +655,58 @@ const onKeydown = (event: KeyboardEvent) => {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.todo-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.todo-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: color-mix(in srgb, var(--text-primary, #2d3748) 72%, transparent);
+}
+
+.todo-item.is-done {
+  color: color-mix(in srgb, var(--text-primary, #2d3748) 42%, transparent);
+}
+
+.todo-item.is-done .todo-text {
+  text-decoration: line-through;
+}
+
+.todo-item.is-cancelled {
+  opacity: 0.45;
+}
+
+.todo-mark {
+  flex-shrink: 0;
+  width: 16px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary, #718096);
+}
+
+.todo-item.is-done .todo-mark {
+  color: color-mix(in srgb, var(--text-primary, #2d3748) 55%, #16a34a);
+}
+
+.todo-text {
+  min-width: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .activity-entry {

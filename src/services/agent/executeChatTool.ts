@@ -1,5 +1,6 @@
 import { isModelStopped, type ModelToolCall } from '../model/runner'
 import { executeBrowserTool } from './browserTools'
+import { applyBrowserTodo, pendingTodos } from './browserTodo'
 import { campusToolHandlers } from './toolHandlers/campus'
 import { folderToolHandlers } from './toolHandlers/folder'
 import { quizToolHandlers } from './toolHandlers/quiz'
@@ -39,8 +40,32 @@ export const executeChatTool = async (input: {
   const args = parseToolArgs(call.arguments)
   const browserId = ctx.browserId()
 
+  if (browserId && call.name === 'browser_site_graph') {
+    const { applySiteGraphPatch } = await import('../browser/siteGraph')
+    const state = await import('../browser/appBrowser').then((mod) => mod.getBrowserState(browserId).catch(() => null))
+    const url = String(state?.url || '')
+    return JSON.stringify(applySiteGraphPatch(args, { url }))
+  }
+
+  if (browserId && call.name === 'browser_todo') {
+    const current = ctx.getTodos?.() || []
+    const result = applyBrowserTodo(current, args)
+    if (result.ok) ctx.setTodos?.(result.todos)
+    return JSON.stringify(result)
+  }
+
   if (browserId && call.name.startsWith('browser_')) {
     try {
+      if (call.name === 'browser_finish' && String(args.status || '') === 'done') {
+        const left = pendingTodos(ctx.getTodos?.() || [])
+        if (left.length) {
+          return JSON.stringify({
+            error: '清单还有未完成项，不能 finish(done)',
+            pending: left.map((item) => item.text),
+            hint: '先 browser_todo check 完成项，或改清单；监控中用 watching。',
+          })
+        }
+      }
       return await executeBrowserTool({
         name: call.name,
         args,

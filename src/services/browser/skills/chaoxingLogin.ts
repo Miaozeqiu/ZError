@@ -6,5 +6,5 @@ export const CHAOXING_LOGIN_PROMPT = `
 - 出现滑块/图形验证就停，让用户完成后点 #loginBtn，不要破解。这时 browser_finish(status=blocked)。
 - 扫码：右侧 #quickCode，等用户用 App 扫。验证码登录：点「验证码登录」，#phone + #sendCodeBtn，用户给短信后填 #vercode。
 - 课程列表常在 iframe #frame_content。本窗口已注入全 frame 桥，用 browser_click_text 点「我学的课」再点课名。也可以打开 https://mooc1-1.chaoxing.com/visit/interaction。课名在 li.course a.color1。进课中间页 stucoursemiddle / 课程壳 mycourse/stu 可以顶层打开；不要打开 studentcourse / knowledge/cards / ananas 等目录视频 iframe。
-- 登录成功离开 passport 后立刻用工具调用 browser_finish(status=done)，不要写在正文里。用户只要登录时不要再点「课程」。填表失败就换办法继续调工具，禁止空口说「让我再试」。
+- 登录成功离开 passport 后：若用户只要登录，勾掉清单里对应项，再用自己的话 browser_finish(status=done, summary=…)。不要写在正文里，不要再点「课程」。填表失败就换办法继续调工具，禁止空口说「让我再试」。
 `

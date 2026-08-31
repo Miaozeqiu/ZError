@@ -17,6 +17,7 @@ import { runStudyProgressEvaluation } from '../study/progressAgent'
 import { finalizeStudySessionSummary } from '../study/timelineSummary'
 import { describeActivity } from './activity'
 import { executeChatTool } from './executeChatTool'
+import { formatTodoNudge } from './browserTodo'
 import { GRAPH_QUALITY, KEEP_GRAPH_HINT, graphSubjectHint, lastStudyFocus } from './studyHelpers'
 import type {
   AgentChatAttachment,
@@ -274,7 +275,7 @@ const browserStatePrefix = async (sessionId: string, light = false) => {
     if (info?.captcha) {
       playLine = '学习通弹出图片验证码（9010）。自己认图读出 4 位，立刻 browser_chaoxing_captcha 提交，然后继续刷课。不要问用户。'
     } else if (info?.quiz) {
-      playLine = `当前是测验/作业（${info.step || info.current || ''}）。停下让用户自己做，不要点播放。`
+      playLine = `当前是章节测验（${info.step || info.current || ''}）。系统会按 ocs 流程自动搜题/随机/暂存；失败再用 homework inspect/guess，然后 next。`
     } else if (info?.video) {
       const clock = `${formatVideoClock(info.video.current)} / ${formatVideoClock(info.video.duration)}`
       const title = info.current || '当前节'
@@ -748,6 +749,18 @@ export const stopChat = (id?: string) => {
   chatAborts.delete(sessionId)
   dropWatchQueue(sessionId)
   if (session?.browserId) stopChaoxingWatch(session.browserId)
+}
+
+/** 用户在面板上手动切章/播视频时打断该窗口 Agent 与播放监控 */
+export const stopBrowserAgent = (browserId?: string) => {
+  const id = String(browserId || '').trim()
+  if (!id) return
+  const session = sessions.value.find((item) => item.browserId === id)
+  if (session) {
+    stopChat(session.id)
+    return
+  }
+  stopChaoxingWatch(id)
 }
 
 export const removeChat = (id: string) => {
@@ -1334,6 +1347,8 @@ export const sendChatMessage = async (
               force: true,
               stepId: input.stepId,
             }),
+            getTodos: () => liveMessage()?.todos || [],
+            setTodos: (todos) => patchMessage(sessionId, assistantId, { todos }),
           },
         })
       },
@@ -1434,8 +1449,11 @@ export const sendChatMessage = async (
 
     let finalText = await runTextModel(modelPrompt, onDelta, runOptions)
     if (isBrowserChat && !abort.signal.aborted && liveMessage()?.status === 'streaming') {
-      const wantsHomework = /作业|答题|作答|应用高等数学/.test(content) && !/刷课|播完|播放视频/.test(content)
-      const wantsCourse = /播放|视频|章节|未完成|刷课|看完|看一下.*课|这个课程|国家安全|进度检查|已完成/.test(content)
+      // 「应用高等数学」是课名，不等于要写作业；章节/任务点优先走刷课流程。
+      const wantsCourse = /播放|视频|章节|任务点|未完成|刷课|看完|看一下.*课|这个课程|国家安全|进度检查|已完成/.test(content)
+      const wantsHomework = /作业|答题|作答/.test(content)
+        && !wantsCourse
+        && !/刷课|播完|播放视频/.test(content)
       const spoken = spokenText || liveContent()
       const steps = liveMessage()?.steps || []
       const usedNext = steps.some((step) => step.name === 'browser_chaoxing_next' && step.status === 'done')
@@ -1576,7 +1594,7 @@ export const sendChatMessage = async (
         keepSpoken()
         debug({ type: 'browser_continue', reason: 'homework unfinished' })
         finalText = await runTextModel(
-          '作业还没做完。只许用 browser_chaoxing_homework：有题卡就一题一题作答，答出一道立刻 fill 这一道（answers 只放一项），再做下一道；没有题卡就 inspect。题干没读出的题先跳过等 inspect 补读，不要猜。不要 eval，不要 click，不要读网页，不要出练习题，不要问用户确认。已选中的题 fill 会跳过。',
+          '作业还没做完。只许用 browser_chaoxing_homework：有题卡就一题一题作答，答出一道立刻 fill 这一道（answers 只放一项），再做下一道；没有题卡就 inspect。章节测验不会的题用 guess。不要 eval，不要 click，不要读网页，不要出练习题，不要问用户确认。已选中的题 fill 会跳过。',
           onDelta,
           {
             ...runOptions,
@@ -1622,8 +1640,7 @@ export const sendChatMessage = async (
         )
       }
 
-      // 任务门：用户这句话是任务。没 browser_finish、也没交监控时，空嘴停不算完，继续催。
-      // flash 常把 browser_finish(...) 写成正文，或登录已成功却不 finish——这两种直接收工。
+      // 任务门：用 Agent 自己写的 todo 清单推进；不要系统套话 finish，也不要因「登录成功」误判收工。
       if (options?.kind !== 'watch') {
         const acceptFinish = (status: string, summary: string, via: string) => {
           addStep(sessionId, assistantId, {
@@ -1645,17 +1662,7 @@ export const sendChatMessage = async (
           if (!hit) return null
           const status = String(hit[1] || 'done').toLowerCase()
           const sum = raw.match(/summary\s*[=:]\s*["“]([^"”]+)["”]/i)
-          return { status, summary: (sum?.[1] || raw.replace(/browser_finish[\s\S]*/i, '').trim() || '任务结束').slice(0, 160) }
-        }
-        const loginOnlyTask = /登录|登陆/.test(content)
-          && !/刷课|作业|答题|播放|章节|未完成|看完|自动播放/.test(content)
-        const pageUrl = async () => {
-          try {
-            const state = await getBrowserState(browserId)
-            return String(state?.url || listAppBrowsers().find((b) => b.id === browserId)?.url || '')
-          } catch {
-            return String(listAppBrowsers().find((b) => b.id === browserId)?.url || '')
-          }
+          return { status, summary: (sum?.[1] || '').trim().slice(0, 160) }
         }
 
         for (let kick = 0; kick < 12; kick += 1) {
@@ -1671,28 +1678,17 @@ export const sendChatMessage = async (
 
           const spokenNow = spokenText || liveContent()
           const textFinish = parseFinishInText(spokenNow)
-          if (textFinish) {
-            acceptFinish(textFinish.status, textFinish.summary, 'text')
-            break
-          }
-          const urlNow = await pageUrl()
-          if (
-            loginOnlyTask
-            && /已成功登录|登录成功|已登录学习通|勾选了.*自动登录/.test(spokenNow)
-            && /i\.mooc\.chaoxing|i\.chaoxing\.com|space\/index|visit\/interaction|个人空间|课程空间/.test(`${spokenNow}\n${urlNow}`)
-          ) {
-            acceptFinish('done', '已登录学习通（用户仅要求登录）', 'login-done')
-            break
+          // 正文里的 finish 只在有自写 summary 时才认，避免空壳收工
+          if (textFinish?.summary) {
+            const left = (liveMessage()?.todos || []).filter((item) => item.status === 'pending')
+            if (textFinish.status !== 'done' || !left.length) {
+              acceptFinish(textFinish.status, textFinish.summary, 'text')
+              break
+            }
           }
 
           keepSpoken()
-          const onlyFinish = /已成功登录|登录成功|已完成|任务已完成|流程已完成/.test(spokenNow)
-          const taskNudge = onlyFinish
-            ? '任务其实已经做完。立刻只调用工具 browser_finish(status=done, summary=…)，禁止写在正文里，不要再点「课程」或其它入口。'
-            : (
-              '用户任务还没结束。禁止只写「让我再试」「接下来」或把 browser_finish(...) 写进正文。'
-              + '立刻继续调用工具；真正做完必须用工具调用 browser_finish(status=done)，等人用 blocked，监控中用 watching。'
-            )
+          const taskNudge = formatTodoNudge(liveMessage()?.todos || [])
           debug({ type: 'browser_continue', reason: 'task not finished', kick })
           finalText = await runTextModel(
             taskNudge,

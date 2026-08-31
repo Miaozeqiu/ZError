@@ -1,4 +1,4 @@
-import { computed, ref, shallowRef } from 'vue'
+import { computed, ref, shallowRef, watch } from 'vue'
 
 export type BrowserAbstractionId =
   | 'chaoxing-homework'
@@ -47,10 +47,35 @@ export const isCourseUrl = (url: string) => (
   && /\/mycourse\/stu|studentcourse|stucoursemiddle/i.test(url)
   && !isPlayerUrl(url)
 )
-export const isHomeworkUrl = (url: string) => {
-  if (!isChaoxing(url) || isPlayerUrl(url) || /studentcourse/i.test(url)) return false
-  return /doHomeWork|\/work\/|workId=|workid=|pageHeader=8/i.test(url)
+
+/** 作业作答页：doHomeWork / work/dowork 等，不含章节播放与课程壳。 */
+export const isHomeworkDoUrl = (url: string) => {
+  if (!isChaoxing(url)) return false
+  if (/studentstudy|studentcourse|knowledge\/cards|ananas|insertcourse|passport2/i.test(url)) return false
+  return /doHomeWork|\/work\/do(?:work)?(?:[/?#]|$)|\/work\/phone\/do|dowork|do-work/i.test(url)
 }
+
+/**
+ * 作业列表页：课程壳 pageHeader=8，或独立 /work/list 等。
+ * 严格排除章节、播放、空间、登录。
+ */
+export const isHomeworkListUrl = (url: string) => {
+  if (!isChaoxing(url) || isHomeworkDoUrl(url)) return false
+  if (/studentstudy|studentcourse|knowledge\/cards|ananas|passport2/i.test(url)) return false
+  // 课程壳「作业」页签（mooc2 mycourse/stu?pageHeader=8）
+  if (/\/mycourse\/stu/i.test(url) && /(?:^|[?&])pageHeader=8(?:&|$)/i.test(url)) return true
+  if (/\/work\/(?:list|index|view)(?:[/?#]|$)/i.test(url)) return true
+  if (/mooc2-ans\.chaoxing\.com\/[^?\s]*\/work(?:\/|\?|$)/i.test(url)) return true
+  return false
+}
+
+export const isHomeworkUrl = (url: string) => isHomeworkDoUrl(url) || isHomeworkListUrl(url)
+
+/** 章节播放页里的测验/作业任务点，可用 homework 的 inspect/fill/save/submit。 */
+export const isChapterWorkUrl = (url: string) => isPlayerUrl(url)
+
+/** 课程作业页，或章节内测验页（可作答）。 */
+export const canUseHomeworkTools = (url: string) => isHomeworkUrl(url) || isChapterWorkUrl(url)
 export const isStudyUrl = (url: string) => (
   (isPlayerUrl(url) || isCourseUrl(url) || (isChaoxing(url) && /knowledge/i.test(url)))
   && !isHomeworkUrl(url)
@@ -156,6 +181,16 @@ export const abstractionButtonLabel = computed(() => {
   if (hit.id === 'chaoxing-study') return '章节'
   if (hit.id === 'chaoxing-homework') return '题卡'
   return hit.name.replace(/^学习通/, '') || '解析'
+})
+
+/** 仅章节/题卡等有内容解析的页面显示入口；登录、空间等无解析页隐藏。 */
+export const abstractionButtonVisible = computed(() => {
+  const hit = primaryAbstraction(currentBrowserUrl.value)
+  return hit?.id === 'chaoxing-study' || hit?.id === 'chaoxing-homework'
+})
+
+watch(abstractionButtonVisible, (visible) => {
+  if (!visible) abstractionMenuOpen.value = false
 })
 
 export const abstractionPanelTitle = computed(() => {

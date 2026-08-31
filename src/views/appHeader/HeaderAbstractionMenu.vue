@@ -1,5 +1,6 @@
 <template>
   <button
+    v-if="abstractionButtonVisible"
     class="abstraction-btn"
     type="button"
     title="查看当前页的章节或题卡"
@@ -19,6 +20,7 @@
 <script setup lang="ts">
 import {
   abstractionButtonLabel,
+  abstractionButtonVisible,
   abstractionMenuOpen,
 } from '../../services/browser/abstractions'
 import { toggleAbstractionMenu } from '../../services/browser/siteGraph'

@@ -96,7 +96,7 @@
     </article>
 
     <article v-else-if="layer.id === 'chaoxing-study'" class="abs-card">
-      <header class="abs-head">
+      <header class="abs-head abs-head-study">
         <div class="abs-head-left">
           <div class="abs-title">章节</div>
           <div
@@ -120,6 +120,7 @@
           </div>
           <div v-else class="abs-sub">{{ studyStatus }}</div>
         </div>
+        <p class="abs-hint">点小节切换并播放；点任务点切视频/测验。操作会打断 Agent。</p>
       </header>
       <div
         v-if="orphanWatch"
@@ -135,6 +136,51 @@
           <span>{{ orphanWatch.percent }}%</span>
         </div>
       </div>
+      <div v-if="currentJobHost && currentJobHost.jobList?.length" class="abs-now">
+        <div class="abs-now-title">
+          <span>{{ currentJobHost.index ? `${currentJobHost.index} ` : '' }}{{ currentJobHost.name || currentJobHost.title }}</span>
+          <em>本节任务点</em>
+        </div>
+        <div class="abs-ch-joblist abs-now-jobs">
+          <button
+            v-for="(job, jobIdx) in currentJobHost.jobList"
+            :key="`now-job-${job.mid || job.jobid || job.label}-${jobIdx}`"
+            type="button"
+            class="abs-ch-job is-go"
+            :class="{
+              'is-active': job.active,
+              'is-done': job.jobDone,
+              'is-busy': openingKey === jobKey(currentJobHost.key, job, jobIdx),
+              [`is-${job.kind}`]: true,
+            }"
+            :title="job.kind === 'video' ? '播放此视频' : job.kind === 'quiz' ? '打开测验' : '打开任务点'"
+            @click.stop="playJob(currentJobHost, job, jobIdx)"
+          >
+            <div class="abs-ch-job-row">
+              <span class="abs-ch-job-label">{{ job.label }}</span>
+              <span v-if="job.jobDone && !job.active" class="abs-ch-job-state">完成</span>
+              <span v-else-if="job.active && job.clock" class="abs-ch-job-state">{{ job.clock }}</span>
+              <span v-else-if="job.kind === 'quiz'" class="abs-ch-job-state">测验</span>
+              <span v-else-if="job.kind === 'doc'" class="abs-ch-job-state">文档</span>
+              <span v-else-if="job.kind === 'video'" class="abs-ch-job-state">播放</span>
+            </div>
+            <div
+              v-if="job.active && job.duration"
+              class="abs-ch-watch"
+              :class="job.paused ? 'is-paused' : job.jobDone ? 'is-done' : 'is-watching'"
+            >
+              <div class="abs-ch-watch-bar" aria-hidden="true">
+                <span :style="{ width: `${job.percent || 0}%` }" />
+              </div>
+              <div class="abs-ch-watch-meta">
+                <span>{{ job.clock }}</span>
+                <span>{{ job.paused ? '暂停' : '播放中' }}</span>
+                <span>{{ job.percent || 0 }}%</span>
+              </div>
+            </div>
+          </button>
+        </div>
+      </div>
       <ol v-if="chapterTree.length" class="abs-list abs-tree abs-body">
         <li
           v-for="item in chapterTree"
@@ -144,17 +190,22 @@
             'is-chapter': item.kind === 'chapter',
             'is-current': item.active,
             'is-open': item.unfinished,
-            'is-go': item.kind !== 'chapter',
-            'is-busy': openingKey === item.key,
-            'is-watching': Boolean(item.watch),
+            'is-watching': Boolean(item.watch) || item.jobList?.length,
           }"
           :style="{ '--depth': item.depth, '--watch-indent': item.index ? 'calc(5ch + 8px)' : '0px' }"
-          :title="item.title"
-          :tabindex="item.kind === 'chapter' ? undefined : 0"
-          @click="openChapter(item)"
-          @keydown.enter.prevent="openChapter(item)"
         >
-          <div class="abs-ch-row">
+          <div
+            class="abs-ch-row"
+            :class="{
+              'is-go': item.kind !== 'chapter',
+              'is-busy': openingKey === item.key,
+            }"
+            :title="item.kind === 'chapter' ? item.title : `打开并播放「${item.title}」`"
+            :tabindex="item.kind === 'chapter' ? undefined : 0"
+            role="button"
+            @click="openChapter(item)"
+            @keydown.enter.prevent="openChapter(item)"
+          >
             <span class="abs-ch-title">
               <i v-if="item.index">{{ item.index }}</i>
               <span>{{ item.name || item.title }}</span>
@@ -162,42 +213,8 @@
             <em v-if="item.active">当前</em>
             <b v-else-if="item.jobs" class="abs-ch-jobs">{{ item.jobs }}</b>
           </div>
-          <ul v-if="item.jobList?.length" class="abs-ch-joblist">
-            <li
-              v-for="(job, jobIdx) in item.jobList"
-              :key="`${item.key}-job-${job.mid || job.jobid || job.label}-${jobIdx}`"
-              class="abs-ch-job"
-              :class="{
-                'is-active': job.active,
-                'is-done': job.jobDone,
-                [`is-${job.kind}`]: true,
-              }"
-            >
-              <div class="abs-ch-job-row">
-                <span class="abs-ch-job-label">{{ job.label }}</span>
-                <span v-if="job.jobDone && !job.active" class="abs-ch-job-state">完成</span>
-                <span v-else-if="job.active && job.clock" class="abs-ch-job-state">{{ job.clock }}</span>
-                <span v-else-if="job.kind === 'quiz'" class="abs-ch-job-state">测验</span>
-                <span v-else-if="job.kind === 'doc'" class="abs-ch-job-state">文档</span>
-              </div>
-              <div
-                v-if="job.active && job.duration"
-                class="abs-ch-watch"
-                :class="job.paused ? 'is-paused' : job.jobDone ? 'is-done' : 'is-watching'"
-              >
-                <div class="abs-ch-watch-bar" aria-hidden="true">
-                  <span :style="{ width: `${job.percent || 0}%` }" />
-                </div>
-                <div class="abs-ch-watch-meta">
-                  <span>{{ job.clock }}</span>
-                  <span>{{ job.paused ? '暂停' : '播放中' }}</span>
-                  <span>{{ job.percent || 0 }}%</span>
-                </div>
-              </div>
-            </li>
-          </ul>
           <div
-            v-else-if="item.watch"
+            v-if="item.watch"
             class="abs-ch-watch"
             :class="`is-${item.watch.status}`"
           >
@@ -234,7 +251,12 @@ import {
   primaryAbstraction,
 } from '../../services/browser/abstractions'
 import QuestionIndexSwitcher from '../ui/QuestionIndexSwitcher.vue'
-import { chapterStateFor, openChapterFromCard } from '../../services/chaoxing/browser/chapters'
+import { stopBrowserAgent } from '../../services/agent/chat'
+import {
+  chapterStateFor,
+  playChapterFromCard,
+  playChapterJobFromCard,
+} from '../../services/chaoxing/browser/chapters'
 import type { ChapterJobItem } from '../../services/chaoxing/browser/chapters'
 import {
   formatVideoClock,
@@ -470,7 +492,7 @@ const chapterTree = computed(() => {
       || (watch ? rows.find((item) => watchMatchesItem(watch, item)) : null)
       || null)
     : null
-  return rows.map((item, i) => {
+  const mapped = rows.map((item, i) => {
     const row = {
       key: `${item.kind}-${item.index}-${item.title}-${i}`,
       kind: item.kind || 'section',
@@ -485,8 +507,9 @@ const chapterTree = computed(() => {
       studyHref: item.studyHref,
       chapterId: item.chapterId,
     }
-    const matched = Boolean(watchHit && watchHit === item)
-    const jobList = matched
+    // 当前节 / 进度挂靠节都挂任务点列表，保证能点到
+    const matched = Boolean(item.active) || Boolean(watchHit && watchHit === item)
+    let jobList = matched
       ? chapterJobs.map((job) => ({
           ...job,
           clock: job.duration
@@ -495,6 +518,28 @@ const chapterTree = computed(() => {
           percent: Math.round(Number(job.percent) || 0),
         }))
       : []
+    // 解析器还没给出任务点时，用本节目录任务数 / 合理 videoCount 拼可点的「视频 n」
+    if (matched && !jobList.length) {
+      const fromCatalog = Number(item.jobs) || 0
+      const fromParsed = chapterJobs.filter((job) => job.kind === 'video').length
+      const fromWatch = Number(watch?.videoCount) || 0
+      const watchOk = fromWatch > 1 && fromWatch <= 8 ? fromWatch : 0
+      const n = Math.min(12, Math.max(fromCatalog, fromParsed, watchOk))
+      if (n > 1) {
+        const activeIndex = Math.max(1, Number(watch?.videoIndex) || 1)
+        jobList = Array.from({ length: n }, (_, idx) => ({
+          mid: '',
+          jobid: '',
+          label: `视频${idx + 1}`,
+          kind: 'video' as const,
+          jobDone: false,
+          unfinished: true,
+          active: idx + 1 === activeIndex,
+          clock: '',
+          percent: 0,
+        }))
+      }
+    }
     const showWatch = matched && watch && !jobList.length
     return {
       ...row,
@@ -505,7 +550,30 @@ const chapterTree = computed(() => {
       watchPercent: showWatch && watch ? Math.round(watch.percent) : 0,
     }
   })
+
+  // 目录没标出当前节时，仍把已解析到的任务点挂到第一个小节上，避免顶部没有可点列表
+  if (!mapped.some((item) => item.jobList?.length) && chapterJobs.length) {
+    const host = mapped.find((item) => item.active)
+      || mapped.find((item) => item.kind !== 'chapter')
+      || mapped[0]
+    if (host) {
+      host.jobList = chapterJobs.map((job) => ({
+        ...job,
+        clock: job.duration
+          ? `${formatVideoClock(job.current || 0)} / ${formatVideoClock(job.duration)}`
+          : '',
+        percent: Math.round(Number(job.percent) || 0),
+      }))
+    }
+  }
+  return mapped
 })
+
+/** 顶部固定：当前节任务点，避免埋在长目录里点不到 */
+const currentJobHost = computed(() => (
+  chapterTree.value.find((item) => item.jobList?.length)
+  || null
+))
 
 const orphanWatch = computed(() => {
   const watch = panelWatch.value
@@ -522,6 +590,14 @@ const orphanWatch = computed(() => {
 })
 
 const openingKey = ref('')
+/** 连续点击时只认最后一次，避免 busy 锁死整块面板 */
+let openGen = 0
+
+const jobKey = (
+  chapterKey: string,
+  job: { mid?: string; jobid?: string; label?: string },
+  jobIdx: number,
+) => `${chapterKey}-job-${job.mid || job.jobid || job.label || jobIdx}`
 
 const openChapter = (item: {
   key: string
@@ -533,11 +609,42 @@ const openChapter = (item: {
   studyHref?: string
   active?: boolean
 }) => {
-  if (!props.browserId || item.kind === 'chapter' || openingKey.value) return
-  if (item.active) return
+  if (!props.browserId || item.kind === 'chapter') return
+  const gen = ++openGen
+  stopBrowserAgent(props.browserId)
   openingKey.value = item.key
-  void openChapterFromCard(props.browserId, item).finally(() => {
-    if (openingKey.value === item.key) openingKey.value = ''
+  void playChapterFromCard(props.browserId, item).finally(() => {
+    if (gen === openGen) openingKey.value = ''
+  })
+}
+
+const playJob = (
+  item: {
+    key: string
+    kind: string
+    title: string
+    index?: string
+    chapterId?: string
+    href?: string
+    studyHref?: string
+    active?: boolean
+    jobList?: Array<ChapterJobItem & { clock?: string; percent?: number }>
+  },
+  job: ChapterJobItem & { clock?: string; percent?: number },
+  jobIdx: number,
+) => {
+  if (!props.browserId) return
+  const key = jobKey(item.key, job, jobIdx)
+  const gen = ++openGen
+  stopBrowserAgent(props.browserId)
+  openingKey.value = key
+  const videosBefore = (item.jobList || []).slice(0, jobIdx + 1).filter((entry) => entry.kind === 'video')
+  const videoIndex = job.kind === 'video' ? videosBefore.length : 0
+  void playChapterJobFromCard(props.browserId, item, job, {
+    videoIndex: videoIndex || undefined,
+    stepIndex: jobIdx + 1,
+  }).finally(() => {
+    if (gen === openGen) openingKey.value = ''
   })
 }
 const chapterProgress = computed(() => chapter.value?.progress || null)
@@ -767,6 +874,21 @@ const pickOption = (item: { index: number }, opt: { letter: string }) => {
   align-items: center;
   gap: 8px;
   min-width: 0;
+  border-radius: 8px;
+  padding: 2px 4px;
+  margin: 0 -4px;
+}
+
+.abs-ch-row.is-go {
+  cursor: pointer;
+}
+
+.abs-ch-row.is-go:hover {
+  background: color-mix(in srgb, var(--text-primary, #2d3748) 5%, transparent);
+}
+
+.abs-ch-row.is-busy {
+  opacity: 0.55;
 }
 
 .abs-ch.is-watching {
@@ -785,16 +907,79 @@ const pickOption = (item: { index: number }, opt: { letter: string }) => {
 .abs-ch-joblist {
   margin: 4px 0 0 var(--watch-indent, 0px);
   padding: 0;
-  list-style: none;
   display: flex;
   flex-direction: column;
   gap: 4px;
+  position: relative;
+  z-index: 2;
+}
+
+.abs-now {
+  flex-shrink: 0;
+  margin: 0 0 10px;
+  padding: 8px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--color-primary, #667eea) 7%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-primary, #667eea) 14%, transparent);
+}
+
+.abs-now-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary, #3a3a3c);
+}
+
+.abs-now-title em {
+  font-style: normal;
+  font-size: 10px;
+  font-weight: 550;
+  color: var(--text-secondary, #86868b);
+}
+
+.abs-now-jobs {
+  margin-left: 0;
 }
 
 .abs-ch-job {
+  display: block;
+  width: 100%;
+  margin: 0;
   padding: 4px 6px;
+  border: none;
   border-radius: 6px;
+  text-align: left;
+  font: inherit;
+  color: inherit;
   background: color-mix(in srgb, var(--text-primary, #000) 3.5%, transparent);
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.abs-ch-job.is-go:hover {
+  background: color-mix(in srgb, var(--text-primary, #2d3748) 8%, transparent);
+}
+
+.abs-ch-job.is-busy {
+  opacity: 0.55;
+}
+
+.abs-head-study {
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+.abs-hint {
+  width: 100%;
+  margin: 2px 0 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-secondary, #86868b);
 }
 
 .abs-ch-job.is-active {
@@ -894,6 +1079,8 @@ const pickOption = (item: { index: number }, opt: { letter: string }) => {
   border-radius: 0;
   background: var(--bg-secondary, #fff);
   box-shadow: 0 1px 0 color-mix(in srgb, var(--border-primary, #e2e8f0) 50%, transparent);
+  /* 粘住时不要挡住下面可点的小节 / 任务点 */
+  pointer-events: none;
 }
 
 .abs-ch.is-chapter:first-child {

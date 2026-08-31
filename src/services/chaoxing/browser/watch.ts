@@ -47,8 +47,6 @@ const SYNC_MS = 1000
 const INSPECT_MS = 8000
 const STALL_MS = 12000
 const LOST_MS = 16000
-const HEARTBEAT_MS = 75000
-const CHECK_MARKS = [25, 50, 75] as const
 
 const timers = new Map<string, number[]>()
 const fired = new Map<string, Set<number>>()
@@ -56,7 +54,6 @@ const stallNotified = new Set<string>()
 const lastProgressAt = new Map<string, number>()
 const lastSeenAt = new Map<string, number>()
 const pausedAt = new Map<string, number>()
-const lastHeartbeatAt = new Map<string, number>()
 const inFlight = new Set<string>()
 
 type CheckHandler = (check: VideoWatchCheck) => void
@@ -117,7 +114,6 @@ export const stopChaoxingWatch = (browserId?: string, opts?: { keep?: boolean })
   lastProgressAt.delete(id)
   lastSeenAt.delete(id)
   pausedAt.delete(id)
-  lastHeartbeatAt.delete(id)
   if (!opts?.keep && browserVideoWatches.value[id]) {
     const rest = { ...browserVideoWatches.value }
     delete rest[id]
@@ -125,6 +121,7 @@ export const stopChaoxingWatch = (browserId?: string, opts?: { keep?: boolean })
   }
 }
 
+/** 进度条本地实时更新；只在播完时叫醒后续逻辑，不再按 25/50/75 里程碑打扰 Agent。 */
 const emitMarks = (state: VideoWatchState, done: boolean) => {
   const marks = fired.get(state.browserId) || new Set<number>()
   if (done && !marks.has(100)) {
@@ -133,14 +130,6 @@ const emitMarks = (state: VideoWatchState, done: boolean) => {
     emit('done', state)
     stopChaoxingWatch(state.browserId, { keep: true })
     return true
-  }
-  for (const mark of CHECK_MARKS) {
-    if (state.percent >= mark && !marks.has(mark)) {
-      marks.add(mark)
-      fired.set(state.browserId, marks)
-      emit('progress', state)
-      break
-    }
   }
   return false
 }
@@ -253,16 +242,6 @@ const applyInspect = (browserId: string, info: ChaoxingVideoInfo | null) => {
   })
 }
 
-const emitHeartbeat = (browserId: string) => {
-  const watch = browserVideoWatches.value[browserId]
-  if (!watch) return
-  if (watch.status === 'done' || watch.status === 'quiz' || watch.status === 'captcha') return
-  const last = lastHeartbeatAt.get(browserId) || watch.startedAt
-  if (Date.now() - last < HEARTBEAT_MS) return
-  lastHeartbeatAt.set(browserId, Date.now())
-  emit('heartbeat', watch)
-}
-
 const tickLive = (browserId: string) => {
   const watch = browserVideoWatches.value[browserId]
   if (!watch) return
@@ -273,11 +252,13 @@ const tickLive = (browserId: string) => {
   if (elapsed < 0.05) return
   const current = Math.min(watch.duration, watch.sampledCurrent + elapsed)
   const done = Boolean(watch.ended || (watch.duration > 0 && current >= watch.duration - 0.15))
-  patchWatch(browserId, {
+  const next = patchWatch(browserId, {
     current,
     percent: livePercent(current, watch.duration, done),
     status: done ? 'done' : 'watching',
+    ended: done || watch.ended,
   })
+  if (next && done) emitMarks(next, true)
 }
 
 const syncTick = async (browserId: string) => {
@@ -333,7 +314,6 @@ export const startChaoxingWatch = (
   }
   lastProgressAt.set(id, Date.now())
   lastSeenAt.set(id, Date.now())
-  if (!resume) lastHeartbeatAt.set(id, Date.now())
   const duration = Math.max(0, Number(seed?.duration) || 0)
   const current = Math.max(0, Number(seed?.current) || 0)
   const done = Boolean(seed?.ended)
@@ -361,11 +341,11 @@ export const startChaoxingWatch = (
     updatedAt: now,
   }
   browserVideoWatches.value = { ...browserVideoWatches.value, [id]: state }
+  // 本地读进度条即可；不设 heartbeat，避免定时叫醒 Agent
   timers.set(id, [
     window.setInterval(() => tickLive(id), LIVE_MS),
     window.setInterval(() => { void syncTick(id) }, SYNC_MS),
     window.setInterval(() => { void inspectTick(id) }, INSPECT_MS),
-    window.setInterval(() => emitHeartbeat(id), 15000),
   ])
   void installChaoxingVideoHook(id).then((tick) => {
     if (tick && 'current' in tick) applyTick(id, tick as ChaoxingVideoTick)

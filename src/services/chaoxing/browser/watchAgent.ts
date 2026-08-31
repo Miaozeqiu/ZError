@@ -62,7 +62,7 @@ const formatWatchPrompt = (check: VideoWatchCheck) => {
     return `${base}\n学习通弹出图片验证码（9010）。图会附上或页面上有 #ccc。立刻认出 4 位并 browser_chaoxing_captcha。不要问用户，不要 browser_wait。提交后再 play 或 study。`
   }
   if (check.kind === 'quiz') {
-    return `${base}\n当前是测验/作业。停下让用户自己做，不要点下一节，不要作答。一句话说明即可。`
+    return `${base}\n当前是章节测验。系统会按 ocs 流程自动搜题/随机/暂存；若失败再 inspect/guess，然后 browser_chaoxing_next。`
   }
   if (check.kind === 'done') {
     return `${base}\n这个视频已经结束。系统会先切本章下一个视频，没有了再切下一章。一句话即可，不要再点下一节。`
@@ -76,7 +76,7 @@ const formatWatchPrompt = (check: VideoWatchCheck) => {
   if (state.paused || state.status === 'stalled') {
     return `${base}\n视频是暂停或卡住的，没有在播。立刻 browser_chaoxing_play。禁止说正在播放。`
   }
-  return `${base}\n定时核对：paused 必须是 false，进度要在走，页面不能弹窗卡住，也不能变成测验。暂停/卡住立刻 browser_chaoxing_play；播放器没了就回目录点节名再 play；测验停下。确认正常就一句话回报进度，不要 browser_wait，监控还会再叫你。`
+  return `${base}\n定时核对：paused 必须是 false，进度要在走，页面不能弹窗卡住。暂停/卡住立刻 browser_chaoxing_play；播放器没了就回目录点节名再 play；遇到测验就 homework inspect/fill/guess 后继续。确认正常就一句话回报进度，不要 browser_wait，监控还会再叫你。`
 }
 
 const advancingBrowsers = new Set<string>()
@@ -159,7 +159,7 @@ const recoverPlayback = async (check: VideoWatchCheck) => {
       return
     }
     if (snap?.quiz) {
-      notifyWatch(sessionId, '进度检查 · 遇到测验', `当前是测验/作业（${snap.step || snap.current || ''}）。停下让用户自己做，不要点下一节，不要作答。`)
+      void handleChapterQuizWatch({ ...check, kind: 'quiz' })
       return
     }
     const played = await playChaoxingVideo(browserId) as Record<string, unknown>
@@ -169,11 +169,7 @@ const recoverPlayback = async (check: VideoWatchCheck) => {
         ...played,
         title: played.title || check.status.title,
       }, check.status), { resume: true })
-      notifyWatch(
-        sessionId,
-        `进度检查 · 已自动继续「${check.status.title || '当前节'}」`,
-        `刚才${check.kind === 'lost' ? '找不到播放器' : '进度卡住'}，系统已经重新点了播放，现在 paused=false。确认还在播就一句话回报，不要再空等。`,
-      )
+      // 自动恢复成功：面板进度条继续走，不叫醒 Agent
       return
     }
     notifyWatch(
@@ -209,11 +205,7 @@ const handleCaptchaWatch = async (check: VideoWatchCheck) => {
         ...played,
         title: played.title || check.status.title,
       }, check.status))
-      notifyWatch(
-        sessionId,
-        `进度检查 · 已填写验证码并继续「${check.status.title || '当前节'}」`,
-        '验证码已自动填写并提交，视频已在播。一句话回报即可，不要再问用户。',
-      )
+      // 验证码自动过且已在播：不叫醒 Agent
       return
     }
     notifyWatch(
@@ -224,6 +216,48 @@ const handleCaptchaWatch = async (check: VideoWatchCheck) => {
     return
   }
   notifyCaptchaWithImage(sessionId, solved.image, solved.error)
+}
+
+const chapterQuizOnce = new Set<string>()
+
+const handleChapterQuizWatch = async (check: VideoWatchCheck) => {
+  const { browserId, sessionId } = check
+  if (!browserId) return
+  const key = `${browserId}:${check.status.step || check.status.title || 'quiz'}`
+  if (chapterQuizOnce.has(key) || advancingBrowsers.has(browserId)) {
+    notifyWatch(
+      sessionId,
+      '进度检查 · 章节测验',
+      '章节测验还在。调用 browser_chaoxing_homework inspect/guess/save，完成后 browser_chaoxing_next。',
+    )
+    return
+  }
+  chapterQuizOnce.add(key)
+  advancingBrowsers.add(browserId)
+  try {
+    const { runChaoxingChapterQuiz } = await import('../homework/chapterQuiz')
+    const result = await runChaoxingChapterQuiz(browserId)
+    if (!result.ok) {
+      notifyWatch(
+        sessionId,
+        '进度检查 · 章节测验未完成',
+        `${result.hint || result.error || '章节测验自动作答失败'}。用 browser_chaoxing_homework inspect/guess/save，再 browser_chaoxing_next。`,
+      )
+      return
+    }
+    // 对齐 ocs：任务点做完直接进下一个，不叫醒 Agent
+  } catch (error) {
+    notifyWatch(
+      sessionId,
+      '进度检查 · 章节测验失败',
+      `自动作答出错：${error instanceof Error ? error.message : String(error)}。用 homework inspect/guess，再 next。`,
+    )
+    return
+  } finally {
+    advancingBrowsers.delete(browserId)
+    window.setTimeout(() => chapterQuizOnce.delete(key), 60_000)
+  }
+  await advanceToNextVideo(check)
 }
 
 const advanceToNextVideo = async (check: VideoWatchCheck) => {
@@ -250,7 +284,18 @@ const advanceToNextVideo = async (check: VideoWatchCheck) => {
       videoIndex?: number
     }
     if (next?.quiz) {
-      notifyWatch(sessionId, '进度检查 · 遇到测验', `当前是测验/作业（${next.step || next.title || ''}）。停下让用户自己做，不要点下一节，不要作答。`)
+      advancingBrowsers.delete(browserId)
+      await handleChapterQuizWatch({
+        ...check,
+        kind: 'quiz',
+        status: {
+          ...check.status,
+          step: String(next.step || next.title || check.status.step || ''),
+          title: String(next.title || next.step || check.status.title || ''),
+          quiz: true,
+          status: 'quiz',
+        },
+      })
       return
     }
     if (next?.hasVideo && Number(next.duration) > 1) {
@@ -260,7 +305,6 @@ const advanceToNextVideo = async (check: VideoWatchCheck) => {
       }
       const title = String(played.opened || played.title || next.opened || next.title || '下一节').trim()
       const playing = videoIsPlaying(played)
-      const sameChapter = Boolean(next.sameChapter)
       recoverAttempts.set(browserId, 0)
       startChaoxingWatch(browserId, sessionId, seedFromPlayed({
         ...played,
@@ -271,26 +315,20 @@ const advanceToNextVideo = async (check: VideoWatchCheck) => {
         videoIndex: played.videoIndex || next.videoIndex,
       }, check.status))
       if (playing) {
-        notifyWatch(
-          sessionId,
-          `进度检查 · 已打开「${title}」`,
-          sameChapter
-            ? `本章下一个视频「${title}」已确认在播（paused=false）。一句话告诉用户即可。后面若还有视频，播完再切，不要直接跳下一章。`
-            : `下一节「${title}」已确认在播（paused=false）。一句话告诉用户即可。不要再说正在播放以外的套话，不要再 browser_chaoxing_next。`,
-        )
-      } else {
-        notifyWatch(
-          sessionId,
-          `进度检查 · 已打开「${title}」但未播放`,
-          `${sameChapter ? '本章下一个视频' : '下一节'}「${title}」已经打开，但视频是暂停的。立刻 browser_chaoxing_play。禁止说正在播放、视频仍在后台播放。`,
-        )
+        // 播完自动切下一段且已在播：进度条更新即可，不叫醒 Agent
+        return
       }
+      notifyWatch(
+        sessionId,
+        `进度检查 · 已打开「${title}」但未播放`,
+        `${next.sameChapter ? '本章下一个视频' : '下一节'}「${title}」已经打开，但视频是暂停的。立刻 browser_chaoxing_play。禁止说正在播放、视频仍在后台播放。`,
+      )
       return
     }
     notifyWatch(
       sessionId,
-      '进度检查 · 下一节没有打开',
-      `自动打开下一节失败。${next?.hint || ''} 跳过了：${(next?.skipped || []).join('、') || '无'}。调用 browser_chaoxing_next 再试一次。不要问用户手动点。`,
+      '进度检查 · 需要继续',
+      `上一节已播完，自动打开下一节失败。${next?.hint || ''} 跳过了：${(next?.skipped || []).join('、') || '无'}。调用 browser_chaoxing_next 再试；若已无未完成，browser_finish(status=done)。不要问用户手动点。`,
     )
   } catch (error) {
     notifyWatch(
@@ -313,6 +351,8 @@ const enqueueWatchCheck = (check: VideoWatchCheck) => {
     }
     return
   }
+  // 正常播放中的 progress / heartbeat：只更新面板，绝不叫 Agent
+  if (check.kind === 'progress' || check.kind === 'heartbeat') return
   if (check.kind === 'done') {
     void advanceToNextVideo(check)
     return
@@ -321,11 +361,14 @@ const enqueueWatchCheck = (check: VideoWatchCheck) => {
     void handleCaptchaWatch(check)
     return
   }
+  if (check.kind === 'quiz') {
+    void handleChapterQuizWatch(check)
+    return
+  }
   if (check.kind === 'stalled' || check.kind === 'lost') {
     void recoverPlayback(check)
     return
   }
-  // 播着且进度在走：只更新面板，不要再叫 Agent，避免反复 study
 }
 
 

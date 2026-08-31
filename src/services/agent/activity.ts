@@ -15,20 +15,66 @@ export const describeActivity = (name: string, args: any, status: ImportTaskStep
     browser_scroll: ['正在滚动', '滚动失败', '滚动了页面'],
     browser_eval: ['正在执行脚本', '执行脚本失败', '在网页上执行了脚本'],
     browser_wait: ['正在等待', '等待失败', args?.seconds ? `等了 ${args.seconds} 秒` : '等待了一会儿'],
+    browser_todo: [
+      args?.action === 'check' ? '正在勾选任务' : args?.action === 'add' ? '正在追加任务' : '正在整理任务清单',
+      '更新任务清单失败',
+      args?.action === 'check'
+        ? '勾选了任务项'
+        : args?.action === 'add'
+          ? '追加了任务项'
+          : args?.action === 'clear'
+            ? '清空了任务清单'
+            : Array.isArray(args?.items)
+              ? `写下了 ${args.items.length} 步任务`
+              : '更新了任务清单',
+    ],
+    browser_site_graph: [
+      args?.action === 'list' || args?.action === 'get'
+        ? '正在查看网站图谱'
+        : args?.action === 'reset'
+          ? '正在重置网站图谱'
+          : '正在修改网站图谱',
+      '网站图谱操作失败',
+      args?.action === 'upsert_node'
+        ? (args?.title ? `更新了图谱节点「${args.title}」` : '更新了图谱节点')
+        : args?.action === 'upsert_edge'
+          ? `更新了图谱边 ${args?.from || ''}→${args?.to || ''}`
+          : args?.action === 'remove_node'
+            ? `删除了图谱节点 ${args?.id || ''}`
+            : args?.action === 'remove_edge'
+              ? `删除了图谱边 ${args?.from || ''}→${args?.to || ''}`
+              : args?.action === 'reset'
+                ? '重置了网站图谱'
+                : args?.action === 'set_notes'
+                  ? '更新了图谱备注'
+                  : '查看了网站图谱',
+    ],
     browser_chaoxing_chapters: ['正在读取章节', '读取章节失败', '读取了章节目录'],
     browser_chaoxing_play: ['正在播放视频', '播放失败', '点了学习通播放'],
     browser_chaoxing_watch: ['正在监控进度', '监控失败', '开始监控视频进度'],
     browser_chaoxing_next: ['正在打开下一节', '打开下一节失败', '打开了下一节视频'],
     browser_chaoxing_homework: [
-      args?.action === 'inspect' ? '正在读题卡' : '正在处理作业',
+      args?.action === 'inspect'
+        ? '正在读题卡'
+        : args?.action === 'list'
+          ? '正在查看作业列表'
+          : args?.action === 'open'
+            ? '正在打开作业'
+            : args?.action === 'fill'
+              ? '正在填写答案'
+              : args?.action === 'guess'
+                ? '正在随机选题'
+                : '正在操作作业',
       '作业操作失败',
       extra?.questionCount
         ? `读到 ${extra.questionCount} 道题`
         : extra?.pendingCount
           ? `待做 ${extra.pendingCount} 份`
-          : extra?.title || args?.title
-            ? `处理了作业「${extra?.title || args?.title}」`
-            : '处理了学习通作业',
+          : extra?.guessed
+            ? `随机填了 ${extra.guessed} 道`
+            : extra?.title || args?.title
+              ? `处理了作业「${extra?.title || args?.title}」`
+              : '处理了学习通作业',
     ],
     browser_chaoxing_captcha: ['正在填写验证码', '验证码提交失败', '已提交验证码'],
     browser_finish: [

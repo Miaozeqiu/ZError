@@ -69,8 +69,6 @@
             <span v-else class="graph-path">{{ node.path }}</span>
           </article>
         </div>
-
-        <p v-if="map.site.notes?.length" class="graph-notes">{{ map.site.notes.join(' ') }}</p>
       </div>
     </div>
   </div>
@@ -308,14 +306,6 @@ watch(() => map.value.current?.id, async (id) => {
 .graph-parser:disabled {
   cursor: default;
   opacity: 0.7;
-}
-
-.graph-notes {
-  margin: 0;
-  padding: 4px 16px 16px;
-  font-size: 11px;
-  line-height: 1.5;
-  color: var(--text-secondary, #86868b);
 }
 
 [data-theme="dark"] .graph-edge {

@@ -1,5 +1,6 @@
 import {
   CHAOXING_CHAPTER_JOB_TICK,
+  CHAOXING_CLICK_STEP,
   CHAOXING_CLICK_VIDEO_TAB,
   CHAOXING_PLAY_SCRIPT,
   CHAOXING_STUDY_INSPECT,
@@ -39,21 +40,52 @@ export const videoIsPlaying = (tick: ChaoxingVideoTick | Record<string, unknown>
   return Boolean(tickLooksLikeVideo(snap) && snap && snap.paused === false)
 }
 
-export const playChaoxingVideo = async (id: string) => {
+/** 点开本节某个任务点（优先 videoIndex / mid，标签常重名） */
+export const clickChaoxingStep = async (
+  id: string,
+  want: string | {
+    label?: string
+    mid?: string
+    jobid?: string
+    videoIndex?: number
+    index?: number
+  },
+) => {
+  const payload = typeof want === 'string' || typeof want === 'number'
+    ? { label: String(want || '').trim() }
+    : {
+        label: String(want?.label || '').trim(),
+        mid: String(want?.mid || '').trim(),
+        jobid: String(want?.jobid || '').trim(),
+        videoIndex: Number(want?.videoIndex) || 0,
+        index: Number(want?.index) || 0,
+      }
+  if (!payload.label && !payload.mid && !payload.jobid && !payload.videoIndex && !payload.index) {
+    return { ok: false, error: '缺少任务点' }
+  }
+  const moved = asObject(await evalBrowserView(id, `${CHAOXING_CLICK_STEP}(${JSON.stringify(payload)})`).catch(() => null))
+  if (moved.ok && !moved.already) await waitMs(700)
+  return moved
+}
+
+/** skipTabClick：已点过任务点标签时不要再切回「第一个未完成视频」 */
+export const playChaoxingVideo = async (id: string, opts?: { skipTabClick?: boolean }) => {
   if (await readChaoxingCaptcha(id)) {
     return { captcha: true, hasVideo: false, playing: false, hint: CAPTCHA_HINT }
   }
-  const tab = await evalBrowserView(id, CHAOXING_CLICK_VIDEO_TAB).catch(() => null) as {
-    quiz?: boolean
-    step?: string
-    ok?: boolean
-    already?: boolean
-  } | null
-  if (tab?.quiz) {
-    return { quiz: true, step: tab.step || '', hasVideo: false, playing: false, hint: '当前是测验/作业，停下让用户自己做' }
-  }
-  if (tab?.ok && !tab.already) {
-    await waitMs(800)
+  if (!opts?.skipTabClick) {
+    const tab = await evalBrowserView(id, CHAOXING_CLICK_VIDEO_TAB).catch(() => null) as {
+      quiz?: boolean
+      step?: string
+      ok?: boolean
+      already?: boolean
+    } | null
+    if (tab?.quiz) {
+      return { quiz: true, step: tab.step || '', hasVideo: false, playing: false, hint: '当前是章节测验。系统会按 ocs 流程自动搜题/随机/暂存' }
+    }
+    if (tab?.ok && !tab.already) {
+      await waitMs(800)
+    }
   }
   let last: Record<string, unknown> = {}
   let baseline = -1

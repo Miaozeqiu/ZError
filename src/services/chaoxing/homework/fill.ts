@@ -87,6 +87,61 @@ export const fillChaoxingHomework = async (id: string, answers: unknown) => {
   }
 }
 
+/** 未答题：选择题随机选，填空/简答填「无」。用于章节测验兜底。 */
+export const guessChaoxingHomework = async (id: string) => {
+  const card = await inspectChaoxingHomework(id, { vision: false })
+  const questions = card.questions || []
+  if (!questions.length) {
+    return {
+      ok: false,
+      error: '没有读到题目',
+      next: 'inspect',
+      hint: '先 inspect；若仍无题，确认已点开章节里的测验标签。',
+    }
+  }
+  const answers: Array<{ index: number; type?: string; answer: string }> = []
+  for (const q of questions) {
+    if (q.filled) continue
+    const index = Number(q.index) || 0
+    if (!index) continue
+    const type = String(q.type || q.typeName || '')
+    const letters = (q.options || [])
+      .map((opt) => String(opt.letter || '').toUpperCase())
+      .filter((letter) => /^[A-H]$/.test(letter))
+    if (/填空|简答|论述|计算|blank|text/i.test(type) || (!letters.length && /填|简|论述/.test(String(q.stem || '')))) {
+      answers.push({ index, type, answer: '无' })
+      continue
+    }
+    if (/多选|multi/i.test(type) && letters.length >= 2) {
+      const count = 1 + Math.floor(Math.random() * Math.min(2, letters.length - 1))
+      const shuffled = [...letters].sort(() => Math.random() - 0.5)
+      answers.push({ index, type, answer: shuffled.slice(0, count).sort().join('') })
+      continue
+    }
+    const letter = letters[Math.floor(Math.random() * Math.max(letters.length, 1))] || 'A'
+    answers.push({ index, type, answer: letter })
+  }
+  if (!answers.length) {
+    return {
+      ok: true,
+      guessed: 0,
+      filledCount: card.filledCount || questions.filter((item) => item.filled).length,
+      questionCount: questions.length,
+      next: 'save',
+      hint: '题都已填过，save 或 submit，再 browser_chaoxing_next 继续。',
+    }
+  }
+  const filled = await fillChaoxingHomework(id, answers)
+  return {
+    ...filled,
+    guessed: answers.length,
+    answers: answers.map((item) => `${item.index}=${item.answer}`),
+    hint: filled.ok
+      ? `已随机填 ${answers.length} 道。save 暂存或 submit，再 browser_chaoxing_next 继续刷课。`
+      : (filled as { hint?: string }).hint || '随机填写失败，再 inspect 一次后 guess。',
+  }
+}
+
 export const saveChaoxingHomework = async (id: string) => {
   const clicked = await clickBrowserText(id, '暂时保存').catch(() => null) as { ok?: boolean } | null
   await waitMs(600)

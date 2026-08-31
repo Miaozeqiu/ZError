@@ -302,8 +302,7 @@ function __cxClearParentUnfinished(items){
   return items;
 }
 function __cxSkipDocTitle(title){
-  return __cxHas(title, '资料') || __cxHas(title, '测验') || __cxHas(title, '考试')
-    || __cxHas(title, '作业') || __cxHas(title, '讨论') || __cxHas(title, '问卷');
+  return __cxHas(title, '资料') || __cxHas(title, '讨论') || __cxHas(title, '问卷');
 }
 function __cxOwnJobs(box){
   if (!box) return 0;
@@ -800,8 +799,7 @@ export const CHAOXING_STUDY_INSPECT = `(function(){
     next: (function(){
       var skip = function(item){
         var title = item && item.title || '';
-        return __cxHas(title, '资料') || __cxHas(title, '测验') || __cxHas(title, '考试')
-          || __cxHas(title, '作业') || __cxHas(title, '讨论') || __cxHas(title, '问卷')
+        return __cxHas(title, '资料') || __cxHas(title, '讨论') || __cxHas(title, '问卷')
           || __cxHasUnfinishedChild(chapters, item);
       };
       var start = -1;
@@ -1135,6 +1133,110 @@ export const CHAOXING_CLICK_VIDEO_TAB = `(function(){
   return { ok: true, step: hit.label, videoCount: steps.filter(function(s){ return s.video }).length };
 })()`
 
+/** 按标签/序号/mid 点开本节任务点（视频标签常都叫「视频」，必须靠 videoIndex） */
+export const CHAOXING_CLICK_STEP = `(function(want){
+  ${cleanJs}
+  var req = want;
+  if (typeof want === 'string' || typeof want === 'number') req = { label: String(want || '') };
+  req = req || {};
+  var wantLabel = __cxClean(req.label || '');
+  var wantMid = __cxClean(req.mid || '');
+  var wantJobid = __cxClean(req.jobid || '');
+  var wantVideoIndex = parseInt(req.videoIndex, 10) || 0;
+  var wantStepIndex = parseInt(req.index, 10) || 0;
+  function playInside(hit){
+    if (!hit || !hit.el || !hit.el.querySelectorAll) return;
+    try {
+      var videos = [];
+      var nodes = hit.el.querySelectorAll('video');
+      for (var i = 0; i < nodes.length; i++) videos.push(nodes[i]);
+      var iframes = hit.el.querySelectorAll('iframe');
+      for (var f = 0; f < iframes.length; f++) {
+        try {
+          var doc = iframes[f].contentDocument;
+          if (!doc) continue;
+          var vs = doc.querySelectorAll('video');
+          for (var v = 0; v < vs.length; v++) videos.push(vs[v]);
+        } catch (e) {}
+      }
+      for (var p = 0; p < videos.length; p++) {
+        try {
+          videos[p].muted = false;
+          var st = videos[p].play();
+          if (st && st.catch) st.catch(function(){});
+        } catch (e) {}
+      }
+    } catch (e) {}
+  }
+  function blobOf(el){
+    try {
+      var iframe = el && el.querySelector && el.querySelector('iframe');
+      return String((el && el.outerHTML) || '') + ' ' + String((iframe && (iframe.src || iframe.getAttribute('src'))) || '');
+    } catch (e) { return ''; }
+  }
+  var steps = __cxListSteps();
+  if (!steps.length) return { ok: false, error: '没有任务点标签' };
+  var hit = null;
+  if (wantMid) {
+    for (var a = 0; a < steps.length; a++) {
+      if (blobOf(steps[a].el).indexOf(wantMid) >= 0) { hit = steps[a]; break; }
+    }
+  }
+  if (!hit && wantJobid) {
+    for (var b = 0; b < steps.length; b++) {
+      if (blobOf(steps[b].el).indexOf(wantJobid) >= 0) { hit = steps[b]; break; }
+    }
+  }
+  if (!hit && wantVideoIndex > 0) {
+    var vo = 0;
+    for (var c = 0; c < steps.length; c++) {
+      if (!steps[c].video) continue;
+      vo += 1;
+      if (vo === wantVideoIndex) { hit = steps[c]; break; }
+    }
+  }
+  if (!hit && wantStepIndex > 0 && wantStepIndex <= steps.length) hit = steps[wantStepIndex - 1];
+  if (!hit && wantLabel) {
+    var videoOrd = 0;
+    for (var d = 0; d < steps.length; d++) {
+      var label = __cxClean(steps[d].label || '');
+      if (steps[d].video) videoOrd += 1;
+      if (label === wantLabel) { hit = steps[d]; break; }
+      if (wantLabel === String(d + 1)) { hit = steps[d]; break; }
+      if (steps[d].video && (wantLabel === String(videoOrd) || wantLabel === ('视频' + videoOrd) || wantLabel === ('视频 ' + videoOrd))) {
+        hit = steps[d];
+        break;
+      }
+    }
+  }
+  if (!hit && wantLabel) {
+    for (var e = 0; e < steps.length; e++) {
+      if (__cxHas(steps[e].label, wantLabel) || __cxHas(wantLabel, steps[e].label)) { hit = steps[e]; break; }
+    }
+  }
+  if (!hit) {
+    return {
+      ok: false,
+      error: '没有「' + (wantLabel || ('视频' + wantVideoIndex) || wantMid || '任务点') + '」',
+      steps: steps.map(function(s){ return s.label; }),
+      videoCount: steps.filter(function(s){ return s.video; }).length,
+    };
+  }
+  var videoOrdOut = 0;
+  for (var o = 0; o < steps.length; o++) {
+    if (!steps[o].video) continue;
+    videoOrdOut += 1;
+    if (steps[o] === hit) break;
+  }
+  if (hit.active) {
+    playInside(hit);
+    return { ok: true, already: true, step: hit.label, video: !!hit.video, quiz: !!hit.quiz, doc: !!hit.doc, videoIndex: videoOrdOut || wantVideoIndex };
+  }
+  __cxClick(hit.el);
+  playInside(hit);
+  return { ok: true, step: hit.label, video: !!hit.video, quiz: !!hit.quiz, doc: !!hit.doc, videoIndex: videoOrdOut || wantVideoIndex };
+})`
+
 export const CHAOXING_NEXT_STEP = `(function(){
   ${cleanJs}
   var steps = __cxListSteps();
@@ -1143,7 +1245,9 @@ export const CHAOXING_NEXT_STEP = `(function(){
   var videos = steps.filter(function(s){ return s.video });
   for (var k = idx + 1; k < steps.length; k++) {
     if (steps[k].quiz) {
-      return { ok: false, quiz: true, step: steps[k].label, chapterDone: false, videoCount: videos.length };
+      if (steps[k].jobDone === true) continue;
+      __cxClick(steps[k].el);
+      return { ok: false, quiz: true, step: steps[k].label, chapterDone: false, videoCount: videos.length, opened: true };
     }
     if (steps[k].doc) continue;
     if (steps[k].video && steps[k].jobDone !== true) {
@@ -1374,7 +1478,7 @@ export const CHAOXING_CHAPTER_HOOK = `(function(){
     title = clean(title);
     var index = String(title || '').trim().match(/^(\\d+(?:\\.\\d+)+)\\b/);
     return !title || (title.length < 2 && !index) || /^ZRRESULT:/.test(title) || /^第.+部分/.test(title) || /^\\d+$/.test(title) || title === '目录'
-      || /资料|测验|考试|作业|讨论|问卷/.test(title);
+      || /资料|讨论|问卷/.test(title);
   }
   function catalogIndex(title){
     var hit = String(title || '').trim().match(/^(\\d+(?:\\.\\d+)+)\\b/);
@@ -1637,14 +1741,15 @@ export const CHAOXING_CAPTCHA_FILL = `(function(code){
 })`
 
 export const CHAOXING_STUDY_PROMPT = `
-学习通章节 / 未完成任务（流程，没有一键刷课工具）：
+学习通章节 / 未完成任务（对齐 ocsjs 任务点循环，没有一键刷课工具）：
 - 先进入具体课程（mycourse/stu），不要在空间页硬播。点「章节」，等出现「已完成任务点 x/y」。
-- 用 browser_get_page 或 browser_chaoxing_chapters 看未完成节名；再 browser_click_text 点干净节名（如「维护网络安全」），不要带 (1)，不要点「第N章」父标题（会收起子节点）。
-- 进入 studentstudy 播放页后立刻 browser_chaoxing_play；确认在播后交给监控（play 成功会自动 watch）。不要 browser_wait 空等整节。
-- 一节多个视频：当前播完用 browser_chaoxing_next 切本章下一个，没有了再下一节。不要只点页面「下一节」。
+- 用 browser_get_page 或 browser_chaoxing_chapters 看未完成节名；再 browser_click_text 点干净节名，不要带 (1)，不要点「第N章」父标题。
+- 进入 studentstudy 后立刻 browser_chaoxing_play；确认在播后交给监控。不要 browser_wait 空等。
+- 一节按 attachments 任务点顺序走：视频播完 → 下一视频 → 章节测验 → … → 再下一节。系统会自动切；不要只点页面「下一节」。
+- 章节测验（ocs JobRunner.chapter）：监控会自动 本地题库搜题 → 填入 → 未命中随机 → 暂存 → 下一任务点。失败时再用 browser_chaoxing_homework inspect/guess/save，然后 next。
 - 「暂无任务 / 默认班级」是任务页不是目录，先点「章节」。
-- 禁止向用户要截图。本窗口有全 frame 桥，不要说跨域读不了。不要把 studentcourse / cards / ananas 当顶层打开。
-- 只有任务点 n/n 且没有未完成节才算做完。暂停/卡住用 browser_chaoxing_play；播放器丢了回到目录再点节名。章节测验默认停下；用户明确说写作业再用 homework。
+- 禁止向用户要截图。不要把 studentcourse / cards / ananas 当顶层打开。
+- 只有任务点 n/n 且没有未完成节才算做完。暂停/卡住用 browser_chaoxing_play。
 - 已开始监控后 browser_finish(status=watching)；整课完成 browser_finish(status=done)。
 - 弹出【9010】验证码：认图后 browser_chaoxing_captcha，提交后再 play。
 `

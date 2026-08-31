@@ -862,6 +862,47 @@ export const BROWSER_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'browser_site_graph',
+      description: '查看或修改当前网站图谱。图谱不是定死的：发现新路由、节点不准、缺边时用 upsert_node/upsert_edge 改正；patterns 写 URL 正则。list/get 查看，reset 恢复种子。',
+      parameters: {
+        type: 'object',
+        properties: {
+          action: {
+            type: 'string',
+            enum: ['list', 'get', 'upsert_node', 'remove_node', 'upsert_edge', 'remove_edge', 'set_notes', 'reset'],
+            description: 'list/get 查看；upsert_* 增改；remove_* 删除；set_notes 备注；reset 恢复种子',
+          },
+          siteId: { type: 'string', description: '站点 id，学习通默认 chaoxing' },
+          id: { type: 'string', description: '节点 id，如 homework-quiz' },
+          title: { type: 'string', description: '节点标题' },
+          path: { type: 'string', description: '路径说明，给用户看' },
+          summary: { type: 'string', description: '节点说明' },
+          patterns: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'URL 正则数组，命中任一即认为当前在此节点',
+          },
+          parserIds: {
+            type: 'array',
+            items: { type: 'string' },
+            description: '可挂解析器 id：chaoxing-study / chaoxing-homework / chaoxing-login',
+          },
+          row: { type: 'integer', description: '布局行，0 起' },
+          col: { type: 'integer', description: '布局列：-1 左 / 0 中 / 1 右' },
+          from: { type: 'string', description: '边起点节点 id' },
+          to: { type: 'string', description: '边终点节点 id' },
+          label: { type: 'string', description: '边标签' },
+          kind: { type: 'string', enum: ['forward', 'back', 'loop'], description: '边类型' },
+          notes: { type: 'array', items: { type: 'string' }, description: '站点备注' },
+          note: { type: 'string', description: '单条备注（等价 notes=[note]）' },
+        },
+        required: ['action'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'browser_get_page',
       description: '读取当前网页的可见正文、标题和主要链接。操作页面前先调用。',
       parameters: { type: 'object', properties: {} },
@@ -985,7 +1026,7 @@ export const BROWSER_TOOLS = [
     type: 'function',
     function: {
       name: 'browser_chaoxing_watch',
-      description: '监控学习通当前视频进度，并显示在 Agent 面板。仅播放页、视频已打开时用。会定时和按进度叫你核对。不要用 browser_wait 空等整节。',
+      description: '监控学习通当前视频进度，并显示在 Agent 面板。仅播放页、视频已打开时用。进度条本地实时更新；播完自动切下一视频，卡住/验证码/测验才叫你。不要用 browser_wait 空等整节。',
       parameters: { type: 'object', properties: {} },
     },
   },
@@ -1001,14 +1042,14 @@ export const BROWSER_TOOLS = [
     type: 'function',
     function: {
       name: 'browser_chaoxing_homework',
-      description: '学习通作业题卡。必须已在作业相关页才能用：作业列表页用 list/open；作答页（doHomeWork / work）用 inspect/fill/save/submit。空间页、课表、章节页不要调——先点「作业」进作业页。不要 eval、不要 click 选项。一题一题：答出一道立刻 fill（answers 只放一项）。',
+      description: '学习通作业/章节测验题卡。课程作业：列表页 list/open，作答页 inspect/fill/save/submit。章节测验（studentstudy 播放页）：直接 inspect/fill/guess/save/submit，不要 list。一题一题 fill；不会就 guess 随便选。不要 eval、不要 click 选项。',
       parameters: {
         type: 'object',
         properties: {
           action: {
             type: 'string',
-            enum: ['list', 'open', 'inspect', 'fill', 'save', 'submit'],
-            description: 'list/open 仅作业列表页；inspect/fill/save/submit 仅作答页。list 列表，open 打开，inspect 读题卡，fill 填答案，save 暂存，submit 提交',
+            enum: ['list', 'open', 'inspect', 'fill', 'guess', 'save', 'submit'],
+            description: 'list/open 仅课程作业列表；inspect/fill/guess/save/submit 用于作答页或章节测验。guess=不会的题随机选',
           },
           title: { type: 'string', description: 'open 时的作业名' },
           answers: {
@@ -1059,8 +1100,39 @@ export const BROWSER_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'browser_todo',
+      description: '维护当前任务清单。多步任务先 set 写出具体步骤（必须你自己写内容），做完一项就 check。清单是任务真相，不要用空话代替。',
+      parameters: {
+        type: 'object',
+        properties: {
+          action: {
+            type: 'string',
+            enum: ['set', 'add', 'check', 'clear'],
+            description: 'set 整表重写；add 追加；check 勾选/改状态；clear 清空',
+          },
+          items: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'set 时的步骤文案，3–8 条为宜，用你自己的话写清楚要做什么',
+          },
+          text: { type: 'string', description: 'add 时的一步文案' },
+          id: { type: 'string', description: 'check 时的项 id' },
+          index: { type: 'integer', description: 'check 时的序号，从 1 起' },
+          status: {
+            type: 'string',
+            enum: ['done', 'pending', 'cancelled'],
+            description: 'check 目标状态，默认 done',
+          },
+        },
+        required: ['action'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'browser_finish',
-      description: '宣告当前用户任务结束。没调用这个工具时，系统不会因为你停嘴就收工。done=已完成；blocked=必须用户动手（滑块/扫码）；watching=已开始监控播放。',
+      description: '宣告当前用户任务结束。先用 browser_todo 把步骤写清并做完；summary 必须你自己写、概括实际结果。done=清单已完成；blocked=必须用户动手；watching=已交播放监控。',
       parameters: {
         type: 'object',
         properties: {
@@ -1069,7 +1141,7 @@ export const BROWSER_TOOLS = [
             enum: ['done', 'blocked', 'watching'],
             description: 'done 完成；blocked 等人；watching 已交监控',
           },
-          summary: { type: 'string', description: '一两句说明结果或卡在哪' },
+          summary: { type: 'string', description: '你自己写的一两句真实结果，禁止套话' },
         },
         required: ['status', 'summary'],
       },

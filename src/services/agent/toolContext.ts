@@ -12,6 +12,8 @@ export type ChatToolContext = {
   setStudySubject: (subjectId?: number | null) => void
   markDrawingGraph: () => void
   scheduleEval: (input: { subjectId: number; hint?: string; stepId: string }) => void
+  getTodos?: () => import('./chatTypes').AgentTodoItem[]
+  setTodos?: (todos: import('./chatTypes').AgentTodoItem[]) => void
 }
 
 export type ChatToolHandler = (input: {

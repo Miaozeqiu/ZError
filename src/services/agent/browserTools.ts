@@ -44,7 +44,7 @@ export const executeBrowserTool = async (input: {
     const { isHomeworkUrl } = await import('../browser/abstractions')
     const state = await getBrowserState(browserId).catch(() => null)
     const nowUrl = String(state?.url || listAppBrowsers().find((b) => b.id === browserId)?.url || '')
-    if (isHomeworkUrl(nowUrl) && /dowork|doHomeWork/i.test(nowUrl)) {
+    if (isHomeworkUrl(nowUrl) && /dowork|doHomeWork|\/work\/do/i.test(nowUrl)) {
       return JSON.stringify({
         error: '作业页禁止读网页或直接点页面',
         hint: '题卡和网页是自动双向同步的：browser_chaoxing_homework action=fill 会同步到网页，网页状态会自动回到题卡。题干/选项还没读出的题先跳过答其他题，稍后 inspect 一次抽象层会自动补读，不要猜答案。',
@@ -163,7 +163,7 @@ export const executeBrowserTool = async (input: {
         playing,
         watching: playing,
         hint: playing
-          ? '已确认在播。进度在 Agent 面板。系统会定时和按进度叫你核对，不要 browser_wait 空等整节。'
+          ? '已确认在播。进度条会实时更新；播完或卡住/验证码/测验时系统再叫你。不要 browser_wait 空等。'
           : '播放器在，但视频没有播起来。不要说正在播放，再点一次播放或告诉用户没播起来。',
       })
     }
@@ -176,7 +176,7 @@ export const executeBrowserTool = async (input: {
         watching: true,
         already: true,
         title: existing.title,
-        hint: '已经在监控，进度在 Agent 面板。不要重复调用，不要 browser_wait。',
+        hint: '已经在监控，进度条会自己走。不要重复调用，不要 browser_wait。',
       })
     }
     let snap = await readChaoxingVideo(browserId)
@@ -197,7 +197,7 @@ export const executeBrowserTool = async (input: {
       jobDone: snap?.jobDone ?? null,
       quiz: Boolean(snap?.quiz),
       video: snap?.video || null,
-      hint: '进度在 Agent 面板。系统会定时叫你核对。这个视频结束了会先切本章下一个视频。',
+      hint: '进度条实时更新。播完系统会自动切下一视频；卡住/丢播放器/验证码/测验才叫你。不要 browser_wait。',
     })
   }
   if (name === 'browser_chaoxing_captcha') {
@@ -254,7 +254,48 @@ export const executeBrowserTool = async (input: {
     return JSON.stringify(next)
   }
   if (name === 'browser_chaoxing_homework') {
+    const { isHomeworkUrl, isHomeworkDoUrl, isHomeworkListUrl, isChapterWorkUrl, canUseHomeworkTools } = await import('../browser/abstractions')
+    const { startHomeworkLiveSync, guessChaoxingHomework } = await import('../chaoxing/homework')
+    const state = await getBrowserState(browserId).catch(() => null)
+    const nowUrl = String(state?.url || listAppBrowsers().find((b) => b.id === browserId)?.url || '')
+    if (!canUseHomeworkTools(nowUrl)) {
+      return JSON.stringify({
+        error: '当前不是作业/章节测验页，禁止调用 browser_chaoxing_homework',
+        url: nowUrl,
+        hint: '课程作业：先点「作业」到列表或作答页；章节测验：在 studentstudy 播放页点开测验标签后再调。',
+      })
+    }
+    const chapterQuiz = isChapterWorkUrl(nowUrl)
     const action = String(args.action || 'list').trim()
+    if (chapterQuiz && ['list', 'open'].includes(action)) {
+      return JSON.stringify({
+        error: '章节测验页不要 list/open',
+        url: nowUrl,
+        hint: '直接 inspect → fill（或 guess）→ save/submit，再 browser_chaoxing_next。',
+      })
+    }
+    if (!chapterQuiz && !isHomeworkUrl(nowUrl)) {
+      return JSON.stringify({
+        error: '当前不是作业页',
+        url: nowUrl,
+      })
+    }
+    if (['inspect', 'fill', 'guess', 'save', 'submit'].includes(action) && !isHomeworkDoUrl(nowUrl) && !chapterQuiz) {
+      return JSON.stringify({
+        error: '当前是作业列表，不是作答页',
+        url: nowUrl,
+        hint: '列表页用 list / open；进作答页后再 inspect / fill / save / submit。',
+      })
+    }
+    if (['list', 'open'].includes(action) && isHomeworkDoUrl(nowUrl) && !isHomeworkListUrl(nowUrl)) {
+      // 作答页允许 list 作为「回看」但通常应 inspect；open 无意义
+      if (action === 'open') {
+        return JSON.stringify({
+          error: '已在作答页，不要 open',
+          hint: '直接 inspect / fill / save。',
+        })
+      }
+    }
     // 题卡里的 data URL 图只给面板看，回给模型前换成短标记，避免撑爆上下文
     const stripHwImages = (card: Awaited<ReturnType<typeof inspectChaoxingHomework>>) => {
       const brief = (src?: string) => {
@@ -274,20 +315,25 @@ export const executeBrowserTool = async (input: {
         })),
       })
     }
-    if (action === 'list') return JSON.stringify(await openChaoxingHomeworkList(browserId))
-    if (action === 'inspect') return stripHwImages(await inspectChaoxingHomework(browserId))
+    const withLive = async <T,>(card: T) => {
+      await startHomeworkLiveSync(browserId).catch(() => null)
+      return card
+    }
+    if (action === 'list') return JSON.stringify(await withLive(await openChaoxingHomeworkList(browserId)))
+    if (action === 'inspect') return stripHwImages(await withLive(await inspectChaoxingHomework(browserId)))
     if (action === 'open') {
       const title = String(args.title || '').trim()
       if (!title) return JSON.stringify({ error: 'open 需要 title' })
-      return JSON.stringify(await openChaoxingHomeworkItem(browserId, title))
+      return JSON.stringify(await withLive(await openChaoxingHomeworkItem(browserId, title)))
     }
     if (action === 'fill') {
       // fill 只回进度摘要（内部只做一次轻量状态检查，不全量重读）
-      return JSON.stringify(await fillChaoxingHomework(browserId, args.answers))
+      return JSON.stringify(await withLive(await fillChaoxingHomework(browserId, args.answers)))
     }
-    if (action === 'save') return stripHwImages(await saveChaoxingHomework(browserId))
-    if (action === 'submit') return stripHwImages(await submitChaoxingHomework(browserId))
-    return JSON.stringify({ error: 'action 必须是 list / open / inspect / fill / save / submit' })
+    if (action === 'guess') return JSON.stringify(await withLive(await guessChaoxingHomework(browserId)))
+    if (action === 'save') return stripHwImages(await withLive(await saveChaoxingHomework(browserId)))
+    if (action === 'submit') return stripHwImages(await withLive(await submitChaoxingHomework(browserId)))
+    return JSON.stringify({ error: 'action 必须是 list / open / inspect / fill / guess / save / submit' })
   }
   if (name === 'browser_wait') {
     const seconds = Math.min(60, Math.max(1, Number(args.seconds) || 20))

@@ -33,6 +33,12 @@ export interface AgentChatAttachment {
   mimeType?: string
 }
 
+export interface AgentTodoItem {
+  id: string
+  text: string
+  status: 'pending' | 'done' | 'cancelled'
+}
+
 export interface AgentChatMessage {
   id: string
   role: 'user' | 'assistant'
@@ -40,6 +46,7 @@ export interface AgentChatMessage {
   kind?: 'watch'
   attachments?: AgentChatAttachment[]
   steps: ImportTaskStep[]
+  todos?: AgentTodoItem[]
   quizAttempts?: AgentQuizAttempt[]
   quizReported?: boolean
   studyEval?: AgentStudyEvalNote
