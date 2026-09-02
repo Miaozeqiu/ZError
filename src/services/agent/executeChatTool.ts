@@ -40,6 +40,45 @@ export const executeChatTool = async (input: {
   const args = parseToolArgs(call.arguments)
   const browserId = ctx.browserId()
 
+  if (call.name === 'list_agent_skills') {
+    const { listAgentSkillsForAgent } = await import('./agentSkills')
+    return JSON.stringify(await listAgentSkillsForAgent())
+  }
+
+  if (call.name === 'read_agent_skill') {
+    const { readAgentSkillContent } = await import('./agentSkills')
+    const id = String(args.skill_id || '').trim()
+    const content = await readAgentSkillContent(id)
+    if (!content) return JSON.stringify({ error: `Skill "${id}" 不存在或未启用` })
+    return JSON.stringify(content)
+  }
+
+  if (call.name === 'read_agent_skill_file') {
+    const { readAgentSkillFileContent } = await import('./agentSkills')
+    const id = String(args.skill_id || '').trim()
+    const path = String(args.path || '').trim()
+    const content = await readAgentSkillFileContent(id, path)
+    if (!content) return JSON.stringify({ error: `Skill "${id}" 的文件 "${path}" 不存在` })
+    return JSON.stringify(content)
+  }
+
+  if (call.name === 'write_agent_skill_file') {
+    const { writeAgentSkillFileContent } = await import('./agentSkills')
+    return JSON.stringify(await writeAgentSkillFileContent(
+      String(args.skill_id || '').trim(),
+      String(args.path || '').trim(),
+      String(args.content ?? ''),
+    ))
+  }
+
+  if (call.name === 'reset_agent_skill_file') {
+    const { resetAgentSkillFile } = await import('./agentSkills')
+    return JSON.stringify(await resetAgentSkillFile(
+      String(args.skill_id || '').trim(),
+      String(args.path || '').trim() || undefined,
+    ))
+  }
+
   if (browserId && call.name === 'browser_site_graph') {
     const { applySiteGraphPatch } = await import('../browser/siteGraph')
     const state = await import('../browser/appBrowser').then((mod) => mod.getBrowserState(browserId).catch(() => null))

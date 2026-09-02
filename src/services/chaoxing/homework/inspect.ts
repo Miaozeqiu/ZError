@@ -85,7 +85,7 @@ const readStashedHomework = async (
   onPartial?: (questions: NonNullable<ChaoxingHomeworkInfo['questions']>) => void,
   options?: { harvest?: boolean; hydrate?: boolean },
 ) => {
-  const stash = asObject(await evalBrowserView(id, STASH_HOMEWORK).catch(() => ({ error: 'stash failed' })))
+  const stash = asObject(await evalBrowserView(id, STASH_HOMEWORK()).catch(() => ({ error: 'stash failed' })))
   let rows = rowsFromStash(stash)
   if (!rows.length && Number(stash.questions) > 0) {
     const total = Math.min(Number(stash.questions) || 0, 40)
@@ -116,7 +116,7 @@ const readStashedHomework = async (
     await evalBrowserView(id, START_HW_IMG(i)).catch(() => null)
     let ready = false
     for (let t = 0; t < 30; t += 1) {
-      const meta = asObject(await evalBrowserView(id, READ_HW_IMG_META).catch(() => ({ wait: 1 })))
+      const meta = asObject(await evalBrowserView(id, READ_HW_IMG_META()).catch(() => ({ wait: 1 })))
       if (!meta.wait) {
         ready = true
         break
@@ -127,7 +127,7 @@ const readStashedHomework = async (
     let data = ''
     let key = ''
     for (let c = 0; c < 80; c += 1) {
-      const part = asObject(await evalBrowserView(id, READ_HW_IMG_CHUNK).catch(() => ({ d: true, c: '' })))
+      const part = asObject(await evalBrowserView(id, READ_HW_IMG_CHUNK()).catch(() => ({ d: true, c: '' })))
       if (part.wait) {
         await waitMs(40)
         continue
@@ -180,12 +180,12 @@ export const inspectChaoxingHomework = async (id: string, options?: { vision?: b
   }
   if (!homeworkReady(info)) {
     await askFrames(id, 'snap')
-    snap = asObject(await evalBrowserView(id, READ_HOMEWORK_SNAPS).catch((err) => ({ error: String(err) })))
+    snap = asObject(await evalBrowserView(id, READ_HOMEWORK_SNAPS()).catch((err) => ({ error: String(err) })))
     info = cardFromSnaps(snap)
     if (!homeworkReady(info)) {
       await waitMs(400)
       await askFrames(id, 'snap')
-      snap = asObject(await evalBrowserView(id, READ_HOMEWORK_SNAPS).catch((err) => ({ error: String(err) })))
+      snap = asObject(await evalBrowserView(id, READ_HOMEWORK_SNAPS()).catch((err) => ({ error: String(err) })))
       info = cardFromSnaps(snap)
     }
   }
@@ -210,7 +210,7 @@ export const inspectChaoxingHomework = async (id: string, options?: { vision?: b
     }).catch(() => undefined)
   }
   if (!(info.questions || []).length) {
-    const liveFallback = asObject(await evalBrowserView(id, READ_HOMEWORK_LIVE).catch(() => ({})))
+    const liveFallback = asObject(await evalBrowserView(id, READ_HOMEWORK_LIVE()).catch(() => ({})))
     const parsed = parseHomeworkText(String(liveFallback.text || ''))
     if (parsed.length) {
       info = {
@@ -261,7 +261,7 @@ export const inspectChaoxingHomework = async (id: string, options?: { vision?: b
       })),
       ...card,
     }, null, 2), 'json')
-    const live = asObject(await evalBrowserView(id, READ_HOMEWORK_LIVE).catch((err) => ({ evalError: String(err) })))
+    const live = asObject(await evalBrowserView(id, READ_HOMEWORK_LIVE()).catch((err) => ({ evalError: String(err) })))
     writeDebugDump('cx-homework-live', formatHomeworkLive(live, card, {
       snapError: snap.error,
       imageRows,
@@ -277,7 +277,7 @@ export const inspectChaoxingHomework = async (id: string, options?: { vision?: b
 export const openChaoxingHomeworkList = async (id: string) => {
   const onStudent = await evalBrowserView(id, `(function(){ return /\\/mycourse\\/stu/.test(location.href || ''); })()`).catch(() => false)
   if (onStudent) {
-    await evalBrowserView(id, CHAOXING_CLICK_HOMEWORK_TAB).catch(() => null)
+    await evalBrowserView(id, CHAOXING_CLICK_HOMEWORK_TAB()).catch(() => null)
     await waitMs(800)
   }
   let info = await inspectChaoxingHomework(id)

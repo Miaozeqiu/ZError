@@ -4,7 +4,7 @@
       {{ parsing ? '正在识别当前页…' : emptyHint }}
     </div>
 
-    <article v-else-if="layer.id === 'chaoxing-homework'" class="abs-card">
+    <article v-else-if="layerRole === 'homework'" class="abs-card">
       <header class="abs-head">
         <div class="abs-head-left">
           <div class="abs-title">{{ homeworkTitle }}</div>
@@ -95,7 +95,7 @@
       <div v-else class="abs-empty abs-body">{{ homeworkEmpty }}</div>
     </article>
 
-    <article v-else-if="layer.id === 'chaoxing-study'" class="abs-card">
+    <article v-else-if="layerRole === 'study'" class="abs-card">
       <header class="abs-head abs-head-study">
         <div class="abs-head-left">
           <div class="abs-title">章节</div>
@@ -249,6 +249,7 @@ import {
   abstractionParsing,
   lastHomeworkCard,
   primaryAbstraction,
+  abstractionRole,
 } from '../../services/browser/abstractions'
 import QuestionIndexSwitcher from '../ui/QuestionIndexSwitcher.vue'
 import { stopBrowserAgent } from '../../services/agent/chat'
@@ -274,10 +275,11 @@ const parsing = abstractionParsing
 const chapter = computed(() => chapterStateFor(props.browserId))
 const videoWatch = computed(() => videoWatchFor(props.browserId))
 const layer = computed(() => primaryAbstraction(props.url || ''))
+const layerRole = computed(() => abstractionRole(layer.value))
 const panelLabel = computed(() => {
-  if (layer.value?.id === 'chaoxing-study') return '章节'
-  if (layer.value?.id === 'chaoxing-homework') return '题卡'
-  return layer.value?.name?.replace(/^学习通/, '') || '解析'
+  if (layerRole.value === 'study') return '章节'
+  if (layerRole.value === 'homework') return '题卡'
+  return layer.value?.name?.replace(/^学习通|^智慧树/, '') || '解析'
 })
 const emptyHint = computed(() => {
   if (/passport2|login/i.test(props.url || '')) return '当前是登录页，没有章节或题卡'

@@ -9,13 +9,7 @@
 
 | 资源 | URL（客户端优先用 /live） | 旧路径（易被 EdgeOne HIT） |
 |------|---------------------------|----------------------------|
-| 模型列表 | `https://webapi.zaizhexue.top/live/models.json` | `/models.json` |
-| 回退下载 | `https://webapi.zaizhexue.top/live/latest_version.json` | `/latest_version.json` |
-| Tauri Updater | `https://webapi.zaizhexue.top/live/update.json` | `/update.json` |
-
-测试版与正式版**都使用**上述地址。数据流：ze-admin → ze-admin-backend（Postgres `app_config`）→ csid_backend → EdgeOne → 客户端。
-
-客户端：`src-tauri/tauri.conf.json` → `plugins.updater.endpoints` →  
+| 模型列表 | `https://webapi.zaizhexue.top/live/models.json` | `a
 `https://webapi.zaizhexue.top/live/update.json`
 
 配置拆成两份：

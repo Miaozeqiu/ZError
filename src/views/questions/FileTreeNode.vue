@@ -110,12 +110,7 @@
           </template>
         </template>
         <template v-else>
-          <svg width="16" height="16" viewBox="0 0 16 16" class="file-icon">
-            <path 
-              fill="currentColor" 
-              :d="getFileIconPath(node.name)"
-            />
-          </svg>
+          <FileTypeIcon :name="node.name" />
         </template>
       </span>
       
@@ -180,6 +175,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onUnmounted } from 'vue';
+import FileTypeIcon from '../../components/ui/FileTypeIcon.vue';
 
 interface TreeNode {
   id: string;
@@ -378,29 +374,6 @@ const handleRightClick = (event: MouseEvent) => {
     x: event.clientX,
     y: event.clientY
   });
-};
-
-const getFileIconPath = (fileName: string): string => {
-  const ext = fileName.split('.').pop()?.toLowerCase();
-  
-  // 根据文件扩展名返回不同的SVG路径
-  switch (ext) {
-    case 'vue':
-      return 'M2 2l2 12h8l2-12H2zm1.5 1h9l-1.5 9H5L3.5 3z';
-    case 'ts':
-    case 'js':
-      return 'M1 1v14h14V1H1zm12 12H3V3h10v10z';
-    case 'json':
-      return 'M6 2a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H6zm0 1h4a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z';
-    case 'html':
-      return 'M1 1v14h14V1H1zm12 12H3V3h10v10zM5 5v2h2V5H5zm4 0v2h2V5H9zM5 9v2h6V9H5z';
-    case 'css':
-      return 'M2 2v12h12V2H2zm10 10H4V4h8v8z';
-    case 'md':
-      return 'M2 3v10h12V3H2zm10 8H4V5h8v6z';
-    default:
-      return 'M4 1h8l2 2v10l-2 2H4l-2-2V3l2-2zm0 1L3 3v10l1 1h8l1-1V3l-1-1H4z';
-  }
 };
 
 // 拖拽事件处理函数

@@ -49,8 +49,37 @@ export const describeActivity = (name: string, args: any, status: ImportTaskStep
                   ? '更新了图谱备注'
                   : '查看了网站图谱',
     ],
+    browser_study_chapters: ['正在读取章节', '读取章节失败', '读取了章节目录'],
+    browser_study_play: ['正在播放视频', '播放失败', '点了播放'],
+    browser_study_watch: ['正在监控进度', '监控失败', '开始监控视频进度'],
+    browser_study_next: ['正在打开下一节', '打开下一节失败', '打开了下一节视频'],
+    browser_homework: [
+      args?.action === 'inspect'
+        ? '正在读题卡'
+        : args?.action === 'list'
+          ? '正在查看作业列表'
+          : args?.action === 'open'
+            ? '正在打开作业'
+            : args?.action === 'fill'
+              ? '正在填写答案'
+              : args?.action === 'guess'
+                ? '正在随机选题'
+                : '正在操作作业',
+      '作业操作失败',
+      extra?.questionCount
+        ? `读到 ${extra.questionCount} 道题`
+        : extra?.pendingCount
+          ? `待做 ${extra.pendingCount} 份`
+          : extra?.guessed
+            ? `随机填了 ${extra.guessed} 道`
+            : extra?.title || args?.title
+              ? `处理了作业「${extra?.title || args?.title}」`
+              : '处理了作业',
+    ],
+    browser_captcha: ['正在填写验证码', '验证码提交失败', '已提交验证码'],
+    // 旧名别名（历史会话 / 日志）
     browser_chaoxing_chapters: ['正在读取章节', '读取章节失败', '读取了章节目录'],
-    browser_chaoxing_play: ['正在播放视频', '播放失败', '点了学习通播放'],
+    browser_chaoxing_play: ['正在播放视频', '播放失败', '点了播放'],
     browser_chaoxing_watch: ['正在监控进度', '监控失败', '开始监控视频进度'],
     browser_chaoxing_next: ['正在打开下一节', '打开下一节失败', '打开了下一节视频'],
     browser_chaoxing_homework: [
@@ -74,7 +103,7 @@ export const describeActivity = (name: string, args: any, status: ImportTaskStep
             ? `随机填了 ${extra.guessed} 道`
             : extra?.title || args?.title
               ? `处理了作业「${extra?.title || args?.title}」`
-              : '处理了学习通作业',
+              : '处理了作业',
     ],
     browser_chaoxing_captcha: ['正在填写验证码', '验证码提交失败', '已提交验证码'],
     browser_finish: [
@@ -623,6 +652,65 @@ export const describeActivity = (name: string, args: any, status: ImportTaskStep
             : count
               ? `添加了 ${count} 个知识点`
               : '更新了知识图谱',
+    }
+  }
+  if (name === 'list_agent_skills') {
+    return {
+      target: 'Skill',
+      label:
+        status === 'running'
+          ? '正在列出 Skill'
+          : status === 'failed'
+            ? '列出 Skill 失败'
+            : '列出了 Skill',
+    }
+  }
+  if (name === 'reset_agent_skill_file') {
+    const path = args?.path || 'SKILL.md'
+    return {
+      target: args?.skill_id || 'Skill',
+      label:
+        status === 'running'
+          ? `正在恢复 ${path}`
+          : status === 'failed'
+            ? `恢复 ${path} 失败`
+            : `恢复了 ${path}`,
+    }
+  }
+  if (name === 'read_agent_skill') {
+    const id = args?.skill_id || extra?.id || 'Skill'
+    return {
+      target: id,
+      label:
+        status === 'running'
+          ? `正在读取 Skill ${id}`
+          : status === 'failed'
+            ? `读取 Skill ${id} 失败`
+            : `读取了 Skill ${id}`,
+    }
+  }
+  if (name === 'read_agent_skill_file') {
+    const path = args?.path || extra?.path || '文件'
+    return {
+      target: args?.skill_id || extra?.id || 'Skill',
+      label:
+        status === 'running'
+          ? `正在读取 ${path}`
+          : status === 'failed'
+            ? `读取 ${path} 失败`
+            : `读取了 ${path}`,
+    }
+  }
+  if (name === 'write_agent_skill_file') {
+    const path = args?.path || extra?.path || '文件'
+    return {
+      target: args?.skill_id || extra?.id || 'Skill',
+      label:
+        status === 'running'
+          ? `正在写入 ${path}`
+          : status === 'failed'
+            ? `写入 ${path} 失败`
+            : `写入了 ${path}`,
     }
   }
   if (name === 'focus_knowledge_graph') {

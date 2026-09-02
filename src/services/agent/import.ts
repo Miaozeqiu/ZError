@@ -11,6 +11,7 @@ import {
   type ImportTask,
 } from '../app/importTasks'
 import { runTextModel, type ModelToolCall } from '../model/runner'
+import { IMPORT_AGENT_SYSTEM_PROMPT } from './skills/questionImport'
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.mjs',
@@ -492,14 +493,7 @@ const describeActivity = (
 
 const clipToolResult = (text: string) => (text.length > 12000 ? `${text.slice(0, 11999)}…` : text)
 
-const SYSTEM_PROMPT = `你是题库导入助手。用户选了一份本地文件，你必须通过工具查看内容并提取题目。
-
-规则：
-1. 先调用 get_file_info，再分段调用 read_range，不要一次读完全文。
-2. 每看完一段，立刻用 save_questions 保存识别到的题目。
-3. 只提取文件里真实存在的题目，不要编造。
-4. 题目字段：question（题干）、options（选项，可写成 "A. xxx\\nB. xxx"）、answer、question_type（单选/多选/判断/填空）。能看出考点就写 knowledge_point 或 node_name，能看出章节就写 parent_name。没有对应知识点时也要写一个简短考点名，系统会自动生成并关联。
-5. 全部读完并保存后，用一两句话总结导入结果。不要把题目 JSON 直接输出到对话里。`
+const SYSTEM_PROMPT = IMPORT_AGENT_SYSTEM_PROMPT
 
 const composeSummary = (raw: string, task: ImportTask, count: number) => {
   const text = String(raw || '')

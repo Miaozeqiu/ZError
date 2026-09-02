@@ -49,13 +49,13 @@ export const applyHomeworkLiveState = (state: HomeworkLiveState | null | undefin
 }
 
 export const readHomeworkLiveState = async (id: string) => {
-  const state = asObject(await evalBrowserView(id, READ_HW_FILL_STATE).catch(() => null))
+  const state = asObject(await evalBrowserView(id, READ_HW_FILL_STATE()).catch(() => null))
   if (!state || !Array.isArray(state.states)) return null
   return state as HomeworkLiveState
 }
 
 const installHomeworkHook = async (id: string) => {
-  const installed = asObject(await evalBrowserView(id, INSTALL_HW_LIVE_HOOK).catch(() => null))
+  const installed = asObject(await evalBrowserView(id, INSTALL_HW_LIVE_HOOK()).catch(() => null))
   hookReady = Boolean(installed.ok)
   if (Number(installed.dirty) > 0) lastDirty = Number(installed.dirty)
   return installed
@@ -64,7 +64,7 @@ const installHomeworkHook = async (id: string) => {
 const tickHomeworkLive = async (id: string) => {
   if (pickLock || liveId !== id || Date.now() < quietUntil) return
   if (!hookReady) await installHomeworkHook(id).catch(() => null)
-  const pulse = asObject(await evalBrowserView(id, READ_HW_DIRTY).catch(() => null))
+  const pulse = asObject(await evalBrowserView(id, READ_HW_DIRTY()).catch(() => null))
   const dirty = Number(pulse.n) || 0
   if (!dirty || dirty === lastDirty) return
   lastDirty = dirty

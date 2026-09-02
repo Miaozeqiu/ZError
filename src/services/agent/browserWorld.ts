@@ -1,6 +1,7 @@
 import { lastHomeworkCard } from '../browser/abstractions'
 import { siteGraphAgentSnap } from '../browser/siteGraph'
 import { browserTaskIntent } from '../agent/browserTask'
+import { isPlatformTool } from '../platform'
 
 export type BrowserWorldNext =
   | 'login'
@@ -37,10 +38,10 @@ export type BrowserWorldSnap = {
 const stepText = (step: BrowserWorldStep) => `${step.label || ''}${step.detail || ''}`
 
 const homeworkFlags = (steps: BrowserWorldStep[] = []) => {
-  const done = steps.filter((step) => step.name === 'browser_chaoxing_homework' && step.status === 'done')
+  const done = steps.filter((step) => isPlatformTool(String(step.name || ''), 'homework') && step.status === 'done')
   const text = done.map(stepText).join('\n')
   return {
-    used: steps.some((step) => step.name === 'browser_chaoxing_homework'),
+    used: steps.some((step) => isPlatformTool(String(step.name || ''), 'homework')),
     inspectedDo: /读到 \d+ 道题/.test(text),
     saved: /提交|已提交|已暂时保存|已暂存/.test(text),
   }
@@ -119,13 +120,13 @@ export const homeworkWorldNudge = (snap: BrowserWorldSnap) => {
   const neverHome = '禁止回导航或 zerror://home，不要重走登录。不要当刚进页。口语里的旧阶段作废，以【网页状态】的 next 为准。'
   if (snap.next === 'done') return ''
   if (snap.next === 'save') {
-    return `任务 next=save。已经在作答页，题都填过了（${snap.filledCount}/${snap.questionCount}）。立刻 browser_chaoxing_homework action=save，不要 inspect。${neverHome}`
+    return `任务 next=save。已经在作答页，题都填过了（${snap.filledCount}/${snap.questionCount}）。立刻 browser_homework action=save，不要 inspect。${neverHome}`
   }
   if (snap.next === 'fill') {
     return `任务 next=fill。已经在作答页，优先 fill。题干或选项读不全就 screenshot 或自己点，不要猜，不要当解析器坏了就停。${neverHome}`
   }
   if (snap.next === 'inspect') {
-    return `任务 next=inspect。已经在作答页且还没有题卡。立刻 browser_chaoxing_homework inspect 一次。${neverHome}`
+    return `任务 next=inspect。已经在作答页且还没有题卡。立刻 browser_homework inspect 一次。${neverHome}`
   }
   if (snap.next === 'open') {
     return `任务 next=open。已经在作业列表。open 用户点名的那一份，不要 inspect 当刚进页。${neverHome}`

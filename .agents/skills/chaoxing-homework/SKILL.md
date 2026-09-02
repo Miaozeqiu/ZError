@@ -9,7 +9,7 @@ description: >-
 
 # 学习通作业 / 章节测验作答
 
-只在 `browser_chaoxing_homework` 题卡上工作。不要 eval、不要 click 选项。
+只在 `browser_homework` 题卡上工作。不要 eval、不要 click 选项。
 
 ## 课程作业
 
@@ -28,7 +28,7 @@ description: >-
 5. 暂时保存  
 6. 继续下一任务点  
 
-只有自动失败时才手动：`inspect` → `fill` / `guess` → `save` → `browser_chaoxing_next`。
+只有自动失败时才手动：`inspect` → `fill` / `guess` → `save` → `browser_study_next`。
 
 ## 不要做
 

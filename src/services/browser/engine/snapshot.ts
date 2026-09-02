@@ -1,7 +1,7 @@
 import { SAME_ORIGIN_FRAMES, asObject, evalBrowserView } from '../eval'
 import { rememberPageRefs, type PageRef } from './refs'
 
-const SNAPSHOT_LIMIT = 80
+const SNAPSHOT_LIMIT = 220
 
 const SNAPSHOT_SCRIPT = `(function(){
 ${SAME_ORIGIN_FRAMES}
@@ -128,7 +128,7 @@ function __zeLocator(el, role, name){
     if (el.id) return { by: 'css', value: '#' + __zeEsc(el.id) };
   }
   if (el.id) return { by: 'css', value: '#' + __zeEsc(el.id) };
-  if (role && name && (role === 'button' || role === 'tab' || role === 'link' || role === 'textbox')) {
+  if (role && name && (role === 'button' || role === 'tab' || role === 'link' || role === 'textbox' || role === 'heading')) {
     return { by: 'role', value: role, name: name };
   }
   if (name) return { by: 'text', value: name, exact: true };
@@ -143,7 +143,7 @@ for (var f = 0; f < frames.length && refs.length < ${SNAPSHOT_LIMIT}; f++) {
   if (!doc) continue;
   var nodes = [];
   try {
-    nodes = doc.querySelectorAll('a, button, input, select, textarea, label, [role="tab"], [role="button"], [role="link"], [role="menuitem"], [role="checkbox"], [role="radio"], [contenteditable="true"]');
+    nodes = doc.querySelectorAll('a, button, input, select, textarea, label, h1, h2, h3, h4, [role="tab"], [role="button"], [role="link"], [role="menuitem"], [role="checkbox"], [role="radio"], [role="listitem"], [role="treeitem"], [contenteditable="true"], [title]');
   } catch (e2) { continue; }
   for (var i = 0; i < nodes.length && refs.length < ${SNAPSHOT_LIMIT}; i++) {
     var el = nodes[i];
@@ -162,8 +162,13 @@ for (var f = 0; f < frames.length && refs.length < ${SNAPSHOT_LIMIT}; f++) {
       el = ctrl;
     } else {
       if (!__zeVisible(el)) continue;
-      if (!role || role === 'heading') continue;
-      name = __zeLabel(el);
+      if (!role) {
+        try { name = String(el.getAttribute('title') || '').replace(/\\s+/g, ' ').trim(); } catch (eTitle) { name = ''; }
+        if (!name || name.length > 40) continue;
+        role = tag === 'a' ? 'link' : 'listitem';
+      } else {
+        name = __zeLabel(el);
+      }
     }
     if (!name && role !== 'textbox') continue;
     var path = __zePath(el);
@@ -183,13 +188,13 @@ for (var f = 0; f < frames.length && refs.length < ${SNAPSHOT_LIMIT}; f++) {
       var node = extra[x];
       if (!__zePainted(node)) continue;
       var extraName = String(node.innerText || node.textContent || '').replace(/\\s+/g, ' ').trim();
-      if (!extraName || extraName.length < 2 || extraName.length > 16) continue;
+      if (!extraName || extraName.length < 2 || extraName.length > 24) continue;
       if (seen[__zePath(node)] || seen['name:' + extraName]) continue;
       var st = '';
       try { st = String((node.ownerDocument.defaultView || window).getComputedStyle(node).cursor || ''); } catch (e4) {}
       var cls = String(node.className || '');
       var looksCheck = extraName === '下次自动登录' || extraName === '记住密码' || extraName === '自动登录' || /check|autoLogin|remember/i.test(cls);
-      var looksBtn = extraName === '登录' || extraName === '注册' || extraName === '提交' || extraName === '确定' || extraName === '下一步';
+      var looksBtn = /^(登录|注册|提交|确定|下一步|打开课程|我的课程|进入课程|开始学习|章节|作业|任务)$/.test(extraName);
       if (!looksCheck && !looksBtn && st !== 'pointer' && String(node.tagName || '') !== 'LABEL') continue;
       seen[__zePath(node)] = 1;
       seen['name:' + extraName] = 1;
@@ -213,9 +218,50 @@ for (var f = 0; f < frames.length && refs.length < ${SNAPSHOT_LIMIT}; f++) {
     }
   } catch (e5) {}
 }
+var extras = window.__ZE_FRAME_SNAPS__ || [];
+var extraLines = 0;
+for (var e = 0; e < extras.length && refs.length < ${SNAPSHOT_LIMIT} && extraLines < 40; e++) {
+  var extraItem = extras[e] || {};
+  var extraText = String(extraItem.text || '');
+  if (!extraText) continue;
+  var lines = extraText.split(/\\n/);
+  for (var L = 0; L < lines.length && refs.length < ${SNAPSHOT_LIMIT} && extraLines < 40; L++) {
+    var line = String(lines[L] || '').replace(/\\s+/g, ' ').trim();
+    if (!line || line.length < 2 || line.length > 36) continue;
+    if (seen['name:' + line]) continue;
+    seen['name:' + line] = 1;
+    extraLines += 1;
+    refs.push({
+      id: 'e' + (refs.length + 1),
+      role: 'listitem',
+      name: line,
+      locator: { by: 'text', value: line, exact: true },
+      checked: null,
+    });
+  }
+}
+var title = String(document.title || '');
+if (title.indexOf('ZRRESULT:') === 0) title = '';
+var bodyText = '';
+try { bodyText = String((document.body && document.body.innerText) || ''); } catch (eBody) {}
+var captcha = !!(document.querySelector('#ucode, .yzmInp, form[action*="processVerify"], img[src*="processVerify"]')
+  || /请输入图片中的验证码|【\\s*9010\\s*】/.test(bodyText));
+var iframes = [];
+try {
+  var frameEls = document.querySelectorAll('iframe[src]');
+  for (var fi = 0; fi < frameEls.length && iframes.length < 8; fi++) {
+    iframes.push({ id: frameEls[fi].id || '', src: frameEls[fi].src || '' });
+  }
+} catch (eFrame) {}
 window.__ZE_SNAP_REFS__ = refs;
-return { refs: refs };
+return { url: location.href, title: title, captcha: captcha, iframes: iframes, refs: refs };
 })()`
+
+export const formatAriaSnapshot = (refs: PageRef[]) => refs.map((ref) => {
+  const name = ref.name ? ` ${JSON.stringify(ref.name)}` : ''
+  const check = ref.checked == null ? '' : ref.checked ? ' [checked]' : ' [unchecked]'
+  return `- ${ref.role || 'generic'}${name} [ref=${ref.id}]${check}`
+}).join('\n')
 
 export const readPageSnapshot = async (browserId: string) => {
   const raw = asObject(await evalBrowserView(browserId, SNAPSHOT_SCRIPT).catch(() => ({ refs: [] })))
@@ -236,5 +282,16 @@ export const readPageSnapshot = async (browserId: string) => {
     } satisfies PageRef
   }).filter((item) => item.locator.value)
   rememberPageRefs(browserId, refs)
-  return refs
+  const iframes = (Array.isArray(raw.iframes) ? raw.iframes : []).map((item) => {
+    const row = asObject(item)
+    return { id: String(row.id || ''), src: String(row.src || '') }
+  }).filter((item) => item.src)
+  return {
+    url: String(raw.url || ''),
+    title: String(raw.title || ''),
+    captcha: Boolean(raw.captcha),
+    iframes,
+    refs,
+    snapshot: formatAriaSnapshot(refs),
+  }
 }

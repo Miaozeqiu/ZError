@@ -173,7 +173,7 @@
                       :index-key="block.key"
                       :max-live-nodes="0"
                       :fade="false"
-                      :smooth-streaming="message.status === 'streaming'"
+                      :smooth-streaming="message.status === 'streaming' && !(message.steps || []).length"
                       :typewriter="false"
                       html-policy="safe"
                       :render-code-blocks-as-pre="true"

@@ -107,7 +107,7 @@ export const runChaoxingChapterQuiz = async (id: string): Promise<ChapterQuizRun
       ok: false,
       quiz: true,
       error: '章节测验没有读到题目',
-      hint: '确认已打开测验标签。可再 browser_chaoxing_homework inspect，或 guess 后 next。',
+      hint: '确认已打开测验标签。可再 browser_homework inspect，或 guess 后 next。',
     }
   }
 

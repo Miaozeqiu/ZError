@@ -39,6 +39,18 @@ export interface AgentTodoItem {
   status: 'pending' | 'done' | 'cancelled'
 }
 
+export type AgentTranscriptItem = {
+  role: string
+  content?: unknown
+  name?: string
+  tool_call_id?: string
+  tool_calls?: Array<{
+    id: string
+    type: 'function'
+    function: { name: string; arguments: string }
+  }>
+}
+
 export interface AgentChatMessage {
   id: string
   role: 'user' | 'assistant'
@@ -46,6 +58,8 @@ export interface AgentChatMessage {
   kind?: 'watch'
   attachments?: AgentChatAttachment[]
   steps: ImportTaskStep[]
+  /** 本轮按模型回合回放的 assistant / tool 消息 */
+  transcript?: AgentTranscriptItem[]
   todos?: AgentTodoItem[]
   quizAttempts?: AgentQuizAttempt[]
   quizReported?: boolean
@@ -71,6 +85,7 @@ export interface AgentChatSession {
   attachments?: AgentChatAttachment[]
   studySubjectId?: number
   browserId?: string
+  todos?: AgentTodoItem[]
   contextSummary?: AgentContextSummary
   createdAt: number
   updatedAt: number

@@ -91,9 +91,18 @@ const waitForChaoxingCatalog = async (id: string, maxMs = 1500) => {
   return last
 }
 
+const chaptersWaiting = () => ({
+  waiting: true,
+  page: 'chapters',
+  unfinished: [] as string[],
+  unfinishedCount: 0,
+  hint: '目录还在加载。再调一次 browser_study_chapters，禁止 get_page / eval。',
+})
+
 export const openChaoxingChapters = async (id: string) => {
-  if (!CHAPTER_PARSER_ENABLED) return null
-  const parsed = await parseChaoxingChapters(id).catch(() => null)
+  if (!CHAPTER_PARSER_ENABLED) return chaptersWaiting()
+  const tryParse = () => parseChaoxingChapters(id).catch(() => null)
+  let parsed = await tryParse()
   if (hasChapterData(parsed)) return parsed
   const probe = await evalBrowserView(id, `(function(){
     var href = location.href || '';
@@ -102,20 +111,20 @@ export const openChaoxingChapters = async (id: string) => {
       hasTab: !!document.querySelector('a[data-url*="studentcourse"], [data-url*="studentcourse"]'),
       pageHeader: (href.match(/[?&]pageHeader=(\\d+)/) || [])[1] || '',
     };
-  })()`) as { onCourse?: boolean; hasTab?: boolean; pageHeader?: string }
+  })()`).catch(() => null) as { onCourse?: boolean; hasTab?: boolean; pageHeader?: string } | null
   // 课程壳但还不在章节页签时，先点「章节」
   if (probe?.onCourse && probe.hasTab && probe.pageHeader !== '1') {
-    await evalBrowserView(id, CHAOXING_CLICK_CHAPTER_TAB).catch(() => null)
-    await waitForChaoxingCatalog(id, 800)
-    const again = await parseChaoxingChapters(id).catch(() => null)
-    if (hasChapterData(again)) return again
+    await evalBrowserView(id, CHAOXING_CLICK_CHAPTER_TAB()).catch(() => null)
+    await waitForChaoxingCatalog(id, 1500)
   } else if (probe?.onCourse) {
-    // 已在章节页签：同源扫空时再等一帧让跨域目录 iframe 回传
-    await waitMs(400)
-    const again = await parseChaoxingChapters(id).catch(() => null)
-    if (hasChapterData(again)) return again
+    await waitForChaoxingCatalog(id, 800)
   }
-  return parsed
+  for (let i = 0; i < 4; i += 1) {
+    parsed = await tryParse()
+    if (hasChapterData(parsed)) return parsed
+    await waitMs(450)
+  }
+  return parsed || chaptersWaiting()
 }
 
 const catalogIndex = (value: unknown) => {
@@ -153,7 +162,7 @@ const unfinishedFromCatalogText = (text: string) => {
     .split('\n')
     .map((line) => line.replace(/\s+/g, ' ').trim())
     .filter(Boolean)
-  const unfinished: string[] = []
+  const rows: Array<{ title: string; jobs: number; unfinished: boolean }> = []
   const progressHit = String(text || '').match(/已完成任务点\s*[:：]?\s*(\d+)\s*\/\s*(\d+)/)
   const progress = progressHit
     ? { done: Number(progressHit[1]), total: Number(progressHit[2]) }
@@ -163,20 +172,24 @@ const unfinishedFromCatalogText = (text: string) => {
     const next = lines[i + 1] || ''
     if (/^\d{1,2}$/.test(line) && /^第/.test(next)) continue
     if (/已完成任务点|^目录$|^第/.test(line)) continue
-    // 节名下一行是待完成数（>0）；0 表示该节已清完，跳过
+    if (/^[一二三四五六七八九十百]+[、.]/.test(line) || /单选题|多选题|判断题|填空题|共\s*\d+\s*题/.test(line)) continue
+    // 节名下一行是该节任务点数；0 表示已清完
     if (
       /^\d{1,2}$/.test(next)
-      && Number(next) > 0
       && !/^第/.test(line)
       && line.length > 1
       && !/资料|测验|考试|作业|讨论|问卷/.test(line)
       && !/^第/.test(lines[i + 2] || '')
     ) {
       const title = keepChapterTitle(line) || bareChapterTitle(line) || line
-      if (title && !unfinished.some((item) => titlesMatch(item, title))) unfinished.push(title)
+      const jobs = Number(next) || 0
+      if (title && !rows.some((item) => titlesMatch(item.title, title))) {
+        rows.push({ title, jobs, unfinished: jobs > 0 })
+      }
     }
   }
-  if (!unfinished.length && !(progress && progress.total > progress.done)) return null
+  const unfinished = rows.filter((item) => item.unfinished).map((item) => item.title)
+  if (!rows.length && !(progress && progress.total > progress.done)) return null
   return {
     url: '',
     page: 'chapters',
@@ -184,10 +197,10 @@ const unfinishedFromCatalogText = (text: string) => {
     progress,
     unfinished,
     unfinishedCount: progress && progress.total > progress.done ? progress.total - progress.done : unfinished.length,
-    chapters: unfinished.map((title) => ({ title, jobs: 1, unfinished: true })),
+    chapters: rows.map((item) => ({ title: item.title, jobs: item.jobs, unfinished: item.unfinished })),
     via: 'frames',
     hint: unfinished.length
-      ? (`未完成：${unfinished.slice(0, 8).join('、')}${unfinished.length > 8 ? '…' : ''}。用 click_text 点第一节干净节名，再 browser_chaoxing_play。`)
+      ? (`未完成：${unfinished.slice(0, 8).join('、')}${unfinished.length > 8 ? '…' : ''}。点「${String(unfinished[0] || '').replace(/^\d+(?:\.\d+)+\s*/, '').trim() || unfinished[0]}」（不要带 1.1），进 studentstudy 后立刻 browser_study_play。`)
       : (progress ? `已完成任务点 ${progress.done}/${progress.total}。` : '没有读到未完成章节。'),
   } as ChaoxingChapterSnap
 }
@@ -220,12 +233,12 @@ const unfinishedFromFrameSnaps = async (id: string) => {
 
 export const installChaoxingChapterHook = async (id: string) => {
   if (!CHAPTER_PARSER_ENABLED) return null
-  return evalBrowserView(id, CHAOXING_CHAPTER_HOOK) as Promise<ChaoxingChapterSnap | null>
+  return evalBrowserView(id, CHAOXING_CHAPTER_HOOK()) as Promise<ChaoxingChapterSnap | null>
 }
 
 export const readChaoxingChapterTick = (id: string) => {
   if (!CHAPTER_PARSER_ENABLED) return Promise.resolve(null)
-  return evalBrowserView(id, CHAOXING_CHAPTER_TICK) as Promise<ChaoxingChapterSnap | null>
+  return evalBrowserView(id, CHAOXING_CHAPTER_TICK()) as Promise<ChaoxingChapterSnap | null>
 }
 
 export const readChaoxingChapterSnap = async (id: string) => {
@@ -246,9 +259,9 @@ export const parseChaoxingChapters = async (id: string) => {
   try {
     const cached = await readChaoxingChapterTick(id).catch(() => null)
     if (hasChapterData(cached)) return cached
-    const fresh = asObject(await evalBrowserView(id, CHAOXING_CHAPTER_REFRESH).catch(() => null)) as ChaoxingChapterSnap
+    const fresh = asObject(await evalBrowserView(id, CHAOXING_CHAPTER_REFRESH()).catch(() => null)) as ChaoxingChapterSnap
     if (hasChapterData(fresh) && !fresh.needInstall) return fresh
-    local = await evalBrowserView(id, CHAOXING_CHAPTER_INSTALL).catch(async () => {
+    local = await evalBrowserView(id, CHAOXING_CHAPTER_INSTALL()).catch(async () => {
       await dumpChaoxingParseHtml(id, 'parse-error').catch(() => null)
       return null
     }) as ChaoxingChapterSnap | null
@@ -365,7 +378,7 @@ export const openChaoxingChapter = async (id: string, title: string, hint?: Open
   }
   const opened = asObject(await evalBrowserView(
     id,
-    `${CHAOXING_OPEN_CHAPTER}(${JSON.stringify(want)}, ${JSON.stringify(chapterId)})`,
+    `${CHAOXING_OPEN_CHAPTER()}(${JSON.stringify(want)}, ${JSON.stringify(chapterId)})`,
   ))
   if (opened.ok) {
     await waitMs(400)
@@ -396,6 +409,12 @@ export const openChaoxingChapter = async (id: string, title: string, hint?: Open
       if (built) return goPlayer(id, built, hit?.title || want, 'chapterId')
     }
   }
+  const short = bareChapterTitle(hit?.title || want) || want
+  const clicked = await clickBrowserText(id, short).catch(() => null) as { ok?: boolean } | null
+  if (clicked?.ok) {
+    await waitMs(800)
+    return { ok: true, title: hit?.title || want, via: 'click-text' }
+  }
   return { ok: false, error: String(opened.error || `目录里没有「${want}」`), want }
 }
 
@@ -412,7 +431,7 @@ const clickChapterOrNext = async (id: string, name?: string) => {
 }
 
 export const openNextChaoxingStep = async (id: string) => {
-  const moved = asObject(await evalBrowserView(id, CHAOXING_NEXT_STEP).catch(() => null))
+  const moved = asObject(await evalBrowserView(id, CHAOXING_NEXT_STEP()).catch(() => null))
   if (moved.quiz) {
     await waitMs(1000)
     return { quiz: true, step: String(moved.step || ''), hasVideo: false, more: false, opened: Boolean(moved.opened) }
@@ -428,7 +447,8 @@ export const openNextChaoxingStep = async (id: string) => {
   if (page?.quiz) {
     return { quiz: true, step: String(page.step || moved.step || ''), hasVideo: false, more: false }
   }
-  const played = await playChaoxingVideo(id)
+  // NEXT_STEP 已经点到目标任务点，绝不能再 play 时点「第一个未完成」
+  const played = await playChaoxingVideo(id, { skipTabClick: true })
   if (played.captcha) {
     return { captcha: true, hasVideo: false, more: false, hint: CAPTCHA_HINT }
   }
@@ -516,7 +536,7 @@ export const studyChaoxingUnfinished = async (id: string, title?: string) => {
   if (!hasChapterData(parsed)) {
     const onStudent = await evalBrowserView(id, `(function(){ return /\\/mycourse\\/stu/.test(location.href || ''); })()`).catch(() => false)
     if (onStudent) {
-      await evalBrowserView(id, CHAOXING_CLICK_CHAPTER_TAB).catch(() => null)
+      await evalBrowserView(id, CHAOXING_CLICK_CHAPTER_TAB()).catch(() => null)
       await waitForChaoxingCatalog(id, 1500)
       parsed = await parseChaoxingChapters(id).catch((error) => {
         parseError = String(error?.message || error || parseError)
@@ -554,7 +574,7 @@ export const studyChaoxingUnfinished = async (id: string, title?: string) => {
         progress,
         page: parsed?.page,
         url: parsed?.url,
-        hint: `页面显示还有 ${progressLeft} 个未完成任务点（已完成 ${progress?.done}/${progress?.total}），但目录项没对上。不要说全部完成。立刻 browser_get_page 看目录正文和 iframe，读到节名就 click_text 干净节名，进播放页后 browser_chaoxing_play。`,
+        hint: `页面显示还有 ${progressLeft} 个未完成任务点（已完成 ${progress?.done}/${progress?.total}），但目录项没对上。不要说全部完成。点「章节」后再 browser_study_chapters；点节用中文短名，进 studentstudy 后立刻 browser_study_play。`,
       }
     }
     const stillNotCatalog = parsed?.page !== 'chapters' && parsed?.page !== 'player' && !progress
@@ -569,7 +589,7 @@ export const studyChaoxingUnfinished = async (id: string, title?: string) => {
         url: parsed?.url,
         error: parseError || undefined,
         hint: parseError
-          ? `解析目录失败：${parseError}。不要说全部完成。立刻 browser_get_page / browser_eval 自己读页面：找「已完成任务点 x/y」和节名旁的数字，读到未完成节名就 click_text，再 browser_chaoxing_play。`
+          ? `解析目录失败：${parseError}。不要说全部完成。立刻 browser_get_page / browser_eval 自己读页面：找「已完成任务点 x/y」和节名旁的数字，读到未完成节名就 click_text，再 browser_study_play。`
           : '课程壳或目录 iframe 还没读到未完成节。不要说全部完成。点「章节」后等两秒，再用 browser_get_page 看 iframe 正文，或 browser_eval 扫 .catalog_title / #coursetree。',
       }
     }
@@ -659,7 +679,7 @@ export const studyChaoxingUnfinished = async (id: string, title?: string) => {
       quiz: false,
       hint: playing
         ? `已打开并确认在播「${openedTitle}」。进度在 Agent 面板，系统会定时核对，不要再 click_text。`
-        : `已打开「${openedTitle}」，但还没播起来。再 browser_chaoxing_play；不行就回目录重点节名。`,
+        : `已打开「${openedTitle}」，但还没播起来。再 browser_study_play；不行就回目录重点节名。`,
     }
   }
 
@@ -670,6 +690,6 @@ export const studyChaoxingUnfinished = async (id: string, title?: string) => {
     unfinishedCount: Number(parsed?.unfinishedCount) || unfinished.length || progressLeft,
     progress,
     skipped,
-    hint: `未完成还有：${unfinished.join('、') || `任务点 ${progressLeft}`}。尝试打开失败或都是资料节。不要说全部完成，可再 click_text 下一节或 browser_chaoxing_next。`,
+    hint: `未完成还有：${unfinished.join('、') || `任务点 ${progressLeft}`}。尝试打开失败或都是资料节。不要说全部完成，可再 click_text 下一节或 browser_study_next。`,
   }
 }

@@ -74,7 +74,7 @@ export const pickHomeworkOption = async (id: string, index: number, letter: stri
         pick = asObject(await evalBrowserView(id, PICK_HW_IN_FRAMES(at, want)).catch((err) => ({ error: String(err) })))
       }
     } else if (!alreadyOn) {
-      topFill = asObject(await evalBrowserView(id, `${CHAOXING_HOMEWORK_FILL}(${JSON.stringify([{ index: at, answer: want }])})`).catch((err) => ({ error: String(err) })))
+      topFill = asObject(await evalBrowserView(id, `${CHAOXING_HOMEWORK_FILL()}(${JSON.stringify([{ index: at, answer: want }])})`).catch((err) => ({ error: String(err) })))
       if (!Number(topFill.filledCount)) {
         pick = asObject(await evalBrowserView(id, PICK_HW_IN_FRAMES(at, want)).catch((err) => ({ error: String(err) })))
       }

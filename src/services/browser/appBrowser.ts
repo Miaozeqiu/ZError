@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
-import { CHAOXING_STUDY_INSPECT } from './skills/chaoxingStudy'
+import { publicRefs } from './engine/refs'
+import { readPageSnapshot } from './engine/snapshot'
 import { askFrames, asObject, evalBrowserView, waitMs, withSameFrames } from './eval'
 
 export {
@@ -70,6 +71,12 @@ export type BrowserPageState = {
   id: string
   url: string
   title: string
+}
+
+export type BrowserLoadState = {
+  id: string
+  phase: 'started' | 'finished' | string
+  url: string
 }
 
 export type BrowserBounds = {
@@ -261,90 +268,20 @@ export const setBrowserZoom = (id: string, zoom: number) => (
 
 export const getBrowserState = (id: string) => invoke<BrowserPageState>('browser_get_state', { id })
 
-/** Walk same-origin iframes. Chaoxing's player sits two frames down. */
+/** Playwright 风格可读快照：role / name / ref，不灌 innerText、不塞站点解析器。 */
 
 export const readBrowserPage = async (id: string) => {
   await askFrames(id, 'snap')
-  return evalBrowserView(id, withSameFrames(`(function(){
-  var frames = __sameFrames(window, 0);
-  var iframeText = [];
-  var catalogText = '';
-  var homeworkText = '';
-  var taskOnly = false;
-  for (var i = 1; i < frames.length && iframeText.length < 6; i++) {
-    try {
-      var frameText = ((frames[i].document.body && frames[i].document.body.innerText) || '').trim();
-      if (!frameText) continue;
-      var frameHref = '';
-      try { frameHref = (frames[i].location && frames[i].location.href) || ''; } catch (e) {}
-      var kind = /studentcourse/.test(frameHref) || /已完成任务点/.test(frameText) ? '章节'
-        : (/暂无任务|默认班级/.test(frameText) && !/已完成任务点/.test(frameText)) ? '任务'
-        : '其他';
-      if (kind === '任务') taskOnly = true;
-      if (kind === '章节' && frameText.length > catalogText.length) catalogText = frameText;
-      iframeText.push('[' + kind + '] ' + frameText.slice(0, 4000));
-    } catch (e) {}
-  }
-  var extras = window.__ZE_FRAME_SNAPS__ || [];
-  for (var e = 0; e < extras.length; e++) {
-    var item = extras[e] || {};
-    var extraText = String(item.text || '').trim();
-    if (!extraText) continue;
-    var extraKind = item.kind === 'catalog' || /已完成任务点/.test(extraText) ? '章节'
-      : item.kind === 'work' || /作业列表|待做|doHomeWork|mooc2\\/work/.test(extraText + String(item.href || '')) ? '作业'
-      : item.kind === 'task' ? '任务' : '其他';
-    if (extraKind === '任务') taskOnly = true;
-    if (extraKind === '章节' && extraText.length > catalogText.length) catalogText = extraText;
-    if (extraKind === '作业' && extraText.length > homeworkText.length) homeworkText = extraText;
-    iframeText.push('[' + extraKind + '] ' + extraText.slice(0, 4000));
-  }
-  var chaoxing = null;
-  try {
-    if (String(location.host).indexOf('chaoxing.com') >= 0) {
-      chaoxing = (${CHAOXING_STUDY_INSPECT});
-    }
-  } catch (e) {
-    chaoxing = { error: String(e && e.message || e) };
-  }
-  var topText = ((document.body && document.body.innerText) || '');
-  var title = String(document.title || '');
-  if (title.indexOf('ZRRESULT:') === 0) title = '';
-  var captcha = !!(document.querySelector('#ucode, .yzmInp, form[action*="processVerify"]')
-    || /请输入图片中的验证码|【\\s*9010\\s*】/.test(topText + catalogText));
-  var text = captcha
-    ? ('【验证码】学习通要求输入图片验证码（9010）。自己认图读出 4 位字母或数字，调用 browser_chaoxing_captcha 提交，然后继续刷课。不要问用户，不要 browser_wait。\\n\\n' + topText.slice(0, 4000))
-    : homeworkText
-    ? (topText.slice(0, 2000) + '\\n\\n【作业】\\n' + homeworkText.slice(0, 11000))
-    : catalogText
-    ? (topText.slice(0, 2500) + '\\n\\n【章节目录】\\n' + catalogText.slice(0, 11000))
-    : (taskOnly
-      ? (topText.slice(0, 2500) + '\\n\\n【注意】当前 iframe 是「任务」页（暂无任务），不是章节目录。先点「章节」等目录出现「已完成任务点」再读。')
-      : topText.slice(0, 14000));
+  const page = await readPageSnapshot(id)
+  const state = page.url ? null : await getBrowserState(id).catch(() => null)
   return {
-    url: location.href,
-    title: title,
-    text: text,
-    iframeText: iframeText,
-    catalogText: catalogText.slice(0, 11000),
-    onTaskTab: taskOnly && !catalogText,
-    headings: Array.from(document.querySelectorAll('h1,h2,h3')).slice(0, 20).map(function(el){ return (el.innerText || '').trim() }).filter(Boolean),
-    links: Array.from(document.querySelectorAll('a[href]')).slice(0, 30).map(function(a){
-      return { text: ((a.innerText || '').trim()).slice(0, 80), href: a.href }
-    }).filter(function(item){ return item.text || item.href }),
-    iframes: Array.from(document.querySelectorAll('iframe[src]')).slice(0, 8).map(function(el){
-      return { id: el.id || '', src: el.src || '' }
-    }),
-    notices: ['#loginTip', '#phoneMsg', '#pwdMsg', '#quickCodeMsg'].map(function(sel){
-      var el = document.querySelector(sel);
-      var text = el && ((el.innerText || '').trim());
-      if (!el || !text) return null;
-      return { selector: sel, text: text.slice(0, 120) };
-    }).filter(Boolean),
-    captcha: captcha,
-    chaoxing: chaoxing,
-    chapters: (typeof window !== 'undefined' && window.__ZE_CHAPTERS__) || null
-  };
-})()`))
+    url: page.url || String(state?.url || ''),
+    title: page.title || String(state?.title || ''),
+    snapshot: page.snapshot,
+    refs: publicRefs(page.refs),
+    captcha: page.captcha,
+    iframes: page.iframes,
+  }
 }
 
 export const clickBrowserElement = (id: string, selector: string) => evalBrowserView(id, withSameFrames(`(function(){
@@ -499,6 +436,12 @@ export const setBrowserAbstractionOverlay = (id: string, html: string | null) =>
 
 export const listenBrowserState = (handler: (state: BrowserPageState) => void): Promise<UnlistenFn> => (
   listen<BrowserPageState>('app-browser-state', (event) => {
+    if (event.payload) handler(event.payload)
+  })
+)
+
+export const listenBrowserLoad = (handler: (state: BrowserLoadState) => void): Promise<UnlistenFn> => (
+  listen<BrowserLoadState>('app-browser-load', (event) => {
     if (event.payload) handler(event.payload)
   })
 )

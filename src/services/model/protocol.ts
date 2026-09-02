@@ -859,11 +859,15 @@ export const resolveExecutableModelJsCode = (
 
   const protocol = normalizeApiProtocol(platform?.apiProtocol || model.apiProtocol)
   if (protocol === 'custom') {
-    return model.jsCode?.trim() || ''
+    const customCode = model.jsCode?.trim() || ''
+    // 2.2.8+：固定协议取代自定义 JS；升级后平台可能仍标 custom 但 jsCode 已被清空。
+    // 无自定义代码时回退到 Chat 预设，避免「模型未配置可执行代码」。
+    if (customCode) return customCode
   }
 
+  const effectiveProtocol = protocol === 'custom' ? 'openai-chat' : protocol
   return buildPresetProcessModelJsCode({
-    protocol,
+    protocol: effectiveProtocol,
     modelId: resolveRuntimeModelId(model),
     enableThinking: model.enableThinking === true,
     thinkingOffEnableThinkingFalse: model.thinkingOffEnableThinkingFalse,

@@ -36,7 +36,13 @@ export interface RunTextModelOptions {
   timeoutMs?: number
   tools?: any[]
   systemPrompt?: string
-  history?: { role: string; content: unknown }[]
+  history?: Array<{
+    role: string
+    content?: unknown
+    name?: string
+    tool_call_id?: string
+    tool_calls?: unknown[]
+  }>
   userContent?: unknown
   maxRounds?: number
   useAgentModel?: boolean
@@ -46,6 +52,14 @@ export interface RunTextModelOptions {
   liveContext?: () => string | Promise<string>
   executeTool?: (call: ModelToolCall) => Promise<string>
   onEvent?: (event: ModelRunEvent) => void
+  /** 本轮追加的 assistant / tool 消息，供跨轮按回合回放 */
+  onTurnTranscript?: (messages: Array<{
+    role: string
+    content?: unknown
+    name?: string
+    tool_call_id?: string
+    tool_calls?: unknown[]
+  }>) => void
 }
 
 const collectContent = (result: any): string => {
@@ -81,7 +95,7 @@ const formatRunnerError = (error: unknown) => {
 }
 
 const SINGLETON_TOOLS = new Set(['get_file_info', 'list_folders'])
-const REPEAT_NUDGE = '不要再用相同参数重复调用工具。请根据已经得到的结果直接回复用户，不要再调用任何工具。'
+const REPEAT_NUDGE = '刚才同一只读工具已经查过。根据已有结果换一步继续（点元素、读新页、播放、下一节都可以），不要停下来问用户，也不要说需要允许才能调工具。'
 const LIVE_CONTEXT_MARK = '\u200B【实时网页状态】'
 /** 传输层失败时最多再试几次（不含首次）。cheaptokens 等网关常偶发 reset。 */
 const MAX_NETWORK_RETRIES = 10
@@ -323,12 +337,50 @@ export async function runTextModel(
     messages.push({ role: 'system', content: options.systemPrompt })
   }
   for (const item of options?.history || []) {
-    if (!item?.content) continue
-    if (item.role === 'assistant' || item.role === 'user') {
-      messages.push({ role: item.role, content: item.content })
+    if (item.role === 'tool') {
+      messages.push({
+        role: 'tool',
+        tool_call_id: item.tool_call_id,
+        name: item.name,
+        content: item.content ?? '',
+      })
+      continue
+    }
+    if (item.role === 'assistant') {
+      const toolCalls = Array.isArray(item.tool_calls) ? item.tool_calls : []
+      const content = item.content ?? ''
+      if (!toolCalls.length && (content === '' || content == null)) continue
+      messages.push({
+        role: 'assistant',
+        content,
+        ...(toolCalls.length ? { tool_calls: toolCalls } : {}),
+      })
+      continue
+    }
+    if (item.role === 'user' && item.content) {
+      messages.push({ role: 'user', content: item.content })
     }
   }
   messages.push({ role: 'user', content: options?.userContent ?? prompt })
+  const transcriptFrom = messages.length
+
+  const emitTurnTranscript = (spoken: string) => {
+    const turn = messages
+      .slice(transcriptFrom)
+      .filter((item) => item?.role === 'assistant' || item?.role === 'tool')
+      .map((item) => ({
+        role: String(item.role),
+        content: item.content,
+        name: item.name,
+        tool_call_id: item.tool_call_id,
+        tool_calls: item.tool_calls,
+      }))
+    const text = String(spoken || '').trim()
+    if (text && !turn.some((item) => item.role === 'assistant' && !item.tool_calls?.length && item.content === text)) {
+      turn.push({ role: 'assistant', content: text })
+    }
+    options?.onTurnTranscript?.(turn)
+  }
 
   const input: any = {
     messages,
@@ -441,7 +493,8 @@ export async function runTextModel(
   const maxRounds = Math.max(1, options?.maxRounds ?? 1)
   let fullResponse = ''
   const seenToolCalls = new Set<string>()
-  let toolsDisabled = false
+  const toolsSnapshot = Array.isArray(input.tools) ? input.tools : []
+  let gatewayRepeatHits = 0
 
   // 开发模式把每轮发给模型的原始 messages / 回复落盘，方便排查 agent 行为
   const ioSafeMessages = (list: any[]) => list.map((item) => {
@@ -476,9 +529,9 @@ export async function runTextModel(
       try {
         result = await processModel(input, config, tauriFetch, abortController.signal)
       } catch (error) {
-        if (!toolsDisabled && isRepetitiveToolError(error)) {
-          toolsDisabled = true
-          input.tools = []
+        if (isRepetitiveToolError(error) && gatewayRepeatHits < 2) {
+          gatewayRepeatHits += 1
+          input.tools = toolsSnapshot
           input.messages.push({ role: 'user', content: REPEAT_NUDGE })
           continue
         }
@@ -528,23 +581,25 @@ export async function runTextModel(
         text: fullResponse.slice(0, 4000),
         toolCalls: toolCalls.map((tc) => ({ name: tc?.function?.name, args: String(tc?.function?.arguments || '').slice(0, 600) })),
       })
-      if (toolCalls.length && options?.executeTool && !toolsDisabled) {
+      if (toolCalls.length && options?.executeTool) {
         const fresh = toolCalls.filter((tc) => {
           const name = tc.function?.name || ''
           if (!name) return false
+          if (!SINGLETON_TOOLS.has(name)) return true
           return !seenToolCalls.has(toolSignature(name, tc.function?.arguments || ''))
         })
         if (!fresh.length) {
-          toolsDisabled = true
-          input.tools = []
+          input.tools = toolsSnapshot
           input.messages.push({ role: 'user', content: REPEAT_NUDGE })
           continue
         }
         toolCalls = fresh
       }
 
-      if (!toolCalls.length || !options?.executeTool || toolsDisabled) {
-        return fullResponse.trim()
+      if (!toolCalls.length || !options?.executeTool) {
+        const spoken = fullResponse.trim()
+        emitTurnTranscript(spoken)
+        return spoken
       }
 
       input.messages.push({

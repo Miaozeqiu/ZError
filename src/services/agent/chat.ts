@@ -6,10 +6,8 @@ import type { ImportStepPreview, ImportTaskStep } from '../app/importTasks'
 import { getQuizCards, parseQuizCards, resolveQuizTitle, saveQuizTitle } from '../../utils/question/quizPractice'
 import { collectGraphNodes, extractMermaidSource } from '../../utils/study/studyGraph'
 import {
-  getBrowserState,
   hostnameOf,
   listAppBrowsers,
-  readChaoxingVideo,
 } from '../browser/appBrowser'
 import { clipAgentDebug, logAgentDebug, writeBrowserTranscript } from './debugLog'
 import { emitStudyGraphStream, finishStudyGraphStream, studyGraphStream } from '../study/graphStream'
@@ -17,7 +15,6 @@ import { runStudyProgressEvaluation } from '../study/progressAgent'
 import { finalizeStudySessionSummary } from '../study/timelineSummary'
 import { describeActivity } from './activity'
 import { executeChatTool } from './executeChatTool'
-import { formatTodoNudge } from './browserTodo'
 import { GRAPH_QUALITY, KEEP_GRAPH_HINT, graphSubjectHint, lastStudyFocus } from './studyHelpers'
 import type {
   AgentChatAttachment,
@@ -36,7 +33,6 @@ import {
   contextSummaryPrompt,
   estimateAgentContext,
   estimateTextTokens,
-  messagePlainText,
   splitCompactedHistory,
 } from './context'
 import {
@@ -50,7 +46,21 @@ import {
   parseMessageParts,
 } from './folderTokens'
 import { parseToolArgs } from './toolArgs'
-import { BROWSER_SYSTEM_PROMPT, SYSTEM_PROMPT } from './prompts'
+import {
+  TOOL_ARGS_KEEP,
+  TOOL_RESULT_KEEP,
+  assistantTurnToHistory,
+  buildModelHistory,
+  clipToolText,
+  clipTranscript,
+  messageHistoryText,
+} from './modelHistory'
+import { buildBrowserSystemPrompt, buildLearningSystemPrompt } from './prompts'
+import {
+  getEnabledSkillCatalog,
+  getSkillPromptBlocksByIds,
+  matchSkillsForText,
+} from './agentSkills'
 import { BROWSER_TOOLS, CHAT_TOOLS } from './tools'
 import {
   recoverSiteAccountsFromTexts,
@@ -58,11 +68,9 @@ import {
   siteAccountsPrompt,
 } from './siteAccounts'
 import { siteGraphAgentContext } from '../browser/siteGraph'
-import { chapterStateFor } from '../chaoxing/browser/chapters'
+import { ensureStudyWatch, liveStudyPlayback } from '../chaoxing/browser/playback'
 import {
-  formatVideoClock,
   stopChaoxingWatch,
-  videoWatchFor,
 } from '../chaoxing/browser/watch'
 import { bindChaoxingWatchAgent, dropWatchQueue, flushWatchAfterTurn } from '../chaoxing/browser/watchAgent'
 
@@ -121,6 +129,7 @@ const loadPersisted = () => {
       attachments: Array.isArray(session.attachments) ? session.attachments : undefined,
       studySubjectId: Number(session.studySubjectId) > 0 ? Number(session.studySubjectId) : undefined,
       browserId: String(session.browserId || '').trim() || undefined,
+      todos: Array.isArray(session.todos) ? session.todos : undefined,
       contextSummary: session.contextSummary?.text && session.contextSummary.coveredThrough
         ? session.contextSummary
         : undefined,
@@ -128,6 +137,7 @@ const loadPersisted = () => {
         ...message,
         attachments: Array.isArray(message.attachments) ? message.attachments : undefined,
         steps: Array.isArray(message.steps) ? message.steps : [],
+        transcript: Array.isArray(message.transcript) ? message.transcript : undefined,
         studyEval: message.studyEval?.status === 'running'
           ? { status: 'empty', text: '上次评估在关闭前中断了。' }
           : message.studyEval,
@@ -169,7 +179,10 @@ const persist = () => {
         steps: message.steps.map((step) => ({
           ...step,
           preview: clipPreview(step.preview),
+          arguments: step.arguments ? clipToolText(step.arguments, TOOL_ARGS_KEEP) : undefined,
+          result: step.result ? clipToolText(step.result, TOOL_RESULT_KEEP) : undefined,
         })),
+        transcript: message.transcript ? clipTranscript(message.transcript) : undefined,
       })),
     }))
   try {
@@ -251,76 +264,20 @@ const describeFolders = (items?: AgentChatAttachment[]) => {
   return `\n\n指定文件夹：\n${lines.join('\n')}`
 }
 
-const browserStatePrefix = async (sessionId: string, light = false) => {
+const browserStatePrefix = async (sessionId: string) => {
   const browserId = String(sessions.value.find((item) => item.id === sessionId)?.browserId || '').trim()
   if (!browserId) return ''
   const item = listAppBrowsers().find((browser) => browser.id === browserId)
   const name = item?.name || item?.title || hostnameOf(item?.url || '')
   const url = item?.url || ''
-  let playLine = '当前没有确认在播的视频。禁止说「正在播放」「视频仍在后台播放」。'
-  const watch = videoWatchFor(browserId)
   const accountLine = siteAccountsPrompt()
-  if (light && watch) {
-    const clock = `${formatVideoClock(watch.current)} / ${formatVideoClock(watch.duration)}`
-    const videos = watch.videoCount > 1
-      ? ` 本章视频 ${watch.videoIndex || 1}/${watch.videoCount}${watch.moreVideos ? '，后面还有' : ''}`
-      : ''
-    playLine = watch.paused
-      ? `监控中「${watch.title || '当前节'}」已暂停 ${clock}。${videos}`
-      : `监控中「${watch.title || '当前节'}」在播 ${clock}。${videos}不要再点播放或读目录。`
-    return `【网页状态】当前对话挂着浏览器「${name}」（browser_id=${browserId}）${url ? `，网址 ${url}` : ''}。${playLine}${accountLine ? ` ${accountLine}` : ''}\n\n`
-  }
-  try {
-    const info = await readChaoxingVideo(browserId)
-    if (info?.captcha) {
-      playLine = '学习通弹出图片验证码（9010）。自己认图读出 4 位，立刻 browser_chaoxing_captcha 提交，然后继续刷课。不要问用户。'
-    } else if (info?.quiz) {
-      playLine = `当前是章节测验（${info.step || info.current || ''}）。系统会按 ocs 流程自动搜题/随机/暂存；失败再用 homework inspect/guess，然后 next。`
-    } else if (info?.video) {
-      const clock = `${formatVideoClock(info.video.current)} / ${formatVideoClock(info.video.duration)}`
-      const title = info.current || '当前节'
-      const videos = Number(info.videoCount) > 1
-        ? ` 本章视频 ${info.videoIndex || 1}/${info.videoCount}${info.moreVideos ? '，后面还有视频' : ''}`
-        : ''
-      if (info.video.paused || info.video.ended) {
-        playLine = `当前节「${title}」视频没有在播（paused=${info.video.paused} ended=${info.video.ended} ${clock}）。${videos}禁止说正在播放。用户要看课就立刻 browser_chaoxing_play。`
-      } else {
-        playLine = `当前节「${title}」视频确认在播 ${clock}。${videos}`
-      }
-    }
-  } catch {
-    // keep default
-  }
-  return `【网页状态】当前对话挂着浏览器「${name}」（browser_id=${browserId}）${url ? `，网址 ${url}` : ''}。${playLine}${accountLine ? ` ${accountLine}` : ''} 读页面、点击、填写、跳转都必须调用工具，不要只口头说已经操作。\n\n`
-}
-
-/** 图谱 + 章节解析器：每次发给模型前刷新，不依赖用户是否再开口 */
-const browserGraphParserContext = (sessionId: string) => {
-  const browserId = String(sessions.value.find((item) => item.id === sessionId)?.browserId || '').trim()
-  if (!browserId) return ''
-  const url = String(listAppBrowsers().find((browser) => browser.id === browserId)?.url || '')
-  const chapters = chapterStateFor(browserId)
-  const chapterLine = chapters
-    ? (chapters.unfinished.length
-      ? `【章节解析】未完成 ${chapters.unfinishedCount}${chapters.progress ? `（任务点 ${chapters.progress.done}/${chapters.progress.total}）` : ''}：${chapters.unfinished.slice(0, 8).join('、')}${chapters.currentTitle ? `；当前「${chapters.currentTitle}」` : ''}。`
-      : chapters.progress
-        ? (chapters.progress.total > chapters.progress.done
-          ? `【章节解析】已完成任务点 ${chapters.progress.done}/${chapters.progress.total}，还没对上节名。不要说全部完成，自己 get_page 解析。`
-          : `【章节解析】已完成任务点 ${chapters.progress.done}/${chapters.progress.total}。`)
-        : '【章节解析】解析器还没读到目录。这不等于做完，必须自己 get_page / eval 解析，不要说全部完成。')
-    : '【章节解析】解析器未挂上。'
-  const jobs = (chapters?.jobs || []).slice(0, 8)
-  const jobLine = jobs.length
-    ? `本节任务点：${jobs.map((job) => {
-      const mark = job.jobDone ? '完成' : job.active ? '进行中' : '未完成'
-      const clock = job.duration
-        ? ` ${formatVideoClock(job.current || 0)}/${formatVideoClock(job.duration)} ${Math.round(job.percent || 0)}%`
-        : ''
-      return `${job.label}(${mark}${clock})`
-    }).join('、')}。`
-    : ''
   const graphLine = siteGraphAgentContext(url)
-  return [graphLine, chapterLine, jobLine].filter(Boolean).join(' ')
+  return [
+    `【网页状态】当前对话挂着浏览器「${name}」（browser_id=${browserId}）${url ? `，网址 ${url}` : ''}。`,
+    accountLine,
+    graphLine,
+    '要看页或操作请调用工具，不要只口头说已经做了。',
+  ].filter(Boolean).join(' ') + '\n\n'
 }
 
 const studyStatePrefix = async (sessionId: string) => {
@@ -520,6 +477,7 @@ export const createChat = (init?: Partial<Pick<AgentChatSession, 'title' | 'atta
     attachments: init?.attachments,
     studySubjectId: Number(init?.studySubjectId) > 0 ? Number(init?.studySubjectId) : undefined,
     browserId: String(init?.browserId || '').trim() || undefined,
+    todos: [],
     createdAt: Date.now(),
     updatedAt: Date.now(),
   }
@@ -852,8 +810,10 @@ const collectRecentTurns = (sessionId: string, limit = 8) => {
       const latestTeach = index === items.length - 1 && item.role === 'assistant'
       const max = latestTeach ? 1800 : 500
       const quiz = formatQuizEvidence(item)
+      const tools = item.role === 'assistant' ? messageHistoryText({ ...item, content: '' }).slice(0, 800) : ''
       return [
         `${item.role === 'user' ? '用户' : '助手'}：${String(item.content || '').slice(0, max)}`,
+        tools ? `工具：${tools}` : '',
         quiz ? `作答记录：${quiz}` : '',
       ].filter(Boolean).join('\n')
     })
@@ -873,15 +833,24 @@ const collectRecentTurns = (sessionId: string, limit = 8) => {
 
 const COMPACT_SYSTEM = '你是对话归档员。把给定的对话压成结构化中文摘要，只保留后续对话还需要用到的信息。不要评论，不要写开场白。'
 
-const compactPrompt = (previous: string, transcript: string) => [
+const compactPrompt = (previous: string, transcript: string, browser = false) => [
   previous ? `已有摘要（要和新内容合并，别丢掉里面的结论）：\n${previous}\n` : '',
   `需要归档的对话：\n${transcript}\n`,
   '输出合并后的摘要，1200 字以内，按下面的小标题分段，没有内容的标题写「无」：',
-  '【用户背景与目标】',
-  '【已讲解的知识点】',
-  '【出过的题与作答情况】',
-  '【已完成的操作】（导入题目、改图谱、建科目等，带上关键 id 或名称）',
-  '【待办与约定】',
+  ...(browser
+    ? [
+      '【用户目标】',
+      '【打开过的页面】',
+      '【工具调用与失败】（工具名、关键参数、error）',
+      '【待办与约定】',
+    ]
+    : [
+      '【用户背景与目标】',
+      '【已讲解的知识点】',
+      '【出过的题与作答情况】',
+      '【已完成的操作】（导入题目、改图谱、建科目等，带上关键 id 或名称）',
+      '【待办与约定】',
+    ]),
   '只输出摘要正文。',
 ].filter(Boolean).join('\n')
 
@@ -890,7 +859,7 @@ const pickCompactBoundary = (kept: AgentChatMessage[]) => {
   let tokens = 0
   let start = kept.length
   for (let i = kept.length - 1; i >= 0; i -= 1) {
-    const size = estimateTextTokens(messagePlainText(kept[i].content))
+    const size = estimateTextTokens(messageHistoryText(kept[i]))
     const overMin = kept.length - i > CONTEXT_KEEP_MIN_MESSAGES
     if (overMin && tokens + size > CONTEXT_KEEP_TOKENS) break
     tokens += size
@@ -903,7 +872,7 @@ const pickCompactBoundary = (kept: AgentChatMessage[]) => {
 
 const buildCompactTranscript = (messages: AgentChatMessage[]) => {
   const items = messages.flatMap((message) => {
-    const text = messagePlainText(message.content).trim()
+    const text = messageHistoryText(message).trim()
     const quiz = formatQuizEvidence(message)
     if (!text && !quiz) return []
     const line = [
@@ -940,7 +909,7 @@ const runContextCompaction = async (sessionId: string) => {
   const transcript = buildCompactTranscript(archived)
   if (!transcript) return
   const text = await runTextModel(
-    compactPrompt(summary?.text || '', transcript),
+    compactPrompt(summary?.text || '', transcript, Boolean(session.browserId)),
     () => undefined,
     {
       timeoutMs: 4 * 60 * 1000,
@@ -1204,21 +1173,20 @@ export const sendChatMessage = async (
   }))
 
   const compacted = splitCompactedHistory(sessions.value.find((item) => item.id === sessionId))
-  const history: { role: string; content: unknown }[] = []
-  for (const message of compacted.kept) {
-    if (message.id === assistantId || message.id === userMessage.id) continue
-    if (message.content) {
-      history.push({
-        role: message.role,
-        content: message.role === 'user'
-          ? toMultimodalUserContent(message.content, message.attachments)
-          : message.content,
-      })
-    }
-  }
+  const history = buildModelHistory(
+    compacted.kept.filter((message) => message.id !== assistantId && message.id !== userMessage.id),
+    (message) => toMultimodalUserContent(message.content, message.attachments),
+  )
   const browserId = String(sessions.value.find((item) => item.id === sessionId)?.browserId || '').trim()
   const isBrowserChat = Boolean(browserId)
-  const turnSystemPrompt = `${isBrowserChat ? BROWSER_SYSTEM_PROMPT : SYSTEM_PROMPT}${contextSummaryPrompt(compacted.summary)}`
+  const skillMatchText = String(options?.modelText || '').trim() || content
+  const skillCatalog = getEnabledSkillCatalog()
+  const matchedSkillIds = matchSkillsForText(skillMatchText)
+  const preloadedSkillBlocks = await getSkillPromptBlocksByIds(matchedSkillIds)
+  const baseSystemPrompt = isBrowserChat
+    ? buildBrowserSystemPrompt({ catalog: skillCatalog, preloadedBlocks: preloadedSkillBlocks })
+    : buildLearningSystemPrompt({ catalog: skillCatalog, preloadedBlocks: preloadedSkillBlocks })
+  const turnSystemPrompt = `${baseSystemPrompt}${contextSummaryPrompt(compacted.summary)}`
   const hasFile = Boolean(sessionAttachment(sessionId))
   const promptFolders = (() => {
     const seen = new Set<number>()
@@ -1230,7 +1198,7 @@ export const sendChatMessage = async (
     }
     return folders
   })()
-  const studyPrefix = isBrowserChat ? await browserStatePrefix(sessionId, options?.kind === 'watch') : await studyStatePrefix(sessionId)
+  const studyPrefix = isBrowserChat ? await browserStatePrefix(sessionId) : await studyStatePrefix(sessionId)
   const isQuizReviewTurn = /^第\s*\d+/.test(content)
   const wantsNewQuiz = !isQuizReviewTurn && /出题|练习|巩固|继续下一|下一[章节]|^继续$|^接着|^再来|^再出/.test(content.trim())
   const quizNudge = wantsNewQuiz
@@ -1259,31 +1227,64 @@ export const sendChatMessage = async (
     const liveMessage = () =>
       sessions.value.find((item) => item.id === sessionId)
         ?.messages.find((message) => message.id === assistantId)
+    const historyWithCurrent = (spoken: string) => [
+      ...history,
+      { role: 'user', content: modelPrompt },
+      ...assistantTurnToHistory({
+        id: assistantId,
+        role: 'assistant',
+        content: spoken,
+        steps: liveMessage()?.steps || [],
+        status: 'streaming',
+      }),
+    ]
 
     const visibleText = (text?: string) => Boolean(String(text || '').replace(/\u200B/g, '').trim())
+    const stripMarks = (text: string) => String(text || '').replace(/\u200B/g, '')
     let awaitingTool = false
     let spokenText = ''
-    const liveContent = () => String(liveMessage()?.content || '')
-    const joinSpoken = (text: string) => {
-      const piece = String(text || '').replace(/\u200B/g, '')
-      if (!spokenText) return piece
-      if (!piece.trim()) return spokenText
-      if (piece === spokenText || piece.startsWith(spokenText)) return piece
-      return `${spokenText}\n\n${piece}`
+    let roundBase = ''
+    const liveContent = () => stripMarks(liveMessage()?.content || '')
+    const joinRound = (text: string) => {
+      const piece = stripMarks(text)
+      const base = stripMarks(roundBase || spokenText || liveContent())
+      if (!piece.trim()) return base
+      if (!base.trim()) return piece
+      if (piece === base || piece.startsWith(base)) return piece
+      if (base.startsWith(piece)) return base
+      const parts = base.split(/\n\n+/)
+      const last = parts[parts.length - 1] || ''
+      if (last && (piece === last || piece.startsWith(last))) {
+        return [...parts.slice(0, -1), piece].join('\n\n')
+      }
+      if (last && last.startsWith(piece)) return base
+      return `${base}\n\n${piece}`
     }
     const keepSpoken = () => {
       const current = liveContent().trim()
       if (current) spokenText = current
     }
+    const beginRound = () => {
+      keepSpoken()
+      roundBase = spokenText || liveContent()
+    }
     const streamText = (text: string) => {
-      const next = joinSpoken(text)
-      if (!String(text || '').trim() && visibleText(liveContent())) {
+      const next = joinRound(text)
+      if (!stripMarks(text).trim() && visibleText(liveContent())) {
         patchMessage(sessionId, assistantId, {
           waiting: awaitingTool,
           status: 'streaming',
         })
         return
       }
+      if (next === spokenText && next === liveContent()) {
+        patchMessage(sessionId, assistantId, {
+          waiting: awaitingTool || !visibleText(next),
+          status: 'streaming',
+        })
+        return
+      }
+      if (next.trim()) spokenText = next
       patchMessage(sessionId, assistantId, {
         content: next,
         waiting: awaitingTool || !visibleText(next),
@@ -1320,9 +1321,12 @@ export const sendChatMessage = async (
       useAgentModel: true,
       history,
       maxRounds: isBrowserChat || hasFile || images.length ? 80 : 32,
-      liveContext: isBrowserChat
-        ? () => browserGraphParserContext(sessionId)
-        : undefined,
+      onTurnTranscript: (items) => {
+        const prev = liveMessage()?.transcript || []
+        patchMessage(sessionId, assistantId, {
+          transcript: clipTranscript([...prev, ...items]),
+        })
+      },
       executeTool: async (call: ModelToolCall) => {
         return executeChatTool({
           call,
@@ -1347,8 +1351,13 @@ export const sendChatMessage = async (
               force: true,
               stepId: input.stepId,
             }),
-            getTodos: () => liveMessage()?.todos || [],
-            setTodos: (todos) => patchMessage(sessionId, assistantId, { todos }),
+            getTodos: () => sessions.value.find((item) => item.id === sessionId)?.todos
+              || liveMessage()?.todos
+              || [],
+            setTodos: (todos) => {
+              patchSession(sessionId, (session) => ({ ...session, todos, updatedAt: Date.now() }))
+              patchMessage(sessionId, assistantId, { todos })
+            },
           },
         })
       },
@@ -1356,11 +1365,11 @@ export const sendChatMessage = async (
         if (abort.signal.aborted || liveMessage()?.status !== 'streaming') return
         if (event.type === 'round_start') {
           awaitingTool = false
+          beginRound()
           waitForFirstToken(false)
           return
         }
         if (event.type === 'text') {
-          streamText(event.text)
           return
         }
         if (event.type === 'tool_pending') {
@@ -1399,6 +1408,7 @@ export const sendChatMessage = async (
                 : undefined,
             status: 'running',
             startedAt: Date.now(),
+            arguments: clipToolText(event.arguments, TOOL_ARGS_KEEP),
           })
           return
         }
@@ -1436,6 +1446,7 @@ export const sendChatMessage = async (
             target: activity.target,
             title: quizTitle || undefined,
             detail: event.error || (typeof parsedError === 'string' ? parsedError : parsedError ? JSON.stringify(parsedError) : undefined),
+            result: clipToolText(event.result, TOOL_RESULT_KEEP),
             finishedAt: Date.now(),
             ...(quizCards.length ? {
               preview: quizCards as ImportStepPreview[],
@@ -1449,262 +1460,8 @@ export const sendChatMessage = async (
 
     let finalText = await runTextModel(modelPrompt, onDelta, runOptions)
     if (isBrowserChat && !abort.signal.aborted && liveMessage()?.status === 'streaming') {
-      // 「应用高等数学」是课名，不等于要写作业；章节/任务点优先走刷课流程。
-      const wantsCourse = /播放|视频|章节|任务点|未完成|刷课|看完|看一下.*课|这个课程|国家安全|进度检查|已完成/.test(content)
-      const wantsHomework = /作业|答题|作答/.test(content)
-        && !wantsCourse
-        && !/刷课|播完|播放视频/.test(content)
-      const spoken = spokenText || liveContent()
-      const steps = liveMessage()?.steps || []
-      const usedNext = steps.some((step) => step.name === 'browser_chaoxing_next' && step.status === 'done')
-      const usedPlay = steps.some((step) => step.name === 'browser_chaoxing_play' && step.status === 'done')
-      const usedWatch = steps.some((step) => step.name === 'browser_chaoxing_watch' && step.status === 'done')
-      const usedClick = steps.some((step) => (step.name === 'browser_click_text' || step.name === 'browser_click') && step.status === 'done')
-      const claimedPlaying = /正在播放|仍在播放|后台播放/.test(spoken)
-      const watchDoneTurn = options?.kind === 'watch' && /已完成|已经结束/.test(`${content}\n${options?.modelText || ''}`)
-      const leftAfterSkip = /没有视频|学习资料|正在打开下一节|已切换到下一节/.test(spoken)
-      const stoppedMid = /让我查看|已进入|下一步|章节目录|正在打开下一节/.test(spoken)
-        && !/正在播放|任务点已完成|遇到测验|开始监控|已确认在播|打开并播放/.test(spoken)
-      const liveWatch = videoWatchFor(browserId)
-      const actuallyWatching = Boolean(liveWatch && (liveWatch.status === 'watching' || liveWatch.status === 'paused' || liveWatch.status === 'stalled'))
-      const alreadyWatching = actuallyWatching || ((usedPlay || usedWatch) && !/没有|失败|无法/.test(spoken))
-      const courseNudge = (
-        '刷课是流程不是一键工具：课程页点「章节」→ browser_chaoxing_chapters 或 get_page 看未完成'
-        + '→ click_text 干净节名 → 播放页 browser_chaoxing_play。不要问用户，不要打开 iframe 网址。'
-      )
-      const askedCaptcha = /请.*(输入|填写).*验证码|让用户.*验证码|停下.*验证码|用户看图|用户说填完/.test(spoken)
-      const claimedAllDone = wantsCourse && !alreadyWatching && options?.kind !== 'watch'
-        && /全部完成|没有未完成|无未完成|暂无任务|学习任务已全部完成|无需继续播放|章节列表为空|没有任何需要播放|已完成检查|跨域|无法读取|无法直接读取|无法继续操作|我将等待|等待您提供/.test(spoken)
-      const fakePlaying = wantsCourse && claimedPlaying && !alreadyWatching && options?.kind !== 'watch'
-      if (watchDoneTurn && !usedNext && (leftAfterSkip || stoppedMid || !steps.some((step) => step.name === 'browser_chaoxing_watch'))) {
-        keepSpoken()
-        debug({ type: 'browser_continue', reason: 'stopped before next video' })
-        finalText = await runTextModel(
-          '这节已经结束，但还没播上下一节视频。立刻 browser_chaoxing_next。资料/PDF 会自动跳过。不要只点「下一节」就停，不要再解释。',
-          onDelta,
-          {
-            ...runOptions,
-            maxRounds: 48,
-            history: [
-              ...history,
-              { role: 'user', content: modelPrompt },
-              { role: 'assistant', content: spoken },
-            ],
-          },
-        )
-      } else if (fakePlaying) {
-        keepSpoken()
-        debug({ type: 'browser_continue', reason: 'claimed playing without play' })
-        finalText = await runTextModel(
-          '当前并没有在播放。立刻 browser_chaoxing_play 确认 paused=false，不要再口头说正在播放或视频仍在后台播放。',
-          onDelta,
-          {
-            ...runOptions,
-            maxRounds: 48,
-            history: [
-              ...history,
-              { role: 'user', content: modelPrompt },
-              { role: 'assistant', content: spoken },
-            ],
-          },
-        )
-      } else if (wantsCourse && !alreadyWatching && options?.kind !== 'watch' && /请确认|您可以提供|无法自动定位|无法找到|建议：|请手动|告诉我具体|请告诉我|截图|配合提供|无法直接看到|请提供当前页面|跨域/.test(spoken)) {
-        keepSpoken()
-        debug({ type: 'browser_continue', reason: 'asked user instead of play' })
-        finalText = await runTextModel(courseNudge, onDelta, {
-          ...runOptions,
-          maxRounds: 48,
-          history: [
-            ...history,
-            { role: 'user', content: modelPrompt },
-            { role: 'assistant', content: spoken },
-          ],
-        })
-      } else if (askedCaptcha) {
-        keepSpoken()
-        debug({ type: 'browser_continue', reason: 'asked user to fill captcha' })
-        finalText = await runTextModel(
-          '不要让用户填验证码。立刻看页面 #ccc 图认出 4 位，调用 browser_chaoxing_captcha。提交后再 browser_chaoxing_play。不要问用户，不要 browser_wait。',
-          onDelta,
-          {
-            ...runOptions,
-            maxRounds: 48,
-            history: [
-              ...history,
-              { role: 'user', content: modelPrompt },
-              { role: 'assistant', content: spoken },
-            ],
-          },
-        )
-      } else if (claimedAllDone) {
-        keepSpoken()
-        debug({ type: 'browser_continue', reason: 'claimed all done without catalog' })
-        finalText = await runTextModel(courseNudge, onDelta, {
-          ...runOptions,
-          maxRounds: 48,
-          history: [
-            ...history,
-            { role: 'user', content: modelPrompt },
-            { role: 'assistant', content: spoken },
-          ],
-        })
-      } else if (wantsCourse && stoppedMid && !alreadyWatching && options?.kind !== 'watch') {
-        keepSpoken()
-        debug({ type: 'browser_continue', reason: 'stopped before play' })
-        finalText = await runTextModel(courseNudge, onDelta, {
-          ...runOptions,
-          maxRounds: 48,
-          history: [
-            ...history,
-            { role: 'user', content: modelPrompt },
-            { role: 'assistant', content: spoken },
-          ],
-        })
-      }
-      const usedHomework = (liveMessage()?.steps || []).some((step) => step.name === 'browser_chaoxing_homework')
-      const alreadyInspected = (liveMessage()?.steps || []).some((step) => step.name === 'browser_chaoxing_homework' && step.status === 'done')
-      const homeworkTalk = /作业|题目|选项|作答|选上|开始|继续/.test(content)
-        || /作业|单选题|题卡|questions|next/.test(spoken)
-      const filledHomework = steps.some((step) => step.name === 'browser_chaoxing_homework' && step.status === 'done' && /fill|已填|暂时保存/.test(`${step.label || ''}${step.detail || ''}`))
-      const homeworkUnfinished = (wantsHomework || homeworkTalk || usedHomework)
-        && options?.kind !== 'watch'
-        && (
-          /请确认|需要你允许|现在提交|全部识别|让我继续查看|没有选中|取消选择|并没有选|看不清|是图像/.test(spoken)
-          || (usedHomework && !filledHomework && !alreadyInspected && /inspect|读题|单选题/.test(spoken))
-        )
-        && !/已暂时保存|已提交|next":"done"/.test(spoken)
-      const stillNoCourseFlow = wantsCourse && !wantsHomework && !alreadyWatching && options?.kind !== 'watch'
-        && !usedPlay && !usedWatch && !usedClick
-      const sawCatalog = wantsCourse && !alreadyWatching && options?.kind !== 'watch'
-        && /已完成任务点|需要开始播放未完成|【章节目录】/.test(spokenText || liveContent())
-        && !/正在播放|已确认在播|进度正常/.test(spokenText || liveContent())
-      if (stillNoCourseFlow) {
-        keepSpoken()
-        debug({ type: 'browser_continue', reason: 'never started course flow' })
-        finalText = await runTextModel(courseNudge, onDelta, {
-          ...runOptions,
-          maxRounds: 24,
-          history: [
-            ...history,
-            { role: 'user', content: modelPrompt },
-            { role: 'assistant', content: spokenText || liveContent() },
-          ],
-        })
-      } else if (homeworkUnfinished) {
-        keepSpoken()
-        debug({ type: 'browser_continue', reason: 'homework unfinished' })
-        finalText = await runTextModel(
-          '作业还没做完。只许用 browser_chaoxing_homework：有题卡就一题一题作答，答出一道立刻 fill 这一道（answers 只放一项），再做下一道；没有题卡就 inspect。章节测验不会的题用 guess。不要 eval，不要 click，不要读网页，不要出练习题，不要问用户确认。已选中的题 fill 会跳过。',
-          onDelta,
-          {
-            ...runOptions,
-            maxRounds: 48,
-            history: [
-              ...history,
-              { role: 'user', content: modelPrompt },
-              { role: 'assistant', content: spokenText || liveContent() },
-            ],
-          },
-        )
-      } else if (wantsHomework && !usedHomework && options?.kind !== 'watch') {
-        keepSpoken()
-        debug({ type: 'browser_continue', reason: 'homework without tool' })
-        finalText = await runTextModel(
-          '用户要写作业。若还在空间/课表/章节，先点进课程再点「作业」进入作业页；已在作业列表就 browser_chaoxing_homework action=list 或 open，已在作答页就 inspect。读到题卡后一题一题作答，每答出一道就 fill 一道。不要 eval，不要在非作业页硬调 homework。',
-          onDelta,
-          {
-            ...runOptions,
-            maxRounds: 48,
-            history: [
-              ...history,
-              { role: 'user', content: modelPrompt },
-              { role: 'assistant', content: spokenText || liveContent() },
-            ],
-          },
-        )
-      } else if (sawCatalog && !wantsHomework) {
-        keepSpoken()
-        debug({ type: 'browser_continue', reason: 'had catalog but did not play' })
-        finalText = await runTextModel(
-          '目录已经读到未完成节。立刻 browser_click_text 点第一节干净节名，进播放页后 browser_chaoxing_play。不要要截图，不要打开 iframe 网址。',
-          onDelta,
-          {
-            ...runOptions,
-            maxRounds: 24,
-            history: [
-              ...history,
-              { role: 'user', content: modelPrompt },
-              { role: 'assistant', content: spokenText || liveContent() },
-            ],
-          },
-        )
-      }
-
-      // 任务门：用 Agent 自己写的 todo 清单推进；不要系统套话 finish，也不要因「登录成功」误判收工。
-      if (options?.kind !== 'watch') {
-        const acceptFinish = (status: string, summary: string, via: string) => {
-          addStep(sessionId, assistantId, {
-            id: `finish-auto-${Date.now()}`,
-            kind: 'tool',
-            name: 'browser_finish',
-            status: 'done',
-            label: summary.slice(0, 80) || (status === 'blocked' ? '需要用户处理' : '任务已完成'),
-            detail: `${status} · ${via}`,
-            startedAt: Date.now(),
-            finishedAt: Date.now(),
-          })
-          debug({ type: 'browser_finish_accepted', status, summary, via })
-        }
-        const parseFinishInText = (text: string) => {
-          const raw = String(text || '')
-          const hit = raw.match(/browser_finish\s*\(\s*(?:\{?\s*)?status\s*[=:]\s*["']?(done|blocked|watching)["']?/i)
-            || raw.match(/browser_finish\s*\(\s*status\s*=\s*(done|blocked|watching)/i)
-          if (!hit) return null
-          const status = String(hit[1] || 'done').toLowerCase()
-          const sum = raw.match(/summary\s*[=:]\s*["“]([^"”]+)["”]/i)
-          return { status, summary: (sum?.[1] || '').trim().slice(0, 160) }
-        }
-
-        for (let kick = 0; kick < 12; kick += 1) {
-          if (abort.signal.aborted || liveMessage()?.status !== 'streaming') break
-          const liveSteps = liveMessage()?.steps || []
-          if (liveSteps.some((step) => step.name === 'browser_finish' && step.status === 'done')) break
-          const liveWatchNow = videoWatchFor(browserId)
-          const handedOff = Boolean(
-            liveWatchNow
-            && (liveWatchNow.status === 'watching' || liveWatchNow.status === 'paused' || liveWatchNow.status === 'stalled'),
-          )
-          if (handedOff) break
-
-          const spokenNow = spokenText || liveContent()
-          const textFinish = parseFinishInText(spokenNow)
-          // 正文里的 finish 只在有自写 summary 时才认，避免空壳收工
-          if (textFinish?.summary) {
-            const left = (liveMessage()?.todos || []).filter((item) => item.status === 'pending')
-            if (textFinish.status !== 'done' || !left.length) {
-              acceptFinish(textFinish.status, textFinish.summary, 'text')
-              break
-            }
-          }
-
-          keepSpoken()
-          const taskNudge = formatTodoNudge(liveMessage()?.todos || [])
-          debug({ type: 'browser_continue', reason: 'task not finished', kick })
-          finalText = await runTextModel(
-            taskNudge,
-            onDelta,
-            {
-              ...runOptions,
-              maxRounds: 24,
-              history: [
-                ...history,
-                { role: 'user', content: modelPrompt },
-                { role: 'assistant', content: spokenNow },
-              ],
-            },
-          )
-        }
-      }
+      const playbackNow = liveStudyPlayback(browserId)
+      if (playbackNow.playing) ensureStudyWatch(browserId, sessionId, playbackNow)
     }
     const hasPresentedQuiz = () =>
       (liveMessage()?.steps || []).some((step) => step.name === 'present_quiz' && step.status === 'done')
@@ -1771,11 +1528,7 @@ export const sendChatMessage = async (
           ...runOptions,
           tools: quizTools,
           userContent: undefined,
-          history: [
-            ...history,
-            { role: 'user', content: modelPrompt },
-            { role: 'assistant', content: spokenText || liveContent() },
-          ],
+          history: historyWithCurrent(spokenText || liveContent()),
           maxRounds: 4,
         },
       )
@@ -1791,11 +1544,7 @@ export const sendChatMessage = async (
             tools: [],
             systemPrompt: '你只输出 JSON 数组，不要解释。',
             useAgentModel: true,
-            history: [
-              ...history,
-              { role: 'user', content: modelPrompt },
-              { role: 'assistant', content: spokenText || liveContent() },
-            ],
+            history: historyWithCurrent(spokenText || liveContent()),
             maxRounds: 1,
           },
         )

@@ -511,9 +511,22 @@ fn get_db_path() -> String {
     }
 }
 
+fn configure_conn(conn: &Connection) -> Result<(), rusqlite::Error> {
+    conn.busy_timeout(std::time::Duration::from_millis(8_000))?;
+    conn.pragma_update(None, "journal_mode", "WAL")?;
+    conn.pragma_update(None, "synchronous", "NORMAL")?;
+    conn.pragma_update(None, "temp_store", "MEMORY")?;
+    Ok(())
+}
+
+fn open_db_at(db_path: &str) -> Result<Connection, String> {
+    let conn = Connection::open(db_path).map_err(|e| format!("{}", e))?;
+    configure_conn(&conn).map_err(|e| format!("{}", e))?;
+    Ok(conn)
+}
+
 fn get_conn() -> Result<Connection, String> {
-    let db_path = get_db_path();
-    Connection::open(&db_path).map_err(|e| format!("{}", e))
+    open_db_at(&get_db_path())
 }
 
 fn map_request_log_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RequestLog> {
@@ -3709,7 +3722,7 @@ pub async fn search_questions_fuzzy(
     let keyword_clone = keyword.clone();
 
     let result = tokio::task::spawn_blocking(move || -> Result<Vec<AIResponse>, String> {
-        let conn = Connection::open(&db_path).map_err(|e| format!("{}", e))?;
+        let conn = open_db_at(&db_path)?;
 
         // 1. 获取候选题目（根据文件夹过滤）
         let query = if let Some(fid) = folder_id {
@@ -3917,7 +3930,9 @@ fn scan_question_matches(
     let query_options = normalize_optional_query_text(options);
     let require_option_match = should_require_option_match(&title_clone);
 
-    let conn = Connection::open(&db_path)?;
+    let conn = open_db_at(&db_path).map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+        Box::new(std::io::Error::new(std::io::ErrorKind::Other, e))
+    })?;
     let mut stmt = conn.prepare(
         "SELECT Id, Question, Options, Answer, IsAi, COALESCE(IsPendingCorrection, 0) FROM AIResponses",
     )?;
@@ -4142,7 +4157,7 @@ fn ensure_column(
 }
 
 pub fn init_database_schema(db_path: &str) -> Result<(), String> {
-    let conn = Connection::open(db_path).map_err(|e| format!("{}", e))?;
+    let conn = open_db_at(db_path)?;
     conn.execute(
         "CREATE TABLE IF NOT EXISTS Folders (
           Id INTEGER PRIMARY KEY AUTOINCREMENT,

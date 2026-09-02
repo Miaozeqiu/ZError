@@ -1,4 +1,5 @@
 import { ref } from 'vue'
+import { withIdleEval } from '../../browser/eval'
 import { isStudyUrl } from '../../browser/abstractions'
 import {
   CHAPTER_PARSER_ENABLED,
@@ -8,6 +9,7 @@ import {
   readChaoxingChapterTick,
   playChaoxingVideo,
   clickChaoxingStep,
+  installChaoxingVideoHook,
   type ChaoxingChapterSnap,
   type OpenChapterHint,
 } from '../study'
@@ -70,10 +72,11 @@ export type ChapterParseState = {
 
 export const browserChapterStates = ref<Record<string, ChapterParseState>>({})
 
-const POLL_MS = 2500
-const HOOK_MS = 12000
-const VIDEO_MS = 1000
-const VIDEO_STALE_MS = 10000
+const CATALOG_MS = 10_000
+const DEEP_MS = 20_000
+const VIDEO_SYNC_MS = 8_000
+const LIVE_MS = 250
+const VIDEO_STALE_MS = 12_000
 const timers = new Map<string, number[]>()
 const inFlight = new Set<string>()
 const videoInFlight = new Set<string>()
@@ -110,6 +113,30 @@ const chapterDepthOf = (item: { kind?: string; depth?: number; index?: string; t
   return index ? index.split('.').length : 1
 }
 
+const keepCatalogTitle = (title: string) => {
+  const text = String(title || '').trim()
+  if (!text) return false
+  if (/^[一二三四五六七八九十]+[、.]/.test(text)) return false
+  if (/单选题|多选题|判断题|填空题|共\s*\d+\s*题/.test(text)) return false
+  return true
+}
+
+const isStubCatalog = (chapters: ChapterItem[]) => (
+  chapters.length > 0
+  && chapters.every((item) => !item.chapterId && (item.jobs === 1 || !item.jobs))
+)
+
+const pickCourseProgress = (
+  next: ChapterParseState['progress'],
+  prev: ChapterParseState['progress'],
+): ChapterParseState['progress'] => {
+  if (!next) return prev
+  if (!prev) return next
+  // 播放页常把「本节 0/1」当成整课进度；课级「已完成任务点 2/120」优先
+  if (prev.total >= 8 && next.total > 0 && next.total < 8 && next.total < prev.total) return prev
+  return next
+}
+
 const asChapters = (snap: ChaoxingChapterSnap): ChapterItem[] => {
   const current = String(snap.current || '').trim()
   const fromItems = (snap.chapters || [])
@@ -131,13 +158,13 @@ const asChapters = (snap: ChaoxingChapterSnap): ChapterItem[] => {
         chapterId: String(item.chapterId || ''),
       }
     })
-    .filter((item) => item.title)
+    .filter((item) => keepCatalogTitle(item.title))
   if (fromItems.length) return fromItems
-  return (snap.unfinished || []).filter(Boolean).map((title) => ({
+  return (snap.unfinished || []).filter((title) => keepCatalogTitle(title)).map((title) => ({
     title,
     jobs: 1,
     unfinished: true,
-    active: Boolean(snap.current && title.includes(String(snap.current))),
+    active: Boolean(current && titlesMatch(title, current)),
   }))
 }
 
@@ -148,7 +175,7 @@ export const chapterStateFor = (browserId?: string) => {
 
 const applySnap = (browserId: string, snap: ChaoxingChapterSnap | null) => {
   if (!snap) return chapterStateFor(browserId)
-  const unfinished = (snap.unfinished || []).filter(Boolean)
+  const unfinished = (snap.unfinished || []).filter((title) => keepCatalogTitle(title))
   const progress = snap.progress || null
   const left = Number(snap.unfinishedCount) || (
     progress && progress.total > progress.done ? progress.total - progress.done : unfinished.length
@@ -156,6 +183,7 @@ const applySnap = (browserId: string, snap: ChaoxingChapterSnap | null) => {
   const chapters = asChapters(snap)
   const empty = !chapters.length && !unfinished.length && !(progress && progress.total)
   const prev = chapterStateFor(browserId)
+  const mergedProgress = pickCourseProgress(progress, prev?.progress || null)
   if (
     empty
     && prev
@@ -165,24 +193,35 @@ const applySnap = (browserId: string, snap: ChaoxingChapterSnap | null) => {
   ) {
     return prev
   }
-  if (prev?.chapters.length && chapters.length && chapters.length < prev.chapters.length) {
+  const keepPrevTree = Boolean(
+    prev?.chapters.length
+    && (
+      (chapters.length && chapters.length < prev.chapters.length)
+      || (prev.chapters.length >= 8 && chapters.length > 0 && isStubCatalog(chapters) && !isStubCatalog(prev.chapters))
+    ),
+  )
+  if (keepPrevTree && prev) {
     const titles = new Set(unfinished)
-    return applyMerged(browserId, snap, prev, titles, progress, left)
+    return applyMerged(browserId, snap, prev, titles, mergedProgress, left)
   }
+  const current = String(snap.current || prev?.currentTitle || '')
   const next: ChapterParseState = {
     browserId,
     url: String(snap.url || prev?.url || ''),
     page: String(snap.page || prev?.page || 'other'),
     kind: chapterKind(String(snap.page || ''), String(snap.url || prev?.url || '')),
-    current: String(snap.current || ''),
-    currentTitle: String(snap.current || ''),
+    current,
+    currentTitle: current,
     unfinished,
     unfinishedCount: left,
-    chapters,
-    progress,
+    chapters: chapters.map((item) => ({
+      ...item,
+      active: Boolean(item.active || (current && titlesMatch(item.title, current))),
+    })),
+    progress: mergedProgress,
     video: prev?.video || null,
     jobs: prev?.jobs || [],
-    status: chapters.length || unfinished.length || progress ? 'ready' : 'empty',
+    status: chapters.length || unfinished.length || mergedProgress ? 'ready' : 'empty',
     updatedAt: Date.now(),
   }
   browserChapterStates.value = { ...browserChapterStates.value, [browserId]: next }
@@ -196,8 +235,9 @@ const applyMerged = (
   unfinishedTitles: Set<string>,
   progress: ChapterParseState['progress'],
   left: number,
+  currentTitle?: string,
 ) => {
-  const current = String(snap.current || prev.currentTitle || '')
+  const current = String(currentTitle || snap.current || prev.currentTitle || '')
   const next: ChapterParseState = {
     ...prev,
     url: String(snap.url || prev.url),
@@ -205,15 +245,17 @@ const applyMerged = (
     kind: chapterKind(String(snap.page || prev.page), String(snap.url || prev.url)),
     current,
     currentTitle: current,
-    unfinished: (snap.unfinished || prev.unfinished).filter(Boolean),
-    unfinishedCount: left,
+    unfinished: (snap.unfinished?.length ? snap.unfinished : prev.unfinished).filter(Boolean),
+    unfinishedCount: left || prev.unfinishedCount,
     chapters: prev.chapters.map((item) => ({
       ...item,
-      unfinished: unfinishedTitles.has(item.title)
-        || [...unfinishedTitles].some((title) => titlesMatch(item.title, title) || titlesMatch(item.index, title)),
+      unfinished: unfinishedTitles.size
+        ? (unfinishedTitles.has(item.title)
+          || [...unfinishedTitles].some((title) => titlesMatch(item.title, title) || titlesMatch(item.index, title)))
+        : item.unfinished,
       active: Boolean(current && (titlesMatch(item.title, current) || item.title === current)),
     })),
-    progress: progress || prev.progress,
+    progress: pickCourseProgress(progress, prev.progress),
     video: prev.video,
     jobs: prev.jobs || [],
     status: 'ready',
@@ -239,11 +281,11 @@ const asJobKind = (raw: unknown): ChapterJobItem['kind'] => {
   return 'other'
 }
 
-const applyVideo = async (browserId: string) => {
+const applyVideo = async (browserId: string, opts?: { force?: boolean }) => {
   if (videoInFlight.has(browserId)) return
   if (!chapterStateFor(browserId)) return
   videoInFlight.add(browserId)
-  try {
+  const run = async () => {
     const snap = await readChaoxingChapterJobTick(browserId).catch(() => null)
     const prev = chapterStateFor(browserId)
     if (!prev) return
@@ -339,8 +381,38 @@ const applyVideo = async (browserId: string) => {
         updatedAt: Date.now(),
       },
     }
+  }
+  try {
+    if (opts?.force) return await run()
+    return await withIdleEval(run)
   } finally {
     videoInFlight.delete(browserId)
+  }
+}
+
+/** 进度条在页面钩子里自己走；宿主只做本地插值，不每秒 eval。 */
+const tickChapterLive = (browserId: string) => {
+  const prev = chapterStateFor(browserId)
+  const video = prev?.video
+  if (!prev || !video || video.paused || video.ended || !(video.duration > 1)) return
+  if (Date.now() - video.updatedAt > 1500) return
+  const elapsed = (Date.now() - video.updatedAt) / 1000
+  if (elapsed < 0.08) return
+  const current = Math.min(video.duration, video.current + elapsed)
+  const ended = current >= video.duration - 0.2
+  const percent = videoPercent(current, video.duration, ended)
+  browserChapterStates.value = {
+    ...browserChapterStates.value,
+    [browserId]: {
+      ...prev,
+      video: { ...video, current, percent, ended, updatedAt: Date.now() },
+      jobs: prev.jobs.map((item) => (
+        item.active && item.kind === 'video'
+          ? { ...item, current, duration: video.duration, percent, paused: false, jobDone: ended || item.jobDone }
+          : item
+      )),
+      updatedAt: Date.now(),
+    },
   }
 }
 
@@ -350,14 +422,16 @@ const poll = async (browserId: string, deep = false) => {
   const prev = chapterStateFor(browserId)
   inFlight.add(browserId)
   try {
-    const tick = await readChaoxingChapterTick(browserId).catch(() => null)
-    if (snapHasData(tick)) {
-      applySnap(browserId, tick)
-    } else if (deep || !prev?.chapters.length) {
-      const snap = await parseChaoxingChapters(browserId)
-      if (snap) applySnap(browserId, snap)
-    }
-    await applyVideo(browserId)
+    await withIdleEval(async () => {
+      const tick = await readChaoxingChapterTick(browserId).catch(() => null)
+      if (snapHasData(tick)) {
+        applySnap(browserId, tick)
+      } else if (deep || !prev?.chapters.length) {
+        const snap = await parseChaoxingChapters(browserId)
+        if (snap) applySnap(browserId, snap)
+      }
+    })
+    if (chapterStateFor(browserId)?.kind === 'player') await applyVideo(browserId)
   } catch {
     // keep last
   } finally {
@@ -402,21 +476,49 @@ export const startChaoxingChapterParser = (browserId: string) => {
       }
     }
     timers.set(id, [
-      window.setInterval(() => { void poll(id, false) }, POLL_MS),
-      window.setInterval(() => { void poll(id, true) }, HOOK_MS),
-      window.setInterval(() => { void applyVideo(id) }, VIDEO_MS),
+      window.setInterval(() => { void poll(id, false) }, CATALOG_MS),
+      window.setInterval(() => { void poll(id, true) }, DEEP_MS),
+      window.setInterval(() => tickChapterLive(id), LIVE_MS),
+      window.setInterval(() => {
+        if (chapterStateFor(id)?.kind === 'player') void applyVideo(id)
+      }, VIDEO_SYNC_MS),
     ])
+    void installChaoxingVideoHook(id).catch(() => null)
     void poll(id, true)
     return chapterStateFor(id)
   }
-  const running = timers.get(id) || []
-  if (running.length < 3) {
-    running.push(window.setInterval(() => { void applyVideo(id) }, VIDEO_MS))
-    timers.set(id, running)
-  }
   if (!chapterStateFor(id)?.chapters.length) void poll(id, true)
-  else void applyVideo(id)
+  else if (chapterStateFor(id)?.kind === 'player') void applyVideo(id)
   return chapterStateFor(id)
+}
+
+/** 网址变了立刻重读，不要等 10 秒轮询。 */
+export const syncChaoxingChapterUrl = (browserId: string, url: string) => {
+  const id = String(browserId || '').trim()
+  if (!id) return
+  startChaoxingChapterParser(id)
+  const prev = chapterStateFor(id)
+  const kind = chapterKind('', url)
+  if (prev && (prev.url !== url || prev.kind !== kind)) {
+    browserChapterStates.value = {
+      ...browserChapterStates.value,
+      [id]: { ...prev, url, kind, updatedAt: Date.now() },
+    }
+  }
+  void (async () => {
+    if (inFlight.has(id)) {
+      if (kind === 'player') void applyVideo(id, { force: true })
+      return
+    }
+    inFlight.add(id)
+    try {
+      const snap = await parseChaoxingChapters(id).catch(() => null)
+      if (snap) applySnap(id, snap)
+      if (chapterStateFor(id)?.kind === 'player') await applyVideo(id, { force: true })
+    } finally {
+      inFlight.delete(id)
+    }
+  })()
 }
 
 export const openChapterFromCard = async (
@@ -455,6 +557,26 @@ export const openChapterFromCard = async (
   const tick = await readChaoxingChapterTick(id).catch(() => null)
   if (tick) applySnap(id, tick)
   else await refreshChapterCard(id).catch(() => null)
+  const after = chapterStateFor(id)
+  if (after && title && !after.chapters.some((item) => item.active)) {
+    browserChapterStates.value = {
+      ...browserChapterStates.value,
+      [id]: {
+        ...after,
+        current: title,
+        currentTitle: title,
+        chapters: after.chapters.map((item) => ({
+          ...item,
+          active: Boolean(
+            (target.chapterId && item.chapterId && item.chapterId === target.chapterId)
+            || (target.index && item.index && item.index === target.index)
+            || titlesMatch(item.title, title),
+          ),
+        })),
+      },
+    }
+  }
+  await applyVideo(id, { force: true }).catch(() => null)
   return opened
 }
 
@@ -467,7 +589,7 @@ export const playChapterFromCard = async (
   const opened = await openChapterFromCard(id, target)
   await new Promise((resolve) => window.setTimeout(resolve, 700))
   const played = await playChaoxingVideo(id).catch(() => null)
-  await applyVideo(id).catch(() => null)
+  await applyVideo(id, { force: true }).catch(() => null)
   return { opened, played }
 }
 
@@ -500,18 +622,18 @@ export const playChapterJobFromCard = async (
     }) as Record<string, unknown>
   }
   if (job.kind === 'quiz' || stepped?.quiz) {
-    await applyVideo(id).catch(() => null)
+    await applyVideo(id, { force: true }).catch(() => null)
     return { ok: true, quiz: true, stepped, hint: '已打开测验任务点' }
   }
   if (job.kind === 'doc' || stepped?.doc) {
-    await applyVideo(id).catch(() => null)
+    await applyVideo(id, { force: true }).catch(() => null)
     return { ok: true, doc: true, stepped }
   }
   // 已点过任务点标签，不要再自动点「第一个未完成视频」把切换冲掉
   const played = await playChaoxingVideo(id, {
     skipTabClick: Boolean(label || mid || jobid || videoIndex || stepIndex),
   }).catch(() => null)
-  await applyVideo(id).catch(() => null)
+  await applyVideo(id, { force: true }).catch(() => null)
   return { ok: Boolean(played?.playing || played?.hasVideo), stepped, played }
 }
 

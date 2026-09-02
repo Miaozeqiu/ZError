@@ -1,4 +1,5 @@
 import { isImageAttachment } from './folderTokens'
+import { messageHistoryText } from './modelHistory'
 import { BROWSER_SYSTEM_PROMPT, SYSTEM_PROMPT } from './prompts'
 import { BROWSER_TOOLS, CHAT_TOOLS } from './tools'
 import type { AgentChatSession, AgentContextSummary, AgentContextUsage } from './chatTypes'
@@ -82,7 +83,7 @@ export const estimateAgentContext = (
   const toolTokens = isBrowser ? cachedBrowserToolTokens : cachedToolTokens
   const { summary, kept, compactedCount } = splitCompactedHistory(session)
   const summaryTokens = summary ? estimateTextTokens(contextSummaryPrompt(summary)) : 0
-  const history = estimateTextTokens(kept.map((item) => messagePlainText(item.content)).join('\n'))
+  const history = estimateTextTokens(kept.map((item) => messageHistoryText(item)).join('\n'))
   const study = session?.studySubjectId ? estimateTextTokens(STUDY_PREFIX_SAMPLE) : 0
   const draft = estimateTextTokens(draftText)
   const imageCount = kept.reduce((sum, item) => (

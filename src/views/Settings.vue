@@ -18,6 +18,22 @@
             </div>
           </div>
 
+          <div v-else-if="activeCategory === 'agent'" key="agent" class="settings-section" :class="{ 'agent-skill-detail-layout': agentSkillDetailOpen }">
+            <div class="settings-inner-wrapper" :class="agentSkillDetailOpen ? 'agent-detail-fill' : 'agent-scroll-wrap'">
+              <div
+                class="settings-content-wrapper"
+                :class="agentSkillDetailOpen ? 'agent-detail-content' : 'agent-scroll-content'"
+                ref="agentScrollContent"
+                @scroll="onAgentScrollMaybe"
+              >
+                <AgentSettings @skill-detail-change="agentSkillDetailOpen = $event" />
+              </div>
+              <div v-if="!agentSkillDetailOpen" class="custom-scrollbar" :class="{ 'is-visible': agentScrollbarVisible }" ref="agentScrollbar" @mousedown="onAgentScrollbarMousedown">
+                <div class="custom-scrollbar-thumb" ref="agentScrollbarThumb"></div>
+              </div>
+            </div>
+          </div>
+
           <div v-else-if="activeCategory === 'models'" key="models" class="settings-section model-settings-layout">
             <div class="settings-inner-wrapper">
               <ModelSettings />
@@ -43,8 +59,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted, watch } from 'vue'
 import GeneralSettings from './settings/GeneralSettings.vue'
+import AgentSettings from './settings/AgentSettings.vue'
 import ModelSettings from './settings/ModelSettings.vue'
 import AboutApp from './settings/AboutApp.vue'
 import SettingsNav from './settings/SettingsNav.vue'
@@ -54,6 +71,11 @@ const emit = defineEmits<{
 }>()
 
 const activeCategory = ref('models')
+const agentSkillDetailOpen = ref(false)
+
+watch(activeCategory, (category) => {
+  if (category !== 'agent') agentSkillDetailOpen.value = false
+})
 
 const handleOpenModelSettings = () => {
   activeCategory.value = 'models'
@@ -118,6 +140,60 @@ const onGeneralScrollbarMouseup = () => {
   generalIsDragging = false
   document.removeEventListener('mousemove', onGeneralScrollbarMousemove)
   document.removeEventListener('mouseup', onGeneralScrollbarMouseup)
+}
+
+// Agent 设置自定义滚动条
+const agentScrollContent = ref<HTMLElement | null>(null)
+const agentScrollbar = ref<HTMLElement | null>(null)
+const agentScrollbarThumb = ref<HTMLElement | null>(null)
+const agentScrollbarVisible = ref(false)
+let agentScrollHideTimer: ReturnType<typeof setTimeout> | null = null
+let agentIsDragging = false
+let agentDragStartY = 0
+let agentDragStartScrollTop = 0
+
+const updateAgentScrollbarThumb = () => {
+  const content = agentScrollContent.value
+  const thumb = agentScrollbarThumb.value
+  const bar = agentScrollbar.value
+  if (!content || !thumb || !bar) return
+  const ratio = content.clientHeight / content.scrollHeight
+  const barHeight = bar.clientHeight
+  thumb.style.height = Math.max(ratio * barHeight, 24) + 'px'
+  thumb.style.top = (content.scrollTop / content.scrollHeight) * barHeight + 'px'
+}
+
+const onAgentScroll = () => {
+  agentScrollbarVisible.value = true
+  if (agentScrollHideTimer) clearTimeout(agentScrollHideTimer)
+  agentScrollHideTimer = setTimeout(() => { agentScrollbarVisible.value = false }, 1500)
+  updateAgentScrollbarThumb()
+}
+
+const onAgentScrollMaybe = () => {
+  if (agentSkillDetailOpen.value) return
+  onAgentScroll()
+}
+
+const onAgentScrollbarMousedown = (e: MouseEvent) => {
+  agentIsDragging = true
+  agentDragStartY = e.clientY
+  agentDragStartScrollTop = agentScrollContent.value?.scrollTop || 0
+  document.addEventListener('mousemove', onAgentScrollbarMousemove)
+  document.addEventListener('mouseup', onAgentScrollbarMouseup)
+}
+
+const onAgentScrollbarMousemove = (e: MouseEvent) => {
+  if (!agentIsDragging || !agentScrollContent.value || !agentScrollbar.value) return
+  const dy = e.clientY - agentDragStartY
+  const ratio = agentScrollContent.value.scrollHeight / agentScrollbar.value.clientHeight
+  agentScrollContent.value.scrollTop = agentDragStartScrollTop + dy * ratio
+}
+
+const onAgentScrollbarMouseup = () => {
+  agentIsDragging = false
+  document.removeEventListener('mousemove', onAgentScrollbarMousemove)
+  document.removeEventListener('mouseup', onAgentScrollbarMouseup)
 }
 
 // 关于应用自定义滚动条
@@ -250,12 +326,14 @@ const onAboutScrollbarMouseup = () => {
 }
 
 .general-scroll-wrap,
+.agent-scroll-wrap,
 .about-scroll-wrap {
   position: relative;
   overflow: hidden;
 }
 
 .general-scroll-content,
+.agent-scroll-content,
 .about-scroll-content {
   height: 100%;
   overflow-y: scroll;
@@ -264,6 +342,7 @@ const onAboutScrollbarMouseup = () => {
 }
 
 .general-scroll-content::-webkit-scrollbar,
+.agent-scroll-content::-webkit-scrollbar,
 .about-scroll-content::-webkit-scrollbar {
   display: none;
 }
@@ -278,11 +357,25 @@ const onAboutScrollbarMouseup = () => {
   border-radius: 4px;
 }
 
-.general-scroll-content.settings-content-wrapper {
-  padding: 16px;
-  padding-top: 0;
+.agent-detail-fill {
+  height: 100%;
+  overflow: hidden;
 }
 
+.agent-detail-content {
+  height: 100%;
+  padding: 0 16px 0 0;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.agent-skill-detail-layout :deep(.agent-settings) {
+  height: 100%;
+  min-height: 0;
+}
+
+.general-scroll-content.settings-content-wrapper,
+.agent-scroll-content.settings-content-wrapper,
 .about-scroll-content.settings-content-wrapper {
   padding: 16px;
   padding-top: 0;

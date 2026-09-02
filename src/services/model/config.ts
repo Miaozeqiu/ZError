@@ -350,10 +350,15 @@ const sanitizeStoredPlatforms = (platforms: AIPlatform[]): AIPlatform[] => {
       )
     )
 
-    const apiProtocol = inferPlatformApiProtocol({
+    const inferredProtocol = inferPlatformApiProtocol({
       ...preferredPlatform,
       models,
     })
+    // 远程平台不再允许 custom：2.2.8 起只走固定协议，旧缓存里的 custom 需纠正
+    const hasRemoteModels = models.some((model) => model.isRemote)
+    const apiProtocol = (hasRemoteModels || preferredPlatform.isRemote) && inferredProtocol === 'custom'
+      ? 'openai-chat'
+      : inferredProtocol
     return {
       ...preferredPlatform,
       displayName: preferredPlatform.displayName || preferredPlatform.name || preferredPlatform.id,

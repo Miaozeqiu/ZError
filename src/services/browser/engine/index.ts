@@ -1,7 +1,7 @@
 export { actOnBrowser, clickByLocator, fillByLocator, probeOnBrowser } from './act'
-export { locatorFromCache, publicRefs, rememberPageRefs, resolveRefLocator, type PageRef } from './refs'
+export { cssSelectorFromArgs, locatorFromCache, looksLikeCssSelector, publicRefs, rememberPageRefs, resolveRefLocator, type PageRef } from './refs'
 export { ENGINE_ACT_SCRIPT } from './script'
-export { readPageSnapshot } from './snapshot'
+export { formatAriaSnapshot, readPageSnapshot } from './snapshot'
 export {
   ACT_POLL_MS,
   ACT_TIMEOUT_MS,

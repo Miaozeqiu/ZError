@@ -125,5 +125,29 @@
       </a>
     </div>
   </div>
+  <script>
+    (function () {
+      document.addEventListener('click', function (event) {
+        if (event.defaultPrevented || event.button) return
+        if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+        var link = event.target && event.target.closest ? event.target.closest('a.site') : null
+        var href = link && link.href
+        if (!href) return
+        event.preventDefault()
+        try { document.title = 'ZRNAV:' + href } catch (e) {}
+        document.documentElement.style.background = '#fff'
+        document.body.replaceChildren()
+        document.body.style.cssText = 'margin:0;background:#fff;min-height:100vh'
+        var meta = document.querySelector('meta[name="referrer"]')
+        if (!meta) {
+          meta = document.createElement('meta')
+          meta.name = 'referrer'
+          document.head.appendChild(meta)
+        }
+        meta.content = 'no-referrer'
+        location.replace(href)
+      })
+    })()
+  </script>
 </body>
 </html>

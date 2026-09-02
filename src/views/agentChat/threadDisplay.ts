@@ -50,11 +50,8 @@ export const visibleSteps = (steps: ImportTaskStep[]) => {
   const items: ImportTaskStep[] = []
   for (const step of steps) {
     if (step.name === 'evaluate_study_progress') continue
-    const dup = items.find((item) => {
-      if (item.name !== step.name) return false
-      if (item.name === 'get_file_info' || item.name === 'list_folders') return true
-      return item.target === step.target && item.label === step.label
-    })
+    const singleton = step.name === 'get_file_info' || step.name === 'list_folders'
+    const dup = singleton ? items.find((item) => item.name === step.name) : null
     if (!dup) {
       items.push(step)
       continue
@@ -85,23 +82,27 @@ export const assistantTimeline = (message: AgentChatMessage): AssistantTimelineB
     ]
   }
   const sorted = [...steps].sort((a, b) => {
-    const la = a.atContentLength ?? 0
-    const lb = b.atContentLength ?? 0
-    if (la !== lb) return la - lb
-    return (a.startedAt || 0) - (b.startedAt || 0)
+    const sa = a.startedAt || 0
+    const sb = b.startedAt || 0
+    if (sa !== sb) return sa - sb
+    return String(a.id).localeCompare(String(b.id))
+  })
+  let lastAt = 0
+  const anchors = sorted.map((step) => {
+    const raw = step.atContentLength
+    const at = Math.min(content.length, Math.max(lastAt, typeof raw === 'number' ? raw : lastAt))
+    lastAt = at
+    return { step, at }
   })
   const blocks: AssistantTimelineBlock[] = []
   let cursor = 0
-  let textIndex = 0
-  for (const step of sorted) {
-    const at = Math.min(Math.max(0, step.atContentLength ?? 0), content.length)
+  for (const { step, at } of anchors) {
     if (at > cursor) {
       blocks.push({
         type: 'text',
-        key: `${message.id}-text-${textIndex}`,
+        key: `${message.id}-text-${cursor}`,
         content: content.slice(cursor, at),
       })
-      textIndex += 1
       cursor = at
     }
     blocks.push({ type: 'step', key: step.id, step })
@@ -109,7 +110,7 @@ export const assistantTimeline = (message: AgentChatMessage): AssistantTimelineB
   if (cursor < content.length) {
     blocks.push({
       type: 'text',
-      key: `${message.id}-text-${textIndex}`,
+      key: `${message.id}-text-${cursor}`,
       content: content.slice(cursor),
     })
   }

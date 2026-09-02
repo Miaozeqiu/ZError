@@ -67,16 +67,18 @@ const readStoredShot = async (id: string, expr: string) => {
 
 const startLocalCapture = async (id: string, index: number) => {
   const { CHAOXING_HOMEWORK_CAPTURE } = await import('../../browser/skills/chaoxingHomework')
-  return asObject(await evalBrowserView(id, `${CHAOXING_HOMEWORK_CAPTURE}(${index})`).catch(() => null))
+  return asObject(await evalBrowserView(id, `${CHAOXING_HOMEWORK_CAPTURE()}(${index})`).catch(() => null))
 }
 
+/** `index` 为题号（1-based）。页面缓存槽仍用 0-based。 */
 export const captureHomeworkQuestionImage = async (id: string, index: number) => {
-  const zero = Math.max(0, index)
-  let local = await startLocalCapture(id, zero)
+  const one = Math.max(1, Number(index) || 1)
+  const zero = one - 1
+  let local = await startLocalCapture(id, one)
   if (local.pending) {
     for (let i = 0; i < 8 && !local.ready; i += 1) {
       await waitMs(350)
-      local = await startLocalCapture(id, zero)
+      local = await startLocalCapture(id, one)
     }
   }
   if (local.ready) {
@@ -212,7 +214,7 @@ export const enrichHomeworkWithVision = async (id: string, info: ChaoxingHomewor
   for (const question of targets) {
     let images = questionDataImages(question)
     if (!images.length) {
-      const shot = await captureHomeworkQuestionImage(id, Math.max(0, Number(question.index) - 1)).catch(() => '')
+      const shot = await captureHomeworkQuestionImage(id, Number(question.index) || 1).catch(() => '')
       if (shot) images = [shot]
     }
     if (images.length) jobs.push({ question, images })

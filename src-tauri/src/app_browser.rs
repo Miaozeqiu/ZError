@@ -4,7 +4,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tauri::{
   webview::{NewWindowResponse, PageLoadEvent, WebviewBuilder},
-  AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, WebviewUrl,
+  AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Rect, WebviewUrl,
 };
 use url::Url;
 
@@ -17,6 +17,13 @@ pub struct BrowserPageState {
   id: String,
   url: String,
   title: String,
+}
+
+#[derive(Clone, Serialize)]
+pub struct BrowserLoadState {
+  id: String,
+  phase: String,
+  url: String,
 }
 
 fn label_for(id: &str) -> Result<String, String> {
@@ -110,11 +117,12 @@ fn shared_data_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
 fn apply_bounds(webview: &tauri::Webview, x: f64, y: f64, width: f64, height: f64) -> Result<(), String> {
   let width = width.max(1.0);
   let height = height.max(1.0);
+  // 一次 set_bounds，避免 set_position + set_size 各打一帧 setFrame，拖窗口时 WK 更容易白屏。
   webview
-    .set_position(LogicalPosition::new(x.max(0.0), y.max(0.0)))
-    .map_err(|err| err.to_string())?;
-  webview
-    .set_size(LogicalSize::new(width, height))
+    .set_bounds(Rect {
+      position: LogicalPosition::new(x.max(0.0), y.max(0.0)).into(),
+      size: LogicalSize::new(width, height).into(),
+    })
     .map_err(|err| err.to_string())?;
   Ok(())
 }
@@ -228,6 +236,17 @@ fn emit_state(app: &AppHandle, id: &str, url: String, title: String) {
   );
 }
 
+fn emit_load(app: &AppHandle, id: &str, phase: &str, url: String) {
+  let _ = app.emit(
+    "app-browser-load",
+    BrowserLoadState {
+      id: id.to_string(),
+      phase: phase.to_string(),
+      url,
+    },
+  );
+}
+
 fn emit_opened(app: &AppHandle, id: &str, url: String) {
   let _ = app.emit(
     "app-browser-opened",
@@ -319,6 +338,43 @@ fn handle_deferred_popup(app: &AppHandle, opener_id: &str, opener_url: &str, raw
   }
   emit_opened(app, &new_browser_id(), raw.to_string());
 }
+
+/// 导航页点卡片：立刻清空画面并通知宿主，再 no-referrer 跳转。
+const BROWSER_HOME_LAUNCH: &str = r#"(function(){
+  try {
+    if (!/\/browser-home\.html(?:$|[?#])/i.test(String(location.href || ''))) return;
+  } catch (e) { return; }
+  if (window.__ZE_HOME_LAUNCH__) return;
+  window.__ZE_HOME_LAUNCH__ = true;
+  document.addEventListener('click', function(event) {
+    if (event.defaultPrevented || event.button) return;
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    var node = event.target;
+    var link = node && node.closest ? node.closest('a.site') : null;
+    var href = link && link.href;
+    if (!href || href === location.href) return;
+    event.preventDefault();
+    event.stopPropagation();
+    try { document.title = 'ZRNAV:' + href; } catch (e2) {}
+    try {
+      document.documentElement.style.background = '#fff';
+      if (document.body) {
+        document.body.replaceChildren();
+        document.body.style.cssText = 'margin:0;background:#fff;min-height:100vh';
+      }
+    } catch (e3) {}
+    try {
+      var meta = document.querySelector('meta[name="referrer"]');
+      if (!meta) {
+        meta = document.createElement('meta');
+        meta.name = 'referrer';
+        document.head.appendChild(meta);
+      }
+      meta.content = 'no-referrer';
+    } catch (e4) {}
+    location.replace(href);
+  }, true);
+})();"#;
 
 /// 注入到每一个 frame（含跨域）。用 postMessage 把子 frame 文本/点击回传到顶层，
 /// 顶层提供 `__ZE_ASK_FRAMES__` / `__ZE_FRAME_SNAPS__`，供 get_page / click_text 使用。
@@ -577,6 +633,16 @@ fn handle_title_change(app: &AppHandle, id: &str, url: String, title: String) {
     }
     return;
   }
+  // 导航页卡片一点就先改标题，地址栏/进度条立刻跟上，不用等外站开始加载。
+  if let Some(rest) = title.strip_prefix("ZRNAV:") {
+    let target = rest.trim();
+    if target.starts_with("http://") || target.starts_with("https://") {
+      remember_url(id, target);
+      emit_load(app, id, "started", target.to_string());
+      emit_state(app, id, target.to_string(), String::new());
+    }
+    return;
+  }
   emit_state(app, id, url, title);
 }
 
@@ -614,6 +680,7 @@ pub async fn browser_open(
     .focused(true)
     .accept_first_mouse(true)
     .user_agent(SAFARI_UA)
+    .initialization_script_for_all_frames(BROWSER_HOME_LAUNCH)
     .initialization_script_for_all_frames(CHAOXING_FRAME_BRIDGE)
     .initialization_script_for_all_frames(CHAOXING_BBS_CARDS)
     .on_new_window(move |url, _features| {
@@ -629,10 +696,19 @@ pub async fn browser_open(
       NewWindowResponse::Deny
     })
     .on_page_load(move |webview, payload| {
-      if payload.event() == PageLoadEvent::Finished {
-        let next = payload.url().to_string();
-        remember_url(&state_id, &next);
-        emit_state(webview.app_handle(), &state_id, next, String::new());
+      let next = payload.url().to_string();
+      remember_url(&state_id, &next);
+      match payload.event() {
+        PageLoadEvent::Started => {
+          emit_load(webview.app_handle(), &state_id, "started", next.clone());
+          if !next.is_empty() && !next.starts_with("about:") {
+            emit_state(webview.app_handle(), &state_id, next, String::new());
+          }
+        }
+        PageLoadEvent::Finished => {
+          emit_load(webview.app_handle(), &state_id, "finished", next.clone());
+          emit_state(webview.app_handle(), &state_id, next, String::new());
+        }
       }
     })
     .on_document_title_changed(move |webview, title| {
@@ -640,7 +716,9 @@ pub async fn browser_open(
         .url()
         .map(|value| value.to_string())
         .unwrap_or_default();
-      remember_url(&title_id, &url);
+      if !title.starts_with("ZR") {
+        remember_url(&title_id, &url);
+      }
       handle_title_change(webview.app_handle(), &title_id, url, title);
     });
 
@@ -682,7 +760,13 @@ pub async fn browser_set_bounds(
   width: f64,
   height: f64,
 ) -> Result<(), String> {
-  apply_bounds(&find_browser(&app, &id)?, x, y, width, height)
+  let webview = find_browser(&app, &id)?;
+  apply_bounds(&webview, x, y, width, height)?;
+  // 拖窗口 / 改布局后 WK 偶发停在白屏合成层；切标签能恢复是因为 open 会 show。
+  // 这里在改完 bounds 后确保可见，不改变其它标签的隐藏状态。
+  let _ = webview.show();
+  mark_shown(&id);
+  Ok(())
 }
 
 #[tauri::command]
@@ -861,7 +945,7 @@ pub async fn browser_eval(app: AppHandle, id: String, script: String) -> Result<
   if script.is_empty() {
     return Err("脚本不能为空".into());
   }
-  if script.len() > 40_000 {
+  if script.len() > 400_000 {
     return Err("脚本过长".into());
   }
   let webview = find_browser(&app, &id)?;

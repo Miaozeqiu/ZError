@@ -11,24 +11,20 @@
     {
       "identifier": "fs:allow-read",
       "allow": [
-        {
-          "path": "$HOME/**"
-        },
-        {
-          "path": "$DESKTOP/**"
-        },
-        {
-          "path": "$DOCUMENTS/**"
-        },
-        {
-          "path": "$DOWNLOADS/**"
-        }
+        { "path": "$HOME/**" },
+        { "path": "$HOME/.local/share/zerror" },
+        { "path": "$HOME/.local/share/zerror/**" },
+        { "path": "$DESKTOP/**" },
+        { "path": "$DOCUMENTS/**" },
+        { "path": "$DOWNLOADS/**" }
       ]
     },
     {
       "identifier": "fs:allow-read-file",
       "allow": [
         { "path": "$HOME/**" },
+        { "path": "$HOME/.local/share/zerror" },
+        { "path": "$HOME/.local/share/zerror/**" },
         { "path": "$DESKTOP/**" },
         { "path": "$DOCUMENTS/**" },
         { "path": "$DOWNLOADS/**" },
@@ -36,13 +32,82 @@
       ]
     },
     {
+      "identifier": "fs:allow-read-text-file",
+      "allow": [
+        { "path": "$HOME/**" },
+        { "path": "$HOME/.local/share/zerror" },
+        { "path": "$HOME/.local/share/zerror/**" },
+        { "path": "$DESKTOP/**" },
+        { "path": "$DOCUMENTS/**" },
+        { "path": "$DOWNLOADS/**" }
+      ]
+    },
+    {
+      "identifier": "fs:allow-read-dir",
+      "allow": [
+        { "path": "$HOME/**" },
+        { "path": "$HOME/.local/share/zerror" },
+        { "path": "$HOME/.local/share/zerror/**" },
+        { "path": "$DESKTOP/**" },
+        { "path": "$DOCUMENTS/**" },
+        { "path": "$DOWNLOADS/**" }
+      ]
+    },
+    {
+      "identifier": "fs:allow-exists",
+      "allow": [
+        { "path": "$HOME/**" },
+        { "path": "$HOME/.local/share/zerror" },
+        { "path": "$HOME/.local/share/zerror/**" }
+      ]
+    },
+    {
       "identifier": "fs:allow-write-file",
       "allow": [
         { "path": "$HOME/**" },
+        { "path": "$HOME/.local/share/zerror" },
+        { "path": "$HOME/.local/share/zerror/**" },
         { "path": "$DESKTOP/**" },
         { "path": "$DOCUMENTS/**" },
         { "path": "$DOWNLOADS/**" },
         { "path": "**" }
+      ]
+    },
+    {
+      "identifier": "fs:allow-write-text-file",
+      "allow": [
+        { "path": "$HOME/**" },
+        { "path": "$HOME/.local/share/zerror" },
+        { "path": "$HOME/.local/share/zerror/**" },
+        { "path": "$DESKTOP/**" },
+        { "path": "$DOCUMENTS/**" },
+        { "path": "$DOWNLOADS/**" }
+      ]
+    },
+    {
+      "identifier": "fs:allow-mkdir",
+      "allow": [
+        { "path": "$HOME/**" },
+        { "path": "$HOME/.local" },
+        { "path": "$HOME/.local/share" },
+        { "path": "$HOME/.local/share/zerror" },
+        { "path": "$HOME/.local/share/zerror/**" }
+      ]
+    },
+    {
+      "identifier": "fs:allow-create",
+      "allow": [
+        { "path": "$HOME/**" },
+        { "path": "$HOME/.local/share/zerror" },
+        { "path": "$HOME/.local/share/zerror/**" }
+      ]
+    },
+    {
+      "identifier": "fs:allow-remove",
+      "allow": [
+        { "path": "$HOME/**" },
+        { "path": "$HOME/.local/share/zerror" },
+        { "path": "$HOME/.local/share/zerror/**" }
       ]
     },
     "dialog:default",

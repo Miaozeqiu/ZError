@@ -1,4 +1,5 @@
 import { ref } from 'vue'
+import { withIdleEval } from '../../browser/eval'
 import {
   installChaoxingVideoHook,
   readChaoxingVideo,
@@ -43,7 +44,7 @@ export type VideoWatchCheck = {
 export const browserVideoWatches = ref<Record<string, VideoWatchState>>({})
 
 const LIVE_MS = 200
-const SYNC_MS = 1000
+const SYNC_MS = 8000
 const INSPECT_MS = 8000
 const STALL_MS = 12000
 const LOST_MS = 16000
@@ -265,7 +266,7 @@ const syncTick = async (browserId: string) => {
   if (!browserVideoWatches.value[browserId] || inFlight.has(browserId)) return
   inFlight.add(browserId)
   try {
-    const tick = await readChaoxingVideoTick(browserId)
+    const tick = await withIdleEval(() => readChaoxingVideoTick(browserId))
     applyTick(browserId, tick)
   } catch {
     applyTick(browserId, null)
@@ -277,7 +278,7 @@ const syncTick = async (browserId: string) => {
 const inspectTick = async (browserId: string) => {
   if (!browserVideoWatches.value[browserId]) return
   try {
-    const info = await readChaoxingVideo(browserId)
+    const info = await withIdleEval(() => readChaoxingVideo(browserId))
     applyInspect(browserId, info)
   } catch {
     // keep live clock

@@ -59,24 +59,24 @@ const formatWatchPrompt = (check: VideoWatchCheck) => {
   const clock = `${formatVideoClock(state.current)} / ${formatVideoClock(state.duration)}`
   const base = `【播放监控】${state.title || '当前节'} ${clock}（${state.percent}%）paused=${state.paused} ended=${state.ended} jobDone=${state.jobDone}${watchVideoLine(state)}`
   if (check.kind === 'captcha') {
-    return `${base}\n学习通弹出图片验证码（9010）。图会附上或页面上有 #ccc。立刻认出 4 位并 browser_chaoxing_captcha。不要问用户，不要 browser_wait。提交后再 play 或 study。`
+    return `${base}\n学习通弹出图片验证码（9010）。图会附上或页面上有 #ccc。立刻认出 4 位并 browser_captcha。不要问用户，不要 browser_wait。提交后再 play 或 study。`
   }
   if (check.kind === 'quiz') {
-    return `${base}\n当前是章节测验。系统会按 ocs 流程自动搜题/随机/暂存；若失败再 inspect/guess，然后 browser_chaoxing_next。`
+    return `${base}\n当前是章节测验。系统会按 ocs 流程自动搜题/随机/暂存；若失败再 inspect/guess，然后 browser_study_next。`
   }
   if (check.kind === 'done') {
     return `${base}\n这个视频已经结束。系统会先切本章下一个视频，没有了再切下一章。一句话即可，不要再点下一节。`
   }
   if (check.kind === 'lost') {
-    return `${base}\n播放器丢了或页面不对。立刻 browser_chaoxing_play；还不行就回章节目录 click_text 当前节名再 play。不要问用户，不要 browser_wait。`
+    return `${base}\n播放器丢了或页面不对。立刻 browser_study_play；还不行就回章节目录 click_text 当前节名再 play。不要问用户，不要 browser_wait。`
   }
   if (check.kind === 'stalled') {
-    return `${base}\n进度卡住或暂停了。立刻 browser_chaoxing_play 继续播。不要 browser_wait 空等。`
+    return `${base}\n进度卡住或暂停了。立刻 browser_study_play 继续播。不要 browser_wait 空等。`
   }
   if (state.paused || state.status === 'stalled') {
-    return `${base}\n视频是暂停或卡住的，没有在播。立刻 browser_chaoxing_play。禁止说正在播放。`
+    return `${base}\n视频是暂停或卡住的，没有在播。立刻 browser_study_play。禁止说正在播放。`
   }
-  return `${base}\n定时核对：paused 必须是 false，进度要在走，页面不能弹窗卡住。暂停/卡住立刻 browser_chaoxing_play；播放器没了就回目录点节名再 play；遇到测验就 homework inspect/fill/guess 后继续。确认正常就一句话回报进度，不要 browser_wait，监控还会再叫你。`
+  return `${base}\n定时核对：paused 必须是 false，进度要在走，页面不能弹窗卡住。暂停/卡住立刻 browser_study_play；播放器没了就回目录点节名再 play；遇到测验就 homework inspect/fill/guess 后继续。确认正常就一句话回报进度，不要 browser_wait，监控还会再叫你。`
 }
 
 const advancingBrowsers = new Set<string>()
@@ -104,7 +104,7 @@ const notifyCaptchaWithImage = (sessionId: string, image?: string, error?: strin
   notifyWatchImpl?.(
     sessionId,
     '进度检查 · 遇到验证码',
-    `学习通弹出图片验证码（9010）。${error ? `自动识别失败：${error}。` : ''}图已附上。立刻认出 4 位字母或数字，调用 browser_chaoxing_captcha。不要问用户，不要 browser_wait。提交后再 study 或 play。`,
+    `学习通弹出图片验证码（9010）。${error ? `自动识别失败：${error}。` : ''}图已附上。立刻认出 4 位字母或数字，调用 browser_captcha。不要问用户，不要 browser_wait。提交后再 study 或 play。`,
     captchaImageFile(image),
   )
 }
@@ -129,7 +129,7 @@ const runAfterCaptcha = async <T extends { captcha?: boolean; hint?: string }>(
     filled: false,
     hint: solved.ok
       ? result.hint
-      : `${solved.error || '验证码没自动认出来'}。图会随后附上，立刻认出 4 位并 browser_chaoxing_captcha，然后继续 study。不要问用户。`,
+      : `${solved.error || '验证码没自动认出来'}。图会随后附上，立刻认出 4 位并 browser_captcha，然后继续 study。不要问用户。`,
   }
 }
 
@@ -162,7 +162,7 @@ const recoverPlayback = async (check: VideoWatchCheck) => {
       void handleChapterQuizWatch({ ...check, kind: 'quiz' })
       return
     }
-    const played = await playChaoxingVideo(browserId) as Record<string, unknown>
+    const played = await playChaoxingVideo(browserId, { skipTabClick: true }) as Record<string, unknown>
     if (videoIsPlaying(played)) {
       recoverAttempts.set(browserId, 0)
       startChaoxingWatch(browserId, sessionId, seedFromPlayed({
@@ -175,13 +175,13 @@ const recoverPlayback = async (check: VideoWatchCheck) => {
     notifyWatch(
       sessionId,
       formatWatchDisplay(check),
-      `${formatWatchPrompt(check)}\n系统已自动点过播放仍没起来（第 ${attempts} 次）。立刻再 browser_chaoxing_play；页面不对就回目录 click_text 节名再 play。不要问用户。`,
+      `${formatWatchPrompt(check)}\n系统已自动点过播放仍没起来（第 ${attempts} 次）。立刻再 browser_study_play；页面不对就回目录 click_text 节名再 play。不要问用户。`,
     )
   } catch (error) {
     notifyWatch(
       sessionId,
       formatWatchDisplay(check),
-      `${formatWatchPrompt(check)}\n自动恢复失败：${error instanceof Error ? error.message : String(error)}。立刻 browser_chaoxing_play；页面不对就回目录点节名。`,
+      `${formatWatchPrompt(check)}\n自动恢复失败：${error instanceof Error ? error.message : String(error)}。立刻 browser_study_play；页面不对就回目录点节名。`,
     )
   } finally {
     recoveringBrowsers.delete(browserId)
@@ -194,7 +194,7 @@ const handleCaptchaWatch = async (check: VideoWatchCheck) => {
   const solved = await solveChaoxingCaptcha(browserId)
   if (solved.ok) {
     pendingCaptchaNotices.delete(sessionId)
-    const played = await playChaoxingVideo(browserId) as Record<string, unknown>
+    const played = await playChaoxingVideo(browserId, { skipTabClick: true }) as Record<string, unknown>
     if (played?.captcha) {
       notifyCaptchaWithImage(sessionId, solved.image, '提交后验证码还在')
       return
@@ -211,7 +211,7 @@ const handleCaptchaWatch = async (check: VideoWatchCheck) => {
     notifyWatch(
       sessionId,
       '进度检查 · 已填写验证码',
-      '验证码已自动填写并提交。立刻 browser_chaoxing_play；页面不对就回目录 click_text 节名再 play。不要问用户。',
+      '验证码已自动填写并提交。立刻 browser_study_play；页面不对就回目录 click_text 节名再 play。不要问用户。',
     )
     return
   }
@@ -228,7 +228,7 @@ const handleChapterQuizWatch = async (check: VideoWatchCheck) => {
     notifyWatch(
       sessionId,
       '进度检查 · 章节测验',
-      '章节测验还在。调用 browser_chaoxing_homework inspect/guess/save，完成后 browser_chaoxing_next。',
+      '章节测验还在。调用 browser_homework inspect/guess/save，完成后 browser_study_next。',
     )
     return
   }
@@ -241,7 +241,7 @@ const handleChapterQuizWatch = async (check: VideoWatchCheck) => {
       notifyWatch(
         sessionId,
         '进度检查 · 章节测验未完成',
-        `${result.hint || result.error || '章节测验自动作答失败'}。用 browser_chaoxing_homework inspect/guess/save，再 browser_chaoxing_next。`,
+        `${result.hint || result.error || '章节测验自动作答失败'}。用 browser_homework inspect/guess/save，再 browser_study_next。`,
       )
       return
     }
@@ -301,7 +301,8 @@ const advanceToNextVideo = async (check: VideoWatchCheck) => {
     if (next?.hasVideo && Number(next.duration) > 1) {
       let played = next
       if (!videoIsPlaying(played)) {
-        played = await playChaoxingVideo(browserId) as typeof next
+        // next 已切到目标任务点，只播当前，不要点回第一个视频
+        played = await playChaoxingVideo(browserId, { skipTabClick: true }) as typeof next
       }
       const title = String(played.opened || played.title || next.opened || next.title || '下一节').trim()
       const playing = videoIsPlaying(played)
@@ -321,20 +322,20 @@ const advanceToNextVideo = async (check: VideoWatchCheck) => {
       notifyWatch(
         sessionId,
         `进度检查 · 已打开「${title}」但未播放`,
-        `${next.sameChapter ? '本章下一个视频' : '下一节'}「${title}」已经打开，但视频是暂停的。立刻 browser_chaoxing_play。禁止说正在播放、视频仍在后台播放。`,
+        `${next.sameChapter ? '本章下一个视频' : '下一节'}「${title}」已经打开，但视频是暂停的。立刻 browser_study_play。禁止说正在播放、视频仍在后台播放。`,
       )
       return
     }
     notifyWatch(
       sessionId,
       '进度检查 · 需要继续',
-      `上一节已播完，自动打开下一节失败。${next?.hint || ''} 跳过了：${(next?.skipped || []).join('、') || '无'}。调用 browser_chaoxing_next 再试；若已无未完成，browser_finish(status=done)。不要问用户手动点。`,
+      `上一节已播完，自动打开下一节失败。${next?.hint || ''} 跳过了：${(next?.skipped || []).join('、') || '无'}。调用 browser_study_next 再试；若已无未完成，browser_finish(status=done)。不要问用户手动点。`,
     )
   } catch (error) {
     notifyWatch(
       sessionId,
       '进度检查 · 切换下一节失败',
-      `打开下一节出错：${error instanceof Error ? error.message : String(error)}。调用 browser_chaoxing_next 再试。`,
+      `打开下一节出错：${error instanceof Error ? error.message : String(error)}。调用 browser_study_next 再试。`,
     )
   } finally {
     advancingBrowsers.delete(browserId)

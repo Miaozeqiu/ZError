@@ -30,6 +30,22 @@ export const locatorFromCache = (browserId: string, ref: string) => (
   cache.get(browserId)?.[String(ref || '').trim()] || null
 )
 
+const SNAPSHOT_REF = /^e\d+$/i
+
+/** 模型常把 #phone / input#pwd 塞进 ref。快照号是 e3，其余当 CSS。 */
+export const looksLikeCssSelector = (value: string) => {
+  const raw = String(value || '').trim()
+  if (!raw || SNAPSHOT_REF.test(raw)) return false
+  return /[#.\[\]>=~:+]/.test(raw) || /^(input|button|textarea|select|a|form|label|div|span)\b/i.test(raw)
+}
+
+export const cssSelectorFromArgs = (ref: string, selector: string) => {
+  const css = String(selector || '').trim()
+  if (css) return css
+  const raw = String(ref || '').trim()
+  return looksLikeCssSelector(raw) ? raw : ''
+}
+
 export const resolveRefLocator = async (browserId: string, ref: string) => {
   const key = String(ref || '').trim()
   if (!key) return null

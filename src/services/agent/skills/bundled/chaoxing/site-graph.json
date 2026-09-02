@@ -1,0 +1,98 @@
+{
+  "id": "chaoxing",
+  "name": "学习通",
+  "host": "chaoxing.com",
+  "hostPattern": "chaoxing\\.com",
+  "notes": [],
+  "nodes": [
+    {
+      "id": "login",
+      "title": "登录",
+      "path": "passport2.chaoxing.com",
+      "summary": "账号密码登录，成功后离开登录页。",
+      "row": 0,
+      "col": 0,
+      "patterns": ["passport2\\.chaoxing\\.com"],
+      "parserIds": ["login"]
+    },
+    {
+      "id": "space",
+      "title": "空间",
+      "path": "i.chaoxing.com",
+      "summary": "登录后的个人空间。",
+      "row": 1,
+      "col": 0,
+      "patterns": ["(?:i\\.mooc\\.chaoxing|i\\.chaoxing)\\.com"],
+      "parserIds": []
+    },
+    {
+      "id": "courses",
+      "title": "课程列表",
+      "path": "/visit/interaction",
+      "summary": "课名在列表里，点进去进课程壳。",
+      "row": 2,
+      "col": 0,
+      "patterns": ["visit\\/(interaction|courses)"],
+      "parserIds": []
+    },
+    {
+      "id": "course",
+      "title": "课程",
+      "path": "/mycourse/stu",
+      "summary": "课程壳：章节、作业等页签。目录在页内 iframe，不要单独开节点。",
+      "row": 3,
+      "col": 0,
+      "patterns": [
+        "\\/mycourse\\/stu(?!dentstudy)(?![^#]*[?&]pageHeader=8(?:&|$))",
+        "stucoursemiddle",
+        "studentcourse"
+      ],
+      "parserIds": ["study"]
+    },
+    {
+      "id": "study",
+      "title": "章节播放",
+      "path": "/mycourse/studentstudy",
+      "summary": "原地切节。视频和资料在页内 iframe，不要当成独立页面。",
+      "row": 4,
+      "col": -1,
+      "patterns": ["studentstudy", "\\/knowledge\\/cards", "ananas\\/modules"],
+      "parserIds": ["study"]
+    },
+    {
+      "id": "homework-list",
+      "title": "作业列表",
+      "path": "/work · pageHeader=8",
+      "summary": "待做、已完成作业。",
+      "row": 4,
+      "col": 1,
+      "patterns": [
+        "[?&]pageHeader=8(?:&|$)",
+        "\\/work\\/(?:list|index|view)(?:[/?#]|$)",
+        "mooc2-ans\\.chaoxing\\.com\\/[^?\\s]*\\/work(?:\\/|\\?|$)"
+      ],
+      "parserIds": ["homework"]
+    },
+    {
+      "id": "homework-do",
+      "title": "作业作答",
+      "path": "/work/dowork",
+      "summary": "题卡和网页双向同步。",
+      "row": 5,
+      "col": 1,
+      "patterns": ["doHomeWork", "\\/work\\/do(?:work)?(?:[/?#]|$)", "dowork", "do-work"],
+      "parserIds": ["homework"]
+    }
+  ],
+  "edges": [
+    { "from": "login", "to": "space", "label": "登录成功" },
+    { "from": "space", "to": "courses", "label": "打开课程" },
+    { "from": "courses", "to": "course", "label": "点课名" },
+    { "from": "course", "to": "study", "label": "点章节" },
+    { "from": "course", "to": "homework-list", "label": "点作业" },
+    { "from": "study", "to": "course", "label": "回课程", "kind": "back" },
+    { "from": "study", "to": "study", "label": "切节", "kind": "loop" },
+    { "from": "homework-list", "to": "homework-do", "label": "打开一份" },
+    { "from": "homework-do", "to": "homework-list", "label": "返回", "kind": "back" }
+  ]
+}

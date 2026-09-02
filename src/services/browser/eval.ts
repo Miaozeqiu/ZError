@@ -64,7 +64,45 @@ export const asObject = (value: unknown): Record<string, unknown> => {
   return {}
 }
 
-export const evalBrowserView = async (id: string, script: string) => {
+/** 同一窗口的 eval 靠改 document.title 回传；并行会撞车。后台轮询占线就跳过，不要排队堵住 type/click。 */
+const evalBusy = new Set<string>()
+const evalWaiters = new Map<string, Array<() => void>>()
+let idleEvalDepth = 0
+
+const evalKey = (id: string) => String(id || '').trim() || '_'
+
+const takeEval = (key: string) => {
+  if (evalBusy.has(key)) return false
+  evalBusy.add(key)
+  return true
+}
+
+const releaseEval = (key: string) => {
+  evalBusy.delete(key)
+  const next = evalWaiters.get(key)?.shift()
+  if (!next) {
+    evalWaiters.delete(key)
+    return
+  }
+  next()
+}
+
+const waitEval = (key: string) => new Promise<void>((resolve) => {
+  const list = evalWaiters.get(key) || []
+  list.push(resolve)
+  evalWaiters.set(key, list)
+})
+
+export const withIdleEval = async <T>(fn: () => Promise<T>): Promise<T> => {
+  idleEvalDepth += 1
+  try {
+    return await fn()
+  } finally {
+    idleEvalDepth -= 1
+  }
+}
+
+const runEvalScript = async (id: string, script: string) => {
   const raw = await invoke<string>('browser_eval', { id, script })
   try {
     const parsed = JSON.parse(raw)
@@ -75,6 +113,39 @@ export const evalBrowserView = async (id: string, script: string) => {
   } catch (error) {
     if (error instanceof SyntaxError) return raw
     throw error
+  }
+}
+
+export const evalBrowserView = async (id: string, script: string) => {
+  const key = evalKey(id)
+  const idle = idleEvalDepth > 0
+  if (idle) {
+    if (!takeEval(key)) return null
+    try {
+      return await runEvalScript(id, script)
+    } finally {
+      releaseEval(key)
+    }
+  }
+  while (!takeEval(key)) await waitEval(key)
+  try {
+    return await runEvalScript(id, script)
+  } finally {
+    releaseEval(key)
+  }
+}
+
+export const clickFrameText = async (id: string, text: string) => {
+  const want = String(text || '').trim()
+  if (!want) return { ok: false, text: '', href: '' }
+  await askFrames(id, 'click', { text: want })
+  const raw = asObject(await evalBrowserView(id, `(function(){
+    return { ok: !!window.__ZE_CLICKED__, text: window.__ZE_CLICKED__ || '', href: window.__ZE_CLICKED_HREF__ || '' };
+  })()`).catch(() => null))
+  return {
+    ok: Boolean(raw.ok),
+    text: String(raw.text || want),
+    href: String(raw.href || ''),
   }
 }
 

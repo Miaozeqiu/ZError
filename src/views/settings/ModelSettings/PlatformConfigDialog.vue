@@ -1,4 +1,4 @@
-﻿﻿<template>
+﻿<template>
   <div v-if="show" class="dialog-overlay" @click="handleOverlayClick">
     <div class="dialog-content" @click.stop>
       <div class="dialog-header">
@@ -498,7 +498,7 @@ const handleOverlayClick = (event: MouseEvent) => {
 .dialog-content {
   background: var(--platform-config-dialog-bg);
   border: 1px solid var(--platform-config-dialog-border);
-  border-radius: 12px;
+  border-radius: 16px;
   width: 90%;
   max-width: 600px;
   max-height: 90vh;

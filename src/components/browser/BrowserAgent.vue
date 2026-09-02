@@ -43,17 +43,6 @@
           <div v-else class="user-bubble">{{ message.content }}</div>
         </div>
         <div v-else class="assistant-turn">
-          <ul v-if="message.todos?.length" class="todo-list" aria-label="任务清单">
-            <li
-              v-for="(item, index) in message.todos"
-              :key="item.id"
-              class="todo-item"
-              :class="`is-${item.status}`"
-            >
-              <span class="todo-mark" aria-hidden="true">{{ item.status === 'done' ? '✓' : item.status === 'cancelled' ? '–' : String(index + 1) }}</span>
-              <span class="todo-text">{{ item.text }}</span>
-            </li>
-          </ul>
           <template v-for="block in assistantTimeline(message)" :key="block.key">
             <div
               v-if="block.type === 'step'"
@@ -146,48 +135,79 @@
         </div>
       </div>
     </div>
-    <form class="composer" @submit.prevent="submit">
-      <div class="composer-box">
-        <textarea
-          ref="inputRef"
-          v-model="draft"
-          class="composer-input"
-          rows="1"
-          :placeholder="composerPlaceholder"
-          @input="resizeComposer"
-          @compositionstart="onCompositionStart"
-          @compositionend="onCompositionEnd"
-          @keydown="onKeydown"
-        />
-        <div class="composer-toolbar">
-          <span class="composer-place">{{ placeHint }}</span>
-          <button
-            v-if="busy"
-            class="composer-send is-stop"
-            type="button"
-            title="停止"
-            aria-label="停止"
-            @click="stop"
-          >
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
-              <rect x="7" y="7" width="10" height="10" rx="2" />
-            </svg>
-          </button>
-          <button
-            v-else
-            class="composer-send"
-            type="submit"
-            :disabled="!draft.trim()"
-            aria-label="发送"
-          >
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M12 19V5" />
-              <path d="M5 12l7-7 7 7" />
-            </svg>
-          </button>
+    <div class="composer-dock">
+      <div v-if="activeTodos.length" class="todo-card" aria-label="任务清单">
+        <div class="todo-card-head">
+          <span class="todo-card-title">任务</span>
+          <span class="todo-card-meta">{{ todoDoneCount }}/{{ activeTodos.length }}</span>
         </div>
+        <ul class="todo-card-list">
+          <li
+            v-for="item in activeTodos"
+            :key="item.id"
+            class="todo-item"
+            :class="`is-${item.status}`"
+          >
+            <span class="todo-mark" aria-hidden="true">
+              <svg v-if="item.status === 'done'" viewBox="0 0 16 16" width="16" height="16">
+                <circle cx="8" cy="8" r="6.25" fill="currentColor" />
+                <path d="M5.2 8.15l1.85 1.85 3.75-3.8" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+              <svg v-else-if="item.status === 'cancelled'" viewBox="0 0 16 16" width="16" height="16">
+                <circle cx="8" cy="8" r="6.25" fill="none" stroke="currentColor" stroke-width="1.4" />
+                <path d="M5.4 8h5.2" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+              </svg>
+              <svg v-else viewBox="0 0 16 16" width="16" height="16">
+                <circle cx="8" cy="8" r="6.25" fill="none" stroke="currentColor" stroke-width="1.4" />
+              </svg>
+            </span>
+            <span class="todo-text">{{ item.text }}</span>
+          </li>
+        </ul>
       </div>
-    </form>
+      <form class="composer" @submit.prevent="submit">
+        <div class="composer-box">
+          <textarea
+            ref="inputRef"
+            v-model="draft"
+            class="composer-input"
+            rows="1"
+            :placeholder="composerPlaceholder"
+            @input="resizeComposer"
+            @compositionstart="onCompositionStart"
+            @compositionend="onCompositionEnd"
+            @keydown="onKeydown"
+          />
+          <div class="composer-toolbar">
+            <span class="composer-place">{{ placeHint }}</span>
+            <button
+              v-if="busy"
+              class="composer-send is-stop"
+              type="button"
+              title="停止"
+              aria-label="停止"
+              @click="stop"
+            >
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+                <rect x="7" y="7" width="10" height="10" rx="2" />
+              </svg>
+            </button>
+            <button
+              v-else
+              class="composer-send"
+              type="submit"
+              :disabled="!draft.trim()"
+              aria-label="发送"
+            >
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 19V5" />
+                <path d="M5 12l7-7 7 7" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      </form>
+    </div>
   </section>
 </template>
 
@@ -267,6 +287,17 @@ const session = computed(() => {
   if (!id) return null
   return browserChatSessions.value.find((item) => item.browserId === id) || null
 })
+
+const activeTodos = computed(() => {
+  if (session.value?.todos?.length) return session.value.todos
+  const messages = session.value?.messages || []
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    if (Array.isArray(messages[i].todos)) return messages[i].todos || []
+  }
+  return []
+})
+
+const todoDoneCount = computed(() => activeTodos.value.filter((item) => item.status === 'done').length)
 
 const streaming = computed(() => Boolean(session.value?.messages.some((item) => item.status === 'streaming')))
 const placeHint = computed(() => hostnameOf(props.url || ''))
@@ -353,7 +384,14 @@ const iconPaths = (name: string) => {
   if (name === 'browser_eval') return ['M8 8l-4 4 4 4', 'M16 8l4 4-4 4']
   if (name === 'browser_todo') return ['M9 11l3 3L22 4', 'M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11']
   if (name === 'browser_site_graph') return ['M6 7a2 2 0 1 0 0-4 2 2 0 0 0 0 4z', 'M18 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4z', 'M8 18a2 2 0 1 0 0-4 2 2 0 0 0 0 4z', 'M16 17a2 2 0 1 0 0-4 2 2 0 0 0 0 4z', 'M8 8l8 1', 'M7 9l2 6']
-  if (name.startsWith('browser_chaoxing') || name === 'browser_wait' || name === 'browser_finish') {
+  if (
+    name.startsWith('browser_chaoxing')
+    || name.startsWith('browser_study_')
+    || name === 'browser_homework'
+    || name === 'browser_captcha'
+    || name === 'browser_wait'
+    || name === 'browser_finish'
+  ) {
     return name === 'browser_wait'
       ? ['M12 6v6l4 2', 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z']
       : name === 'browser_finish'
@@ -391,7 +429,7 @@ watch(
 )
 
 watch(
-  () => session.value?.messages.map((item) => `${item.id}:${item.status}:${item.content.length}:${item.steps.length}:${item.todos?.length || 0}:${(item.todos || []).map((t) => t.status).join('')}`).join('|'),
+  () => `${session.value?.todos?.map((t) => t.status).join('') || ''}|${session.value?.messages.map((item) => `${item.id}:${item.status}:${item.content.length}:${item.steps.length}:${item.todos?.length || 0}:${(item.todos || []).map((t) => t.status).join('')}`).join('|')}`,
   () => { void scrollBottom() },
 )
 
@@ -657,13 +695,51 @@ const onKeydown = (event: KeyboardEvent) => {
   gap: 8px;
 }
 
-.todo-list {
+.todo-card {
+  flex-shrink: 0;
+  padding: 10px 12px 8px;
+  border: 0.5px solid color-mix(in srgb, var(--border-primary, #e2e8f0) 55%, transparent);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--bg-secondary, #fff) 88%, transparent);
+  box-shadow: 0 1px 2px color-mix(in srgb, #000 4%, transparent), 0 6px 16px color-mix(in srgb, #000 5%, transparent);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+.todo-card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.todo-card-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary, #2d3748);
+}
+
+.todo-card-meta {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary, #718096);
+}
+
+.todo-card-list {
   margin: 0;
   padding: 0;
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
+  max-height: 168px;
+  overflow: auto;
+  scrollbar-width: none;
+}
+
+.todo-card-list::-webkit-scrollbar {
+  display: none;
 }
 
 .todo-item {
@@ -672,7 +748,7 @@ const onKeydown = (event: KeyboardEvent) => {
   gap: 8px;
   font-size: 12px;
   line-height: 1.45;
-  color: color-mix(in srgb, var(--text-primary, #2d3748) 72%, transparent);
+  color: color-mix(in srgb, var(--text-primary, #2d3748) 78%, transparent);
 }
 
 .todo-item.is-done {
@@ -684,7 +760,11 @@ const onKeydown = (event: KeyboardEvent) => {
 }
 
 .todo-item.is-cancelled {
-  opacity: 0.45;
+  opacity: 0.42;
+}
+
+.todo-item.is-cancelled .todo-text {
+  text-decoration: line-through;
 }
 
 .todo-mark {
@@ -694,13 +774,11 @@ const onKeydown = (event: KeyboardEvent) => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  color: var(--text-secondary, #718096);
+  color: color-mix(in srgb, var(--text-primary, #2d3748) 38%, transparent);
 }
 
 .todo-item.is-done .todo-mark {
-  color: color-mix(in srgb, var(--text-primary, #2d3748) 55%, #16a34a);
+  color: color-mix(in srgb, var(--text-primary, #2d3748) 42%, #22c55e);
 }
 
 .todo-text {
@@ -843,8 +921,11 @@ const onKeydown = (event: KeyboardEvent) => {
   background: var(--bg-secondary, #fff);
 }
 
-.composer {
+.composer-dock {
   flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   padding: 8px 10px 12px;
   background: linear-gradient(
     to bottom,
@@ -852,6 +933,12 @@ const onKeydown = (event: KeyboardEvent) => {
     color-mix(in srgb, var(--bg-secondary, #fff) 72%, transparent) 28%,
     var(--bg-secondary, #fff) 100%
   );
+}
+
+.composer {
+  flex-shrink: 0;
+  padding: 0;
+  background: none;
 }
 
 .composer-box {
@@ -932,6 +1019,7 @@ const onKeydown = (event: KeyboardEvent) => {
   cursor: default;
 }
 
+[data-theme="dark"] .todo-card,
 [data-theme="dark"] .composer-box {
   border-color: color-mix(in srgb, var(--border-primary, #3d3d3f) 88%, transparent);
   background: color-mix(in srgb, var(--bg-tertiary, #3a3a3c) 82%, transparent);

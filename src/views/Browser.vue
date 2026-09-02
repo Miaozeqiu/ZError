@@ -53,6 +53,17 @@
         </div>
         <HeaderSiteGraphMenu />
         <HeaderAbstractionMenu />
+        <div
+          class="chrome-load"
+          :class="{ 'is-on': loadLine.visible, 'is-fade': loadLine.fading }"
+          role="progressbar"
+          :aria-hidden="!loadLine.visible"
+          :aria-valuemin="0"
+          :aria-valuemax="100"
+          :aria-valuenow="Math.round(loadLine.progress * 100)"
+        >
+          <i :style="{ transform: `scaleX(${loadLine.progress})` }" />
+        </div>
       </div>
       <div v-if="selected" ref="hostRef" class="browser-host" />
       <div v-else class="browser-empty">正在打开浏览器</div>
@@ -106,6 +117,7 @@ import {
   normalizeBrowserUrl,
   getSelectedBrowserId,
   listenBrowserOpened,
+  listenBrowserLoad,
   listenBrowserState,
   listAppBrowsers,
   navigateBrowserView,
@@ -115,6 +127,7 @@ import {
   patchAppBrowser,
   setBrowserBounds,
   setBrowserZoom,
+  showBrowserView,
   removeAppBrowser,
   upsertAppBrowser,
   type AppBrowser,
@@ -128,6 +141,7 @@ import {
 import {
   startChaoxingChapterParser,
   stopChaoxingChapterParser,
+  syncChaoxingChapterUrl,
 } from '../services/chaoxing/browser/chapters'
 import {
   abstractionMenuOpen,
@@ -164,6 +178,65 @@ const zoom = computed(() => clampBrowserZoom(selected.value?.zoom))
 const zoomPercent = computed(() => Math.round(zoom.value * 100))
 const addressText = ref('')
 const addressFocused = ref(false)
+const loadLine = ref({ visible: false, fading: false, progress: 0 })
+
+let unlistenLoad: (() => void) | null = null
+let loadRaf = 0
+let loadFrom = 0
+let loadAt = 0
+let loadFinishing = false
+let loadTab = ''
+const loadingTabs = new Set<string>()
+const reduceLoadMotion = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+
+const stopLoadTick = () => {
+  if (loadRaf) window.cancelAnimationFrame(loadRaf)
+  loadRaf = 0
+}
+
+const beginLoadLine = (id: string) => {
+  if (!id) return
+  loadingTabs.add(id)
+  loadTab = id
+  loadFinishing = false
+  stopLoadTick()
+  if (id !== selectedId.value) return
+  const current = loadLine.value.visible && !loadLine.value.fading ? loadLine.value.progress : 0
+  loadFrom = current >= 0.98 ? 0 : current
+  loadAt = performance.now()
+  loadLine.value = { visible: true, fading: false, progress: loadFrom || 0.04 }
+  const tick = (now: number) => {
+    if (loadFinishing || loadTab !== id) return
+    const t = (now - loadAt) / 1000
+    const cap = reduceLoadMotion() ? 0.7 : 0.86
+    const eased = 1 - Math.exp(-t / (reduceLoadMotion() ? 0.28 : 1.15))
+    loadLine.value = {
+      visible: true,
+      fading: false,
+      progress: loadFrom + (cap - loadFrom) * eased,
+    }
+    loadRaf = window.requestAnimationFrame(tick)
+  }
+  loadRaf = window.requestAnimationFrame(tick)
+}
+
+const finishLoadLine = (id: string) => {
+  if (!id) return
+  loadingTabs.delete(id)
+  if (loadTab && loadTab !== id) return
+  loadFinishing = true
+  stopLoadTick()
+  if (id !== selectedId.value) {
+    loadLine.value = { visible: false, fading: false, progress: 0 }
+    return
+  }
+  loadLine.value = { visible: true, fading: true, progress: 1 }
+  window.setTimeout(() => {
+    if (!loadFinishing || loadTab !== id) return
+    loadLine.value = { visible: false, fading: false, progress: 0 }
+    loadFinishing = false
+  }, reduceLoadMotion() ? 120 : 320)
+}
 
 const visibleUrl = (raw: string) => {
   if (isBrowserHome(raw)) return ''
@@ -207,9 +280,11 @@ const submitAddress = async () => {
   loadBrowsers()
   addressFocused.value = false
   addressText.value = visibleUrl(next)
+  beginLoadLine(current.id)
   try {
     await navigateBrowserView(current.id, next)
   } catch {
+    finishLoadLine(current.id)
     await syncView()
   }
 }
@@ -284,9 +359,11 @@ const goHome = async () => {
   upsertAppBrowser({ id: current.id, name: current.name, url: home, title: '导航' })
   address.value = home
   loadBrowsers()
+  beginLoadLine(current.id)
   try {
     await navigateBrowserView(current.id, home)
   } catch {
+    finishLoadLine(current.id)
     await syncView()
   }
 }
@@ -311,7 +388,7 @@ const syncView = async () => {
   }
 }
 
-const syncViewNow = async () => {
+const syncViewNow = async (opts?: { forceShow?: boolean }) => {
   if (!props.active) {
     shownId = ''
     await hideAllBrowserViews().catch(() => undefined)
@@ -319,18 +396,26 @@ const syncViewNow = async () => {
   }
   const current = selected.value
   const bounds = hostBounds(hostRef.value)
-  if (!current || !bounds) {
+  if (!current) {
     shownId = ''
     await hideAllBrowserViews().catch(() => undefined)
+    return
+  }
+  // 布局抖动时 host 可能短暂 <8px（开侧栏、重排、拖窗口），不要把当前 webview 藏掉。
+  // 否则偶发白屏，要切标签（走 open/show）才能回来。
+  if (!bounds) {
     return
   }
   const key = `${bounds.x},${bounds.y},${bounds.width},${bounds.height}`
   // 原生视图已经在位：位置没变就什么都不做，变了也只挪一下。
   // 切走的标签只隐藏，满 10 分钟没再打开才休眠回收。
   if (shownId === current.id) {
-    if (shownBounds === key) return
+    if (shownBounds === key && !opts?.forceShow) return
     try {
       await setBrowserBounds(current.id, bounds)
+      if (opts?.forceShow) {
+        await showBrowserView(current.id).catch(() => undefined)
+      }
       shownBounds = key
       return
     } catch {
@@ -348,6 +433,7 @@ const syncViewNow = async () => {
       shownId = current.id
       shownBounds = key
       await setBrowserBounds(current.id, bounds).catch(() => undefined)
+      await showBrowserView(current.id).catch(() => undefined)
       return
     }
     shownId = ''
@@ -365,25 +451,46 @@ const updateBounds = () => {
     boundsRaf = window.requestAnimationFrame(flushBounds)
   }
   window.clearTimeout(boundsSettle)
+  // 拖完窗口后再强制 show 一次，修 macOS WK 合成层停住导致的白屏
   boundsSettle = window.setTimeout(() => {
     boundsSettle = 0
-    void syncView()
-  }, 140)
+    void (async () => {
+      if (syncing) {
+        syncAgain = true
+        return
+      }
+      syncing = true
+      try {
+        do {
+          syncAgain = false
+          await syncViewNow({ forceShow: true })
+        } while (syncAgain)
+      } finally {
+        syncing = false
+      }
+    })()
+  }, 160)
 }
 
 const goBack = () => {
   const current = selected.value
-  if (current) void goBackBrowserView(current.id).catch(() => undefined)
+  if (!current) return
+  beginLoadLine(current.id)
+  void goBackBrowserView(current.id).catch(() => finishLoadLine(current.id))
 }
 
 const goForward = () => {
   const current = selected.value
-  if (current) void goForwardBrowserView(current.id).catch(() => undefined)
+  if (!current) return
+  beginLoadLine(current.id)
+  void goForwardBrowserView(current.id).catch(() => finishLoadLine(current.id))
 }
 
 const reload = () => {
   const current = selected.value
-  if (current) void reloadBrowserView(current.id).catch(() => undefined)
+  if (!current) return
+  beginLoadLine(current.id)
+  void reloadBrowserView(current.id).catch(() => finishLoadLine(current.id))
 }
 
 const applyNativeZoom = async (id: string, value: number) => {
@@ -453,10 +560,14 @@ watch(selectedId, async (id, prev) => {
 /** 学习页：解析器后台轮询，不依赖打开「解析」面板 */
 watch(
   () => [selectedId.value, address.value] as const,
-  ([id, url]) => {
+  ([id, url], prev) => {
     if (!id) return
-    if (isStudyUrl(url || '')) startChaoxingChapterParser(id)
-    else stopChaoxingChapterParser(id)
+    if (!isStudyUrl(url || '')) {
+      stopChaoxingChapterParser(id)
+      return
+    }
+    if (url && url !== prev?.[1]) syncChaoxingChapterUrl(id, url)
+    else startChaoxingChapterParser(id)
   },
 )
 
@@ -565,7 +676,8 @@ onMounted(async () => {
     const current = browsers.value.find((item) => item.id === state.id)
     if (!current) return
     const url = state.url || current.url
-    const title = state.title || current.title
+    const title = state.title
+      || (isBrowserHome(url) ? '导航' : (url !== current.url ? hostnameOf(url) : current.title))
     patchAppBrowser(current.id, { url, title })
     loadBrowsers()
     const urlChanged = url !== address.value
@@ -587,6 +699,10 @@ onMounted(async () => {
     acceptOpened(state)
     void nextTick().then(() => syncView())
   }).catch(() => null)
+  unlistenLoad = await listenBrowserLoad((state) => {
+    if (state.phase === 'started') beginLoadLine(state.id)
+    else if (state.phase === 'finished') finishLoadLine(state.id)
+  }).catch(() => null)
   window.addEventListener('resize', updateBounds)
   window.addEventListener('keydown', onAbsKey)
   await nextTick()
@@ -597,10 +713,20 @@ onMounted(async () => {
   }
 })
 
+watch(selectedId, (id) => {
+  if (id && loadingTabs.has(id)) beginLoadLine(id)
+  else {
+    stopLoadTick()
+    loadLine.value = { visible: false, fading: false, progress: 0 }
+  }
+})
+
 onUnmounted(() => {
   browserTabHandlers.value = null
   unlistenState?.()
   unlistenOpened?.()
+  unlistenLoad?.()
+  stopLoadTick()
   resizeObserver?.disconnect()
   if (boundsRaf) window.cancelAnimationFrame(boundsRaf)
   boundsRaf = 0
@@ -691,6 +817,7 @@ onUnmounted(() => {
 }
 
 .browser-chrome {
+  position: relative;
   height: 40px;
   min-height: 40px;
   padding: 0 10px;
@@ -700,6 +827,48 @@ onUnmounted(() => {
   flex-shrink: 0;
   background: var(--bg-secondary, #fff);
   border-bottom: 1px solid color-mix(in srgb, var(--border-primary, #e2e8f0) 42%, transparent);
+}
+
+.chrome-load {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 0;
+}
+
+.chrome-load.is-on {
+  opacity: 1;
+}
+
+.chrome-load.is-fade {
+  opacity: 0;
+  transition: opacity 0.28s ease-out;
+}
+
+.chrome-load i {
+  display: block;
+  height: 100%;
+  width: 100%;
+  transform: scaleX(0);
+  transform-origin: left center;
+  background: #007aff;
+  box-shadow: 0 0 8px rgba(0, 122, 255, 0.55);
+  will-change: transform;
+}
+
+[data-theme="dark"] .chrome-load i {
+  background: #0a84ff;
+  box-shadow: 0 0 8px rgba(10, 132, 255, 0.5);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chrome-load.is-fade {
+    transition-duration: 0.12s;
+  }
 }
 
 .chrome-btn {

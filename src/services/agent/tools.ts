@@ -1,4 +1,12 @@
 /** Agent 可调用的工具定义（题库对话 / 浏览器对话）。 */
+import {
+  LIST_AGENT_SKILLS_TOOL,
+  READ_AGENT_SKILL_FILE_TOOL,
+  READ_AGENT_SKILL_TOOL,
+  RESET_AGENT_SKILL_FILE_TOOL,
+  WRITE_AGENT_SKILL_FILE_TOOL,
+} from './skillTools'
+
 export const CHAT_TOOLS = [
   {
     type: 'function',
@@ -848,6 +856,11 @@ export const CHAT_TOOLS = [
       },
     },
   },
+  LIST_AGENT_SKILLS_TOOL,
+  READ_AGENT_SKILL_TOOL,
+  READ_AGENT_SKILL_FILE_TOOL,
+  WRITE_AGENT_SKILL_FILE_TOOL,
+  RESET_AGENT_SKILL_FILE_TOOL,
 ]
 
 export const BROWSER_TOOLS = [
@@ -863,7 +876,7 @@ export const BROWSER_TOOLS = [
     type: 'function',
     function: {
       name: 'browser_site_graph',
-      description: '查看或修改当前网站图谱。图谱不是定死的：发现新路由、节点不准、缺边时用 upsert_node/upsert_edge 改正；patterns 写 URL 正则。list/get 查看，reset 恢复种子。',
+      description: '查看或修改当前网站图谱。固定步骤连续失败、URL 对不上节点、发现新路由或缺边时用 upsert_node/upsert_edge 改正；patterns 写 URL 正则。iframe 地址写进宿主页，不要单独建节点。改对了就 write_agent_skill_file 写回 site-graph.json。list/get 查看，reset 恢复种子。',
       parameters: {
         type: 'object',
         properties: {
@@ -885,7 +898,7 @@ export const BROWSER_TOOLS = [
           parserIds: {
             type: 'array',
             items: { type: 'string' },
-            description: '可挂解析器 id：chaoxing-study / chaoxing-homework / chaoxing-login',
+            description: '可挂解析器角色：login / study / homework / captcha',
           },
           row: { type: 'integer', description: '布局行，0 起' },
           col: { type: 'integer', description: '布局列：-1 左 / 0 中 / 1 右' },
@@ -904,7 +917,7 @@ export const BROWSER_TOOLS = [
     type: 'function',
     function: {
       name: 'browser_get_page',
-      description: '读取当前网页的可见正文、标题和主要链接。操作页面前先调用。',
+      description: '读取当前网页的可交互快照（role / name / ref）。操作页面前先调用。点元素用 snapshot 里的文案或 ref。',
       parameters: { type: 'object', properties: {} },
     },
   },
@@ -948,11 +961,13 @@ export const BROWSER_TOOLS = [
     type: 'function',
     function: {
       name: 'browser_click',
-      description: '点击页面上的元素，selector 用合法 CSS。同域 iframe 里也能点。不要用 :contains()。',
+      description: '点击页面元素。快照编号用 ref=e3；CSS 用 selector=#loginBtn。不要把 #phone 这类 CSS 放进 ref。不要用 :contains()。',
       parameters: {
         type: 'object',
-        properties: { selector: { type: 'string' } },
-        required: ['selector'],
+        properties: {
+          ref: { type: 'string', description: '快照编号，如 e3。不要放 CSS。' },
+          selector: { type: 'string', description: 'CSS，如 #loginBtn。登录按钮用这个。' },
+        },
       },
     },
   },
@@ -972,14 +987,15 @@ export const BROWSER_TOOLS = [
     type: 'function',
     function: {
       name: 'browser_type',
-      description: '向输入框填写文字。',
+      description: '向输入框填写文字。快照编号用 ref=e4；CSS 用 selector=#phone。登录页直接 selector=#phone / #pwd，不要 get_page。',
       parameters: {
         type: 'object',
         properties: {
-          selector: { type: 'string' },
+          ref: { type: 'string', description: '快照编号，如 e4。不要放 #phone。' },
+          selector: { type: 'string', description: 'CSS，如 #phone、#pwd。登录填表用这个。' },
           text: { type: 'string' },
         },
-        required: ['selector', 'text'],
+        required: ['text'],
       },
     },
   },
@@ -1009,40 +1025,60 @@ export const BROWSER_TOOLS = [
   {
     type: 'function',
     function: {
-      name: 'browser_chaoxing_chapters',
-      description: '读取后台章节解析器的当前结果（未完成节名、任务点进度）。须在课程章节页。刷课流程里用来确认目录，不要代替点击和播放。',
+      name: 'browser_study_chapters',
+      description: '读取章节解析器（未完成节名、任务点进度）。有未完成立刻 browser_study_play，不要 open / get_page / eval。空就再调一次。',
+      parameters: {
+        type: 'object',
+        properties: {
+          open: {
+            type: 'string',
+            description: '要打开的节名，如「函数（一）」。不要带 1.1。打开后立刻 browser_study_play。',
+          },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_study_play',
+      description: '学习平台播放页点播放。对齐 ocs：播「当前」任务点视频，不要自己点回第一个。可选 videoIndex（本节第几个视频，从 1 起）或 label 切到指定任务点再播。成功后自动监控。',
+      parameters: {
+        type: 'object',
+        properties: {
+          videoIndex: {
+            type: 'number',
+            description: '本节第几个视频（1 起）。一节多视频时用这个切换，不要反复 play 指望自动跳。',
+          },
+          label: {
+            type: 'string',
+            description: '任务点标签，如「视频2」「测验」。标签常重名时优先用 videoIndex。',
+          },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_study_watch',
+      description: '监控当前视频进度，并显示在 Agent 面板。仅播放页、视频已打开时用。进度条本地实时更新；播完自动切下一视频，卡住/验证码/测验才叫你。不要用 browser_wait 空等整节。',
       parameters: { type: 'object', properties: {} },
     },
   },
   {
     type: 'function',
     function: {
-      name: 'browser_chaoxing_play',
-      description: '学习通播放页点播放。仅 studentstudy 播放页。播放器在 #iframe 再套一层 video iframe，顶层没有 video。成功后会自动开始进度监控。',
+      name: 'browser_study_next',
+      description: '当前视频播完后先切本章下一个视频任务点（attachments 顺序，对齐 ocs），没有了再开下一节。不要自己点「第一个视频」标签。资料/PDF 会跳过。',
       parameters: { type: 'object', properties: {} },
     },
   },
   {
     type: 'function',
     function: {
-      name: 'browser_chaoxing_watch',
-      description: '监控学习通当前视频进度，并显示在 Agent 面板。仅播放页、视频已打开时用。进度条本地实时更新；播完自动切下一视频，卡住/验证码/测验才叫你。不要用 browser_wait 空等整节。',
-      parameters: { type: 'object', properties: {} },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'browser_chaoxing_next',
-      description: '当前视频播完后先切本章下一个视频，没有了再打开下一节。仅刷课流程里用。资料/PDF 会自动跳过。不要只点「下一节」就停，必须用这个。',
-      parameters: { type: 'object', properties: {} },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'browser_chaoxing_homework',
-      description: '学习通作业/章节测验题卡。课程作业：列表页 list/open，作答页 inspect/fill/save/submit。章节测验（studentstudy 播放页）：直接 inspect/fill/guess/save/submit，不要 list。一题一题 fill；不会就 guess 随便选。不要 eval、不要 click 选项。',
+      name: 'browser_homework',
+      description: '作业/章节测验题卡。课程作业：列表页 list/open，作答页 inspect/fill/save/submit。章节测验（播放页）：直接 inspect/fill/guess/save/submit，不要 list。一题一题 fill；不会就 guess 随便选。不要 eval、不要 click 选项。',
       parameters: {
         type: 'object',
         properties: {
@@ -1073,12 +1109,12 @@ export const BROWSER_TOOLS = [
   {
     type: 'function',
     function: {
-      name: 'browser_chaoxing_captcha',
-      description: '学习通【9010】图片验证码：把认出的 4 位字母或数字填进 #ucode 并提交。不要问用户。提交后再 study 或 play。',
+      name: 'browser_captcha',
+      description: '图片验证码：把认出的字符填入并提交。不要问用户。提交后再 study 或 play。',
       parameters: {
         type: 'object',
         properties: {
-          code: { type: 'string', description: '图中 4 位字母或数字' },
+          code: { type: 'string', description: '图中验证码字符' },
         },
         required: ['code'],
       },
@@ -1088,7 +1124,7 @@ export const BROWSER_TOOLS = [
     type: 'function',
     function: {
       name: 'browser_wait',
-      description: '等待若干秒，再继续看页面。学习通视频请用 browser_chaoxing_watch，不要用这个空等整节。',
+      description: '等待若干秒，再继续看页面。学习视频请用 browser_study_watch，不要用这个空等整节。',
       parameters: {
         type: 'object',
         properties: {
@@ -1147,4 +1183,9 @@ export const BROWSER_TOOLS = [
       },
     },
   },
+  LIST_AGENT_SKILLS_TOOL,
+  READ_AGENT_SKILL_TOOL,
+  READ_AGENT_SKILL_FILE_TOOL,
+  WRITE_AGENT_SKILL_FILE_TOOL,
+  RESET_AGENT_SKILL_FILE_TOOL,
 ]

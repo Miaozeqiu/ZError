@@ -1,22 +1,35 @@
+import { reactive } from 'vue'
+
 export type SiteAccountId = 'chaoxing' | 'zhihuishu'
 
 export type SiteAccount = {
   account: string
   password: string
+  note: string
   updatedAt: number
 }
 
 const STORAGE_KEY = 'zerror-site-accounts'
 const FILE_NAME = 'site-accounts.json'
 
-const LABELS: Record<SiteAccountId, string> = {
+export const SITE_ACCOUNT_LABELS: Record<SiteAccountId, string> = {
   chaoxing: '学习通',
   zhihuishu: '智慧树',
 }
 
+export const SITE_ACCOUNT_IDS: SiteAccountId[] = ['chaoxing', 'zhihuishu']
+
+const LABELS = SITE_ACCOUNT_LABELS
+
 const isPlatform = (value: string): value is SiteAccountId => (
   value === 'chaoxing' || value === 'zhihuishu'
 )
+
+/** 供设置页响应式读取 */
+export const siteAccountsState = reactive({
+  rows: {} as Partial<Record<SiteAccountId, SiteAccount>>,
+  ready: false,
+})
 
 let memory: Partial<Record<SiteAccountId, SiteAccount>> = {}
 let fileReady = false
@@ -24,10 +37,12 @@ let fileReady = false
 const asRow = (row: Partial<SiteAccount> | undefined): SiteAccount | null => {
   const account = String(row?.account || '').trim()
   const password = String(row?.password || '')
-  if (!account && !password) return null
+  const note = String(row?.note || '').trim()
+  if (!account && !password && !note) return null
   return {
     account,
     password,
+    note,
     updatedAt: Number(row?.updatedAt) || Date.now(),
   }
 }
@@ -37,8 +52,16 @@ const mergeRow = (prev: SiteAccount | undefined, next: SiteAccount) => {
   return {
     account: (newer ? next.account : prev.account) || next.account || prev?.account || '',
     password: (newer ? next.password : prev.password) || next.password || prev?.password || '',
+    // 备注允许显式清空，不能用 || 回落到旧值
+    note: newer ? String(next.note || '') : String(prev?.note || next.note || ''),
     updatedAt: Math.max(next.updatedAt || 0, prev?.updatedAt || 0, Date.now()),
   }
+}
+
+const syncState = (all: Partial<Record<SiteAccountId, SiteAccount>>) => {
+  memory = all
+  siteAccountsState.rows = { ...all }
+  siteAccountsState.ready = fileReady
 }
 
 const readLocal = (): Partial<Record<SiteAccountId, SiteAccount>> => {
@@ -57,7 +80,7 @@ const readLocal = (): Partial<Record<SiteAccountId, SiteAccount>> => {
 }
 
 const writeLocal = (all: Partial<Record<SiteAccountId, SiteAccount>>) => {
-  memory = all
+  syncState(all)
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(all))
   } catch {
@@ -97,7 +120,7 @@ const mergeAll = (
 ) => {
   const out: Partial<Record<SiteAccountId, SiteAccount>> = {}
   for (const list of lists) {
-    for (const id of ['chaoxing', 'zhihuishu'] as SiteAccountId[]) {
+    for (const id of SITE_ACCOUNT_IDS) {
       const row = list[id]
       if (!row) continue
       out[id] = mergeRow(out[id], row)
@@ -107,7 +130,7 @@ const mergeAll = (
 }
 
 const loadAll = (): Partial<Record<SiteAccountId, SiteAccount>> => {
-  memory = mergeAll(memory, readLocal())
+  syncState(mergeAll(memory, readLocal()))
   return memory
 }
 
@@ -117,27 +140,38 @@ const saveAll = (all: Partial<Record<SiteAccountId, SiteAccount>>) => {
 }
 
 memory = readLocal()
+syncState(memory)
 void loadFile().then((file) => {
-  memory = mergeAll(memory, file)
-  writeLocal(memory)
   fileReady = true
+  syncState(mergeAll(memory, file))
+  writeLocal(memory)
 })
 
 export const siteAccountOf = (id: SiteAccountId) => loadAll()[id] || null
 
 export const rememberSiteAccount = (
   id: SiteAccountId,
-  patch: Partial<Pick<SiteAccount, 'account' | 'password'>>,
+  patch: Partial<Pick<SiteAccount, 'account' | 'password' | 'note'>>,
 ) => {
-  const account = String(patch.account || '').trim()
-  const password = String(patch.password || '')
-  if (!account && !password) return siteAccountOf(id)
+  const account = patch.account !== undefined ? String(patch.account || '').trim() : undefined
+  const password = patch.password !== undefined ? String(patch.password || '') : undefined
+  const note = patch.note !== undefined ? String(patch.note || '').trim() : undefined
+  if (account === undefined && password === undefined && note === undefined) {
+    return siteAccountOf(id)
+  }
   const all = loadAll()
-  const next = mergeRow(all[id], {
-    account,
-    password,
+  const prev = all[id]
+  const next = mergeRow(prev, {
+    account: account !== undefined ? account : (prev?.account || ''),
+    password: password !== undefined ? password : (prev?.password || ''),
+    note: note !== undefined ? note : (prev?.note || ''),
     updatedAt: Date.now(),
   })
+  if (!next.account && !next.password && !next.note) {
+    delete all[id]
+    saveAll(all)
+    return null
+  }
   all[id] = next
   saveAll(all)
   return next
@@ -211,7 +245,10 @@ export const siteAccountsPrompt = () => {
   const all = loadAll()
   const lines = (Object.entries(all) as [SiteAccountId, SiteAccount][])
     .filter(([, row]) => row.account && row.password)
-    .map(([id, row]) => `${LABELS[id]} 账号 ${row.account} 密码 ${row.password}`)
+    .map(([id, row]) => {
+      const note = row.note ? `（${row.note}）` : ''
+      return `${LABELS[id]} 账号 ${row.account} 密码 ${row.password}${note}`
+    })
   if (!lines.length) return ''
   return `【已记账号】${lines.join('；')}。这是跨对话长期记忆，用户不用再报。登录页直接填，不要问用户要密码。`
 }

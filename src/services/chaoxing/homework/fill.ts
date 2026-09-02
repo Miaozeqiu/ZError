@@ -29,7 +29,7 @@ export const fillChaoxingHomework = async (id: string, answers: unknown) => {
   for (let i = 0; i < list.length; i += 1) {
     const item = list[i]
     const label = String((item as { id?: string; index?: number })?.id || (item as { index?: number })?.index || i + 1)
-    const top = asObject(await evalBrowserView(id, `${CHAOXING_HOMEWORK_FILL}(${JSON.stringify([item])})`).catch(() => null))
+    const top = asObject(await evalBrowserView(id, `${CHAOXING_HOMEWORK_FILL()}(${JSON.stringify([item])})`).catch(() => null))
     if (Number(top.filledCount) > 0) {
       filled.push(label)
       await waitMs(120)
@@ -61,7 +61,7 @@ export const fillChaoxingHomework = async (id: string, answers: unknown) => {
   }
   // 只读各题已填/勾选（1 次轻量 eval），不做全量重读
   const live = await readHomeworkLiveState(id)
-  const state = live || asObject(await evalBrowserView(id, READ_HW_FILL_STATE).catch(() => ({})))
+  const state = live || asObject(await evalBrowserView(id, READ_HW_FILL_STATE()).catch(() => ({})))
   const rows = (Array.isArray(state.states) ? state.states : []) as Array<{ index?: number; selected?: string; filled?: boolean } | number>
   const normalized = rows.map((row, i) => (
     typeof row === 'number'
@@ -128,7 +128,7 @@ export const guessChaoxingHomework = async (id: string) => {
       filledCount: card.filledCount || questions.filter((item) => item.filled).length,
       questionCount: questions.length,
       next: 'save',
-      hint: '题都已填过，save 或 submit，再 browser_chaoxing_next 继续。',
+      hint: '题都已填过，save 或 submit，再 browser_study_next 继续。',
     }
   }
   const filled = await fillChaoxingHomework(id, answers)
@@ -137,7 +137,7 @@ export const guessChaoxingHomework = async (id: string) => {
     guessed: answers.length,
     answers: answers.map((item) => `${item.index}=${item.answer}`),
     hint: filled.ok
-      ? `已随机填 ${answers.length} 道。save 暂存或 submit，再 browser_chaoxing_next 继续刷课。`
+      ? `已随机填 ${answers.length} 道。save 暂存或 submit，再 browser_study_next 继续刷课。`
       : (filled as { hint?: string }).hint || '随机填写失败，再 inspect 一次后 guess。',
   }
 }
@@ -154,7 +154,7 @@ export const saveChaoxingHomework = async (id: string) => {
 }
 
 export const submitChaoxingHomework = async (id: string) => {
-  const top = asObject(await evalBrowserView(id, CHAOXING_HOMEWORK_SUBMIT).catch(() => null))
+  const top = asObject(await evalBrowserView(id, CHAOXING_HOMEWORK_SUBMIT()).catch(() => null))
   if (top.ok) {
     await waitMs(800)
     return toHomeworkCard({ ...top, ...(await inspectChaoxingHomework(id, { vision: false })) } as ChaoxingHomeworkInfo)

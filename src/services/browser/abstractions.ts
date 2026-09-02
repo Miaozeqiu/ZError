@@ -1,13 +1,21 @@
 import { computed, ref, shallowRef, watch } from 'vue'
+import {
+  ensurePlatformAdapters,
+  listPlatformAdapters,
+  resolvePlatformAdapter,
+  type PlatformRole,
+} from '../platform'
 
-export type BrowserAbstractionId =
-  | 'chaoxing-homework'
-  | 'chaoxing-study'
-  | 'chaoxing-captcha'
-  | 'chaoxing-login'
+ensurePlatformAdapters()
+
+/** 抽象层角色（跨平台稳定）。旧 id 如 chaoxing-study 已废弃，请用 role。 */
+export type BrowserAbstractionRole = PlatformRole
+export type BrowserAbstractionId = BrowserAbstractionRole
 
 export type BrowserAbstraction = {
   id: BrowserAbstractionId
+  role: BrowserAbstractionRole
+  platformId: string
   name: string
   tool: string
   extraTools?: string[]
@@ -40,79 +48,72 @@ export type HomeworkCardSnap = {
   works?: Array<{ title: string; status: string }>
 }
 
-const isChaoxing = (url: string) => /chaoxing\.com/i.test(url)
-export const isPlayerUrl = (url: string) => isChaoxing(url) && /studentstudy/i.test(url)
-export const isCourseUrl = (url: string) => (
-  isChaoxing(url)
-  && /\/mycourse\/stu|studentcourse|stucoursemiddle/i.test(url)
-  && !isPlayerUrl(url)
-)
-
-/** 作业作答页：doHomeWork / work/dowork 等，不含章节播放与课程壳。 */
-export const isHomeworkDoUrl = (url: string) => {
-  if (!isChaoxing(url)) return false
-  if (/studentstudy|studentcourse|knowledge\/cards|ananas|insertcourse|passport2/i.test(url)) return false
-  return /doHomeWork|\/work\/do(?:work)?(?:[/?#]|$)|\/work\/phone\/do|dowork|do-work/i.test(url)
+const withAdapter = <T,>(url: string, fn: (adapter: NonNullable<ReturnType<typeof resolvePlatformAdapter>>) => T, fallback: T): T => {
+  const adapter = resolvePlatformAdapter(url)
+  if (!adapter) return fallback
+  return fn(adapter)
 }
 
-/**
- * 作业列表页：课程壳 pageHeader=8，或独立 /work/list 等。
- * 严格排除章节、播放、空间、登录。
- */
-export const isHomeworkListUrl = (url: string) => {
-  if (!isChaoxing(url) || isHomeworkDoUrl(url)) return false
-  if (/studentstudy|studentcourse|knowledge\/cards|ananas|passport2/i.test(url)) return false
-  // 课程壳「作业」页签（mooc2 mycourse/stu?pageHeader=8）
-  if (/\/mycourse\/stu/i.test(url) && /(?:^|[?&])pageHeader=8(?:&|$)/i.test(url)) return true
-  if (/\/work\/(?:list|index|view)(?:[/?#]|$)/i.test(url)) return true
-  if (/mooc2-ans\.chaoxing\.com\/[^?\s]*\/work(?:\/|\?|$)/i.test(url)) return true
-  return false
-}
+export const isPlayerUrl = (url: string) => withAdapter(url, (a) => a.isPlayerUrl(url), false)
+export const isCourseUrl = (url: string) => withAdapter(url, (a) => a.isCourseUrl(url), false)
+export const isHomeworkDoUrl = (url: string) => withAdapter(url, (a) => a.isHomeworkDoUrl(url), false)
+export const isHomeworkListUrl = (url: string) => withAdapter(url, (a) => a.isHomeworkListUrl(url), false)
+export const isHomeworkUrl = (url: string) => withAdapter(url, (a) => a.isHomeworkUrl(url), false)
+export const isChapterWorkUrl = (url: string) => withAdapter(url, (a) => a.isChapterWorkUrl(url), false)
+export const canUseHomeworkTools = (url: string) => withAdapter(url, (a) => a.canUseHomeworkTools(url), false)
+export const isStudyUrl = (url: string) => withAdapter(url, (a) => a.isStudyUrl(url), false)
+export const isLoginUrl = (url: string) => withAdapter(url, (a) => a.isLoginUrl(url), false)
 
-export const isHomeworkUrl = (url: string) => isHomeworkDoUrl(url) || isHomeworkListUrl(url)
-
-/** 章节播放页里的测验/作业任务点，可用 homework 的 inspect/fill/save/submit。 */
-export const isChapterWorkUrl = (url: string) => isPlayerUrl(url)
-
-/** 课程作业页，或章节内测验页（可作答）。 */
-export const canUseHomeworkTools = (url: string) => isHomeworkUrl(url) || isChapterWorkUrl(url)
-export const isStudyUrl = (url: string) => (
-  (isPlayerUrl(url) || isCourseUrl(url) || (isChaoxing(url) && /knowledge/i.test(url)))
-  && !isHomeworkUrl(url)
-)
-export const isLoginUrl = (url: string) => /passport2\.chaoxing\.com/i.test(url)
-
-export const BROWSER_ABSTRACTIONS: BrowserAbstraction[] = [
-  {
-    id: 'chaoxing-homework',
-    name: '学习通作业',
-    tool: 'browser_chaoxing_homework',
+const ROLE_META: Record<BrowserAbstractionRole, { name: string; tool: string; extraTools?: string[]; summary: string }> = {
+  homework: {
+    name: '作业',
+    tool: 'browser_homework',
     summary: '题卡：list / open / inspect / fill / save / submit',
-    match: isHomeworkUrl,
   },
-  {
-    id: 'chaoxing-study',
-    name: '学习通刷课',
-    tool: 'browser_click_text / browser_chaoxing_play',
-    extraTools: ['browser_chaoxing_chapters', 'browser_chaoxing_watch', 'browser_chaoxing_next'],
+  study: {
+    name: '刷课',
+    tool: 'browser_click_text / browser_study_play',
+    extraTools: ['browser_study_chapters', 'browser_study_watch', 'browser_study_next'],
     summary: '点章节 → 点节名 → play → watch → next',
-    match: isStudyUrl,
   },
-  {
-    id: 'chaoxing-captcha',
-    name: '学习通验证码',
-    tool: 'browser_chaoxing_captcha',
-    summary: '认图填写 9010 图片验证码',
-    match: () => false,
+  captcha: {
+    name: '验证码',
+    tool: 'browser_captcha',
+    summary: '认图填写图片验证码',
   },
-  {
-    id: 'chaoxing-login',
-    name: '学习通登录',
+  login: {
+    name: '登录',
     tool: 'browser_type / browser_click',
-    summary: 'passport2：#phone、#pwd、#loginBtn',
-    match: isLoginUrl,
+    summary: '账号密码登录',
   },
-]
+}
+
+const buildAbstractionsForRole = (role: BrowserAbstractionRole, platformId: string, platformName: string): BrowserAbstraction => {
+  const meta = ROLE_META[role]
+  const label = listPlatformAdapters().find((a) => a.id === platformId)?.roleLabel(role) || meta.name
+  return {
+    id: role,
+    role,
+    platformId,
+    name: platformName ? `${platformName}${label}` : label,
+    tool: meta.tool,
+    extraTools: meta.extraTools,
+    summary: meta.summary,
+    match: (url: string) => {
+      const adapter = resolvePlatformAdapter(url)
+      if (!adapter || adapter.id !== platformId) return false
+      if (role === 'captcha') return false
+      return adapter.roleOf(url) === role
+    },
+  }
+}
+
+/** 由已注册平台生成抽象层；当前仅学习通。 */
+export const BROWSER_ABSTRACTIONS: BrowserAbstraction[] = listPlatformAdapters().flatMap((adapter) => (
+  (['homework', 'study', 'captcha', 'login'] as BrowserAbstractionRole[]).map((role) => (
+    buildAbstractionsForRole(role, adapter.id, adapter.name)
+  ))
+))
 
 export const lastHomeworkCard = shallowRef<HomeworkCardSnap | null>(null)
 export const abstractionParsing = ref(false)
@@ -129,8 +130,19 @@ export const setCurrentBrowserPage = (id: string, url: string) => {
   currentBrowserUrl.value = url
 }
 
+export const abstractionRole = (layer: { id?: string; role?: BrowserAbstractionRole } | null | undefined): BrowserAbstractionRole | null => {
+  if (!layer) return null
+  if (layer.role) return layer.role
+  const id = String(layer.id || '')
+  if (id === 'homework' || id.endsWith('-homework') || id === 'chaoxing-homework') return 'homework'
+  if (id === 'study' || id.endsWith('-study') || id === 'chaoxing-study') return 'study'
+  if (id === 'login' || id.endsWith('-login') || id === 'chaoxing-login') return 'login'
+  if (id === 'captcha' || id.endsWith('-captcha') || id === 'chaoxing-captcha') return 'captcha'
+  return null
+}
+
 export const primaryAbstraction = (url: string) => (
-  BROWSER_ABSTRACTIONS.find((item) => item.id !== 'chaoxing-captcha' && item.match(url))
+  BROWSER_ABSTRACTIONS.find((item) => item.role !== 'captcha' && item.match(url))
   || BROWSER_ABSTRACTIONS.find((item) => item.match(url))
   || null
 )
@@ -151,10 +163,12 @@ export const abstractionRows = (
 ): AbstractionRow[] => {
   const primary = primaryAbstraction(url)
   const homework = lastHomeworkCard.value
-  return BROWSER_ABSTRACTIONS.map((item) => {
-    const current = primary?.id === item.id
+  const adapter = resolvePlatformAdapter(url)
+  const visible = BROWSER_ABSTRACTIONS.filter((item) => !adapter || item.platformId === adapter.id)
+  return visible.map((item) => {
+    const current = primary?.id === item.id && primary?.platformId === item.platformId
     let preview = item.summary
-    if (item.id === 'chaoxing-homework' && homework) {
+    if (item.role === 'homework' && homework) {
       const count = homework.questionCount || homework.questions?.length || 0
       const filled = homework.filledCount || 0
       const pending = homework.pendingCount || homework.pending?.length || 0
@@ -162,7 +176,7 @@ export const abstractionRows = (
       else if (pending) preview = `待做 ${pending} 份`
       else if (homework.hint) preview = homework.hint
     }
-    if (item.id === 'chaoxing-study' && extras) {
+    if (item.role === 'study' && extras) {
       const left = extras.unfinishedCount || extras.unfinished?.length || 0
       const bits = [
         left ? `未完成 ${left}` : '',
@@ -177,16 +191,17 @@ export const abstractionRows = (
 
 export const abstractionButtonLabel = computed(() => {
   const hit = primaryAbstraction(currentBrowserUrl.value)
-  if (!hit) return '解析'
-  if (hit.id === 'chaoxing-study') return '章节'
-  if (hit.id === 'chaoxing-homework') return '题卡'
-  return hit.name.replace(/^学习通/, '') || '解析'
+  const role = abstractionRole(hit)
+  if (!hit || !role) return '解析'
+  if (role === 'study') return '章节'
+  if (role === 'homework') return '题卡'
+  return hit.name.replace(/^学习通|^智慧树/, '') || '解析'
 })
 
 /** 仅章节/题卡等有内容解析的页面显示入口；登录、空间等无解析页隐藏。 */
 export const abstractionButtonVisible = computed(() => {
-  const hit = primaryAbstraction(currentBrowserUrl.value)
-  return hit?.id === 'chaoxing-study' || hit?.id === 'chaoxing-homework'
+  const role = abstractionRole(primaryAbstraction(currentBrowserUrl.value))
+  return role === 'study' || role === 'homework'
 })
 
 watch(abstractionButtonVisible, (visible) => {
@@ -195,12 +210,13 @@ watch(abstractionButtonVisible, (visible) => {
 
 export const abstractionPanelTitle = computed(() => {
   const hit = primaryAbstraction(currentBrowserUrl.value)
-  if (!hit) return '解析'
-  if (hit.id === 'chaoxing-study') return '章节'
-  if (hit.id === 'chaoxing-homework') return '题卡'
-  if (hit.id === 'chaoxing-login') return '登录'
-  if (hit.id === 'chaoxing-captcha') return '验证码'
-  return hit.name.replace(/^学习通/, '') || '解析'
+  const role = abstractionRole(hit)
+  if (!hit || !role) return '解析'
+  if (role === 'study') return '章节'
+  if (role === 'homework') return '题卡'
+  if (role === 'login') return '登录'
+  if (role === 'captcha') return '验证码'
+  return hit.name.replace(/^学习通|^智慧树/, '') || '解析'
 })
 
 const esc = (value: string) => String(value || '')
@@ -268,13 +284,14 @@ export const abstractionOverlayHtml = (
   extras?: Parameters<typeof abstractionRows>[1],
 ) => {
   const layer = primaryAbstraction(url)
+  const role = abstractionRole(layer)
   const homework = lastHomeworkCard.value
   const parsing = abstractionParsing.value
-  if (!layer) {
+  if (!layer || !role) {
     return `<div class="ze-abs-empty">${parsing ? '正在识别当前页…' : '当前页没有可解析的题卡'}</div>`
   }
 
-  if (layer.id === 'chaoxing-homework') {
+  if (role === 'homework') {
     const questions = (homework?.questions || []).slice(0, 40)
     const works = ((homework?.pending?.length ? homework.pending : homework?.works) || []).slice(0, 16)
     const count = homework?.questionCount || questions.length
@@ -299,7 +316,7 @@ export const abstractionOverlayHtml = (
     return `<article class="ze-abs-card is-current">${head}${body}</article>`
   }
 
-  if (layer.id === 'chaoxing-study') {
+  if (role === 'study') {
     const unfinished = extras?.unfinished || []
     const left = extras?.unfinishedCount || unfinished.length
     const progress = extras?.progress

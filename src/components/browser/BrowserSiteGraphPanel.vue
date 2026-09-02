@@ -1,24 +1,24 @@
 <template>
   <div class="graph-panel" role="region" aria-label="网站图谱">
     <div v-if="!map.site" class="graph-empty">
-      {{ map.unknown ? '当前站还没有图谱' : '打开网页后显示路由和解析器' }}
+      {{ emptyText }}
     </div>
 
     <div v-else class="graph-board">
       <header class="graph-head">
         <b>{{ map.site.name }}</b>
-        <span>{{ map.current ? `当前在「${map.current.title}」` : map.site.host }}</span>
+        <span>{{ headHint }}</span>
       </header>
 
       <div ref="scrollRef" class="graph-scroll">
         <div class="graph-map" :style="{ width: `${map.width}px`, height: `${map.height}px` }">
           <svg class="graph-wires" :viewBox="`0 0 ${map.width} ${map.height}`">
             <defs>
-              <marker id="sg-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
-                <path d="M 1 1 L 9 5 L 1 9 z" />
+              <marker :id="`${markerId}-arrow`" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+                <path class="graph-arrow" d="M 1 1 L 9 5 L 1 9 z" />
               </marker>
-              <marker id="sg-arrow-on" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
-                <path d="M 1 1 L 9 5 L 1 9 z" />
+              <marker :id="`${markerId}-arrow-on`" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+                <path class="graph-arrow-on" d="M 1 1 L 9 5 L 1 9 z" />
               </marker>
             </defs>
             <path
@@ -26,7 +26,7 @@
               :key="`${wire.from}-${wire.to}-${idx}`"
               :d="wire.d"
               :class="['graph-wire', `is-${wire.kind}`, { 'is-on': wire.active }]"
-              :marker-end="wire.active ? 'url(#sg-arrow-on)' : 'url(#sg-arrow)'"
+              :marker-end="wire.active ? `url(#${markerId}-arrow-on)` : `url(#${markerId}-arrow)`"
             />
           </svg>
 
@@ -59,8 +59,8 @@
                 :key="parser.id"
                 type="button"
                 class="graph-parser"
-                :disabled="!node.current"
-                :title="node.current ? parser.tool : '打开对应页面后可挂这个解析器'"
+                :disabled="preview || !node.current"
+                :title="parserTitle(node.current, parser.tool)"
                 @click="openParser(node.id)"
               >
                 {{ parserLabel(parser.name) }}
@@ -77,16 +77,41 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { abstractionMenuOpen } from '../../services/browser/abstractions'
-import { siteGraphMenuOpen, siteGraphView } from '../../services/browser/siteGraph'
+import {
+  siteGraphMenuOpen,
+  siteGraphView,
+  siteGraphViewFromData,
+  type SiteGraphData,
+} from '../../services/browser/siteGraph'
 
 const props = defineProps<{
   url?: string
+  data?: SiteGraphData | null
+  preview?: boolean
 }>()
 
-const map = computed(() => siteGraphView(props.url || ''))
+const fromFile = computed(() => props.preview || props.data !== undefined)
+const markerId = computed(() => fromFile.value ? 'sg-preview' : 'sg')
+const map = computed(() => (
+  fromFile.value ? siteGraphViewFromData(props.data ?? null) : siteGraphView(props.url || '')
+))
+const emptyText = computed(() => {
+  if (props.preview) return '图谱为空或 JSON 无效'
+  return map.value.unknown ? '当前站还没有图谱' : '打开网页后显示路由和解析器'
+})
+const headHint = computed(() => {
+  const site = map.value.site
+  if (!site) return ''
+  if (props.preview) return `${site.host} · ${map.value.nodes.length} 个页面`
+  return map.value.current ? `当前在「${map.value.current.title}」` : site.host
+})
 const scrollRef = ref<HTMLElement | null>(null)
 
 const parserLabel = (name: string) => name.replace(/^学习通/, '')
+const parserTitle = (current: boolean, tool: string) => {
+  if (props.preview) return tool || '解析器'
+  return current ? tool : '打开对应页面后可挂这个解析器'
+}
 
 const nodeEls = new Map<string, Element>()
 
@@ -201,11 +226,11 @@ watch(() => map.value.current?.id, async (id) => {
   stroke: color-mix(in srgb, var(--color-primary, #667eea) 72%, transparent);
 }
 
-#sg-arrow path {
+.graph-arrow {
   fill: color-mix(in srgb, var(--text-primary, #1d1d1f) 28%, transparent);
 }
 
-#sg-arrow-on path {
+.graph-arrow-on {
   fill: color-mix(in srgb, var(--color-primary, #667eea) 80%, transparent);
 }
 
