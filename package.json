@@ -5,13 +5,16 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "test": "node --test scripts/test-url-question.mjs scripts/test-browser-build-bridges.mjs",
+    "test:url-question": "node --test scripts/test-url-question.mjs",
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
     "tauri": "node ./scripts/run-tauri.mjs",
     "tauri:dev": "node ./scripts/run-tauri.mjs dev",
     "tauri:build": "node ./scripts/run-tauri.mjs build",
     "tauri:build:signed": "TAURI_SIGNING_PRIVATE_KEY=\"$PWD/src-tauri/keys/zerror.key\" TAURI_SIGNING_PRIVATE_KEY_PASSWORD=\"\" tauri build",
-    "tauri:build:win": "scripts\\build-windows.cmd"
+    "tauri:build:win": "scripts\\build-windows.cmd",
+    "tauri:build:win:local": "node ./scripts/run-tauri.mjs build --ci --bundles nsis --config src-tauri/tauri.local-test.conf.json -- --locked"
   },
   "dependencies": {
     "@antv/infographic": "^0.2.19",

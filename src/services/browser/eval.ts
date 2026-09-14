@@ -79,7 +79,7 @@ export const evalBrowserView = async (id: string, script: string) => {
 }
 
 export const askFrames = async (id: string, op = 'snap', extra?: Record<string, string>) => {
-  await evalBrowserView(id, `(function(){
+  const asked = await evalBrowserView(id, `(function(){
     if (typeof window.__ZE_ASK_FRAMES__ === 'function') {
       window.__ZE_ASK_FRAMES__(${JSON.stringify(op)}, ${JSON.stringify(extra || {})});
       return true;
@@ -88,4 +88,16 @@ export const askFrames = async (id: string, op = 'snap', extra?: Record<string, 
   })()`).catch(() => false)
   const wait = op === 'hwstate' || op === 'hwpick' ? 80 : op === 'click' ? 350 : op === 'snap' ? 700 : 450
   await waitMs(wait)
+  return asked === true
+}
+
+/** 复用全 frame 桥点击跨域 iframe 内的文案。 */
+export const clickFrameText = async (id: string, text: string) => {
+  const want = String(text || '').trim()
+  const missed = { ok: false, text: '', href: '' }
+  if (!want || !await askFrames(id, 'click', { text: want })) return missed
+  const clicked = asObject(await evalBrowserView(id, `(function(){
+    return { ok: !!window.__ZE_CLICKED__, text: window.__ZE_CLICKED__ || '' };
+  })()`).catch(() => null))
+  return { ok: Boolean(clicked.ok), text: String(clicked.text || ''), href: '' }
 }

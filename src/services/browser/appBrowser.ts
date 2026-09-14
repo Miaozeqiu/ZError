@@ -1,12 +1,13 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { CHAOXING_STUDY_INSPECT } from './skills/chaoxingStudy'
-import { askFrames, asObject, evalBrowserView, waitMs, withSameFrames } from './eval'
+import { askFrames, asObject, clickFrameText, evalBrowserView, waitMs, withSameFrames } from './eval'
 
 export {
   SAME_ORIGIN_FRAMES,
   askFrames,
   asObject,
+  clickFrameText,
   evalBrowserView,
   waitMs,
 } from './eval'
@@ -430,9 +431,8 @@ export const clickBrowserText = async (id: string, text: string) => {
     }
     return local
   }
-  await askFrames(id, 'click', { text: want })
-  const clicked = await evalBrowserView(id, `(function(){ return { ok: !!window.__ZE_CLICKED__, text: window.__ZE_CLICKED__ || '', href: window.__ZE_CLICKED_HREF__ || '' }; })()`).catch(() => null) as { ok?: boolean; text?: string; href?: string } | null
-  if (clicked?.ok) {
+  const clicked = await clickFrameText(id, want)
+  if (clicked.ok) {
     return { ok: true, text: clicked.text || want, href: '', via: 'frame' }
   }
   return local

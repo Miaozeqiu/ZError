@@ -53,3 +53,14 @@ src-tauri/keys/*.key
 # 本地拷来的 Markstream 技能，不进仓库
 .agents/skills/markstream-*/
 skills-lock.json
+
+# Local test installers and build records
+/artifacts/
+
+# Local environment and private credentials
+.env
+.env.*
+!.env.example
+!.env.template
+*.pfx
+*.p12

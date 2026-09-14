@@ -4,7 +4,6 @@ import {
   getBrowserState,
   getSelectedBrowserId,
   listAppBrowsers,
-  screenshotBrowserView,
 } from '../browser/appBrowser'
 import { siteGraphAgentSnap } from '../browser/siteGraph'
 import { inspectChaoxingHomework } from '../chaoxing/homework'
@@ -12,6 +11,7 @@ import { browserChatSessions, ensureBrowserChat, sendChatMessage, stopChat } fro
 import { modelConfigManager } from '../model/config'
 
 const enabled = () => import.meta.env.DEV
+const SCREENSHOT_UNSUPPORTED = '当前构建未提供浏览器截图能力，请使用 state 获取页面状态'
 
 const postResult = (payload: Record<string, unknown>) => {
   fetch('/__agent-bridge/result', {
@@ -38,18 +38,13 @@ const snapshotOf = async (browserId: string, withImage: boolean) => {
   const item = listAppBrowsers().find((browser) => browser.id === browserId)
   const url = state?.url || item?.url || ''
   const title = state?.title || item?.title || item?.name || ''
-  let image = ''
-  if (withImage) {
-    const shot = await screenshotBrowserView(browserId).catch(() => null)
-    image = shot?.image || ''
-  }
   return {
-    ok: true,
+    ok: !withImage,
     browserId,
     url,
     title,
     siteGraph: siteGraphAgentSnap(url),
-    image,
+    ...(withImage ? { error: SCREENSHOT_UNSUPPORTED } : {}),
   }
 }
 
@@ -147,8 +142,14 @@ const runCommand = async (cmd: { id?: string; action?: string; args?: Record<str
       const text = String(cmd.args?.text || '').trim()
       if (!text) return { ok: false, id: cmd.id, action, error: '缺少 text' }
       const clicked = await clickBrowserText(browserId, text)
-      const snap = await snapshotOf(browserId, true)
-      return { id: cmd.id, action, ...snap, clicked }
+      const snap = await snapshotOf(browserId, false)
+      return {
+        id: cmd.id, action, ...snap,
+        ok: Boolean(clicked.ok),
+        ...(clicked.error ? { error: clicked.error } : {}),
+        clicked,
+        screenshotError: SCREENSHOT_UNSUPPORTED,
+      }
     }
     if (action === 'eval') {
       const script = String(cmd.args?.script || '').trim()
@@ -158,7 +159,10 @@ const runCommand = async (cmd: { id?: string; action?: string; args?: Record<str
     }
     if (action === 'inspect') {
       const card = await inspectChaoxingHomework(browserId)
-      return { id: cmd.id, action, ok: true, browserId, card, ...(await snapshotOf(browserId, true)) }
+      return {
+        id: cmd.id, action, card, ...(await snapshotOf(browserId, false)),
+        screenshotError: SCREENSHOT_UNSUPPORTED,
+      }
     }
     return { ok: false, id: cmd.id, action, error: `未知动作 ${action}` }
   } catch (error) {

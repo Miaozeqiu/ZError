@@ -2,6 +2,8 @@ export type UrlQuestionMode = 'open' | 'single' | 'multiple' | 'judgement'
 
 const LETTER_LABEL = /^\s*([A-Za-z])[\.、．]\s*(.*)$/
 const NUMBER_LABEL = /^\s*(\d+)[\.、．]\s*(.*)$/
+/** 行首形如「0.3」「1．5」的数字串是小数/数值内容，不是「编号.内容」 */
+const LEADING_DECIMAL = /^\d+[\.．]\d/
 
 /** 从选项文本中解析带标签的选项块（支持块内换行） */
 const parseLabeledOptionBlocks = (optionsStr: string): string[] => {
@@ -32,7 +34,8 @@ const parseLabeledOptionBlocks = (optionsStr: string): string[] => {
       continue
     }
 
-    const numberMatch = line.match(NUMBER_LABEL)
+    // 小数不是编号；已有标签块时仍需把这一行追加为选项正文。
+    const numberMatch = LEADING_DECIMAL.test(line) ? null : line.match(NUMBER_LABEL)
     if (numberMatch && !letterCurrent) {
       if (numberCurrent) {
         const text = numberCurrent.join('\n').trim()
@@ -73,7 +76,11 @@ const parseLineFallbackOptions = (optionsStr: string): string[] => {
     .split('\n')
     .map(l => l.trim())
     .filter(Boolean)
-    .map(line => line.replace(/^[A-Za-z\d]+[\.、．]\s*/, '').trim() || line)
+    .map(line => {
+      // 「0.3 千克」这类数字+点+数字开头的小数不是编号，原样保留
+      if (LEADING_DECIMAL.test(line)) return line
+      return line.replace(/^[A-Za-z\d]+[\.、．]\s*/, '').trim() || line
+    })
 }
 
 /**
