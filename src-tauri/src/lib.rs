@@ -4,6 +4,14 @@
 // 模块声明
 pub mod app_activity;
 pub mod app_browser;
+#[cfg(target_os = "macos")]
+pub mod cdp_client;
+#[cfg(target_os = "macos")]
+pub mod cef_browser;
+#[cfg(target_os = "macos")]
+pub mod cef_runtime;
+#[cfg(target_os = "macos")]
+pub mod macos_video_overlay;
 pub mod commands;
 pub mod database;
 pub mod logger;
@@ -344,9 +352,31 @@ pub fn run() {
             crate::app_browser::browser_get_state,
             crate::app_browser::browser_set_zoom,
             crate::app_browser::browser_eval,
+            crate::app_browser::browser_eval_main,
+            crate::app_browser::browser_eval_frames,
             crate::app_browser::browser_set_app_above_page,
+            crate::app_browser::browser_engine,
+            crate::app_browser::browser_cdp_click_text,
+            crate::app_browser::browser_cdp_click,
+            crate::app_browser::browser_cdp_locate,
+            crate::app_browser::browser_cdp_click_box,
+            crate::app_browser::browser_cdp_fill_box,
+            crate::app_browser::browser_cdp_fill,
+            crate::app_browser::browser_cdp_hover,
+            crate::app_browser::browser_cdp_scroll,
+            crate::app_browser::browser_cdp_press,
+            crate::app_browser::browser_cdp_type_focused,
+            crate::app_browser::browser_cdp_snapshot,
+            crate::app_browser::browser_screenshot,
+            crate::app_browser::browser_video_overlay_tick,
+            crate::app_browser::browser_video_overlay_state,
+            crate::app_browser::browser_video_overlay_play,
+            crate::app_browser::browser_video_overlay_hide,
         ])
         .setup(|app| {
+            #[cfg(target_os = "macos")]
+            crate::cef_runtime::install_app_protocol();
+
             // 初始化 ServerState 并注入 app_handle
             let mut state = ServerState::default();
             state.app_handle = Some(app.handle().clone());

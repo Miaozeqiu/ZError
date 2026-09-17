@@ -12,7 +12,7 @@ export const CONTEXT_KEEP_TOKENS = 48 * 1024
 export const CONTEXT_KEEP_MIN_MESSAGES = 4
 export const CONTEXT_COMPACT_MIN_MESSAGES = 4
 export const CONTEXT_COMPACT_INPUT_TOKENS = 100 * 1024
-export const CONTEXT_COMPACT_MSG_CHARS = 2400
+export const CONTEXT_COMPACT_MSG_CHARS = 4800
 const IMAGE_CONTEXT_TOKENS = 765
 const STUDY_PREFIX_SAMPLE = '【学习状态】当前对话挂着科目（subject_id=000）。掌握进度 00%，约 00 个知识点。讲解、出题、改图谱时默认用这个科目，不要另建同名科目。订正或复习错题时调用 list_recent_wrong_questions。\n\n'
 

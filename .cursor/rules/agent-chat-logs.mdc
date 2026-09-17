@@ -12,5 +12,9 @@ alwaysApply: true
 - 学习 Agent：`logs/agent-chat/YYYY-MM-DD-<sessionId>.jsonl`（文件名不以 `browser-` 开头）
 - 学习通作业抽象层实时数据：`logs/agent-chat/cx-homework-live.md`（每次打开/刷新抽象层覆盖写入）
 - 学习通作业题卡 JSON：`logs/agent-chat/cx-homework-latest.txt`
+- 学习通刷课解析器实时数据：`logs/agent-chat/cx-study-live.md`（play / step / pause / 播完覆盖写入）
+- 学习通刷课解析器 JSON：`logs/agent-chat/cx-study-latest.txt`
+
+用户说章节视频播不了、切不了视频、点了没反应、解析错任务点时，先读 `cx-study-live.md`，看 Handle / Locate / Tick / 任务点，不要说看不到。切视频坑见 `chaoxing-study-player.mdc`。
 
 `browser-latest.md` 在每次浏览器对话更新后覆盖写入。jsonl 是逐条事件（user / tool_start / tool_end / assistant）。

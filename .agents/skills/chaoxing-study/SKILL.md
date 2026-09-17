@@ -21,16 +21,16 @@ description: >-
 
 同一节里可能有多个任务点（`attachments`：`insertvideo` / `work` / `insertdoc`…）。ocs 是在 **当前 iframe** 里播完一个再找下一个，**不会**每次都点回第一个视频。
 
-1. **视频**：`browser_study_play` → 交给监控；播完系统 `browser_study_next` 切**下一个**任务点（不是第一个）。
-2. **要切到本节第 N 个视频**：`browser_study_play` 带 `videoIndex: N`（从 1 起），不要反复裸调 play。
+1. **视频**：`browser_study_play` → 交给监控；播完系统会叫醒你，用 `videoIndex` / `label` 再 play。不要指望自动点开下一段。
+2. **要切到本节第 N 个视频**：`browser_study_play` 带 `videoIndex: N`（从 1 起）或 `label` / `mid`，不要反复裸调 play。同一节里经常没有「视频1/视频2」页签，而是 `knowledge/cards` 里叠着的 `.ans-attach-ct.videoContainer`；切失败就读 `logs/agent-chat/cx-study-live.md` 的 Locate，不要当成已经切过去。
 3. **章节测验（work / `.TiMu`）**：监控自动跑 ocs 式流程：本地题库 `/query` 搜题 → fill → 未命中 `guess` → 暂存 → 继续下一任务点。失败再 `browser_homework`。
 4. **文档/PPT**：系统会跳过或快速过；不要停在资料节。
-5. 本节任务点做完 → 下一节。
+5. 本节任务点做完 → `browser_study_next` 只打开下一节，再自己 `play` 指定视频。
 
 ## 播一节
 
 1. 播放页直接 `browser_study_play`，不要自己扒 iframe。
-2. 不要 `browser_wait` 空等。卡住/验证码才叫你；测验尽量自动处理。
+2. 播起来后 `browser_wait` 等面板事件。卡住/验证码/测验/本节清完会立刻返回；不要 `chapters` 查进度。
 3. 暂停/播放器丢了：再 `browser_study_play`（会留在当前任务点）；不要点「视频」标签指望跳到第一个。
 4. 只有任务点 n/n 且没有未完成节才算做完。
 

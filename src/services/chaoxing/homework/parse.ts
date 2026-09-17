@@ -1,4 +1,96 @@
-import type { ChaoxingHomeworkInfo, HomeworkFrameSnap } from './types'
+import { homeworkParseApi } from '../../parser/homeworkRuntime'
+import { createPageDocument } from '../../browser/pageDom'
+import type { ChaoxingHomeworkInfo, HomeworkQuestion } from './types'
+
+export const parseHomeworkDocument = (doc: Document, href = '') => {
+  const api = homeworkParseApi()
+  const questions = api.__hwParseQuestions(doc)
+  const works = api.__hwParseWorks(doc, href)
+  const actions = api.__hwActions(doc)
+  return { questions, works, page: api.__hwPageOf(href, '', questions, works), ...actions }
+}
+
+export const parseHomeworkHtml = (html: string, href = '') => (
+  parseHomeworkDocument(createPageDocument(html, href), href)
+)
+
+const compactHomeworkQuestion = (item: HomeworkQuestion): HomeworkQuestion => ({
+  id: item.id,
+  index: item.index,
+  type: item.type,
+  typeName: item.typeName,
+  stem: String(item.stem || '').slice(0, 400),
+  images: (item.images || []).slice(0, 8),
+  options: (item.options || []).slice(0, 8).map((opt) => ({
+    letter: opt.letter,
+    text: String(opt.text || '').slice(0, 80),
+    selected: !!opt.selected,
+    image: opt.image || '',
+    images: opt.images || [],
+  })),
+  filled: !!item.filled,
+  imageCount: item.imageCount || 0,
+  needsVision: !!item.needsVision,
+})
+
+/** CDP 只取回 HTML，parse.js 在本地跑，不注入作答页。 */
+export const cardFromHomeworkHtml = (raw: Record<string, unknown>): ChaoxingHomeworkInfo => {
+  const href = String(raw.url || '')
+  const title = String(raw.title || '').replace(/^ZRRESULT:.*/, '')
+  const html = String(raw.html || '')
+  if (!html.trim()) return { page: 'other' }
+  const parsed = parseHomeworkHtml(html, href)
+  const questions = parsed.questions.map(compactHomeworkQuestion)
+  // 章节页误扫目录链接时清掉假 works
+  const onChapterShell = /\/mycourse\/studentstudy|\/mycourse\/stu/i.test(href) && !/\/work\//i.test(href)
+  const works = onChapterShell && !questions.length ? [] : (parsed.works || [])
+  const pending = works.filter((item) => /待做|未做|未完成|未交|未提交|待交/.test(item.status || ''))
+  return {
+    ok: true,
+    page: parsed.page || (questions.length ? 'do' : works.length ? 'list' : 'other'),
+    url: href,
+    title: (title.match(/作业[^\n]{0,40}/)?.[0] || title).slice(0, 40),
+    works,
+    pending,
+    pendingCount: pending.length,
+    questions,
+    questionCount: questions.length,
+    questionTotal: parsed.questions.total || questions.length,
+    truncated: !!parsed.questions.truncated,
+    filledCount: questions.filter((item) => item.filled).length,
+    canSave: Boolean(parsed.canSave),
+    canSubmit: Boolean(parsed.canSubmit),
+  }
+}
+
+if (import.meta.hot) {
+  import.meta.hot.accept(() => {
+    if (typeof window === 'undefined' || !(window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__) return
+    void import('./inspect').then((mod) => mod.retrySelectedHomeworkInspect()).catch(() => undefined)
+  })
+}
+
+export const isBlankHomeworkStem = (stem?: string) => {
+  const text = String(stem || '').replace(/[\s\u00a0\u3000]+/g, '')
+  return !text || /^[（()）]+$/.test(text)
+}
+
+export const questionHasContent = (
+  item?: NonNullable<ChaoxingHomeworkInfo['questions']>[number],
+) => {
+  if (!item) return false
+  if (!isBlankHomeworkStem(item.stem)) return true
+  if ((item.images || []).length) return true
+  return (item.options || []).some((opt) => (
+    Boolean(String(opt.text || '').trim())
+    || Boolean(opt.image)
+    || Boolean(opt.images?.length)
+  ))
+}
+
+export const homeworkQuestionsHollow = (
+  questions?: ChaoxingHomeworkInfo['questions'],
+) => Boolean(questions?.length) && !questions.some(questionHasContent)
 
 export const homeworkReady = (info: ChaoxingHomeworkInfo | null) =>
   Boolean(info && ((info.works && info.works.length) || (info.questions && info.questions.length)))
@@ -25,10 +117,12 @@ export const toHomeworkCard = (info: ChaoxingHomeworkInfo): ChaoxingHomeworkInfo
     })
     .map((q) => q.index)
   const unreadNote = unread.length
-    ? `第 ${unread.join('、')} 题的公式还没读全，先跳过答其他题，稍后再 inspect 一次会自动补读，不要猜。`
+    ? (info.skippedVision
+      ? `第 ${unread.join('、')} 题是图像/公式，当前没有视觉模型，已跳过，不要猜。`
+      : `第 ${unread.join('、')} 题的公式还没读全，先跳过答其他题，稍后再 inspect 一次会自动补读，不要猜。`)
     : ''
   const hints: Record<string, string> = {
-    list: '先 list，再 open 待做作业。',
+    list: '待做作业已在 works 里。直接 open 第一份未交，不要再 list / get_page。',
     open: info.pending?.[0]?.title ? `open，title 填「${info.pending[0].title}」。` : 'open 打开一份待做作业。',
     inspect: '还没读到题目。打开作业页后再 inspect。',
     fill: `已读到 ${info.questionCount || 0} 道题，已填 ${info.filledCount || 0} 道。一题一题来：答出一道就立刻 fill 这一道，再看下一道。${unreadNote}`,
@@ -40,9 +134,37 @@ export const toHomeworkCard = (info: ChaoxingHomeworkInfo): ChaoxingHomeworkInfo
     ok: true,
     ...info,
     next,
-    hint: info.hint && !/不在作业页|作业列表还没读到/.test(info.hint) ? info.hint : hints[next],
+    hint: [
+      info.error || (info.hint && !/不在作业页|作业列表还没读到/.test(info.hint) ? info.hint : hints[next]),
+      info.truncated && info.questionTotal
+        ? `只显示前 ${info.questionCount || info.questions?.length || 0} 道，页上共 ${info.questionTotal} 道。`
+        : '',
+    ].filter(Boolean).join(' '),
   }
 }
+
+export const enrichQuestionsFromLiveText = (
+  questions: NonNullable<ChaoxingHomeworkInfo['questions']>,
+  rows: Array<{ i?: number; t?: string }>,
+) => questions.map((item) => {
+  const row = rows.find((entry) => Number(entry.i) === Number(item.index))
+  const text = String(row?.t || '').replace(/\s+/g, ' ').trim()
+  if (!text) return item
+  const parsed = parseChoiceChunk(text)
+  const options = (item.options || []).map((opt) => {
+    if (String(opt.text || '').trim()) return opt
+    const hit = parsed.find((entry) => entry.letter === opt.letter)
+    return hit?.text ? { ...opt, text: hit.text } : opt
+  })
+  let stem = item.stem
+  if (isBlankHomeworkStem(stem)) {
+    const afterType = text.replace(/^\d+\.\s*[（(][^）)]+[）)]\s*/, '')
+    const optAt = afterType.search(/(?:^|\s)([A-H])(?:[.、．)\s]|$)/)
+    const stemRaw = (optAt >= 0 ? afterType.slice(0, optAt) : afterType).replace(/\(\s*\)/g, ' ').trim()
+    if (!isBlankHomeworkStem(stemRaw)) stem = stemRaw.slice(0, 400)
+  }
+  return { ...item, stem, options }
+})
 
 const parseChoiceChunk = (text: string) => {
   const options: NonNullable<ChaoxingHomeworkInfo['questions']>[number]['options'] = []
@@ -53,6 +175,32 @@ const parseChoiceChunk = (text: string) => {
     options.push({ letter: hit[1], text: (hit[2] || '').replace(/\s+/g, ' ').trim().slice(0, 80), selected: false })
   }
   return options
+}
+
+const WORK_STATUS = '待做|未做|未完成|未交|未提交|待交|待批阅|已完成|已批阅|已交'
+const WORK_LINE = new RegExp(`^(.*?)(?:\\s*[;；|]\\s*|\\s+)(${WORK_STATUS})\\s*$`)
+const WORK_SKIP = /^(作业|测验|考试|章节|任务|讨论|资料|错题集|学习记录|默认班级)$/
+
+export const parseHomeworkWorks = (text: string): NonNullable<ChaoxingHomeworkInfo['works']> => {
+  const out: NonNullable<ChaoxingHomeworkInfo['works']> = []
+  const seen: Record<string, 1> = {}
+  const add = (title: string, status: string) => {
+    const name = String(title || '').replace(/\s+/g, ' ').trim()
+    if (!name || name.length < 2 || name.length > 80 || WORK_SKIP.test(name) || seen[name]) return
+    seen[name] = 1
+    const raw = String(status || '')
+    out.push({
+      title: name,
+      status: /待批阅/.test(raw)
+        ? '待批阅'
+        : (/已完成|已批阅|已交/.test(raw) && !/未交|未提交|待交/.test(raw) ? '已完成' : '待做'),
+    })
+  }
+  for (const line of String(text || '').split(/\n+/).map((item) => item.replace(/\s+/g, ' ').trim()).filter(Boolean)) {
+    const hit = line.match(WORK_LINE)
+    if (hit) add(hit[1], hit[2])
+  }
+  return out
 }
 
 export const parseHomeworkText = (text: string): NonNullable<ChaoxingHomeworkInfo['questions']> => {
@@ -69,7 +217,12 @@ export const parseHomeworkText = (text: string): NonNullable<ChaoxingHomeworkInf
     out.push({
       id: String(out.length + 1),
       index: out.length + 1,
-      type: /多选/.test(typeName) ? 'multi' : /填空/.test(typeName) ? 'blank' : /判断/.test(typeName) ? 'judge' : 'single',
+      type: /多选/.test(typeName) ? 'multi'
+        : /填空/.test(typeName) ? 'blank'
+        : /判断/.test(typeName) ? 'judge'
+        : /简答|论述|计算|解答/.test(typeName) ? 'text'
+        : /单选/.test(typeName) ? 'single'
+        : 'other',
       typeName,
       stem: stemRaw.slice(0, 180),
       options,
@@ -147,152 +300,3 @@ export const rebalanceHomeworkQuestion = (
   return stem === item.stem ? item : { ...item, stem }
 }
 
-const pruneWrapperImages = (
-  list: NonNullable<ChaoxingHomeworkInfo['questions']>,
-) => {
-  if (list.length < 2) return list
-  const first = list[0].images?.length || 0
-  const rest = list.slice(1)
-  const restMax = Math.max(0, ...rest.map((row) => row.images?.length || 0))
-  if (first >= 6 && first > restMax + 2) {
-    return rest.map((row, index) => ({ ...row, index: index + 1 }))
-  }
-  return list
-}
-
-const mergeQuestionImages = (
-  base: NonNullable<ChaoxingHomeworkInfo['questions']>,
-  rich: NonNullable<ChaoxingHomeworkInfo['questions']>,
-) => {
-  if (!rich.length) return base
-  const aligned = pruneWrapperImages(rich)
-  return base.map((item, index) => {
-    const hit = aligned.find((row) => row.index === item.index) || aligned[index]
-    if (!hit) return item
-    const images = item.images?.length ? item.images : hit.images
-    const options = (item.options || []).map((opt, optIndex) => {
-      const src = hit.options?.[optIndex]
-      const pics = opt.images?.length || opt.image ? [opt.image, ...(opt.images || [])] : [src?.image, ...(src?.images || [])]
-      const unique = pics.filter((src, idx) => src && pics.indexOf(src) === idx) as string[]
-      return {
-        ...opt,
-        text: opt.text || src?.text || '',
-        image: unique[0] || opt.image || src?.image || '',
-        images: unique,
-      }
-    })
-    return {
-      ...item,
-      type: item.type || hit.type,
-      typeName: item.typeName || hit.typeName,
-      stem: item.stem || hit.stem,
-      images,
-      options: options.length ? options : hit.options,
-      imageCount: item.imageCount || hit.imageCount,
-      needsVision: item.needsVision || hit.needsVision,
-    }
-  })
-}
-
-export const cardFromSnaps = (raw: Record<string, unknown>): ChaoxingHomeworkInfo => {
-  const extras = (Array.isArray(raw.extras) ? raw.extras : []) as HomeworkFrameSnap[]
-  const topQuestions = (Array.isArray(raw.topQuestions) ? raw.topQuestions : []) as NonNullable<ChaoxingHomeworkInfo['questions']>
-  let questions: NonNullable<ChaoxingHomeworkInfo['questions']> = []
-  let works: NonNullable<ChaoxingHomeworkInfo['works']> = []
-  let text = String(raw.text || '')
-  let url = String(raw.url || '')
-  let title = String(raw.title || '').replace(/^ZRRESULT:.*/, '')
-  for (const item of extras) {
-    if ((item.questions?.length || 0) > questions.length) questions = item.questions || []
-    if ((item.works?.length || 0) > works.length) works = item.works || []
-    if (item.kind === 'work' || /work|doHomeWork|作业/.test(`${item.href || ''}${item.text || ''}`)) {
-      if (item.text && item.text.length > text.length) text = item.text
-      if (item.href) url = item.href
-      if (item.title) title = item.title
-    }
-  }
-  if (topQuestions.some((item) => item.stem) && (!questions.length || questionImageCount(topQuestions) > questionImageCount(questions))) {
-    questions = topQuestions
-  } else if (questions.length && topQuestions.length) {
-    questions = mergeQuestionImages(questions, topQuestions)
-  }
-  if (!questions.length) {
-    const parsed = parseHomeworkText(text)
-    if (parsed.length) questions = mergeQuestionImages(parsed, topQuestions)
-  }
-  const pending = works.filter((item) => /待做|未做|未完成/.test(item.status || ''))
-  const page = questions.length
-    ? (/view|已批阅|正确答案/.test(`${url}${text}`) ? 'view' : 'do')
-    : works.length || /作业列表|work\/list|mooc2\/work/.test(`${url}${text}`)
-      ? 'list'
-      : /\/mycourse\/stu/.test(url) && /作业/.test(text)
-        ? 'course'
-        : 'other'
-  return {
-    ok: true,
-    page,
-    url,
-    title: (title.match(/作业[^\n]{0,40}/)?.[0] || text.match(/作业\d*[（(][^）)]+[）)]/)?.[0] || title).slice(0, 40),
-    works,
-    pending,
-    pendingCount: pending.length,
-    questions,
-    questionCount: questions.length,
-    filledCount: questions.filter((item) => item.filled).length,
-    hint: questions.length || works.length
-      ? undefined
-      : raw.asked === false
-        ? '这一页还没接上题卡，刷新后再看。'
-        : extras.length
-          ? '作业框回来了，但还没解析到题目。'
-          : '还没读到题目。打开作业后再看。',
-  }
-}
-
-const hwImageKeys = (raw: unknown): string[] => {
-  if (Array.isArray(raw)) return raw.filter((key): key is string => typeof key === 'string')
-  if (raw && typeof raw === 'object' && Array.isArray((raw as { keys?: unknown }).keys)) {
-    return (raw as { keys: unknown[] }).keys.filter((key): key is string => typeof key === 'string')
-  }
-  return []
-}
-
-const hwImageSrcs = (raw: unknown, fallback?: string[]) => {
-  const listed = (fallback || []).filter(Boolean)
-  if (raw && typeof raw === 'object' && !Array.isArray(raw) && Array.isArray((raw as { srcs?: unknown }).srcs)) {
-    return (raw as { srcs: unknown[] }).srcs.filter((src): src is string => typeof src === 'string' && !!src)
-  }
-  return listed
-}
-
-const pickHwImages = (keys: string[], fallback: string[], map: Record<string, string>) => {
-  if (keys.length) {
-    return keys.map((key, index) => map[key] || fallback[index] || '').filter(Boolean)
-  }
-  return fallback.filter(Boolean)
-}
-
-export const applyHwImageMap = (
-  questions: NonNullable<ChaoxingHomeworkInfo['questions']>,
-  map: Record<string, string>,
-) => questions.map((item) => {
-  const keys = hwImageKeys(item.imageKeys)
-  const fallback = hwImageSrcs(item.imageKeys, item.images)
-  const images = pickHwImages(keys, fallback, map)
-  const options = (item.options || []).map((opt) => {
-    const optKeys = hwImageKeys(opt.imageKeys)
-    const optFallback = hwImageSrcs(opt.imageKeys, opt.images)
-    const pics = pickHwImages(optKeys, optFallback, map)
-    return {
-      ...opt,
-      image: pics[0] || opt.image || '',
-      images: pics,
-    }
-  })
-  return {
-    ...item,
-    images,
-    options,
-    imageCount: images.length + options.reduce((n, opt) => n + (opt.images?.length || 0), 0),
-  }
-})

@@ -22,7 +22,7 @@ export const READ_AGENT_SKILL_FILE_TOOL = {
       type: 'object',
       properties: {
         skill_id: { type: 'string', description: 'Skill id' },
-        path: { type: 'string', description: '相对路径，如 SKILL.md、references/login.md、parsers/study/play.js' },
+        path: { type: 'string', description: '相对路径，如 SKILL.md、references/login.md、parsers/study/catalog.js' },
       },
       required: ['skill_id', 'path'],
     },
@@ -42,7 +42,7 @@ export const WRITE_AGENT_SKILL_FILE_TOOL = {
   type: 'function' as const,
   function: {
     name: 'write_agent_skill_file',
-    description: '写入 Skill 文件并保存。path 可以是已有文件或新建文本文件（如 SKILL.md、references/x.md、parsers/study/play.js）。content 必须是该文件完整正文，不要写整包解析器。学习通的 site-graph.json / parsers/study/* / parsers/homework/* 保存后会热加载。',
+    description: '写入 Skill 文件并保存。path 可以是已有文件或新建文本文件。content 必须是该文件完整正文。声明了热加载的站点文件（site-graph.json、parsers/*）保存后立刻生效。',
     parameters: {
       type: 'object',
       properties: {

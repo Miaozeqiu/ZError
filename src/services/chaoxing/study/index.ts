@@ -1,7 +1,8 @@
-/** 学习通刷课：章节、播放、验证码。页面脚本在 browserSkills/chaoxingStudy。 */
+/** 学习通刷课：章节、播放、验证码。目录本地解析，动作走 CDP。 */
 export type { ChaoxingChapterSnap, ChaoxingVideoInfo, ChaoxingVideoTick } from './types'
 export type { OpenChapterHint } from './chapters'
 export { dumpChaoxingParseHtml } from './dump'
+export { lastStudyParser, noteStudyParser } from './debug'
 export {
   fillChaoxingCaptcha,
   readChaoxingCaptcha,
@@ -19,14 +20,22 @@ export {
   parseChaoxingChapters,
   readChaoxingChapterSnap,
   readChaoxingChapterTick,
+  liveStudyHref,
+  waitForStudentStudyPage,
+  waitForStudyPlayerReady,
   studyChaoxingUnfinished,
 } from './chapters'
 export {
   installChaoxingVideoHook,
   playChaoxingVideo,
+  tapChaoxingPlay,
+  pinChaoxingPlayMid,
+  pauseChaoxingVideo,
   clickChaoxingStep,
   readChaoxingChapterJobTick,
+  asVideoTick,
   readChaoxingVideo,
   readChaoxingVideoTick,
   videoIsPlaying,
+  videoTickHasPlayer,
 } from './video'

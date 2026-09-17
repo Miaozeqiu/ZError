@@ -11,7 +11,18 @@
     "tauri:dev": "node ./scripts/run-tauri.mjs dev",
     "tauri:build": "node ./scripts/run-tauri.mjs build",
     "tauri:build:signed": "TAURI_SIGNING_PRIVATE_KEY=\"$PWD/src-tauri/keys/zerror.key\" TAURI_SIGNING_PRIVATE_KEY_PASSWORD=\"\" tauri build",
-    "tauri:build:win": "scripts\\build-windows.cmd"
+    "tauri:build:win": "scripts\\build-windows.cmd",
+    "test": "vitest run",
+    "agent:bridge": "node ./scripts/agent-bridge-server.mjs",
+    "agent:help": "node ./scripts/browser-bridge.mjs help",
+    "agent:list": "node ./scripts/browser-bridge.mjs list",
+    "agent:chapter": "node ./scripts/browser-bridge.mjs chapter",
+    "agent:send": "node ./scripts/browser-bridge.mjs send",
+    "agent:chat": "node ./scripts/browser-bridge.mjs chat",
+    "agent:live": "node ./scripts/browser-bridge.mjs live",
+    "agent:watch": "node ./scripts/browser-bridge.mjs watch",
+    "agent:cdp": "node ./scripts/browser-bridge.mjs cdp",
+    "agent:h264": "node ./scripts/cef-h264-shim.mjs"
   },
   "dependencies": {
     "@antv/infographic": "^0.2.19",
@@ -61,8 +72,10 @@
   "devDependencies": {
     "@tauri-apps/cli": "^2",
     "@vitejs/plugin-vue": "^5.2.1",
+    "jsdom": "^30.0.1",
     "typescript": "~5.6.2",
     "vite": "^6.0.3",
+    "vitest": "^4.1.11",
     "vue-tsc": "^2.1.10"
   }
 }

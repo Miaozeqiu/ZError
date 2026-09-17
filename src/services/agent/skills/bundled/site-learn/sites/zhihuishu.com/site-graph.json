@@ -1,0 +1,27 @@
+{
+  "id": "zhihuishu",
+  "name": "智慧树",
+  "host": "zhihuishu.com",
+  "hostPattern": "zhihuishu\\.com",
+  "notes": [
+    "第二站烟测：课程列表出卡，open 用 list 包的 work handle。选择器在 parsers/list/helpers.js。"
+  ],
+  "nodes": [
+    {
+      "id": "course-list",
+      "title": "课程列表",
+      "path": "/student/course",
+      "summary": "我的课程。点课名进详情。",
+      "structure": "列表在 .course-list；每项 .course-item，标题 .course-name。",
+      "row": 0,
+      "col": 0,
+      "patterns": [
+        "zhihuishu\\.com",
+        "onlineh5\\.zhihuishu\\.com",
+        "online\\.zhihuishu\\.com"
+      ],
+      "parserIds": ["list"]
+    }
+  ],
+  "edges": []
+}

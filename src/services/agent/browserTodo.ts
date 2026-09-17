@@ -41,14 +41,24 @@ export const applyBrowserTodo = (
   if (action === 'check') {
     const wantId = String(args.id || '').trim()
     const wantIndex = Number(args.index)
+    const wantText = String(args.text || '').replace(/\s+/g, ' ').trim()
     const statusRaw = String(args.status || 'done').trim()
     const status: AgentTodoItem['status'] = statusRaw === 'pending' || statusRaw === 'cancelled' ? statusRaw : 'done'
+    const norm = (value: string) => String(value || '').replace(/^\d+[.、．)]\s*/, '').replace(/\s+/g, '')
     const hit = current.find((item) => item.id === wantId)
       || (Number.isFinite(wantIndex) && wantIndex >= 1 ? current[wantIndex - 1] : null)
+      || (wantText
+        ? current.find((item) => {
+          const a = norm(item.text)
+          const b = norm(wantText)
+          return a === b || a.includes(b) || b.includes(a)
+        })
+        : null)
+      || current.find((item) => item.status === 'pending')
     if (!hit) {
       return {
         ok: false,
-        error: '找不到该项，传 id 或 index（从 1 起）',
+        error: '找不到该项。传 id、index（从 1 起）或 text；不传就勾第一项未完成。',
         todos: current,
       }
     }
@@ -80,19 +90,10 @@ export const pendingTodos = (todos?: AgentTodoItem[] | null) =>
 export const formatTodoNudge = (todos: AgentTodoItem[]) => {
   const pending = pendingTodos(todos)
   if (!todos.length) {
-    return (
-      '先用 browser_todo action=set 把用户任务拆成具体步骤（内容必须你自己写，例如「登录学习通」「进入应用高等数学」「点章节找未完成」「播放并交给监控」），'
-      + '再按清单调用工具。禁止空喊 browser_finish，也禁止用套话 summary。'
-    )
+    return '还没有任务清单。多步任务可以用 browser_todo action=set 记下步骤；不是行动许可，可以直接探路。'
   }
   if (pending.length) {
-    return (
-      `清单还有未完成：${pending.map((item) => item.text).join('、')}。`
-      + '继续调用工具做这些事；做完一项立刻 browser_todo action=check。不要提前 browser_finish。'
-    )
+    return `清单未完成：${pending.map((item) => item.text).join('、')}。做完一项就 check。`
   }
-  return (
-    '清单项都已完成。用你自己的话写 summary（概括实际做了什么/交到哪一步），'
-    + '调用 browser_finish(status=done|watching|blocked, summary=…)。禁止套话，禁止写在正文里。'
-  )
+  return '清单项都已完成。用自己的话写 summary，再 browser_finish(status=done|watching|blocked)。'
 }

@@ -1,0 +1,25 @@
+---
+description: CEF 浏览区尺寸必须跟手，禁止再把 was_resized 交给 JS 防抖
+globs:
+  - src-tauri/src/cef_browser.rs
+  - src/views/Browser.vue
+  - src/services/browser/appBrowser.ts
+alwaysApply: false
+---
+
+# CEF 洞口尺寸
+
+网页长宽由 **原生 `ZeCefHoleView`** 在 `setFrameSize` / `resizeWithOldSuperviewSize` 里立刻 `was_resized`。这是唯一正确来源。
+
+禁止：
+- JS `setTimeout` 防抖后再 `was_resized`（拖完才变，过一阵又会被改回来）
+- 拖窗口时每帧 `setFrame` 抢 AppKit autoresize
+- CATransform / 图层拉伸冒充 resize
+- 为了「少打 was_resized」在 live resize 里吞掉原生通知
+- 在 `setFrameSize` / `hole_size_tick` 里 `registry().lock()`（`set_bounds` 已握锁再 setFrame，会卡死主线程）
+- 在 `setFrameSize` 里同步 `was_resized` 或 `setFrame` 子 view（创建浏览页会和 AppKit/CEF 布局重入，整窗卡死）
+
+允许：
+- JS 只对齐洞口在窗口里的位置（rAF / 分栏变化）
+- `set_bounds` 在 `inLiveResize` 时跳过 `setFrame`
+- 尺寸没变不重复 `was_resized`

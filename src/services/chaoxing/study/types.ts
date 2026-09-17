@@ -57,6 +57,8 @@ export type ChaoxingVideoTick = {
   ended: boolean
   ready?: number
   src?: string
+  mid?: string
   ts?: number
   hasVideo?: boolean
+  jobDone?: boolean
 }

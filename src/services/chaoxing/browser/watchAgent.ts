@@ -1,9 +1,9 @@
+import { hasAgentWait, wakeAgentWait } from '../../agent/agentWait'
 import {
-  openNextChaoxingChapter,
-  playChaoxingVideo,
   readChaoxingVideo,
   videoIsPlaying,
 } from '../../browser/appBrowser'
+import { packAgentPanel, playPanelStudy } from './panelStudy'
 import { solveChaoxingCaptcha } from './captcha'
 import {
   formatVideoClock,
@@ -59,31 +59,85 @@ const formatWatchPrompt = (check: VideoWatchCheck) => {
   const clock = `${formatVideoClock(state.current)} / ${formatVideoClock(state.duration)}`
   const base = `【播放监控】${state.title || '当前节'} ${clock}（${state.percent}%）paused=${state.paused} ended=${state.ended} jobDone=${state.jobDone}${watchVideoLine(state)}`
   if (check.kind === 'captcha') {
-    return `${base}\n学习通弹出图片验证码（9010）。图会附上或页面上有 #ccc。立刻认出 4 位并 browser_captcha。不要问用户，不要 browser_wait。提交后再 play 或 study。`
+    return `${base}\n学习通弹出图片验证码（9010）。图会附上或页面上有 #ccc。用 browser_captcha 填 4 位后再 play。`
   }
   if (check.kind === 'quiz') {
     return `${base}\n当前是章节测验。系统会按 ocs 流程自动搜题/随机/暂存；若失败再 inspect/guess，然后 browser_study_next。`
   }
   if (check.kind === 'done') {
-    return `${base}\n这个视频已经结束。系统会先切本章下一个视频，没有了再切下一章。一句话即可，不要再点下一节。`
+    return `${base}\n这个视频已经结束。不要自动点开下一段。看 jobs，用 browser_study_play 指定 videoIndex / label；只剩测验就 browser_study_next。`
   }
   if (check.kind === 'lost') {
-    return `${base}\n播放器丢了或页面不对。立刻 browser_study_play；还不行就回章节目录 click_text 当前节名再 play。不要问用户，不要 browser_wait。`
+    return `${base}\n播放器丢了或页面不对。可 play；还不行就回目录点当前节名再 play。`
   }
   if (check.kind === 'stalled') {
-    return `${base}\n进度卡住或暂停了。立刻 browser_study_play 继续播。不要 browser_wait 空等。`
+    return `${base}\n进度卡住或暂停了。paused=true。`
   }
   if (state.paused || state.status === 'stalled') {
-    return `${base}\n视频是暂停或卡住的，没有在播。立刻 browser_study_play。禁止说正在播放。`
+    return `${base}\n视频是暂停或卡住的，没有在播。`
   }
-  return `${base}\n定时核对：paused 必须是 false，进度要在走，页面不能弹窗卡住。暂停/卡住立刻 browser_study_play；播放器没了就回目录点节名再 play；遇到测验就 homework inspect/fill/guess 后继续。确认正常就一句话回报进度，不要 browser_wait，监控还会再叫你。`
+  return `${base}\n定时核对：paused、进度、是否弹窗。暂停/卡住看 play；播放器没了回目录再 play；测验用 homework。进度看面板/watch。`
 }
 
-const advancingBrowsers = new Set<string>()
 const recoveringBrowsers = new Set<string>()
 const recoverAttempts = new Map<string, number>()
+const panelEventOnce = new Set<string>()
+
+const forgetPanelEvents = (browserId: string) => {
+  for (const key of [...panelEventOnce]) {
+    if (key.startsWith(`${browserId}:`)) panelEventOnce.delete(key)
+  }
+}
+
+const formatPanelForAgent = (browserId: string) => {
+  const panel = packAgentPanel(browserId)
+  if (!panel) return ''
+  return [
+    `【解析面板】${panel.thisSection.title || '当前节'}`,
+    panel.jobLine ? `任务点：${panel.jobLine}` : '',
+    panel.thisSection.next ? `下一步：${panel.thisSection.next.label}（${panel.thisSection.next.kind}）` : '',
+    panel.hint,
+  ].filter(Boolean).join('\n')
+}
+
+const notifyPanelTakeover = (sessionId: string, display: string, extra: string, browserId: string) => {
+  notifyWatch(
+    sessionId,
+    display,
+    `${extra}\n${formatPanelForAgent(browserId)}\n处理完需要继续等再用 wait。已完成的视频不必再 watch。`,
+  )
+}
+
+/** 解析面板有事件（测验 / 本节任务点已清完）时叫醒 Agent；视频还在播则继续闷头监控。 */
+const maybeTakeoverFromPanel = (check: VideoWatchCheck) => {
+  const panel = packAgentPanel(check.browserId)
+  if (!panel || panel.event === 'need_video' || panel.event === 'empty') return false
+  const key = `${check.browserId}:${panel.event}:${panel.leftJobs.join(',')}`
+  if (panelEventOnce.has(key)) return true
+  panelEventOnce.add(key)
+  if (panel.event === 'quiz_left') {
+    notifyPanelTakeover(
+      check.sessionId,
+      `解析面板 · ${panel.thisSection.title || '本节'} 视频已完成，还剩测验`,
+      '解析面板有事件：本节视频已完成，还剩测验。刷课默认跳过测验。立刻 browser_study_next，不要 homework / fill / eval。',
+      check.browserId,
+    )
+    return true
+  }
+  notifyPanelTakeover(
+    check.sessionId,
+    `解析面板 · ${panel.thisSection.title || '本节'} 任务点已完成`,
+    '解析面板有事件：本节任务点都已完成。调用 browser_study_next 去下一未完成节。',
+    check.browserId,
+  )
+  return true
+}
 
 const notifyWatch = (sessionId: string, display: string, modelText: string) => {
+  if (wakeAgentWait(sessionId, { reason: 'watch', display, hint: modelText })) {
+    queuedWatchChecks.delete(sessionId)
+    return
+  }
   notifyWatchImpl?.(sessionId, display, modelText)
 }
 
@@ -101,10 +155,20 @@ const captchaImageFile = (image?: string) => {
 
 const notifyCaptchaWithImage = (sessionId: string, image?: string, error?: string) => {
   pendingCaptchaNotices.delete(sessionId)
+  const hint = `学习通弹出图片验证码（9010）。${error ? `自动识别失败：${error}。` : ''}图已附上或页面上有 #ccc。立刻认出 4 位字母或数字，调用 browser_captcha。不要问用户。提交后再 study 或 play。`
+  if (wakeAgentWait(sessionId, {
+    reason: 'captcha',
+    display: '进度检查 · 遇到验证码',
+    hint,
+    captchaImage: String(image || '').startsWith('data:image/') ? image : undefined,
+  })) {
+    queuedWatchChecks.delete(sessionId)
+    return
+  }
   notifyWatchImpl?.(
     sessionId,
     '进度检查 · 遇到验证码',
-    `学习通弹出图片验证码（9010）。${error ? `自动识别失败：${error}。` : ''}图已附上。立刻认出 4 位字母或数字，调用 browser_captcha。不要问用户，不要 browser_wait。提交后再 study 或 play。`,
+    hint,
     captchaImageFile(image),
   )
 }
@@ -144,11 +208,12 @@ const seedFromPlayed = (played: Record<string, unknown>, fallback?: VideoWatchCh
   moreVideos: Boolean(played.moreVideos),
   videoCount: Number(played.videoCount) || fallback?.videoCount || 0,
   videoIndex: Number(played.videoIndex) || fallback?.videoIndex || 0,
+  mid: String(played.mid || ''),
 })
 
 const recoverPlayback = async (check: VideoWatchCheck) => {
   const { browserId, sessionId } = check
-  if (!browserId || recoveringBrowsers.has(browserId) || advancingBrowsers.has(browserId)) return
+  if (!browserId || recoveringBrowsers.has(browserId)) return
   recoveringBrowsers.add(browserId)
   const attempts = (recoverAttempts.get(browserId) || 0) + 1
   recoverAttempts.set(browserId, attempts)
@@ -162,7 +227,7 @@ const recoverPlayback = async (check: VideoWatchCheck) => {
       void handleChapterQuizWatch({ ...check, kind: 'quiz' })
       return
     }
-    const played = await playChaoxingVideo(browserId, { skipTabClick: true }) as Record<string, unknown>
+    const played = await playPanelStudy(browserId, { resume: true }) as Record<string, unknown>
     if (videoIsPlaying(played)) {
       recoverAttempts.set(browserId, 0)
       startChaoxingWatch(browserId, sessionId, seedFromPlayed({
@@ -194,7 +259,7 @@ const handleCaptchaWatch = async (check: VideoWatchCheck) => {
   const solved = await solveChaoxingCaptcha(browserId)
   if (solved.ok) {
     pendingCaptchaNotices.delete(sessionId)
-    const played = await playChaoxingVideo(browserId, { skipTabClick: true }) as Record<string, unknown>
+    const played = await playPanelStudy(browserId, { resume: true }) as Record<string, unknown>
     if (played?.captcha) {
       notifyCaptchaWithImage(sessionId, solved.image, '提交后验证码还在')
       return
@@ -218,144 +283,63 @@ const handleCaptchaWatch = async (check: VideoWatchCheck) => {
   notifyCaptchaWithImage(sessionId, solved.image, solved.error)
 }
 
-const chapterQuizOnce = new Set<string>()
-
 const handleChapterQuizWatch = async (check: VideoWatchCheck) => {
   const { browserId, sessionId } = check
   if (!browserId) return
-  const key = `${browserId}:${check.status.step || check.status.title || 'quiz'}`
-  if (chapterQuizOnce.has(key) || advancingBrowsers.has(browserId)) {
-    notifyWatch(
-      sessionId,
-      '进度检查 · 章节测验',
-      '章节测验还在。调用 browser_homework inspect/guess/save，完成后 browser_study_next。',
-    )
-    return
-  }
-  chapterQuizOnce.add(key)
-  advancingBrowsers.add(browserId)
-  try {
-    const { runChaoxingChapterQuiz } = await import('../homework/chapterQuiz')
-    const result = await runChaoxingChapterQuiz(browserId)
-    if (!result.ok) {
-      notifyWatch(
-        sessionId,
-        '进度检查 · 章节测验未完成',
-        `${result.hint || result.error || '章节测验自动作答失败'}。用 browser_homework inspect/guess/save，再 browser_study_next。`,
-      )
-      return
-    }
-    // 对齐 ocs：任务点做完直接进下一个，不叫醒 Agent
-  } catch (error) {
-    notifyWatch(
-      sessionId,
-      '进度检查 · 章节测验失败',
-      `自动作答出错：${error instanceof Error ? error.message : String(error)}。用 homework inspect/guess，再 next。`,
-    )
-    return
-  } finally {
-    advancingBrowsers.delete(browserId)
-    window.setTimeout(() => chapterQuizOnce.delete(key), 60_000)
-  }
-  await advanceToNextVideo(check)
+  if (maybeTakeoverFromPanel(check)) return
+  const key = `${browserId}:quiz:${check.status.step || check.status.title || 'quiz'}`
+  if (panelEventOnce.has(key)) return
+  panelEventOnce.add(key)
+  notifyPanelTakeover(
+    sessionId,
+    '解析面板 · 出现测验',
+    '解析面板有事件：当前是章节测验。立刻 browser_homework inspect/fill/guess/save，完成后 browser_study_next。',
+    browserId,
+  )
 }
 
-const advanceToNextVideo = async (check: VideoWatchCheck) => {
-  const { browserId, sessionId } = check
-  if (!browserId || advancingBrowsers.has(browserId)) return
-  advancingBrowsers.add(browserId)
-  try {
-    const next = await openNextChaoxingChapter(browserId) as {
-      hasVideo?: boolean
-      quiz?: boolean
-      opened?: string
-      title?: string
-      next?: string
-      current?: number
-      duration?: number
-      paused?: boolean
-      ended?: boolean
-      skipped?: string[]
-      hint?: string
-      step?: string
-      sameChapter?: boolean
-      moreVideos?: boolean
-      videoCount?: number
-      videoIndex?: number
-    }
-    if (next?.quiz) {
-      advancingBrowsers.delete(browserId)
-      await handleChapterQuizWatch({
-        ...check,
-        kind: 'quiz',
-        status: {
-          ...check.status,
-          step: String(next.step || next.title || check.status.step || ''),
-          title: String(next.title || next.step || check.status.title || ''),
-          quiz: true,
-          status: 'quiz',
-        },
-      })
-      return
-    }
-    if (next?.hasVideo && Number(next.duration) > 1) {
-      let played = next
-      if (!videoIsPlaying(played)) {
-        // next 已切到目标任务点，只播当前，不要点回第一个视频
-        played = await playChaoxingVideo(browserId, { skipTabClick: true }) as typeof next
-      }
-      const title = String(played.opened || played.title || next.opened || next.title || '下一节').trim()
-      const playing = videoIsPlaying(played)
-      recoverAttempts.set(browserId, 0)
-      startChaoxingWatch(browserId, sessionId, seedFromPlayed({
-        ...played,
-        opened: title,
-        next: played.next || next.next || '',
-        moreVideos: played.moreVideos ?? next.moreVideos,
-        videoCount: played.videoCount || next.videoCount,
-        videoIndex: played.videoIndex || next.videoIndex,
-      }, check.status))
-      if (playing) {
-        // 播完自动切下一段且已在播：进度条更新即可，不叫醒 Agent
-        return
-      }
-      notifyWatch(
-        sessionId,
-        `进度检查 · 已打开「${title}」但未播放`,
-        `${next.sameChapter ? '本章下一个视频' : '下一节'}「${title}」已经打开，但视频是暂停的。立刻 browser_study_play。禁止说正在播放、视频仍在后台播放。`,
-      )
-      return
-    }
-    notifyWatch(
-      sessionId,
-      '进度检查 · 需要继续',
-      `上一节已播完，自动打开下一节失败。${next?.hint || ''} 跳过了：${(next?.skipped || []).join('、') || '无'}。调用 browser_study_next 再试；若已无未完成，browser_finish(status=done)。不要问用户手动点。`,
-    )
-  } catch (error) {
-    notifyWatch(
-      sessionId,
-      '进度检查 · 切换下一节失败',
-      `打开下一节出错：${error instanceof Error ? error.message : String(error)}。调用 browser_study_next 再试。`,
-    )
-  } finally {
-    advancingBrowsers.delete(browserId)
-  }
+const handleVideoDone = (check: VideoWatchCheck) => {
+  if (maybeTakeoverFromPanel(check)) return
+  const panel = packAgentPanel(check.browserId)
+  const nextJob = panel?.thisSection.next
+  notifyPanelTakeover(
+    check.sessionId,
+    `解析面板 · ${panel?.thisSection.title || '本节'} 一段视频已完成`,
+    nextJob
+      ? `解析面板有事件：这段视频已完成。下一步是${nextJob.label}。看 jobs 后 browser_study_play 指定 videoIndex / label，不要自动点开视频。`
+      : '解析面板有事件：这段视频已完成。看 jobs：还有未完成视频就 play 指定任务点；只剩测验就 browser_study_next 去下一节。不要自动点开视频。',
+    check.browserId,
+  )
+}
+
+export const shouldDeferWatchNotify = (
+  gate: 'missing' | 'busy' | 'ready',
+  waiting: boolean,
+) => {
+  if (gate === 'missing') return 'drop' as const
+  if (gate === 'busy' && !waiting) return 'queue' as const
+  return 'now' as const
 }
 
 const enqueueWatchCheck = (check: VideoWatchCheck) => {
   const gate = sessionGateImpl?.(check.sessionId) || 'missing'
-  if (gate === 'missing') return
-  if (gate === 'busy') {
+  const defer = shouldDeferWatchNotify(gate, hasAgentWait(check.sessionId))
+  if (defer === 'drop') return
+  // 等着的回合也是 busy，但事件要立刻打断 wait，不能排队等回合结束再另开对话
+  if (defer === 'queue') {
     const prev = queuedWatchChecks.get(check.sessionId)
     if (!prev || watchCheckRank[check.kind] >= watchCheckRank[prev.kind]) {
       queuedWatchChecks.set(check.sessionId, check)
     }
     return
   }
-  // 正常播放中的 progress / heartbeat：只更新面板，绝不叫 Agent
-  if (check.kind === 'progress' || check.kind === 'heartbeat') return
+  // 正常播放中的 progress / heartbeat：只更新面板；解析面板有测验/本节已清完才叫 Agent
+  if (check.kind === 'progress' || check.kind === 'heartbeat') {
+    maybeTakeoverFromPanel(check)
+    return
+  }
   if (check.kind === 'done') {
-    void advanceToNextVideo(check)
+    handleVideoDone(check)
     return
   }
   if (check.kind === 'captcha') {
@@ -382,7 +366,31 @@ export const dropWatchQueue = (sessionId: string) => {
   pendingCaptchaNotices.delete(sessionId)
 }
 
+export const notePanelEvent = (browserId: string, panel: { event: string; leftJobs: string[] }) => {
+  if (panel.event === 'need_video' || panel.event === 'empty') return
+  panelEventOnce.add(`${browserId}:${panel.event}:${panel.leftJobs.join(',')}`)
+}
+
+export const flushWatchIntoWait = (sessionId: string) => {
+  const queued = queuedWatchChecks.get(sessionId)
+  if (!queued) return
+  queuedWatchChecks.delete(sessionId)
+  if (queued.kind === 'stalled' || queued.kind === 'lost') {
+    wakeAgentWait(sessionId, {
+      reason: 'watch',
+      display: formatWatchDisplay(queued),
+      hint: formatWatchPrompt(queued),
+    })
+    return
+  }
+  enqueueWatchCheck(queued)
+}
+
 export const flushWatchAfterTurn = (sessionId: string) => {
+  if (hasAgentWait(sessionId)) {
+    flushWatchIntoWait(sessionId)
+    return
+  }
   const queued = queuedWatchChecks.get(sessionId)
   const pendingImage = pendingCaptchaNotices.get(sessionId)
   if (pendingImage && (!queued || queued.kind !== 'captcha')) {

@@ -63,7 +63,14 @@ windows = { version = "0.56", features = ["Win32_Foundation", "Win32_UI_WindowsA
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
-objc2-foundation = { version = "0.3", features = ["NSProcessInfo", "NSString", "NSObject", "NSUserDefaults", "NSArray"] }
+objc2-foundation = { version = "0.3", features = ["NSProcessInfo", "NSString", "NSObject", "NSUserDefaults", "NSArray", "NSGeometry"] }
+objc2-app-kit = { version = "0.3", features = ["NSView", "NSWindow", "NSGraphics"] }
+objc2-av-foundation = { version = "0.3.2", features = ["AVPlayer", "AVPlayerItem", "AVAsset", "objc2-core-media"] }
+objc2-av-kit = { version = "0.3.2", features = ["AVPlayerView"] }
+objc2-core-media = { version = "0.3.2", features = ["CMTime"] }
+raw-window-handle = "0.6"
+cef = "151.8.0"
+tokio-tungstenite = { version = "0.26", features = ["native-tls"] }
 
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-process = "2.0"

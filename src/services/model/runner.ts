@@ -16,6 +16,22 @@ export type ModelRunEvent =
   | { type: 'tool_start'; id: string; name: string; arguments: string }
   | { type: 'tool_end'; id: string; name: string; result: string; error?: string }
 
+const takeToolImages = (raw: string) => {
+  try {
+    const data = JSON.parse(raw)
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return { text: raw, images: [] as string[] }
+    const image = String((data as { image?: unknown }).image || '')
+    if (!image.startsWith('data:image/')) return { text: raw, images: [] as string[] }
+    const rest = { ...(data as Record<string, unknown>) }
+    delete rest.image
+    rest.image = '[attached]'
+    rest.bytes = image.length
+    return { text: JSON.stringify(rest), images: [image] }
+  } catch {
+    return { text: raw, images: [] as string[] }
+  }
+}
+
 export const MODEL_STOPPED_MESSAGE = '已终止对话'
 
 export class ModelStoppedError extends Error {
@@ -50,6 +66,8 @@ export interface RunTextModelOptions {
   signal?: AbortSignal
   /** 每轮发给模型前刷新（浏览器图谱/解析器等），返回文本会写入独立 system 消息 */
   liveContext?: () => string | Promise<string>
+  /** 每轮发给模型前按当前页刷新工具列表（进学习通后再挂上 study_*） */
+  liveTools?: () => any[] | Promise<any[]>
   executeTool?: (call: ModelToolCall) => Promise<string>
   onEvent?: (event: ModelRunEvent) => void
   /** 本轮追加的 assistant / tool 消息，供跨轮按回合回放 */
@@ -96,6 +114,12 @@ const formatRunnerError = (error: unknown) => {
 
 const SINGLETON_TOOLS = new Set(['get_file_info', 'list_folders'])
 const REPEAT_NUDGE = '刚才同一只读工具已经查过。根据已有结果换一步继续（点元素、读新页、播放、下一节都可以），不要停下来问用户，也不要说需要允许才能调工具。'
+
+const toolExecutionLock = (name: string) => {
+  if (name.startsWith('browser_')) return 'browser'
+  if (name === 'write_agent_skill_file' || name === 'reset_agent_skill_file') return 'skill-write'
+  return ''
+}
 const LIVE_CONTEXT_MARK = '\u200B【实时网页状态】'
 /** 传输层失败时最多再试几次（不含首次）。cheaptokens 等网关常偶发 reset。 */
 const MAX_NETWORK_RETRIES = 10
@@ -493,7 +517,7 @@ export async function runTextModel(
   const maxRounds = Math.max(1, options?.maxRounds ?? 1)
   let fullResponse = ''
   const seenToolCalls = new Set<string>()
-  const toolsSnapshot = Array.isArray(input.tools) ? input.tools : []
+  let toolsSnapshot = Array.isArray(input.tools) ? input.tools : []
   let gatewayRepeatHits = 0
 
   // 开发模式把每轮发给模型的原始 messages / 回复落盘，方便排查 agent 行为
@@ -522,6 +546,13 @@ export async function runTextModel(
       armTimeout()
       fullResponse = ''
       onDelta?.('')
+      if (options?.liveTools) {
+        const nextTools = await options.liveTools()
+        if (Array.isArray(nextTools) && nextTools.length) {
+          input.tools = nextTools
+          toolsSnapshot = nextTools
+        }
+      }
       await applyLiveContext(input.messages, options?.liveContext)
       options?.onEvent?.({ type: 'round_start' })
       logModelIo({ kind: 'model_request', round, messages: ioSafeMessages(input.messages) })
@@ -532,7 +563,7 @@ export async function runTextModel(
         if (isRepetitiveToolError(error) && gatewayRepeatHits < 2) {
           gatewayRepeatHits += 1
           input.tools = toolsSnapshot
-          input.messages.push({ role: 'user', content: REPEAT_NUDGE })
+          input.messages.push({ role: 'system', content: REPEAT_NUDGE })
           continue
         }
         throw error
@@ -590,7 +621,7 @@ export async function runTextModel(
         })
         if (!fresh.length) {
           input.tools = toolsSnapshot
-          input.messages.push({ role: 'user', content: REPEAT_NUDGE })
+          input.messages.push({ role: 'system', content: REPEAT_NUDGE })
           continue
         }
         toolCalls = fresh
@@ -602,50 +633,94 @@ export async function runTextModel(
         return spoken
       }
 
+      toolCalls.forEach((tc, index) => {
+        if (!tc.id) tc.id = `tool-${Date.now()}-${index}`
+      })
       input.messages.push({
         role: 'assistant',
         content: fullResponse || '',
         tool_calls: toolCalls,
       })
 
-      for (const tc of toolCalls) {
-        throwIfStopped()
+      const lockTail = new Map<string, Promise<void>>()
+      const toolJobs = toolCalls.map((tc, index) => {
         const call: ModelToolCall = {
-          id: tc.id || `tool-${Date.now()}`,
+          id: String(tc.id),
           name: tc.function?.name || '',
           arguments: tc.function?.arguments || '',
         }
-        if (call.name) seenToolCalls.add(toolSignature(call.name, call.arguments))
-        options.onEvent?.({
-          type: 'tool_start',
-          id: call.id,
-          name: call.name,
-          arguments: call.arguments,
-        })
-        let toolResult = ''
-        let toolError: string | undefined
-        try {
-          toolResult = await options.executeTool(call)
-        } catch (error) {
-          if (options?.signal?.aborted || isModelStopped(error)) throw error
-          toolError = error instanceof Error ? error.message : String(error)
-          toolResult = `Error: ${toolError}`
+        const run = async () => {
+          throwIfStopped()
+          if (call.name) seenToolCalls.add(toolSignature(call.name, call.arguments))
+          options.onEvent?.({
+            type: 'tool_start',
+            id: call.id,
+            name: call.name,
+            arguments: call.arguments,
+          })
+          let toolResult = ''
+          let toolError: string | undefined
+          let toolImages: string[] = []
+          try {
+            const raw = await options.executeTool!(call)
+            const taken = takeToolImages(raw)
+            toolResult = taken.text
+            toolImages = taken.images
+          } catch (error) {
+            if (options?.signal?.aborted || isModelStopped(error)) throw error
+            toolError = error instanceof Error ? error.message : String(error)
+            toolResult = `Error: ${toolError}`
+          }
+          throwIfStopped()
+          options.onEvent?.({
+            type: 'tool_end',
+            id: call.id,
+            name: call.name,
+            result: toolResult,
+            error: toolError,
+          })
+          armTimeout()
+          return { index, call, toolResult, toolImages }
         }
-        throwIfStopped()
-        options.onEvent?.({
-          type: 'tool_end',
-          id: call.id,
-          name: call.name,
-          result: toolResult,
-          error: toolError,
+        const lock = toolExecutionLock(call.name)
+        if (!lock) return run()
+        const prev = lockTail.get(lock) || Promise.resolve()
+        const curr = prev.then(run, run)
+        lockTail.set(lock, curr.then(() => undefined, () => undefined))
+        return curr
+      })
+      const finished = await Promise.all(toolJobs)
+      const visionOk = modelHasVision(model)
+      const attached: string[] = []
+      finished
+        .sort((left, right) => left.index - right.index)
+        .forEach((item) => {
+          const noVision = Boolean(item.toolImages?.length) && !visionOk
+          input.messages.push({
+            role: 'tool',
+            tool_call_id: item.call.id,
+            name: item.call.name,
+            content: noVision
+              ? `${item.toolResult}\n当前 Agent 模型不能看图，请用 get_page 读结构。`
+              : item.toolResult,
+          })
+          if (visionOk) {
+            for (const image of item.toolImages || []) {
+              if (image.startsWith('data:image/') && image.length < 2_500_000) attached.push(image)
+            }
+          }
         })
+      if (attached.length) {
         input.messages.push({
-          role: 'tool',
-          tool_call_id: call.id,
-          name: call.name,
-          content: toolResult,
+          role: 'user',
+          content: [
+            ...attached.map((url) => ({
+              type: 'image_url' as const,
+              image_url: { url, detail: 'low' as const },
+            })),
+            { type: 'text' as const, text: '上面是刚才工具拍到的当前页。' },
+          ],
         })
-        armTimeout()
       }
 
       fullResponse = ''

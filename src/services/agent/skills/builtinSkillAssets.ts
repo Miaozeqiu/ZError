@@ -1,6 +1,6 @@
 const SKILL_MAIN = 'SKILL.md'
 
-const rawModules = import.meta.glob<string>('./bundled/**/*.{md,json,js}', {
+const rawModules = import.meta.glob<string>('./bundled/**/*.{md,json,js,html}', {
   query: '?raw',
   import: 'default',
   eager: true,

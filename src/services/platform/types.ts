@@ -8,6 +8,9 @@ export type StudyPlayOptions = {
   videoIndex?: number
   label?: string
   skipTabClick?: boolean
+  /** 仅在明确要求跳过已完成任务点时为 true。默认仍播放。 */
+  skipIfDone?: boolean
+  action?: 'play' | 'pause'
 }
 
 export type HomeworkAction =

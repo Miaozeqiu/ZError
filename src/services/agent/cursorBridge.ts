@@ -1,43 +1,77 @@
-import {
-  clickBrowserText,
-  evalBrowserView,
-  getBrowserState,
-  getSelectedBrowserId,
-  listAppBrowsers,
-  screenshotBrowserView,
-} from '../browser/appBrowser'
-import { siteGraphAgentSnap } from '../browser/siteGraph'
-import { inspectChaoxingHomework } from '../chaoxing/homework'
-import { browserChatSessions, ensureBrowserChat, sendChatMessage, stopChat } from './chat'
-import { modelConfigManager } from '../model/config'
+/** 开发机 → 应用内浏览器。只在 Tauri 窗口接命令，不进正式包。 */
 
-const enabled = () => import.meta.env.DEV
+import { runBridgeAction, type BridgeCmd } from './bridgeApi'
 
-const postResult = (payload: Record<string, unknown>) => {
-  fetch('/__agent-bridge/result', {
+const VITE = 'http://localhost:1420'
+const BRIDGES = ['http://127.0.0.1:1429', `${VITE}/__agent-bridge`]
+
+const postJson = (path: string, payload: Record<string, unknown>) => {
+  for (const base of BRIDGES) {
+    fetch(`${base}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }).catch(() => {})
+  }
+}
+
+const postDebugFile = (file: string, ext: 'json' | 'md' | 'txt', text: string) => {
+  fetch(`${VITE}/__agent-debug-log`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ file, replace: true, ext, text }),
   }).catch(() => {})
 }
 
-const resolveBrowserId = (want?: string) => {
+const postResult = (payload: Record<string, unknown>) => {
+  postJson('/result', payload)
+  postDebugFile('bridge-result', 'txt', JSON.stringify(payload))
+}
+
+let lastInboxId = ''
+
+const pullCmd = async (): Promise<BridgeCmd | null> => {
+  for (const base of BRIDGES) {
+    try {
+      const res = await fetch(`${base}/cmd`)
+      if (res.status === 204) continue
+      const type = res.headers.get('content-type') || ''
+      if (!type.includes('json')) continue
+      const cmd = await res.json()
+      if (cmd?.id) return cmd as BridgeCmd
+    } catch {
+      // 这条桥没起来就试下一条
+    }
+  }
+  try {
+    const res = await fetch(`${VITE}/__agent-inbox.json?t=${Date.now()}`)
+    if (!res.ok) return null
+    const cmd = await res.json()
+    if (cmd?.id && cmd.id !== lastInboxId) {
+      lastInboxId = String(cmd.id)
+      return cmd as BridgeCmd
+    }
+  } catch {
+    // 同源 inbox 还没写
+  }
+  return null
+}
+
+const resolveBrowserId = async (want?: string) => {
+  const { listAppBrowsers, getSelectedBrowserId } = await import('../browser/appBrowser')
   const list = listAppBrowsers()
   const asked = String(want || '').trim()
   if (asked) return asked
   const selected = getSelectedBrowserId()
   if (selected && list.some((item) => item.id === selected)) return selected
-  const chaoxing = [...list].reverse().find((item) => /chaoxing\.com/i.test(item.url || ''))
-  if (chaoxing) return chaoxing.id
-  const latest = [...list].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))[0]
-  return latest?.id || list[0]?.id || ''
+  return list[0]?.id || ''
 }
 
 const snapshotOf = async (browserId: string, withImage: boolean) => {
+  const { getBrowserState, listAppBrowsers, screenshotBrowserView } = await import('../browser/appBrowser')
+  const { siteGraphAgentSnap } = await import('../browser/siteGraph')
   const state = await getBrowserState(browserId).catch(() => null)
   const item = listAppBrowsers().find((browser) => browser.id === browserId)
-  const url = state?.url || item?.url || ''
-  const title = state?.title || item?.title || item?.name || ''
   let image = ''
   if (withImage) {
     const shot = await screenshotBrowserView(browserId).catch(() => null)
@@ -46,160 +80,87 @@ const snapshotOf = async (browserId: string, withImage: boolean) => {
   return {
     ok: true,
     browserId,
-    url,
-    title,
-    siteGraph: siteGraphAgentSnap(url),
+    url: state?.url || item?.url || '',
+    title: state?.title || item?.title || item?.name || '',
+    siteGraph: siteGraphAgentSnap(state?.url || item?.url || ''),
     image,
-  }
-}
-
-const clip = (text: string, max = 400) => {
-  const value = String(text || '').replace(/\s+/g, ' ').trim()
-  return value.length > max ? `${value.slice(0, max)}…` : value
-}
-
-const ensureAgentModel = () => {
-  if (modelConfigManager.getSelectedAgentModel() || modelConfigManager.getSelectedTextModel()) {
-    return modelConfigManager.getSelectedAgentModel()?.displayName
-      || modelConfigManager.getSelectedTextModel()?.displayName
-      || ''
-  }
-  const models = modelConfigManager.getSettings().platforms
-    .filter((platform) => platform.enabled !== false)
-    .flatMap((platform) => platform.models || [])
-    .filter((model) => model.enabled !== false)
-  const prefer = models.find((model) => /qwen3\.7-flash/i.test(`${model.modelId || ''} ${model.id} ${model.displayName || ''}`))
-    || models[0]
-  if (prefer) modelConfigManager.setSelectedAgentModel(prefer.id)
-  return prefer?.displayName || ''
-}
-
-const runCommand = async (cmd: { id?: string; action?: string; args?: Record<string, unknown> }) => {
-  const action = String(cmd.action || 'snapshot')
-  const browserId = resolveBrowserId(String(cmd.args?.browserId || ''))
-  try {
-    if (action === 'stop') {
-      const session = browserChatSessions.value.find((item) => item.browserId === browserId)
-        || browserChatSessions.value[0]
-      if (session) stopChat(session.id)
-      return { ok: true, id: cmd.id, action, sessionId: session?.id || '', stopped: Boolean(session) }
-    }
-    if (action === 'send' || action === 'prompt') {
-      const text = String(cmd.args?.text || '').trim()
-      if (!text) return { ok: false, id: cmd.id, action, error: '缺少 text' }
-      if (!browserId) return { ok: false, id: cmd.id, action, error: '没有打开的浏览器' }
-      const session = ensureBrowserChat({ browserId })
-      if (!session) return { ok: false, id: cmd.id, action, error: '没有浏览器对话' }
-      const agentModel = ensureAgentModel()
-      if (!agentModel) {
-        return { ok: false, id: cmd.id, action, error: '没有可用的 agent 模型', sessionId: session.id }
-      }
-      if (session.messages.some((item) => item.status === 'streaming')) stopChat(session.id)
-      void sendChatMessage(text, undefined, { sessionId: session.id })
-      return { ok: true, id: cmd.id, action, browserId, sessionId: session.id, agentModel, sent: clip(text, 120) }
-    }
-    if (action === 'chat') {
-      const session = browserChatSessions.value.find((item) => item.browserId === browserId)
-        || browserChatSessions.value[0]
-        || null
-      const last = session?.messages[session.messages.length - 1]
-      return {
-        ok: Boolean(session),
-        id: cmd.id,
-        action,
-        browserId: session?.browserId || browserId,
-        sessionId: session?.id || '',
-        streaming: last?.status === 'streaming',
-        agentModel: modelConfigManager.getSelectedAgentModel()?.displayName
-          || modelConfigManager.getSelectedTextModel()?.displayName
-          || '',
-        lastRole: last?.role || '',
-        lastText: clip(last?.content || last?.error || '', 240),
-        steps: (last?.steps || []).slice(-6).map((step) => ({
-          name: step.name,
-          status: step.status,
-          label: step.label,
-        })),
-      }
-    }
-    if (!browserId) return { ok: false, error: '没有打开的浏览器', id: cmd.id, action }
-    if (action === 'list') {
-      return {
-        id: cmd.id,
-        action,
-        ok: true,
-        selected: getSelectedBrowserId(),
-        browsers: listAppBrowsers().map((item) => ({
-          id: item.id,
-          url: item.url,
-          title: item.title || item.name,
-          updatedAt: item.updatedAt,
-        })),
-      }
-    }
-    if (action === 'state') {
-      return { id: cmd.id, action, ...(await snapshotOf(browserId, false)) }
-    }
-    if (action === 'snapshot' || action === 'screenshot') {
-      return { id: cmd.id, action, ...(await snapshotOf(browserId, true)) }
-    }
-    if (action === 'click_text') {
-      const text = String(cmd.args?.text || '').trim()
-      if (!text) return { ok: false, id: cmd.id, action, error: '缺少 text' }
-      const clicked = await clickBrowserText(browserId, text)
-      const snap = await snapshotOf(browserId, true)
-      return { id: cmd.id, action, ...snap, clicked }
-    }
-    if (action === 'eval') {
-      const script = String(cmd.args?.script || '').trim()
-      if (!script) return { ok: false, id: cmd.id, action, error: '缺少 script' }
-      const result = await evalBrowserView(browserId, script)
-      return { id: cmd.id, action, ok: true, browserId, result, ...(await snapshotOf(browserId, false)) }
-    }
-    if (action === 'inspect') {
-      const card = await inspectChaoxingHomework(browserId)
-      return { id: cmd.id, action, ok: true, browserId, card, ...(await snapshotOf(browserId, true)) }
-    }
-    return { ok: false, id: cmd.id, action, error: `未知动作 ${action}` }
-  } catch (error) {
-    return {
-      ok: false,
-      id: cmd.id,
-      action,
-      browserId,
-      error: error instanceof Error ? error.message : String(error),
-    }
   }
 }
 
 let pollTimer = 0
 let busy = false
+let liveTick = 0
+
+const pushLive = () => {
+  void (async () => {
+    const browserId = await resolveBrowserId().catch(() => '')
+    const { listAppBrowsers } = await import('../browser/appBrowser')
+    const item = listAppBrowsers().find((browser) => browser.id === browserId)
+    postJson('/live', {
+      browserId,
+      url: item?.url || '',
+      title: item?.title || item?.name || '',
+      lastText: '',
+    })
+  })()
+}
+
+const waitMs = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 const tick = async () => {
-  if (!enabled() || busy) return
+  if (busy) return
   busy = true
   try {
-    const res = await fetch('/__agent-bridge/cmd')
-    if (res.status === 204) return
-    const cmd = await res.json()
-    if (!cmd?.id) return
-    postResult(await runCommand(cmd))
-  } catch {
-    // 桥没起来时安静跳过
+    const cmd = await pullCmd()
+    if (cmd?.id) {
+      const result = await Promise.race([
+        runBridgeAction(cmd).catch((error) => ({
+          ok: false,
+          id: cmd.id,
+          action: cmd.action,
+          error: error instanceof Error ? error.message : String(error),
+        })),
+        waitMs(10_000).then(() => ({
+          ok: false,
+          id: cmd.id,
+          action: cmd.action,
+          error: '动作超时',
+        })),
+      ])
+      postResult(result as Record<string, unknown>)
+    }
+    liveTick += 1
+    if (liveTick % 5 === 0) pushLive()
+  } catch (error) {
+    postDebugFile(
+      'bridge-boot',
+      'txt',
+      `tick-error ${error instanceof Error ? error.message : String(error)}\n`,
+    )
   } finally {
     busy = false
   }
 }
 
 export const dumpCursorSnapshot = async (browserId?: string) => {
-  if (!enabled()) return
-  const id = resolveBrowserId(browserId)
+  const id = await resolveBrowserId(browserId)
   if (!id) return
   postResult(await snapshotOf(id, true))
 }
 
+const isTauriHost = () => Boolean(
+  (window as Window & { __TAURI_INTERNALS__?: unknown; __TAURI__?: unknown }).__TAURI_INTERNALS__
+  || (window as Window & { __TAURI__?: unknown }).__TAURI__
+)
+
 export const startCursorBridge = () => {
-  if (!enabled() || pollTimer) return
+  if (pollTimer) return
+  if (!isTauriHost()) {
+    postDebugFile('bridge-boot', 'txt', `skip-non-tauri ${new Date().toISOString()} ${window.location.href}\n`)
+    return
+  }
+  postJson('/live', { browserId: '', url: '', title: 'bridge-started', lastText: 'cursorBridge 已启动' })
+  postDebugFile('bridge-boot', 'txt', `started ${new Date().toISOString()} ${window.location.href}\n`)
   void tick()
   pollTimer = window.setInterval(() => { void tick() }, 400)
 }
@@ -209,9 +170,8 @@ export const stopCursorBridge = () => {
   pollTimer = 0
 }
 
-if (enabled()) {
-  startCursorBridge()
-  if (import.meta.hot) {
-    import.meta.hot.dispose(() => stopCursorBridge())
-  }
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => stopCursorBridge())
 }
+
+if (import.meta.env.DEV && isTauriHost()) startCursorBridge()

@@ -955,8 +955,6 @@ r#"Object.defineProperty(window, 'ipc', {
 
   pub fn set_visible(&self, visible: bool) -> Result<()> {
     self.webview.setHidden(!visible);
-    #[cfg(target_os = "macos")]
-    self.webview.refresh_covered_siblings();
     Ok(())
   }
 

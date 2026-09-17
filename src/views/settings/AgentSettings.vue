@@ -29,6 +29,26 @@
       >
         Skills
       </button>
+      <button
+        type="button"
+        class="agent-pane-tab"
+        role="tab"
+        :aria-selected="activePane === 'policy'"
+        :class="{ active: activePane === 'policy' }"
+        @click="activePane = 'policy'"
+      >
+        权限
+      </button>
+      <button
+        type="button"
+        class="agent-pane-tab"
+        role="tab"
+        :aria-selected="activePane === 'agents'"
+        :class="{ active: activePane === 'agents' }"
+        @click="activePane = 'agents'"
+      >
+        Agents
+      </button>
     </nav>
 
     <template v-if="activePane === 'accounts'">
@@ -76,8 +96,11 @@
     </div>
     </template>
 
-    <template v-else>
-    <p class="group-hint pane-intro-hint">启用后 Agent 可见 Skill 索引；相关任务时会预加载最多 2 个 Skill，其余需 read_agent_skill 按需读取。点击 Skill 进入详情页查看与编辑文件。</p>
+    <template v-else-if="activePane === 'skills'">
+    <div class="pane-intro">
+      <p class="group-hint">启用后，对应范围的 Agent 能看到这条 Skill 索引。执行前 Agent 会自己 read_agent_skill。点击进入详情查看与编辑文件。</p>
+      <button type="button" class="add-btn" @click="openSkillInstall">安装</button>
+    </div>
     <div class="network-group">
       <div v-if="skillRows.length" class="skill-list">
         <div
@@ -96,6 +119,7 @@
                 {{ skill.builtin ? '内置' : '已安装' }}
               </span>
               <span v-if="skill.customized" class="skill-badge customized">已修改</span>
+              <span class="skill-badge scope">{{ scopeLabel(skill.scope) }}</span>
             </div>
             <p class="skill-desc">{{ skill.description || skill.id }}</p>
             <p v-if="skill.source" class="skill-source">{{ skill.source }}<span v-if="skill.sourcePath"> · {{ skill.sourcePath }}</span></p>
@@ -123,6 +147,121 @@
       </div>
       <p v-if="agentSkillsState.installError" class="install-error">{{ agentSkillsState.installError }}</p>
     </div>
+    </template>
+
+    <template v-else-if="activePane === 'policy'">
+      <p class="group-hint pane-intro-hint">低风险看页默认开。严格模式会拦作业页直接点填、以及顶层打开 iframe 地址。提交作业和写 Skill 默认先确认。</p>
+      <div class="network-group policy-list">
+        <label class="policy-row">
+          <span class="policy-label">浏览器权限</span>
+          <select class="form-input form-select" :value="agentPolicyState.permissionMode" @change="setAgentPolicy({ permissionMode: ($event.target as HTMLSelectElement).value as 'explore' | 'strict' })">
+            <option value="explore">探索（默认，可看页、可探路）</option>
+            <option value="strict">严格（作业页锁定填写）</option>
+          </select>
+        </label>
+        <label class="policy-row">
+          <span class="policy-label">写 Skill</span>
+          <select class="form-input form-select" :value="agentPolicyState.writeSkills" @change="setAgentPolicy({ writeSkills: ($event.target as HTMLSelectElement).value as 'allow' | 'ask' | 'deny' })">
+            <option value="ask">先确认</option>
+            <option value="allow">允许</option>
+            <option value="deny">禁止</option>
+          </select>
+        </label>
+        <label class="policy-row">
+          <span class="policy-label">提交作业</span>
+          <select class="form-input form-select" :value="agentPolicyState.submit" @change="setAgentPolicy({ submit: ($event.target as HTMLSelectElement).value as 'ask' | 'allow' })">
+            <option value="ask">先确认</option>
+            <option value="allow">允许</option>
+          </select>
+        </label>
+      </div>
+    </template>
+
+    <template v-else>
+      <p class="group-hint pane-intro-hint">浏览器对话用「浏览器」配置，题库对话用「学习」配置。可复制后改附加规则和 Skill 集。预设改坏可以恢复。</p>
+      <div class="pane-intro">
+        <button type="button" class="add-btn" :disabled="!selectedProfile" @click="duplicateSelected">复制</button>
+      </div>
+      <div class="network-group">
+        <div class="skill-list">
+          <div
+            v-for="profile in profileRows"
+            :key="profile.id"
+            class="skill-row"
+            role="button"
+            tabindex="0"
+            :class="{ 'is-selected': selectedProfileId === profile.id }"
+            @click="selectedProfileId = profile.id"
+            @keydown.enter.prevent="selectedProfileId = profile.id"
+          >
+            <div class="skill-main">
+              <div class="skill-title">
+                <span class="skill-name">{{ profile.name }}</span>
+                <span class="skill-badge" :class="profile.preset ? 'builtin' : 'installed'">
+                  {{ profile.preset ? '预设' : '自定义' }}
+                </span>
+                <span v-if="isDefaultProfile(profile)" class="skill-badge customized">默认</span>
+              </div>
+              <p class="skill-desc">{{ profile.kind === 'browser' ? '浏览器窗口对话' : '题库与学习对话' }}</p>
+            </div>
+          </div>
+        </div>
+        <div v-if="selectedProfile" class="profile-edit">
+          <div class="form-group">
+            <label class="form-label">名称</label>
+            <input
+              class="form-input"
+              type="text"
+              :value="selectedProfile.name"
+              :disabled="Boolean(selectedProfile.preset)"
+              @change="patchSelected({ name: ($event.target as HTMLInputElement).value })"
+            >
+          </div>
+          <div class="form-group">
+            <label class="form-label">附加规则</label>
+            <textarea
+              class="form-input profile-overlay"
+              rows="4"
+              :value="selectedProfile.systemOverlay"
+              placeholder="只写额外原则，不要把整份 SOP 贴回来"
+              @change="patchSelected({ systemOverlay: ($event.target as HTMLTextAreaElement).value })"
+            />
+          </div>
+          <div v-if="selectedProfile.kind === 'browser'" class="form-group">
+            <label class="form-label">领域工具</label>
+            <select
+              class="form-input form-select"
+              :value="selectedProfile.toolPolicy.domain"
+              @change="patchSelected({ toolPolicy: { domain: ($event.target as HTMLSelectElement).value as 'current-site' | 'always' | 'never' } })"
+            >
+              <option value="current-site">仅当前站点</option>
+              <option value="always">始终带上</option>
+              <option value="never">从不</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Skill 集</label>
+            <p class="group-hint">不勾选任何项表示按范围继承已启用 Skill。</p>
+            <label
+              v-for="skill in skillsForSelected"
+              :key="skill.id"
+              class="profile-skill"
+            >
+              <input
+                type="checkbox"
+                :checked="selectedProfile.skillIds.length ? selectedProfile.skillIds.includes(skill.id) : skill.enabled"
+                @change="toggleProfileSkill(skill.id, ($event.target as HTMLInputElement).checked)"
+              >
+              <span>{{ skill.name }}</span>
+            </label>
+          </div>
+          <div class="account-actions">
+            <button type="button" class="text-btn" @click="makeSelectedDefault">设为默认</button>
+            <button v-if="selectedProfile.preset" type="button" class="text-btn" @click="resetSelected">恢复默认</button>
+            <button v-else type="button" class="text-btn danger" @click="removeSelected">删除</button>
+          </div>
+        </div>
+      </div>
     </template>
     </template>
 
@@ -279,6 +418,18 @@ import {
   siteAccountsState,
   type SiteAccountId,
 } from '../../services/agent/siteAccounts'
+import { agentPolicyState, setAgentPolicy } from '../../services/agent/agentPolicy'
+import {
+  agentProfileState,
+  deleteAgentProfile,
+  duplicateAgentProfile,
+  listAgentProfiles,
+  resetAgentProfile,
+  saveAgentProfile,
+  setDefaultProfile,
+  type AgentProfile,
+} from '../../services/agent/agentProfiles'
+import type { SkillScope } from '../../services/agent/agentSkills'
 
 const emit = defineEmits<{
   'skill-detail-change': [open: boolean]
@@ -407,7 +558,72 @@ const removeSkill = async (id: string) => {
   await uninstallSkill(id)
 }
 
-const activePane = ref<'accounts' | 'skills'>('accounts')
+const activePane = ref<'accounts' | 'skills' | 'policy' | 'agents'>('accounts')
+const selectedProfileId = ref('browser')
+
+const profileRows = computed(() => listAgentProfiles())
+const selectedProfile = computed(() => profileRows.value.find((item) => item.id === selectedProfileId.value) || null)
+const skillsForSelected = computed(() => {
+  const kind = selectedProfile.value?.kind
+  return agentSkillsState.items.filter((item) => !kind || item.scope === 'both' || item.scope === kind)
+})
+
+const scopeLabel = (scope?: SkillScope) => {
+  if (scope === 'browser') return '浏览器'
+  if (scope === 'learning') return '学习'
+  return '共用'
+}
+
+const isDefaultProfile = (profile: AgentProfile) => (
+  (profile.kind === 'browser' && agentProfileState.defaultBrowserId === profile.id)
+  || (profile.kind === 'learning' && agentProfileState.defaultLearningId === profile.id)
+)
+
+const patchSelected = (patch: Partial<AgentProfile>) => {
+  const current = selectedProfile.value
+  if (!current) return
+  saveAgentProfile({
+    ...current,
+    ...patch,
+    toolPolicy: patch.toolPolicy ? { ...current.toolPolicy, ...patch.toolPolicy } : current.toolPolicy,
+  })
+}
+
+const toggleProfileSkill = (id: string, checked: boolean) => {
+  const current = selectedProfile.value
+  if (!current) return
+  const base = current.skillIds.length
+    ? [...current.skillIds]
+    : skillsForSelected.value.filter((item) => item.enabled).map((item) => item.id)
+  const next = checked ? [...new Set([...base, id])] : base.filter((item) => item !== id)
+  patchSelected({ skillIds: next })
+}
+
+const duplicateSelected = () => {
+  const current = selectedProfile.value
+  if (!current) return
+  const copy = duplicateAgentProfile(current.id)
+  if (copy) selectedProfileId.value = copy.id
+}
+
+const makeSelectedDefault = () => {
+  const current = selectedProfile.value
+  if (!current) return
+  setDefaultProfile(current.kind, current.id)
+}
+
+const resetSelected = () => {
+  const current = selectedProfile.value
+  if (!current?.preset) return
+  resetAgentProfile(current.id)
+}
+
+const removeSelected = () => {
+  const current = selectedProfile.value
+  if (!current || current.preset) return
+  deleteAgentProfile(current.id)
+  selectedProfileId.value = current.kind
+}
 const selectedSkillId = ref('')
 const selectedSkillMode = ref<'view' | 'edit'>('view')
 
@@ -669,6 +885,56 @@ const closeSkillDetail = () => {
 
 .skill-badge.customized {
   color: #b45309;
+}
+
+.skill-badge.scope {
+  color: var(--text-secondary);
+}
+
+.skill-row.is-selected .skill-name {
+  color: var(--color-accent, #667eea);
+}
+
+.policy-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 8px 0 16px;
+}
+
+.policy-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.policy-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.profile-edit {
+  margin-top: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.profile-overlay {
+  min-height: 88px;
+  resize: vertical;
+}
+
+.profile-skill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-primary);
+  margin-top: 6px;
 }
 
 .skill-desc,

@@ -32,9 +32,15 @@ export type ActResult = {
   candidates?: ActCandidate[]
   retry?: boolean
   box?: string
+  filled?: boolean
+  length?: number
+  url?: string
+  navigated?: boolean
+  hint?: string
 }
 
 export type ActOp = 'click' | 'fill' | 'ready'
 
+/** 先轮询 locate，可点后再 CDP 真鼠标。not_found/hidden/covered/unstable 重试；ambiguous/disabled 立刻失败。 */
 export const ACT_TIMEOUT_MS = 8000
 export const ACT_POLL_MS = 120

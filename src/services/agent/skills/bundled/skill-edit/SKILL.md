@@ -27,6 +27,6 @@ description: 列出、阅读、改写或恢复 Agent Skill 文件。
 
 ## 专项
 
-- 网站图谱 → 先 `read_agent_skill(site-graph)`，实现写在 `chaoxing` 的 `site-graph.json`；任务中路由对不上也可改
+- 网站图谱 → 先 `read_agent_skill(site-graph)`。学习通写 `chaoxing` 的 `site-graph.json`；新站点先 `site-learn`，写 `sites/<host>/`
 - 解析器 → 先 `read_agent_skill(parser)`，实现写在 `chaoxing` 的 `parsers/study/`、`parsers/homework/`；同一失败点连续两次只改对应分组
 - 用户问失败原因或要优化流程：对着失败步骤的 error 和当时参数改对应文件（登录在 `chaoxing` 的 `references/login.md`）。不要否认，不要说不用优化。

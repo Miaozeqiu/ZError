@@ -56,6 +56,8 @@ export interface AgentChatMessage {
   role: 'user' | 'assistant'
   content: string
   kind?: 'watch'
+  /** 发给模型的用户正文；监控钩子的展示文案和模型文案不同时才写 */
+  modelContent?: string
   attachments?: AgentChatAttachment[]
   steps: ImportTaskStep[]
   /** 本轮按模型回合回放的 assistant / tool 消息 */

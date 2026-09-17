@@ -1,82 +1,37 @@
 import { writeDebugDump } from '../../agent/debugLog'
 import { evalBrowserView } from '../../browser/eval'
 
-const CHAOXING_DUMP_CAPTURE = `(function(){
-  var out = [];
-  function one(win, depth, label){
-    var item = {
-      label: label,
-      depth: depth || 0,
-      href: '',
-      title: '',
-      sameOrigin: false,
-      html: '',
-      text: '',
-      iframeMeta: [],
-      error: ''
-    };
-    try {
-      item.href = (win.location && win.location.href) || '';
-      item.title = (win.document && win.document.title) || '';
-      item.sameOrigin = true;
-      var doc = win.document;
-      item.html = (doc.documentElement && doc.documentElement.outerHTML) || '';
-      item.text = ((doc.body && doc.body.innerText) || '').slice(0, 40000);
-      var list = doc.querySelectorAll('iframe');
-      for (var i = 0; i < list.length && i < 16; i++) {
-        var el = list[i];
-        var src = '';
-        try { src = el.src || el.getAttribute('src') || ''; } catch (e) {}
-        item.iframeMeta.push({
-          i: i,
-          id: el.id || '',
-          cls: String(el.className || '').slice(0, 80),
-          src: src,
-          w: el.offsetWidth || 0,
-          h: el.offsetHeight || 0
-        });
-        try {
-          if (el.contentWindow) one(el.contentWindow, (depth || 0) + 1, label + '/iframe' + i);
-        } catch (e) {
-          out.push({
-            label: label + '/iframe' + i,
-            depth: (depth || 0) + 1,
-            href: src,
-            title: '',
-            sameOrigin: false,
-            html: '',
-            text: '',
-            iframeMeta: [],
-            error: 'cross-origin'
-          });
-        }
-      }
-    } catch (e) {
-      item.error = String(e && e.message || e);
+const READ_DUMP_META = `(function(){
+  var html = document.documentElement ? document.documentElement.outerHTML : '';
+  var text = ((document.body && document.body.innerText) || '');
+  window.__ZE_DUMP_HTML__ = html;
+  window.__ZE_DUMP_TEXT__ = text;
+  var iframes = [];
+  try {
+    var list = document.querySelectorAll('iframe');
+    for (var i = 0; i < list.length && i < 16; i++) {
+      var el = list[i];
+      iframes.push({
+        i: i,
+        id: el.id || '',
+        cls: String(el.className || '').slice(0, 80),
+        src: String(el.src || el.getAttribute('src') || ''),
+        w: el.offsetWidth || 0,
+        h: el.offsetHeight || 0
+      });
     }
-    out.push(item);
-  }
-  one(window, 0, 'top');
-  window.__cxHtmlDump = out;
+  } catch (e) {}
   return {
-    url: location.href,
-    count: out.length,
-    frames: out.map(function(x){
-      return {
-        label: x.label,
-        href: x.href,
-        title: x.title,
-        sameOrigin: x.sameOrigin,
-        htmlLen: (x.html || '').length,
-        textLen: (x.text || '').length,
-        error: x.error,
-        iframes: x.iframeMeta
-      };
-    })
+    url: location.href || '',
+    title: String(document.title || ''),
+    htmlLen: html.length,
+    textLen: text.length,
+    catalogLi: document.querySelectorAll('#coursetree .posCatalog_select, .catalog_title, a.clicktitle, .posCatalog_name, .chapter_item').length,
+    iframes: iframes
   };
 })()`
 
-const CHAOXING_DUMP_OUTLINE = `(function(){
+const READ_DUMP_OUTLINE = `(function(){
   var sels = [
     '#coursetree', '.posCatalog_name', '.posCatalog_select', '.posCatalog_active',
     '.catalog_title', '.catalog_task', '.catalog_name', 'a.clicktitle',
@@ -101,53 +56,30 @@ const CHAOXING_DUMP_OUTLINE = `(function(){
   };
 })()`
 
-const dumpChunk = (index: number, start: number, size: number) => `(function(){
-  var d = (window.__cxHtmlDump || [])[${index}];
-  if (!d) return { done: true };
-  var html = d.html || '';
+const dumpChunk = (key: 'html' | 'text', start: number, size: number) => `(function(){
+  var s = String(window.${key === 'html' ? '__ZE_DUMP_HTML__' : '__ZE_DUMP_TEXT__'} || '');
   return {
-    label: d.label,
-    href: d.href || '',
     start: ${start},
-    chunk: html.slice(${start}, ${start + size}),
-    left: Math.max(0, html.length - ${start} - ${size})
+    chunk: s.slice(${start}, ${start + size}),
+    left: Math.max(0, s.length - ${start} - ${size})
   };
 })()`
 
-const dumpTextChunk = (index: number, start: number, size: number) => `(function(){
-  var d = (window.__cxHtmlDump || [])[${index}];
-  if (!d) return { done: true };
-  var text = d.text || '';
-  return {
-    label: d.label,
-    start: ${start},
-    chunk: text.slice(${start}, ${start + size}),
-    left: Math.max(0, text.length - ${start} - ${size})
-  };
-})()`
-
-const readEvalChunks = async (id: string, scriptFor: (start: number) => string, max = 400000) => {
+const readEvalChunks = async (id: string, key: 'html' | 'text', max = 400000) => {
   const size = 6000
   let start = 0
   let out = ''
-  let label = ''
-  let href = ''
   while (start < max) {
-    const part = await evalBrowserView(id, scriptFor(start)).catch(() => null) as {
-      done?: boolean
-      label?: string
-      href?: string
+    const part = await evalBrowserView(id, dumpChunk(key, start, size)).catch(() => null) as {
       chunk?: string
       left?: number
     } | null
-    if (!part || part.done) break
-    if (part.label) label = part.label
-    if (part.href) href = part.href
+    if (!part) break
     out += String(part.chunk || '')
     if (!Number(part.left)) break
     start += size
   }
-  return { label, href, text: out }
+  return out
 }
 
 export const dumpChaoxingParseHtml = async (id: string, reason = 'parse') => {
@@ -157,55 +89,40 @@ export const dumpChaoxingParseHtml = async (id: string, reason = 'parse') => {
   const writeBoth = (name: string, text: string, ext: 'html' | 'md' | 'json' | 'txt' = 'html') => {
     writeDebugDump(`${latest}/${name}`, text, ext)
     writeDebugDump(`${archive}/${name}`, text, ext)
-    // vite 未重启时新目录写不进去，同时落到已有的 agent-chat 日志
     const fallbackExt = ext === 'md' ? 'md' : 'txt'
     writeDebugDump(`cx-dump-${name.replace(/[^\w.-]+/g, '_')}`, text, fallbackExt)
   }
   try {
-    const index = await evalBrowserView(id, CHAOXING_DUMP_CAPTURE) as {
+    const meta = await evalBrowserView(id, READ_DUMP_META) as {
       url?: string
-      count?: number
-      frames?: Array<{
-        label: string
-        href: string
-        title?: string
-        sameOrigin: boolean
-        htmlLen: number
-        textLen: number
-        error?: string
-        iframes?: Array<{ i: number; id: string; cls: string; src: string; w: number; h: number }>
-      }>
+      title?: string
+      htmlLen?: number
+      textLen?: number
+      catalogLi?: number
+      iframes?: Array<{ i: number; id: string; cls: string; src: string; w: number; h: number }>
     }
-    const outline = await evalBrowserView(id, CHAOXING_DUMP_OUTLINE).catch(() => null)
-    writeBoth('index', JSON.stringify({ reason, ts: new Date().toISOString(), ...index }, null, 2), 'json')
+    const outline = await evalBrowserView(id, READ_DUMP_OUTLINE).catch(() => null)
+    writeBoth('index', JSON.stringify({ reason, ts: new Date().toISOString(), ...meta }, null, 2), 'json')
     writeBoth('outline', JSON.stringify(outline, null, 2), 'json')
-    const frames = index?.frames || []
-    const summary: string[] = [
+    const html = await readEvalChunks(id, 'html')
+    const text = await readEvalChunks(id, 'text')
+    writeBoth('00-cdp-frame', html || '<!-- empty -->', 'html')
+    writeBoth('00-cdp-frame-text', text || '', 'txt')
+    const iframes = meta?.iframes || []
+    const summary = [
       `# 学习通解析快照`,
       `reason: ${reason}`,
-      `url: ${index?.url || ''}`,
-      `frames: ${frames.length}`,
+      `url: ${meta?.url || ''}`,
+      `title: ${meta?.title || ''}`,
+      `catalogLi: ${meta?.catalogLi || 0}`,
+      `htmlLen: ${meta?.htmlLen || 0} textLen: ${meta?.textLen || 0}`,
+      `iframes: ${iframes.length}（只记 src，不另发请求、不走 contentWindow）`,
+      '',
+      ...iframes.map((frame) => `- iframe[${frame.i}] id=${frame.id} ${frame.w}x${frame.h} ${frame.src}`),
       '',
     ]
-    for (let i = 0; i < frames.length; i++) {
-      const meta = frames[i]
-      const html = await readEvalChunks(id, (start) => dumpChunk(i, start, 6000))
-      const text = await readEvalChunks(id, (start) => dumpTextChunk(i, start, 6000))
-      const file = `${String(i).padStart(2, '0')}-${(meta.label || 'frame').replace(/[^\w.-]+/g, '_')}`
-      writeBoth(file, html.text || `<!-- empty sameOrigin=${meta.sameOrigin} error=${meta.error || ''} -->`, 'html')
-      writeBoth(`${file}-text`, text.text || '', 'txt')
-      summary.push(`## ${meta.label}`)
-      summary.push(`href: ${meta.href}`)
-      summary.push(`sameOrigin: ${meta.sameOrigin} htmlLen: ${meta.htmlLen} textLen: ${meta.textLen} error: ${meta.error || ''}`)
-      if (meta.iframes?.length) {
-        for (const frame of meta.iframes) {
-          summary.push(`- iframe[${frame.i}] id=${frame.id} ${frame.w}x${frame.h} ${frame.src}`)
-        }
-      }
-      summary.push('')
-    }
     writeBoth('README', `${summary.join('\n').trim()}\n`, 'md')
-    return { ok: true, dir: latest, frames: frames.length }
+    return { ok: true, dir: latest, frames: 1 }
   } catch (error) {
     writeBoth('error', String((error as Error)?.message || error), 'txt')
     return { ok: false, error: String((error as Error)?.message || error) }

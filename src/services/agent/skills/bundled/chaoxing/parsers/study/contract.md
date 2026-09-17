@@ -1,38 +1,13 @@
 # 刷课导出契约
 
-导出键名不要改。`page()` 按引用自动注入 helpers。入参由 `studyScript(key, ...args)` 传入。失败带 `ok: false` / `error`。`page` 常见值：`login` / `player` / `chapters` / `captcha` / `other`。
+目录、切章、切任务点、播放都不注入页面。
 
-## 动作
+- 认节 / 任务点 / 播放器：只改 `helpers.js`
+- 读目录：CDP 取 HTML，本地跑 `helpers.js` + `catalog.js` 的 `__zeScanOne`
+- 切章 / 任务点 / 播放：`locate.js` 的 Handle（`chapter` / `step` / `play` / `video-tab` / `chapter-tab` / `next`）
+- 目录还没出来：点「章节」再等，不要另发 studentcourse 请求
 
-| 键 | 入参 | 成功时 |
-|---|---|---|
-| `inspect` | 无 | `{ page, chapterId, step, quiz, jobDone, steps, videoCount, videoIndex, moreVideos, current, next, unfinished, iframes, chapterListUrl, video }`；非学习通返回 `null` |
-| `openChapter` | `(title, id?)` | `{ ok, title, via }` |
-| `clickTab` | 无 | 点章节/任务点条 |
-| `play` | 无 | `{ page, clickedPlay, clickedCover, hasVideo, paused, ended, current, duration, ready, src, step, frameCount }` |
-| `clickVideoTab` | 无 | `{ ok, already?, step, videoCount, jobDone? }`；测验 `{ ok: false, quiz: true }`；本节视频完 `{ ok: false, done: true }` |
-| `clickStep` | `(want)` 字符串/数字或 `{ label, mid, jobid, videoIndex, index }`，`index` / `videoIndex` 从 1 起 | `{ ok, already?, step, video, quiz, doc, videoIndex }` |
-| `nextStep` | 无 | 下一未完成视频 `{ ok, step, more, chapterDone }`；碰到测验 `{ ok: false, quiz: true, opened }`；本节完 `{ ok: false, chapterDone: true }` |
-| `captchaCheck` | 无 | `{ captcha, message? }` |
-| `captchaImage` | 无 | `{ captcha, image?, pending?, src? }` |
-| `captchaRefresh` | 无 | `{ ok }` |
-| `captchaFill` | `(code)` | `{ ok, code }` |
+本目录不再导出注入键。 `frames.js` 只给旧覆盖目录兜底，不要和新 `helpers.js` 一起拼。
 
-## 目录（先装再读）
-
-同一份 `window.__ZE_CHAPTERS__`。读缓存用 `tick`，不要再加 `read`。
-
-| 键 | 入参 | 成功时 |
-|---|---|---|
-| `install` | 无 | 挂上目录监听 |
-| `hook` | 无 | 扫一遍并写入缓存：`{ url, page, current, progress, unfinished, unfinishedCount, chapters, ts }` |
-| `tick` | 无 | 读缓存，没有则 `null` |
-| `refresh` | 无 | 立刻重扫；未安装时 `{ needInstall: true }` |
-
-## 播放监控
-
-| 键 | 入参 | 成功时 |
-|---|---|---|
-| `videoHook` | 无 | 绑监听并返回当前视频快照，或 `{ hooked: true, hasVideo: false }` |
-| `videoTick` | 无 | 视频快照或 `null` |
-| `jobTick` | 无 | `{ jobs, video, ts }` |
+宿主侧接口：`studyControlApi()`（`collectSteps` / `collectAllSteps` / `locate` / `__zeScanOne`）。
+调试快照：开发模式写入 `logs/agent-chat/cx-study-live.md`。

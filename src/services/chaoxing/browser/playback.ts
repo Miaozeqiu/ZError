@@ -42,7 +42,7 @@ export const liveStudyPlayback = (browserId?: string): LiveStudyPlayback => {
   const chapters = chapterStateFor(id)
   const video = chapters?.video
   const job = (chapters?.jobs || []).find((item) => (
-    item.kind === 'video' && Number(item.duration) > 1 && (item.active || Number(item.current) > 0)
+    item.kind === 'video' && (item.active || Number(item.current) > 0 || Number(item.duration) > 1)
   ))
   const current = Number(video?.current ?? job?.current) || 0
   const duration = Number(video?.duration ?? job?.duration) || 0
@@ -64,14 +64,20 @@ export const liveStudyPlayback = (browserId?: string): LiveStudyPlayback => {
 
 export const ensureStudyWatch = (browserId: string, sessionId: string, seed?: LiveStudyPlayback) => {
   const live = seed || liveStudyPlayback(browserId)
-  if (!live.playing && !live.watching) return live
+  if (!live.playing) return { ...live, watching: false }
   if (videoWatchFor(browserId)) return { ...live, watching: true }
+  const jobs = chapterStateFor(browserId)?.jobs || []
+  const active = jobs.find((item) => item.kind === 'video' && item.active)
+    || jobs.find((item) => item.kind === 'video' && Number(item.current) > 0)
   startChaoxingWatch(browserId, sessionId, {
     current: live.current,
     duration: live.duration,
-    paused: !live.playing,
+    paused: false,
     ended: live.ended,
     title: live.title,
+    mid: String(active?.mid || ''),
+    videoIndex: active ? jobs.filter((item) => item.kind === 'video').indexOf(active) + 1 : 0,
+    videoCount: jobs.filter((item) => item.kind === 'video').length,
   })
   return { ...live, watching: true }
 }
@@ -83,7 +89,7 @@ export const playbackContextLine = (live: LiveStudyPlayback) => {
     ? ` ${formatVideoClock(live.current)} / ${formatVideoClock(live.duration)}`
     : ''
   if (live.playing) {
-    return `【播放】「${title}」确认在播${clock}。已交给监控。不要 reload，不要 get_page 空转，不要再 play。用 browser_finish(watching)。`
+    return `【播放】「${title}」确认在播${clock}。已交给监控。不要 reload，不要 get_page 空转，不要再 play。接着 browser_wait 等面板事件。`
   }
   if (live.watching && live.paused) {
     return `【播放】监控中「${title}」已暂停${clock}。立刻 browser_study_play。`

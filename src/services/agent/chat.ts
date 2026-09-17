@@ -8,6 +8,7 @@ import { collectGraphNodes, extractMermaidSource } from '../../utils/study/study
 import {
   hostnameOf,
   listAppBrowsers,
+  peekAppBrowserUrl,
 } from '../browser/appBrowser'
 import { clipAgentDebug, logAgentDebug, writeBrowserTranscript } from './debugLog'
 import { emitStudyGraphStream, finishStudyGraphStream, studyGraphStream } from '../study/graphStream'
@@ -15,7 +16,9 @@ import { runStudyProgressEvaluation } from '../study/progressAgent'
 import { finalizeStudySessionSummary } from '../study/timelineSummary'
 import { describeActivity } from './activity'
 import { executeChatTool } from './executeChatTool'
-import { GRAPH_QUALITY, KEEP_GRAPH_HINT, graphSubjectHint, lastStudyFocus } from './studyHelpers'
+import { formatBrowserLiveContext } from './browserLoop'
+import { rememberBrowserTaskIntent } from './browserTask'
+import { GRAPH_QUALITY, KEEP_GRAPH_HINT, graphSubjectHint } from './studyHelpers'
 import type {
   AgentChatAttachment,
   AgentChatMessage,
@@ -49,25 +52,27 @@ import { parseToolArgs } from './toolArgs'
 import {
   TOOL_ARGS_KEEP,
   TOOL_RESULT_KEEP,
-  assistantTurnToHistory,
   buildModelHistory,
   clipToolText,
   clipTranscript,
   messageHistoryText,
 } from './modelHistory'
 import { buildBrowserSystemPrompt, buildLearningSystemPrompt } from './prompts'
-import {
-  getEnabledSkillCatalog,
-  getSkillPromptBlocksByIds,
-  matchSkillsForText,
-} from './agentSkills'
-import { BROWSER_TOOLS, CHAT_TOOLS } from './tools'
+import { getEnabledSkillCatalog } from './agentSkills'
+import { getProfileForKind } from './agentProfiles'
+import { cancelApprovalsForSession } from './agentApproval'
+import { wakeAgentWait } from './agentWait'
+import { resolveSitePackForUrl } from './sitePack'
+import { assembleBrowserTools, CHAT_TOOLS } from './tools'
 import {
   recoverSiteAccountsFromTexts,
   rememberAccountsFromUserText,
   siteAccountsPrompt,
 } from './siteAccounts'
-import { siteGraphAgentContext } from '../browser/siteGraph'
+import { siteGraphAgentSnap } from '../browser/siteGraph'
+import { formatLessonsNudge } from './agentLessons'
+import { hasUsableVisionModel } from '../model/config'
+import { packAgentPanel } from '../chaoxing/browser/panelStudy'
 import { ensureStudyWatch, liveStudyPlayback } from '../chaoxing/browser/playback'
 import {
   stopChaoxingWatch,
@@ -168,7 +173,7 @@ const clipPreview = (preview?: ImportStepPreview[]) => {
 const stripImageData = (items?: AgentChatAttachment[]) =>
   items?.map((item) => (item.imageUrl ? { ...item, imageUrl: undefined } : item))
 
-const persist = () => {
+const persist = (writeTranscript = true) => {
   const toPayload = (stripImages: boolean) =>
     sessions.value.slice(0, 30).map((session) => ({
       ...session,
@@ -194,6 +199,7 @@ const persist = () => {
       // ignore quota
     }
   }
+  if (!writeTranscript) return
   const latestBrowser = sessions.value
     .filter((session) => session.browserId)
     .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))[0]
@@ -268,16 +274,35 @@ const browserStatePrefix = async (sessionId: string) => {
   const browserId = String(sessions.value.find((item) => item.id === sessionId)?.browserId || '').trim()
   if (!browserId) return ''
   const item = listAppBrowsers().find((browser) => browser.id === browserId)
-  const name = item?.name || item?.title || hostnameOf(item?.url || '')
-  const url = item?.url || ''
+  const url = peekAppBrowserUrl(browserId) || item?.url || ''
+  const name = item?.name || item?.title || hostnameOf(url)
   const accountLine = siteAccountsPrompt()
-  const graphLine = siteGraphAgentContext(url)
+  const snap = url ? siteGraphAgentSnap(url) : null
+  const pack = resolveSitePackForUrl(url)
+  const siteBits = [
+    pack?.siteId || snap?.site,
+    snap?.page ? `节点 ${snap.page}` : '',
+    snap?.tab ? `页签 ${snap.tab}` : '',
+  ].filter(Boolean)
+  const siteLine = siteBits.length ? `【站点】${siteBits.join(' · ')}` : ''
+  const todos = sessions.value.find((item) => item.id === sessionId)?.todos || []
+  const panel = pack?.panel.study || pack?.panel.homework
+    ? packAgentPanel(browserId)
+    : null
+  const loop = formatBrowserLiveContext({
+    url,
+    sessionId,
+    todos,
+    panel,
+  })
   return [
-    `【网页状态】当前对话挂着浏览器「${name}」（browser_id=${browserId}）${url ? `，网址 ${url}` : ''}。`,
+    `同一轮对话跟着整个浏览器「${name}」（browser_id=${browserId}）。弹出新标签会自动切过来。`,
+    loop,
     accountLine,
-    graphLine,
-    '要看页或操作请调用工具，不要只口头说已经做了。',
-  ].filter(Boolean).join(' ') + '\n\n'
+    siteLine,
+    hasUsableVisionModel() ? '' : '【模型】当前是文本模型，不能看图。跳过图像/公式题和验证码识图。',
+    formatLessonsNudge(url),
+  ].filter(Boolean).join('\n') + '\n\n'
 }
 
 const studyStatePrefix = async (sessionId: string) => {
@@ -318,57 +343,79 @@ const toMultimodalUserContent = (text: string, items?: AgentChatAttachment[]) =>
   ]
 }
 
+let persistTimer = 0
+const persistSoon = (immediate = false) => {
+  const run = (writeTranscript: boolean) => {
+    persistTimer = 0
+    persist(writeTranscript)
+  }
+  if (immediate) {
+    if (persistTimer) {
+      window.clearTimeout(persistTimer)
+      persistTimer = 0
+    }
+    const idle = (window as Window & {
+      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number
+    }).requestIdleCallback
+    if (idle) {
+      idle(() => run(true), { timeout: 800 })
+      return
+    }
+    persistTimer = window.setTimeout(() => run(true), 0)
+    return
+  }
+  if (sessions.value.some((session) => sessionIsStreaming(session))) return
+  if (persistTimer) return
+  persistTimer = window.setTimeout(() => run(false), 1500)
+}
+
+const liveSession = (sessionId: string) =>
+  sessions.value.find((session) => session.id === sessionId)
+
 const patchSession = (sessionId: string, mutate: (session: AgentChatSession) => AgentChatSession) => {
-  sessions.value = sessions.value.map((session) => (session.id === sessionId ? mutate(session) : session))
-  persist()
+  const current = liveSession(sessionId)
+  if (!current) return
+  const next = mutate(current)
+  if (next !== current) Object.assign(current, next)
+  persistSoon()
 }
 
 const patchMessage = (sessionId: string, messageId: string, patch: Partial<AgentChatMessage>) => {
-  patchSession(sessionId, (session) => ({
-    ...session,
-    updatedAt: Date.now(),
-    messages: session.messages.map((message) =>
-      message.id === messageId ? { ...message, ...patch } : message
-    ),
-  }))
+  const session = liveSession(sessionId)
+  const message = session?.messages.find((item) => item.id === messageId)
+  if (!session || !message) return
+  Object.assign(message, patch)
+  session.updatedAt = Date.now()
+  persistSoon()
 }
 
 const addStep = (sessionId: string, messageId: string, step: ImportTaskStep) => {
-  const contentLen = sessions.value
-    .find((item) => item.id === sessionId)
-    ?.messages.find((message) => message.id === messageId)
-    ?.content.length ?? 0
-  const anchored: ImportTaskStep = {
-    ...step,
-    atContentLength: typeof step.atContentLength === 'number' ? step.atContentLength : contentLen,
+  const session = liveSession(sessionId)
+  const message = session?.messages.find((item) => item.id === messageId)
+  if (!session || !message) return
+  if (message.steps.some((item) => item.id === step.id)) return
+  if (
+    (step.name === 'get_file_info' || step.name === 'list_folders')
+    && message.steps.some((item) => item.name === step.name)
+  ) {
+    return
   }
-  patchSession(sessionId, (session) => ({
-    ...session,
-    messages: session.messages.map((message) => {
-      if (message.id !== messageId) return message
-      if (message.steps.some((item) => item.id === anchored.id)) return message
-      if (
-        (anchored.name === 'get_file_info' || anchored.name === 'list_folders')
-        && message.steps.some((item) => item.name === anchored.name)
-      ) {
-        return message
-      }
-      return { ...message, steps: [...message.steps, anchored] }
-    }),
-  }))
+  message.steps.push({
+    ...step,
+    atContentLength: typeof step.atContentLength === 'number' ? step.atContentLength : message.content.length,
+  })
+  session.updatedAt = Date.now()
+  persistSoon()
 }
 
 const patchStep = (sessionId: string, messageId: string, stepId: string, patch: Partial<ImportTaskStep>) => {
-  patchSession(sessionId, (session) => ({
-    ...session,
-    messages: session.messages.map((message) => {
-      if (message.id !== messageId) return message
-      return {
-        ...message,
-        steps: message.steps.map((step) => (step.id === stepId ? { ...step, ...patch } : step)),
-      }
-    }),
-  }))
+  const session = liveSession(sessionId)
+  const message = session?.messages.find((item) => item.id === messageId)
+  const step = message?.steps.find((item) => item.id === stepId)
+  if (!session || !step) return
+  Object.assign(step, patch)
+  session.updatedAt = Date.now()
+  persistSoon()
 }
 
 const dropStep = (sessionId: string, messageId: string, stepId: string) => {
@@ -635,11 +682,35 @@ ${GRAPH_QUALITY}`,
   )
 }
 
+/** 整窗共用一轮浏览器对话：切标签/弹新页只改挂着的 browserId，不清空消息。 */
 export const ensureBrowserChat = (input: { browserId: string; title?: string }) => {
   const browserId = String(input.browserId || '').trim()
   if (!browserId) return null
-  const existing = sessions.value.find((item) => item.browserId === browserId)
-  if (existing) return existing
+  const all = sessions.value.filter((item) => item.browserId)
+  const keep = all.slice().sort((left, right) => {
+    const byMessages = (right.messages?.length || 0) - (left.messages?.length || 0)
+    if (byMessages) return byMessages
+    return (right.updatedAt || 0) - (left.updatedAt || 0)
+  })[0]
+  if (keep) {
+    const extras = all.filter((item) => item.id !== keep.id)
+    if (extras.length) {
+      for (const extra of extras) {
+        if (sessionIsStreaming(extra)) stopChat(extra.id)
+      }
+      sessions.value = sessions.value.filter((item) => !extras.some((extra) => extra.id === item.id))
+    }
+    if (keep.browserId !== browserId || (input.title && keep.title !== input.title)) {
+      patchSession(keep.id, (current) => ({
+        ...current,
+        browserId,
+        title: input.title || current.title,
+        updatedAt: Date.now(),
+      }))
+    }
+    persist()
+    return sessions.value.find((item) => item.id === keep.id) || keep
+  }
   return createChat({
     title: input.title || '网页助手',
     browserId,
@@ -703,8 +774,11 @@ export const stopChat = (id?: string) => {
   const session = sessions.value.find((item) => item.id === sessionId)
   const message = session?.messages.find((item) => item.status === 'streaming')
   if (session && message) finalizeStopped(session.id, message.id)
+  persistSoon(true)
   if (abort && !abort.signal.aborted) abort.abort()
   chatAborts.delete(sessionId)
+  wakeAgentWait(sessionId, { reason: 'timeout', hint: '已终止' })
+  cancelApprovalsForSession(sessionId)
   dropWatchQueue(sessionId)
   if (session?.browserId) stopChaoxingWatch(session.browserId)
 }
@@ -740,6 +814,7 @@ export const clearBrowserChat = (browserId: string) => {
   patchSession(session.id, (current) => ({
     ...current,
     messages: [],
+    todos: [],
     contextSummary: undefined,
     updatedAt: Date.now(),
   }))
@@ -1120,6 +1195,7 @@ export const sendChatMessage = async (
     logAgentDebug(sessionId, { kind: session.browserId ? 'browser' : 'study', ...entry })
   if (options?.kind !== 'watch') await attachStudyFromUserText(sessionId, content)
   if (session.browserId) {
+    if (options?.kind !== 'watch') rememberBrowserTaskIntent(sessionId, content)
     rememberAccountsFromUserText(content)
     recoverSiteAccountsFromTexts(
       (session.messages || [])
@@ -1132,11 +1208,13 @@ export const sendChatMessage = async (
   chatAborts.set(sessionId, abort)
   const attachments = files?.length ? files : undefined
 
+  const modelFacing = String(options?.modelText || '').trim()
   const userMessage: AgentChatMessage = {
     id: `user-${Date.now()}`,
     role: 'user',
     content,
     kind: options?.kind,
+    modelContent: modelFacing && modelFacing !== content ? modelFacing : undefined,
     attachments,
     steps: [],
     status: 'done',
@@ -1157,36 +1235,46 @@ export const sendChatMessage = async (
     attachments: attachments?.map((item) => item.fileName || item.folderPath || item.filePath),
   })
 
-  patchSession(sessionId, (current) => ({
-    ...current,
-    title: current.title !== '新对话' || current.messages.length
-      ? current.title
-      : (attachments?.find(isFileAttachment)?.fileName || attachments?.[0]?.folderPath || attachments?.[0]?.fileName || content.slice(0, 24)),
-    updatedAt: Date.now(),
-    attachments: attachments?.length
-      ? [
-          ...attachments.filter((item) => !isImageAttachment(item)),
-          ...(current.attachments || []).filter((item) => !attachments.some((file) => file.filePath === item.filePath)),
-        ]
-      : current.attachments,
-    messages: [...current.messages, userMessage, assistantMessage],
-  }))
+  const live = liveSession(sessionId)
+  if (live) {
+    if (live.title === '新对话' && !live.messages.length) {
+      live.title = attachments?.find(isFileAttachment)?.fileName
+        || attachments?.[0]?.folderPath
+        || attachments?.[0]?.fileName
+        || content.slice(0, 24)
+    }
+    live.updatedAt = Date.now()
+    if (attachments?.length) {
+      live.attachments = [
+        ...attachments.filter((item) => !isImageAttachment(item)),
+        ...(live.attachments || []).filter((item) => !attachments.some((file) => file.filePath === item.filePath)),
+      ]
+    }
+    live.messages.push(userMessage, assistantMessage)
+    persistSoon()
+  }
+  await new Promise<void>((resolve) => { window.setTimeout(resolve, 0) })
 
   const compacted = splitCompactedHistory(sessions.value.find((item) => item.id === sessionId))
   const history = buildModelHistory(
     compacted.kept.filter((message) => message.id !== assistantId && message.id !== userMessage.id),
-    (message) => toMultimodalUserContent(message.content, message.attachments),
+    (message) => toMultimodalUserContent(message.modelContent || message.content, message.attachments),
   )
   const browserId = String(sessions.value.find((item) => item.id === sessionId)?.browserId || '').trim()
   const isBrowserChat = Boolean(browserId)
-  const skillMatchText = String(options?.modelText || '').trim() || content
-  const skillCatalog = getEnabledSkillCatalog()
-  const matchedSkillIds = matchSkillsForText(skillMatchText)
-  const preloadedSkillBlocks = await getSkillPromptBlocksByIds(matchedSkillIds)
+  const profile = getProfileForKind(isBrowserChat ? 'browser' : 'learning')
+  const skillCatalog = getEnabledSkillCatalog(
+    isBrowserChat ? 'browser' : 'learning',
+    profile.skillIds.length ? profile.skillIds : undefined,
+  )
   const baseSystemPrompt = isBrowserChat
-    ? buildBrowserSystemPrompt({ catalog: skillCatalog, preloadedBlocks: preloadedSkillBlocks })
-    : buildLearningSystemPrompt({ catalog: skillCatalog, preloadedBlocks: preloadedSkillBlocks })
-  const turnSystemPrompt = `${baseSystemPrompt}${contextSummaryPrompt(compacted.summary)}`
+    ? buildBrowserSystemPrompt({ catalog: skillCatalog })
+    : buildLearningSystemPrompt({ catalog: skillCatalog })
+  const overlay = String(profile.systemOverlay || '').trim()
+  const envBlock = (isBrowserChat
+    ? await browserStatePrefix(sessionId)
+    : await studyStatePrefix(sessionId)
+  ).trim()
   const hasFile = Boolean(sessionAttachment(sessionId))
   const promptFolders = (() => {
     const seen = new Set<number>()
@@ -1198,14 +1286,14 @@ export const sendChatMessage = async (
     }
     return folders
   })()
-  const studyPrefix = isBrowserChat ? await browserStatePrefix(sessionId) : await studyStatePrefix(sessionId)
-  const isQuizReviewTurn = /^第\s*\d+/.test(content)
-  const wantsNewQuiz = !isQuizReviewTurn && /出题|练习|巩固|继续下一|下一[章节]|^继续$|^接着|^再来|^再出/.test(content.trim())
-  const quizNudge = wantsNewQuiz
-    ? '\n\n【出题】用户这句话是要继续学并出可点选练习。必须调用 present_quiz，自己出 3–5 道选择题（带题干、选项、答案、解析和 node_name）。调用成功前禁止说已出示、请看右侧或假装题已经出来。'
-    : ''
+  const turnSystemPrompt = [
+    baseSystemPrompt,
+    overlay ? `【附加规则】\n${overlay}` : '',
+    contextSummaryPrompt(compacted.summary),
+    envBlock,
+  ].filter(Boolean).join('\n\n')
   const promptBody = String(options?.modelText || '').trim() || content
-  const modelPrompt = `${studyPrefix}${modelUserContent(promptBody, promptFolders)}${quizNudge}`
+  const modelPrompt = modelUserContent(promptBody, promptFolders)
   const images = (attachments || []).filter((item) => isImageAttachment(item) && item.imageUrl)
   const userContent = images.length
     ? [
@@ -1222,23 +1310,12 @@ export const sendChatMessage = async (
     String(content).match(/subject_id\s*=\s*(\d+)/)?.[1]
     || sessions.value.find((item) => item.id === sessionId)?.studySubjectId,
   )
+  let flushPendingStream = () => {}
 
   try {
     const liveMessage = () =>
       sessions.value.find((item) => item.id === sessionId)
         ?.messages.find((message) => message.id === assistantId)
-    const historyWithCurrent = (spoken: string) => [
-      ...history,
-      { role: 'user', content: modelPrompt },
-      ...assistantTurnToHistory({
-        id: assistantId,
-        role: 'assistant',
-        content: spoken,
-        steps: liveMessage()?.steps || [],
-        status: 'streaming',
-      }),
-    ]
-
     const visibleText = (text?: string) => Boolean(String(text || '').replace(/\u200B/g, '').trim())
     const stripMarks = (text: string) => String(text || '').replace(/\u200B/g, '')
     let awaitingTool = false
@@ -1268,24 +1345,45 @@ export const sendChatMessage = async (
       keepSpoken()
       roundBase = spokenText || liveContent()
     }
+    let streamPaint = 0
+    let streamHold: Partial<AgentChatMessage> | null = null
+    const flushStreamHold = () => {
+      if (streamPaint) {
+        window.cancelAnimationFrame(streamPaint)
+        streamPaint = 0
+      }
+      if (!streamHold) return
+      const hold = streamHold
+      streamHold = null
+      patchMessage(sessionId, assistantId, hold)
+    }
+    flushPendingStream = flushStreamHold
+    const streamPatch = (patch: Partial<AgentChatMessage>) => {
+      streamHold = { ...streamHold, ...patch }
+      if (streamPaint) return
+      streamPaint = window.requestAnimationFrame(() => {
+        streamPaint = 0
+        flushStreamHold()
+      })
+    }
     const streamText = (text: string) => {
       const next = joinRound(text)
       if (!stripMarks(text).trim() && visibleText(liveContent())) {
-        patchMessage(sessionId, assistantId, {
+        streamPatch({
           waiting: awaitingTool,
           status: 'streaming',
         })
         return
       }
       if (next === spokenText && next === liveContent()) {
-        patchMessage(sessionId, assistantId, {
+        streamPatch({
           waiting: awaitingTool || !visibleText(next),
           status: 'streaming',
         })
         return
       }
       if (next.trim()) spokenText = next
-      patchMessage(sessionId, assistantId, {
+      streamPatch({
         content: next,
         waiting: awaitingTool || !visibleText(next),
         status: 'streaming',
@@ -1301,6 +1399,7 @@ export const sendChatMessage = async (
     }
     const waitForFirstToken = (clearContent = false) => {
       if (!clearContent) keepSpoken()
+      flushStreamHold()
       patchMessage(sessionId, assistantId, {
         ...(clearContent ? { content: '' } : {}),
         waiting: true,
@@ -1316,12 +1415,39 @@ export const sendChatMessage = async (
       timeoutMs: isBrowserChat || hasFile || images.length ? 15 * 60 * 1000 : 5 * 60 * 1000,
       userContent,
       signal: abort.signal,
-      tools: isBrowserChat ? BROWSER_TOOLS : CHAT_TOOLS,
+      tools: isBrowserChat
+        ? assembleBrowserTools({
+          url: listAppBrowsers().find((item) => item.id === browserId)?.url || '',
+          domain: profile.toolPolicy.domain,
+        })
+        : CHAT_TOOLS,
+      liveTools: isBrowserChat
+        ? () => assembleBrowserTools({
+          url: listAppBrowsers().find((item) => item.id === browserId)?.url || '',
+          domain: profile.toolPolicy.domain,
+        })
+        : undefined,
       systemPrompt: turnSystemPrompt,
       useAgentModel: true,
       history,
       maxRounds: isBrowserChat || hasFile || images.length ? 80 : 32,
+      liveContext: isBrowserChat
+        ? async () => {
+          const current = sessions.value.find((item) => item.id === sessionId)
+          const id = String(current?.browserId || browserId || '').trim()
+          const url = id
+            ? (peekAppBrowserUrl(id) || listAppBrowsers().find((item) => item.id === id)?.url || '')
+            : ''
+          return formatBrowserLiveContext({
+            url,
+            sessionId,
+            todos: current?.todos || [],
+            panel: id ? packAgentPanel(id) : null,
+          })
+        }
+        : undefined,
       onTurnTranscript: (items) => {
+        flushStreamHold()
         const prev = liveMessage()?.transcript || []
         patchMessage(sessionId, assistantId, {
           transcript: clipTranscript([...prev, ...items]),
@@ -1389,6 +1515,7 @@ export const sendChatMessage = async (
             nodes: event.name === 'set_knowledge_graph' ? collectGraphNodes(args, event.arguments) : undefined,
           })
           const activity = describeActivity(event.name, args, 'running')
+          flushStreamHold()
           addStep(sessionId, assistantId, {
             id: event.id,
             kind: 'tool',
@@ -1440,6 +1567,7 @@ export const sendChatMessage = async (
             ? String(extra?.title || resolveQuizTitle(extra) || '').trim()
             : ''
           if (quizTitle) saveQuizTitle(event.id, quizTitle)
+          flushStreamHold()
           patchStep(sessionId, assistantId, event.id, {
             status,
             label: activity.label,
@@ -1463,96 +1591,6 @@ export const sendChatMessage = async (
       const playbackNow = liveStudyPlayback(browserId)
       if (playbackNow.playing) ensureStudyWatch(browserId, sessionId, playbackNow)
     }
-    const hasPresentedQuiz = () =>
-      (liveMessage()?.steps || []).some((step) => step.name === 'present_quiz' && step.status === 'done')
-    const quizTopicOf = (text: string) => {
-      const names = [...String(text || '').matchAll(/「([^」]+)」/g)]
-        .map((item) => String(item[1] || '').replace(/\s*(入门)?练习$/, '').trim())
-        .filter(Boolean)
-      return names[names.length - 1] || ''
-    }
-    const claimedQuiz = () => /出示|练习页|点选|作答会|入门练习|\d+\s*道题/.test(liveContent())
-    const needsForcedQuiz = () => {
-      if (hasPresentedQuiz() || isQuizReviewTurn) return false
-      return claimedQuiz() || wantsNewQuiz
-    }
-    const parseDraftedQuestions = (text: string) => {
-      const raw = String(text || '').trim()
-      const start = raw.indexOf('[')
-      const end = raw.lastIndexOf(']')
-      if (start < 0 || end <= start) return []
-      try {
-        const items = JSON.parse(raw.slice(start, end + 1))
-        if (!Array.isArray(items)) return []
-        return items
-          .filter((item) => item && item.question && item.answer)
-          .slice(0, 5)
-      } catch {
-        return []
-      }
-    }
-    const forcePresentQuiz = async (topic: string, questions?: unknown[]) => {
-      const id = `auto-quiz-${Date.now()}`
-      const title = topic ? `${topic} 练习` : '练习'
-      const raw = JSON.stringify({
-        title,
-        node_name: topic || undefined,
-        ...(questions?.length ? { questions } : { count: 5 }),
-      })
-      runOptions.onEvent?.({ type: 'tool_start', id, name: 'present_quiz', arguments: raw })
-      let result = ''
-      let error: string | undefined
-      try {
-        result = await runOptions.executeTool({ id, name: 'present_quiz', arguments: raw })
-      } catch (caught) {
-        error = caught instanceof Error ? caught.message : String(caught)
-        result = `Error: ${error}`
-      }
-      runOptions.onEvent?.({ type: 'tool_end', id, name: 'present_quiz', result, error })
-    }
-    if (!isBrowserChat && !abort.signal.aborted && liveMessage()?.status === 'streaming' && needsForcedQuiz()) {
-      keepSpoken()
-      const topic = quizTopicOf(spokenText || liveContent())
-        || lastStudyFocus.get(Number(sessions.value.find((item) => item.id === sessionId)?.studySubjectId))?.nodeName
-        || ''
-      debug({ type: 'quiz_followup', topic, reason: claimedQuiz() ? 'claimed without present_quiz' : 'asked without present_quiz' })
-      const quizTools = CHAT_TOOLS.filter((item) =>
-        ['present_quiz', 'focus_knowledge_graph', 'list_knowledge_questions'].includes(item.function.name),
-      )
-      finalText = await runTextModel(
-        topic
-          ? `右侧练习页现在是空的。立刻调用 present_quiz，自己出 3–5 道「${topic}」的选择题，title 用「${topic} 练习」，每题带 question、options、answer、explanation、node_name。不要只口头说已出示，不要再讲一遍。`
-          : '右侧练习页现在是空的。立刻调用 present_quiz，自己出 3–5 道选择题，每题带 question、options、answer、explanation。不要只口头说已出示。',
-        onDelta,
-        {
-          ...runOptions,
-          tools: quizTools,
-          userContent: undefined,
-          history: historyWithCurrent(spokenText || liveContent()),
-          maxRounds: 4,
-        },
-      )
-      if (!hasPresentedQuiz() && !abort.signal.aborted) {
-        const drafted = await runTextModel(
-          topic
-            ? `只输出 JSON 数组，不要其他文字。为「${topic}」出 5 道单选题，每项含 question、options（A. …\\nB. …）、answer（如 A）、explanation、question_type（单选）、node_name。`
-            : '只输出 JSON 数组，不要其他文字。出 5 道当前进度相关的单选题，每项含 question、options、answer、explanation、question_type（单选）。',
-          () => undefined,
-          {
-            timeoutMs: runOptions.timeoutMs,
-            signal: abort.signal,
-            tools: [],
-            systemPrompt: '你只输出 JSON 数组，不要解释。',
-            useAgentModel: true,
-            history: historyWithCurrent(spokenText || liveContent()),
-            maxRounds: 1,
-          },
-        )
-        const questions = parseDraftedQuestions(drafted)
-        debug({ type: 'quiz_fallback', topic, count: questions.length })
-        if (questions.length) await forcePresentQuiz(topic, questions)
-      }
-    }
 
     if (abort.signal.aborted) {
       const current = sessions.value.find((item) => item.id === sessionId)
@@ -1564,7 +1602,7 @@ export const sendChatMessage = async (
       ?.messages.find((message) => message.id === assistantId)?.content || ''
     const assistantContent = visibleText(liveNow)
       ? liveNow
-      : joinSpoken(finalText || '')
+      : joinRound(finalText || '')
     const assistantSteps = sessions.value.find((item) => item.id === sessionId)
       ?.messages.find((message) => message.id === assistantId)?.steps || []
     debug({
@@ -1619,7 +1657,9 @@ export const sendChatMessage = async (
       if (liveId == null || id == null || liveId === id) finishStudyGraphStream(id)
     }
     if (chatAborts.get(sessionId) === abort) chatAborts.delete(sessionId)
+    flushPendingStream()
     flushWatchAfterTurn(sessionId)
+    persistSoon(true)
   }
 }
 

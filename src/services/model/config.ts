@@ -133,6 +133,15 @@ export const modelHasVision = (model?: Pick<AIModel, 'hasVision' | 'category'> |
   return model.category === 'vision'
 }
 
+/** 作业读图 / 截图给模型看：选了视觉模型，或当前 Agent 模型本身能看图。 */
+export const hasUsableVisionModel = (): boolean => {
+  const vision = modelConfigManager.getSelectedVisionModel()
+  if (vision && modelHasVision(vision)) return true
+  const agent = modelConfigManager.getSelectedAgentModel()
+  if (agent && modelHasVision(agent)) return true
+  return false
+}
+
 const resolveRemoteHasVision = (raw: Record<string, unknown> | AIModel): boolean => {
   const record = raw as Record<string, unknown>
   if (record.hasVision === true || record.has_vision === true || record.vision === true) return true

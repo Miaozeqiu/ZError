@@ -1,8 +1,8 @@
 import { invoke } from '@tauri-apps/api/core'
-import { SAME_ORIGIN_FRAMES, askFrames, evalBrowserView, waitMs } from '../eval'
+import { evalBrowserView, waitMs } from '../eval'
 import { probeOnBrowser } from './act'
 import { resolveRefLocator } from './refs'
-import type { BrowserLocator } from './types'
+import type { ActResult, BrowserLocator } from './types'
 
 const WAIT_POLL_MS = 150
 const WAIT_TIMEOUT_MS = 8000
@@ -94,32 +94,16 @@ export const waitForBrowser = async (
     return { ok: false, error: '缺少 url / text / selector / ref' }
   }
   let lastUrl = ''
-  let asked = false
   while (Date.now() - started < timeout) {
     lastUrl = await pageUrl(id)
     if (wantUrl && urlMatches(lastUrl, wantUrl)) {
       return { ok: true, url: lastUrl }
     }
     if (wantText) {
-      if (!asked) {
-        await askFrames(id, 'snap').catch(() => false)
-        asked = true
-      }
       const found = await evalBrowserView(id, `(function(){
-        ${SAME_ORIGIN_FRAMES}
         var want = ${JSON.stringify(wantText)};
-        var frames = __sameFrames(window, 0);
-        for (var i = 0; i < frames.length; i++) {
-          try {
-            var t = ((frames[i].document.body && frames[i].document.body.innerText) || '');
-            if (t.indexOf(want) >= 0) return { ok: true, url: location.href || '' };
-          } catch (e) {}
-        }
-        var extras = window.__ZE_FRAME_SNAPS__ || [];
-        for (var e = 0; e < extras.length; e++) {
-          if (String((extras[e] && extras[e].text) || '').indexOf(want) >= 0) return { ok: true, url: location.href || '' };
-        }
-        return { ok: false, url: location.href || '' };
+        var t = ((document.body && document.body.innerText) || '');
+        return { ok: t.indexOf(want) >= 0, found: t.indexOf(want) >= 0, url: location.href || '' };
       })()`).catch(() => null) as { ok?: boolean; url?: string } | null
       if (found?.ok) return { ok: true, url: found.url || lastUrl }
       const probed = await probeOnBrowser(id, { by: 'text', value: wantText })
@@ -136,5 +120,29 @@ export const waitForBrowser = async (
     reason: 'timeout',
     error: '等待超时',
     url: lastUrl || await pageUrl(id),
+  }
+}
+
+export const observeAfterClick = async (id: string, result: ActResult, fromUrl: string): Promise<ActResult> => {
+  if (!result.ok) {
+    return {
+      ...result,
+      ok: false,
+      error: result.error || '点击失败',
+    }
+  }
+  const from = String(fromUrl || '').split('#')[0]
+  const timeout = /passport2|\/login/i.test(from) ? 3500 : 900
+  const nav = await waitForNavigation(id, { from, timeout })
+  const url = String(nav.url || from)
+  const navigated = Boolean(url && from && url.split('#')[0] !== from)
+  return {
+    ok: true,
+    text: result.text,
+    url,
+    navigated,
+    hint: navigated
+      ? `已跳到 ${url}`
+      : '点击已送达，网址没变。不是跳转。',
   }
 }

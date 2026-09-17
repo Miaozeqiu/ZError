@@ -9,6 +9,23 @@
 
   <body>
     <div id="app"></div>
+    <script type="module">
+      if (import.meta.env.DEV) {
+        const boot = (text) => {
+          fetch('http://localhost:1420/__agent-debug-log', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ file: 'bridge-boot', replace: true, ext: 'txt', text }),
+          }).catch(() => {})
+        }
+        boot(`index ${new Date().toISOString()} ${location.href} tauri=${typeof window.__TAURI_INTERNALS__ !== 'undefined'}\n`)
+        if (window.__TAURI_INTERNALS__) {
+          import('/src/services/agent/cursorBridge.ts')
+            .then((mod) => mod.startCursorBridge())
+            .catch((error) => boot(`import-fail ${error}\n`))
+        }
+      }
+    </script>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

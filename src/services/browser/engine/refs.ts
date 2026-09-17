@@ -5,6 +5,7 @@ export type PageRef = {
   id: string
   role: string
   name: string
+  value?: string
   checked?: boolean
   locator: BrowserLocator
 }
@@ -71,5 +72,6 @@ export const publicRefs = (refs: PageRef[]) => refs.map((ref) => ({
   id: ref.id,
   role: ref.role,
   name: ref.name,
+  ...(ref.value ? { value: ref.value } : {}),
   ...(ref.role === 'checkbox' || ref.role === 'radio' ? { checked: Boolean(ref.checked) } : {}),
 }))

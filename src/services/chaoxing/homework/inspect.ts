@@ -1,24 +1,21 @@
-import { CHAOXING_CLICK_HOMEWORK_TAB } from '../../browser/skills/chaoxingHomework'
 import { writeDebugDump } from '../../agent/debugLog'
-import { publishHomeworkCard } from '../../browser/abstractions'
-import { askFrames, asObject, evalBrowserView, waitMs } from '../../browser/eval'
+import { lastHomeworkCard, publishHomeworkCard } from '../../browser/abstractions'
+import { asObject, clickFrameText, evalBrowserView, waitMs } from '../../browser/eval'
+import { read as protocolRead } from '../../browser/protocol'
 import type { ChaoxingHomeworkInfo } from './types'
 import {
-  applyHwImageMap,
-  cardFromSnaps,
+  cardFromHomeworkHtml,
+  enrichQuestionsFromLiveText,
   homeworkReady,
   parseHomeworkText,
   questionImageCount,
   rebalanceHomeworkQuestion,
   toHomeworkCard,
 } from './parse'
+import { clickHomeworkBox } from './act'
 import {
+  LOCATE_HW_TAB,
   READ_HOMEWORK_LIVE,
-  READ_HOMEWORK_SNAPS,
-  READ_HW_IMG_CHUNK,
-  READ_HW_IMG_META,
-  STASH_HOMEWORK,
-  START_HW_IMG,
 } from './scripts'
 
 const clickBrowserText = async (id: string, text: string) => {
@@ -73,79 +70,6 @@ const formatHomeworkLive = (
   return lines.join('\n')
 }
 
-const rowsFromStash = (stash: Record<string, unknown>) => {
-  if (Array.isArray(stash.questions)) {
-    return stash.questions as NonNullable<ChaoxingHomeworkInfo['questions']>
-  }
-  return []
-}
-
-const readStashedHomework = async (
-  id: string,
-  onPartial?: (questions: NonNullable<ChaoxingHomeworkInfo['questions']>) => void,
-  options?: { harvest?: boolean; hydrate?: boolean },
-) => {
-  const stash = asObject(await evalBrowserView(id, STASH_HOMEWORK()).catch(() => ({ error: 'stash failed' })))
-  let rows = rowsFromStash(stash)
-  if (!rows.length && Number(stash.questions) > 0) {
-    const total = Math.min(Number(stash.questions) || 0, 40)
-    for (let i = 0; i < total; i += 1) {
-      const row = asObject(await evalBrowserView(id, `(function(){ return (window.__ZE_HW_CARD__ || [])[${i}] || null; })()`).catch(() => null))
-      if (row.index || row.stem || row.options) {
-        rows.push(row as NonNullable<ChaoxingHomeworkInfo['questions']>[number])
-      }
-    }
-  }
-  const ready = applyHwImageMap(rows, {})
-  if (ready.length) onPartial?.(ready)
-  if (options?.hydrate === false) {
-    return { stash, questions: ready, imageGot: 0 }
-  }
-  const { hydrateHomeworkImages } = await import('./homeworkImages')
-  // 图片一律由本机带完整浏览器头拉取（Rust 端有磁盘缓存），页面内逐块搬运只留作兜底
-  const hydrated = await hydrateHomeworkImages(ready, 40)
-  const hydratedGot = hydrated.filter((item) => (item.images || []).some((src) => src.startsWith('data:'))).length
-  if (options?.harvest === false || hydratedGot > 0) {
-    return { stash, questions: hydrated, imageGot: hydratedGot }
-  }
-  const n = Number(stash.images || (await evalBrowserView(id, `(function(){ return (window.__ZE_HW_IMGELS__ || []).length; })()`).catch(() => 0)) || 0)
-  const map: Record<string, string> = {}
-  const harvestUntil = Date.now() + 8000
-  for (let i = 0; i < Math.min(n, 48); i += 1) {
-    if (Date.now() > harvestUntil) break
-    await evalBrowserView(id, START_HW_IMG(i)).catch(() => null)
-    let ready = false
-    for (let t = 0; t < 30; t += 1) {
-      const meta = asObject(await evalBrowserView(id, READ_HW_IMG_META()).catch(() => ({ wait: 1 })))
-      if (!meta.wait) {
-        ready = true
-        break
-      }
-      await waitMs(40)
-    }
-    if (!ready) continue
-    let data = ''
-    let key = ''
-    for (let c = 0; c < 80; c += 1) {
-      const part = asObject(await evalBrowserView(id, READ_HW_IMG_CHUNK()).catch(() => ({ d: true, c: '' })))
-      if (part.wait) {
-        await waitMs(40)
-        continue
-      }
-      key = String(part.key || key)
-      data += String(part.c || '')
-      if (part.d) break
-    }
-    if (key && (data.indexOf('data:image') === 0 || /^https?:\/\//.test(data))) map[key] = data
-  }
-  const harvested = await hydrateHomeworkImages(applyHwImageMap(rows, map), 40)
-  return {
-    stash,
-    questions: harvested,
-    imageGot: Object.keys(map).length,
-  }
-}
-
 const applyStashedQuestions = (
   info: ChaoxingHomeworkInfo,
   questions: NonNullable<ChaoxingHomeworkInfo['questions']>,
@@ -157,51 +81,81 @@ const applyStashedQuestions = (
   filledCount: questions.filter((item) => item.filled).length,
 })
 
-export const inspectChaoxingHomework = async (id: string, options?: { vision?: boolean }) => {
-  let snap: Record<string, unknown> = {}
+const isChapterShellUrl = (url: string) =>
+  /\/mycourse\/studentstudy|\/mycourse\/stu/i.test(url) && !/\/work\//i.test(url)
+
+const readInspectDirect = async (id: string): Promise<ChaoxingHomeworkInfo | null> => {
+  const dom = asObject(await protocolRead(id, 'homework').catch(() => ({})))
+  const parsed = cardFromHomeworkHtml(dom)
+  if (!homeworkReady(parsed)) return null
+  // 章节壳上只有假列表、还没有嵌套测验题 → 当作未就绪，继续等 iframe
+  if (isChapterShellUrl(String(parsed.url || dom.url || '')) && !(parsed.questions || []).length) {
+    return null
+  }
+  return parsed
+}
+
+const readHomeworkListFast = async (id: string): Promise<ChaoxingHomeworkInfo> => {
+  const direct = await readInspectDirect(id)
+  if (direct) {
+    const first = direct.pending?.[0]?.title || ''
+    const card = toHomeworkCard({
+      ...direct,
+      page: direct.works?.length ? 'list' : direct.page,
+      hint: first ? `直接 open「${first}」，不要再 list / get_page。` : direct.hint,
+    })
+    publishHomeworkCard(card)
+    return card
+  }
+  await waitMs(350)
+  const again = await readInspectDirect(id)
+  const info = again || { page: 'other' as const }
+  const first = info.pending?.[0]?.title || ''
+  const card = toHomeworkCard({
+    ...info,
+    page: info.works?.length ? 'list' : info.page,
+    hint: first ? `直接 open「${first}」，不要再 list / get_page。` : info.hint,
+  })
+  publishHomeworkCard(card)
+  return card
+}
+
+export const retrySelectedHomeworkInspect = async () => {
+  if (typeof window === 'undefined' || !(window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__) {
+    return null
+  }
+  const { currentBrowserId } = await import('../../browser/abstractions')
+  const { getSelectedBrowserId } = await import('../../browser/appBrowser')
+  const id = String(currentBrowserId.value || getSelectedBrowserId() || '').trim()
+  if (!id) return null
+  return inspectChaoxingHomework(id, { vision: false })
+}
+
+export const inspectChaoxingHomework = async (id: string, options?: { vision?: boolean; dump?: boolean }) => {
+  const snap: Record<string, unknown> = {}
   let info: ChaoxingHomeworkInfo = { page: 'other' }
   let boxedError = ''
-  let imageRows = 0
-  const publishPartial = (partial: NonNullable<ChaoxingHomeworkInfo['questions']>) => {
-    info = applyStashedQuestions(info, partial)
-    publishHomeworkCard(toHomeworkCard(info))
-  }
+  const imageRows = 0
   try {
-    const stashed = await readStashedHomework(id, publishPartial, {
-      harvest: false,
-      hydrate: false,
-    })
-    boxedError = stashed.stash.error ? String(stashed.stash.error) : ''
-    if (stashed.questions.length) {
-      info = applyStashedQuestions(info, stashed.questions)
+    const direct = await readInspectDirect(id)
+    if (direct) info = { ...info, ...direct }
+    if ((info.questions || []).length) {
+      const { hydrateHomeworkImages } = await import('./homeworkImages')
+      const hydrated = await hydrateHomeworkImages(info.questions || [], 80)
+      if (hydrated.length) info = applyStashedQuestions(info, hydrated)
     }
   } catch (err) {
     boxedError = String(err)
   }
-  if (!homeworkReady(info)) {
-    await askFrames(id, 'snap')
-    snap = asObject(await evalBrowserView(id, READ_HOMEWORK_SNAPS()).catch((err) => ({ error: String(err) })))
-    info = cardFromSnaps(snap)
-    if (!homeworkReady(info)) {
-      await waitMs(400)
-      await askFrames(id, 'snap')
-      snap = asObject(await evalBrowserView(id, READ_HOMEWORK_SNAPS()).catch((err) => ({ error: String(err) })))
-      info = cardFromSnaps(snap)
+  if (!homeworkReady(info) || (!(info.questions || []).length && isChapterShellUrl(String(info.url || '')))) {
+    for (const delay of [600, 1000, 1400]) {
+      if ((info.questions || []).length) break
+      await waitMs(delay)
+      const again = await readInspectDirect(id)
+      if (again) info = { ...info, ...again }
     }
   }
-  if (!(info.questions || []).length) {
-    try {
-      const stashed = await readStashedHomework(id, publishPartial, {
-        harvest: options?.vision !== false,
-        hydrate: options?.vision !== false,
-      })
-      boxedError = boxedError || (stashed.stash.error ? String(stashed.stash.error) : '')
-      imageRows = stashed.imageGot
-      if (stashed.questions.length) info = applyStashedQuestions(info, stashed.questions)
-    } catch (err) {
-      boxedError = boxedError || String(err)
-    }
-  } else {
+  if ((info.questions || []).length) {
     void import('./homeworkImages').then(async ({ hydrateHomeworkImages }) => {
       const hydrated = await hydrateHomeworkImages(info.questions || [], 40)
       if (!hydrated.length) return
@@ -209,43 +163,78 @@ export const inspectChaoxingHomework = async (id: string, options?: { vision?: b
       publishHomeworkCard(toHomeworkCard(info))
     }).catch(() => undefined)
   }
+  const liveEarly = asObject(await evalBrowserView(id, READ_HOMEWORK_LIVE()).catch((err) => ({ evalError: String(err) })))
   if (!(info.questions || []).length) {
-    const liveFallback = asObject(await evalBrowserView(id, READ_HOMEWORK_LIVE()).catch(() => ({})))
-    const parsed = parseHomeworkText(String(liveFallback.text || ''))
+    const parsed = parseHomeworkText(String(liveEarly.text || ''))
     if (parsed.length) {
       info = {
         ...info,
         page: 'do',
-        url: String(liveFallback.url || info.url || ''),
-        title: String(liveFallback.title || info.title || ''),
+        url: String(liveEarly.url || info.url || ''),
+        title: String(liveEarly.title || info.title || ''),
         questions: parsed,
         questionCount: parsed.length,
       }
     }
   }
+  const liveRows = (Array.isArray(liveEarly.rows) ? liveEarly.rows : []) as Array<{ i?: number; t?: string }>
+  if (liveRows.length && (info.questions || []).length) {
+    info = {
+      ...info,
+      questions: enrichQuestionsFromLiveText(info.questions || [], liveRows),
+    }
+  }
   const questions = info.questions || []
-  const needVision = options?.vision !== false
-    && (info.page === 'do' || info.page === 'view')
-    && questions.some((item) => (
-      item.needsVision
-      || Number(item.imageCount) > 0
-      || (item.images || []).length > 0
-      || String(item.stem || '').length < 12
-      || /（图像）|\(图像\)|公式图|显示不全/.test(String(item.stem || ''))
-      || (item.options || []).some((opt) => !String(opt.text || '').trim() && (opt.image || opt.images?.length))
-    ))
   const { enrichHomeworkWithVision, applyHomeworkVisionCache } = await import('./homeworkVision')
+  const { hasUsableVisionModel } = await import('../../model/config')
+  const looksVisual = (item: NonNullable<typeof questions>[number]) => (
+    Boolean(item.needsVision)
+    || Number(item.imageCount) > 0
+    || (item.images || []).length > 0
+    || String(item.stem || '').length < 12
+    || /（图像）|\(图像\)|公式图|显示不全/.test(String(item.stem || ''))
+    || (item.options || []).some((opt) => !String(opt.text || '').trim() && (opt.image || opt.images?.length))
+  )
+  const visualIndexes = questions.filter(looksVisual).map((item) => item.index)
+  const canVision = hasUsableVisionModel()
+  const needVision = options?.vision !== false
+    && canVision
+    && (info.page === 'do' || info.page === 'view')
+    && visualIndexes.length > 0
   // 已转写过的题直接用缓存文字，面板无视觉刷新也能补上
   info = applyHomeworkVisionCache(info)
   if (needVision) {
     info = await enrichHomeworkWithVision(id, info)
+  } else if (!canVision && visualIndexes.length && (info.page === 'do' || info.page === 'view')) {
+    info = {
+      ...info,
+      skippedVision: true,
+      hint: `当前没有可用的视觉模型，第 ${visualIndexes.join('、')} 题是图像/公式，已跳过。只答能读到文字的题，不要猜图，不要再 inspect 等看图。`,
+    }
   }
   info = {
     ...info,
     questions: (info.questions || []).map(rebalanceHomeworkQuestion),
   }
   const card = toHomeworkCard(info)
+  const prev = lastHomeworkCard.value
+  if (!homeworkReady(card) && prev && homeworkReady(prev)) {
+    if (options?.dump !== false) {
+      try {
+        writeDebugDump('cx-homework-live', formatHomeworkLive(liveEarly, card, {
+          snapError: snap.error,
+          imageRows,
+          boxedError,
+          evalError: String(liveEarly.evalError || 'inspect empty, keep last card'),
+        }), 'md')
+      } catch {
+        // ignore
+      }
+    }
+    return prev
+  }
   publishHomeworkCard(card)
+  if (options?.dump === false) return card
   try {
     writeDebugDump('cx-homework-latest', JSON.stringify({
       ts: new Date().toISOString(),
@@ -261,7 +250,7 @@ export const inspectChaoxingHomework = async (id: string, options?: { vision?: b
       })),
       ...card,
     }, null, 2), 'json')
-    const live = asObject(await evalBrowserView(id, READ_HOMEWORK_LIVE()).catch((err) => ({ evalError: String(err) })))
+    const live = Object.keys(liveEarly).length ? liveEarly : asObject(await evalBrowserView(id, READ_HOMEWORK_LIVE()).catch((err) => ({ evalError: String(err) })))
     writeDebugDump('cx-homework-live', formatHomeworkLive(live, card, {
       snapError: snap.error,
       imageRows,
@@ -275,34 +264,89 @@ export const inspectChaoxingHomework = async (id: string, options?: { vision?: b
 }
 
 export const openChaoxingHomeworkList = async (id: string) => {
-  const onStudent = await evalBrowserView(id, `(function(){ return /\\/mycourse\\/stu/.test(location.href || ''); })()`).catch(() => false)
-  if (onStudent) {
-    await evalBrowserView(id, CHAOXING_CLICK_HOMEWORK_TAB()).catch(() => null)
-    await waitMs(800)
+  const state = asObject(await evalBrowserView(id, `(function(){
+    var href = location.href || '';
+    var frames = [];
+    try {
+      var list = document.querySelectorAll('iframe[src]');
+      for (var i = 0; i < list.length && frames.length < 6; i++) frames.push(String(list[i].src || ''));
+    } catch (e) {}
+    return { href: href, frames: frames };
+  })()`).catch(() => ({})))
+  const href = String(state.href || '')
+  const frames = (Array.isArray(state.frames) ? state.frames : []).map((item) => String(item || ''))
+  const alreadyList = /pageHeader=8/.test(href) || frames.some((src) => /\/work\/list|mooc2\/work/i.test(src))
+  if (!alreadyList && /\/mycourse\/stu|stucoursemiddle/i.test(href)) {
+    let tab = await clickHomeworkBox(id, LOCATE_HW_TAB()).catch(() => ({ ok: false }))
+    if (!tab.ok) {
+      await waitMs(800)
+      tab = await clickBrowserText(id, '作业').catch(() => ({ ok: false })) as { ok?: boolean }
+    }
+    await waitMs(700)
   }
-  let info = await inspectChaoxingHomework(id)
-  if (!homeworkReady(info)) {
-    await clickBrowserText(id, '作业').catch(() => null)
-    await waitMs(1000)
-    info = await inspectChaoxingHomework(id)
-  }
-  return toHomeworkCard(info)
+  return readHomeworkListFast(id)
 }
+
+const homeworkOpened = (info: ChaoxingHomeworkInfo | null) =>
+  Boolean(info && (info.page === 'do' || info.page === 'view' || (info.questions || []).length))
 
 export const openChaoxingHomeworkItem = async (id: string, title: string) => {
   const want = String(title || '').trim()
-  if (!want) return { ok: false, error: '缺少作业名' }
-  let info = await inspectChaoxingHomework(id)
-  if (info.page === 'course' || info.page === 'other' || !(info.works || []).length) {
-    info = await openChaoxingHomeworkList(id)
+  if (!want) return toHomeworkCard({ ok: false, error: '缺少作业名' })
+  const labels = [want, `${want} ; 未交`, `${want};未交`]
+  let clicked: { ok?: boolean; text?: string } | null = null
+  for (const label of labels) {
+    const framed = await clickFrameText(id, label).catch(() => null)
+    if (framed?.ok) {
+      clicked = framed
+      break
+    }
+    const hit = await clickBrowserText(id, label).catch(() => null) as { ok?: boolean; text?: string } | null
+    if (hit?.ok) {
+      clicked = hit
+      break
+    }
   }
-  const hit = (info.works || []).find((item) => titlesMatch(item.title, want) || item.title.includes(want))
-  const clicked = await clickBrowserText(id, hit?.title || want).catch(() => null) as { ok?: boolean; text?: string } | null
-  await waitMs(1200)
-  const page = await inspectChaoxingHomework(id)
+  if (!clicked?.ok) {
+    const list = await readHomeworkListFast(id)
+    const row = (list.works || []).find((item) => titlesMatch(item.title, want) || item.title.includes(want))
+    if (row?.title) {
+      clicked = await clickBrowserText(id, row.title).catch(() => null) as { ok?: boolean; text?: string } | null
+    }
+    if (!clicked?.ok) {
+      return toHomeworkCard({
+        ...list,
+        ok: false,
+        error: `列表里点不开「${want}」。`,
+        title: want,
+        next: 'open',
+      })
+    }
+  }
+  await waitMs(900)
+  const peek = await readHomeworkListFast(id)
+  if (!homeworkOpened(peek)) {
+    const names = (peek.pending || []).map((item) => item.title).filter(Boolean)
+    return toHomeworkCard({
+      ...peek,
+      ok: false,
+      error: '还在作业列表，没有打开作答页。不要 navigate / eval iframe。',
+      title: peek.title || want,
+      hint: names.length
+        ? `列表还在。再 open，title 用未交任务点「${names[0]}」。`
+        : '点了但还在列表。再 open 一次，不要 get_page。',
+      next: 'open',
+    })
+  }
+  const page = (peek.questions || []).length
+    ? peek
+    : await inspectChaoxingHomework(id, { vision: false, dump: false })
   return toHomeworkCard({
     ...page,
-    ok: Boolean(clicked?.ok || (page.questions || []).length),
-    title: page.title || hit?.title || want,
+    ok: true,
+    title: page.title || want,
+    hint: (page.questions || []).length
+      ? `已打开「${page.title || want}」，已读到 ${page.questions?.length} 道题。`
+      : `已打开「${page.title || want}」。再 inspect 读题。`,
   })
 }

@@ -9,7 +9,7 @@
         @click="clear"
       >清空</button>
     </div>
-    <div ref="threadRef" class="agent-thread">
+    <div ref="threadRef" class="agent-thread" @scroll.passive="onThreadScroll">
       <div v-if="!session?.messages.length" class="feature-panel">
         <div class="feature-kicker">我可以帮你</div>
         <div class="feature-grid">
@@ -35,6 +35,7 @@
       <div
         v-for="message in session?.messages || []"
         :key="message.id"
+        v-memo="messageMemo(message)"
         class="chat-turn"
         :class="`is-${message.role}`"
       >
@@ -57,31 +58,6 @@
                 <span class="activity-text" :class="{ 'is-live': block.step.status === 'running' }">{{ block.step.label }}</span>
               </div>
               <p v-if="block.step.status === 'failed' && block.step.detail" class="activity-detail">{{ block.step.detail }}</p>
-              <div
-                v-if="isQuizStep(block.step)"
-                class="write-block is-quiz"
-                :class="{ 'is-open': isQuizOpen(message.id, block.step.id) }"
-              >
-                <button class="write-head" type="button" @click="toggleQuiz(message.id, block.step.id)">
-                  <span class="write-file">
-                    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                      <circle cx="12" cy="12" r="9" />
-                      <path d="M9.5 9.5a2.5 2.5 0 1 1 3.6 2.25c-.7.4-1.1.9-1.1 1.75" />
-                      <path d="M12 17h.01" />
-                    </svg>
-                    <span class="write-file-name">{{ quizTitleFor(block.step) }}</span>
-                  </span>
-                  <span class="write-stat">{{ quizStatFor(message, block.step.id, quizCardsFor(block.step)) }}</span>
-                </button>
-                <div v-if="isQuizOpen(message.id, block.step.id)" class="write-quiz">
-                  <AgentQuizBlock
-                    layout="chat"
-                    :step-id="block.step.id"
-                    :cards="quizCardsFor(block.step)"
-                    @attempt="onQuizAttempt(message.id, $event)"
-                  />
-                </div>
-              </div>
             </div>
             <div
               v-else-if="block.type === 'text' && block.content.trim()"
@@ -104,31 +80,6 @@
               />
             </div>
           </template>
-          <div
-            v-if="fallbackQuizCards(message).length"
-            class="write-block is-quiz"
-            :class="{ 'is-open': isQuizOpen(message.id, `${message.id}-md`) }"
-          >
-            <button class="write-head" type="button" @click="toggleQuiz(message.id, `${message.id}-md`)">
-              <span class="write-file">
-                <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                  <circle cx="12" cy="12" r="9" />
-                  <path d="M9.5 9.5a2.5 2.5 0 1 1 3.6 2.25c-.7.4-1.1.9-1.1 1.75" />
-                  <path d="M12 17h.01" />
-                </svg>
-                <span class="write-file-name">{{ quizTitleFor(undefined, `${message.id}-md`) }}</span>
-              </span>
-              <span class="write-stat">{{ quizStatFor(message, `${message.id}-md`, fallbackQuizCards(message)) }}</span>
-            </button>
-            <div v-if="isQuizOpen(message.id, `${message.id}-md`)" class="write-quiz">
-              <AgentQuizBlock
-                layout="chat"
-                :step-id="`${message.id}-md`"
-                :cards="fallbackQuizCards(message)"
-                @attempt="onQuizAttempt(message.id, $event)"
-              />
-            </div>
-          </div>
           <div v-if="isThinking(message)" class="assistant-thinking">正在思考</div>
           <div v-if="message.status === 'stopped'" class="agent-note">已停止生成</div>
           <div v-if="message.error" class="agent-error">{{ message.error }}</div>
@@ -136,6 +87,7 @@
       </div>
     </div>
     <div class="composer-dock">
+      <BrowserAgentWatchBar :browser-id="browserId" />
       <div v-if="activeTodos.length" class="todo-card" aria-label="任务清单">
         <div class="todo-card-head">
           <span class="todo-card-title">任务</span>
@@ -165,6 +117,7 @@
           </li>
         </ul>
       </div>
+      <AgentApprovalBar :session-id="session?.id" />
       <form class="composer" @submit.prevent="submit">
         <div class="composer-box">
           <textarea
@@ -217,24 +170,20 @@ import MarkdownRender from 'markstream-vue'
 import 'markstream-vue/index.css'
 import '../../services/model/markstream'
 import { themeState } from '../../composables/useTheme'
-import AgentQuizBlock from '../agent/AgentQuizBlock.vue'
+import AgentApprovalBar from '../agent/AgentApprovalBar.vue'
+import { resolveSitePackForUrl, sitePackHasTool } from '../../services/agent/sitePack'
 import {
   browserChatSessions,
   clearBrowserChat,
   ensureBrowserChat,
-  formatQuizAttempt,
-  recordQuizAttempt,
   sendChatMessage,
   stopChat,
-  type AgentChatMessage,
-  type AgentQuizAttempt,
 } from '../../services/agent/chat'
 import { hostnameOf } from '../../services/browser/appBrowser'
 import { browserVideoWatches } from '../../services/chaoxing/browser/watch'
 import { shouldSubmitComposerEnter } from '../../utils/ui/composerEnter'
-import { getQuizCards, getQuizTitle, parseMarkdownQuizzes, parseQuizCards, type QuizCard } from '../../utils/question/quizPractice'
-import type { ImportTaskStep } from '../../services/app/importTasks'
 import { assistantTimeline } from '../../views/agentChat/threadDisplay'
+import BrowserAgentWatchBar from './BrowserAgentWatchBar.vue'
 
 const props = defineProps<{
   browserId?: string
@@ -246,55 +195,56 @@ const draft = ref('')
 const threadRef = ref<HTMLElement | null>(null)
 const inputRef = ref<HTMLTextAreaElement | null>(null)
 const composing = ref(false)
-const openedQuizKey = ref<string | null>(null)
-const mdQuizCache = ref<Record<string, QuizCard[]>>({})
-const reportedQuiz = new Set<string>()
+const pinBottom = ref(true)
 let compositionEndedAt = 0
 
-const featureCards = [
-  {
-    id: 'read',
-    title: '读当前页',
-    desc: '看看现在打开的是什么',
-    prompt: '读一下当前网页，告诉我现在在哪、页面上能做什么。',
-    paths: ['M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z', 'M3 12h18', 'M12 3c2.7 2.8 4 5.8 4 9s-1.3 6.2-4 9c-2.7-2.8-4-5.8-4-9s1.3-6.2 4-9z'],
-  },
-  {
-    id: 'click',
-    title: '点一下',
-    desc: '按钮、链接或选项',
-    prompt: '帮我点页面上该点的按钮或链接。',
-    paths: ['M9 9l11 4-5 2-2 5z', 'M5 5v6'],
-  },
-  {
-    id: 'type',
-    title: '填写',
-    desc: '在输入框里打字',
-    prompt: '帮我填写这个页面上的表单。',
-    paths: ['M4 7h16v10H4z', 'M8 17v2', 'M16 17v2', 'M8 11h8'],
-  },
-  {
-    id: 'play',
-    title: '播完章节',
-    desc: '把学习通未完成的播完',
-    prompt: '把学习通未完成的章节播完。',
-    paths: ['M8 6v12l10-6z'],
-  },
-]
+const featureCards = computed(() => {
+  const cards = [
+    {
+      id: 'read',
+      title: '读当前页',
+      desc: '看看现在打开的是什么',
+      prompt: '读一下当前网页，告诉我现在在哪、页面上能做什么。',
+      paths: ['M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z', 'M3 12h18', 'M12 3c2.7 2.8 4 5.8 4 9s-1.3 6.2-4 9c-2.7-2.8-4-5.8-4-9s1.3-6.2 4-9z'],
+    },
+    {
+      id: 'click',
+      title: '点一下',
+      desc: '按钮、链接或选项',
+      prompt: '帮我点页面上该点的按钮或链接。',
+      paths: ['M9 9l11 4-5 2-2 5z', 'M5 5v6'],
+    },
+    {
+      id: 'type',
+      title: '填写',
+      desc: '在输入框里打字',
+      prompt: '帮我填写这个页面上的表单。',
+      paths: ['M4 7h16v10H4z', 'M8 17v2', 'M16 17v2', 'M8 11h8'],
+    },
+  ]
+  const pack = resolveSitePackForUrl(props.url || '')
+  if (sitePackHasTool(pack, 'browser_study_play')) {
+    cards.push({
+      id: 'play',
+      title: '播完章节',
+      desc: pack?.name ? `把${pack.name}未完成的播完` : '把未完成的章节播完',
+      prompt: pack?.name ? `把${pack.name}未完成的章节播完。` : '把未完成的章节播完。',
+      paths: ['M8 6v12l10-6z'],
+    })
+  }
+  return cards
+})
 
 const session = computed(() => {
   const id = String(props.browserId || '').trim()
-  if (!id) return null
-  return browserChatSessions.value.find((item) => item.browserId === id) || null
+  const chats = browserChatSessions.value
+  if (!chats.length) return null
+  return (id && chats.find((item) => item.browserId === id)) || chats[0] || null
 })
 
 const activeTodos = computed(() => {
-  if (session.value?.todos?.length) return session.value.todos
-  const messages = session.value?.messages || []
-  for (let i = messages.length - 1; i >= 0; i -= 1) {
-    if (Array.isArray(messages[i].todos)) return messages[i].todos || []
-  }
-  return []
+  if (!session.value?.messages.length) return []
+  return Array.isArray(session.value.todos) ? session.value.todos : []
 })
 
 const todoDoneCount = computed(() => activeTodos.value.filter((item) => item.status === 'done').length)
@@ -307,14 +257,10 @@ const composerPlaceholder = computed(() =>
     : '问网页，或让我点、填、打开…',
 )
 
-const videoWatch = computed(() => {
-  const id = String(props.browserId || '').trim()
-  return id ? browserVideoWatches.value[id] || null : null
-})
-
-/** 播放监控中对话可能已结束，仍视为任务进行中，保留停止按钮。 */
+/** 只读 status，避免进度时钟每 200ms 把整段对话 Markdown 重绘一遍。 */
 const watchActive = computed(() => {
-  const status = videoWatch.value?.status
+  const id = String(props.browserId || '').trim()
+  const status = id ? browserVideoWatches.value[id]?.status : ''
   return status === 'watching'
     || status === 'paused'
     || status === 'stalled'
@@ -323,52 +269,23 @@ const watchActive = computed(() => {
 })
 const busy = computed(() => streaming.value || watchActive.value)
 
-const quizKeyOf = (messageId: string, stepId: string) => `${messageId}\t${stepId}`
-const isQuizOpen = (messageId: string, stepId: string) => openedQuizKey.value === quizKeyOf(messageId, stepId)
-
-const quizCardsFor = (step: ImportTaskStep): QuizCard[] => {
-  const stored = getQuizCards(step.id)
-  if (stored.length) return stored
-  return parseQuizCards(step.preview || [])
-}
-
-const quizTitleFor = (step?: ImportTaskStep, stepId?: string) =>
-  getQuizTitle(step?.id || stepId || '', '') || step?.title || '练习'
-
-const isQuizStep = (step: ImportTaskStep) =>
-  step.name === 'present_quiz' && step.status === 'done' && quizCardsFor(step).length > 0
-
-const stepQuizCards = (message: AgentChatMessage) =>
-  (message.steps || []).filter((step) => isQuizStep(step)).flatMap((step) => quizCardsFor(step))
-
-const fallbackQuizCards = (message: AgentChatMessage) => {
-  if (stepQuizCards(message).length) return []
-  const parsed = parseMarkdownQuizzes(message.content)
-  return parsed.length ? (mdQuizCache.value[message.id] || parsed) : []
-}
-
-const quizStatFor = (message: AgentChatMessage, _stepId: string, cards: QuizCard[]) => {
-  const done = new Set((message.quizAttempts || []).map((item) => item.uid))
-  const answered = cards.filter((card) => done.has(card.uid)).length
-  if (message.quizReported || (cards.length && answered >= cards.length)) return `已完成 ${cards.length}`
-  if (answered) return `${answered}/${cards.length}`
-  return `${cards.length} 题`
-}
-
-const isThinking = (message: AgentChatMessage) =>
+const isThinking = (message: { status?: string; waiting?: boolean; content?: string }) =>
   message.status === 'streaming' && message.waiting !== false && !message.content
 
-const latestQuizKey = computed(() => {
-  const messages = [...(session.value?.messages || [])].reverse()
-  for (const message of messages) {
-    if (message.role !== 'assistant') continue
-    for (const step of [...(message.steps || [])].reverse()) {
-      if (isQuizStep(step)) return quizKeyOf(message.id, step.id)
-    }
-    if (fallbackQuizCards(message).length) return quizKeyOf(message.id, `${message.id}-md`)
-  }
-  return null
-})
+const messageMemo = (message: {
+  status?: string
+  content?: string
+  error?: string
+  waiting?: boolean
+  steps?: Array<{ id?: string; status?: string; label?: string }>
+}) => [
+  message.status,
+  message.content,
+  message.error,
+  message.waiting,
+  (message.steps || []).map((step) => `${step.id}:${step.status}:${step.label}`).join(),
+  themeState.isDark,
+]
 
 const iconPaths = (name: string) => {
   if (name === 'browser_get_page' || name === 'browser_get_state') {
@@ -382,6 +299,7 @@ const iconPaths = (name: string) => {
   if (name === 'browser_type') return ['M4 7h16v10H4z', 'M8 12h8']
   if (name === 'browser_scroll') return ['M12 5v14', 'M6 11l6-6 6 6', 'M6 13l6 6 6-6']
   if (name === 'browser_eval') return ['M8 8l-4 4 4 4', 'M16 8l4 4-4 4']
+  if (name === 'browser_screenshot') return ['M4 7h4l2-2h4l2 2h4v12H4z', 'M12 16a3 3 0 1 0 0-6 3 3 0 0 0 0 6z']
   if (name === 'browser_todo') return ['M9 11l3 3L22 4', 'M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11']
   if (name === 'browser_site_graph') return ['M6 7a2 2 0 1 0 0-4 2 2 0 0 0 0 4z', 'M18 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4z', 'M8 18a2 2 0 1 0 0-4 2 2 0 0 0 0 4z', 'M16 17a2 2 0 1 0 0-4 2 2 0 0 0 0 4z', 'M8 8l8 1', 'M7 9l2 6']
   if (
@@ -402,10 +320,16 @@ const iconPaths = (name: string) => {
   return ['M12 3v3', 'M12 18v3', 'M3 12h3', 'M18 12h3']
 }
 
+const onThreadScroll = () => {
+  const el = threadRef.value
+  if (!el) return
+  pinBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight < 48
+}
+
 const scrollBottom = async () => {
   await nextTick()
   const el = threadRef.value
-  if (el) el.scrollTop = el.scrollHeight
+  if (el && pinBottom.value) el.scrollTop = el.scrollHeight
 }
 
 const resizeComposer = () => {
@@ -432,25 +356,6 @@ watch(
   () => `${session.value?.todos?.map((t) => t.status).join('') || ''}|${session.value?.messages.map((item) => `${item.id}:${item.status}:${item.content.length}:${item.steps.length}:${item.todos?.length || 0}:${(item.todos || []).map((t) => t.status).join('')}`).join('|')}`,
   () => { void scrollBottom() },
 )
-
-watch(latestQuizKey, (key) => {
-  openedQuizKey.value = key
-}, { immediate: true })
-
-const toggleQuiz = (messageId: string, stepId: string) => {
-  const key = quizKeyOf(messageId, stepId)
-  openedQuizKey.value = openedQuizKey.value === key ? null : key
-}
-
-const onQuizAttempt = (messageId: string, attempt: AgentQuizAttempt) => {
-  const current = session.value
-  if (!current || attempt.kind === 'note') return
-  recordQuizAttempt(current.id, messageId, attempt)
-  const key = `${attempt.stepId}:${attempt.uid}`
-  if (reportedQuiz.has(key) || busy.value) return
-  reportedQuiz.add(key)
-  void sendChatMessage(formatQuizAttempt(attempt), undefined, { sessionId: current.id })
-}
 
 const sendPrompt = async (text: string) => {
   const current = session.value
@@ -483,7 +388,7 @@ const stop = () => {
 const clear = () => {
   const id = String(props.browserId || '').trim()
   if (id) clearBrowserChat(id)
-  openedQuizKey.value = null
+  pinBottom.value = true
 }
 
 const onCompositionStart = () => {
@@ -919,6 +824,45 @@ const onKeydown = (event: KeyboardEvent) => {
 .write-quiz {
   padding: 8px 8px 10px;
   background: var(--bg-secondary, #fff);
+}
+
+.watch-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: color-mix(in srgb, var(--text-primary, #2d3748) 78%, transparent);
+  background: color-mix(in srgb, var(--text-primary, #2d3748) 5%, transparent);
+}
+
+.watch-bar-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #22c55e;
+  box-shadow: 0 0 0 3px color-mix(in srgb, #22c55e 22%, transparent);
+}
+
+.watch-bar.is-paused .watch-bar-dot,
+.watch-bar.is-stalled .watch-bar-dot {
+  background: #f59e0b;
+  box-shadow: 0 0 0 3px color-mix(in srgb, #f59e0b 22%, transparent);
+}
+
+.watch-bar.is-captcha .watch-bar-dot,
+.watch-bar.is-quiz .watch-bar-dot {
+  background: #ef4444;
+  box-shadow: 0 0 0 3px color-mix(in srgb, #ef4444 22%, transparent);
+}
+
+.watch-bar-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .composer-dock {

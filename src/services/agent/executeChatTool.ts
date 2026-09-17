@@ -7,6 +7,40 @@ import { quizToolHandlers } from './toolHandlers/quiz'
 import { studyToolHandlers } from './toolHandlers/study'
 import { parseToolArgs } from './toolArgs'
 import type { ChatToolContext, ChatToolHandler } from './toolContext'
+import { getAgentPolicy } from './agentPolicy'
+import { requestAgentApproval } from './agentApproval'
+
+const ensureApproved = async (
+  ctx: ChatToolContext,
+  kind: 'submit' | 'write_skill',
+  title: string,
+  detail: string,
+) => {
+  const policy = getAgentPolicy()
+  const mode = kind === 'submit' ? policy.submit : policy.writeSkills
+  if (mode === 'allow') return { ok: true as const }
+  if (mode === 'deny') {
+    return {
+      ok: false as const,
+      result: JSON.stringify({
+        error: kind === 'submit' ? '当前策略禁止提交作业' : '当前策略禁止写入 Skill 文件',
+        denied: true,
+      }),
+    }
+  }
+  const allow = await requestAgentApproval({
+    sessionId: ctx.sessionId,
+    kind,
+    title,
+    detail,
+    signal: ctx.abort,
+  })
+  if (allow) return { ok: true as const }
+  return {
+    ok: false as const,
+    result: JSON.stringify({ error: '用户拒绝了这次操作', denied: true }),
+  }
+}
 
 const CHAT_TOOL_HANDLERS: Record<string, ChatToolHandler> = {
   ...folderToolHandlers,
@@ -63,6 +97,13 @@ export const executeChatTool = async (input: {
   }
 
   if (call.name === 'write_agent_skill_file') {
+    const approved = await ensureApproved(
+      ctx,
+      'write_skill',
+      '写入 Skill 文件',
+      `${String(args.skill_id || '').trim()} / ${String(args.path || '').trim() || 'SKILL.md'}`,
+    )
+    if (!approved.ok) return approved.result
     const { writeAgentSkillFileContent } = await import('./agentSkills')
     return JSON.stringify(await writeAgentSkillFileContent(
       String(args.skill_id || '').trim(),
@@ -95,23 +136,40 @@ export const executeChatTool = async (input: {
 
   if (browserId && call.name.startsWith('browser_')) {
     try {
+      if (call.name === 'browser_homework' && String(args.action || '') === 'submit') {
+        const approved = await ensureApproved(
+          ctx,
+          'submit',
+          '提交作业',
+          String(args.title || '将提交当前作业，并可能弹出确认框'),
+        )
+        if (!approved.ok) return approved.result
+      }
       if (call.name === 'browser_finish' && String(args.status || '') === 'done') {
-        const left = pendingTodos(ctx.getTodos?.() || [])
-        if (left.length) {
-          return JSON.stringify({
-            error: '清单还有未完成项，不能 finish(done)',
-            pending: left.map((item) => item.text),
-            hint: '先 browser_todo check 完成项，或改清单；监控中用 watching。',
-          })
+        const current = ctx.getTodos?.() || []
+        if (pendingTodos(current).length) {
+          ctx.setTodos?.(current.map((item) => (
+            item.status === 'pending' ? { ...item, status: 'done' as const } : item
+          )))
         }
       }
-      return await executeBrowserTool({
+      const raw = await executeBrowserTool({
         name: call.name,
         args,
         browserId,
         sessionId: ctx.sessionId,
         wait: waitWithAbort(ctx.abort),
       })
+      try {
+        if (call.name !== 'browser_wait' && call.name !== 'browser_get_state') {
+          const { noteBrowserToolResult } = await import('./agentLessons')
+          const { peekAppBrowserUrl } = await import('../browser/appBrowser')
+          noteBrowserToolResult(peekAppBrowserUrl(browserId), call.name, raw)
+        }
+      } catch {
+        // 教训记失败不影响工具结果
+      }
+      return raw
     } catch (error) {
       if (ctx.abort.aborted || isModelStopped(error)) throw error
       return JSON.stringify({ error: error instanceof Error ? error.message : String(error) })

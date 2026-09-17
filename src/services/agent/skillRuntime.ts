@@ -1,9 +1,9 @@
-import { readBundledSkillFile } from './skills/builtinSkillAssets'
+import { applyHomeworkParserParts, homeworkCaptureScript } from '../parser/homeworkRuntime'
+import { registerSitePackage } from '../parser/registry'
+import { applyStudyParserParts } from '../parser/studyRuntime'
+import { listBundledSkillFiles, readBundledSkillFile } from './skills/builtinSkillAssets'
 import {
   PARSER_PACKAGES,
-  assembleParserSource,
-  collectAssembledFns,
-  inferPageHelperNames,
   parseParserFileList,
   parserPackageOf,
   type ParserPackageId,
@@ -27,94 +27,11 @@ export { parserPackageOf }
 
 const OVERRIDE_DIR = '.local/share/zerror/skill-overrides'
 
-type ParserFn = (...args: unknown[]) => string
-type ParserMap = Record<string, string | ParserFn>
-
-const parsers: Record<'study' | 'homework', ParserMap> = {
-  study: {},
-  homework: {},
-}
-
 let siteGraphSeed: SiteGraphData | null = null
 let applySiteGraph: ((data: SiteGraphData) => void) | null = null
 
 export const bindChaoxingSiteGraph = (fn: (data: SiteGraphData) => void) => {
   applySiteGraph = fn
-}
-
-const isFn = (value: unknown): value is (...args: unknown[]) => unknown => typeof value === 'function'
-
-const flattenPageArgs = (rest: unknown[]) => {
-  const helpers: Array<(...args: unknown[]) => unknown> = []
-  let bindings: Record<string, unknown> | null = null
-  for (const item of rest) {
-    if (!item) continue
-    if (isFn(item)) helpers.push(item)
-    else if (Array.isArray(item)) {
-      for (const entry of item) {
-        if (isFn(entry)) helpers.push(entry)
-      }
-    } else if (typeof item === 'object' && !bindings) {
-      bindings = item as Record<string, unknown>
-    }
-  }
-  return { helpers, bindings }
-}
-
-const helperNameOf = (fn: (...args: unknown[]) => unknown) => (
-  fn.name || (fn.toString().match(/^function\s+([A-Za-z_$][\w$]*)/) || [])[1] || ''
-)
-
-const buildPageScript = (
-  fn: (...args: unknown[]) => unknown,
-  helperTexts: string[],
-  bindings: Record<string, unknown> | null,
-) => {
-  const prelude = helperTexts.join('\n')
-  const assigns = bindings
-    ? Object.entries(bindings).map(([key, value]) => `var ${key} = ${JSON.stringify(value)};`).join('\n')
-    : ''
-  const invoke = fn.length && !bindings ? '' : '()'
-  return `(function(){\n${prelude}\n${assigns}\nreturn (${fn.toString()})${invoke};\n})()`
-}
-
-/** 把 Skill 里的真函数拼成页面 IIFE。有参数的函数返回函数本身，供外面 `(args)` 调用。 */
-export const compilePageScript = (fn: unknown, ...rest: unknown[]) => {
-  if (!isFn(fn)) return String(fn ?? '')
-  const { helpers, bindings } = flattenPageArgs(rest)
-  return buildPageScript(fn, helpers.map((item) => item.toString()), bindings)
-}
-
-const compilePageWithPool = (source: string) => {
-  const pool = collectAssembledFns(source)
-  return (fn: unknown, ...rest: unknown[]) => {
-    if (!isFn(fn)) return String(fn ?? '')
-    const { helpers, bindings } = flattenPageArgs(rest)
-    const used = new Set<string>()
-    const texts: string[] = []
-    for (const name of inferPageHelperNames(fn.toString(), pool, fn.name)) {
-      const text = pool.get(name)
-      if (!text || used.has(name)) continue
-      used.add(name)
-      texts.push(text)
-    }
-    for (const extra of helpers) {
-      const name = helperNameOf(extra)
-      if (name && used.has(name)) continue
-      if (name) used.add(name)
-      texts.push(extra.toString())
-    }
-    return buildPageScript(fn, texts, bindings)
-  }
-}
-
-export const evalSkillModule = (source: string): Record<string, unknown> => {
-  const text = String(source || '').replace(/^\uFEFF/, '').trim()
-  if (!text) throw new Error('Skill 模块为空')
-  const result = new Function(`"use strict"; return (${text});`)()
-  const raw = isFn(result) ? result(compilePageWithPool(text)) : result
-  if (!raw || typeof raw !== 'object') throw new Error('Skill 模块必须返回对象')
-  return raw as Record<string, unknown>
 }
 
 const emptyGraph = (): SiteGraphData => ({
@@ -138,15 +55,6 @@ const parseGraph = (raw: string | null): SiteGraphData | null => {
   }
 }
 
-const asParserMap = (raw: unknown): ParserMap => {
-  if (!raw || typeof raw !== 'object') return {}
-  const out: ParserMap = {}
-  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
-    if (typeof value === 'string' || typeof value === 'function') out[key] = value as string | ParserFn
-  }
-  return out
-}
-
 export const readBundledChaoxingFile = (path: string) => readBundledSkillFile(CHAOXING_SKILL_ID, path)
 
 export const readOverrideChaoxingFile = async (path: string): Promise<string | null> => {
@@ -166,39 +74,63 @@ export const isChaoxingImplPath = (path: string) => (
   path === SITE_GRAPH_PATH || Boolean(parserPackageOf(path))
 )
 
-const applyParserSource = (id: ParserPackageId, source: string | null) => {
-  if (!source?.trim()) return
-  parsers[id] = asParserMap(evalSkillModule(source))
+const applyHomeworkParts = (readFile: (path: string) => string | null) => {
+  const dir = PARSER_PACKAGES.homework.dir
+  const helpers = readFile(`${dir}/helpers.js`)
+  const parse = readFile(`${dir}/parse.js`)
+  const locate = readFile(`${dir}/locate.js`)
+  const capture = readFile(`${dir}/capture.js`)
+  applyHomeworkParserParts({
+    ...(helpers ? { helpers } : {}),
+    ...(parse ? { parse } : {}),
+    ...(locate ? { locate } : {}),
+    ...(capture ? { capture } : {}),
+  })
+}
+
+const applyStudyParts = (readFile: (path: string) => string | null) => {
+  const dir = PARSER_PACKAGES.study.dir
+  const helpers = readFile(`${dir}/helpers.js`) || readFile(`${dir}/frames.js`)
+  const catalog = readFile(`${dir}/catalog.js`)
+  const locate = readFile(`${dir}/locate.js`)
+  applyStudyParserParts({
+    ...(helpers ? { helpers } : {}),
+    ...(catalog ? { catalog } : {}),
+    ...(locate ? { locate } : {}),
+  })
+}
+
+const applyGenericParts = (siteId: string, role: string, dir: string, readFile: (path: string) => string | null) => {
+  const index = readFile(`${dir}/index.js`) || ''
+  const names = parseParserFileList(index, ['helpers.js', 'parse.js', 'locate.js'])
+  const fileOf = (name: string) => (names.includes(name) ? readFile(`${dir}/${name}`) : null) || readFile(`${dir}/${name}`)
+  registerSitePackage(siteId, role, {
+    helpers: fileOf('helpers.js') || '',
+    parse: fileOf('parse.js') || fileOf('catalog.js') || '',
+    locate: fileOf('locate.js') || '',
+  })
 }
 
 const applyParserFiles = (id: ParserPackageId, readFile: (path: string) => string | null) => {
-  const pack = PARSER_PACKAGES[id]
-  const index = readFile(`${pack.dir}/index.js`)
-  if (index?.trim()) {
-    const names = parseParserFileList(index, pack.files)
-    applyParserSource(id, assembleParserSource(index, names.map((name) => readFile(`${pack.dir}/${name}`) || '')))
-    return
+  if (id === 'homework') applyHomeworkParts(readFile)
+  else if (id === 'study') applyStudyParts(readFile)
+  else {
+    const pack = parserPackageOf(`parsers/${id}`) || PARSER_PACKAGES[id]
+    if (pack) applyGenericParts('chaoxing', id, pack.dir, readFile)
   }
-  const legacy = readFile(pack.legacy)
-  if (legacy?.trim()) applyParserSource(id, legacy)
 }
 
 const loadParserPackage = async (id: ParserPackageId) => {
   const cache = new Map<string, string | null>()
-  const readFile = async (path: string) => {
+  const override = async (path: string) => {
     if (!cache.has(path)) cache.set(path, await readChaoxingImplFile(path))
     return cache.get(path) || null
   }
-  const pack = PARSER_PACKAGES[id]
-  const index = await readFile(`${pack.dir}/index.js`)
-  if (index?.trim()) {
-    const names = parseParserFileList(index, pack.files)
-    const parts: string[] = []
-    for (const name of names) parts.push((await readFile(`${pack.dir}/${name}`)) || '')
-    applyParserSource(id, assembleParserSource(index, parts))
-    return
-  }
-  applyParserSource(id, await readFile(pack.legacy))
+  const pack = PARSER_PACKAGES[id] || parserPackageOf(`parsers/${id}`)
+  if (!pack) return
+  const names = parseParserFileList((await override(`${pack.dir}/index.js`)) || '', pack.files)
+  for (const name of names) await override(`${pack.dir}/${name}`)
+  applyParserFiles(id, (path) => cache.get(path) ?? readBundledChaoxingFile(path))
 }
 
 const applyGraphSource = (source: string | null, pushLive: boolean) => {
@@ -216,15 +148,100 @@ export const seedChaoxingSiteGraph = (): SiteGraphData => {
 
 export const getChaoxingSiteGraphSeed = (): SiteGraphData => siteGraphSeed || seedChaoxingSiteGraph()
 
-const parserScript = (id: 'study' | 'homework', name: string, args: unknown[]) => {
-  const value = parsers[id][name]
-  if (typeof value === 'function') return String(value(...args) ?? '')
-  if (typeof value === 'string') return value
-  throw new Error(`学习通 Skill 缺少解析器脚本 ${id}.${name}`)
+export const homeworkScript = (name: string) => {
+  if (name === 'capture') return homeworkCaptureScript()
+  throw new Error(`作业解析器没有注入脚本 ${name}`)
 }
 
-export const studyScript = (name: string, ...args: unknown[]) => parserScript('study', name, args)
-export const homeworkScript = (name: string, ...args: unknown[]) => parserScript('homework', name, args)
+const LEARNED_SITES_DIR = `${OVERRIDE_DIR}/site-learn/sites`
+const LEARNED_GRAPH = /^sites\/[^/]+\/site-graph\.json$/
+const LEARNED_PARSER = /^sites\/([^/]+)\/parsers\/([^/]+)\//
+
+export const applyLearnedSiteGraphContent = (content: string) => {
+  const data = parseGraph(content)
+  if (!data || data.id === 'chaoxing') return false
+  applySiteGraph?.(data)
+  return true
+}
+
+export const isLearnedSiteGraphPath = (path: string) => LEARNED_GRAPH.test(String(path || '').replace(/\\/g, '/'))
+export const isLearnedParserPath = (path: string) => LEARNED_PARSER.test(String(path || '').replace(/\\/g, '/'))
+
+const loadSiteParserDir = (siteId: string, role: string, dir: string, readFile: (path: string) => string | null) => {
+  applyGenericParts(siteId, role, dir, readFile)
+}
+
+export const applyLearnedParserContent = (path: string, content: string) => {
+  const match = String(path || '').replace(/\\/g, '/').match(LEARNED_PARSER)
+  if (!match) return false
+  const host = match[1]
+  const role = match[2]
+  const dir = `sites/${host}/parsers/${role}`
+  const readFile = (file: string) => (
+    file === path ? content : readBundledSkillFile('site-learn', file)
+  )
+  const graph = parseGraph(readBundledSkillFile('site-learn', `sites/${host}/site-graph.json`))
+  const siteId = graph?.id || host
+  loadSiteParserDir(siteId, role, dir, readFile)
+  if (graph?.host && graph.host !== siteId) loadSiteParserDir(graph.host, role, dir, readFile)
+  return true
+}
+
+export const seedBundledLearnedSites = () => {
+  for (const path of listBundledSkillFiles('site-learn')) {
+    if (LEARNED_GRAPH.test(path)) applyLearnedSiteGraphContent(readBundledSkillFile('site-learn', path) || '')
+  }
+  const roles = new Map<string, { host: string; role: string }>()
+  for (const path of listBundledSkillFiles('site-learn')) {
+    const match = path.match(LEARNED_PARSER)
+    if (!match) continue
+    roles.set(`${match[1]}/${match[2]}`, { host: match[1], role: match[2] })
+  }
+  for (const { host, role } of roles.values()) {
+    const dir = `sites/${host}/parsers/${role}`
+    const graph = parseGraph(readBundledSkillFile('site-learn', `sites/${host}/site-graph.json`))
+    const siteId = graph?.id || host
+    const readFile = (file: string) => readBundledSkillFile('site-learn', file)
+    loadSiteParserDir(siteId, role, dir, readFile)
+    if (graph?.host && graph.host !== siteId) loadSiteParserDir(graph.host, role, dir, readFile)
+  }
+}
+
+export const reloadLearnedSiteGraphs = async () => {
+  seedBundledLearnedSites()
+  try {
+    const { readDir, readTextFile, BaseDirectory } = await import('@tauri-apps/plugin-fs')
+    const entries = await readDir(LEARNED_SITES_DIR, { baseDir: BaseDirectory.Home }).catch(() => [])
+    for (const entry of entries || []) {
+      const name = String(entry.name || '').trim()
+      if (!name) continue
+      try {
+        const raw = await readTextFile(`${LEARNED_SITES_DIR}/${name}/site-graph.json`, {
+          baseDir: BaseDirectory.Home,
+        })
+        applyLearnedSiteGraphContent(raw)
+      } catch {
+        /* 该站还没有图谱文件 */
+      }
+      try {
+        const parserDirs = await readDir(`${LEARNED_SITES_DIR}/${name}/parsers`, { baseDir: BaseDirectory.Home }).catch(() => [])
+        for (const roleEntry of parserDirs || []) {
+          const role = String(roleEntry.name || '').trim()
+          if (!role) continue
+          const dir = `sites/${name}/parsers/${role}`
+          const graph = parseGraph(readBundledSkillFile('site-learn', `sites/${name}/site-graph.json`))
+          const siteId = graph?.id || name
+          const readFile = (file: string) => readBundledSkillFile('site-learn', file)
+          loadSiteParserDir(siteId, role, dir, readFile)
+        }
+      } catch {
+        /* 该站还没有解析器 */
+      }
+    }
+  } catch {
+    /* 还没有学过其它站点 */
+  }
+}
 
 export const applyChaoxingImplContent = (path: string, content: string) => {
   if (path === SITE_GRAPH_PATH) {
@@ -233,10 +250,6 @@ export const applyChaoxingImplContent = (path: string, content: string) => {
   }
   const pack = parserPackageOf(path)
   if (!pack) return
-  if (path === pack.legacy) {
-    applyParserSource(pack.id, content)
-    return
-  }
   applyParserFiles(pack.id, (file) => (file === path ? content : readBundledChaoxingFile(file)))
 }
 
@@ -273,3 +286,19 @@ try {
 }
 
 void reloadChaoxingImpl()
+try { seedBundledLearnedSites() } catch (error) {
+  console.warn('[site-learn] 内置站点解析器加载失败', error)
+}
+
+if (import.meta.hot) {
+  import.meta.hot.accept('./skills/builtinSkillAssets.ts', (mod) => {
+    if (!mod) return
+    const read = (path: string) => mod.readBundledSkillFile(CHAOXING_SKILL_ID, path)
+    try { applyParserFiles('study', read) } catch (error) {
+      console.warn('[chaoxing skill] HMR 刷课解析器失败', error)
+    }
+    try { applyParserFiles('homework', read) } catch (error) {
+      console.warn('[chaoxing skill] HMR 作业解析器失败', error)
+    }
+  })
+}

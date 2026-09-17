@@ -1,4 +1,5 @@
 import { SAME_ORIGIN_FRAMES } from '../eval'
+import { CHROME_HELPERS } from './chrome'
 import type { ActOp, BrowserLocator } from './types'
 
 /** 页内一次探测/执行。必须是单表达式，供 `var value = SCRIPT` 使用。 */
@@ -8,6 +9,7 @@ export const ENGINE_ACT_SCRIPT = (input: {
   text?: string
 }) => `(function(){
 ${SAME_ORIGIN_FRAMES}
+${CHROME_HELPERS}
 function __zeCompact(s){ return String(s || '').replace(/\\s+/g, ''); }
 function __zeEsc(id){
   return String(id || '').replace(/([^a-zA-Z0-9_-])/g, '\\\\$1');
@@ -35,6 +37,9 @@ function __zeLabel(el){
     try { t = el.innerText || el.textContent || el.value || el.getAttribute('placeholder') || ''; } catch (e2) {}
   }
   t = String(t || '').replace(/\\s+/g, ' ').trim();
+  if (t && t !== 'on' && t.length <= 24) return t;
+  var chrome = __zeChromeName(el);
+  if (chrome) return chrome;
   if (t && t !== 'on') return t;
   var lab = __zeAssocLabel(el);
   if (lab && lab !== el) {
@@ -178,39 +183,61 @@ function __zeClickTarget(el){
 }
 function __zeFireClick(el){
   __zeScrollNear(el);
+  try { __zeMouseOn(el, 'click', __zeLabel(el)); } catch (eM) {}
   var view = (el.ownerDocument && el.ownerDocument.defaultView) || window;
   var rect = { left: 0, top: 0, width: 2, height: 2 };
   try { rect = el.getBoundingClientRect(); } catch (e) {}
   var x = rect.left + (rect.width || 2) / 2;
   var y = rect.top + (rect.height || 2) / 2;
+  var hit = el;
+  try {
+    var at = view.document.elementFromPoint(x, y);
+    if (at && !(at.closest && at.closest('#__ze_mouse_root'))) hit = at;
+  } catch (eP) {}
+  var a = hit.closest ? hit.closest('a') : null;
+  var target = a || hit;
   var fire = function(type, Ctor){
-    try { el.dispatchEvent(new Ctor(type, { bubbles: true, cancelable: true, view: view, clientX: x, clientY: y })); } catch (e2) {}
+    try { target.dispatchEvent(new Ctor(type, { bubbles: true, cancelable: true, view: view, clientX: x, clientY: y, button: 0 })); } catch (e2) {}
   };
   if (typeof PointerEvent === 'function') fire('pointerdown', PointerEvent);
   fire('mousedown', MouseEvent);
   if (typeof PointerEvent === 'function') fire('pointerup', PointerEvent);
   fire('mouseup', MouseEvent);
-  if (typeof el.click === 'function') {
-    try { el.click(); return true; } catch (e3) {}
+  if (typeof target.click === 'function') {
+    try { target.click(); return true; } catch (e3) {}
   }
   fire('click', MouseEvent);
   return true;
 }
 function __zeFill(el, text){
   __zeScrollNear(el);
+  try { __zeMouseOn(el, 'type', ''); } catch (eM) {}
+  try { el.click(); } catch (eClick) {}
   try { el.focus(); } catch (e) {}
-  var tag = String(el.tagName || '');
-  if (el.isContentEditable) {
-    el.textContent = text;
-  } else {
+  try { if (typeof el.select === 'function') el.select(); } catch (eSel) {}
+  var want = String(text || '');
+  var apply = function(value){
+    if (el.isContentEditable) { el.textContent = value; return; }
+    var tag = String(el.tagName || '');
     var proto = tag === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
     var desc = Object.getOwnPropertyDescriptor(proto, 'value');
-    if (desc && desc.set) desc.set.call(el, text);
-    else el.value = text;
+    if (desc && desc.set) desc.set.call(el, value);
+    else el.value = value;
+    try { el._value = value; } catch (eV) {}
+  };
+  apply('');
+  try { el.dispatchEvent(new Event('input', { bubbles: true })); } catch (eClr) {}
+  apply(want);
+  try {
+    el.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, composed: true, data: want, inputType: 'insertFromPaste' }));
+  } catch (e2) {
+    try { el.dispatchEvent(new Event('input', { bubbles: true })); } catch (e3) {}
   }
-  try { el.dispatchEvent(new Event('input', { bubbles: true })); } catch (e2) {}
-  try { el.dispatchEvent(new Event('change', { bubbles: true })); } catch (e3) {}
-  return true;
+  try { el.dispatchEvent(new Event('change', { bubbles: true })); } catch (e4) {}
+  var got = el.isContentEditable ? String(el.textContent || '') : String(el.value || '');
+  var pwd = false;
+  try { pwd = String(el.type || '').toLowerCase() === 'password'; } catch (e5) {}
+  return { filled: got.length > 0 || !want, length: got.length, password: pwd, value: pwd ? '' : got.slice(0, 80) };
 }
 function __zeRoleOf(el){
   try {
@@ -261,7 +288,7 @@ function __zeCollect(loc){
         }
         continue;
       }
-      var nodes = doc.querySelectorAll('a, button, input, label, select, textarea, [role="tab"], [role="button"], [role="link"], [role="menuitem"], [contenteditable="true"], span, div, li, h3, h4, p');
+      var nodes = doc.querySelectorAll('a, button, input, label, select, textarea, [role="tab"], [role="button"], [role="link"], [role="menuitem"], [contenteditable="true"], span, div, li, h3, h4, p, [data-url], [title]');
       var wantText = __zeCompact(value.replace(/[（(]\\s*\\d+\\s*[）)]\\s*$/g, ''));
       var wantRole = __zeCompact(value).toLowerCase();
       var wantName = __zeCompact(name);
@@ -351,26 +378,31 @@ function __zeAct(op, loc, text){
     var ct = __zeLabel(list[c]).slice(0, 24);
     if (ct) cand.push({ text: ct });
   }
-  if (!__zeVisible(el)) return { ok: false, reason: 'hidden', retry: true, error: '元素不可见', candidates: cand, box: __zeBox(el) };
+  if (!__zeVisible(el) && !__zeChromeHit(el)) return { ok: false, reason: 'hidden', retry: true, error: '元素不可见', candidates: cand, box: __zeBox(el) };
   if (__zeDisabled(el)) return { ok: false, reason: 'disabled', retry: true, error: '元素已禁用', candidates: cand, box: __zeBox(el) };
   if (op === 'fill' && !__zeEditable(el)) {
     return { ok: false, reason: __zeReadonly(el) ? 'readonly' : 'disabled', retry: true, error: '输入框不可编辑', candidates: cand, box: __zeBox(el) };
   }
   __zeScrollNear(el);
-  var hit = __zeHit(el);
-  if (!hit.ok) return { ok: false, reason: 'covered', retry: true, error: '元素被挡住', cover: hit.cover, candidates: cand, box: __zeBox(el) };
+  if (op !== 'fill') {
+    var hit = __zeHit(el);
+    if (!hit.ok) return { ok: false, reason: 'covered', retry: true, error: '元素被挡住', cover: hit.cover, candidates: cand, box: __zeBox(el) };
+  }
   var box = __zeBox(el);
   var sig = String(loc.by || '') + ':' + String(loc.value || '') + ':' + String(loc.name || '');
   var prev = window.__ZE_ACT_BOX__ || null;
-  if (prev && prev.sig === sig && prev.box !== box) {
+  if (op !== 'fill' && prev && prev.sig === sig && prev.box !== box) {
     window.__ZE_ACT_BOX__ = { sig: sig, box: box };
     return { ok: false, reason: 'unstable', retry: true, error: '元素还在动', candidates: cand, box: box };
   }
   window.__ZE_ACT_BOX__ = { sig: sig, box: box };
   if (op === 'ready') return { ok: true, text: __zeLabel(el).slice(0, 80), box: box };
   if (op === 'fill') {
-    __zeFill(el, String(text || ''));
-    return { ok: true, text: String(text || '').slice(0, 80), box: box };
+    var wrote = __zeFill(el, String(text || ''));
+    if (!wrote.filled) {
+      return { ok: false, reason: 'readonly', retry: true, error: '输入框还是空的，页面没吃到这次填写', filled: false, length: wrote.length, box: box };
+    }
+    return { ok: true, filled: true, length: wrote.length, password: wrote.password, text: wrote.value || (wrote.password ? '' : String(text || '').slice(0, 80)), box: box };
   }
   __zeFireClick(el);
   return { ok: true, text: __zeLabel(el).slice(0, 80), box: box };

@@ -1,4 +1,4 @@
-import { askFrames, evalBrowserView, waitMs } from '../../browser/eval'
+import { evalBrowserView, waitMs } from '../../browser/eval'
 import type { ChaoxingHomeworkInfo } from './types'
 import { runTextModel } from '../../model/runner'
 
@@ -7,7 +7,7 @@ const CHUNK = 7000
 const asObject = (value: unknown) =>
   value && typeof value === 'object' ? value as Record<string, unknown> : {}
 
-const questionNeedsVision = (question: NonNullable<ChaoxingHomeworkInfo['questions']>[number]) => {
+export const questionNeedsVision = (question: NonNullable<ChaoxingHomeworkInfo['questions']>[number]) => {
   if (question.needsVision || Number(question.imageCount) > 0) return true
   const stem = String(question.stem || '')
   const optText = (question.options || []).map((item) => item.text).join('')
@@ -83,18 +83,6 @@ export const captureHomeworkQuestionImage = async (id: string, index: number) =>
   }
   if (local.ready) {
     const image = await readStoredShot(id, `(window.__ZE_HW_LOCAL_SHOTS__ || {})[${zero}]`)
-    if (image.startsWith('data:image/')) return image
-  }
-
-  await evalBrowserView(id, `(function(){
-    window.__ZE_HW_SHOTS__ = window.__ZE_HW_SHOTS__ || {};
-    window.__ZE_HW_SHOTS__[${zero}] = { ready: false, data: '', parts: {}, got: 0, total: 0 };
-    return true;
-  })()`).catch(() => null)
-  await askFrames(id, 'hwshot', { index: String(zero) })
-  for (let i = 0; i < 10; i += 1) {
-    await waitMs(350)
-    const image = await readStoredShot(id, `(window.__ZE_HW_SHOTS__ || {})[${zero}]`)
     if (image.startsWith('data:image/')) return image
   }
   return ''

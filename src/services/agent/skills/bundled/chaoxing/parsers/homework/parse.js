@@ -1,177 +1,17 @@
-// 作业 · parse：题盒、选项、题面
-function __hwQuestionBoxes(doc){
-    if (!doc || !doc.querySelectorAll) return [];
-    var raw = doc.querySelectorAll('.questionLi');
-    if (!raw.length) raw = doc.querySelectorAll('.singleQuesId');
-    var out = [];
-    for (var i = 0; i < raw.length; i++) {
-      var el = raw[i];
-      var inner = null;
-      try { inner = el.querySelector('.questionLi, .singleQuesId'); } catch (e) {}
-      if (inner && inner !== el) continue;
-      out.push(el);
-    }
-    return out;
-  }
-
-function __hwPickedOf(box){
-    var picked = '';
-    if (!box || !box.querySelectorAll) return picked;
-    var rows = box.querySelectorAll('.stem_answer .answerBg, .answerBg');
-    if (!rows.length) rows = box.querySelectorAll('.answer_item');
-    for (var i = 0; i < rows.length && i < 8; i++) {
-      var row = rows[i];
-      if (row.querySelector && row.querySelector('.answerBg')) continue;
-      var num = row.querySelector ? row.querySelector('.num_option') : null;
-      var on = (row.getAttribute && row.getAttribute('aria-checked') === 'true')
-        || (num && /(^|\s)check_answer(\s|$)/.test(String(num.className || '')));
-      if (!on) continue;
-      var letter = String((num && num.getAttribute('data')) || '').toUpperCase();
-      if (!/^[A-H]$/.test(letter)) {
-        var aria = String((row.getAttribute && row.getAttribute('aria-label')) || '');
-        letter = ((aria.match(/^([A-H])/) || [])[1] || '');
-      }
-      if (/^[A-H]$/.test(letter) && picked.indexOf(letter) < 0) picked += letter;
-    }
-    return picked;
-  }
-
-function __hwClean(s){ return String(s || '').replace(/[\n\r\t]+/g, ' ').replace(/  +/g, ' ').trim(); }
-
-function __hwClick(el){
-    if (!el) return false;
-    try { el.scrollIntoView({ block: 'center' }); } catch (e) {}
-    var view = (el.ownerDocument && el.ownerDocument.defaultView) || window;
-    var rect = { left: 0, top: 0, width: 0, height: 0 };
-    try { rect = el.getBoundingClientRect(); } catch (e) {}
-    var x = rect.left + (rect.width || 2) / 2;
-    var y = rect.top + (rect.height || 2) / 2;
-    var fire = function(type, Ctor){
-      try {
-        el.dispatchEvent(new Ctor(type, { bubbles: true, cancelable: true, view: view, clientX: x, clientY: y }));
-      } catch (e) {}
-    };
-    if (typeof PointerEvent === 'function') { fire('pointerdown', PointerEvent); }
-    fire('mousedown', MouseEvent);
-    if (typeof PointerEvent === 'function') { fire('pointerup', PointerEvent); }
-    fire('mouseup', MouseEvent);
-    // 只能触发一次 click：学习通选项再点一次是「取消选择」，双击等于没点
-    if (typeof el.click === 'function') {
-      try { el.click(); return true; } catch (e) {}
-    }
-    fire('click', MouseEvent);
-    return true;
-  }
-
-function __hwTypeName(raw, code){
-    var t = __hwClean(raw);
-    if (/单选/.test(t) || code === '0') return 'single';
-    if (/多选/.test(t) || code === '1') return 'multi';
-    if (/填空/.test(t) || code === '2') return 'blank';
-    if (/判断/.test(t) || code === '3') return 'judge';
-    if (/简答|论述|计算|解答/.test(t) || code === '4' || code === '5') return 'text';
-    return t ? 'other' : (code ? 'other' : 'unknown');
-  }
-
-function __hwLetter(text){
-    var m = __hwClean(text).match(/^([A-Ha-h])(?:[.、．\s)]|$)/);
-    return m ? m[1].toUpperCase() : '';
-  }
-
-function __hwBoxes(doc){
-    if (!doc || !doc.querySelectorAll) return [];
-    var raw = doc.querySelectorAll('.questionLi');
-    if (!raw.length) raw = doc.querySelectorAll('.singleQuesId');
-    var out = [];
-    for (var i = 0; i < raw.length; i++) {
-      var el = raw[i];
-      var inner = null;
-      try { inner = el.querySelector('.questionLi, .singleQuesId'); } catch (e) {}
-      if (inner && inner !== el) continue;
-      out.push(el);
-    }
-    return out;
-  }
-
-function __hwChoiceNodes(box){
-    if (!box || !box.querySelectorAll) return [];
-    var wraps = box.querySelectorAll('.stem_answer .answerBg, .stem_answer .answer_item, .answerBg, .answer_item');
-    if (wraps.length) return Array.prototype.slice.call(wraps);
-    var nodes = box.querySelectorAll('span[class*="choice"], .num_option, a.checkDiv, .check_answer');
-    if (nodes.length) return Array.prototype.slice.call(nodes);
-    var legacy = box.querySelectorAll('.workTextWrap, .options li');
-    var out = [];
-    for (var i = 0; i < legacy.length; i++) {
-      var kids = legacy[i].querySelectorAll('span, a, label');
-      if (kids.length) {
-        for (var k = 0; k < kids.length; k++) out.push(kids[k]);
-      } else out.push(legacy[i]);
-    }
-    return out;
-  }
-
-function __hwIsSelected(el){
-    if (!el) return false;
-    var cls = String(el.className || '');
-    if (/check_answer|checked|active|selected|cur|choice_answer/.test(cls)) return true;
-    if (el.getAttribute && el.getAttribute('aria-checked') === 'true') return true;
-    try {
-      if (el.querySelector && el.querySelector('input:checked')) return true;
-      var p = el.parentElement;
-      if (p && /check_answer|checked|active|selected/.test(String(p.className || ''))) return true;
-    } catch (e) {}
-    return false;
-  }
-
-function __hwOptions(box){
-    var out = [];
-    var nodes = __hwChoiceNodes(box);
-    for (var i = 0; i < nodes.length && out.length < 12; i++) {
-      var el = nodes[i];
-      var bodyEl = el.querySelector ? el.querySelector('.answer_p') : null;
-      var letterEl = el.querySelector ? el.querySelector('.num_option, [class*="num_option"]') : null;
-      var letter = String((letterEl && letterEl.getAttribute('data')) || '').trim().toUpperCase();
-      if (!/^[A-H]$/.test(letter)) {
-        var aria = String(el.getAttribute && el.getAttribute('aria-label') || '');
-        letter = (aria.match(/^([A-H])s/) || [])[1] || '';
-      }
-      var text = __hwClean(bodyEl ? bodyEl.innerText : (el.getAttribute('data') || el.innerText || el.textContent || ''));
-      if (!/^[A-H]$/.test(letter)) letter = __hwLetter(text) || __hwClean(el.getAttribute('data') || '').slice(0, 1).toUpperCase();
-      if (!/^[A-H]$/.test(letter) && /正确|对/.test(text)) letter = 'A';
-      if (!/^[A-H]$/.test(letter) && /错误|错/.test(text)) letter = 'B';
-      if (!/^[A-H]$/.test(letter)) letter = String.fromCharCode(65 + out.length);
-      text = text.replace(/^[A-H][.、．)s]*/, '').slice(0, 120);
-      if (!text && !bodyEl) continue;
-      if (out.some(function(item){ return item.letter === letter; })) continue;
-      out.push({ letter: letter, text: text || '', selected: __hwIsSelected(letterEl || el) });
-    }
-    return out;
-  }
+// 作业 · parse：题面、名单、页类。认盒/选项在 helpers.js。
+var HW_QUESTION_CAP = 80;
 
 function __hwStem(box){
     var el = box.querySelector('h3.mark_name, h3 .mark_name, h3, .Zy_TItle, .mark_name, .qtTitle, .question-title, .stem, .quesTitle');
-    var text = __hwClean((el && (el.innerText || el.textContent)) || '');
-    text = text.replace(/^d+[.、．s]*/, '').replace(/[（(]s*(单选题|多选题|填空题|判断题|简答题)s*[）)]/g, '').replace(/(s*)/g, ' ').trim();
+    var text = __hwRichText(el);
+    if (!text) text = __hwClean((el && (el.innerText || el.textContent)) || '');
+    text = text.replace(/^\d+[.、．\s]*/, '').replace(/[（(]\s*(单选题|多选题|填空题|判断题|简答题)\s*[）)]/g, '').trim();
+    if (/^[（(][\s\u00a0\u3000]*[）)]$/.test(text)) text = '';
     if (!text) {
       var raw = __hwClean(box.innerText || '');
-      text = (raw.split(/A[.、．s]/)[0] || raw).replace(/^d+[.、．s]*/, '').trim();
+      text = (raw.split(/A[.、．\s]/)[0] || raw).replace(/^\d+[.、．\s]*/, '').trim();
     }
-    return text.split(/(?=[A-H][.、．s])/)[0]?.trim() || text.slice(0, 400);
-  }
-
-function __hwImgs(box){
-    var out = [];
-    var imgs = box.querySelectorAll('img');
-    for (var i = 0; i < imgs.length && out.length < 10; i++) {
-      var img = imgs[i];
-      var src = String(img.src || img.getAttribute('src') || '');
-      var w = img.naturalWidth || img.width || 0;
-      var h = img.naturalHeight || img.height || 0;
-      if (!src || /icon|logo|radio|check|btn|avatar|pixel|blank\.gif|spacer|\.svg(\?|$)/i.test(src)) continue;
-      if (w && h && (w < 16 || h < 16)) continue;
-      out.push(img);
-    }
-    return out;
+    return (text.split(/(?=[A-H][.、．\s])/)[0] || text).trim().slice(0, 400);
   }
 
 function __hwShotBox(box, done){
@@ -242,7 +82,7 @@ function __hwShotBox(box, done){
   }
 
 function __hwParseBox(box, index){
-    var id = String(box.getAttribute('data') || box.getAttribute('questionid') || box.getAttribute('data-questionid') || box.id || index + 1);
+    var id = String(box.getAttribute('data') || box.getAttribute('questionid') || box.getAttribute('data-questionid') || box.id || ('hw-' + (index + 1)));
     var typeName = box.getAttribute('typeName') || box.getAttribute('typename') || '';
     var typeCode = '';
     try {
@@ -263,20 +103,27 @@ function __hwParseBox(box, index){
       }
     }
     var stem = __hwStem(box);
-    var idxHit = stem.match(/^\s*(\d+)/);
-    var qIndex = Number(idxHit && idxHit[1]) || (index + 1);
+    var qIndex = index + 1;
     var stemBody = stem
       .replace(/^\d+\s*[.、．)）]\s*/, '')
       .replace(/^\d+(?=[（(]|单选|多选|填空|判断|简答)/, '')
       .replace(/^[（(]\s*(单选题|多选题|填空题|判断题|简答题|计算题|论述题|单选|多选|填空|判断)\s*[)）]\s*/, '')
       .trim();
-    var imgs = __hwImgs(box);
-    var imageUrls = [];
-    for (var g = 0; g < imgs.length && imageUrls.length < 6; g++) {
-      var src = String(imgs[g].src || imgs[g].getAttribute('src') || '');
-      if (src) imageUrls.push(src);
+    var stemEl = box.querySelector('h3.mark_name, h3, .mark_name, .Zy_TItle, .qtTitle, .question-title, .stem, .quesTitle');
+    var imageUrls = __hwImgUrls(stemEl);
+    if (!imageUrls.length) {
+      var taken = {};
+      for (var oi = 0; oi < options.length; oi++) {
+        var pics = options[oi].images || [];
+        for (var pi = 0; pi < pics.length; pi++) taken[pics[pi]] = 1;
+      }
+      var all = __hwImgUrls(box);
+      for (var g = 0; g < all.length; g++) {
+        if (!taken[all[g]]) imageUrls.push(all[g]);
+      }
     }
-    var imageCount = imgs.length;
+    var imageCount = imageUrls.length;
+    for (var oc = 0; oc < options.length; oc++) imageCount += (options[oc].images || []).length;
     var optText = options.map(function(item){ return item.text; }).join('');
     var needsVision = imageCount > 0 || stemBody.length < 12 || /（图像）|\(图像\)|公式图/.test(stemBody + optText);
     return {
@@ -296,10 +143,12 @@ function __hwParseBox(box, index){
 function __hwParseQuestions(doc){
     var boxes = __hwBoxes(doc);
     var out = [];
-    for (var i = 0; i < boxes.length && out.length < 40; i++) {
+    for (var i = 0; i < boxes.length && out.length < HW_QUESTION_CAP; i++) {
       var q = __hwParseBox(boxes[i], i);
       if (q.stem || q.options.length || q.imageCount) out.push(q);
     }
+    out.total = boxes.length;
+    out.truncated = boxes.length > out.length;
     return out;
   }
 
@@ -333,43 +182,99 @@ function __hwParseText(text){
     return out;
   }
 
+function __hwIsStatus(s){
+    return /^(待做|未做|未完成|未交|未提交|待交|待批阅|已完成|已批阅|已交)$/.test(String(s || '').trim());
+  }
+
+function __hwNormStatus(s){
+    var t = String(s || '');
+    if (/待批阅/.test(t)) return '待批阅';
+    if (/已完成|已批阅|已交/.test(t) && !/未交|未提交|待交/.test(t)) return '已完成';
+    if (/待做|未做|未完成|未交|未提交|待交/.test(t)) return '待做';
+    return '';
+  }
+
+function __hwIsWorkTitle(s){
+    s = __hwClean(s);
+    if (!s || s.length < 2 || s.length > 80) return false;
+    if (__hwIsStatus(s)) return false;
+    if (/^作业$|^测验$|^考试$|^章节$|^任务$|^讨论$|^资料$|^错题集$|^学习记录$|^默认班级$/.test(s)) return false;
+    if (/截止日期|作业列表|开始时间|剩余\d|小时|分钟|课程门户/.test(s)) return false;
+    return true;
+  }
+
+function __hwParseWorkLine(line){
+    line = __hwClean(line);
+    var m = line.match(/^(.*?)(?:\s*[;；|]\s*|\s+)(待做|未做|未完成|未交|未提交|待交|待批阅|已完成|已批阅|已交)\s*$/);
+    if (m && __hwIsWorkTitle(m[1])) return { title: __hwClean(m[1]), status: m[2] };
+    return null;
+  }
+
+function __hwParseWorksFromText(text, href){
+    var out = [];
+    var seen = {};
+    var add = function(title, status){
+      title = __hwClean(title).replace(/^[（(]\d+[）)]\s*/, '');
+      if (!__hwIsWorkTitle(title) || seen[title]) return;
+      seen[title] = 1;
+      out.push({ title: title, status: __hwNormStatus(status) || '待做', score: '', due: '', href: href || '' });
+    };
+    var lines = String(text || '').split(/\n+/).map(__hwClean).filter(Boolean);
+    for (var j = 0; j < lines.length && out.length < 40; j++) {
+      var one = __hwParseWorkLine(lines[j]);
+      if (one) { add(one.title, one.status); continue; }
+      if (!__hwIsStatus(lines[j])) continue;
+      for (var k = j - 1; k >= 0 && k >= j - 3; k--) {
+        if (__hwIsWorkTitle(lines[k])) { add(lines[k], lines[j]); break; }
+      }
+    }
+    return out;
+  }
+
 function __hwParseWorks(doc, href){
+    href = String(href || '');
+    if (/\/mycourse\/studentstudy|\/mycourse\/stu/.test(href) && !/\/work\//.test(href)) {
+      return [];
+    }
     var out = [];
     var seen = {};
     var add = function(title, status, score, due, link){
       title = __hwClean(title).replace(/^[（(]\d+[）)]\s*/, '');
-      if (!title || title.length < 2 || title.length > 80 || seen[title]) return;
-      if (/^作业$|^测验$|^考试$|^章节$/.test(title)) return;
+      if (!__hwIsWorkTitle(title) || seen[title]) return;
       seen[title] = 1;
-      var st = __hwClean(status);
-      if (!st) st = /已完成|已批阅/.test(title) ? '已完成' : /待批阅/.test(title) ? '待批阅' : '待做';
+      var st = __hwNormStatus(status);
+      if (!st) st = __hwNormStatus(title) || '待做';
       out.push({ title: title, status: st, score: __hwClean(score), due: __hwClean(due), href: __hwClean(link) });
     };
-    var links = doc.querySelectorAll('a[href*="work"], a[href*="Work"], a[onclick*="work"], .titTxt a, .workName a, .work-title, .bottomList a');
-    for (var i = 0; i < links.length && out.length < 40; i++) {
-      var a = links[i];
-      var title = a.getAttribute('title') || a.innerText || a.textContent || '';
-      var wrap = a.closest ? (a.closest('li, .workLi, .work-item, tr, .listLi') || a.parentElement) : a.parentElement;
-      var block = __hwClean((wrap && (wrap.innerText || wrap.textContent)) || '');
-      var status = '';
-      if (/待做|未做|未完成/.test(block)) status = '待做';
-      else if (/待批阅/.test(block)) status = '待批阅';
-      else if (/已完成|已批阅|已交/.test(block)) status = '已完成';
+    var cards = doc.querySelectorAll('.workLi, .bottomList li, .listLi, .work-item, [class*="workItem"], [class*="work-item"]');
+    for (var c = 0; c < cards.length && out.length < 40; c++) {
+      var card = cards[c];
+      var nameEl = card.querySelector('.titTxt a, .titTxt, .workName a, .workName, .work-title, h2, h3, a');
+      var title = (nameEl && (nameEl.getAttribute('title') || nameEl.innerText || nameEl.textContent)) || '';
+      var block = String(card.innerText || card.textContent || '');
+      var status = __hwNormStatus(block);
       var score = (block.match(/\d+(?:\.\d+)?\s*分/) || [])[0] || '';
       var due = (block.match(/\d{4}[-./]\d{1,2}[-./]\d{1,2}[^\n]{0,12}/) || [])[0] || '';
-      add(title, status, score, due, a.href || a.getAttribute('href') || href);
+      var a = card.querySelector('a[href*="work"], a[href*="Work"], a[onclick*="work"], a');
+      var link = (a && (a.href || a.getAttribute('href'))) || href;
+      if (/^javascript:/i.test(String(link || ''))) link = href || '';
+      add(title, status, score, due, link);
+    }
+    var links = doc.querySelectorAll('a[href*="work"], a[href*="Work"], a[onclick*="work"], a[onclick*="Work"], .titTxt a, .workName a, .work-title, .bottomList a');
+    for (var i = 0; i < links.length && out.length < 40; i++) {
+      var el = links[i];
+      var linkTitle = el.getAttribute('title') || el.innerText || el.textContent || '';
+      var wrap = el.closest ? (el.closest('li, .workLi, .work-item, tr, .listLi') || el.parentElement) : el.parentElement;
+      var wrapText = (wrap && (wrap.innerText || wrap.textContent)) || '';
+      var hrefRaw = el.href || el.getAttribute('href') || href;
+      if (/^javascript:/i.test(String(hrefRaw || '')) || /看不清|看不清题/.test(__hwClean(linkTitle))) continue;
+      add(linkTitle, __hwNormStatus(wrapText), (wrapText.match(/\d+(?:\.\d+)?\s*分/) || [])[0] || '', (wrapText.match(/\d{4}[-./]\d{1,2}[-./]\d{1,2}[^\n]{0,12}/) || [])[0] || '', hrefRaw);
     }
     if (!out.length) {
-      var text = __hwClean((doc.body && doc.body.innerText) || '');
-      var lines = String((doc.body && doc.body.innerText) || '').split('\n').map(__hwClean).filter(Boolean);
-      for (var j = 0; j < lines.length && out.length < 40; j++) {
-        var line = lines[j];
-        var next = lines[j + 1] || '';
-        if (/待做|未做|待批阅|已完成|已批阅/.test(next) && line.length >= 2 && line.length <= 60 && !/截止日期|作业列表|开始时间/.test(line)) {
-          add(line, next, '', '', href);
-        }
-      }
-      if (!out.length && /暂无作业|没有作业/.test(text)) return [];
+      var bodyText = String((doc.body && (doc.body.innerText || doc.body.textContent)) || '');
+      var fromText = __hwParseWorksFromText(bodyText, href);
+      for (var t = 0; t < fromText.length; t++) add(fromText[t].title, fromText[t].status, '', '', href);
+      if (!out.length && /暂无作业|没有作业/.test(bodyText)) return [];
     }
     return out;
   }
@@ -378,6 +283,9 @@ function __hwPageOf(href, text, questions, works){
     href = String(href || '');
     text = String(text || '');
     if (questions.length) return /view|已批阅|正确答案/.test(href + text) ? 'view' : 'do';
+    if (/\/mycourse\/studentstudy|\/mycourse\/stu/.test(href) && !/\/work\//.test(href)) {
+      return /作业/.test(text) ? 'course' : 'other';
+    }
     if (works.length || /作业列表|work\/list|mooc2\/work/.test(href + text)) return 'list';
     if (/\/mycourse\/stu/.test(href) && /作业/.test(text)) return 'course';
     return 'other';

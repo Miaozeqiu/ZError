@@ -751,6 +751,11 @@ onUnmounted(() => {
   flex-direction: column;
 }
 
+.skill-graph-body :deep(.graph-panel) {
+  flex: 1;
+  min-height: 0;
+}
+
 .skill-graph-body .skill-preview-empty {
   padding: 24px 16px;
 }

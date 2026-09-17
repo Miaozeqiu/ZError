@@ -12,15 +12,15 @@ description: >-
 
 ## 入口
 
-- 登录页：`https://passport2.chaoxing.com`（会跳到 `/login?fid=&refer=`）
+- 登录页：`https://passport2.chaoxing.com/login?fid=&newversion=true&refer=https%3A%2F%2Fi.chaoxing.com`（不要打开光秃的 passport2 根地址，旧页一点登录会整页跳走、表单清空）
 - 成功后：`https://i.mooc.chaoxing.com/space/index`（标题常是学校名）
-- 课程列表常在 iframe `#frame_content`。已注入全 frame 桥，可直接点；也可打开顶层课表 `https://mooc1-1.chaoxing.com/visit/interaction`。不要打开 `studentcourse` / `knowledge/cards` / `ananas` 等 iframe 文档地址
+- 点「我学的课」：页签在 `#frame_content`。看 `get_state.spaceTab`，直接 `click_text「我学的课」`。禁止 navigate / 改 iframe src / 点 `visit/courses` 链接 / eval 找页签。不要打开 `studentcourse` / `knowledge/cards` / `ananas` 等嵌套文档地址
 
 ## 先看页面
 
 1. `browser_get_state`
 2. 已在 `i.mooc.chaoxing.com` / `i.chaoxing.com` 且没有 `#loginBtn` → 已登录，不要再填密码
-3. 否则 `browser_navigate` 到 `https://passport2.chaoxing.com`，再 `browser_get_page`
+3. 否则 `browser_navigate` 到 `https://passport2.chaoxing.com/login?fid=&newversion=true&refer=https%3A%2F%2Fi.chaoxing.com`，再 `browser_get_page`
 
 ## 账号密码登录
 
@@ -91,13 +91,9 @@ description: >-
 | 课程 | `#zne_kc_icon` | 切 iframe |
 | 退出登录 | 含该文本的链接 | 顶栏 |
 
-课程列表页（直接打开 interaction URL）：
+课表在空间 iframe 里，点 `.tab-item[coursetype=1]` 后课名在框内。不要把 `visit/courses` 当顶层打开。
 
-- 标签：`我教的课` / `我学的课`
-- 课名在 `li.course a.color1` 或 `.course-name`
-- 点课名进入课程
-
-iframe 里的点击：用 `browser_click_text` / 全 frame 桥，**不要** `browser_navigate` 进 iframe 自己的地址。
+播放器 / 章节树 / 作业框仍是嵌套文档：用 `browser_click_text`，不要把那些地址当顶层打开。
 
 ## 不要做
 

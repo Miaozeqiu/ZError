@@ -20,6 +20,9 @@
           @ask="onAskSelection"
           @hide-composer-menu="composerCompRef?.hideMenu()"
         />
+          <div v-if="approvalPending" class="chat-approval">
+            <AgentApprovalBar :session-id="activeChat?.id" />
+          </div>
           <AgentChatComposer
             ref="composerCompRef"
             v-model:draft="draft"
@@ -156,6 +159,8 @@ import {
   MermaidBlockNode,
   setCustomComponents,
 } from 'markstream-vue'
+import AgentApprovalBar from '../components/agent/AgentApprovalBar.vue'
+import { agentApprovalState } from '../services/agent/agentApproval'
 import AgentChatComposer from './agentChat/AgentChatComposer.vue'
 import AgentChatSidebar from './agentChat/AgentChatSidebar.vue'
 import AgentChatThread from './agentChat/AgentChatThread.vue'
@@ -301,6 +306,9 @@ const folderPickerInitialId = computed(() => {
   return tokens.at(-1)?.folderId ?? null
 })
 const showFeatureCards = computed(() => !(activeChat.value?.messages.length))
+const approvalPending = computed(() => (
+  Boolean(agentApprovalState.pending && agentApprovalState.pending.sessionId === activeChat.value?.id)
+))
 
 const ensureAgentModel = () => {
   if (agentModel.value) return true
@@ -664,6 +672,18 @@ onUnmounted(() => {
   border-radius: 4px;
   margin-bottom: 5px;
   margin-right: 5px;
+}
+
+.chat-approval {
+  padding: 0 var(--chat-gutter) 8px;
+  max-width: var(--chat-max-width);
+  width: 100%;
+  margin: 0 auto;
+  box-sizing: border-box;
+}
+
+.chat-approval:empty {
+  display: none;
 }
 
 .chat-main {

@@ -1,17 +1,23 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
-import { publicRefs } from './engine/refs'
-import { readPageSnapshot } from './engine/snapshot'
-import { askFrames, asObject, evalBrowserView, waitMs, withSameFrames } from './eval'
+import { clickByLocator, fillByLocator } from './engine/act'
+import { clickLabelMatches } from './engine/clickFind'
+import { clickSpaceTab, isSpaceListTopUrl } from './engine/spaceTab'
+import { publicRefs, rememberPageRefs, type PageRef } from './engine/refs'
+import { formatAriaSnapshot } from './engine/snapshot'
+import { askFrames, asObject, evalBrowserView, isCefEngine, waitMs } from './eval'
 
 export {
   SAME_ORIGIN_FRAMES,
   askFrames,
   asObject,
+  browserEngine,
+  evalBrowserFrames,
   evalBrowserView,
+  isCefEngine,
   waitMs,
 } from './eval'
-export type { ChaoxingHomeworkInfo, HomeworkLiveState } from '../chaoxing/homework'
+export type { ChaoxingHomeworkInfo, HomeworkCard, HomeworkLiveState } from '../chaoxing/homework'
 export {
   applyHomeworkLiveState,
   fillChaoxingHomework,
@@ -46,6 +52,14 @@ export {
   studyChaoxingUnfinished,
   videoIsPlaying,
 } from '../chaoxing/study'
+export {
+  hideNativeVideo,
+  playNativeVideo,
+  readNativeVideo,
+  startNativeVideoLoop,
+  stopNativeVideoLoop,
+  tickNativeVideo,
+} from './nativeVideo'
 
 export type AppBrowser = {
   id: string
@@ -149,6 +163,11 @@ const writeList = (items: AppBrowser[]) => {
 
 export const listAppBrowsers = () => readList().sort((a, b) => a.createdAt - b.createdAt || a.updatedAt - b.updatedAt)
 
+/** 本地记住的地址，不打 CDP。等 url / 回执用这个，避免和播放抢通道。 */
+export const peekAppBrowser = (id: string) => readList().find((item) => item.id === id) || null
+
+export const peekAppBrowserUrl = (id: string) => String(peekAppBrowser(id)?.url || '')
+
 export const ensureDefaultBrowsers = () => {
   const home = browserHomeUrl()
   const items = readList().map((item) => (
@@ -244,22 +263,86 @@ export const hostBounds = (el: HTMLElement | null): BrowserBounds | null => {
   }
 }
 
-export const openBrowserView = (id: string, url: string, bounds: BrowserBounds) => (
-  invoke('browser_open', { id, url: normalizeBrowserUrl(url), ...bounds })
-)
+export const openBrowserView = (id: string, url: string, bounds: BrowserBounds) => {
+  if (isSpaceListTopUrl(url)) {
+    return Promise.reject(new Error('禁止顶层打开课表地址。只点 iframe 里的「我学的课」页签。'))
+  }
+  return invoke('browser_open', { id, url: normalizeBrowserUrl(url), ...bounds })
+}
 
-export const setBrowserBounds = (id: string, bounds: BrowserBounds) => (
-  invoke('browser_set_bounds', { id, ...bounds })
-)
+let boundsFlight: Promise<void> | null = null
+let boundsQueued: { id: string; bounds: BrowserBounds; notify: boolean } | null = null
+
+/** 拖窗口/分栏时只保留最新一帧。网页 was_resized 由原生洞口 view 负责，这里默认不 notify。 */
+export const setBrowserBounds = (id: string, bounds: BrowserBounds, notify = false) => {
+  boundsQueued = { id, bounds, notify }
+  if (boundsFlight) return boundsFlight
+  boundsFlight = (async () => {
+    try {
+      while (boundsQueued) {
+        const job = boundsQueued
+        boundsQueued = null
+        await invoke('browser_set_bounds', { id: job.id, ...job.bounds, notify: job.notify })
+      }
+    } finally {
+      boundsFlight = null
+    }
+  })()
+  return boundsFlight
+}
 
 export const showBrowserView = (id: string) => invoke('browser_show', { id })
 export const hideBrowserView = (id: string) => invoke('browser_hide', { id })
 export const hideAllBrowserViews = () => invoke('browser_hide_all')
 export const closeBrowserView = (id: string) => invoke('browser_close', { id })
-export const navigateBrowserView = (id: string, url: string) => (
-  invoke('browser_navigate', { id, url: normalizeBrowserUrl(url) })
-)
-export const reloadBrowserView = (id: string) => invoke('browser_reload', { id })
+export const navigateBrowserView = (id: string, url: string) => {
+  if (isSpaceListTopUrl(url)) {
+    return Promise.reject(new Error('禁止顶层打开课表地址。只点 iframe 里的「我学的课」页签。'))
+  }
+  return invoke('browser_navigate', { id, url: normalizeBrowserUrl(url) })
+}
+const loadPhase = new Map<string, { phase: string; at: number; url: string }>()
+let loadWatch: Promise<UnlistenFn> | null = null
+
+export const trackBrowserLoads = () => watchBrowserLoad()
+
+const watchBrowserLoad = () => {
+  if (!loadWatch) {
+    loadWatch = listen<BrowserLoadState>('app-browser-load', (event) => {
+      const state = event.payload
+      if (!state?.id) return
+      loadPhase.set(state.id, {
+        phase: String(state.phase || ''),
+        at: Date.now(),
+        url: String(state.url || ''),
+      })
+    })
+  }
+  return loadWatch
+}
+
+/** 只有主文档真的在刷新时才等。切章是同页换 iframe，不能把 leftover started 当成整页重载。 */
+export const waitForBrowserIdle = async (id: string, maxMs = 8_000) => {
+  await watchBrowserLoad()
+  const started = Date.now()
+  const row = () => loadPhase.get(id)
+  if (row()?.phase !== 'started') return
+  while (Date.now() - started < maxMs) {
+    const hit = row()
+    if (hit?.phase === 'finished' && hit.at >= started - 80) {
+      await waitMs(400)
+      return
+    }
+    await waitMs(120)
+  }
+}
+
+export const reloadBrowserView = async (id: string) => {
+  await watchBrowserLoad()
+  loadPhase.set(id, { phase: 'started', at: Date.now(), url: '' })
+  await invoke('browser_reload', { id })
+  await waitForBrowserIdle(id)
+}
 export const goBackBrowserView = (id: string) => invoke('browser_go_back', { id })
 export const goForwardBrowserView = (id: string) => invoke('browser_go_forward', { id })
 export const setBrowserZoom = (id: string, zoom: number) => (
@@ -268,128 +351,149 @@ export const setBrowserZoom = (id: string, zoom: number) => (
 
 export const getBrowserState = (id: string) => invoke<BrowserPageState>('browser_get_state', { id })
 
+export const screenshotBrowserView = async (id: string) => {
+  const shot = asObject(await invoke('browser_screenshot', { id }))
+  const image = String(shot.image || '')
+  if (!image.startsWith('data:image/')) {
+    throw new Error(String(shot.error || '截图失败'))
+  }
+  return {
+    url: String(shot.url || ''),
+    image,
+  }
+}
+
+export const readBrowserFrameSrcs = async (id: string) => {
+  const raw = await evalBrowserView(id, `(function(){
+    var out = [];
+    try {
+      var list = document.querySelectorAll('iframe[src]');
+      for (var i = 0; i < list.length && out.length < 8; i++) {
+        var el = list[i];
+        var live = '';
+        try { live = String((el.contentWindow && el.contentWindow.location && el.contentWindow.location.href) || ''); } catch (eLive) {}
+        out.push(live || String(el.src || ''));
+      }
+    } catch (e) {}
+    return out;
+  })()`).catch(() => [])
+  return (Array.isArray(raw) ? raw : []).map((item) => String(item || '')).filter(Boolean)
+}
+
 /** Playwright 风格可读快照：role / name / ref，不灌 innerText、不塞站点解析器。 */
 
 export const readBrowserPage = async (id: string) => {
-  await askFrames(id, 'snap')
-  const page = await readPageSnapshot(id)
-  const state = page.url ? null : await getBrowserState(id).catch(() => null)
-  return {
-    url: page.url || String(state?.url || ''),
-    title: page.title || String(state?.title || ''),
-    snapshot: page.snapshot,
-    refs: publicRefs(page.refs),
-    captcha: page.captcha,
-    iframes: page.iframes,
+  try {
+    const cdp = asObject(await invoke('browser_cdp_snapshot', { id }))
+    const refs = (Array.isArray(cdp.refs) ? cdp.refs : []) as PageRef[]
+    rememberPageRefs(id, refs)
+    const frames = (Array.isArray(cdp.frames) ? cdp.frames : []).map((item) => {
+      const row = asObject(item)
+      return {
+        url: String(row.url || ''),
+        priority: Number(row.priority) || 0,
+        snapshot: String(row.snapshot || ''),
+        refCount: Number(row.refCount) || 0,
+      }
+    }).filter((item) => item.url || item.snapshot)
+    const preferred = asObject(cdp.preferredFrame)
+    return {
+      url: String(cdp.url || ''),
+      title: String(cdp.title || ''),
+      snapshot: String(cdp.snapshot || '') || formatAriaSnapshot(refs),
+      refs: publicRefs(refs),
+      captcha: Boolean(cdp.captcha),
+      iframes: (Array.isArray(cdp.iframes) ? cdp.iframes : []).map((item) => {
+        if (typeof item === 'string') return { id: '', src: item }
+        const row = asObject(item)
+        return { id: String(row.id || ''), src: String(row.src || '') }
+      }).filter((item) => item.src),
+      frames,
+      preferredFrame: preferred.url
+        ? {
+          url: String(preferred.url || ''),
+          priority: Number(preferred.priority) || 0,
+          snapshot: String(preferred.snapshot || ''),
+          refCount: Number(preferred.refCount) || 0,
+        }
+        : null,
+    }
+  } catch (error) {
+    const state = await getBrowserState(id).catch(() => null)
+    return {
+      url: String(state?.url || ''),
+      title: String(state?.title || ''),
+      snapshot: '',
+      refs: publicRefs([]),
+      captcha: false,
+      iframes: [],
+      frames: [],
+      preferredFrame: null,
+      error: String((error as Error)?.message || error || '页面读取失败'),
+    }
   }
 }
 
-export const clickBrowserElement = (id: string, selector: string) => evalBrowserView(id, withSameFrames(`(function(){
-  var el = __findEl(${JSON.stringify(selector)});
-  if (!el) return { ok: false, error: '没有找到元素' };
-  __clickEl(el);
-  return { ok: true, text: ((el.innerText || el.value || el.getAttribute('title') || '') + '').slice(0, 80) };
-})()`))
+export const clickBrowserElement = async (id: string, selector: string) => {
+  try {
+    const acted = await clickByLocator(id, { by: 'css', value: selector })
+    if (acted.ok) return { ok: true, text: String(acted.text || ''), via: 'cdp' }
+    return { ok: false, error: String(acted.error || '没有找到元素') }
+  } catch (error) {
+    return { ok: false, error: String((error as Error)?.message || error || '点击失败') }
+  }
+}
 
 export const clickBrowserText = async (id: string, text: string) => {
   const want = String(text || '').trim()
-  const isIframeDoc = (href: string) => (
-    /studentcourse|\/knowledge\/cards|ananas\/modules|insertvideo|insertdoc|insertaudio|insertbbs/i.test(href)
-  )
-  const isCourseEntry = (href: string) => (
-    /stucoursemiddle|\/mycourse\/stu|studentstudy|courseid=/i.test(href)
-  )
-  const localRaw = await evalBrowserView(id, withSameFrames(`(function(){
-  var want = ${JSON.stringify(want)};
-  if (!want) return { ok: false, error: '缺少文案' };
-  var compact = function(value){ return String(value || '').replace(/\\s+/g, '') };
-  var target = compact(want.replace(/[（(]\\s*\\d+\\s*[）)]\\s*$/g, ''));
-  var iframeDoc = function(href){
-    return /studentcourse|\\/knowledge\\/cards|ananas\\/modules|insertvideo|insertdoc|insertaudio|insertbbs/i.test(String(href || ''));
-  };
-  var courseEntry = function(href){
-    return /stucoursemiddle|\\/mycourse\\/stu|studentstudy|courseid=/i.test(String(href || ''));
-  };
-  var frames = __sameFrames(window, 0);
-  var exactLink = null;
-  var exact = null;
-  var fuzzyLink = null;
-  var fuzzy = null;
-  var linkHref = '';
-  for (var i = 0; i < frames.length; i++) {
-    try {
-      var nodes = frames[i].document.querySelectorAll('a, button, [role="tab"], [role="button"], span, div, li, h3, h4');
-      for (var j = 0; j < nodes.length; j++) {
-        var el = nodes[j];
-        var label = compact(el.getAttribute('title') || el.innerText || el.textContent || '');
-        if (!label) continue;
-        var href = __navHref(el);
-        var isExact = label === target;
-        var isFuzzy = !isExact && label.length <= 48 && label.indexOf(target) >= 0;
-        if (!isExact && !isFuzzy) continue;
-        // 课名优先点带进课链接的 a（含 stucoursemiddle / mycourse/stu）
-        if (href && (courseEntry(href) || /work/i.test(href)) && !iframeDoc(href)) {
-          if (isExact && !exactLink) { exactLink = el; linkHref = href; }
-          else if (!fuzzyLink) { fuzzyLink = el; if (!linkHref) linkHref = href; }
-        }
-        if (isExact && !exact) exact = el;
-        else if (isFuzzy && !fuzzy) fuzzy = el;
-      }
-    } catch (e) {}
+  if (/^(我学的课|已学的课|我教的课)$/.test(want)) {
+    return clickSpaceTab(id, want === '我教的课' ? 'taught' : 'student')
   }
-  var hit = exactLink || fuzzyLink || exact || fuzzy;
-  if (!hit) return { ok: false, error: '没有找到「' + want + '」' };
-  var a = hit.tagName === 'A' ? hit : (hit.closest ? hit.closest('a') : null);
-  var href = linkHref || __navHref(a || hit);
-  // 目录/视频等 iframe 文档只在 frame 里点；进课中间页保留 href 给顶层导航
-  if (iframeDoc(href)) href = '';
-  __clickEl(a || hit);
-  return {
-    ok: true,
-    text: ((hit.innerText || hit.getAttribute('title') || '') + '').replace(/\\s+/g, ' ').trim().slice(0, 80),
-    href: href || '',
-  };
-})()`))
-  const local = localRaw && typeof localRaw === 'object' ? localRaw as { ok?: boolean; text?: string; error?: string; href?: string } : {}
-  if (local.ok) {
-    const href = String(local.href || '').trim()
-    // 进课中间页 / 课程壳 / 播放页：顶层打开（点完没跳就强制 navigate）
-    if (/^https?:/i.test(href) && !isIframeDoc(href) && (isCourseEntry(href) || /\/work\//i.test(href))) {
-      const before = String((await getBrowserState(id).catch(() => null))?.url || '')
-      if (/studentstudy/i.test(before) && /studentstudy/i.test(href)) return local
-      await waitMs(500)
-      const after = String((await getBrowserState(id).catch(() => null))?.url || '')
-      const moved = after && before && after.split('#')[0] !== before.split('#')[0]
-      if (!moved) {
-        await navigateBrowserView(id, href)
-        return { ...local, via: 'href' }
-      }
-    }
-    return local
+  try {
+    const { act } = await import('./protocol')
+    const acted = await act(id, { op: 'click', at: { by: 'text', value: want } })
+    const got = String(acted.text || '')
+    if (acted.ok && (clickLabelMatches(want, got) || !got)) return { ok: true, text: got || want, via: 'cdp' }
+    if (acted.ok && got) return { ok: false, error: `点到的是「${got}」，不是「${want}」`, text: got }
+    const err = acted.error ? String(acted.error) : ''
+    if (err.includes('点到的是')) return { ok: false, error: err, text: got }
+    return { ok: false, error: err || `没有找到「${want}」`, text: got }
+  } catch (error) {
+    return { ok: false, error: String((error as Error)?.message || error || `没有找到「${want}」`) }
   }
-  await askFrames(id, 'click', { text: want })
-  const clicked = await evalBrowserView(id, `(function(){ return { ok: !!window.__ZE_CLICKED__, text: window.__ZE_CLICKED__ || '', href: window.__ZE_CLICKED_HREF__ || '' }; })()`).catch(() => null) as { ok?: boolean; text?: string; href?: string } | null
-  if (clicked?.ok) {
-    return { ok: true, text: clicked.text || want, href: '', via: 'frame' }
-  }
-  return local
 }
 
-export const typeBrowserElement = (id: string, selector: string, text: string) => evalBrowserView(id, withSameFrames(`(function(){
-  var el = __findEl(${JSON.stringify(selector)});
-  if (!el) return { ok: false, error: '没有找到输入框' };
-  el.focus();
-  var proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-  var desc = Object.getOwnPropertyDescriptor(proto, 'value');
-  if (desc && desc.set) desc.set.call(el, ${JSON.stringify(text)});
-  else el.value = ${JSON.stringify(text)};
-  el.dispatchEvent(new Event('input', { bubbles: true }));
-  el.dispatchEvent(new Event('change', { bubbles: true }));
-  return { ok: true };
-})()`))
+export const typeBrowserElement = async (id: string, selector: string, text: string) => {
+  try {
+    const acted = await fillByLocator(id, { by: 'css', value: selector }, text)
+    if (acted.ok && acted.filled !== false) return { ...acted, via: 'cdp' }
+    if (acted.ok === false) return acted
+    return { ok: false, error: String(acted.error || '没有找到输入框'), filled: false, length: 0 }
+  } catch (error) {
+    return { ok: false, error: String((error as Error)?.message || error || '没有找到输入框'), filled: false, length: 0 }
+  }
+}
 
+export const scrollBrowserView = async (id: string, amount: number) => {
+  const delta = Number(amount) || 0
+  try {
+    const cdp = asObject(await invoke('browser_cdp_scroll', { id, amount: delta }))
+    if (cdp.ok) return { ok: true, via: 'cdp' }
+    return { ok: false, error: String(cdp.error || '滚动失败') }
+  } catch (error) {
+    return { ok: false, error: String((error as Error)?.message || error || '滚动失败') }
+  }
+}
 
-export const scrollBrowserView = (id: string, amount: number) => evalBrowserView(id, `window.scrollBy(0, ${Number(amount) || 0})`)
+export const hoverBrowserElement = async (id: string, input: { text?: string; selector?: string }) => {
+  const cdp = asObject(await invoke('browser_cdp_hover', { id, text: input.text, selector: input.selector }))
+  return { ok: Boolean(cdp.ok), text: String(cdp.text || input.text || ''), error: cdp.error ? String(cdp.error) : undefined, via: 'cdp' }
+}
+
+export const pressBrowserKey = async (id: string, key: string) => {
+  const cdp = asObject(await invoke('browser_cdp_press', { id, key }))
+  return { ok: Boolean(cdp.ok), text: String(cdp.text || key), error: cdp.error ? String(cdp.error) : undefined, via: 'cdp' }
+}
 
 
 export const setAppAbovePage = (above: boolean, id?: string) => (

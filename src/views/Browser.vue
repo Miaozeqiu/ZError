@@ -76,7 +76,68 @@
     </aside>
     <aside v-else-if="abstractionMenuOpen" class="browser-card">
       <div class="pane-header">
-        <div class="header-title">{{ abstractionPanelTitle }}</div>
+        <template v-if="abstractionDrillView">
+          <button
+            type="button"
+            class="header-back"
+            title="返回章节"
+            @click="backFromAbstractionDrill"
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M10.2 3.2 5.4 8l4.8 4.8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </button>
+          <nav class="header-crumbs" aria-label="层级">
+            <button type="button" class="header-crumb is-link" @click="backFromAbstractionDrill">章节</button>
+            <span class="header-crumb-sep" aria-hidden="true">/</span>
+            <span class="header-crumb" :title="abstractionDrillView.sectionTitle">
+              {{ abstractionDrillView.sectionIndex ? `${abstractionDrillView.sectionIndex} ` : '' }}{{ abstractionDrillView.sectionTitle }}
+            </span>
+            <span class="header-crumb-sep" aria-hidden="true">/</span>
+            <span class="header-crumb is-current">{{ abstractionDrillView.jobLabel }}</span>
+          </nav>
+          <div
+            v-if="homeworkHeaderProgress"
+            class="header-ring"
+            :title="`${homeworkHeaderProgress.filled} / ${homeworkHeaderProgress.count}`"
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <circle class="header-ring-track" cx="8" cy="8" r="6" />
+              <circle
+                class="header-ring-arc"
+                cx="8"
+                cy="8"
+                r="6"
+                :stroke-dasharray="homeworkHeaderRingDash"
+              />
+            </svg>
+          </div>
+          <div v-if="homeworkHeaderProgress" class="header-count">
+            {{ homeworkHeaderProgress.filled }} / {{ homeworkHeaderProgress.count }}
+          </div>
+        </template>
+        <template v-else>
+          <div class="header-title">{{ abstractionPanelTitle }}</div>
+          <div
+            v-if="abstractionChapterProgress"
+            class="header-ring"
+            :title="`已完成任务点 ${abstractionChapterProgress.done} / ${abstractionChapterProgress.total}`"
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <circle class="header-ring-track" cx="8" cy="8" r="6" />
+              <circle
+                class="header-ring-arc"
+                cx="8"
+                cy="8"
+                r="6"
+                :stroke-dasharray="abstractionChapterRingDash"
+              />
+            </svg>
+          </div>
+          <div v-if="abstractionChapterProgress" class="header-count">
+            {{ abstractionChapterProgress.done }} / {{ abstractionChapterProgress.total }}
+          </div>
+        </template>
       </div>
       <BrowserAbstractionPanel
         :browser-id="selected?.id"
@@ -132,21 +193,28 @@ import {
   upsertAppBrowser,
   type AppBrowser,
 } from '../services/browser/appBrowser'
-import { clearBrowserChat } from '../services/agent/chat'
+import { ensureBrowserChat } from '../services/agent/chat'
 import {
   inspectChaoxingHomework,
+  startHomeworkBackgroundParse,
   startHomeworkLiveSync,
+  stopHomeworkBackgroundParse,
   stopHomeworkLiveSync,
 } from '../services/chaoxing/homework'
+import { questionHasContent } from '../services/chaoxing/homework/parse'
 import {
+  chapterStateFor,
+  resyncChaoxingStudy,
   startChaoxingChapterParser,
   stopChaoxingChapterParser,
   syncChaoxingChapterUrl,
 } from '../services/chaoxing/browser/chapters'
 import {
+  abstractionDrill,
   abstractionMenuOpen,
   abstractionParsing,
   abstractionPanelTitle,
+  clearAbstractionDrill,
   isHomeworkUrl,
   isStudyUrl,
   lastHomeworkCard,
@@ -168,12 +236,43 @@ let unlistenState: (() => void) | null = null
 let unlistenOpened: (() => void) | null = null
 let resizeObserver: ResizeObserver | null = null
 let boundsRaf = 0
-let boundsSettle = 0
 /** 已挂上原生视图的窗口，以及它当前的位置尺寸；用于跳过重复的原生调用 */
 let shownId = ''
 let shownBounds = ''
 
 const selected = computed(() => browsers.value.find((item) => item.id === selectedId.value) || null)
+const CHAPTER_RING = 2 * Math.PI * 6
+const abstractionDrillView = computed(() => {
+  const drill = abstractionDrill.value
+  if (!drill || drill.kind !== 'chapter-quiz') return null
+  if (selectedId.value && drill.browserId !== selectedId.value) return null
+  return drill
+})
+const abstractionChapterProgress = computed(() => {
+  if (abstractionDrillView.value) return null
+  if (abstractionPanelTitle.value !== '章节') return null
+  return chapterStateFor(selectedId.value)?.progress || null
+})
+const abstractionChapterRingDash = computed(() => {
+  const progress = abstractionChapterProgress.value
+  if (!progress?.total) return `0 ${CHAPTER_RING}`
+  return `${(progress.done / progress.total) * CHAPTER_RING} ${CHAPTER_RING}`
+})
+const homeworkHeaderProgress = computed(() => {
+  if (!abstractionDrillView.value) return null
+  const card = lastHomeworkCard.value
+  const count = Number(card?.questionCount || card?.questions?.length) || 0
+  if (!count) return null
+  return { count, filled: Number(card?.filledCount) || 0 }
+})
+const homeworkHeaderRingDash = computed(() => {
+  const progress = homeworkHeaderProgress.value
+  if (!progress?.count) return `0 ${CHAPTER_RING}`
+  return `${(progress.filled / progress.count) * CHAPTER_RING} ${CHAPTER_RING}`
+})
+const backFromAbstractionDrill = () => {
+  clearAbstractionDrill(selectedId.value)
+}
 const zoom = computed(() => clampBrowserZoom(selected.value?.zoom))
 const zoomPercent = computed(() => Math.round(zoom.value * 100))
 const addressText = ref('')
@@ -335,9 +434,10 @@ const closeTab = async (id: string) => {
   removeAppBrowser(id)
   stopChaoxingChapterParser(id)
   void closeBrowserView(id).catch(() => undefined)
-  clearBrowserChat(id)
   if (shownId === id) shownId = ''
-  loadBrowsers(selectedId.value === id ? fallback?.id || '' : selectedId.value)
+  const nextId = selectedId.value === id ? fallback?.id || '' : selectedId.value
+  loadBrowsers(nextId)
+  if (nextId) ensureBrowserChat({ browserId: nextId })
 }
 
 const acceptOpened = (state: { id: string; url: string; title?: string }) => {
@@ -350,6 +450,10 @@ const acceptOpened = (state: { id: string; url: string; title?: string }) => {
     name: hostnameOf(state.url),
   })
   loadBrowsers(state.id)
+  ensureBrowserChat({
+    browserId: state.id,
+    title: hostnameOf(state.url) ? `浏览 ${hostnameOf(state.url)}` : '网页助手',
+  })
 }
 
 const goHome = async () => {
@@ -388,7 +492,7 @@ const syncView = async () => {
   }
 }
 
-const syncViewNow = async (opts?: { forceShow?: boolean }) => {
+const syncViewNow = async (opts?: { notify?: boolean }) => {
   if (!props.active) {
     shownId = ''
     await hideAllBrowserViews().catch(() => undefined)
@@ -407,20 +511,16 @@ const syncViewNow = async (opts?: { forceShow?: boolean }) => {
     return
   }
   const key = `${bounds.x},${bounds.y},${bounds.width},${bounds.height}`
-  // 原生视图已经在位：位置没变就什么都不做，变了也只挪一下。
-  // 切走的标签只隐藏，满 10 分钟没再打开才休眠回收。
+  // 原生视图已经在位：位置没变就什么都不做。尺寸没变时不要 was_resized。
   if (shownId === current.id) {
-    if (shownBounds === key && !opts?.forceShow) return
-    try {
-      await setBrowserBounds(current.id, bounds)
-      if (opts?.forceShow) {
-        await showBrowserView(current.id).catch(() => undefined)
-      }
-      shownBounds = key
-      return
-    } catch {
+    if (shownBounds === key) return
+    shownBounds = key
+    const move = setBrowserBounds(current.id, bounds, false).catch(() => {
       shownId = ''
-    }
+      shownBounds = ''
+    })
+    if (opts?.notify) await move
+    return
   }
   try {
     await openBrowserView(current.id, current.url, bounds)
@@ -441,35 +541,29 @@ const syncViewNow = async (opts?: { forceShow?: boolean }) => {
   }
 }
 
-const flushBounds = () => {
-  boundsRaf = 0
-  void syncView()
+const alignBrowserHole = async () => {
+  if (syncing) {
+    syncAgain = true
+    return
+  }
+  syncing = true
+  try {
+    do {
+      syncAgain = false
+      await syncViewNow({ notify: true })
+    } while (syncAgain)
+  } finally {
+    syncing = false
+  }
 }
 
 const updateBounds = () => {
-  if (!boundsRaf) {
-    boundsRaf = window.requestAnimationFrame(flushBounds)
-  }
-  window.clearTimeout(boundsSettle)
-  // 拖完窗口后再强制 show 一次，修 macOS WK 合成层停住导致的白屏
-  boundsSettle = window.setTimeout(() => {
-    boundsSettle = 0
-    void (async () => {
-      if (syncing) {
-        syncAgain = true
-        return
-      }
-      syncing = true
-      try {
-        do {
-          syncAgain = false
-          await syncViewNow({ forceShow: true })
-        } while (syncAgain)
-      } finally {
-        syncing = false
-      }
-    })()
-  }, 160)
+  if (boundsRaf) return
+  // 只对齐洞口位置。网页宽高由原生 ZeCefHoleView 在尺寸变化时立刻 was_resized，不要在这里防抖。
+  boundsRaf = window.requestAnimationFrame(() => {
+    boundsRaf = 0
+    void syncView()
+  })
 }
 
 const goBack = () => {
@@ -540,7 +634,10 @@ watch(
       await syncView()
     } else {
       stopParseLoop()
-      if (selectedId.value) stopChaoxingChapterParser(selectedId.value)
+      if (selectedId.value) {
+        stopChaoxingChapterParser(selectedId.value)
+      }
+      stopHomeworkBackgroundParse()
       stopHomeworkLiveSync()
       abstractionMenuOpen.value = false
       siteGraphMenuOpen.value = false
@@ -550,24 +647,31 @@ watch(
 )
 
 watch(selectedId, async (id, prev) => {
-  if (prev && prev !== id) stopChaoxingChapterParser(prev)
+  if (prev && prev !== id) {
+    stopChaoxingChapterParser(prev)
+    stopHomeworkBackgroundParse()
+  }
   await nextTick()
   bindHost()
   await syncView()
   void refreshCurrentParse()
 })
 
-/** 学习页：解析器后台轮询，不依赖打开「解析」面板 */
+/** 学习页：章节 + 测验题卡都后台轮询，不依赖打开「解析」面板 */
 watch(
   () => [selectedId.value, address.value] as const,
   ([id, url], prev) => {
     if (!id) return
-    if (!isStudyUrl(url || '')) {
-      stopChaoxingChapterParser(id)
+    const href = url || selected.value?.url || ''
+    if (!isStudyUrl(href)) {
+      if (url) stopChaoxingChapterParser(id)
+      if (!isHomeworkUrl(href)) stopHomeworkBackgroundParse()
       return
     }
-    if (url && url !== prev?.[1]) syncChaoxingChapterUrl(id, url)
+    if (href && href !== prev?.[1]) syncChaoxingChapterUrl(id, href)
     else startChaoxingChapterParser(id)
+    if (isHomeworkUrl(href)) startHomeworkBackgroundParse(id)
+    else stopHomeworkBackgroundParse()
   },
 )
 
@@ -575,24 +679,33 @@ let parseTimer = 0
 let liveTimer = 0
 let parseBusy = false
 let lastInspectUrl = ''
+const PARSE_TIMER_KEY = '__zeHwParseTimer'
 
 const homeworkCardUseful = () => {
   const card = lastHomeworkCard.value
   if (!card) return false
-  return Boolean(
-    card.questions?.length
-    || card.works?.length
-    || card.pending?.length
-    || (card.questionCount || 0) > 0
-    || (card.pendingCount || 0) > 0,
-  )
+  if (card.works?.length || card.pending?.length || (card.pendingCount || 0) > 0) return true
+  const questions = card.questions || []
+  if (!questions.length) return false
+  const withImages = questions.some((item) => (
+    Boolean(item.images?.length)
+    || (item.options || []).some((opt) => opt.image || opt.images?.length)
+  ))
+  if (withImages) return true
+  return questions.every(questionHasContent)
 }
 
 const ensureHomeworkParseLoop = () => {
+  const leaked = Number((window as Window & { [PARSE_TIMER_KEY]?: number })[PARSE_TIMER_KEY] || 0)
+  if (leaked && leaked !== parseTimer) {
+    window.clearInterval(leaked)
+    ;(window as Window & { [PARSE_TIMER_KEY]?: number })[PARSE_TIMER_KEY] = 0
+  }
   if (parseTimer) return
   parseTimer = window.setInterval(() => {
     void refreshCurrentParse(false)
   }, 2000)
+  ;(window as Window & { [PARSE_TIMER_KEY]?: number })[PARSE_TIMER_KEY] = parseTimer
 }
 
 const refreshCurrentParse = async (force = false) => {
@@ -600,21 +713,25 @@ const refreshCurrentParse = async (force = false) => {
   if (!current || parseBusy) return
   const url = address.value || current.url || ''
   if (isStudyUrl(url)) {
+    // 章节解析后台跑；章节测验题卡也后台探测，不依赖打开面板
     stopParseLoop()
-    stopHomeworkLiveSync()
-    if (lastHomeworkCard.value) publishHomeworkCard(null)
+    abstractionParsing.value = false
     startChaoxingChapterParser(current.id)
+    stopHomeworkBackgroundParse()
     lastInspectUrl = url
     return
   }
   stopChaoxingChapterParser(current.id)
   if (!isHomeworkUrl(url)) {
     stopParseLoop()
+    stopHomeworkBackgroundParse()
     stopHomeworkLiveSync()
     if (lastHomeworkCard.value) publishHomeworkCard(null)
     lastInspectUrl = ''
     return
   }
+  // 独立作业页同样后台轮询
+  startHomeworkBackgroundParse(current.id)
   ensureHomeworkParseLoop()
   if (!force && homeworkCardUseful() && lastInspectUrl === url) {
     await startHomeworkLiveSync(current.id).catch(() => null)
@@ -640,6 +757,9 @@ const refreshCurrentParse = async (force = false) => {
 }
 
 const stopParseLoop = () => {
+  const leaked = Number((window as Window & { [PARSE_TIMER_KEY]?: number })[PARSE_TIMER_KEY] || 0)
+  if (leaked) window.clearInterval(leaked)
+  ;(window as Window & { [PARSE_TIMER_KEY]?: number })[PARSE_TIMER_KEY] = 0
   if (parseTimer) {
     window.clearInterval(parseTimer)
     parseTimer = 0
@@ -650,14 +770,27 @@ const stopParseLoop = () => {
   }
 }
 
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    stopParseLoop()
+    stopHomeworkBackgroundParse()
+    stopHomeworkLiveSync()
+  })
+  lastInspectUrl = ''
+  void nextTick().then(() => {
+    loadBrowsers()
+    if (!homeworkCardUseful()) void refreshCurrentParse(true)
+  })
+}
+
 watch(abstractionMenuOpen, (open) => {
+  // 面板打开只强制刷新一次；后台轮询不依赖此开关
   if (open) void refreshCurrentParse(true)
-  // 侧栏显隐会挤动 webview 区域，立刻重算 bounds，避免原生视图盖住面板导致点不了
-  void nextTick().then(() => updateBounds())
+  void nextTick().then(() => alignBrowserHole())
 })
 
 watch(siteGraphMenuOpen, () => {
-  void nextTick().then(() => updateBounds())
+  void nextTick().then(() => alignBrowserHole())
 })
 
 const onAbsKey = (event: KeyboardEvent) => {
@@ -670,6 +803,9 @@ const onAbsKey = (event: KeyboardEvent) => {
 }
 
 onMounted(async () => {
+  if (import.meta.env.DEV) {
+    void import('../services/agent/cursorBridge').then((m) => m.startCursorBridge()).catch(() => {})
+  }
   browserTabHandlers.value = { selectTab, closeTab, newTab, tabLabel }
   loadBrowsers()
   unlistenState = await listenBrowserState((state) => {
@@ -701,7 +837,11 @@ onMounted(async () => {
   }).catch(() => null)
   unlistenLoad = await listenBrowserLoad((state) => {
     if (state.phase === 'started') beginLoadLine(state.id)
-    else if (state.phase === 'finished') finishLoadLine(state.id)
+    else if (state.phase === 'finished') {
+      finishLoadLine(state.id)
+      const href = state.url || address.value || ''
+      if (selectedId.value === state.id && isStudyUrl(href)) resyncChaoxingStudy(state.id, href)
+    }
   }).catch(() => null)
   window.addEventListener('resize', updateBounds)
   window.addEventListener('keydown', onAbsKey)
@@ -730,11 +870,10 @@ onUnmounted(() => {
   resizeObserver?.disconnect()
   if (boundsRaf) window.cancelAnimationFrame(boundsRaf)
   boundsRaf = 0
-  window.clearTimeout(boundsSettle)
-  boundsSettle = 0
   window.removeEventListener('resize', updateBounds)
   window.removeEventListener('keydown', onAbsKey)
   stopParseLoop()
+  stopHomeworkBackgroundParse()
   stopHomeworkLiveSync()
   abstractionMenuOpen.value = false
   siteGraphMenuOpen.value = false
@@ -784,6 +923,7 @@ onUnmounted(() => {
   padding: 0 12px;
   display: flex;
   align-items: center;
+  gap: 8px;
   flex-shrink: 0;
 }
 
@@ -802,6 +942,109 @@ onUnmounted(() => {
   font-size: 13px;
   font-weight: 600;
   color: var(--text-primary, #2d3748);
+}
+
+.browser-card .header-back {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  margin-left: -4px;
+  border: 0;
+  border-radius: 6px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: var(--text-secondary, #64748b);
+  cursor: pointer;
+}
+
+.browser-card .header-back:hover {
+  background: color-mix(in srgb, var(--text-primary, #2d3748) 8%, transparent);
+  color: var(--text-primary, #2d3748);
+}
+
+.browser-card .header-back svg {
+  width: 14px;
+  height: 14px;
+}
+
+.browser-card .header-crumbs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+}
+
+.browser-card .header-crumb {
+  min-width: 0;
+  max-width: 9em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text-secondary, #64748b);
+}
+
+.browser-card .header-crumb.is-link {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--text-secondary, #64748b);
+  cursor: pointer;
+}
+
+.browser-card .header-crumb.is-link:hover {
+  color: var(--text-primary, #2d3748);
+}
+
+.browser-card .header-crumb.is-current {
+  color: var(--text-primary, #2d3748);
+  font-weight: 600;
+  max-width: 6em;
+}
+
+.browser-card .header-crumb-sep {
+  flex-shrink: 0;
+  color: color-mix(in srgb, var(--text-secondary, #94a3b8) 80%, transparent);
+  font-size: 11px;
+}
+
+.browser-card .header-ring {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+}
+
+.browser-card .header-ring svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+
+.browser-card .header-ring-track,
+.browser-card .header-ring-arc {
+  fill: none;
+  stroke-width: 2.5;
+}
+
+.browser-card .header-ring-track {
+  stroke: color-mix(in srgb, var(--border-primary, #cbd5e1) 80%, transparent);
+}
+
+.browser-card .header-ring-arc {
+  stroke: var(--accent-primary, #3b82f6);
+  stroke-linecap: round;
+}
+
+.browser-card .header-count {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary, #64748b);
 }
 
 .browser-card :deep(.abs-panel),

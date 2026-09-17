@@ -6,6 +6,8 @@ import {
   RESET_AGENT_SKILL_FILE_TOOL,
   WRITE_AGENT_SKILL_FILE_TOOL,
 } from './skillTools'
+import { resolveSitePackForUrl } from './sitePack'
+import type { DomainToolPolicy } from './agentProfiles'
 
 export const CHAT_TOOLS = [
   {
@@ -863,12 +865,12 @@ export const CHAT_TOOLS = [
   RESET_AGENT_SKILL_FILE_TOOL,
 ]
 
-export const BROWSER_TOOLS = [
+export const BROWSER_PRIMITIVE_TOOLS = [
   {
     type: 'function',
     function: {
       name: 'browser_get_state',
-      description: '查看当前浏览器的网址、标题和网站图谱（当前路由、可挂解析器、可跳转）。',
+      description: '查看当前浏览器的网址、标题和网站图谱节点。',
       parameters: { type: 'object', properties: {} },
     },
   },
@@ -876,20 +878,48 @@ export const BROWSER_TOOLS = [
     type: 'function',
     function: {
       name: 'browser_site_graph',
-      description: '查看或修改当前网站图谱。固定步骤连续失败、URL 对不上节点、发现新路由或缺边时用 upsert_node/upsert_edge 改正；patterns 写 URL 正则。iframe 地址写进宿主页，不要单独建节点。改对了就 write_agent_skill_file 写回 site-graph.json。list/get 查看，reset 恢复种子。',
+      description: '查看或修改当前网站图谱。新站点先 upsert_site，再 upsert_node/upsert_edge。patterns 写 URL 正则。改对了写回对应 Skill 的 site-graph.json（学习通写 chaoxing，其它写 site-learn 的 sites/<host>/site-graph.json）。',
       parameters: {
         type: 'object',
         properties: {
           action: {
             type: 'string',
-            enum: ['list', 'get', 'upsert_node', 'remove_node', 'upsert_edge', 'remove_edge', 'set_notes', 'reset'],
-            description: 'list/get 查看；upsert_* 增改；remove_* 删除；set_notes 备注；reset 恢复种子',
+            enum: ['list', 'get', 'upsert_site', 'upsert_node', 'remove_node', 'upsert_edge', 'remove_edge', 'set_notes', 'reset'],
+            description: 'list 看全部站点；get 看当前；upsert_site 新建/改站点；upsert_* 增改节点边；reset 从文件恢复',
           },
-          siteId: { type: 'string', description: '站点 id，学习通默认 chaoxing' },
+          siteId: { type: 'string', description: '站点 id，学习通默认 chaoxing；新站点用主机名' },
+          host: { type: 'string', description: 'upsert_site 的主机，如 example.com' },
+          hostPattern: { type: 'string', description: '站点 URL 正则，默认按 host 转义' },
+          name: { type: 'string', description: '站点显示名' },
           id: { type: 'string', description: '节点 id，如 homework-quiz' },
           title: { type: 'string', description: '节点标题' },
           path: { type: 'string', description: '路径说明，给用户看' },
-          summary: { type: 'string', description: '节点说明' },
+          summary: { type: 'string', description: '节点短说明' },
+          structure: { type: 'string', description: '页内结构：入口、iframe、这页能不能挂解析器' },
+          frame: {
+            type: 'object',
+            description: '页内框外壳，如 #frame_content',
+            properties: {
+              name: { type: 'string', description: '框名，如 #frame_content' },
+              title: { type: 'string', description: '框里是什么' },
+              open: { type: 'string', enum: ['top', 'stay'] },
+            },
+          },
+          frames: {
+            type: 'array',
+            description: '同一 iframe 里的页签（如空间的「我教的课 / 我学的课」），不要为此再建节点',
+            items: {
+              type: 'object',
+              properties: {
+                id: { type: 'string' },
+                tab: { type: 'string' },
+                name: { type: 'string' },
+                title: { type: 'string' },
+                open: { type: 'string', enum: ['top', 'stay'] },
+                patterns: { type: 'array', items: { type: 'string' } },
+              },
+            },
+          },
           patterns: {
             type: 'array',
             items: { type: 'string' },
@@ -898,7 +928,7 @@ export const BROWSER_TOOLS = [
           parserIds: {
             type: 'array',
             items: { type: 'string' },
-            description: '可挂解析器角色：login / study / homework / captcha',
+            description: '本站解析包角色：学习通 homework / study；其它站 parsers/<role> 的角色名。login / captcha 可以只当角色、没有包。',
           },
           row: { type: 'integer', description: '布局行，0 起' },
           col: { type: 'integer', description: '布局列：-1 左 / 0 中 / 1 右' },
@@ -917,7 +947,7 @@ export const BROWSER_TOOLS = [
     type: 'function',
     function: {
       name: 'browser_get_page',
-      description: '读取当前网页的可交互快照（role / name / ref）。操作页面前先调用。点元素用 snapshot 里的文案或 ref。',
+      description: '读取当前网页的可交互快照（role / name / ref，输入框带 value）。点元素用 snapshot 里的文案或 ref。',
       parameters: { type: 'object', properties: {} },
     },
   },
@@ -925,7 +955,7 @@ export const BROWSER_TOOLS = [
     type: 'function',
     function: {
       name: 'browser_navigate',
-      description: '打开指定网址。禁止打开目录/视频 iframe（studentcourse / knowledge/cards / ananas / insert*）。进课中间页 stucoursemiddle、课程壳 mycourse/stu 可以打开。',
+      description: '打开 http/https 网址。',
       parameters: {
         type: 'object',
         properties: { url: { type: 'string', description: 'http/https 网址' } },
@@ -961,7 +991,7 @@ export const BROWSER_TOOLS = [
     type: 'function',
     function: {
       name: 'browser_click',
-      description: '点击页面元素。快照编号用 ref=e3；CSS 用 selector=#loginBtn。不要把 #phone 这类 CSS 放进 ref。不要用 :contains()。',
+      description: '点击页面元素。快照编号用 ref=e3；CSS 用 selector=#loginBtn。不要把 CSS 放进 ref。',
       parameters: {
         type: 'object',
         properties: {
@@ -975,7 +1005,7 @@ export const BROWSER_TOOLS = [
     type: 'function',
     function: {
       name: 'browser_click_text',
-      description: '按可见文案点击，如「章节」「开始学习」。学习通导航请用这个，不要点「课程门户链接」。',
+      description: '按可见文案点击按钮或链接。',
       parameters: {
         type: 'object',
         properties: { text: { type: 'string', description: '按钮或链接上的文字，尽量短且精确' } },
@@ -987,7 +1017,7 @@ export const BROWSER_TOOLS = [
     type: 'function',
     function: {
       name: 'browser_type',
-      description: '向输入框填写文字。快照编号用 ref=e4；CSS 用 selector=#phone。登录页直接 selector=#phone / #pwd，不要 get_page。',
+      description: '向输入框填写文字，不会按回车。快照编号用 ref=e4；CSS 用 selector=#phone。',
       parameters: {
         type: 'object',
         properties: {
@@ -1014,7 +1044,8 @@ export const BROWSER_TOOLS = [
     type: 'function',
     function: {
       name: 'browser_eval',
-      description: '在当前网页执行一段 JavaScript，并返回结果。用于读取 DOM 或做选择器无法覆盖的操作。',
+      description:
+        '在当前页每个 frame（含跨域 iframe）内执行同一段 JS，返回 frames[]。写 document/querySelector 即可；不要用 iframe.contentDocument。',
       parameters: {
         type: 'object',
         properties: { script: { type: 'string' } },
@@ -1025,110 +1056,28 @@ export const BROWSER_TOOLS = [
   {
     type: 'function',
     function: {
-      name: 'browser_study_chapters',
-      description: '读取章节解析器（未完成节名、任务点进度）。有未完成立刻 browser_study_play，不要 open / get_page / eval。空就再调一次。',
-      parameters: {
-        type: 'object',
-        properties: {
-          open: {
-            type: 'string',
-            description: '要打开的节名，如「函数（一）」。不要带 1.1。打开后立刻 browser_study_play。',
-          },
-        },
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'browser_study_play',
-      description: '学习平台播放页点播放。对齐 ocs：播「当前」任务点视频，不要自己点回第一个。可选 videoIndex（本节第几个视频，从 1 起）或 label 切到指定任务点再播。成功后自动监控。',
-      parameters: {
-        type: 'object',
-        properties: {
-          videoIndex: {
-            type: 'number',
-            description: '本节第几个视频（1 起）。一节多视频时用这个切换，不要反复 play 指望自动跳。',
-          },
-          label: {
-            type: 'string',
-            description: '任务点标签，如「视频2」「测验」。标签常重名时优先用 videoIndex。',
-          },
-        },
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'browser_study_watch',
-      description: '监控当前视频进度，并显示在 Agent 面板。仅播放页、视频已打开时用。进度条本地实时更新；播完自动切下一视频，卡住/验证码/测验才叫你。不要用 browser_wait 空等整节。',
+      name: 'browser_screenshot',
+      description: '拍摄当前页可视区域。布局、验证码、图标按钮等快照看不清时用。',
       parameters: { type: 'object', properties: {} },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'browser_study_next',
-      description: '当前视频播完后先切本章下一个视频任务点（attachments 顺序，对齐 ocs），没有了再开下一节。不要自己点「第一个视频」标签。资料/PDF 会跳过。',
-      parameters: { type: 'object', properties: {} },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'browser_homework',
-      description: '作业/章节测验题卡。课程作业：列表页 list/open，作答页 inspect/fill/save/submit。章节测验（播放页）：直接 inspect/fill/guess/save/submit，不要 list。一题一题 fill；不会就 guess 随便选。不要 eval、不要 click 选项。',
-      parameters: {
-        type: 'object',
-        properties: {
-          action: {
-            type: 'string',
-            enum: ['list', 'open', 'inspect', 'fill', 'guess', 'save', 'submit'],
-            description: 'list/open 仅课程作业列表；inspect/fill/guess/save/submit 用于作答页或章节测验。guess=不会的题随机选',
-          },
-          title: { type: 'string', description: 'open 时的作业名' },
-          answers: {
-            type: 'array',
-            description: 'fill 时的答案，一次只填一道题（数组只放一项）。每项 id 或 index、type、answer。单选填 A，多选填 AC，填空多空用分号。',
-            items: {
-              type: 'object',
-              properties: {
-                id: { type: 'string' },
-                index: { type: 'integer' },
-                type: { type: 'string' },
-                answer: { type: 'string' },
-              },
-            },
-          },
-        },
-        required: ['action'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'browser_captcha',
-      description: '图片验证码：把认出的字符填入并提交。不要问用户。提交后再 study 或 play。',
-      parameters: {
-        type: 'object',
-        properties: {
-          code: { type: 'string', description: '图中验证码字符' },
-        },
-        required: ['code'],
-      },
     },
   },
   {
     type: 'function',
     function: {
       name: 'browser_wait',
-      description: '等待若干秒，再继续看页面。学习视频请用 browser_study_watch，不要用这个空等整节。',
+      description: '等待条件成立或超时。until=panel 等解析面板；url 等网址匹配；selector 等 CSS 出现；idle 等文档稳定。',
       parameters: {
         type: 'object',
         properties: {
-          seconds: { type: 'integer', description: '等待秒数，1–60，默认 20' },
+          seconds: { type: 'integer', description: '最长等待秒数。panel 默认 180，其它默认 30。' },
+          until: {
+            type: 'string',
+            enum: ['panel', 'url', 'selector', 'idle'],
+            description: 'panel=解析面板事件；url=网址包含或正则；selector=CSS 出现；idle=readyState complete 且网址稳定',
+          },
+          url: { type: 'string', description: 'until=url 时的子串或正则' },
+          selector: { type: 'string', description: 'until=selector 时的 CSS' },
+          idleMs: { type: 'integer', description: 'until=idle 时稳定毫秒，默认 800' },
         },
       },
     },
@@ -1137,7 +1086,7 @@ export const BROWSER_TOOLS = [
     type: 'function',
     function: {
       name: 'browser_todo',
-      description: '维护当前任务清单。多步任务先 set 写出具体步骤（必须你自己写内容），做完一项就 check。清单是任务真相，不要用空话代替。',
+      description: '维护当前任务清单。多步任务建议 set 写出具体步骤，做完一项就 check。不是行动许可。',
       parameters: {
         type: 'object',
         properties: {
@@ -1151,9 +1100,9 @@ export const BROWSER_TOOLS = [
             items: { type: 'string' },
             description: 'set 时的步骤文案，3–8 条为宜，用你自己的话写清楚要做什么',
           },
-          text: { type: 'string', description: 'add 时的一步文案' },
+          text: { type: 'string', description: 'add 的文案；check 也可传步骤原文来勾选' },
           id: { type: 'string', description: 'check 时的项 id' },
-          index: { type: 'integer', description: 'check 时的序号，从 1 起' },
+          index: { type: 'integer', description: 'check 时的序号，从 1 起。都不传就勾第一项未完成' },
           status: {
             type: 'string',
             enum: ['done', 'pending', 'cancelled'],
@@ -1168,7 +1117,7 @@ export const BROWSER_TOOLS = [
     type: 'function',
     function: {
       name: 'browser_finish',
-      description: '宣告当前用户任务结束。先用 browser_todo 把步骤写清并做完；summary 必须你自己写、概括实际结果。done=清单已完成；blocked=必须用户动手；watching=已交播放监控。',
+      description: '宣告当前用户任务结束。summary 必须你自己写、概括实际结果。done=做完；blocked=必须用户动手；watching=已交播放监控。',
       parameters: {
         type: 'object',
         properties: {
@@ -1189,3 +1138,129 @@ export const BROWSER_TOOLS = [
   WRITE_AGENT_SKILL_FILE_TOOL,
   RESET_AGENT_SKILL_FILE_TOOL,
 ]
+
+export const BROWSER_DOMAIN_TOOLS = [
+  {
+    type: 'function',
+    function: {
+      name: 'browser_study_chapters',
+      description: '读取解析面板章节目录和本节任务点。打开某一节用 open=节名。这是工具，不是页面函数，不要 eval window.__study_*。',
+      parameters: {
+        type: 'object',
+        properties: {
+          open: {
+            type: 'string',
+            description: '要打开的节名。打开后用 browser_study_play 播放。',
+          },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_study_play',
+      description: '播放或暂停解析面板指定的任务点。用 videoIndex / label 指定。必须调用本工具，不要 eval window.__study_play，不要自己点播放器。',
+      parameters: {
+        type: 'object',
+        properties: {
+          action: {
+            type: 'string',
+            enum: ['play', 'pause'],
+            description: 'play=播放（默认），pause=暂停当前视频',
+          },
+          videoIndex: {
+            type: 'number',
+            description: '本节第几个视频（1 起）。',
+          },
+          label: {
+            type: 'string',
+            description: '任务点标签，如「视频2」「测验」。',
+          },
+          skipIfDone: {
+            type: 'boolean',
+            description: '只有明确要跳过已完成任务点时才传 true。',
+          },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_study_watch',
+      description: '监控当前未完成视频。播完不会自动点开下一段。',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_study_next',
+      description: '本节还有未完成视频时播下一条；否则打开下一未完成节（不自动播）。不要 click_text「下一节」，调用本工具。',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_homework',
+      description: '解析面板题卡。inspect 读题；fill 点选项；guess 随机；save 暂存；submit 提交。课程作业列表才 list/open。',
+      parameters: {
+        type: 'object',
+        properties: {
+          action: {
+            type: 'string',
+            enum: ['list', 'open', 'inspect', 'fill', 'guess', 'save', 'submit'],
+            description: 'list/open 仅作业列表；其余用于作答页或章节测验。',
+          },
+          title: { type: 'string', description: 'open 时的作业名' },
+          answers: {
+            type: 'array',
+            description: 'fill 时的答案，一次只填一道题。',
+            items: {
+              type: 'object',
+              properties: {
+                id: { type: 'string' },
+                index: { type: 'integer' },
+                type: { type: 'string' },
+                answer: { type: 'string' },
+              },
+            },
+          },
+        },
+        required: ['action'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_captcha',
+      description: '把认出的图片验证码字符填入并提交。',
+      parameters: {
+        type: 'object',
+        properties: {
+          code: { type: 'string', description: '图中验证码字符' },
+        },
+        required: ['code'],
+      },
+    },
+  },
+]
+
+export const BROWSER_TOOLS = [...BROWSER_PRIMITIVE_TOOLS, ...BROWSER_DOMAIN_TOOLS]
+
+export const assembleBrowserTools = (input?: {
+  url?: string
+  domain?: DomainToolPolicy
+}) => {
+  const domain = input?.domain || 'current-site'
+  if (domain === 'never') return BROWSER_PRIMITIVE_TOOLS
+  if (domain === 'always') return BROWSER_TOOLS
+  const pack = resolveSitePackForUrl(String(input?.url || ''))
+  if (!pack?.tools.length) return BROWSER_PRIMITIVE_TOOLS
+  const allow = new Set(pack.tools)
+  const extra = BROWSER_DOMAIN_TOOLS.filter((tool) => allow.has(tool.function.name))
+  return extra.length ? [...BROWSER_PRIMITIVE_TOOLS, ...extra] : BROWSER_PRIMITIVE_TOOLS
+}

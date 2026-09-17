@@ -2,8 +2,9 @@ import { ref } from 'vue'
 import { withIdleEval } from '../../browser/eval'
 import {
   installChaoxingVideoHook,
-  readChaoxingVideo,
+  readChaoxingCaptcha,
   readChaoxingVideoTick,
+  videoTickHasPlayer,
   type ChaoxingVideoInfo,
   type ChaoxingVideoTick,
 } from '../study'
@@ -26,6 +27,7 @@ export type VideoWatchState = {
   moreVideos: boolean
   videoCount: number
   videoIndex: number
+  mid: string
   status: 'watching' | 'paused' | 'stalled' | 'done' | 'quiz' | 'lost' | 'captcha'
   sampledAt: number
   sampledCurrent: number
@@ -44,10 +46,12 @@ export type VideoWatchCheck = {
 export const browserVideoWatches = ref<Record<string, VideoWatchState>>({})
 
 const LIVE_MS = 200
-const SYNC_MS = 8000
+const SYNC_MS = 2000
 const INSPECT_MS = 8000
+const INTERPOLATE_MS = 12000
 const STALL_MS = 12000
 const LOST_MS = 16000
+const lastInspectAt = new Map<string, number>()
 
 const timers = new Map<string, number[]>()
 const fired = new Map<string, Set<number>>()
@@ -76,6 +80,18 @@ export const videoWatchFor = (browserId?: string) => {
   return id ? browserVideoWatches.value[id] || null : null
 }
 
+/** watch 工具先看本地监控状态，不要再打一轮重读播放器（会占死 eval，播完也送不进对话）。 */
+export const watchSessionFastPath = (
+  existing: Pick<VideoWatchState, 'status' | 'ended'> | null | undefined,
+  panelEvent?: string | null,
+): 'panel_clear' | 'ended' | 'already' | null => {
+  if (panelEvent === 'quiz_left' || panelEvent === 'chapter_jobs_done') return 'panel_clear'
+  if (!existing) return null
+  if (existing.ended || existing.status === 'done') return 'ended'
+  if (existing.status === 'watching' || existing.status === 'paused' || existing.status === 'stalled') return 'already'
+  return null
+}
+
 const livePercent = (current: number, duration: number, done: boolean) => {
   if (done) return 100
   if (!(duration > 0)) return 0
@@ -95,9 +111,8 @@ const emit = (kind: VideoWatchKind, state: VideoWatchState) => {
 const patchWatch = (browserId: string, patch: Partial<VideoWatchState>) => {
   const current = browserVideoWatches.value[browserId]
   if (!current) return null
-  const next = { ...current, ...patch, updatedAt: Date.now() }
-  browserVideoWatches.value = { ...browserVideoWatches.value, [browserId]: next }
-  return next
+  Object.assign(current, patch, { updatedAt: Date.now() })
+  return current
 }
 
 const clearTimers = (browserId: string) => {
@@ -115,6 +130,7 @@ export const stopChaoxingWatch = (browserId?: string, opts?: { keep?: boolean })
   lastProgressAt.delete(id)
   lastSeenAt.delete(id)
   pausedAt.delete(id)
+  lastInspectAt.delete(id)
   if (!opts?.keep && browserVideoWatches.value[id]) {
     const rest = { ...browserVideoWatches.value }
     delete rest[id]
@@ -129,6 +145,20 @@ const emitMarks = (state: VideoWatchState, done: boolean) => {
     marks.add(100)
     fired.set(state.browserId, marks)
     emit('done', state)
+    void import('../study/debug').then(({ noteStudyParser }) => {
+      noteStudyParser({
+        via: 'watch-done',
+        tick: {
+          current: state.current,
+          duration: state.duration,
+          paused: state.paused,
+          ended: true,
+          jobDone: state.jobDone,
+        },
+        playing: false,
+        force: true,
+      })
+    }).catch(() => {})
     stopChaoxingWatch(state.browserId, { keep: true })
     return true
   }
@@ -138,7 +168,8 @@ const emitMarks = (state: VideoWatchState, done: boolean) => {
 const applyTick = (browserId: string, tick: ChaoxingVideoTick | null, meta?: Partial<VideoWatchState>) => {
   const watch = browserVideoWatches.value[browserId]
   if (!watch) return
-  if (!tick || (!tick.duration && !tick.current && tick.paused == null)) {
+  if (!tick) return
+  if (!videoTickHasPlayer(tick)) {
     const last = lastSeenAt.get(browserId) || watch.startedAt
     if (Date.now() - last >= LOST_MS) {
       const next = patchWatch(browserId, { status: 'lost' })
@@ -154,6 +185,10 @@ const applyTick = (browserId: string, tick: ChaoxingVideoTick | null, meta?: Par
   lastSeenAt.set(browserId, Date.now())
   const duration = tick.duration > 0 ? tick.duration : watch.duration
   const current = Math.max(0, Number(tick.current) || 0)
+  const mid = String(tick.mid || watch.mid || '')
+  if (watch.current > 3 && current < 1 && duration > 1 && !tick.ended && current < watch.current - 3) {
+    return
+  }
   const nearEnd = duration > 1 && current >= duration - 0.5
   const done = Boolean(tick.ended || nearEnd)
   const prev = watch.sampledCurrent
@@ -182,10 +217,11 @@ const applyTick = (browserId: string, tick: ChaoxingVideoTick | null, meta?: Par
     duration,
     percent: livePercent(current, duration, done),
     paused: Boolean(tick.paused),
-    ended: Boolean(tick.ended),
+    ended: done || Boolean(tick.ended),
     status,
     sampledAt: Date.now(),
     sampledCurrent: current,
+    mid,
   })
   if (!next) return
   if ((pausedLong || stalled) && !done && !stallNotified.has(browserId)) {
@@ -248,7 +284,7 @@ const tickLive = (browserId: string) => {
   if (!watch) return
   if (watch.paused || watch.ended || watch.status !== 'watching') return
   if (!(watch.sampledAt > 0) || !(watch.duration > 1)) return
-  if (Date.now() - watch.sampledAt > 1500) return
+  if (Date.now() - watch.sampledAt > INTERPOLATE_MS) return
   const elapsed = (Date.now() - watch.sampledAt) / 1000
   if (elapsed < 0.05) return
   const current = Math.min(watch.duration, watch.sampledCurrent + elapsed)
@@ -262,26 +298,33 @@ const tickLive = (browserId: string) => {
   if (next && done) emitMarks(next, true)
 }
 
+const inspectCaptcha = async (browserId: string) => {
+  const watch = browserVideoWatches.value[browserId]
+  if (!watch || watch.status !== 'watching' || watch.paused) return
+  lastInspectAt.set(browserId, Date.now())
+  if (await withIdleEval(() => readChaoxingCaptcha(browserId))) {
+    applyInspect(browserId, {
+      page: 'captcha',
+      captcha: true,
+      quiz: false,
+      video: null,
+      hint: '',
+    })
+  }
+}
+
 const syncTick = async (browserId: string) => {
   if (!browserVideoWatches.value[browserId] || inFlight.has(browserId)) return
   inFlight.add(browserId)
   try {
-    const tick = await withIdleEval(() => readChaoxingVideoTick(browserId))
-    applyTick(browserId, tick)
+    const tick = await readChaoxingVideoTick(browserId)
+    if (tick) applyTick(browserId, tick)
+    const due = Date.now() - (lastInspectAt.get(browserId) || 0) >= INSPECT_MS
+    if (due) await inspectCaptcha(browserId)
   } catch {
-    applyTick(browserId, null)
+    // 探测失败继续本地走表，不要把进度打回 0
   } finally {
     inFlight.delete(browserId)
-  }
-}
-
-const inspectTick = async (browserId: string) => {
-  if (!browserVideoWatches.value[browserId]) return
-  try {
-    const info = await withIdleEval(() => readChaoxingVideo(browserId))
-    applyInspect(browserId, info)
-  } catch {
-    // keep live clock
   }
 }
 
@@ -299,6 +342,7 @@ export const startChaoxingWatch = (
     moreVideos?: boolean
     videoCount?: number
     videoIndex?: number
+    mid?: string
   },
   opts?: { resume?: boolean },
 ) => {
@@ -335,6 +379,7 @@ export const startChaoxingWatch = (
     moreVideos: Boolean(seed?.moreVideos ?? prev?.moreVideos),
     videoCount: Number(seed?.videoCount) || prev?.videoCount || 0,
     videoIndex: Number(seed?.videoIndex) || prev?.videoIndex || 0,
+    mid: String(seed?.mid || prev?.mid || ''),
     status: done ? 'done' : seed?.paused ? 'paused' : 'watching',
     sampledAt: now,
     sampledCurrent: current,
@@ -343,17 +388,14 @@ export const startChaoxingWatch = (
   }
   browserVideoWatches.value = { ...browserVideoWatches.value, [id]: state }
   // 本地读进度条即可；不设 heartbeat，避免定时叫醒 Agent
+  lastInspectAt.set(id, now)
   timers.set(id, [
     window.setInterval(() => tickLive(id), LIVE_MS),
     window.setInterval(() => { void syncTick(id) }, SYNC_MS),
-    window.setInterval(() => { void inspectTick(id) }, INSPECT_MS),
   ])
   void installChaoxingVideoHook(id).then((tick) => {
     if (tick && 'current' in tick) applyTick(id, tick as ChaoxingVideoTick)
   }).catch(() => {})
   void syncTick(id)
-  void inspectTick(id)
-  window.setTimeout(() => { void inspectTick(id) }, 800)
-  window.setTimeout(() => { void inspectTick(id) }, 2400)
   return state
 }

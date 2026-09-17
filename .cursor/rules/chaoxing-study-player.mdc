@@ -1,0 +1,31 @@
+---
+description: 学习通切章/切视频播放器：反复踩过的坑，改解析器时必读
+alwaysApply: true
+---
+
+# 学习通视频控制（项目记忆）
+
+用户说播不了、切不了视频、任务点扫不到时：先读 `logs/agent-chat/cx-study-live.md`，再用 `POST http://127.0.0.1:1429/rpc` 调 `play` / `pause` / `chapter_open`，用 CDP `127.0.0.1:9333` 看应用内 CEF，不要另开 Chrome 打 localhost:1420。
+
+## 同一节里切视频
+
+- **裸 `play` 只播当前看得见的那条**，不会切到视频2。要切必须带 `videoIndex`（从 1）或 `label` / `mid`。
+- 多任务点**常常没有「视频1/视频2」页签**。真实结构是 `knowledge/cards` 里叠着的 `.ans-attach-ct.videoContainer`，用 iframe `mid` 区分。
+- 切视频 = 按 mid / 第 N 个 video 盒 `scrollIntoView` + 点那个盒里的播放器。只扫 `.tabtags` / `.prev_title` 会失败。
+- **locate 失败后禁止退回去播当前视频再报成功**。要点视频2却播了视频1，必须 `ok: false`。
+- `CHEAP_FIND_VIDEO` 会先命中正在播、已有 src 的旧 video。指定任务点时必须按 mid 进对应 iframe，跳过其它 `ananas/modules/video`。
+- **进度必须跟 mid 走**。叠着的视频暂停后廉价扫描会退回第一条，监测会停在视频1、丢掉视频2。点播/切任务点后钉住 mid；`applyVideo` / watch / 面板进度条都按 mid 写回对应任务点。
+- 有的 ananas 播放器 `video.duration` 是 `NaN`、`readyState=0`，但 `currentTime` 还在、`window.duration` 有总时长。廉价 tick 必须读 `window.duration` / videojs，不能只信 `video.duration`。`duration` 未就绪时仍要留下 current/src，不能当成没播放器。
+- 面板进度条不能只画 `active && duration`。没有 active、或只有 percent 没有 clock，用户会以为监测坏了。
+
+## 切章后再播
+
+- 切章后 20+ iframe 在重建。禁止注入 helpers、禁止全帧慢扫、禁止 `video.play()` 的 Promise。
+- 只浅走已 ready 的文档，跳过 `loading` / `about:blank`。先等播放器挂上（src 或 duration），再点播放。
+- 任务点扫描用廉价 collect；不要为了不卡死就空着 jobs 复用上一节。
+
+## 不要做
+
+- 不要用 all-frames 顺序 attach 扫验证码/作业（会卡死 CDP）
+- 不要把「打开了下一节」或「播了当前条」说成已经切到指定视频
+- 不要在切到视频 2 后又点回第一个未完成视频

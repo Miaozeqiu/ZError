@@ -5,12 +5,15 @@ import {
 } from './skills/builtinSkillAssets'
 import { CHAOXING_SKILL_DESCRIPTION } from './skills/chaoxing'
 
+export type SkillScope = 'browser' | 'learning' | 'both'
+
 export type AgentSkillItem = {
   id: string
   name: string
   description: string
   enabled: boolean
   builtin: boolean
+  scope: SkillScope
   customized?: boolean
   source?: string
   sourcePath?: string
@@ -65,6 +68,7 @@ type BuiltinSkillDef = {
   description: string
   triggerHint: string
   defaultEnabled: boolean
+  scope: SkillScope
   matchKeywords?: string[]
 }
 
@@ -100,58 +104,72 @@ const BUILTIN_SKILLS: Record<string, BuiltinSkillDef> = {
   chaoxing: {
     name: '学习通',
     description: CHAOXING_SKILL_DESCRIPTION,
-    triggerHint: '用户要登录、刷课、播视频、做学习通作业或章节测验时，先 read_agent_skill(chaoxing) 读 SKILL.md，再按任务用 read_agent_skill_file 读 references/login.md、study.md 或 homework.md。',
+    triggerHint: '用户要登录、刷课、播视频、做学习通作业或章节测验时，先 read_agent_skill(chaoxing)。',
     defaultEnabled: true,
-    matchKeywords: [
-      '登录', '学习通', '超星', 'chaoxing', 'passport', 'mooc', '打开学习通',
-      '刷课', '播放', '章节', '未完成', '自动播放', '看完', '刷未完成', '播章节', '视频', '任务点',
-      '作业', '答题', '测验', '写作业', 'homework', '填空', '应用高等数学',
-    ],
+    scope: 'browser',
   },
   'campus-bank': {
     name: '校园题库',
     description: '查看、搜索、上传与编辑校园题库试卷和题目。',
-    triggerHint: '用户问校园题、学校课、试卷，或要上传/改校园题库时，先 read_agent_skill(campus-bank)，再按需 read_agent_skill_file 读 references/workflow.md。',
+    triggerHint: '用户问校园题、学校课、试卷，或要上传/改校园题库时，先 read_agent_skill(campus-bank)。',
     defaultEnabled: true,
-    matchKeywords: ['校园', '校园题', '校园题库', '学校课', '试卷', 'campus', '上传校园', '校园认证', '同学分享'],
+    scope: 'learning',
   },
   'question-import': {
     name: '题库导入',
     description: '从附带文件或导入任务识别题目并写入本地/校园题库。',
-    triggerHint: '用户要求导入、识别、收录或从文件提取题目时，先 read_agent_skill(question-import)，再按需 read_agent_skill_file 读 references/workflow.md。',
+    triggerHint: '用户要求导入、识别、收录或从文件提取题目时，先 read_agent_skill(question-import)。',
     defaultEnabled: true,
-    matchKeywords: ['导入', '识别题目', '收录', '写入题库', '提取题目', '从文件', '导入题库', '保存到题库'],
+    scope: 'learning',
+  },
+  'knowledge-graph': {
+    name: '知识图谱',
+    description: '查看、绘制、补改、聚焦或打开学习页的科目知识图谱。',
+    triggerHint: '用户要画图、补章/节、聚焦或打开图谱时，先 read_agent_skill(knowledge-graph)。',
+    defaultEnabled: true,
+    scope: 'learning',
+  },
+  'quiz-practice': {
+    name: '练习与讲评',
+    description: '出练习题、讲评作答、复习错题，以及查看练习记录。',
+    triggerHint: '用户要出题、练习、订正或讲评时，先 read_agent_skill(quiz-practice)。',
+    defaultEnabled: true,
+    scope: 'learning',
+  },
+  'folder-admin': {
+    name: '题库文件夹',
+    description: '查看、新建、重命名、移动或删除题库文件夹，以及移动题目、改指标、挂知识点。',
+    triggerHint: '用户要整理文件夹、挪题或改题目指标时，先 read_agent_skill(folder-admin)。',
+    defaultEnabled: true,
+    scope: 'learning',
   },
   'site-graph': {
     name: '网站图谱',
     description: '查看、改正并持久化浏览器网站图谱（节点、边、URL 正则、解析器挂载）。',
-    triggerHint: '用户要改网站图谱，或任务中 URL 对不上节点、缺边、新站点没图时，先 read_agent_skill(site-graph)，再按需 read_agent_skill_file 读 references/edit.md。',
+    triggerHint: '用户要改网站图谱，或任务中 URL 对不上节点、缺边、新站点没图时，先 read_agent_skill(site-graph)。',
     defaultEnabled: true,
-    matchKeywords: [
-      '图谱', '网站图谱', 'site-graph', 'sitegraph', '路由图', '改图谱', '加节点',
-      'upsert_node', 'hostPattern', 'site-graph.json',
-    ],
+    scope: 'browser',
+  },
+  'site-learn': {
+    name: '认识新站点',
+    description: '在未知网站上探路、记下页面结构和操作步骤，并写入该站的图谱与 Skill。',
+    triggerHint: '当前站点没有对应 Skill、图谱对不上、或没有专用工具时，先 read_agent_skill(site-learn)。',
+    defaultEnabled: true,
+    scope: 'browser',
   },
   parser: {
     name: '解析器',
-    description: '阅读并改写 Skill 里的页面解析器（注入脚本），保存后立即生效。',
-    triggerHint: '用户要改解析器，或刷课/作业同一失败点连续两次（空目录、播不起来、读不到题）时，先 read_agent_skill(parser)，再按需 read_agent_skill_file 读 references/format.md 和对应分组文件。',
+    description: '阅读并改写站点解析包（helpers / parse / locate），保存后立即生效。',
+    triggerHint: '用户要改解析器，或刷课/作业同一失败点连续两次时，先 read_agent_skill(parser)。',
     defaultEnabled: true,
-    matchKeywords: [
-      '解析器', 'parser', '注入脚本', '改解析器', 'study.js', 'homework.js',
-      'compilePageScript', 'parsers/', 'play.js', 'chapter.js',
-    ],
+    scope: 'browser',
   },
   'skill-edit': {
     name: '编辑 Skill',
     description: '列出、阅读、改写或恢复 Agent Skill 文件（SKILL.md、references、解析器、图谱）。',
-    triggerHint: '用户要改 Skill、问失败原因、要优化流程/脚本，或工具参数和 Skill 对不上时，先 read_agent_skill(skill-edit)，对照失败步骤用 write_agent_skill_file 改对应 references。',
+    triggerHint: '用户要改 Skill、问失败原因或要优化流程时，先 read_agent_skill(skill-edit)。',
     defaultEnabled: true,
-    matchKeywords: [
-      '编辑 skill', '改 skill', '写 skill', '改技能', '编辑技能', '修改 skill',
-      'SKILL.md', 'skill-edit', '恢复默认', '改技能说明',
-      '优化流程', '优化脚本', '失败原因', '填写失败', '改流程',
-    ],
+    scope: 'both',
   },
 }
 
@@ -246,6 +264,7 @@ export const parseSkillFrontmatter = (raw: string) => {
     return {
       name: '',
       description: '',
+      scope: '' as const,
       body: text.trim(),
       hasFrontmatter: false,
     }
@@ -271,9 +290,14 @@ export const parseSkillFrontmatter = (raw: string) => {
       .join(' ')
       .trim()
   }
+  const scopeRaw = readField('scope')
+  const scope: SkillScope | '' = scopeRaw === 'browser' || scopeRaw === 'learning' || scopeRaw === 'both'
+    ? scopeRaw
+    : ''
   return {
     name: readField('name'),
     description: readMultiline('description') || readField('description'),
+    scope,
     body,
     hasFrontmatter: true,
   }
@@ -533,6 +557,7 @@ const buildItems = async (config: SkillConfigFile): Promise<AgentSkillItem[]> =>
       description,
       enabled: isEnabled(id, row),
       builtin: true,
+      scope: def.scope,
       customized,
       installedAt: row?.installedAt,
       updatedAt: row?.updatedAt,
@@ -545,12 +570,15 @@ const buildItems = async (config: SkillConfigFile): Promise<AgentSkillItem[]> =>
     const meta = await readSkillMeta(id)
     const row = config.skills[id]
     if (!meta) continue
+    const markdown = await readSkillMarkdownRaw(id)
+    const parsed = markdown ? parseSkillFrontmatter(markdown) : null
     items.push({
       id,
       name: meta.name || id,
       description: meta.description || '',
       enabled: isEnabled(id, row),
       builtin: false,
+      scope: parsed?.scope || 'both',
       source: meta.source,
       sourcePath: meta.sourcePath,
       installedAt: meta.installedAt,
@@ -618,16 +646,27 @@ const fallbackBuiltinItems = (): AgentSkillItem[] => (
     description: def.description,
     enabled: def.defaultEnabled,
     builtin: true,
+    scope: def.scope,
   }))
 )
 
-export const getEnabledSkillItems = (): AgentSkillItem[] => {
-  const items = agentSkillsState.items.length ? agentSkillsState.items : fallbackBuiltinItems()
-  return items.filter((item) => item.enabled)
+const scopeMatches = (scope: SkillScope, want?: SkillScope | AgentKindScope) => {
+  if (!want) return true
+  return scope === 'both' || scope === want
 }
 
-export const getEnabledSkillCatalog = (): SkillCatalogEntry[] => (
-  getEnabledSkillItems().map((item) => ({
+type AgentKindScope = 'browser' | 'learning'
+
+export const getEnabledSkillItems = (scope?: AgentKindScope, allowedIds?: string[]): AgentSkillItem[] => {
+  const items = agentSkillsState.items.length ? agentSkillsState.items : fallbackBuiltinItems()
+  const enabled = items.filter((item) => item.enabled && scopeMatches(item.scope || 'both', scope))
+  if (!allowedIds?.length) return enabled
+  const allow = new Set(allowedIds)
+  return enabled.filter((item) => allow.has(item.id))
+}
+
+export const getEnabledSkillCatalog = (scope?: AgentKindScope, allowedIds?: string[]): SkillCatalogEntry[] => (
+  getEnabledSkillItems(scope, allowedIds).map((item) => ({
     id: item.id,
     name: item.name,
     description: item.description,
@@ -767,6 +806,7 @@ export const listAgentSkillsForAgent = async () => {
       description: item.description,
       enabled: item.enabled,
       builtin: item.builtin,
+      scope: item.scope,
       customized: Boolean(item.customized),
       files: await listSkillFiles(item.id),
     })
@@ -789,7 +829,7 @@ export const writeAgentSkillFileContent = async (id: string, relativePath: strin
       ok: true,
       id,
       path,
-      hint: '已写入。学习通的 site-graph.json / parsers/study/* / parsers/homework/* 会立刻热加载。',
+      hint: '已写入。学习通的 site-graph.json / parsers/*，以及 site-learn 的 sites/*/site-graph.json 和 sites/*/parsers/* 会立刻热加载。',
       files: await listSkillFiles(id),
     }
   } catch (error) {
@@ -895,14 +935,23 @@ export const saveSkillFileContent = async (id: string, relativePath: string, con
     }
   }
   await syncState()
-  if (id === 'chaoxing') {
-    try {
-      const { applyChaoxingImplContent, isChaoxingImplPath, reloadChaoxingImpl, SITE_GRAPH_PATH } = await import('./skillRuntime')
-      if (path === SITE_GRAPH_PATH) applyChaoxingImplContent(path, text)
-      else if (isChaoxingImplPath(path)) await reloadChaoxingImpl(path)
-    } catch (error) {
-      console.warn('[chaoxing skill] 热加载失败', error)
-    }
+  try {
+    const {
+      applyChaoxingImplContent,
+      applyLearnedParserContent,
+      applyLearnedSiteGraphContent,
+      isChaoxingImplPath,
+      isLearnedParserPath,
+      isLearnedSiteGraphPath,
+      reloadChaoxingImpl,
+      SITE_GRAPH_PATH,
+    } = await import('./skillRuntime')
+    if (id === 'site-learn' && isLearnedSiteGraphPath(path)) applyLearnedSiteGraphContent(text)
+    else if (id === 'site-learn' && isLearnedParserPath(path)) applyLearnedParserContent(path, text)
+    else if (id === 'chaoxing' && path === SITE_GRAPH_PATH) applyChaoxingImplContent(path, text)
+    else if (id === 'chaoxing' && isChaoxingImplPath(path)) await reloadChaoxingImpl(path)
+  } catch (error) {
+    console.warn('[site skill] 热加载失败', error)
   }
 }
 

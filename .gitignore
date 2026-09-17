@@ -1,5 +1,6 @@
 # Logs
 logs
+public/__agent-inbox.json
 *.log
 npm-debug.log*
 yarn-debug.log*
@@ -45,6 +46,9 @@ target/
 # local build / eval artifacts
 tmp/
 **/.zerror-updater-tmp/
+
+# 本机 CEF 内核（预编译 framework / 符号链接），不要推进 GitHub
+/Chromium Embedded Framework.framework/
 
 # Tauri updater private signing key (never commit)
 src-tauri/keys/*.key

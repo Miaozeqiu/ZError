@@ -1,8 +1,12 @@
-/** 学习通作业：读题、填空、点选、和网页同步。页面注入脚本仍在 browserSkills/chaoxingHomework。 */
-export type { ChaoxingHomeworkInfo, HomeworkLiveState, HomeworkQuestion, HomeworkOption } from './types'
+/** 学习通作业：读题、填空、点选、和网页同步。对外用 HomeworkEngine。 */
+export type { ChaoxingHomeworkInfo, HomeworkCard, HomeworkLiveState, HomeworkQuestion, HomeworkOption } from './types'
+export type { HomeworkEngine } from './engine'
+export { chaoxingHomeworkEngine } from './engine'
 export { applyHomeworkLiveState, installHomeworkLiveSync, readHomeworkLiveState, startHomeworkLiveSync, stopHomeworkLiveSync } from './live'
+export { holdChapterQuizAutoDrill, startHomeworkBackgroundParse, stopHomeworkBackgroundParse } from './background'
 export { pickHomeworkOption } from './pick'
 export { inspectChaoxingHomework, openChaoxingHomeworkItem, openChaoxingHomeworkList } from './inspect'
 export { fillChaoxingHomework, guessChaoxingHomework, saveChaoxingHomework, submitChaoxingHomework } from './fill'
+export { inspectPanelHomework, fillPanelHomework, readPanelHomework, runPanelHomework } from './panelHomework'
 export { runChaoxingChapterQuiz } from './chapterQuiz'
 export type { ChapterQuizRunResult } from './chapterQuiz'

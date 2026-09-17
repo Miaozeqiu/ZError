@@ -1,6 +1,6 @@
 ---
 name: 解析器
-description: 阅读并改写 Skill 里的页面解析器（注入脚本），保存后立即生效。
+description: 阅读并改写站点解析包（helpers / parse / locate），保存后立即生效。
 ---
 
 # 解析器
@@ -15,53 +15,49 @@ description: 阅读并改写 Skill 里的页面解析器（注入脚本），保
 
 | 失败 | 改谁 |
 |------|------|
-| 空目录、节名对不上 | `chapter.js` / `catalog.js` |
-| 播不起来、找不到视频/任务点 | `play.js` / `video.js` |
-| 进度不走 | `watch.js` |
-| 读不到题、填不上 | `inspect.js` / `parse.js` / `answer.js` |
+| 空目录、节名对不上 | `helpers.js`（认节）+ `catalog.js`（本地读树） |
+| 播不起来、找不到视频/任务点 | `helpers.js`（认播放器/任务点）；点选在 `locate.js` |
+| 进度不走 | CDP 读 `video.currentTime` |
+| 读不到题、填不上 | `helpers.js`（认盒/选项）；题面在 `parse.js`，点选在 `locate.js` |
 
-改完立刻用原来的 `browser_study_*` / `browser_homework` 重试。不要用 `browser_eval` 另写一套，不要改导出键。路由错了去 `site-graph`，不要改解析器。
+改完立刻用原来的 `browser_study_*` / `browser_homework` 重试。路由错了去 `site-graph`。面板空或要验证选择器时，可以用 `browser_eval` / `get_page` 探路一次；不要用 eval 长期替代解析器。有卡时工具会拒绝 get_page。
 
 ## 刷课 `parsers/study/`
 
 | 文件 | 改什么 |
 |------|--------|
-| `chapter.js` | 目录、打开章节 |
-| `play.js` | 播放、切任务点 |
-| `watch.js` | 进度监控 |
-| `captcha.js` | 验证码 |
-| `frames.js` | iframe、点击 |
-| `catalog.js` | 目录树、节名 |
-| `video.js` | 播放器、任务点图标 |
-| `contract.md` | 导出键：动作 / 目录 / 监控 |
-| `index.js` | 导出键；新增脚本时改这里，并更新顶部 `// files:` |
+| `helpers.js` | 节 / 任务点 / 播放器（读和做共用，只改这里） |
+| `catalog.js` | 目录树、节名（本地跑，不注入） |
+| `locate.js` | Handle → 切章 / 任务点 / 播放 |
+| `contract.md` | 不再导出注入键 |
+| `index.js` | `// files:` 清单 |
 
 ## 作业 `parsers/homework/`
 
 | 文件 | 改什么 |
 |------|--------|
-| `inspect.js` | 读题、点标签 |
-| `live.js` | 实时监听 |
-| `capture.js` | 截图 |
-| `answer.js` | 填答案、提交 |
-| `frames.js` | iframe、点击、取图 |
-| `parse.js` | 题盒、选项、题面 |
-| `contract.md` | 导出键：动作 / 读页 / 内部传图 |
-| `index.js` | 导出键与 `// files:` |
+| `helpers.js` | 题盒、选项、按钮（读和做共用，只改这里） |
+| `parse.js` | 题面、名单（本地跑，不注入） |
+| `locate.js` | Handle → 点选 / 填空 / 暂存 / 提交 |
+| `capture.js` | 题盒截图 |
+| `contract.md` | 导出键与 Handle |
+| `index.js` | `// files:` 清单 |
 
-读：`read_agent_skill_file(chaoxing, parsers/study/play.js)`  
+读：`read_agent_skill_file(chaoxing, parsers/study/helpers.js)`  
 写：`write_agent_skill_file(chaoxing, path, content)`，`content` 是**该文件**全文。保存后热加载。
+
+新站写到 `site-learn` 的 `sites/<host>/parsers/<role>/`。
 
 ## 步骤
 
 1. 看失败点属于哪一组，只读那一个 `.js`；需要返回值时读同目录 `contract.md`
-2. 分组文件写函数声明；`index.js` 用 `page(fn)` 导出（helpers 按引用自动注入）
-3. 新加一组：新建 `parsers/study/xxx.js`，把它写进 `index.js` 顶部 `// files:` 和 `return`
-4. 写回后用现有浏览器工具试（`browser_study_*` / `browser_homework`），不要用 `browser_eval` 重写一整套
+2. 分组文件写函数声明。`index.js` 只写 `// files:`，不要再写 `function (page)` / `page(fn)`
+3. 新加一组：新建文件，把它写进对应 `index.js` 顶部 `// files:`
+4. 写回后用现有浏览器工具试。探路可以用 eval，不要用 eval 重写一整套长期流程
 
 ## 不要做
 
 - 不要把解析器正文贴进对话或写进 `SKILL.md`
 - 不要用 `eval` / `new Function` 在页面里再编译一层
-- 不要改导出键名，否则刷课/作业工具会对不上
+- 不要整包重写。同一失败两次只改 helpers 或 locate
 - 作业题面只走 `browser_homework` 题卡

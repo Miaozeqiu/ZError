@@ -53,6 +53,12 @@ async function initApp() {
   });
   
   createApp(App).mount("#app");
+
+  if (import.meta.env.DEV) {
+    void import("./services/agent/cursorBridge")
+      .then((mod) => mod.startCursorBridge())
+      .catch(() => {})
+  }
 }
 
 initApp();

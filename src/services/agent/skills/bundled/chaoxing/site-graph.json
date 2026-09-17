@@ -3,13 +3,17 @@
   "name": "学习通",
   "host": "chaoxing.com",
   "hostPattern": "chaoxing\\.com",
-  "notes": [],
+  "notes": [
+    "任务 / 章节 / 作业是课程壳侧栏页签（frames），不是并列顶层页面。",
+    "章节里夹带的测验仍在播放页内；只有课程作业作答才是独立页。"
+  ],
   "nodes": [
     {
       "id": "login",
       "title": "登录",
-      "path": "passport2.chaoxing.com",
-      "summary": "账号密码登录，成功后离开登录页。",
+      "path": "passport2.chaoxing.com/login?newversion=true",
+      "summary": "账号密码登录。",
+      "structure": "整页。#phone / #pwd / #loginBtn，无 iframe。",
       "row": 0,
       "col": 0,
       "patterns": ["passport2\\.chaoxing\\.com"],
@@ -18,81 +22,131 @@
     {
       "id": "space",
       "title": "空间",
-      "path": "i.chaoxing.com",
-      "summary": "登录后的个人空间。",
+      "path": "i.chaoxing.com · #frame_content",
+      "summary": "登录后的个人空间。课表在同一块 iframe 里切页签。",
+      "structure": "外壳。#frame_content 里切页签。点「我学的课」后框内会到 visit/courses，但外壳 iframe.src 常仍是最初的 visit/interaction，不要用 src 属性判断页签。看 get_state.spaceTab。",
+      "frame": { "name": "#frame_content", "title": "课表", "open": "top", "kind": "host" },
+      "frames": [
+        {
+          "id": "taught",
+          "tab": "我教的课",
+          "name": "/visit/interaction",
+          "title": "默认页，不是学生课表",
+          "open": "stay",
+          "patterns": ["visit/interaction"]
+        },
+        {
+          "id": "learned",
+          "tab": "我学的课",
+          "name": "/visit/courses",
+          "title": "学生课表，点课名进课",
+          "open": "stay",
+          "patterns": ["visit/courses", "courselist"]
+        }
+      ],
       "row": 1,
       "col": 0,
-      "patterns": ["(?:i\\.mooc\\.chaoxing|i\\.chaoxing)\\.com"],
-      "parserIds": []
-    },
-    {
-      "id": "courses",
-      "title": "课程列表",
-      "path": "/visit/interaction",
-      "summary": "课名在列表里，点进去进课程壳。",
-      "row": 2,
-      "col": 0,
-      "patterns": ["visit\\/(interaction|courses)"],
+      "patterns": [
+        "(?:i\\.mooc\\.chaoxing|i\\.chaoxing)\\.com/(?:space|base)(?:[/?#]|$)",
+        "(?:i\\.mooc\\.chaoxing|i\\.chaoxing)\\.com/?$",
+        "visit/interaction",
+        "visit/courses",
+        "courselist"
+      ],
       "parserIds": []
     },
     {
       "id": "course",
       "title": "课程",
-      "path": "/mycourse/stu",
-      "summary": "课程壳：章节、作业等页签。目录在页内 iframe，不要单独开节点。",
-      "row": 3,
+      "path": "/mycourse/stu · 侧栏页签",
+      "summary": "一门课的外壳。侧栏切换中间 iframe：任务 / 章节 / 作业 / 讨论。刚进课常默认「任务」。",
+      "structure": "顶层 mycourse/stu（或 stucoursemiddle）。侧栏点「章节」→ studentcourse 目录；点「作业」→ work/list；点「任务」→ 活动列表。目录里点节名才进播放页。不要把侧栏页签画成独立顶层节点。",
+      "frame": { "name": "course-iframe", "title": "侧栏内容", "open": "stay", "kind": "host" },
+      "frames": [
+        {
+          "id": "tasks",
+          "tab": "任务",
+          "name": "pageHeader=0",
+          "title": "任务/活动列表（刚进课默认）",
+          "open": "stay",
+          "patterns": ["[?&]pageHeader=0(?:&|$)", "stuActiveList", "\\/active\\/stu"]
+        },
+        {
+          "id": "chapters",
+          "tab": "章节",
+          "name": "studentcourse",
+          "title": "章节目录（已完成任务点 x/y）",
+          "open": "stay",
+          "patterns": ["[?&]pageHeader=1(?:&|$)", "studentcourse"]
+        },
+        {
+          "id": "homework",
+          "tab": "作业",
+          "name": "work/list",
+          "title": "课程作业名单（待交/已完成）",
+          "open": "stay",
+          "patterns": [
+            "[?&]pageHeader=8(?:&|$)",
+            "\\/work\\/(?:list|index|view)(?:[/?#]|$)",
+            "mooc2-ans\\.chaoxing\\.com\\/[^?\\s]*\\/work(?:\\/|\\?|$)"
+          ]
+        }
+      ],
+      "row": 2,
       "col": 0,
       "patterns": [
-        "\\/mycourse\\/stu(?!dentstudy)(?![^#]*[?&]pageHeader=8(?:&|$))",
+        "\\/mycourse\\/stu(?!dentstudy)",
         "stucoursemiddle",
-        "studentcourse"
+        "studentcourse",
+        "[?&]pageHeader=(?:0|1|8)(?:&|$)",
+        "stuActiveList",
+        "\\/active\\/stu",
+        "\\/work\\/(?:list|index|view)(?:[/?#]|$)"
       ],
-      "parserIds": ["study"]
+      "parserIds": []
     },
     {
       "id": "study",
       "title": "章节播放",
       "path": "/mycourse/studentstudy",
-      "summary": "原地切节。视频和资料在页内 iframe，不要当成独立页面。",
-      "row": 4,
-      "col": -1,
+      "summary": "独立播放页。切节、任务点、验证码、本节测验都在本页。",
+      "structure": "顶层 studentstudy。中间两层同源 iframe：knowledge/cards → ananas/video 或章节测验题卡。左侧 #coursetree。章节里夹带的作业/测验不是独立「作业作答」页，仍用本页 homework/study 工具。",
+      "frame": { "name": "cards → ananas/video|work", "title": "播放器/本节测验", "open": "stay", "kind": "host" },
+      "row": 3,
+      "col": 0,
       "patterns": ["studentstudy", "\\/knowledge\\/cards", "ananas\\/modules"],
-      "parserIds": ["study"]
-    },
-    {
-      "id": "homework-list",
-      "title": "作业列表",
-      "path": "/work · pageHeader=8",
-      "summary": "待做、已完成作业。",
-      "row": 4,
-      "col": 1,
-      "patterns": [
-        "[?&]pageHeader=8(?:&|$)",
-        "\\/work\\/(?:list|index|view)(?:[/?#]|$)",
-        "mooc2-ans\\.chaoxing\\.com\\/[^?\\s]*\\/work(?:\\/|\\?|$)"
-      ],
-      "parserIds": ["homework"]
+      "parserIds": ["study", "captcha", "homework"]
     },
     {
       "id": "homework-do",
       "title": "作业作答",
       "path": "/work/dowork",
-      "summary": "题卡和网页双向同步。",
-      "row": 5,
+      "summary": "课程作业的独立作答页（从课程壳「作业」名单打开）。",
+      "structure": "整页题干/选项。仅课程作业名单点进去才到这里。章节播放里夹带的测验不要认成本节点。",
+      "row": 3,
       "col": 1,
-      "patterns": ["doHomeWork", "\\/work\\/do(?:work)?(?:[/?#]|$)", "dowork", "do-work"],
+      "patterns": [
+        "doHomeWork(?:New)?",
+        "\\/work\\/do(?:work)?(?:[/?#]|$)",
+        "\\/work\\/phone\\/do",
+        "dowork",
+        "do-work"
+      ],
       "parserIds": ["homework"]
     }
   ],
   "edges": [
     { "from": "login", "to": "space", "label": "登录成功" },
-    { "from": "space", "to": "courses", "label": "打开课程" },
-    { "from": "courses", "to": "course", "label": "点课名" },
-    { "from": "course", "to": "study", "label": "点章节" },
-    { "from": "course", "to": "homework-list", "label": "点作业" },
+    { "from": "space", "to": "course", "label": "点课名" },
+    { "from": "course", "to": "space", "label": "回空间", "kind": "back" },
+    { "from": "course", "to": "course", "label": "侧栏切页签", "kind": "loop" },
+    { "from": "course", "to": "study", "label": "点节名" },
+    { "from": "course", "to": "homework-do", "label": "打开一份作业" },
     { "from": "study", "to": "course", "label": "回课程", "kind": "back" },
     { "from": "study", "to": "study", "label": "切节", "kind": "loop" },
-    { "from": "homework-list", "to": "homework-do", "label": "打开一份" },
-    { "from": "homework-do", "to": "homework-list", "label": "返回", "kind": "back" }
+    { "from": "study", "to": "study", "label": "切任务点", "kind": "loop" },
+    { "from": "study", "to": "study", "label": "验证码", "kind": "loop" },
+    { "from": "study", "to": "study", "label": "本节测验", "kind": "loop" },
+    { "from": "homework-do", "to": "course", "label": "返回作业名单", "kind": "back" }
   ]
 }

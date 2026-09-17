@@ -1,35 +1,35 @@
-import {
-  fillChaoxingHomework,
-  guessChaoxingHomework,
-  inspectChaoxingHomework,
-  openChaoxingHomeworkItem,
-  openChaoxingHomeworkList,
-  saveChaoxingHomework,
-  startHomeworkLiveSync,
-  submitChaoxingHomework,
-} from '../../chaoxing/homework'
+import { chaoxingHomeworkEngine } from '../../chaoxing/homework'
+import { runPanelHomework } from '../../chaoxing/homework/panelHomework'
 import { startChaoxingChapterParser } from '../../chaoxing/browser/chapters'
+import { nextPanelStudy, playPanelStudy } from '../../chaoxing/browser/panelStudy'
 import { startChaoxingWatch, videoWatchFor } from '../../chaoxing/browser/watch'
 import { clearPendingCaptcha, runAfterCaptcha } from '../../chaoxing/browser/watchAgent'
 import {
   fillChaoxingCaptcha,
   openChaoxingChapters,
-  openNextChaoxingChapter,
-  playChaoxingVideo,
   readChaoxingVideo,
   videoIsPlaying,
 } from '../../chaoxing/study'
 import {
   siteGraphForUrl,
   siteGraphNodeForUrl,
-  siteGraphParserIds,
+  activeFrameOf,
 } from '../../browser/siteGraphCore'
 import type { HomeworkToolArgs, PlatformAdapter, PlatformRole, StudyPlayOptions } from '../types'
 
-const isChaoxing = (url: string) => Boolean(siteGraphForUrl(url)) || /chaoxing\.com/i.test(url)
+const isChaoxing = (url: string) => {
+  const site = siteGraphForUrl(url)
+  if (site) return site.id === 'chaoxing'
+  return /chaoxing\.com/i.test(url)
+}
 
 const nodeId = (url: string) => siteGraphNodeForUrl(url)?.id || ''
-const parsers = (url: string) => siteGraphParserIds(url)
+
+const courseTab = (url: string) => {
+  const node = siteGraphNodeForUrl(url)
+  if (node?.id !== 'course') return ''
+  return String(activeFrameOf(node, url)?.id || activeFrameOf(node, url)?.tab || '')
+}
 
 const isPlayerUrl = (url: string) => {
   const id = nodeId(url)
@@ -51,15 +51,19 @@ const isHomeworkDoUrl = (url: string) => {
   const id = nodeId(url)
   if (id) return id === 'homework-do'
   if (!isChaoxing(url)) return false
+  // 播放页内嵌测验不是独立作答页
   if (/studentstudy|studentcourse|knowledge\/cards|ananas|insertcourse|passport2/i.test(url)) return false
   return /doHomeWork|\/work\/do(?:work)?(?:[/?#]|$)|\/work\/phone\/do|dowork|do-work/i.test(url)
 }
 
 const isHomeworkListUrl = (url: string) => {
+  if (!isChaoxing(url) || isHomeworkDoUrl(url) || isPlayerUrl(url)) return false
   const id = nodeId(url)
-  if (id) return id === 'homework-list'
-  if (!isChaoxing(url) || isHomeworkDoUrl(url)) return false
-  if (/studentstudy|studentcourse|knowledge\/cards|ananas|passport2/i.test(url)) return false
+  if (id === 'course') {
+    const tab = courseTab(url)
+    if (tab === 'homework' || tab === '作业') return true
+  }
+  if (id === 'homework-list') return true
   if (/\/mycourse\/stu/i.test(url) && /(?:^|[?&])pageHeader=8(?:&|$)/i.test(url)) return true
   if (/\/work\/(?:list|index|view)(?:[/?#]|$)/i.test(url)) return true
   if (/mooc2-ans\.chaoxing\.com\/[^?\s]*\/work(?:\/|\?|$)/i.test(url)) return true
@@ -67,34 +71,52 @@ const isHomeworkListUrl = (url: string) => {
 }
 
 const isHomeworkUrl = (url: string) => {
-  if (parsers(url).includes('homework') && nodeId(url) !== 'study') return true
-  return isHomeworkDoUrl(url) || isHomeworkListUrl(url)
+  if (isHomeworkDoUrl(url) || isHomeworkListUrl(url)) return true
+  const node = siteGraphNodeForUrl(url)
+  if (node) return node.parserIds.includes('homework') && node.id !== 'study'
+  return false
 }
 const isChapterWorkUrl = (url: string) => isPlayerUrl(url)
 const canUseHomeworkTools = (url: string) => isHomeworkUrl(url) || isChapterWorkUrl(url)
+const isCourseChapterTab = (url: string) => {
+  if (isPlayerUrl(url) || !isCourseUrl(url)) return false
+  const tab = courseTab(url)
+  if (tab === 'chapters' || tab === '章节') return true
+  return /(?:^|[?&])pageHeader=1(?:&|$)|studentcourse/i.test(url)
+}
+
 const isStudyUrl = (url: string) => {
-  if (parsers(url).includes('study')) return true
-  return (
-    (isPlayerUrl(url) || isCourseUrl(url) || (isChaoxing(url) && /knowledge/i.test(url)))
-    && !isHomeworkUrl(url)
-  )
+  if (isPlayerUrl(url) || isCourseChapterTab(url)) return true
+  const node = siteGraphNodeForUrl(url)
+  if (node) return node.id !== 'course' && node.parserIds.includes('study')
+  return isChaoxing(url) && /knowledge/i.test(url) && !isHomeworkUrl(url)
 }
 const isLoginUrl = (url: string) => {
-  if (nodeId(url) === 'login' || parsers(url).includes('login')) return true
+  const node = siteGraphNodeForUrl(url)
+  if (node) return node.id === 'login' || node.parserIds.includes('login')
   return /passport2\.chaoxing\.com/i.test(url)
 }
 
 const roleOf = (url: string): PlatformRole | null => {
-  const first = parsers(url)[0]
-  if (first) return first
+  const node = siteGraphNodeForUrl(url)
+  if (node?.id === 'course') {
+    if (isCourseChapterTab(url)) return 'study'
+    if (isHomeworkListUrl(url)) return 'homework'
+    return null
+  }
+  if (node) {
+    const role = node.parserIds.find((id): id is PlatformRole => (
+      id === 'login' || id === 'study' || id === 'homework' || id === 'captcha'
+    ))
+    return role || null
+  }
   if (isLoginUrl(url)) return 'login'
   if (isHomeworkUrl(url)) return 'homework'
   if (isStudyUrl(url)) return 'study'
-  if (isChaoxing(url)) return 'study'
   return null
 }
 
-const stripHwImages = (card: Awaited<ReturnType<typeof inspectChaoxingHomework>>) => {
+const stripHwImages = (card: Awaited<ReturnType<typeof chaoxingHomeworkEngine.inspect>>) => {
   const brief = (src?: string) => {
     const s = String(src || '')
     return s.startsWith('data:') ? '［图，已由视觉读成文字］' : s
@@ -114,23 +136,11 @@ const stripHwImages = (card: Awaited<ReturnType<typeof inspectChaoxingHomework>>
 }
 
 const runHomework = async (browserId: string, args: HomeworkToolArgs) => {
-  const action = args.action
-  const withLive = async <T,>(card: T) => {
-    await startHomeworkLiveSync(browserId).catch(() => null)
-    return card
+  const result = await runPanelHomework(browserId, args)
+  if (result && typeof result === 'object' && 'questions' in result) {
+    return stripHwImages(result as Awaited<ReturnType<typeof chaoxingHomeworkEngine.inspect>>)
   }
-  if (action === 'list') return withLive(await openChaoxingHomeworkList(browserId))
-  if (action === 'inspect') return stripHwImages(await withLive(await inspectChaoxingHomework(browserId)))
-  if (action === 'open') {
-    const title = String(args.title || '').trim()
-    if (!title) return { error: 'open 需要 title' }
-    return withLive(await openChaoxingHomeworkItem(browserId, title))
-  }
-  if (action === 'fill') return withLive(await fillChaoxingHomework(browserId, args.answers))
-  if (action === 'guess') return withLive(await guessChaoxingHomework(browserId))
-  if (action === 'save') return stripHwImages(await withLive(await saveChaoxingHomework(browserId)))
-  if (action === 'submit') return stripHwImages(await withLive(await submitChaoxingHomework(browserId)))
-  return { error: 'action 必须是 list / open / inspect / fill / guess / save / submit' }
+  return result
 }
 
 export const chaoxingPlatformAdapter: PlatformAdapter = {
@@ -148,18 +158,20 @@ export const chaoxingPlatformAdapter: PlatformAdapter = {
   isStudyUrl,
   isLoginUrl,
   openChapters: (browserId) => openChaoxingChapters(browserId),
-  playVideo: async (browserId, options?: StudyPlayOptions) => (
-    await playChaoxingVideo(browserId, {
+  playVideo: async (browserId, options?: StudyPlayOptions) => {
+    return await playPanelStudy(browserId, {
+      action: options?.action,
       videoIndex: options?.videoIndex,
       label: options?.label,
-      skipTabClick: options?.skipTabClick ?? false,
+      skipIfDone: options?.skipIfDone,
+      resume: options?.skipTabClick === true,
     }) as Record<string, unknown>
-  ),
+  },
   readVideo: async (browserId) => (
     (await readChaoxingVideo(browserId)) as Record<string, unknown> | null
   ),
   openNext: async (browserId) => (
-    (await openNextChaoxingChapter(browserId)) as Record<string, unknown>
+    (await nextPanelStudy(browserId)) as Record<string, unknown>
   ),
   videoIsPlaying: (snap) => videoIsPlaying(snap as never),
   startWatch: (browserId, sessionId, snap, options) => {

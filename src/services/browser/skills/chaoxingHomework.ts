@@ -1,7 +1,4 @@
-import { homeworkScript } from '../../agent/skillRuntime'
+import { homeworkCaptureScript } from '../../parser/homeworkRuntime'
 
-/** 作业解析器脚本来自 Skill `parsers/homework/`，这里只做调用。 */
-export const CHAOXING_CLICK_HOMEWORK_TAB = () => homeworkScript('clickTab')
-export const CHAOXING_HOMEWORK_CAPTURE = () => homeworkScript('capture')
-export const CHAOXING_HOMEWORK_FILL = () => homeworkScript('fill')
-export const CHAOXING_HOMEWORK_SUBMIT = () => homeworkScript('submit')
+/** 作业动作走 CDP。这里只留视觉截图仍要的注入入口。 */
+export const CHAOXING_HOMEWORK_CAPTURE = () => homeworkCaptureScript()

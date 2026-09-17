@@ -1,9 +1,9 @@
-import { CHAOXING_HOMEWORK_FILL } from '../../browser/skills/chaoxingHomework'
 import { writeDebugDump } from '../../agent/debugLog'
 import { lastHomeworkCard } from '../../browser/abstractions'
 import { asObject, evalBrowserView, waitMs } from '../../browser/eval'
+import { clickHomeworkBox } from './act'
 import { applyHomeworkLiveState, beginHomeworkPick, endHomeworkPick, readHomeworkLiveState } from './live'
-import { PICK_HW_IN_FRAMES, READ_HW_PICKED } from './scripts'
+import { LOCATE_HW_PICK, INVOKE_HW_PICK, READ_HW_PICKED } from './scripts'
 
 const formatPickDebug = (report: Record<string, unknown>) => {
   const frames = (Array.isArray(report.frames) ? report.frames : []) as Array<Record<string, unknown>>
@@ -67,16 +67,16 @@ export const pickHomeworkOption = async (id: string, index: number, letter: stri
   try {
     const before = asObject(await evalBrowserView(id, READ_HW_PICKED(at)).catch(() => ({})))
     const alreadyOn = String(before.picked || '').includes(want)
-    let topFill: Record<string, unknown> = {}
+    const topFill: Record<string, unknown> = {}
     let pick: Record<string, unknown> = {}
-    if (turningOff) {
-      if (alreadyOn || !before.found) {
-        pick = asObject(await evalBrowserView(id, PICK_HW_IN_FRAMES(at, want)).catch((err) => ({ error: String(err) })))
-      }
-    } else if (!alreadyOn) {
-      topFill = asObject(await evalBrowserView(id, `${CHAOXING_HOMEWORK_FILL()}(${JSON.stringify([{ index: at, answer: want }])})`).catch((err) => ({ error: String(err) })))
-      if (!Number(topFill.filledCount)) {
-        pick = asObject(await evalBrowserView(id, PICK_HW_IN_FRAMES(at, want)).catch((err) => ({ error: String(err) })))
+    const needClick = turningOff ? (alreadyOn || !before.found) : !alreadyOn
+    if (needClick) {
+      // 章节测验在嵌套 iframe：优先帧内 addChoice/click，CDP 鼠标坐标常偏
+      const invoked = asObject(await evalBrowserView(id, INVOKE_HW_PICK(at, want)).catch((err) => ({ error: String(err) })))
+      pick = invoked
+      if (!invoked.ok) {
+        pick = asObject(await clickHomeworkBox(id, LOCATE_HW_PICK(at, want)).catch((err) => ({ error: String(err) })))
+        if (pick.ok) pick = { ...pick, via: 'cdp' }
       }
     }
     await waitMs(80)

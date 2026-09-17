@@ -4,7 +4,7 @@
 
 - 主说明：`SKILL.md`（可含 YAML frontmatter：`name`、`description`）
 - 细则：`references/*.md`
-- 学习通实现：`site-graph.json`、`parsers/study/*`、`parsers/homework/*`（先改对应分组，不要整包重写）
+- 学习通实现：`site-graph.json`、`parsers/study/*`、`parsers/homework/*`（选择器先改对应 `helpers.js`，不要整包重写）
 
 `write_agent_skill_file` 的 `content` 必须是**完整文件**，不能只传片段。
 

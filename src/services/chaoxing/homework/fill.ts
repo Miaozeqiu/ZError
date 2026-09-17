@@ -1,11 +1,21 @@
-import { CHAOXING_HOMEWORK_FILL, CHAOXING_HOMEWORK_SUBMIT } from '../../browser/skills/chaoxingHomework'
 import { writeDebugDump } from '../../agent/debugLog'
-import { askFrames, asObject, evalBrowserView, waitMs } from '../../browser/eval'
-import type { ChaoxingHomeworkInfo } from './types'
+import { asObject, evalBrowserView, waitMs } from '../../browser/eval'
+import { clickHomeworkBox, fillHomeworkBox } from './act'
 import { inspectChaoxingHomework } from './inspect'
 import { applyHomeworkLiveState, readHomeworkLiveState } from './live'
 import { toHomeworkCard } from './parse'
-import { DEBUG_HW_BOX, READ_HW_FILL_STATE, READ_HW_PICKED } from './scripts'
+import {
+  DEBUG_HW_BOX,
+  INVOKE_HW_CONFIRM,
+  INVOKE_HW_SAVE,
+  INVOKE_HW_SUBMIT,
+  LOCATE_HW_BLANK,
+  LOCATE_HW_CONFIRM,
+  LOCATE_HW_SAVE,
+  LOCATE_HW_SUBMIT,
+  READ_HW_FILL_STATE,
+  READ_HW_PICKED,
+} from './scripts'
 
 const clickBrowserText = async (id: string, text: string) => {
   const { clickBrowserText: click } = await import('../../browser/appBrowser')
@@ -20,43 +30,65 @@ export const fillChaoxingHomework = async (id: string, answers: unknown) => {
   const pickedOk = async (item: unknown) => {
     const row = item as { index?: number; answer?: string; value?: string }
     const index = Number(row?.index) || 0
-    const want = String(row?.answer || row?.value || '').toUpperCase().replace(/[^A-H]/g, '')
+    const ans = String(row?.answer || row?.value || '')
+    let want = ans.toUpperCase().replace(/[^A-H]/g, '')
+    if (!want) {
+      if (/正确|对/.test(ans)) want = 'A'
+      else if (/错误|错/.test(ans)) want = 'B'
+    }
     if (!index || !want) return false
     const state = asObject(await evalBrowserView(id, READ_HW_PICKED(index)).catch(() => null))
     const picked = String(state.picked || '')
     return want.split('').every((letter) => picked.includes(letter))
   }
+  const fillViaCef = async (item: unknown) => {
+    const row = item as { index?: number; type?: string; typeName?: string; answer?: string; value?: string }
+    const index = Number(row?.index) || 0
+    const ans = String(row?.answer || row?.value || '').trim()
+    const type = String(row?.type || row?.typeName || '')
+    const want = ans.toUpperCase().replace(/[^A-H]/g, '')
+    const letters = want || (/正确|对/.test(ans) ? 'A' : /错误|错/.test(ans) ? 'B' : '')
+    const isBlank = /填空|简答|论述|计算|blank|text/i.test(type) || (!letters && ans.length > 2)
+    if (!index) return false
+    if (isBlank) {
+      const parts = ans.split(/[;；\n]/).map((s) => s.trim()).filter(Boolean)
+      const texts = parts.length ? parts : [ans]
+      let ok = false
+      for (let slot = 0; slot < texts.length; slot += 1) {
+        const typed = await fillHomeworkBox(id, LOCATE_HW_BLANK(index, slot), texts[slot]).catch(() => ({ ok: false }))
+        if (typed.ok) ok = true
+      }
+      return ok
+    }
+    if (!letters) return false
+    const { pickHomeworkOption } = await import('./pick')
+    const before = asObject(await evalBrowserView(id, READ_HW_PICKED(index)).catch(() => ({})))
+    const already = String(before.picked || '')
+    for (const letter of letters) {
+      if (already.includes(letter)) continue
+      await pickHomeworkOption(id, index, letter)
+      await waitMs(80)
+    }
+    await waitMs(120)
+    return pickedOk({ ...row, answer: letters })
+  }
   for (let i = 0; i < list.length; i += 1) {
     const item = list[i]
     const label = String((item as { id?: string; index?: number })?.id || (item as { index?: number })?.index || i + 1)
-    const top = asObject(await evalBrowserView(id, `${CHAOXING_HOMEWORK_FILL()}(${JSON.stringify([item])})`).catch(() => null))
-    if (Number(top.filledCount) > 0) {
+    if (await fillViaCef(item)) {
       filled.push(label)
       await waitMs(120)
       continue
     }
-    // 页面可能异步更新选中态，稍等后按题号直接复核
-    await waitMs(350)
-    if (await pickedOk(item)) {
-      filled.push(label)
-      continue
-    }
-    await askFrames(id, 'hwfill', { answers: JSON.stringify([item]) })
-    await waitMs(300)
-    const via = asObject(await evalBrowserView(id, `(function(){ return window.__ZE_HW_FILLED__ || null; })()`).catch(() => null))
-    if (Number(via.filled) > 0 || await pickedOk(item)) {
-      filled.push(label)
-    } else {
-      missed.push(label)
-      const debugIndex = Number((item as { index?: number })?.index) || i + 1
-      const scene = await evalBrowserView(id, DEBUG_HW_BOX(debugIndex)).catch((err) => ({ error: String(err) }))
-      writeDebugDump('cx-fill-debug', JSON.stringify({
-        ts: new Date().toISOString(),
-        item,
-        topResult: top,
-        scene,
-      }, null, 2), 'json')
-    }
+    missed.push(label)
+    const debugIndex = Number((item as { index?: number })?.index) || i + 1
+    const scene = await evalBrowserView(id, DEBUG_HW_BOX(debugIndex)).catch((err) => ({ error: String(err) }))
+    writeDebugDump('cx-fill-debug', JSON.stringify({
+      ts: new Date().toISOString(),
+      item,
+      via: 'cdp',
+      scene,
+    }, null, 2), 'json')
     await waitMs(120)
   }
   // 只读各题已填/勾选（1 次轻量 eval），不做全量重读
@@ -91,6 +123,9 @@ export const fillChaoxingHomework = async (id: string, answers: unknown) => {
 export const guessChaoxingHomework = async (id: string) => {
   const card = await inspectChaoxingHomework(id, { vision: false })
   const questions = card.questions || []
+  const { hasUsableVisionModel } = await import('../../model/config')
+  const { questionNeedsVision } = await import('./homeworkVision')
+  const skipVision = !hasUsableVisionModel()
   if (!questions.length) {
     return {
       ok: false,
@@ -100,10 +135,15 @@ export const guessChaoxingHomework = async (id: string) => {
     }
   }
   const answers: Array<{ index: number; type?: string; answer: string }> = []
+  const skipped: number[] = []
   for (const q of questions) {
     if (q.filled) continue
     const index = Number(q.index) || 0
     if (!index) continue
+    if (skipVision && questionNeedsVision(q)) {
+      skipped.push(index)
+      continue
+    }
     const type = String(q.type || q.typeName || '')
     const letters = (q.options || [])
       .map((opt) => String(opt.letter || '').toUpperCase())
@@ -125,48 +165,75 @@ export const guessChaoxingHomework = async (id: string) => {
     return {
       ok: true,
       guessed: 0,
+      skippedVision: skipped,
       filledCount: card.filledCount || questions.filter((item) => item.filled).length,
       questionCount: questions.length,
       next: 'save',
-      hint: '题都已填过，save 或 submit，再 browser_study_next 继续。',
+      hint: skipped.length
+        ? `第 ${skipped.join('、')} 题是图像/公式，当前没有视觉模型，已跳过。其余已填过则 save / next。`
+        : '题都已填过，save 或 submit，再 browser_study_next 继续。',
     }
   }
   const filled = await fillChaoxingHomework(id, answers)
   return {
     ...filled,
     guessed: answers.length,
+    skippedVision: skipped,
     answers: answers.map((item) => `${item.index}=${item.answer}`),
-    hint: filled.ok
+    hint: skipped.length
+      ? `已随机 ${answers.length} 道文字题。第 ${skipped.join('、')} 题是图像/公式，当前没有视觉模型，已跳过。`
+      : filled.ok
       ? `已随机填 ${answers.length} 道。save 暂存或 submit，再 browser_study_next 继续刷课。`
       : (filled as { hint?: string }).hint || '随机填写失败，再 inspect 一次后 guess。',
   }
 }
 
+const clickConfirmIfAny = async (id: string) => {
+  await waitMs(500)
+  const invoked = asObject(await evalBrowserView(id, INVOKE_HW_CONFIRM()).catch(() => null))
+  if (invoked?.ok) return true
+  const box = await clickHomeworkBox(id, LOCATE_HW_CONFIRM()).catch(() => null)
+  if (box?.ok) return true
+  const text = await clickBrowserText(id, '确定').catch(() => null) as { ok?: boolean } | null
+  return Boolean(text?.ok)
+}
+
 export const saveChaoxingHomework = async (id: string) => {
-  const clicked = await clickBrowserText(id, '暂时保存').catch(() => null) as { ok?: boolean } | null
-  await waitMs(600)
+  const invoked = asObject(await evalBrowserView(id, INVOKE_HW_SAVE()).catch(() => null))
+  let ok = Boolean(invoked?.ok)
+  if (!ok) {
+    const box = await clickHomeworkBox(id, LOCATE_HW_SAVE()).catch(() => null)
+    ok = Boolean(box?.ok)
+  }
+  if (!ok) {
+    const text = await clickBrowserText(id, '暂时保存').catch(() => null) as { ok?: boolean } | null
+    ok = Boolean(text?.ok)
+  }
+  await waitMs(1200)
   const again = await inspectChaoxingHomework(id, { vision: false })
   return toHomeworkCard({
     ...again,
-    ok: Boolean(clicked?.ok),
-    hint: clicked?.ok ? '已暂时保存。用户要交再用 submit。' : '没点到暂时保存。再 save，不要 eval。',
+    ok,
+    hint: ok ? '已暂时保存。用户要交再用 submit。' : '没点到暂时保存。再 save。',
   })
 }
 
 export const submitChaoxingHomework = async (id: string) => {
-  const top = asObject(await evalBrowserView(id, CHAOXING_HOMEWORK_SUBMIT()).catch(() => null))
-  if (top.ok) {
-    await waitMs(800)
-    return toHomeworkCard({ ...top, ...(await inspectChaoxingHomework(id, { vision: false })) } as ChaoxingHomeworkInfo)
+  const invoked = asObject(await evalBrowserView(id, INVOKE_HW_SUBMIT()).catch(() => null))
+  let ok = Boolean(invoked?.ok)
+  if (!ok) {
+    const box = await clickHomeworkBox(id, LOCATE_HW_SUBMIT()).catch(() => null)
+    ok = Boolean(box?.ok)
   }
-  await askFrames(id, 'hwsubmit')
-  await waitMs(500)
-  const via = asObject(await evalBrowserView(id, `(function(){ return window.__ZE_HW_SUBMITTED__ || null; })()`).catch(() => null))
-  if (via.href || via.op) {
-    await waitMs(800)
-    return toHomeworkCard({ ok: true, ...(await inspectChaoxingHomework(id, { vision: false })) })
+  if (!ok) {
+    const text = await clickBrowserText(id, '提交').catch(() => null) as { ok?: boolean } | null
+    ok = Boolean(text?.ok)
   }
-  const clicked = await clickBrowserText(id, '提交').catch(() => null) as { ok?: boolean } | null
+  if (ok) await clickConfirmIfAny(id)
   await waitMs(800)
-  return toHomeworkCard({ ok: Boolean(clicked?.ok), ...(await inspectChaoxingHomework(id, { vision: false })) })
+  return toHomeworkCard({
+    ok,
+    ...(await inspectChaoxingHomework(id, { vision: false })),
+    hint: ok ? '已提交。' : '没点到提交。再 submit。',
+  })
 }

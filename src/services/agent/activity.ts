@@ -9,12 +9,47 @@ export const describeActivity = (name: string, args: any, status: ImportTaskStep
     browser_reload: ['正在刷新', '刷新失败', '刷新了网页'],
     browser_go_back: ['正在后退', '后退失败', '后退了一页'],
     browser_go_forward: ['正在前进', '前进失败', '前进了一页'],
-    browser_click: ['正在点击', '点击失败', args?.selector ? `点击了 ${args.selector}` : '点击了元素'],
-    browser_click_text: ['正在点击', '点击失败', args?.text ? `点击了「${args.text}」` : '点击了文案'],
-    browser_type: ['正在填写', '填写失败', args?.selector ? `填写了 ${args.selector}` : '填写了输入框'],
+    browser_click: [
+      '正在点击',
+      extra?.error ? `点击失败 · ${extra.error}` : '点击失败',
+      extra?.navigated
+        ? `点击了，已跳到新页`
+        : extra?.navigated === false
+          ? `点击了，网址没变`
+          : args?.selector ? `点击了 ${args.selector}` : '点击了元素',
+    ],
+    browser_click_text: [
+      '正在点击',
+      extra?.error ? `点击失败 · ${extra.error}` : '点击失败',
+      extra?.navigated
+        ? `点击了「${args?.text || extra?.text || '文案'}」，已跳到新页`
+        : extra?.navigated === false
+          ? `点击了「${args?.text || extra?.text || '文案'}」，网址没变`
+          : args?.text ? `点击了「${args.text}」` : '点击了文案',
+    ],
+    browser_type: [
+      '正在填写',
+      extra?.error ? `填写失败 · ${extra.error}` : '填写失败',
+      extra?.filled === false
+        ? '填写了，但输入框还是空的'
+        : extra?.filled
+          ? `填写了，框里已有内容`
+          : args?.selector ? `填写了 ${args.selector}` : '填写了输入框',
+    ],
     browser_scroll: ['正在滚动', '滚动失败', '滚动了页面'],
     browser_eval: ['正在执行脚本', '执行脚本失败', '在网页上执行了脚本'],
-    browser_wait: ['正在等待', '等待失败', args?.seconds ? `等了 ${args.seconds} 秒` : '等待了一会儿'],
+    browser_screenshot: ['正在截图', '截图失败', '拍了当前页'],
+    browser_wait: [
+      args?.until === 'url'
+        ? '正在等网址'
+        : args?.until === 'selector'
+          ? '正在等元素'
+          : args?.until === 'idle'
+            ? '正在等页面稳定'
+            : '正在等待',
+      '等待失败',
+      args?.seconds ? `等了 ${args.seconds} 秒` : '等待了一会儿',
+    ],
     browser_todo: [
       args?.action === 'check' ? '正在勾选任务' : args?.action === 'add' ? '正在追加任务' : '正在整理任务清单',
       '更新任务清单失败',
@@ -50,7 +85,15 @@ export const describeActivity = (name: string, args: any, status: ImportTaskStep
                   : '查看了网站图谱',
     ],
     browser_study_chapters: ['正在读取章节', '读取章节失败', '读取了章节目录'],
-    browser_study_play: ['正在播放视频', '播放失败', '点了播放'],
+    browser_study_play: [
+      extra?.playing ? '正在播放视频' : '正在控制视频',
+      extra?.error ? `播放失败 · ${extra.error}` : '播放失败',
+      extra?.playing
+        ? (extra.watching ? '视频正在播放，已交给监控' : '视频正在播放')
+        : extra?.hasVideo
+          ? '播放器在，但视频没播起来'
+          : '已控制视频',
+    ],
     browser_study_watch: ['正在监控进度', '监控失败', '开始监控视频进度'],
     browser_study_next: ['正在打开下一节', '打开下一节失败', '打开了下一节视频'],
     browser_homework: [

@@ -1,17 +1,12 @@
-import {
-  CHAOXING_CHAPTER_HOOK,
-  CHAOXING_CHAPTER_INSTALL,
-  CHAOXING_CHAPTER_REFRESH,
-  CHAOXING_CHAPTER_TICK,
-  CHAOXING_CLICK_CHAPTER_TAB,
-  CHAOXING_NEXT_STEP,
-  CHAOXING_OPEN_CHAPTER,
-} from '../../browser/skills/chaoxingStudy'
-import { askFrames, asObject, evalBrowserView, waitMs } from '../../browser/eval'
+import { READ_PAGE_DOM } from '../../browser/pageDom'
+import { asObject, evalBrowserViewMain, evalBrowserViewMainNow, waitMs } from '../../browser/eval'
+import { clickHomeworkBox } from '../homework/act'
+import { LOCATE_CHAPTER, LOCATE_CHAPTER_TAB, LOCATE_NEXT_STEP, READ_CATALOG_READY, READ_CATALOG_SLIM } from './cdpScripts'
+import { cardFromStudyHtml } from './parsePage'
 import { CAPTCHA_HINT, readChaoxingCaptcha } from './captcha'
 import { dumpChaoxingParseHtml } from './dump'
 import type { ChaoxingChapterSnap } from './types'
-import { playChaoxingVideo, readChaoxingVideo, videoIsPlaying } from './video'
+import { playChaoxingVideo, readChaoxingVideo, readChaoxingVideoTick, videoIsPlaying } from './video'
 
 /** 排查 webview / 题卡问题时可先关掉章节解析。 */
 export const CHAPTER_PARSER_ENABLED = true
@@ -23,51 +18,18 @@ const clickBrowserText = async (id: string, text: string) => {
   return click(id, text)
 }
 
-const navigateBrowserView = async (id: string, url: string) => {
-  const { navigateBrowserView: go } = await browserView()
-  return go(id, url)
-}
-
-const getBrowserState = async (id: string) => {
-  const { getBrowserState: state } = await browserView()
-  return state(id)
-}
+/** 目录脚本自己穿透同源 iframe。只跑顶层，禁止再扫 20+ iframe（会把解析卡成十几秒）。 */
+const evalCatalog = async (id: string, script: string) => (
+  asObject(await evalBrowserViewMain(id, script))
+)
 
 const catalogReadySnap = (id: string) =>
-  evalBrowserView(id, `(function(){
-    var href = location.href || '';
-    var text = '';
-    var walk = function(win, depth){
-      try {
-        var piece = ((win.document.body && win.document.body.innerText) || '');
-        if (!(/暂无任务|默认班级/.test(piece) && !/已完成任务点/.test(piece))) text += piece + '\\n';
-      } catch (e) {}
-      if ((depth || 0) > 4) return;
-      try {
-        var list = win.document.querySelectorAll('iframe');
-        for (var i = 0; i < list.length; i++) {
-          try { if (list[i].contentWindow) walk(list[i].contentWindow, (depth || 0) + 1); } catch (e) {}
-        }
-      } catch (e) {}
-    };
-    walk(window, 0);
-    var extras = window.__ZE_FRAME_SNAPS__ || [];
-    for (var e = 0; e < extras.length; e++) {
-      var extraText = String((extras[e] && extras[e].text) || '');
-      if (extraText) text += extraText + '\\n';
-    }
-    return {
-      href: href,
-      onCatalog: /已完成任务点/.test(text) || !!document.querySelector('.catalog_title, #coursetree'),
-      hasProgress: /已完成任务点/.test(text),
-      hasDir: text.indexOf('目录') >= 0 && /已完成任务点|维护|第\\d/.test(text),
-      sample: text.replace(/\\s+/g, ' ').slice(0, 120),
-    };
-  })()`) as Promise<{
+  evalBrowserViewMain(id, READ_CATALOG_READY()) as Promise<{
     href?: string
     onCatalog?: boolean
     hasProgress?: boolean
     hasDir?: boolean
+    catalogLi?: number
     sample?: string
   } | null>
 
@@ -80,31 +42,152 @@ const hasChapterData = (snap: ChaoxingChapterSnap | null | undefined) => Boolean
   )
 )
 
-const waitForChaoxingCatalog = async (id: string, maxMs = 1500) => {
+const waitForChaoxingCatalog = async (id: string, maxMs = 2500) => {
   const started = Date.now()
   let last: Awaited<ReturnType<typeof catalogReadySnap>> = null
   while (Date.now() - started < maxMs) {
     last = await catalogReadySnap(id).catch(() => null)
-    if (last?.onCatalog && (last.hasProgress || last.hasDir)) return last
-    await waitMs(120)
+    if (last?.onCatalog && (last.hasProgress || last.hasDir || Number((last as { catalogLi?: number }).catalogLi) > 0)) return last
+    await waitMs(160)
   }
   return last
 }
 
-const chaptersWaiting = () => ({
+export const liveStudyHref = async (id: string) => {
+  const href = await evalBrowserViewMainNow(id, `(function(){ try { return String(location.href || ''); } catch (e) { return ''; } })()`).catch(() => '')
+  return String(href || '').trim()
+}
+
+/** 等顶层真正进到 studentstudy；课程壳目录上的预览不能当播放器。 */
+export const waitForStudentStudyPage = async (id: string, maxMs = 12_000) => {
+  const started = Date.now()
+  let url = await liveStudyHref(id)
+  while (Date.now() - started < maxMs) {
+    if (/studentstudy/i.test(url)) return url
+    await waitMs(350)
+    url = await liveStudyHref(id)
+  }
+  return url
+}
+
+const videoTickReady = (tick: Record<string, unknown> | null) => {
+  if (!tick) return false
+  const duration = Number(tick.duration) || 0
+  const current = Number(tick.current) || 0
+  const src = String(tick.src || '')
+  return duration > 1 || Boolean(src) || tick.paused === false || current > 0.2
+}
+
+/** 目录点进去要等跳转；播放页内切章只等新 iframe，不要等整页 load。 */
+export const waitForStudyPlayerReady = async (id: string, maxMs = 8_000) => {
+  const before = await liveStudyHref(id)
+  const startedOnPlayer = /studentstudy/i.test(before)
+  if (!startedOnPlayer) {
+    const { waitForBrowserIdle } = await import('../../browser/appBrowser')
+    await waitForBrowserIdle(id, Math.min(maxMs, 6_000)).catch(() => null)
+  }
+  const url = startedOnPlayer ? before : await waitForStudentStudyPage(id, maxMs)
+  if (!/studentstudy/i.test(url)) {
+    return { ok: false as const, url, error: '目录点击后没有进入播放页（studentstudy）' }
+  }
+  const settleMs = startedOnPlayer ? 5_000 : 7_000
+  const settleStart = Date.now()
+  while (Date.now() - settleStart < settleMs) {
+    const tick = asObject(await readChaoxingVideoTick(id).catch(() => null))
+    if (videoTickReady(tick)) return { ok: true as const, url, hasVideo: true }
+    await waitMs(280)
+  }
+  return { ok: true as const, url, hasVideo: false }
+}
+
+const hrefChapterId = (href: string) => (
+  ((String(href || '').match(/[?&](?:chapterId|chapterid|knowledgeid)=(\d+)/i) || [])[1] || '').replace(/\D/g, '')
+)
+
+const settleAfterChapterClick = async (id: string, wantId = '') => {
+  await waitMs(700)
+  let href = await liveStudyHref(id)
+  if (/studentstudy/i.test(href) && (!wantId || hrefChapterId(href) === wantId)) return href
+  await waitMs(700)
+  href = await liveStudyHref(id)
+  return href
+}
+
+const chaptersWaiting = (extra?: Record<string, unknown>) => ({
   waiting: true,
   page: 'chapters',
   unfinished: [] as string[],
   unfinishedCount: 0,
-  hint: '目录还在加载。再调一次 browser_study_chapters，禁止 get_page / eval。',
+  ...extra,
+  hint: String(extra?.hint || '目录还没读到「已完成任务点」。再调一次 browser_study_chapters；仍空用 browser_get_page。'),
 })
 
+const diagnoseCatalogGap = async (id: string) => {
+  const probe = asObject(await evalBrowserViewMain(id, `(function(){
+    var href = location.href || '';
+    var pageHeader = (href.match(/[?&]pageHeader=(\\d+)/) || [])[1] || '';
+    var iframes = [];
+    try {
+      var list = document.querySelectorAll('iframe[src]');
+      for (var i = 0; i < list.length && iframes.length < 8; i++) iframes.push(String(list[i].src || ''));
+    } catch (e) {}
+    return {
+      href: href,
+      pageHeader: pageHeader,
+      onCourse: /\\/mycourse\\/stu|stucoursemiddle/.test(href) && !/studentstudy/.test(href),
+      hasChapterTab: !!document.querySelector('a[data-url*="studentcourse"], [data-url*="studentcourse"], [title="章节"]'),
+      iframes: iframes,
+    };
+  })()`).catch(() => ({})))
+  const slim = await evalCatalog(id, READ_CATALOG_SLIM())
+  const pageHeader = String(probe.pageHeader || '')
+  const iframeSrcs = (Array.isArray(probe.iframes) ? probe.iframes : []).map(String)
+  const hasStudentcourse = iframeSrcs.some((src) => /studentcourse/i.test(src))
+    || /studentcourse/i.test(String(slim.url || ''))
+  const diag = {
+    pierced: Number(slim.pierced) || 0,
+    candidates: slim.candidates,
+    catalogLi: Number(slim.catalogLi) || 0,
+    hasProgress: Boolean(slim.hasProgress),
+    frame: String(slim.url || ''),
+  }
+  if (probe.onCourse && pageHeader !== '1') {
+    return chaptersWaiting({
+      reason: 'not_chapter_tab',
+      pageHeader,
+      hint: '还在课程壳其它页签。先点「章节」（pageHeader=1），再 browser_study_chapters。',
+    })
+  }
+  if (probe.onCourse && !hasStudentcourse && !(Number(slim.catalogLi) > 0) && !slim.hasProgress) {
+    return chaptersWaiting({
+      reason: 'iframe_missing',
+      pageHeader,
+      iframes: iframeSrcs,
+      hint: '章节页签已开，但目录 iframe（studentcourse）还没挂上。等 1–2 秒再调 browser_study_chapters；仍空用 browser_get_page 看 frames。',
+    })
+  }
+  if (Number(slim.catalogLi) > 0 || slim.hasProgress || String(slim.text || '').includes('已完成任务点')) {
+    return chaptersWaiting({
+      reason: 'parse_empty',
+      pageHeader,
+      ...diag,
+      hint: '目录帧在，但未解析出未完成节名。再调一次 browser_study_chapters。',
+    })
+  }
+  return chaptersWaiting({
+    reason: Number(slim.pierced) > 1 ? 'iframe_loading' : 'iframe_empty',
+    pageHeader,
+    iframes: iframeSrcs,
+    ...diag,
+  })
+}
+
 export const openChaoxingChapters = async (id: string) => {
-  if (!CHAPTER_PARSER_ENABLED) return chaptersWaiting()
+  if (!CHAPTER_PARSER_ENABLED) return chaptersWaiting({ reason: 'disabled' })
   const tryParse = () => parseChaoxingChapters(id).catch(() => null)
   let parsed = await tryParse()
-  if (hasChapterData(parsed)) return parsed
-  const probe = await evalBrowserView(id, `(function(){
+  if (hasChapterData(parsed)) return withNextPlay(parsed)
+  const probe = await evalBrowserViewMain(id, `(function(){
     var href = location.href || '';
     return {
       onCourse: /\\/mycourse\\/stu|stucoursemiddle/.test(href) && !/studentstudy/.test(href),
@@ -112,19 +195,34 @@ export const openChaoxingChapters = async (id: string) => {
       pageHeader: (href.match(/[?&]pageHeader=(\\d+)/) || [])[1] || '',
     };
   })()`).catch(() => null) as { onCourse?: boolean; hasTab?: boolean; pageHeader?: string } | null
-  // 课程壳但还不在章节页签时，先点「章节」
   if (probe?.onCourse && probe.hasTab && probe.pageHeader !== '1') {
-    await evalBrowserView(id, CHAOXING_CLICK_CHAPTER_TAB()).catch(() => null)
-    await waitForChaoxingCatalog(id, 1500)
+    await clickHomeworkBox(id, LOCATE_CHAPTER_TAB()).catch(() => null)
+    await waitForChaoxingCatalog(id, 3200)
   } else if (probe?.onCourse) {
-    await waitForChaoxingCatalog(id, 800)
+    await waitForChaoxingCatalog(id, 2800)
   }
-  for (let i = 0; i < 4; i += 1) {
+  for (let i = 0; i < 6; i += 1) {
     parsed = await tryParse()
-    if (hasChapterData(parsed)) return parsed
+    if (hasChapterData(parsed)) return withNextPlay(parsed)
     await waitMs(450)
   }
-  return parsed || chaptersWaiting()
+  return diagnoseCatalogGap(id)
+}
+
+const withNextPlay = (snap: ChaoxingChapterSnap | null) => {
+  if (!snap) return chaptersWaiting()
+  const unfinished = snap.unfinished || []
+  const first = String(unfinished[0] || '').replace(/^\d+(?:\.\d+)+\s*/, '').trim() || unfinished[0] || ''
+  if (unfinished.length || (snap.unfinishedCount || 0) > 0) {
+    return {
+      ...snap,
+      next: 'browser_study_play',
+      hint: snap.hint || (first
+        ? `未完成：${unfinished.slice(0, 8).join('、')}${unfinished.length > 8 ? '…' : ''}。立刻 browser_study_play（会打开「${first}」），不要 get_page。`
+        : '有未完成任务点。立刻 browser_study_play，不要 get_page。'),
+    }
+  }
+  return snap
 }
 
 const catalogIndex = (value: unknown) => {
@@ -167,25 +265,41 @@ const unfinishedFromCatalogText = (text: string) => {
   const progress = progressHit
     ? { done: Number(progressHit[1]), total: Number(progressHit[2]) }
     : null
+  const pushRow = (rawTitle: string, jobs: number) => {
+    const title = keepChapterTitle(rawTitle) || bareChapterTitle(rawTitle) || rawTitle
+    if (!title || title.length < 2) return
+    if (/^第/.test(title) || title === '目录') return
+    if (/资料|测验|考试|作业|讨论|问卷/.test(title) && !catalogIndex(title)) return
+    if (rows.some((item) => titlesMatch(item.title, title))) {
+      const hit = rows.find((item) => titlesMatch(item.title, title))
+      if (hit && jobs > hit.jobs) {
+        hit.jobs = jobs
+        hit.unfinished = jobs > 0
+      }
+      return
+    }
+    rows.push({ title, jobs, unfinished: jobs > 0 })
+  }
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i]
     const next = lines[i + 1] || ''
     if (/^\d{1,2}$/.test(line) && /^第/.test(next)) continue
-    if (/已完成任务点|^目录$|^第/.test(line)) continue
+    if (/已完成任务点|待完成任务点|^目录$|^第/.test(line)) continue
     if (/^[一二三四五六七八九十百]+[、.]/.test(line) || /单选题|多选题|判断题|填空题|共\s*\d+\s*题/.test(line)) continue
     // 节名下一行是该节任务点数；0 表示已清完
     if (
       /^\d{1,2}$/.test(next)
       && !/^第/.test(line)
       && line.length > 1
-      && !/资料|测验|考试|作业|讨论|问卷/.test(line)
       && !/^第/.test(lines[i + 2] || '')
     ) {
-      const title = keepChapterTitle(line) || bareChapterTitle(line) || line
-      const jobs = Number(next) || 0
-      if (title && !rows.some((item) => titlesMatch(item.title, title))) {
-        rows.push({ title, jobs, unfinished: jobs > 0 })
-      }
+      pushRow(line, Number(next) || 0)
+      continue
+    }
+    // mooc2 / a11y：同行「1.1 函数（一） 2」
+    const sameLine = line.match(/^(.*\S)\s+(\d{1,2})$/)
+    if (sameLine && !/^第/.test(sameLine[1]) && sameLine[1] !== '目录') {
+      pushRow(sameLine[1], Number(sameLine[2]) || 0)
     }
   }
   const unfinished = rows.filter((item) => item.unfinished).map((item) => item.title)
@@ -205,75 +319,82 @@ const unfinishedFromCatalogText = (text: string) => {
   } as ChaoxingChapterSnap
 }
 
-const unfinishedFromFrameSnaps = async (id: string) => {
-  // 课程壳里目录常在跨域 iframe，同源 __cxFrames 扫不到；走 frame bridge 拉文本
-  await askFrames(id, 'snap')
-  await waitMs(80)
-  await askFrames(id, 'snap')
-  const extras = asObject(await evalBrowserView(id, `(function(){
-    var extras = window.__ZE_FRAME_SNAPS__ || [];
-    var catalog = '';
-    var other = '';
-    for (var i = 0; i < extras.length; i++) {
-      var s = extras[i];
-      if (!s) continue;
-      var t = String(s.text || '');
-      if (!t) continue;
-      if (s.kind === 'catalog' || /已完成任务点|posCatalog_|\\d+\\.\\d+\\s+\\S/.test(t)) catalog += t + '\\n';
-      else other += t + '\\n';
+const unfinishedFromPageDom = async (id: string) => {
+  // 课程壳目录在同源 studentcourse iframe：穿透取节点，再本地兜底
+  const slim = await evalCatalog(id, READ_CATALOG_SLIM())
+  const slimUrl = String(slim.url || '')
+  const slimText = String(slim.text || '')
+  const slimHtml = String(slim.html || '')
+  const slimChapters = Array.isArray(slim.chapters) ? slim.chapters : []
+  if (slimChapters.length) {
+    const unfinished = Array.isArray(slim.unfinished)
+      ? slim.unfinished.map(String)
+      : slimChapters.filter((item: { unfinished?: boolean; kind?: string }) => item.unfinished && item.kind !== 'chapter').map((item: { title?: string }) => String(item.title || ''))
+    return {
+      url: slimUrl,
+      page: 'chapters',
+      current: String(slim.current || ''),
+      chapters: slimChapters,
+      unfinished,
+      unfinishedCount: Number(slim.unfinishedCount) || unfinished.length,
+      progress: slim.progress && typeof slim.progress === 'object' ? slim.progress as { done: number; total: number } : null,
+      via: 'catalog-rows',
+    } as ChaoxingChapterSnap
+  }
+  if (slimText || Number(slim.catalogLi) > 0 || slim.hasProgress) {
+    const fromText = unfinishedFromCatalogText(slimText)
+    if (hasChapterData(fromText)) {
+      return {
+        ...fromText,
+        url: slimUrl || fromText?.url || '',
+        via: 'frames-text',
+      } as ChaoxingChapterSnap
     }
-    try {
-      var topText = String((document.body && document.body.innerText) || '');
-      if (/已完成任务点|\\d+\\.\\d+/.test(topText)) catalog = topText + '\\n' + catalog;
-    } catch (e) {}
-    return { text: (catalog || other).slice(0, 16000), count: extras.length };
-  })()`).catch(() => null))
-  return unfinishedFromCatalogText(String(extras.text || ''))
-}
-
-export const installChaoxingChapterHook = async (id: string) => {
-  if (!CHAPTER_PARSER_ENABLED) return null
-  return evalBrowserView(id, CHAOXING_CHAPTER_HOOK()) as Promise<ChaoxingChapterSnap | null>
-}
-
-export const readChaoxingChapterTick = (id: string) => {
-  if (!CHAPTER_PARSER_ENABLED) return Promise.resolve(null)
-  return evalBrowserView(id, CHAOXING_CHAPTER_TICK()) as Promise<ChaoxingChapterSnap | null>
-}
-
-export const readChaoxingChapterSnap = async (id: string) => {
-  if (!CHAPTER_PARSER_ENABLED) return null
-  const first = await installChaoxingChapterHook(id).catch(() => null)
-  if (hasChapterData(first)) return first
-  for (let i = 0; i < 3; i += 1) {
-    await waitMs(160)
-    const tick = await readChaoxingChapterTick(id).catch(() => null)
-    if (hasChapterData(tick)) return tick
   }
-  return (await unfinishedFromFrameSnaps(id)) || first
+  if (slimHtml.trim()) {
+    const fromHtml = cardFromStudyHtml({ url: slimUrl, html: slimHtml })
+    if (hasChapterData(fromHtml)) {
+      return {
+        ...fromHtml,
+        url: slimUrl || fromHtml?.url || '',
+        via: 'frames-html',
+      } as ChaoxingChapterSnap
+    }
+  }
+  // 目录节点在、但 slim 没抽出节名时，只拉顶层 HTML，不再扫每个 iframe 的 outerHTML
+  if (Number(slim.catalogLi) > 0 || slim.hasProgress) {
+    const dom = asObject(await evalBrowserViewMain(id, READ_PAGE_DOM()).catch(() => ({})))
+    const parsed = cardFromStudyHtml(dom)
+    if (hasChapterData(parsed)) return parsed
+    const html = String(dom.html || '')
+    const text = html.replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<[^>]+>/g, ' ')
+    const fromDom = unfinishedFromCatalogText(text)
+    if (hasChapterData(fromDom)) return fromDom
+  }
+  return unfinishedFromCatalogText(slimText)
 }
 
-export const parseChaoxingChapters = async (id: string) => {
+const readStudyCatalog = async (id: string) => {
   if (!CHAPTER_PARSER_ENABLED) return null
-  let local: ChaoxingChapterSnap | null = null
   try {
-    const cached = await readChaoxingChapterTick(id).catch(() => null)
-    if (hasChapterData(cached)) return cached
-    const fresh = asObject(await evalBrowserView(id, CHAOXING_CHAPTER_REFRESH()).catch(() => null)) as ChaoxingChapterSnap
-    if (hasChapterData(fresh) && !fresh.needInstall) return fresh
-    local = await evalBrowserView(id, CHAOXING_CHAPTER_INSTALL()).catch(async () => {
-      await dumpChaoxingParseHtml(id, 'parse-error').catch(() => null)
-      return null
-    }) as ChaoxingChapterSnap | null
-    if (hasChapterData(local)) return local
-  } catch {
+    return await unfinishedFromPageDom(id)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error || '解析失败')
+    void import('./debug').then(({ noteStudyParser }) => {
+      noteStudyParser({ via: 'catalog-error', error: message, force: true })
+    }).catch(() => null)
     await dumpChaoxingParseHtml(id, 'parse-error').catch(() => null)
+    throw error
   }
-  // 同源扫不到时（mooc2 课程壳 + 跨域目录 iframe）用 bridge 文本兜底
-  const fromFrames = await unfinishedFromFrameSnaps(id).catch(() => null)
-  if (hasChapterData(fromFrames)) return fromFrames
-  return local
 }
+
+export const installChaoxingChapterHook = (id: string) => readStudyCatalog(id)
+
+export const readChaoxingChapterTick = (id: string) => readStudyCatalog(id)
+
+export const readChaoxingChapterSnap = (id: string) => readStudyCatalog(id)
+
+export const parseChaoxingChapters = (id: string) => readStudyCatalog(id)
 
 export type OpenChapterHint = {
   chapterId?: string
@@ -282,140 +403,36 @@ export type OpenChapterHint = {
   index?: string
 }
 
-const playerHrefOf = (href?: string, studyHref?: string) => {
-  const study = String(studyHref || '')
-  const raw = String(href || '')
-  if (study.includes('studentstudy')) return study
-  if (raw.includes('studentstudy')) return raw
-  return ''
-}
-
-const playerUrlForChapterId = async (id: string, chapterId: string, pageUrl?: string) => {
-  const wantId = String(chapterId || '').replace(/\D/g, '')
-  if (!wantId) return ''
-  const state = await getBrowserState(id).catch(() => null)
-  try {
-    const current = new URL(String(state?.url || pageUrl || ''))
-    const courseId = current.searchParams.get('courseid') || current.searchParams.get('courseId') || ''
-    const clazzid = current.searchParams.get('clazzid') || current.searchParams.get('clazzId') || ''
-    const cpi = current.searchParams.get('cpi') || ''
-    const enc = current.searchParams.get('enc') || current.searchParams.get('stuenc') || ''
-    if (!courseId || !clazzid) return ''
-    return `https://mooc1.chaoxing.com/mycourse/studentstudy?chapterId=${wantId}&courseId=${courseId}&clazzid=${clazzid}${cpi ? `&cpi=${cpi}` : ''}${enc ? `&enc=${enc}` : ''}&mooc2=1`
-  } catch {
-    return ''
-  }
-}
-
-const clickChapterById = async (id: string, chapterId: string, title: string) => {
-  const wantId = String(chapterId || '').replace(/\D/g, '')
-  if (!wantId) return { ok: false as const }
-  const opened = asObject(await evalBrowserView(id, `(function(){
-    var wantId = ${JSON.stringify(wantId)};
-    var find = function(win, depth){
-      if ((depth || 0) > 4) return null;
-      try {
-        var el = win.document.getElementById('cur' + wantId) || win.document.getElementById(wantId);
-        if (el) return el;
-        var list = win.document.querySelectorAll('iframe');
-        for (var i = 0; i < list.length; i++) {
-          try {
-            var hit = find(list[i].contentWindow, (depth || 0) + 1);
-            if (hit) return hit;
-          } catch (e) {}
-        }
-      } catch (e2) {}
-      return null;
-    };
-    var el = find(window, 0);
-    if (!el) return { ok: false };
-    var name = (el.querySelector && (el.querySelector('.posCatalog_name, a.clicktitle, a') || el)) || el;
-    try { name.click(); } catch (e3) { try { el.click(); } catch (e4) {} }
-    return { ok: true, title: ${JSON.stringify(title)}, via: 'id' };
-  })()`))
-  return opened.ok ? { ok: true as const, title, via: 'id' } : { ok: false as const }
-}
-
-const goPlayer = async (id: string, url: string, title: string, via: string) => {
-  const state = await getBrowserState(id).catch(() => null)
-  const current = String(state?.url || '')
-  if (/studentstudy/i.test(current) && /studentstudy/i.test(url)) {
-    const chapterId = (url.match(/chapterId=(\d+)/i) || [])[1] || ''
-    if (chapterId) {
-      const clicked = await clickChapterById(id, chapterId, title)
-      if (clicked.ok) {
-        await waitMs(400)
-        return { ok: true, title, via: `${via}-inplace` }
-      }
-    }
-    return { ok: true, title, via: `${via}-stay` }
-  }
-  await navigateBrowserView(id, url)
-  await waitMs(1200)
-  return { ok: true, title, via }
-}
-
 export const openChaoxingChapter = async (id: string, title: string, hint?: OpenChapterHint) => {
   const want = keepChapterTitle(title) || bareChapterTitle(title) || String(hint?.index || '').trim()
   const chapterId = String(hint?.chapterId || '').replace(/\D/g, '')
   if (!want && !chapterId) return { ok: false, error: '缺少节名' }
-  const state = await getBrowserState(id).catch(() => null)
-  const onPlayer = /studentstudy/i.test(String(state?.url || ''))
-  if (chapterId) {
-    const clicked = await clickChapterById(id, chapterId, want)
-    if (clicked.ok) {
-      await waitMs(400)
-      return clicked
+  const cheap = asObject(await evalBrowserViewMainNow(id, `(function(){
+    var want = ${JSON.stringify(want)}.replace(/\\s+/g, ' ').trim();
+    var wantId = ${JSON.stringify(chapterId)};
+    var nodes = document.querySelectorAll('#coursetree .posCatalog_name, #coursetree .posCatalog_title');
+    for (var i = 0; i < nodes.length; i++) {
+      var el = nodes[i];
+      var t = String(el.getAttribute('title') || el.textContent || '').replace(/\\s+/g, ' ').trim();
+      var row = el.closest('.posCatalog_select, [id], li, dd');
+      var id = '';
+      try {
+        var raw = row ? String(row.id || row.getAttribute('id') || row.getAttribute('data-id') || '') : '';
+        var m = raw.match(/(\\d{6,})/);
+        if (m) id = m[1];
+      } catch (e0) {}
+      var hit = (wantId && id && id === wantId) || (want && t && (t === want || t.indexOf(want) >= 0 || want.indexOf(t) >= 0));
+      if (!hit) continue;
+      try { el.click(); } catch (e1) {}
+      return { ok: true, text: t, chapterId: id, via: 'catalog' };
     }
+    return { ok: false, n: nodes.length };
+  })()`).catch(() => null))
+  if (cheap.ok) {
+    await settleAfterChapterClick(id, chapterId)
+    return { ...cheap, title: want, via: 'catalog' }
   }
-  if (!onPlayer) {
-    const knownPlayer = playerHrefOf(hint?.href, hint?.studyHref)
-    if (knownPlayer) return goPlayer(id, knownPlayer, want, 'player')
-    if (chapterId) {
-      const built = await playerUrlForChapterId(id, chapterId)
-      if (built) return goPlayer(id, built, want, 'chapterId')
-    }
-  }
-  const opened = asObject(await evalBrowserView(
-    id,
-    `${CHAOXING_OPEN_CHAPTER()}(${JSON.stringify(want)}, ${JSON.stringify(chapterId)})`,
-  ))
-  if (opened.ok) {
-    await waitMs(400)
-    return opened
-  }
-  if (!CHAPTER_PARSER_ENABLED) {
-    return { ok: false, error: String(opened.error || `目录里没有「${want}」`), want }
-  }
-  const parsed = await parseChaoxingChapters(id).catch(() => null)
-  const wantIndex = catalogIndex(want) || String(hint?.index || '').trim()
-  const hit = (parsed?.chapters || []).find((item) => (
-    (wantIndex && (item.index === wantIndex || catalogIndex(item.title) === wantIndex))
-    || titlesMatch(item.title, want)
-    || titlesMatch(item.index, want)
-    || (chapterId && item.chapterId === chapterId)
-  ))
-  const playerHref = playerHrefOf(hit?.href, hit?.studyHref)
-  if (playerHref && !onPlayer) return goPlayer(id, playerHref, hit?.title || want, 'player')
-  const parsedId = String(hit?.chapterId || chapterId)
-  if (parsedId) {
-    const clicked = await clickChapterById(id, parsedId, hit?.title || want)
-    if (clicked.ok) {
-      await waitMs(400)
-      return clicked
-    }
-    if (!onPlayer) {
-      const built = await playerUrlForChapterId(id, parsedId, parsed?.url)
-      if (built) return goPlayer(id, built, hit?.title || want, 'chapterId')
-    }
-  }
-  const short = bareChapterTitle(hit?.title || want) || want
-  const clicked = await clickBrowserText(id, short).catch(() => null) as { ok?: boolean } | null
-  if (clicked?.ok) {
-    await waitMs(800)
-    return { ok: true, title: hit?.title || want, via: 'click-text' }
-  }
-  return { ok: false, error: String(opened.error || `目录里没有「${want}」`), want }
+  return { ok: false, error: String(cheap.error || `目录里没有「${want}」`), want, n: cheap.n }
 }
 
 /** 资料/讨论等可跳；测验/考试/作业留着让 Agent 用题卡作答。 */
@@ -431,13 +448,26 @@ const clickChapterOrNext = async (id: string, name?: string) => {
 }
 
 export const openNextChaoxingStep = async (id: string) => {
-  const moved = asObject(await evalBrowserView(id, CHAOXING_NEXT_STEP()).catch(() => null))
+  const hit = asObject(await evalBrowserViewMain(id, LOCATE_NEXT_STEP()).catch(() => null))
+  const clicked = hit.found
+    ? asObject(await clickHomeworkBox(id, LOCATE_NEXT_STEP()).catch(() => ({ ok: false })))
+    : { ok: false }
+  const moved = {
+    ...hit,
+    ok: Boolean(clicked.ok) && !hit.quiz && !hit.chapterDone,
+    opened: Boolean(clicked.ok || hit.opened),
+  }
   if (moved.quiz) {
     await waitMs(1000)
     return { quiz: true, step: String(moved.step || ''), hasVideo: false, more: false, opened: Boolean(moved.opened) }
   }
   if (!moved.ok) {
-    return { ok: false, chapterDone: true, more: false, videoCount: Number(moved.videoCount) || 0 }
+    return {
+      ok: false,
+      chapterDone: Boolean(hit.chapterDone),
+      more: Boolean(hit.more),
+      videoCount: Number(moved.videoCount) || 0,
+    }
   }
   await waitMs(1000)
   const page = await readChaoxingVideo(id).catch(() => null)
@@ -534,18 +564,15 @@ export const studyChaoxingUnfinished = async (id: string, title?: string) => {
     return null
   })
   if (!hasChapterData(parsed)) {
-    const onStudent = await evalBrowserView(id, `(function(){ return /\\/mycourse\\/stu/.test(location.href || ''); })()`).catch(() => false)
+    const onStudent = await evalBrowserViewMain(id, `(function(){ return /\\/mycourse\\/stu/.test(location.href || ''); })()`).catch(() => false)
     if (onStudent) {
-      await evalBrowserView(id, CHAOXING_CLICK_CHAPTER_TAB()).catch(() => null)
+      await clickHomeworkBox(id, LOCATE_CHAPTER_TAB()).catch(() => null)
       await waitForChaoxingCatalog(id, 1500)
       parsed = await parseChaoxingChapters(id).catch((error) => {
         parseError = String(error?.message || error || parseError)
         return parsed
       })
     }
-  }
-  if (!hasChapterData(parsed)) {
-    parsed = (await unfinishedFromFrameSnaps(id)) || parsed
   }
   const unfinished = (parsed?.unfinished || [])
     .map(keepChapterTitle)

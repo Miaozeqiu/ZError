@@ -205,7 +205,36 @@ export const abstractionButtonVisible = computed(() => {
 })
 
 watch(abstractionButtonVisible, (visible) => {
-  if (!visible) abstractionMenuOpen.value = false
+  if (!visible) {
+    abstractionMenuOpen.value = false
+    abstractionDrill.value = null
+  }
+})
+
+/** 章节面板钻进本节测验等子页时的面包屑 / 返回状态 */
+export type AbstractionDrill = {
+  browserId: string
+  kind: 'chapter-quiz'
+  sectionIndex?: string
+  sectionTitle: string
+  jobLabel: string
+}
+
+export const abstractionDrill = ref<AbstractionDrill | null>(null)
+
+export const setAbstractionDrill = (next: AbstractionDrill | null) => {
+  abstractionDrill.value = next
+}
+
+export const clearAbstractionDrill = (browserId?: string) => {
+  const id = String(browserId || '').trim()
+  if (!id || abstractionDrill.value?.browserId === id) abstractionDrill.value = null
+}
+
+watch(currentBrowserUrl, (url) => {
+  const drill = abstractionDrill.value
+  if (!drill) return
+  if (!/studentstudy/i.test(url || '')) clearAbstractionDrill(drill.browserId)
 })
 
 export const abstractionPanelTitle = computed(() => {

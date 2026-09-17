@@ -1,14 +1,12 @@
 import { lastHomeworkCard, publishHomeworkCard } from '../../browser/abstractions'
 import { asObject, evalBrowserView } from '../../browser/eval'
-import { INSTALL_HW_LIVE_HOOK, READ_HW_DIRTY, READ_HW_FILL_STATE } from './scripts'
+import { READ_HW_FILL_STATE } from './scripts'
 import type { HomeworkLiveState } from './types'
 
 let liveTimer = 0
 let liveId = ''
 let pickLock = 0
 let quietUntil = 0
-let lastDirty = 0
-let hookReady = false
 
 export const beginHomeworkPick = () => {
   pickLock += 1
@@ -54,20 +52,8 @@ export const readHomeworkLiveState = async (id: string) => {
   return state as HomeworkLiveState
 }
 
-const installHomeworkHook = async (id: string) => {
-  const installed = asObject(await evalBrowserView(id, INSTALL_HW_LIVE_HOOK()).catch(() => null))
-  hookReady = Boolean(installed.ok)
-  if (Number(installed.dirty) > 0) lastDirty = Number(installed.dirty)
-  return installed
-}
-
 const tickHomeworkLive = async (id: string) => {
   if (pickLock || liveId !== id || Date.now() < quietUntil) return
-  if (!hookReady) await installHomeworkHook(id).catch(() => null)
-  const pulse = asObject(await evalBrowserView(id, READ_HW_DIRTY()).catch(() => null))
-  const dirty = Number(pulse.n) || 0
-  if (!dirty || dirty === lastDirty) return
-  lastDirty = dirty
   const state = await readHomeworkLiveState(id).catch(() => null)
   if (state) applyHomeworkLiveState(state)
 }
@@ -76,8 +62,6 @@ export const stopHomeworkLiveSync = () => {
   if (liveTimer) window.clearInterval(liveTimer)
   liveTimer = 0
   liveId = ''
-  lastDirty = 0
-  hookReady = false
 }
 
 export const startHomeworkLiveSync = async (id: string) => {
@@ -91,9 +75,8 @@ export const startHomeworkLiveSync = async (id: string) => {
     liveId = next
     liveTimer = window.setInterval(() => {
       void tickHomeworkLive(next)
-    }, 220)
+    }, 400)
   }
-  await installHomeworkHook(next).catch(() => null)
   const state = await readHomeworkLiveState(next).catch(() => null)
   if (state) applyHomeworkLiveState(state)
   return state
