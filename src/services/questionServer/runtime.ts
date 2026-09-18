@@ -13,7 +13,9 @@ export const slideInActive = ref(false)
 export const heartbeatIntervals = new Map<string, number>()
 export const activeModelAbortControllers = new Map<string, Set<AbortController>>()
 export const cancelledRequestIds = new Set<string>()
-export const finalModelResponseState = new Map<string, 'success' | 'error'>()
+// key 为裸 requestId（裁剪/清理按裸 id 释放）；value 记录是哪个阶段产生的，
+// 因为同题判断、正式答题、URL 分析会共用同一 requestId，不能互相顶掉
+export const finalModelResponseState = new Map<string, { phase: string; state: 'success' | 'error' }>()
 export const processedRequestIds = new Set<string>()
 export const activeUrlAnalysisRequestIds = new Set<string>()
 
