@@ -1,4 +1,4 @@
-import type { AIModel } from './config'
+import type { AIModel } from './configTypes'
 
 type ApiProtocol = AIModel['apiProtocol']
 

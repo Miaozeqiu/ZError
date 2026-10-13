@@ -1,11 +1,10 @@
-import { asObject, evalBrowserViewMain, evalBrowserViewMainIdle, evalBrowserViewMainNow, waitMs } from '../../browser/eval'
+import { readFrameHtml, useLegacyEval } from '../../browser/domRead'
+import { asObject, evalBrowserViewMain, evalBrowserViewMainNow, waitMs } from '../../browser/eval'
+import { readLastTick, tickMatchesMid } from '../../browser/pushEvents'
+import { jobsFromHtml } from './localJobs'
+import { locatorsForStudyControl, locatorsForStudyStep } from '../locators'
 import { clickHomeworkBox } from '../homework/act'
 import {
-  LOCATE_STUDY_PLAY,
-  LOCATE_STUDY_STEP,
-  LOCATE_STUDY_VIDEO_TAB,
-  NUDGE_VIDEO_PAUSE,
-  NUDGE_VIDEO_PLAY,
   READ_CATALOG_SLIM,
   READ_STUDY_LIVE,
   READ_STUDY_PLAYER,
@@ -100,124 +99,24 @@ export const clickChaoxingStep = async (
   if (!payload.label && !payload.mid && !payload.jobid && !payload.videoIndex && !payload.index) {
     return { ok: false, error: '缺少任务点' }
   }
-  const cheapStep = asObject(await evalBrowserViewMainNow(id, `(function(){
-    var want = ${JSON.stringify(payload.label)};
-    var mid = ${JSON.stringify(payload.mid)};
-    var videoIndex = ${payload.videoIndex || 0};
-    function kindOf(label){
-      return /视频|直播/.test(label) && !/测验/.test(label);
-    }
-    function walk(doc, depth){
-      if (!doc || (depth || 0) > 4) return null;
-      var nodes = [];
-      try { nodes = doc.querySelectorAll('.tabtags a, .tabtags span, .tabtags li, .prev_title, .prev_white, #dct a'); } catch (e0) {}
-      var nVideo = 0;
-      for (var i = 0; i < nodes.length; i++) {
-        var el = nodes[i];
-        if (el.closest && el.closest('#coursetree')) continue;
-        var t = String((el.getAttribute && el.getAttribute('title')) || el.textContent || '').replace(/\\s+/g, ' ').trim();
-        if (!t || t.length > 24) continue;
-        var id = '';
-        try { id = String(el.getAttribute('mid') || el.getAttribute('data-mid') || ''); } catch (e1) {}
-        if (kindOf(t)) nVideo += 1;
-        var hit = (mid && id && id === mid) || (want && t && (t === want || t.indexOf(want) >= 0)) || (videoIndex > 0 && kindOf(t) && nVideo === videoIndex);
-        if (!hit) continue;
-        var on = /currents|current|active/.test(String(el.className || ''));
-        if (!on) { try { el.click(); } catch (e2) {} }
-        return { ok: true, already: on, found: !on, text: t, via: 'cheap' };
-      }
-      var boxes = [];
-      try { boxes = doc.querySelectorAll('.ans-attach-ct, .moduleDiv'); } catch (eB) {}
-      var nBoxVideo = 0;
-      for (var b = 0; b < boxes.length; b++) {
-        var box = boxes[b];
-        var iframe = null;
-        try { iframe = box.querySelector('iframe'); } catch (eI) {}
-        var bsrc = '';
-        try { bsrc = iframe ? String(iframe.getAttribute('src') || iframe.src || '') : ''; } catch (eS2) {}
-        var bmid = '';
-        try {
-          bmid = String((iframe && (iframe.getAttribute('mid') || iframe.getAttribute('data-mid'))) || (box.getAttribute && (box.getAttribute('mid') || box.getAttribute('data-mid'))) || '');
-        } catch (eM) {}
-        var isVideo = /modules\\/video|insertvideo|videoContainer/.test(bsrc + ' ' + String(box.className || ''));
-        if (!isVideo) continue;
-        nBoxVideo += 1;
-        var hitBox = (mid && bmid && bmid === mid) || (videoIndex > 0 && nBoxVideo === videoIndex) || (want && want === ('视频' + nBoxVideo));
-        if (!hitBox) continue;
-        try { box.scrollIntoView({ block: 'center', inline: 'nearest' }); } catch (eV) {}
-        var inner = null;
-        try { inner = iframe && iframe.contentDocument; } catch (eC) {}
-        var btn = null;
-        try { btn = inner && inner.querySelector('.vjs-big-play-button, .vjs-poster, .vjs-play-control.vjs-paused, video'); } catch (eP) {}
-        try { (btn || box).click(); } catch (eK) {}
-        return { ok: true, already: false, found: true, text: want || ('视频' + nBoxVideo), mid: bmid, via: 'box' };
-      }
-      var list = [];
-      try { list = doc.querySelectorAll('iframe'); } catch (e3) { return null; }
-      for (var j = 0; j < list.length; j++) {
-        var src = '';
-        try { src = String(list[j].getAttribute('src') || ''); } catch (e4) {}
-        if (!src || src === 'about:blank' || /insertvideo|ananas|doHomeWork/.test(src)) continue;
-        var rs = '';
-        try { rs = list[j].contentDocument ? String(list[j].contentDocument.readyState || '') : ''; } catch (e5) { continue; }
-        if (!rs || rs === 'loading' || rs === 'uninitialized') continue;
-        var child = null;
-        try { child = list[j].contentDocument; } catch (e6) {}
-        var next = walk(child, (depth || 0) + 1);
-        if (next) return next;
-      }
-      return null;
-    }
-    return walk(document, 0) || { ok: false, found: false, error: '没找到任务点' };
-  })()`).catch(() => null))
-  if (cheapStep.ok) {
-    pinChaoxingPlayMid(id, String(cheapStep.mid || payload.mid || ''))
-    if (!cheapStep.already) await waitMs(800)
-    const { noteStudyParser } = await import('./debug')
-    noteStudyParser({
-      via: 'step',
-      handle: { kind: 'step', ...payload },
-      locate: cheapStep,
-      error: '',
-      force: true,
-    })
-    return { ok: true, already: Boolean(cheapStep.already), step: String(cheapStep.text || payload.label || ''), via: 'cheap' }
-  }
-  const hit = asObject(await evalBrowserViewMainNow(id, LOCATE_STUDY_STEP(payload)).catch(() => null))
+  const clicked = await clickHomeworkBox(id, locatorsForStudyStep(payload)).catch(() => ({ ok: false }))
+  pinChaoxingPlayMid(id, payload.mid)
+  if (clicked.ok) await waitMs(800)
   const { noteStudyParser } = await import('./debug')
   noteStudyParser({
     via: 'step',
     handle: { kind: 'step', ...payload },
-    locate: hit,
-    steps: hit.steps,
-    error: hit.found || hit.already ? '' : String(hit.error || '切换任务点失败'),
+    locate: { found: Boolean(clicked.ok), via: 'cdp', text: clicked.text },
+    error: clicked.ok ? '' : String(clicked.error || '切换任务点失败'),
     force: true,
   })
-  if (hit.quiz && !hit.found && !(payload.videoIndex > 0)) {
-    return { ok: false, quiz: true, step: String(hit.step || '') }
+  return {
+    ok: Boolean(clicked.ok),
+    step: String(clicked.text || payload.label || ''),
+    mid: payload.mid,
+    error: clicked.ok ? undefined : String(clicked.error || '切换任务点失败'),
+    via: 'cdp',
   }
-  if (hit.already) {
-    return { ok: true, already: true, step: String(hit.step || ''), quiz: Boolean(hit.quiz), video: hit.video }
-  }
-  if (hit.found) {
-    const clicked = await clickHomeworkBox(id, LOCATE_STUDY_STEP(payload)).catch(() => ({ ok: false }))
-    if (clicked.ok) await waitMs(1200)
-    noteStudyParser({
-      via: 'step-click',
-      handle: { kind: 'step', ...payload },
-      locate: { ...hit, clicked: clicked.ok, clickError: clicked.error },
-      error: clicked.ok ? '' : String(clicked.error || hit.error || '切换任务点失败'),
-      force: true,
-    })
-    return {
-      ok: Boolean(clicked.ok),
-      quiz: Boolean(hit.quiz),
-      step: String(hit.step || clicked.text || ''),
-      video: hit.video,
-      error: clicked.ok ? undefined : String(clicked.error || hit.error || '切换任务点失败'),
-    }
-  }
-  return { ok: false, error: String(hit.error || '切换任务点失败'), steps: hit.steps }
 }
 
 /**
@@ -339,6 +238,103 @@ const CHEAP_FIND_VIDEO = `
       mid: String(mid || '')
     };
   }
+  function zeCheapVisible(el){
+    if (!el) return false;
+    var r = null;
+    try { r = el.getBoundingClientRect(); } catch (eV) {}
+    if (!r || r.width < 4 || r.height < 4) return false;
+    try {
+      var win = el.ownerDocument && el.ownerDocument.defaultView;
+      var st = win && win.getComputedStyle && win.getComputedStyle(el);
+      if (st && (st.display === 'none' || st.visibility === 'hidden' || Number(st.opacity) === 0)) return false;
+    } catch (eS) {}
+    return true;
+  }
+  function zeCheapPlayEl(doc, v){
+    if (!doc) return v;
+    var sels = '.vjs-big-play-button, button.vjs-big-play-button, .vjs-play-control.vjs-paused, .vjs-poster, .xt_video_player_play_btn, .play-btn, .playButton, .replay-btn, .vjs-ended .vjs-play-control';
+    var list = [];
+    try { list = doc.querySelectorAll(sels); } catch (eQ) { return v; }
+    for (var i = 0; i < list.length; i++) {
+      if (zeCheapVisible(list[i])) return list[i];
+    }
+    return v;
+  }
+  function zeCheapFire(el){
+    if (!el) return;
+    try { el.scrollIntoView({ block: 'center', inline: 'nearest' }); } catch (e0) {}
+    var doc = el.ownerDocument;
+    var win = doc && doc.defaultView;
+    var Ev = (win && win.MouseEvent) || MouseEvent;
+    var types = ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'];
+    for (var i = 0; i < types.length; i++) {
+      try {
+        el.dispatchEvent(new Ev(types[i], {
+          bubbles: true,
+          cancelable: true,
+          view: win,
+          buttons: types[i].indexOf('down') >= 0 ? 1 : 0
+        }));
+      } catch (e1) {}
+    }
+    try { el.click(); } catch (e2) {}
+  }
+  function zeCheapStart(v){
+    if (!v) return;
+    var doc = v.ownerDocument;
+    var win = doc && doc.defaultView;
+    try { v.muted = false; } catch (e0) {}
+    try {
+      var root = v.closest && v.closest('.video-js, .video-js-box, #video');
+      var id = root && root.id;
+      var p = v.player;
+      var vjs = win && win.videojs;
+      if (!p && vjs) {
+        if (id) try { p = vjs.getPlayer(id); } catch (e1) {}
+        if (!p && vjs.getAllPlayers) try { p = vjs.getAllPlayers()[0]; } catch (e2) {}
+        if (!p && vjs.getPlayers) {
+          try {
+            var ps = vjs.getPlayers() || {};
+            for (var k in ps) { p = ps[k]; break; }
+          } catch (e3) {}
+        }
+      }
+      if (p) {
+        try { if (p.muted) p.muted(false); } catch (e4) {}
+        setTimeout(function(){
+          try { var pr = p.play(); if (pr && pr.catch) pr.catch(function(){}); } catch (e5) {}
+        }, 0);
+      }
+    } catch (e6) {}
+    setTimeout(function(){
+      try { if (v.readyState < 1 && !(v.currentSrc || v.src)) v.load(); } catch (e7) {}
+      try { var st = v.play(); if (st && st.catch) st.catch(function(){}); } catch (e8) {}
+    }, 0);
+  }
+  function zeCheapBox(el){
+    if (!el) return null;
+    try { el.scrollIntoView({ block: 'center', inline: 'nearest' }); } catch (e0) {}
+    var r = null;
+    try { r = el.getBoundingClientRect(); } catch (e1) {}
+    if (!r || r.width < 2 || r.height < 2) return null;
+    var x = r.left + r.width / 2;
+    var y = r.top + r.height / 2;
+    var win = el.ownerDocument && el.ownerDocument.defaultView;
+    var topWin = null;
+    try { topWin = (win && win.top) || win; } catch (e2) { topWin = win; }
+    for (var g = 0; win && topWin && win !== topWin && g < 8; g++) {
+      var frame = null;
+      try { frame = win.frameElement; } catch (e3) { break; }
+      if (!frame) break;
+      var fr = null;
+      try { fr = frame.getBoundingClientRect(); } catch (e4) {}
+      if (!fr) break;
+      x += fr.left + (Number(frame.clientLeft) || 0);
+      y += fr.top + (Number(frame.clientTop) || 0);
+      try { win = win.parent; } catch (e5) { win = null; break; }
+    }
+    return { x: x, y: y, space: 'page' };
+  }
 `
 
 const cheapTickScript = (mid = '') => `(function(){${CHEAP_FIND_VIDEO}
@@ -348,91 +344,6 @@ const cheapTickScript = (mid = '') => `(function(){${CHEAP_FIND_VIDEO}
 })()`
 
 const CHEAP_TICK = cheapTickScript('')
-
-const CHEAP_CLICK_FIRST_VIDEO_TAB = `(function(){
-  function kindOf(label){
-    return /视频|直播/.test(label) && !/测验/.test(label);
-  }
-  function walk(doc, depth){
-    if (!doc || (depth || 0) > 4) return null;
-    var nodes = [];
-    try { nodes = doc.querySelectorAll('.tabtags a, .tabtags span, .tabtags li, .prev_title, .prev_white, #dct a'); } catch (e0) {}
-    for (var i = 0; i < nodes.length; i++) {
-      var el = nodes[i];
-      if (el.closest && el.closest('#coursetree')) continue;
-      var t = String((el.getAttribute && el.getAttribute('title')) || el.textContent || '').replace(/\\s+/g, ' ').trim();
-      if (!t || t.length > 24 || !kindOf(t)) continue;
-      var on = /currents|current|active/.test(String(el.className || ''));
-      if (!on) { try { el.click(); } catch (e1) {} }
-      return { ok: true, already: on, text: t };
-    }
-    var boxes = [];
-    try { boxes = doc.querySelectorAll('.ans-attach-ct.videoContainer, .ans-attach-ct'); } catch (eB) {}
-    for (var b = 0; b < boxes.length; b++) {
-      var srcB = '';
-      try {
-        var ifr = boxes[b].querySelector && boxes[b].querySelector('iframe');
-        srcB = ifr ? String(ifr.getAttribute('src') || '') : '';
-      } catch (eS) {}
-      if (!/modules\\/video|insertvideo|videoContainer/.test(srcB + ' ' + String(boxes[b].className || ''))) continue;
-      try { boxes[b].scrollIntoView({ block: 'center' }); } catch (eV) {}
-      try { boxes[b].click(); } catch (eC) {}
-      return { ok: true, already: false, text: '视频1' };
-    }
-    var list = [];
-    try { list = doc.querySelectorAll('iframe'); } catch (e2) { return null; }
-    for (var j = 0; j < list.length; j++) {
-      var src = '';
-      try { src = String(list[j].getAttribute('src') || ''); } catch (e3) {}
-      if (!src || src === 'about:blank' || /insertvideo|ananas|doHomeWork/.test(src)) continue;
-      var rs = '';
-      try { rs = list[j].contentDocument ? String(list[j].contentDocument.readyState || '') : ''; } catch (e4) { continue; }
-      if (!rs || rs === 'loading' || rs === 'uninitialized') continue;
-      var child = null;
-      try { child = list[j].contentDocument; } catch (e5) {}
-      var next = walk(child, (depth || 0) + 1);
-      if (next) return next;
-    }
-    return null;
-  }
-  return walk(document, 0) || { ok: false };
-})()`
-
-const cheapPlayScript = (mid = '') => `(function(){${CHEAP_FIND_VIDEO}
-  var hit = zeCheapHit(document, 0, ${JSON.stringify(mid)});
-  if (!hit || !hit.v) return { ok: false, hasVideo: false, mid: ${JSON.stringify(mid)} };
-  var v = hit.v;
-  var doc = v.ownerDocument;
-  var btn = null;
-  try { btn = doc && doc.querySelector('.vjs-big-play-button, .vjs-play-control.vjs-paused, .vjs-poster, .xt_video_player_play_btn, .play-btn'); } catch (e6) {}
-  try { (btn || v).click(); } catch (e7) {}
-  try { setTimeout(function(){ try { v.play(); } catch (e8) {} }, 0); } catch (e9) {}
-  var tick = zeCheapTick(v, hit.mid);
-  tick.ok = true;
-  return tick;
-})()`
-
-const cheapPauseScript = (mid = '') => `(function(){${CHEAP_FIND_VIDEO}
-  function pauseHit(h){
-    if (!h || !h.v) return null;
-    var v = h.v;
-    var doc = v.ownerDocument;
-    var btn = null;
-    try { btn = doc && doc.querySelector('.vjs-play-control.vjs-playing, button.vjs-playing'); } catch (e6) {}
-    try { (btn || v).click(); } catch (e7) {}
-    try { v.pause(); } catch (e8) {}
-    return zeCheapTick(v, h.mid);
-  }
-  var hit = zeCheapHit(document, 0, ${JSON.stringify(mid)});
-  if ((!hit || !hit.v) && ${JSON.stringify(mid)}) hit = zeCheapHit(document, 0, '');
-  var tick = pauseHit(hit);
-  var extra = zeCheapHit(document, 0, '');
-  if (extra && extra.v && extra.v.paused === false) pauseHit(extra);
-  if (!tick) return { ok: false, hasVideo: false };
-  tick.ok = true;
-  tick.paused = true;
-  return tick;
-})()`
 
 /** 只扫 ready 的同源文档。loading / 播放器内框跳过，不读 location.href。 */
 const CHEAP_COLLECT_JOBS = `(function(){
@@ -526,6 +437,7 @@ const CHEAP_COLLECT_JOBS = `(function(){
       try { src = String(list[j].getAttribute('src') || ''); } catch (e10) {}
       if (!src || src === 'about:blank') continue;
       if (/insertvideo|ananas\\/modules\\/video|inserthomework|doHomeWork|insertdoc/.test(src)) continue;
+      if ((depth || 0) > 0 && /studentstudy/i.test(src)) continue;
       var rs = '';
       try { rs = list[j].contentDocument ? String(list[j].contentDocument.readyState || '') : ''; } catch (e11) { continue; }
       if (!rs || rs === 'loading' || rs === 'uninitialized') continue;
@@ -551,7 +463,7 @@ const CHEAP_COLLECT_JOBS = `(function(){
   var current = '';
   try {
     var name = document.querySelector('#coursetree .posCatalog_active .posCatalog_name');
-    current = String((name && (name.getAttribute('title') || name.textContent)) || '').replace(/\\s+/g, ' ').trim();
+    current = String((name && (name.textContent || name.getAttribute('title'))) || '').replace(/\\s+/g, ' ').trim();
   } catch (e15) {}
   return { ok: true, jobs: uniq, chapterId: chapterId, current: current, tabCount: uniq.length };
 })()`
@@ -566,6 +478,11 @@ export const pinChaoxingPlayMid = (id: string, mid?: string) => {
   if (value) pinnedPlayMid.set(key, value)
 }
 
+/** 切章后上一节的 mid 必须清掉，否则裸 play 会拿旧 mid 当目标，播起来也判「不是那条」而反复点成暂停。 */
+export const clearChaoxingPlayMid = (id: string) => {
+  pinnedPlayMid.delete(String(id || '').trim())
+}
+
 const rememberPlayTick = (id: string, tick: ChaoxingVideoTick | null | undefined) => {
   if (!tick?.mid) return
   if (tick.paused === false || Number(tick.current) > 0.2) pinChaoxingPlayMid(id, tick.mid)
@@ -574,46 +491,44 @@ const rememberPlayTick = (id: string, tick: ChaoxingVideoTick | null | undefined
 /** 点一次可视区里的大播放按钮，不等 play() Promise（未加载时会挂死 CDP）。 */
 export const tapChaoxingPlay = async (id: string, opts?: { mid?: string }) => {
   const wantMid = String(opts?.mid || pinnedPlayMid.get(id) || '').trim()
+  // 只有调用方点名的 mid 才是硬要求；钉住的 mid 只是「优先找这条」的提示，播起来别的可见条也算成功。
+  const strictMid = Boolean(opts?.mid)
   if (opts?.mid) pinChaoxingPlayMid(id, opts.mid)
-  let nudged: Record<string, unknown> = {}
+  const midOk = (tick: ChaoxingVideoTick | null) => !strictMid || !wantMid || !tick?.mid || tick.mid === wantMid
   let rawTick: ChaoxingVideoTick | null = null
-  let openedTab = false
+  let clickedOk = false
   const deadline = Date.now() + 7_000
-  for (let i = 0; Date.now() < deadline && i < 14; i += 1) {
-    nudged = asObject(await evalBrowserViewMainNow(id, cheapPlayScript(wantMid)).catch(() => null))
-    rawTick = asVideoTick(nudged) || asVideoTick(await readChaoxingVideoTick(id).catch(() => null))
-    const midOk = !wantMid || !rawTick?.mid || rawTick.mid === wantMid
-    if (tickLooksLikeVideo(rawTick) && midOk) break
-    if (!openedTab && i >= 2 && !nudged.hasVideo && !wantMid) {
-      const tab = asObject(await evalBrowserViewMainNow(id, CHEAP_CLICK_FIRST_VIDEO_TAB).catch(() => null))
-      if (tab.ok && !tab.already) openedTab = true
+  // 已经在播就别再点：播放定位兜底会落到 <video> 本身，点一下就成了暂停。
+  rawTick = asVideoTick(await readChaoxingVideoTick(id).catch(() => null))
+  const alreadyPlaying = videoIsPlaying(rawTick) && midOk(rawTick)
+  for (let i = 0; !alreadyPlaying && Date.now() < deadline && i < 14; i += 1) {
+    const clicked = await clickHomeworkBox(id, locatorsForStudyControl('play', wantMid)).catch(() => ({ ok: false }))
+    clickedOk = Boolean(clicked.ok) || clickedOk
+    // 点到了就等 play 事件推上来再读；立刻读会拿到旧 tick 又点一次，落到 <video> 上就成了暂停。
+    if (clicked.ok) await waitMs(650)
+    rawTick = asVideoTick(await readChaoxingVideoTick(id).catch(() => null))
+    if (videoIsPlaying(rawTick) && midOk(rawTick)) break
+    if (i >= 2 && !tickLooksLikeVideo(rawTick) && !wantMid) {
+      await clickHomeworkBox(id, locatorsForStudyControl('video-tab')).catch(() => null)
     }
-    await waitMs(450)
+    await waitMs(420)
   }
-  let settled = await settlePlaying(id, rawTick)
-  const locate = { found: Boolean(nudged.ok || tickLooksLikeVideo(rawTick)), via: 'cheap' }
-  const clicked: { ok?: boolean } = { ok: Boolean(nudged.ok) }
-  if (!settled.playing && (nudged.ok || tickLooksLikeVideo(rawTick) || openedTab)) {
-    await waitMs(500)
-    nudged = asObject(await evalBrowserViewMainNow(id, cheapPlayScript(wantMid)).catch(() => null))
-    rawTick = asVideoTick(nudged) || asVideoTick(await readChaoxingVideoTick(id).catch(() => null)) || rawTick
-    settled = await settlePlaying(id, rawTick)
-  }
+  const settled = await settlePlaying(id, rawTick)
   const tick = settled.tick
   const { noteStudyParser } = await import('./debug')
   noteStudyParser({
     via: 'play',
     handle: { kind: 'control', name: 'play' },
-    locate: { ...locate, clicked: clicked.ok },
+    locate: { found: clickedOk || tickLooksLikeVideo(rawTick), via: 'cdp', clicked: clickedOk },
     tick,
     playing: settled.playing,
-    error: settled.playing || clicked.ok || nudged.ok ? '' : '播放器没点着或没播起来',
+    error: settled.playing || clickedOk || tickLooksLikeVideo(tick) ? '' : '播放器没点着或没播起来',
     force: true,
   })
   rememberPlayTick(id, tick)
   return {
-    ok: Boolean(clicked.ok || nudged.ok || tickLooksLikeVideo(tick)),
-    clickedPlay: Boolean((clicked as { ok?: boolean }).ok),
+    ok: Boolean(clickedOk || tickLooksLikeVideo(tick)),
+    clickedPlay: clickedOk,
     hasVideo: tickLooksLikeVideo(tick),
     playing: settled.playing,
     paused: tick?.paused !== false,
@@ -646,7 +561,7 @@ export const playChaoxingVideo = async (
       hasVideo: false,
       playing: false,
       error: '不在章节播放页（studentstudy）',
-      hint: '课程壳/任务页/目录上的预览不能当播放器。先点节名进 studentstudy，再 browser_study_play。',
+      hint: '课程壳/任务页/目录上的预览不能当播放器。先点节名进 studentstudy，再 看快照。',
     }
   }
   {
@@ -683,12 +598,13 @@ export const playChaoxingVideo = async (
     if (!stepped.already) await waitMs(1200)
     return tapChaoxingPlay(id)
   } else if (!opts?.skipTabClick) {
-    const tab = asObject(await evalBrowserViewMain(id, LOCATE_STUDY_VIDEO_TAB()).catch(() => null))
+    const tab = useLegacyEval()
+      ? asObject(await evalBrowserViewMain(id, READ_STUDY_PLAYER()).catch(() => null))
+      : asObject(await readChaoxingChapterJobTick(id).catch(() => null))
     if (tab.quiz) {
       return { quiz: true, step: String(tab.step || ''), hasVideo: false, playing: false, hint: '当前是章节测验。系统会按 ocs 流程自动搜题/随机/暂存' }
     }
-    // 已完成只是状态。没指定任务点就播当前；只有调用方明确 skipIfDone 才跳过。
-    if (opts?.skipIfDone && tab.done && Number(tab.videoCount) > 0) {
+    if (opts?.skipIfDone && tab.jobDone && Number(tab.videoCount) > 0) {
       return {
         hasVideo: false,
         playing: false,
@@ -698,10 +614,8 @@ export const playChaoxingVideo = async (
         hint: '已按 skipIfDone 跳过已完成视频。要重播就不要带 skipIfDone。',
       }
     }
-    if (tab.found) {
-      const clicked = await clickHomeworkBox(id, LOCATE_STUDY_VIDEO_TAB()).catch(() => ({ ok: false }))
-      if (clicked.ok) await waitMs(800)
-    }
+    const clicked = await clickHomeworkBox(id, locatorsForStudyControl('video-tab')).catch(() => ({ ok: false }))
+    if (clicked.ok) await waitMs(800)
   }
   const again = await tapChaoxingPlay(id)
   return {
@@ -724,10 +638,10 @@ export const pauseChaoxingVideo = async (id: string) => {
   if (await readChaoxingCaptcha(id)) {
     return { captcha: true, hasVideo: false, playing: false, paused: true, hint: CAPTCHA_HINT }
   }
-  const nudged = asObject(await evalBrowserViewMainNow(id, cheapPauseScript(pinnedPlayMid.get(id) || '')).catch(() => null))
+  const clicked = await clickHomeworkBox(id, locatorsForStudyControl('pause', pinnedPlayMid.get(id) || '')).catch(() => ({ ok: false }))
   await waitMs(200)
-  const tick = asVideoTick(await readChaoxingVideoTick(id).catch(() => null)) || asVideoTick(nudged)
-  const hasVideo = tickLooksLikeVideo(tick) || Boolean(nudged.ok)
+  const tick = asVideoTick(await readChaoxingVideoTick(id).catch(() => null))
+  const hasVideo = tickLooksLikeVideo(tick) || Boolean(clicked.ok)
   const paused = !tick || tick.paused !== false
   const { noteStudyParser } = await import('./debug')
   noteStudyParser({
@@ -743,8 +657,8 @@ export const pauseChaoxingVideo = async (id: string) => {
     playing: !paused && hasVideo,
     paused,
     ended: Boolean(tick?.ended),
-    current: tick?.current || Number(nudged.current) || 0,
-    duration: tick?.duration || Number(nudged.duration) || 0,
+    current: tick?.current || 0,
+    duration: tick?.duration || 0,
     hint: hasVideo
       ? (paused ? '已暂停当前视频。' : '已发暂停，但播放器仍在播；再试一次。')
       : '没读到可暂停的视频。',
@@ -755,23 +669,45 @@ export const readChaoxingVideo = async (id: string): Promise<ChaoxingVideoInfo |
   if (await readChaoxingCaptcha(id)) {
     return { page: 'captcha', captcha: true, quiz: false, video: null, hint: CAPTCHA_HINT }
   }
-  const player = asObject(await evalBrowserViewMain(id, READ_STUDY_PLAYER()).catch(() => null))
-  const slim = asObject(await evalBrowserViewMain(id, READ_CATALOG_SLIM()).catch(() => ({})))
-  const steps = (Array.isArray(player.steps) ? player.steps : []) as NonNullable<ChaoxingVideoInfo['steps']>
+  const jobs = await readChaoxingChapterJobTick(id).catch(() => null)
+  const tick = asVideoTick(await readChaoxingVideoTick(id).catch(() => null))
+  const player = useLegacyEval()
+    ? asObject(await evalBrowserViewMain(id, READ_STUDY_PLAYER()).catch(() => null))
+    : {
+        page: 'player',
+        chapterId: jobs?.chapterId || '',
+        step: '',
+        quiz: Boolean((jobs?.jobs || []).some((item) => item.quiz || item.kind === 'quiz')),
+        jobDone: (jobs?.jobs || []).some((item) => item.jobDone === true),
+        steps: jobs?.jobs || [],
+        videoCount: Number(jobs?.videoCount) || 0,
+        videoIndex: Number(jobs?.videoIndex) || 0,
+        moreVideos: Number(jobs?.videoCount) > 1,
+        current: jobs?.current || '',
+        hasVideo: videoTickHasPlayer(tick),
+        paused: tick?.paused,
+        ended: tick?.ended,
+        currentTime: tick?.current,
+        duration: tick?.duration,
+      }
+  const slim = useLegacyEval()
+    ? asObject(await evalBrowserViewMain(id, READ_CATALOG_SLIM()).catch(() => ({})))
+    : {}
+  const steps = (Array.isArray(player.steps) ? player.steps : jobs?.jobs || []) as NonNullable<ChaoxingVideoInfo['steps']>
   const unfinished = Array.isArray(slim.unfinished) ? slim.unfinished.map(String) : []
-  const current = String(slim.current || player.current || '')
+  const current = String(slim.current || player.current || jobs?.current || '')
   const { noteStudyParser } = await import('./debug')
   noteStudyParser({
     via: 'player',
-    tick: player.hasVideo
-      ? { current: player.currentTime, duration: player.duration, paused: player.paused, ended: player.ended, hasVideo: true }
+    tick: videoTickHasPlayer(tick)
+      ? { current: tick?.current, duration: tick?.duration, paused: tick?.paused, ended: tick?.ended, hasVideo: true }
       : { hasVideo: false },
     steps,
-    playing: player.paused === false,
+    playing: tick?.paused === false,
   })
   return {
     page: String(player.page || slim.page || 'other'),
-    chapterId: String(player.chapterId || ''),
+    chapterId: String(player.chapterId || jobs?.chapterId || ''),
     step: String(player.step || ''),
     quiz: Boolean(player.quiz),
     jobDone: player.jobDone == null ? null : Boolean(player.jobDone),
@@ -782,12 +718,12 @@ export const readChaoxingVideo = async (id: string): Promise<ChaoxingVideoInfo |
     current,
     next: unfinished.find((title) => title && title !== current) || unfinished[0] || '',
     unfinished,
-    video: player.hasVideo
+    video: videoTickHasPlayer(tick)
       ? {
-          paused: Boolean(player.paused),
-          ended: Boolean(player.ended),
-          current: Number(player.currentTime) || 0,
-          duration: Number(player.duration) || 0,
+          paused: Boolean(tick?.paused),
+          ended: Boolean(tick?.ended),
+          current: Number(tick?.current) || 0,
+          duration: Number(tick?.duration) || 0,
         }
       : null,
   }
@@ -797,6 +733,15 @@ export const installChaoxingVideoHook = (id: string) => readChaoxingVideoTick(id
 
 export const readChaoxingVideoTick = async (id: string) => {
   const pin = pinnedPlayMid.get(id) || ''
+  // 钉住 mid 时 Rust 只回那条；没钉住时 Rust 挑在播 / 可见的那条
+  const cached = await readLastTick(id, pin).catch(() => null)
+  if (cached?.ok && cached.tick && cached.ageMs <= 4000 && tickMatchesMid(cached.tick, pin)) {
+    const tick = asVideoTick(cached.tick)
+    if (tick) {
+      rememberPlayTick(id, tick)
+      return tick
+    }
+  }
   const cheap = await evalBrowserViewMainNow(id, cheapTickScript(pin)).catch(() => null)
   const tick = asVideoTick(asObject(cheap))
   rememberPlayTick(id, tick)
@@ -804,8 +749,22 @@ export const readChaoxingVideoTick = async (id: string) => {
 }
 
 export const readChaoxingChapterJobTick = async (id: string, opts?: { full?: boolean }) => {
-  const cheap = asObject(await evalBrowserViewMainNow(id, CHEAP_COLLECT_JOBS).catch(() => null))
-  let jobs = Array.isArray(cheap.jobs) ? cheap.jobs as Record<string, unknown>[] : []
+  let cheap: Record<string, unknown> = {}
+  let jobs: Record<string, unknown>[] = []
+  if (!useLegacyEval()) {
+    const cards = await readFrameHtml(id, 'knowledge/cards')
+    if (cards.html) {
+      jobs = jobsFromHtml(cards.html, 'knowledge/cards')
+      // chapterId 必须带回去：面板用它判断这批任务点属于哪一节（jobChapterId）。
+      // 丢了它，每次目录轮询都会把 jobs 判成「不属于本节」清空，进度和「当前」标记随之丢失。
+      const knowledgeId = ((String(cards.url || '').match(/[?&]knowledgeid=(\d+)/i) || [])[1] || '')
+      cheap = { jobs, current: '', chapterId: knowledgeId }
+    }
+  }
+  if (!jobs.length) {
+    cheap = asObject(await evalBrowserViewMainNow(id, CHEAP_COLLECT_JOBS).catch(() => null))
+    jobs = Array.isArray(cheap.jobs) ? cheap.jobs as Record<string, unknown>[] : []
+  }
   if (!jobs.length && opts?.full !== false) {
     const player = asObject(await evalBrowserViewMainNow(id, READ_STUDY_PLAYER()).catch(() => null))
     jobs = Array.isArray(player.jobs) ? player.jobs as Record<string, unknown>[] : []

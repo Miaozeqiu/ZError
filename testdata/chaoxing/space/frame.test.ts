@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { isChaoxingCourseListUrl } from '../../../src/services/browser/engine/courseList'
-import { isSpaceListTopUrl } from '../../../src/services/browser/engine/spaceTab'
+import { isChaoxingCourseListUrl } from '../../../src/services/platform/chaoxing/courseList'
+import { isSpaceListTopUrl } from '../../../src/services/platform/chaoxing/spaceTab'
 
 describe('禁止课表外路', () => {
   it('visit/courses / interaction / courselist 一律禁止顶层打开', () => {

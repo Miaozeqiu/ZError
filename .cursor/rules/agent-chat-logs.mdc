@@ -15,6 +15,6 @@ alwaysApply: true
 - 学习通刷课解析器实时数据：`logs/agent-chat/cx-study-live.md`（play / step / pause / 播完覆盖写入）
 - 学习通刷课解析器 JSON：`logs/agent-chat/cx-study-latest.txt`
 
-用户说章节视频播不了、切不了视频、点了没反应、解析错任务点时，先读 `cx-study-live.md`，看 Handle / Locate / Tick / 任务点，不要说看不到。切视频坑见 `chaoxing-study-player.mdc`。
+用户说章节视频播不了、切不了视频、点了没反应、解析错任务点时，先读 `cx-study-live.md`，看 Handle / Locate / Tick / 监测（store）/ 任务点，不要说看不到。「监测（store）」是面板侧状态写入者的最近 8 笔（snap / store / publish / applyVideo），谁把 jobs 抹平一眼可见。切视频坑见 `chaoxing-study-player.mdc`。
 
 `browser-latest.md` 在每次浏览器对话更新后覆盖写入。jsonl 是逐条事件（user / tool_start / tool_end / assistant）。

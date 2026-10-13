@@ -4,6 +4,10 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export PATH="$HOME/Library/Python/3.9/bin:$HOME/Library/Python/3.12/bin:$PATH"
+if ! command -v cmake >/dev/null 2>&1 || ! command -v ninja >/dev/null 2>&1; then
+  echo "[cef] 缺少 cmake/ninja，用 pip 装到用户目录"
+  python3 -m pip install --user cmake ninja >/dev/null
+fi
 CEF_HOME="${CEF_PATH:-$HOME/.local/share/cef}"
 export CEF_PATH="$CEF_HOME"
 FRAMEWORKS="${CEF_FRAMEWORKS:-$ROOT/src-tauri/target/Frameworks}"

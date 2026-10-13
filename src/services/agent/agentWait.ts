@@ -1,20 +1,20 @@
-import { evalBrowserViewMainIdle, withSameFrames } from '../browser/eval'
+import { evalBrowserViewInFrame, evalBrowserViewMainIdle, withSameFrames } from '../browser/eval'
 import { peekAppBrowserUrl } from '../browser/appBrowser'
-import { packAgentPanel } from '../chaoxing/browser/panelStudy'
-import { chapterStateFor } from '../chaoxing/browser/chapters'
-import { videoWatchFor } from '../chaoxing/browser/watch'
+import { isWaitTruthy, waitForResponse } from '../browser/engine'
+import { chapterStateFor, packAgentPanel, videoWatchFor } from '../platform/panelAccess'
 
-export type AgentWaitUntil = 'panel' | 'url' | 'selector' | 'idle'
+export type AgentWaitUntil = 'panel' | 'url' | 'selector' | 'idle' | 'fn' | 'response'
 
 export type AgentWaitResult = {
   ok: true
-  reason: 'timeout' | 'panel' | 'watch' | 'captcha' | 'url' | 'selector' | 'idle'
+  reason: 'timeout' | 'panel' | 'watch' | 'captcha' | 'url' | 'selector' | 'idle' | 'fn' | 'response'
   waited: number
   until: AgentWaitUntil
   event?: string
   display?: string
   hint?: string
   url?: string
+  already?: boolean
   panel?: ReturnType<typeof packAgentPanel>
   captchaImage?: string
 }
@@ -27,6 +27,9 @@ export type AgentWaitInput = {
   until?: AgentWaitUntil | string
   url?: string
   selector?: string
+  fn?: string
+  response?: string
+  frame?: string
   idleMs?: number
   onStart?: (sessionId: string) => void
   onPanel?: (panel: NonNullable<ReturnType<typeof packAgentPanel>>) => void
@@ -69,7 +72,9 @@ const waitShouldFinish = (browserId: string, panel: ReturnType<typeof packAgentP
 
 const normalizeUntil = (input: AgentWaitInput): AgentWaitUntil => {
   const raw = String(input.until || '').trim().toLowerCase()
-  if (raw === 'url' || raw === 'selector' || raw === 'idle' || raw === 'panel') return raw
+  if (raw === 'url' || raw === 'selector' || raw === 'idle' || raw === 'panel' || raw === 'fn' || raw === 'response') return raw
+  if (String(input.fn || '').trim()) return 'fn'
+  if (String(input.response || '').trim()) return 'response'
   if (String(input.selector || '').trim()) return 'selector'
   if (String(input.url || '').trim()) return 'url'
   return 'panel'
@@ -156,7 +161,7 @@ const snapshot = (
 })
 
 const tickMs = (until: AgentWaitUntil) => (
-  until === 'panel' ? 1200 : until === 'url' ? 800 : 800
+  until === 'panel' ? 1200 : until === 'fn' || until === 'response' ? 200 : until === 'url' ? 800 : 800
 )
 
 export const runAgentWait = async (input: AgentWaitInput): Promise<AgentWaitResult> => {
@@ -164,6 +169,9 @@ export const runAgentWait = async (input: AgentWaitInput): Promise<AgentWaitResu
   const until = normalizeUntil(input)
   const matchUrl = String(input.url || '').trim()
   const selector = String(input.selector || '').trim()
+  const fn = String(input.fn || '').trim()
+  const response = String(input.response || '').trim()
+  const frame = String(input.frame || '').trim()
   const idleMs = Math.min(8000, Math.max(400, Number(input.idleMs) || 800))
   const started = Date.now()
   const deadline = started + seconds * 1000
@@ -199,26 +207,43 @@ export const runAgentWait = async (input: AgentWaitInput): Promise<AgentWaitResu
       hint: panelNeedsTakeover(panel)
         ? panel?.hint
         : (ended
-          ? '这段视频已经结束。看 jobs，用 browser_study_play 指定下一条；只剩测验就 browser_study_next。'
+          ? '这段视频已经结束。'
           : '视频暂停或卡住了。'),
       panel,
     })
   }
 
-  let lastHref = cachedHref(browserId)
+  const startHref = cachedHref(browserId)
+  let lastHref = startHref
   let idleSince = 0
   let readyOnce = false
+  let probes = 0
 
   const probe = async (): Promise<AgentWaitResult | null> => {
+    probes += 1
     const href = cachedHref(browserId)
     if (until === 'url' && matchUrl && urlMatches(href, matchUrl)) {
-      return snapshot(browserId, started, {
-        until,
-        reason: 'url',
-        url: href,
-        hint: `网址已匹配 ${matchUrl}`,
-        panel: packAgentPanel(browserId),
-      })
+      const changed = href.split('#')[0] !== startHref.split('#')[0]
+      if (!changed) {
+        if (probes === 1) {
+          return snapshot(browserId, started, {
+            until,
+            reason: 'url',
+            url: href,
+            already: true,
+            hint: `开始时网址已经包含「${matchUrl}」，还没有发生跳转`,
+            panel: packAgentPanel(browserId),
+          })
+        }
+      } else {
+        return snapshot(browserId, started, {
+          until,
+          reason: 'url',
+          url: href,
+          hint: `网址已变成 ${href}`,
+          panel: packAgentPanel(browserId),
+        })
+      }
     }
     if (until === 'selector' && selector) {
       const hit = await selectorPresent(browserId, selector)
@@ -228,6 +253,33 @@ export const runAgentWait = async (input: AgentWaitInput): Promise<AgentWaitResu
           reason: 'selector',
           url: href,
           hint: `已出现 ${selector}`,
+          panel: packAgentPanel(browserId),
+        })
+      }
+    }
+    if (until === 'fn' && fn) {
+      const raw = frame
+        ? await evalBrowserViewInFrame(browserId, fn, frame).catch(() => null)
+        : await evalBrowserViewMainIdle(browserId, fn).catch(() => null)
+      if (raw != null && isWaitTruthy(raw)) {
+        return snapshot(browserId, started, {
+          until,
+          reason: 'fn',
+          url: href,
+          already: probes === 1,
+          hint: probes === 1 ? '函数一开始就成立，没有等到变化' : '函数已成立',
+          panel: packAgentPanel(browserId),
+        })
+      }
+    }
+    if (until === 'response' && response) {
+      const hit = await waitForResponse(browserId, { url: response, timeout: 180, lookback: Date.now() - started + 8000 })
+      if (hit.ok) {
+        return snapshot(browserId, started, {
+          until,
+          reason: 'response',
+          url: href,
+          hint: `已等到 ${hit.response?.url || response}`,
           panel: packAgentPanel(browserId),
         })
       }
@@ -292,10 +344,14 @@ export const runAgentWait = async (input: AgentWaitInput): Promise<AgentWaitResu
         ? `超时，当前网址未匹配 ${matchUrl || '目标'}`
         : until === 'selector'
           ? `超时，未出现 ${selector || '目标元素'}`
+          : until === 'fn'
+            ? '超时，函数还没成立'
+            : until === 'response'
+              ? `超时，没等到 ${response || '接口'}`
           : until === 'idle'
             ? '超时，页面还没稳定'
             : watchEndedTakeover(browserId)
-              ? '这段视频已经结束。看 jobs，用 browser_study_play 指定下一条；只剩测验就 browser_study_next。'
+              ? '这段视频已经结束。'
               : watchNeedsTakeover(browserId)
                 ? '视频暂停或卡住了。'
                 : '还在播或还没到等待条件。',

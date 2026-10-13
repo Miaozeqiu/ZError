@@ -2,6 +2,8 @@ import { resolveExecutableModelJsCode, resolveRuntimeModelId } from './protocol'
 import { modelConfigManager, modelHasVision } from './config'
 import { settingsManager } from '../app/settings'
 import { logAgentDebug } from '../agent/debugLog'
+import { takeToolImages, visionAttachParts } from './toolImages'
+import { mergeToolArgs, mergeToolCalls } from './toolCallMerge'
 
 export interface ModelToolCall {
   id: string
@@ -15,22 +17,6 @@ export type ModelRunEvent =
   | { type: 'tool_pending'; name?: string }
   | { type: 'tool_start'; id: string; name: string; arguments: string }
   | { type: 'tool_end'; id: string; name: string; result: string; error?: string }
-
-const takeToolImages = (raw: string) => {
-  try {
-    const data = JSON.parse(raw)
-    if (!data || typeof data !== 'object' || Array.isArray(data)) return { text: raw, images: [] as string[] }
-    const image = String((data as { image?: unknown }).image || '')
-    if (!image.startsWith('data:image/')) return { text: raw, images: [] as string[] }
-    const rest = { ...(data as Record<string, unknown>) }
-    delete rest.image
-    rest.image = '[attached]'
-    rest.bytes = image.length
-    return { text: JSON.stringify(rest), images: [image] }
-  } catch {
-    return { text: raw, images: [] as string[] }
-  }
-}
 
 export const MODEL_STOPPED_MESSAGE = '已终止对话'
 
@@ -197,35 +183,6 @@ const isRepetitiveToolError = (error: unknown) => {
   return /Repetitive tool calls|相同参数|infinite loops/i.test(message)
 }
 
-const mergeJsonObjects = (left: string, right: string) => {
-  const tryParse = (value: string) => {
-    try {
-      return JSON.parse(value)
-    } catch {
-      return null
-    }
-  }
-  const a = tryParse(left)
-  const b = tryParse(right)
-  if (a && b && typeof a === 'object' && typeof b === 'object' && !Array.isArray(a) && !Array.isArray(b)) {
-    return JSON.stringify({ ...a, ...b })
-  }
-  const glued = `${left}${right}`.replace(/}\s*{/g, ',')
-  if (tryParse(glued)) return glued
-  return null
-}
-
-const mergeToolArgs = (prev: string, next: string) => {
-  if (!next) return prev
-  if (!prev) return next
-  if (next === prev) return prev
-  if (!prev.trim() || prev.trim() === '{}') return next
-  if (!next.trim() || next.trim() === '{}') return prev
-  if (next.startsWith(prev)) return next
-  if (prev.startsWith(next)) return prev
-  return mergeJsonObjects(prev, next) || `${prev}${next}`
-}
-
 const sameToolPayload = (left: any, right: any) => {
   const leftName = left?.function?.name || left?.name || ''
   const rightName = right?.function?.name || right?.name || ''
@@ -258,51 +215,9 @@ const finalizeToolCalls = (toolCalls: any[]) => {
     dup.function = dup.function || { name: '', arguments: '' }
     if (tc.id && String(dup.id || '').startsWith('tool-')) dup.id = tc.id
     if (tc.function?.name) dup.function.name = tc.function.name
-    dup.function.arguments = mergeToolArgs(dup.function.arguments || '', tc.function?.arguments || '')
+    dup.function.arguments = mergeToolArgs(dup.function.arguments || '', tc.function?.arguments || '', 'snapshot')
   }
   return result
-}
-
-const mergeToolCalls = (existing: any[], incoming: any[]) => {
-  for (const tc of incoming || []) {
-    const incomingId = tc.id || tc.tool_call_id || ''
-    const incomingIndex = Number.isFinite(Number(tc.index)) ? Number(tc.index) : undefined
-    const incomingName = tc.function?.name || tc.name || ''
-    const found = existing.find((item) => {
-      if (incomingId && item.id && item.id === incomingId) return true
-      if (incomingIndex != null && item.index === incomingIndex) return true
-      return false
-    }) || (
-      !incomingId && incomingIndex == null
-        ? existing.find((item, index) => (
-          index === existing.length - 1
-          && (!incomingName || !item.function?.name || item.function.name === incomingName)
-        ))
-        : incomingId
-          ? existing.find((item) =>
-            String(item.id || '').startsWith('tool-')
-            && (!incomingName || !item.function?.name || item.function.name === incomingName)
-          )
-          : undefined
-    )
-    if (found) {
-      found.function = found.function || { name: '', arguments: '' }
-      if (incomingId) found.id = incomingId
-      if (incomingIndex != null) found.index = incomingIndex
-      if (incomingName) found.function.name = incomingName
-      found.function.arguments = mergeToolArgs(found.function.arguments || '', tc.function?.arguments || '')
-      continue
-    }
-    existing.push({
-      id: incomingId || `tool-${existing.length + 1}`,
-      index: incomingIndex,
-      type: tc.type || 'function',
-      function: {
-        name: incomingName,
-        arguments: tc.function?.arguments || '',
-      },
-    })
-  }
 }
 
 const normalizeToolCalls = (result: any): any[] => {
@@ -579,7 +494,7 @@ export async function runTextModel(
         for await (const chunk of result) {
           throwIfStopped()
           if (chunk?.tool_calls) {
-            mergeToolCalls(toolCalls, chunk.tool_calls)
+            mergeToolCalls(toolCalls, chunk.tool_calls, 'delta')
             if (!toolPendingSent && toolCalls.length) {
               toolPendingSent = true
               options?.onEvent?.({
@@ -596,7 +511,7 @@ export async function runTextModel(
           }
         }
       } else {
-        mergeToolCalls(toolCalls, normalizeToolCalls(result))
+        mergeToolCalls(toolCalls, normalizeToolCalls(result), 'snapshot')
         const response = collectContent(result)
         if (response) {
           fullResponse = response
@@ -713,13 +628,7 @@ export async function runTextModel(
       if (attached.length) {
         input.messages.push({
           role: 'user',
-          content: [
-            ...attached.map((url) => ({
-              type: 'image_url' as const,
-              image_url: { url, detail: 'low' as const },
-            })),
-            { type: 'text' as const, text: '上面是刚才工具拍到的当前页。' },
-          ],
+          content: visionAttachParts(attached),
         })
       }
 

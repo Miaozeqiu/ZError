@@ -106,6 +106,7 @@ function __zeEnsureMouse(){
   };
   var api = {
     act: function(kind, nx, ny, label){
+      root.style.visibility = 'visible';
       move(Number(nx) || 0, Number(ny) || 0);
       if (kind === 'click' || kind === 'type') pulse();
       say(label || (kind === 'type' ? '输入' : kind === 'scroll' ? '滚动' : ''));

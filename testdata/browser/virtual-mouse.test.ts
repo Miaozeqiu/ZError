@@ -27,4 +27,15 @@ describe('虚拟鼠标', () => {
     expect(root?.querySelector('style')?.textContent).toContain('width:0')
     expect(root?.querySelector('style')?.textContent).not.toContain('inset:0')
   })
+
+  it('藏起来后再 act 会重新显示', () => {
+    const dom = boot()
+    const win = dom.window as unknown as { __ZE_MOUSE__: { act: Function; cover: Function } }
+    const root = dom.window.document.getElementById('__ze_mouse_root')
+    win.__ZE_MOUSE__.cover(false)
+    expect(root?.style.visibility).toBe('hidden')
+    win.__ZE_MOUSE__.act('click', 40, 50, '播放')
+    expect(root?.style.visibility).toBe('visible')
+    expect(root?.querySelector('.ze-chip')?.textContent).toBe('播放')
+  })
 })

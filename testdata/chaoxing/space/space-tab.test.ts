@@ -1,6 +1,6 @@
 import { JSDOM } from 'jsdom'
 import { describe, expect, it } from 'vitest'
-import { CLICK_SPACE_TAB, READ_SPACE_LIST, isSpaceListTopUrl } from '../../../src/services/browser/engine/spaceTab'
+import { CLICK_SPACE_TAB, READ_SPACE_LIST, isSpaceListTopUrl } from '../../../src/services/platform/chaoxing/spaceTab'
 
 const boot = () => {
   const dom = new JSDOM(

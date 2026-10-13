@@ -1,6 +1,6 @@
 import { describe, expect, it, afterEach } from 'vitest'
 import { watchEndedTakeover, watchNeedsTakeover, runAgentWait } from '../../../src/services/agent/agentWait'
-import { browserVideoWatches, watchSessionFastPath, type VideoWatchState } from '../../../src/services/chaoxing/browser/watch'
+import { browserVideoWatches, watchSessionFastPath, agentWatchBusy, type VideoWatchState } from '../../../src/services/chaoxing/browser/watch'
 import { shouldDeferWatchNotify } from '../../../src/services/chaoxing/browser/watchAgent'
 import { lastStudyParser, noteStudyParser } from '../../../src/services/chaoxing/study/debug'
 import { asVideoTick, videoTickHasPlayer } from '../../../src/services/chaoxing/study/video'
@@ -44,6 +44,22 @@ describe('watchSessionFastPath', () => {
 
   it('本节只剩测验时让出 watch', () => {
     expect(watchSessionFastPath(watch({ status: 'watching' }), 'quiz_left')).toBe('panel_clear')
+  })
+})
+
+describe('agentWatchBusy', () => {
+  it('面板空白监测（sessionId 空、默认 paused）不算对话忙', () => {
+    browserVideoWatches.value = {
+      b1: watch({ sessionId: '', status: 'paused', paused: true, current: 0, duration: 0, title: '' }),
+    }
+    expect(agentWatchBusy('b1')).toBe(false)
+  })
+
+  it('Agent 自己挂的监测才让停止钮亮', () => {
+    browserVideoWatches.value = { b1: watch({ status: 'watching' }) }
+    expect(agentWatchBusy('b1')).toBe(true)
+    browserVideoWatches.value = { b1: watch({ status: 'done' }) }
+    expect(agentWatchBusy('b1')).toBe(false)
   })
 })
 

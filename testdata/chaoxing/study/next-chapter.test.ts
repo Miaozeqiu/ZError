@@ -82,8 +82,9 @@ describe('解析面板暂停要写给 Agent', () => {
       panel: { event: 'video_paused', thisSection: { next: { label: '视频3', kind: 'video' } } },
     })
     expect(recipe).toContain('视频3暂停了')
-    expect(recipe).toContain('禁止 watch')
-    expect(recipe).toContain('禁止说正在播放')
+    expect(recipe).toContain('没有在播')
+    expect(recipe).toContain('快照 ref')
+    expect(recipe).toContain('browser_watch')
   })
 })
 
@@ -97,6 +98,10 @@ describe('pickPlayableJob', () => {
   it('指定已完成的视频1时改播未完成的视频2', () => {
     expect(pickPlayableJob(jobs, { label: '视频1' })?.label).toBe('视频2')
     expect(pickPlayableJob(jobs, { videoIndex: 1 })?.label).toBe('视频2')
+  })
+
+  it('skipIfDone=false 时点名的已完成视频照样播', () => {
+    expect(pickPlayableJob(jobs, { videoIndex: 1, skipIfDone: false })?.label).toBe('视频1')
   })
 
   it('本节视频都完成时不再挑已完成的当前视频', () => {

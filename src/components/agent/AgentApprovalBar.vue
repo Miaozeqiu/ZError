@@ -6,13 +6,13 @@
     </div>
     <div class="approval-actions">
       <button type="button" class="approval-btn" @click="resolveAgentApproval(pending.id, false)">拒绝</button>
-      <button type="button" class="approval-btn is-allow" @click="resolveAgentApproval(pending.id, true)">允许</button>
+      <button type="button" class="approval-btn is-allow" @click="resolveAgentApproval(pending.id, true)">{{ allowLabel }}</button>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 import { agentApprovalState, resolveAgentApproval } from '../../services/agent/agentApproval'
 
 defineProps<{
@@ -20,6 +20,35 @@ defineProps<{
 }>()
 
 const pending = computed(() => agentApprovalState.pending)
+const left = ref(0)
+let tick = 0
+const stopTick = () => {
+  if (!tick) return
+  window.clearInterval(tick)
+  tick = 0
+}
+watch(
+  () => pending.value?.id,
+  () => {
+    stopTick()
+    const item = pending.value
+    if (!item?.autoAllowAt) {
+      left.value = 0
+      return
+    }
+    const update = () => {
+      left.value = Math.max(0, Math.ceil((item.autoAllowAt! - Date.now()) / 1000))
+      if (left.value <= 0) stopTick()
+    }
+    update()
+    tick = window.setInterval(update, 200)
+  },
+  { immediate: true },
+)
+onUnmounted(stopTick)
+const allowLabel = computed(() => (
+  pending.value?.kind === 'write_skill' && left.value > 0 ? `允许 ${left.value}s` : '允许'
+))
 </script>
 
 <style scoped>

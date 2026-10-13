@@ -21,9 +21,7 @@
             @click="startFromCard(card.prompt)"
           >
             <span class="feature-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <path v-for="(d, index) in card.paths" :key="index" :d="d" />
-              </svg>
+              <Icon :icon="featureIconName(card.id)" width="16" height="16" />
             </span>
             <span class="feature-copy">
               <span class="feature-title">{{ card.title }}</span>
@@ -49,15 +47,43 @@
               v-if="block.type === 'step'"
               class="activity-entry"
             >
-              <div class="activity-line" :class="[`is-${block.step.status}`]">
+              <button
+                v-if="block.step.children?.length"
+                class="activity-line is-task"
+                type="button"
+                :class="[`is-${block.step.status}`]"
+                @click="toggleJob(block.step.id)"
+              >
                 <span class="activity-icon" aria-hidden="true">
-                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                    <path v-for="(d, index) in iconPaths(block.step.name)" :key="index" :d="d" />
-                  </svg>
+                  <Icon :icon="activityIconName(block.step.name)" width="14" height="14" />
+                </span>
+                <span class="activity-text" :class="{ 'is-live': block.step.status === 'running' }">{{ block.step.label }}</span>
+                <span class="activity-toggle">{{ expandedJobs[block.step.id] !== false ? '▾' : '▸' }} {{ block.step.children.length }}</span>
+              </button>
+              <div
+                v-else
+                class="activity-line"
+                :class="[`is-${block.step.status}`]"
+              >
+                <span class="activity-icon" aria-hidden="true">
+                  <Icon :icon="activityIconName(block.step.name)" width="14" height="14" />
                 </span>
                 <span class="activity-text" :class="{ 'is-live': block.step.status === 'running' }">{{ block.step.label }}</span>
               </div>
               <p v-if="block.step.status === 'failed' && block.step.detail" class="activity-detail">{{ block.step.detail }}</p>
+              <div v-if="block.step.children?.length && expandedJobs[block.step.id] !== false" class="activity-children">
+                <div
+                  v-for="child in block.step.children"
+                  :key="child.id"
+                  class="activity-line is-child"
+                  :class="[`is-${child.status}`]"
+                >
+                  <span class="activity-icon" aria-hidden="true">
+                    <Icon :icon="activityIconName(child.name)" width="12" height="12" />
+                  </span>
+                  <span class="activity-text" :class="{ 'is-live': child.status === 'running' }">{{ child.label }}</span>
+                </div>
+              </div>
             </div>
             <div
               v-else-if="block.type === 'text' && block.content.trim()"
@@ -165,22 +191,25 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { Icon } from '@iconify/vue/offline'
 import MarkdownRender from 'markstream-vue'
 import 'markstream-vue/index.css'
 import '../../services/model/markstream'
 import { themeState } from '../../composables/useTheme'
 import AgentApprovalBar from '../agent/AgentApprovalBar.vue'
-import { resolveSitePackForUrl, sitePackHasTool } from '../../services/agent/sitePack'
+import { resolveSitePackForUrl } from '../../services/agent/sitePack'
 import {
   browserChatSessions,
   clearBrowserChat,
   ensureBrowserChat,
   sendChatMessage,
+  stopBrowserAgent,
   stopChat,
 } from '../../services/agent/chat'
 import { hostnameOf } from '../../services/browser/appBrowser'
-import { browserVideoWatches } from '../../services/chaoxing/browser/watch'
+import { agentWatchBusy } from '../../services/platform/panelAccess'
+import { activityIconName, featureIconName, type AgentFeatureIcon } from '../../utils/ui/agentIcons'
 import { shouldSubmitComposerEnter } from '../../utils/ui/composerEnter'
 import { assistantTimeline } from '../../views/agentChat/threadDisplay'
 import BrowserAgentWatchBar from './BrowserAgentWatchBar.vue'
@@ -196,40 +225,40 @@ const threadRef = ref<HTMLElement | null>(null)
 const inputRef = ref<HTMLTextAreaElement | null>(null)
 const composing = ref(false)
 const pinBottom = ref(true)
+const expandedJobs = ref<Record<string, boolean>>({})
+const toggleJob = (id: string) => {
+  expandedJobs.value = { ...expandedJobs.value, [id]: !expandedJobs.value[id] }
+}
 let compositionEndedAt = 0
 
 const featureCards = computed(() => {
-  const cards = [
+  const cards: Array<{ id: AgentFeatureIcon; title: string; desc: string; prompt: string }> = [
     {
       id: 'read',
       title: '读当前页',
       desc: '看看现在打开的是什么',
       prompt: '读一下当前网页，告诉我现在在哪、页面上能做什么。',
-      paths: ['M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z', 'M3 12h18', 'M12 3c2.7 2.8 4 5.8 4 9s-1.3 6.2-4 9c-2.7-2.8-4-5.8-4-9s1.3-6.2 4-9z'],
     },
     {
       id: 'click',
       title: '点一下',
       desc: '按钮、链接或选项',
       prompt: '帮我点页面上该点的按钮或链接。',
-      paths: ['M9 9l11 4-5 2-2 5z', 'M5 5v6'],
     },
     {
       id: 'type',
       title: '填写',
       desc: '在输入框里打字',
       prompt: '帮我填写这个页面上的表单。',
-      paths: ['M4 7h16v10H4z', 'M8 17v2', 'M16 17v2', 'M8 11h8'],
     },
   ]
   const pack = resolveSitePackForUrl(props.url || '')
-  if (sitePackHasTool(pack, 'browser_study_play')) {
+  if (pack?.siteId === 'chaoxing') {
     cards.push({
       id: 'play',
       title: '播完章节',
       desc: pack?.name ? `把${pack.name}未完成的播完` : '把未完成的章节播完',
       prompt: pack?.name ? `把${pack.name}未完成的章节播完。` : '把未完成的章节播完。',
-      paths: ['M8 6v12l10-6z'],
     })
   }
   return cards
@@ -257,16 +286,8 @@ const composerPlaceholder = computed(() =>
     : '问网页，或让我点、填、打开…',
 )
 
-/** 只读 status，避免进度时钟每 200ms 把整段对话 Markdown 重绘一遍。 */
-const watchActive = computed(() => {
-  const id = String(props.browserId || '').trim()
-  const status = id ? browserVideoWatches.value[id]?.status : ''
-  return status === 'watching'
-    || status === 'paused'
-    || status === 'stalled'
-    || status === 'captcha'
-    || status === 'quiz'
-})
+/** 只认 Agent 自己的监测。面板空白监测默认 paused，不能拿来当对话忙。 */
+const watchActive = computed(() => agentWatchBusy(props.browserId))
 const busy = computed(() => streaming.value || watchActive.value)
 
 const isThinking = (message: { status?: string; waiting?: boolean; content?: string }) =>
@@ -277,50 +298,31 @@ const messageMemo = (message: {
   content?: string
   error?: string
   waiting?: boolean
-  steps?: Array<{ id?: string; status?: string; label?: string }>
+  steps?: Array<{ id?: string; status?: string; label?: string; children?: Array<{ id?: string; status?: string; label?: string }> }>
 }) => [
   message.status,
   message.content,
   message.error,
   message.waiting,
-  (message.steps || []).map((step) => `${step.id}:${step.status}:${step.label}`).join(),
+  (message.steps || []).map((step) => `${step.id}:${step.status}:${step.label}:${(step.children || []).map((child) => `${child.id}:${child.status}:${child.label}`).join(',')}`).join(),
+  JSON.stringify(expandedJobs.value),
   themeState.isDark,
 ]
 
-const iconPaths = (name: string) => {
-  if (name === 'browser_get_page' || name === 'browser_get_state') {
-    return ['M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z', 'M3 12h18', 'M12 3c2.4 2.6 3.6 5.4 3.6 8.2S14.4 18.4 12 21']
-  }
-  if (name === 'browser_navigate') return ['M10 13a5 5 0 0 0 7 0l1-1a5 5 0 0 0-7-7l-1 1', 'M14 11a5 5 0 0 0-7 0l-1 1a5 5 0 0 0 7 7l1-1']
-  if (name === 'browser_reload') return ['M21 12a9 9 0 1 1-3-6.7', 'M21 3v6h-6']
-  if (name === 'browser_go_back') return ['M15 6l-6 6 6 6']
-  if (name === 'browser_go_forward') return ['M9 6l6 6-6 6']
-  if (name === 'browser_click' || name === 'browser_click_text') return ['M9 9l11 4-5 2-2 5z']
-  if (name === 'browser_type') return ['M4 7h16v10H4z', 'M8 12h8']
-  if (name === 'browser_scroll') return ['M12 5v14', 'M6 11l6-6 6 6', 'M6 13l6 6 6-6']
-  if (name === 'browser_eval') return ['M8 8l-4 4 4 4', 'M16 8l4 4-4 4']
-  if (name === 'browser_screenshot') return ['M4 7h4l2-2h4l2 2h4v12H4z', 'M12 16a3 3 0 1 0 0-6 3 3 0 0 0 0 6z']
-  if (name === 'browser_todo') return ['M9 11l3 3L22 4', 'M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11']
-  if (name === 'browser_site_graph') return ['M6 7a2 2 0 1 0 0-4 2 2 0 0 0 0 4z', 'M18 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4z', 'M8 18a2 2 0 1 0 0-4 2 2 0 0 0 0 4z', 'M16 17a2 2 0 1 0 0-4 2 2 0 0 0 0 4z', 'M8 8l8 1', 'M7 9l2 6']
-  if (
-    name.startsWith('browser_chaoxing')
-    || name.startsWith('browser_study_')
-    || name === 'browser_homework'
-    || name === 'browser_captcha'
-    || name === 'browser_wait'
-    || name === 'browser_finish'
-  ) {
-    return name === 'browser_wait'
-      ? ['M12 6v6l4 2', 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z']
-      : name === 'browser_finish'
-        ? ['M20 6L9 17l-5-5']
-        : ['M8 6v12l10-6z']
-  }
-  if (name === 'present_quiz') return ['M9 11l3 3L22 4', 'M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11']
-  return ['M12 3v3', 'M12 18v3', 'M3 12h3', 'M18 12h3']
+let followLock = false
+let contentObserver: ResizeObserver | null = null
+let childObserver: MutationObserver | null = null
+
+const stickToBottom = () => {
+  const el = threadRef.value
+  if (!el || !pinBottom.value) return
+  followLock = true
+  el.scrollTop = el.scrollHeight
+  followLock = false
 }
 
 const onThreadScroll = () => {
+  if (followLock) return
   const el = threadRef.value
   if (!el) return
   pinBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight < 48
@@ -328,8 +330,21 @@ const onThreadScroll = () => {
 
 const scrollBottom = async () => {
   await nextTick()
+  stickToBottom()
+}
+
+const observeThreadGrowth = () => {
   const el = threadRef.value
-  if (el && pinBottom.value) el.scrollTop = el.scrollHeight
+  if (!el || typeof ResizeObserver === 'undefined') return
+  contentObserver?.disconnect()
+  childObserver?.disconnect()
+  contentObserver = new ResizeObserver(() => stickToBottom())
+  const watchChildren = () => {
+    for (const child of el.children) contentObserver?.observe(child)
+  }
+  watchChildren()
+  childObserver = new MutationObserver(watchChildren)
+  childObserver.observe(el, { childList: true })
 }
 
 const resizeComposer = () => {
@@ -382,6 +397,11 @@ const submit = async () => {
 }
 
 const stop = () => {
+  const id = String(props.browserId || '').trim()
+  if (id) {
+    stopBrowserAgent(id)
+    return
+  }
   if (session.value) stopChat(session.value.id)
 }
 
@@ -390,6 +410,14 @@ const clear = () => {
   if (id) clearBrowserChat(id)
   pinBottom.value = true
 }
+
+onMounted(observeThreadGrowth)
+onUnmounted(() => {
+  contentObserver?.disconnect()
+  childObserver?.disconnect()
+  contentObserver = null
+  childObserver = null
+})
 
 const onCompositionStart = () => {
   composing.value = true
@@ -478,11 +506,17 @@ const onKeydown = (event: KeyboardEvent) => {
   flex: 1;
   min-height: 0;
   overflow: auto;
+  overflow-anchor: none;
   padding: 12px 12px 8px;
   display: flex;
   flex-direction: column;
   gap: 12px;
   scrollbar-width: none;
+}
+
+.chat-turn {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .agent-thread::-webkit-scrollbar {
@@ -556,17 +590,22 @@ const onKeydown = (event: KeyboardEvent) => {
   font-size: 12px;
   font-weight: 600;
   color: var(--text-primary, #2d3748);
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .feature-desc {
   font-size: 11px;
   line-height: 1.35;
   color: var(--text-secondary, #718096);
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .chat-turn.is-user {
   display: flex;
   justify-content: flex-end;
+  min-width: 0;
 }
 
 .user-turn {
@@ -574,6 +613,7 @@ const onKeydown = (event: KeyboardEvent) => {
   flex-direction: column;
   align-items: flex-end;
   max-width: 88%;
+  min-width: 0;
 }
 
 .watch-chip {
@@ -598,6 +638,7 @@ const onKeydown = (event: KeyboardEvent) => {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-width: 0;
 }
 
 .todo-card {
@@ -688,7 +729,9 @@ const onKeydown = (event: KeyboardEvent) => {
 
 .todo-text {
   min-width: 0;
+  flex: 1 1 auto;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
   word-break: break-word;
 }
 
@@ -696,15 +739,50 @@ const onKeydown = (event: KeyboardEvent) => {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  min-width: 0;
 }
 
 .activity-line {
   display: flex;
   align-items: flex-start;
   gap: 8px;
+  min-width: 0;
+  width: 100%;
+}
+
+.activity-line.is-task {
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.activity-toggle {
+  flex-shrink: 0;
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-secondary, #718096);
+  white-space: nowrap;
+}
+
+.activity-children {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 4px 0 0 22px;
+  padding-left: 8px;
+  border-left: 1px solid color-mix(in srgb, var(--text-primary, #2d3748) 10%, transparent);
+}
+
+.activity-line.is-child .activity-text {
+  font-size: 12px;
 }
 
 .activity-icon {
+  flex-shrink: 0;
   width: 16px;
   height: 22px;
   display: flex;
@@ -720,8 +798,18 @@ const onKeydown = (event: KeyboardEvent) => {
   color: color-mix(in srgb, var(--text-primary, #2d3748) 86%, transparent);
 }
 
+.assistant-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .activity-text {
+  flex: 1 1 auto;
+  min-width: 0;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .activity-text.is-live,
@@ -741,6 +829,8 @@ const onKeydown = (event: KeyboardEvent) => {
   font-size: 12px;
   line-height: 1.5;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .assistant-thinking,

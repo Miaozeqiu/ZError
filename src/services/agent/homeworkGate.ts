@@ -1,7 +1,10 @@
 import { siteGraphUrlFromFrames } from '../browser/siteGraphCore'
-import type { PlatformAdapter } from '../platform'
+import { CX_COURSE } from '../platform/chaoxing/fallback'
 
-type HomeworkUrls = Pick<PlatformAdapter, 'isCourseUrl' | 'isHomeworkDoUrl'>
+type HomeworkUrls = {
+  isCourseUrl: (url: string) => boolean
+  isHomeworkDoUrl: (url: string) => boolean
+}
 
 /** 顶层是课程壳、名单在 iframe 时，用内容框地址认当前页。 */
 export const homeworkPageUrl = (topUrl: string, frameSrcs: string[] = []) =>
@@ -10,7 +13,7 @@ export const homeworkPageUrl = (topUrl: string, frameSrcs: string[] = []) =>
 /** 课程壳 / 进课中间页：名单可能还没出来，list/open 应能点「作业」。 */
 export const isHomeworkCourseShell = (adapter: HomeworkUrls, url: string) =>
   !adapter.isHomeworkDoUrl(url)
-  && (adapter.isCourseUrl(url) || /stucoursemiddle|\/mycourse\/stu/i.test(url))
+  && (adapter.isCourseUrl(url) || CX_COURSE.test(url))
 
 export const homeworkEnteringList = (
   adapter: HomeworkUrls,

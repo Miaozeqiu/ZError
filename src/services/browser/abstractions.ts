@@ -1,15 +1,19 @@
 import { computed, ref, shallowRef, watch } from 'vue'
+import { contentParserIdsOf, parserPageKindOf, siteGraphForUrl, siteGraphNodeForUrl } from './siteGraphCore'
 import {
-  ensurePlatformAdapters,
-  listPlatformAdapters,
-  resolvePlatformAdapter,
-  type PlatformRole,
-} from '../platform'
+  isChaoxingCourseUrl,
+  isChaoxingHomeworkDoUrl,
+  isChaoxingHomeworkListUrl,
+  isChaoxingHomeworkUrl,
+  isChaoxingLoginUrl,
+  isChaoxingPlayerUrl,
+  isChaoxingStudyUrl,
+  pageRoleForUrl,
+} from '../platform/chaoxing/nav'
+import '../platform'
 
-ensurePlatformAdapters()
-
-/** 抽象层角色（跨平台稳定）。旧 id 如 chaoxing-study 已废弃，请用 role。 */
-export type BrowserAbstractionRole = PlatformRole
+/** 抽象层角色跟网站地图节点走。旧 id 如 chaoxing-study 已废弃，请用 role。 */
+export type BrowserAbstractionRole = string
 export type BrowserAbstractionId = BrowserAbstractionRole
 
 export type BrowserAbstraction = {
@@ -46,76 +50,99 @@ export type HomeworkCardSnap = {
   }>
   pending?: Array<{ title: string; status: string }>
   works?: Array<{ title: string; status: string }>
+  canSave?: boolean
+  canSubmit?: boolean
 }
 
-const withAdapter = <T,>(url: string, fn: (adapter: NonNullable<ReturnType<typeof resolvePlatformAdapter>>) => T, fallback: T): T => {
-  const adapter = resolvePlatformAdapter(url)
-  if (!adapter) return fallback
-  return fn(adapter)
-}
+export const isPlayerUrl = (url: string) => isChaoxingPlayerUrl(url)
+export const isCourseUrl = (url: string) => isChaoxingCourseUrl(url)
+export const isHomeworkDoUrl = (url: string) => isChaoxingHomeworkDoUrl(url)
+export const isHomeworkListUrl = (url: string) => isChaoxingHomeworkListUrl(url)
+export const isHomeworkUrl = (url: string) => isChaoxingHomeworkUrl(url)
+export const isChapterWorkUrl = (url: string) => isPlayerUrl(url)
+export const canUseHomeworkTools = (url: string) => isHomeworkUrl(url) || isChapterWorkUrl(url)
+export const isStudyUrl = (url: string) => isChaoxingStudyUrl(url)
+export const isLoginUrl = (url: string) => isChaoxingLoginUrl(url)
 
-export const isPlayerUrl = (url: string) => withAdapter(url, (a) => a.isPlayerUrl(url), false)
-export const isCourseUrl = (url: string) => withAdapter(url, (a) => a.isCourseUrl(url), false)
-export const isHomeworkDoUrl = (url: string) => withAdapter(url, (a) => a.isHomeworkDoUrl(url), false)
-export const isHomeworkListUrl = (url: string) => withAdapter(url, (a) => a.isHomeworkListUrl(url), false)
-export const isHomeworkUrl = (url: string) => withAdapter(url, (a) => a.isHomeworkUrl(url), false)
-export const isChapterWorkUrl = (url: string) => withAdapter(url, (a) => a.isChapterWorkUrl(url), false)
-export const canUseHomeworkTools = (url: string) => withAdapter(url, (a) => a.canUseHomeworkTools(url), false)
-export const isStudyUrl = (url: string) => withAdapter(url, (a) => a.isStudyUrl(url), false)
-export const isLoginUrl = (url: string) => withAdapter(url, (a) => a.isLoginUrl(url), false)
-
-const ROLE_META: Record<BrowserAbstractionRole, { name: string; tool: string; extraTools?: string[]; summary: string }> = {
+const ROLE_META: Record<string, { name: string; tool: string; extraTools?: string[]; summary: string }> = {
   homework: {
     name: '作业',
-    tool: 'browser_homework',
-    summary: '题卡：list / open / inspect / fill / save / submit',
+    tool: 'browser_click',
+    summary: '看快照点选项，填完再保存',
   },
   study: {
     name: '刷课',
-    tool: 'browser_click_text / browser_study_play',
-    extraTools: ['browser_study_chapters', 'browser_study_watch', 'browser_study_next'],
-    summary: '点章节 → 点节名 → play → watch → next',
+    tool: 'browser_click / browser_watch',
+    summary: '侧栏「章节」只是目录。点节名进播放页，再点播放，browser_watch 挂进度',
   },
   captcha: {
     name: '验证码',
-    tool: 'browser_captcha',
-    summary: '认图填写图片验证码',
+    tool: 'browser_type',
+    summary: '认图后填进输入框',
   },
   login: {
     name: '登录',
     tool: 'browser_type / browser_click',
     summary: '账号密码登录',
   },
+  list: {
+    name: '名单',
+    tool: 'browser_click',
+    summary: '看快照点要打开的那一行',
+  },
+  course: {
+    name: '课程',
+    tool: 'browser_click',
+    extraTools: ['browser_click_text'],
+    summary: '侧栏页签：任务 / 章节 / 作业。章节只是目录，作业才是名单。',
+  },
 }
 
-const buildAbstractionsForRole = (role: BrowserAbstractionRole, platformId: string, platformName: string): BrowserAbstraction => {
-  const meta = ROLE_META[role]
-  const label = listPlatformAdapters().find((a) => a.id === platformId)?.roleLabel(role) || meta.name
+export type SiteCard = {
+  ok?: boolean
+  url?: string
+  role?: string
+  page?: string
+  title?: string
+  current?: string
+  hint?: string
+  next?: string
+  confidence?: number
+  questionCount?: number
+  filledCount?: number
+  handles?: Array<{ kind?: string; label?: string; title?: string }>
+  jobs?: unknown[]
+  chapters?: unknown[]
+  works?: Array<{ title?: string; status?: string }>
+  questions?: unknown[]
+  controls?: Record<string, string>
+}
+
+const roleMetaOf = (role: string) => (
+  ROLE_META[role] || { name: role, tool: 'browser_click', summary: '看快照点' }
+)
+
+const GRAPH_ROLES = ['homework', 'study', 'course', 'list', 'login'] as const
+
+const buildAbstractionsForRole = (role: BrowserAbstractionRole): BrowserAbstraction => {
+  const meta = roleMetaOf(role)
   return {
     id: role,
     role,
-    platformId,
-    name: platformName ? `${platformName}${label}` : label,
+    platformId: 'graph',
+    name: meta.name,
     tool: meta.tool,
     extraTools: meta.extraTools,
     summary: meta.summary,
-    match: (url: string) => {
-      const adapter = resolvePlatformAdapter(url)
-      if (!adapter || adapter.id !== platformId) return false
-      if (role === 'captcha') return false
-      return adapter.roleOf(url) === role
-    },
+    match: (url: string) => role !== 'captcha' && pageRoleForUrl(url) === role,
   }
 }
 
-/** 由已注册平台生成抽象层；当前仅学习通。 */
-export const BROWSER_ABSTRACTIONS: BrowserAbstraction[] = listPlatformAdapters().flatMap((adapter) => (
-  (['homework', 'study', 'captcha', 'login'] as BrowserAbstractionRole[]).map((role) => (
-    buildAbstractionsForRole(role, adapter.id, adapter.name)
-  ))
-))
+/** 抽象层跟网站地图的页面身份走，不跟站点适配器。 */
+export const BROWSER_ABSTRACTIONS: BrowserAbstraction[] = GRAPH_ROLES.map((role) => buildAbstractionsForRole(role))
 
 export const lastHomeworkCard = shallowRef<HomeworkCardSnap | null>(null)
+export const lastSiteCard = shallowRef<SiteCard | null>(null)
 export const abstractionParsing = ref(false)
 export const abstractionMenuOpen = ref(false)
 export const currentBrowserUrl = ref('')
@@ -125,9 +152,39 @@ export const publishHomeworkCard = (card: HomeworkCardSnap | null) => {
   lastHomeworkCard.value = card
 }
 
+const clickableCount = (card: SiteCard | null) => {
+  if (!card || card.ok === false) return 0
+  return (card.handles?.length || 0) + (card.jobs?.length || 0) + (card.chapters?.length || 0)
+    + (card.questions?.length || 0) + (card.works?.length || 0) + (Number(card.questionCount) || 0)
+}
+
+export const publishSiteCard = (card: SiteCard | null) => {
+  if (card && clickableCount(card) === 0) {
+    const prev = lastSiteCard.value
+    if (prev && clickableCount(prev) > 0) {
+      const same = !card.url || !prev.url || card.url === prev.url
+      if (same) return
+    }
+    lastSiteCard.value = null
+    return
+  }
+  lastSiteCard.value = card
+}
+
+const hostOf = (url: string) => {
+  try {
+    return new URL(url).hostname.replace(/^www\./i, '').toLowerCase()
+  } catch {
+    return ''
+  }
+}
+
 export const setCurrentBrowserPage = (id: string, url: string) => {
+  const prevHost = hostOf(currentBrowserUrl.value)
   currentBrowserId.value = id
   currentBrowserUrl.value = url
+  const nextHost = hostOf(url)
+  if (prevHost && nextHost && prevHost !== nextHost) lastSiteCard.value = null
 }
 
 export const abstractionRole = (layer: { id?: string; role?: BrowserAbstractionRole } | null | undefined): BrowserAbstractionRole | null => {
@@ -137,10 +194,12 @@ export const abstractionRole = (layer: { id?: string; role?: BrowserAbstractionR
   if (id === 'homework' || id.endsWith('-homework') || id === 'chaoxing-homework') return 'homework'
   if (id === 'study' || id.endsWith('-study') || id === 'chaoxing-study') return 'study'
   if (id === 'login' || id.endsWith('-login') || id === 'chaoxing-login') return 'login'
+  if (id === 'course' || id.endsWith('-course') || id === 'chaoxing-course') return 'course'
   if (id === 'captcha' || id.endsWith('-captcha') || id === 'chaoxing-captcha') return 'captcha'
   return null
 }
 
+/** 跟页面身份走。播放页是章节；本节测验靠 abstractionDrill 钻入，不改主角色。 */
 export const primaryAbstraction = (url: string) => (
   BROWSER_ABSTRACTIONS.find((item) => item.role !== 'captcha' && item.match(url))
   || BROWSER_ABSTRACTIONS.find((item) => item.match(url))
@@ -163,8 +222,8 @@ export const abstractionRows = (
 ): AbstractionRow[] => {
   const primary = primaryAbstraction(url)
   const homework = lastHomeworkCard.value
-  const adapter = resolvePlatformAdapter(url)
-  const visible = BROWSER_ABSTRACTIONS.filter((item) => !adapter || item.platformId === adapter.id)
+  const onGraph = Boolean(siteGraphForUrl(url))
+  const visible = onGraph ? BROWSER_ABSTRACTIONS : (primary ? [primary] : [])
   return visible.map((item) => {
     const current = primary?.id === item.id && primary?.platformId === item.platformId
     let preview = item.summary
@@ -175,6 +234,9 @@ export const abstractionRows = (
       if (count) preview = `${homework.title || '题卡'} · ${count} 道，已填 ${filled}`
       else if (pending) preview = `待做 ${pending} 份`
       else if (homework.hint) preview = homework.hint
+    }
+    if (item.role === 'course' && lastSiteCard.value?.current) {
+      preview = `当前「${lastSiteCard.value.current}」`
     }
     if (item.role === 'study' && extras) {
       const left = extras.unfinishedCount || extras.unfinished?.length || 0
@@ -189,19 +251,24 @@ export const abstractionRows = (
   })
 }
 
+export const parserPageKind = (url: string) => parserPageKindOf(siteGraphNodeForUrl(url))
+
 export const abstractionButtonLabel = computed(() => {
-  const hit = primaryAbstraction(currentBrowserUrl.value)
-  const role = abstractionRole(hit)
-  if (!hit || !role) return '解析'
-  if (role === 'study') return '章节'
-  if (role === 'homework') return '题卡'
-  return hit.name.replace(/^学习通|^智慧树/, '') || '解析'
+  const href = currentBrowserUrl.value
+  const kind = parserPageKind(href)
+  if (kind === 'study') return '章节'
+  if (kind === 'homework') return '题卡'
+  const site = lastSiteCard.value
+  if (site?.ok) return site.title || site.page || '解析'
+  const node = siteGraphNodeForUrl(href)
+  if (kind === 'site') return node?.title || '解析'
+  return '解析'
 })
 
-/** 仅章节/题卡等有内容解析的页面显示入口；登录、空间等无解析页隐藏。 */
+/** 有内容解析器的节点才显示入口。登录、验证码、没写 parserIds 的页隐藏。 */
 export const abstractionButtonVisible = computed(() => {
-  const role = abstractionRole(primaryAbstraction(currentBrowserUrl.value))
-  return role === 'study' || role === 'homework'
+  if (lastSiteCard.value?.ok) return true
+  return contentParserIdsOf(siteGraphNodeForUrl(currentBrowserUrl.value)).length > 0
 })
 
 watch(abstractionButtonVisible, (visible) => {
@@ -238,14 +305,13 @@ watch(currentBrowserUrl, (url) => {
 })
 
 export const abstractionPanelTitle = computed(() => {
-  const hit = primaryAbstraction(currentBrowserUrl.value)
-  const role = abstractionRole(hit)
-  if (!hit || !role) return '解析'
-  if (role === 'study') return '章节'
-  if (role === 'homework') return '题卡'
-  if (role === 'login') return '登录'
-  if (role === 'captcha') return '验证码'
-  return hit.name.replace(/^学习通|^智慧树/, '') || '解析'
+  const href = currentBrowserUrl.value
+  const kind = parserPageKind(href)
+  if (kind === 'study') return '章节'
+  if (kind === 'homework') return '题卡'
+  const site = lastSiteCard.value
+  if (site?.ok) return site.title || site.page || '解析'
+  return siteGraphNodeForUrl(href)?.title || '解析'
 })
 
 const esc = (value: string) => String(value || '')
@@ -316,6 +382,24 @@ export const abstractionOverlayHtml = (
   const role = abstractionRole(layer)
   const homework = lastHomeworkCard.value
   const parsing = abstractionParsing.value
+  const site = lastSiteCard.value
+  if ((!layer || !role) && site?.ok) {
+    const works = (site.works || []).slice(0, 16)
+    const title = String(site.title || site.page || '解析')
+    const list = works.length
+      ? `<ul class="ze-abs-works">${works.map((work) =>
+          `<li><span>${esc(String(work.title || ''))}</span><span>${esc(String(work.status || ''))}</span></li>`).join('')}</ul>`
+      : `<div class="ze-abs-empty">${esc(String(site.hint || '看快照，用 ref 点'))}</div>`
+    return `<article class="ze-abs-card is-current">
+      <header class="ze-abs-head">
+        <div>
+          <div class="ze-abs-title">${esc(title)}</div>
+          <div class="ze-abs-sub">${works.length ? `${works.length} 项` : esc(site.hint || '')}</div>
+        </div>
+      </header>
+      ${list}
+    </article>`
+  }
   if (!layer || !role) {
     return `<div class="ze-abs-empty">${parsing ? '正在识别当前页…' : '当前页没有可解析的题卡'}</div>`
   }

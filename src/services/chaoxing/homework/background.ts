@@ -1,9 +1,11 @@
 import {
   abstractionDrill,
+  abstractionParsing,
   lastHomeworkCard,
   publishHomeworkCard,
   setAbstractionDrill,
 } from '../../browser/abstractions'
+import { kickParserClock, parserClockWatching, unwatchParserClock, watchParserClock } from '../../browser/pageClock'
 import { asObject, evalBrowserViewMain } from '../../browser/eval'
 import { chapterStateFor } from '../browser/chapters'
 import { inspectChaoxingHomework } from './inspect'
@@ -11,10 +13,8 @@ import { questionHasContent } from './parse'
 import { startHomeworkLiveSync, stopHomeworkLiveSync } from './live'
 import { PROBE_HOMEWORK_PAGE } from './scripts'
 
-const PARSE_MS = 1600
 const VISION_EVERY = 4
 
-let timer = 0
 let browserId = ''
 let busy = false
 let ticks = 0
@@ -113,7 +113,12 @@ const tick = async (id: string) => {
     lastProbeUrl = href || lastProbeUrl
     if (urlChanged || cardNeedsRefresh(questionLi)) {
       const useVision = ticks % VISION_EVERY === 1 || !cardUseful()
-      await inspectChaoxingHomework(id, { vision: useVision }).catch(() => null)
+      abstractionParsing.value = true
+      try {
+        await inspectChaoxingHomework(id, { vision: useVision }).catch(() => null)
+      } finally {
+        abstractionParsing.value = false
+      }
     }
     await startHomeworkLiveSync(id).catch(() => null)
   } finally {
@@ -122,8 +127,7 @@ const tick = async (id: string) => {
 }
 
 export const stopHomeworkBackgroundParse = () => {
-  if (timer) window.clearInterval(timer)
-  timer = 0
+  if (browserId) unwatchParserClock(browserId, 'homework')
   browserId = ''
   busy = false
   ticks = 0
@@ -140,14 +144,12 @@ export const startHomeworkBackgroundParse = (id: string) => {
     stopHomeworkBackgroundParse()
     return
   }
-  if (browserId === next && timer) {
-    void tick(next)
+  if (browserId === next && parserClockWatching(next, 'homework')) {
+    void kickParserClock(next)
     return
   }
   stopHomeworkBackgroundParse()
   browserId = next
-  timer = window.setInterval(() => {
-    void tick(next)
-  }, PARSE_MS)
-  void tick(next)
+  watchParserClock(next, 'homework', () => tick(next))
+  void kickParserClock(next)
 }

@@ -1,5 +1,4 @@
 import { SAME_ORIGIN_FRAMES } from '../eval'
-import { CHROME_HELPERS } from './chrome'
 import type { ActOp, BrowserLocator } from './types'
 
 /** 页内一次探测/执行。必须是单表达式，供 `var value = SCRIPT` 使用。 */
@@ -9,7 +8,13 @@ export const ENGINE_ACT_SCRIPT = (input: {
   text?: string
 }) => `(function(){
 ${SAME_ORIGIN_FRAMES}
-${CHROME_HELPERS}
+function __zeChromeName(el){
+  try {
+    var t = String(el.getAttribute('aria-label') || el.getAttribute('title') || '').replace(/\\s+/g, ' ').trim();
+    return t.length && t.length <= 40 ? t : '';
+  } catch (e) { return ''; }
+}
+function __zeChromeHit(el){ return !!__zeChromeName(el); }
 function __zeCompact(s){ return String(s || '').replace(/\\s+/g, ''); }
 function __zeEsc(id){
   return String(id || '').replace(/([^a-zA-Z0-9_-])/g, '\\\\$1');
@@ -137,6 +142,25 @@ function __zeHit(el){
       n = n.parentElement;
     }
     if (lab && top && lab.contains && lab.contains(top)) return { ok: true, cover: '' };
+    var clickable = function(node){
+      var cur = node;
+      for (var i = 0; i < 6 && cur; i++) {
+        var tag = String(cur.tagName || '').toLowerCase();
+        var role = '';
+        try { role = String(cur.getAttribute('role') || ''); } catch (eR) {}
+        if (tag === 'a' || tag === 'button' || tag === 'label' || role === 'button' || role === 'link' || role === 'tab' || role === 'menuitem' || role === 'treeitem' || role === 'listitem') return cur;
+        try { if (cur.getAttribute('onclick')) return cur; } catch (eC) {}
+        cur = cur.parentElement;
+      }
+      return null;
+    };
+    var fromEl = clickable(el);
+    var fromTop = clickable(top);
+    if (fromEl && fromTop && fromEl === fromTop) return { ok: true, cover: '' };
+    try {
+      var st = (doc.defaultView || window).getComputedStyle(top);
+      if (st && st.pointerEvents === 'none') return { ok: true, cover: '' };
+    } catch (eS) {}
     var type = '';
     try { type = String(el.type || '').toLowerCase(); } catch (e2) {}
     if ((type === 'checkbox' || type === 'radio') && lab && __zePainted(lab)) return { ok: true, cover: '' };
@@ -176,7 +200,7 @@ function __zeClickTarget(el){
     var role = '';
     try { role = String(n.getAttribute('role') || ''); } catch (e) {}
     if (tag === 'A' || tag === 'BUTTON' || tag === 'INPUT' || tag === 'LABEL' || tag === 'SELECT' || tag === 'TEXTAREA') return n;
-    if (role === 'button' || role === 'tab' || role === 'link' || role === 'menuitem') return n;
+    if (role === 'button' || role === 'tab' || role === 'link' || role === 'menuitem' || role === 'treeitem' || role === 'listitem') return n;
     n = n.parentElement;
   }
   return el;

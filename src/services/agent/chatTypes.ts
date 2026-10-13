@@ -80,6 +80,25 @@ export interface AgentContextSummary {
   updatedAt: number
 }
 
+export type AgentSubagentKind = 'explore' | 'execute' | 'parser'
+
+export type AgentSubagentJobStatus = 'running' | 'done' | 'failed' | 'stopped'
+
+export interface AgentSubagentJob {
+  id: string
+  parentSessionId: string
+  kind: AgentSubagentKind
+  goal: string
+  todoId?: string
+  status: AgentSubagentJobStatus
+  summary?: string
+  url?: string
+  card?: unknown
+  error?: string
+  startedAt: number
+  endedAt?: number
+}
+
 export interface AgentChatSession {
   id: string
   title: string
@@ -87,7 +106,10 @@ export interface AgentChatSession {
   attachments?: AgentChatAttachment[]
   studySubjectId?: number
   browserId?: string
+  parentId?: string
+  role?: 'parent' | AgentSubagentKind
   todos?: AgentTodoItem[]
+  jobs?: AgentSubagentJob[]
   contextSummary?: AgentContextSummary
   createdAt: number
   updatedAt: number

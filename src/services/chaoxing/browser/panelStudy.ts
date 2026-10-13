@@ -1,5 +1,7 @@
+/** 面板点播放 / 下一节。Agent 经 adapter 进来，不要从 chat.ts 直调。 */
 import { startChaoxingChapterParser } from './chapters'
 import {
+  applyVideo,
   chapterStateFor,
   findChapterInPanel,
   ingestChapterSnap,
@@ -15,6 +17,7 @@ import {
 import { liveStudyHref, parseChaoxingChapters, waitForStudyPlayerReady } from '../study'
 import { pauseChaoxingVideo, readChaoxingVideoTick, tapChaoxingPlay, videoTickHasPlayer } from '../study/video'
 import { waitMs } from '../../browser/eval'
+import { kickParserClock } from '../../browser/pageClock'
 
 const hrefChapterId = (href: string) => (
   ((String(href || '').match(/[?&](?:chapterId|chapterid|knowledgeid)=(\d+)/i) || [])[1] || '').replace(/\D/g, '')
@@ -89,7 +92,7 @@ export const packAgentPanel = (browserId: string) => {
   const nextJob = pickPanelActionJob(jobs)
   const unfinishedSections = (raw.unfinished || []).filter((title) => isCatalogSectionTitle(title))
     const hint = event === 'quiz_left'
-    ? `本节视频都已完成，还剩${left.map((job) => job.label).join('、')}。刷课默认跳过测验，立刻 browser_study_next。`
+    ? `本节视频都已完成，还剩${left.map((job) => job.label).join('、')}。刷课默认跳过测验，立刻 看快照。`
     : event === 'chapter_jobs_done'
       ? '本节任务点都已完成'
       : event === 'video_paused'
@@ -218,8 +221,8 @@ export const readPanelStudy = (browserId: string) => {
 export const ensurePanelStudy = async (browserId: string) => {
   const id = String(browserId || '').trim()
   startChaoxingChapterParser(id)
-  const state = chapterStateFor(id)
-  if (state?.chapters.length) return state
+  const refreshed = await refreshChapterCard(id).catch(() => chapterStateFor(id))
+  if (refreshed?.chapters.length) return refreshed
   const ready = await waitForChapterState(id, 800)
   if (ready?.chapters.length) return ready
   return chapterStateFor(id)
@@ -301,8 +304,9 @@ export const pickPlayableJob = (
   )
   const picked = pickJob(jobs, { videoIndex: opts?.videoIndex, label: opts?.label })
   if (opts?.videoIndex || opts?.label) {
-    if (picked?.kind === 'video' && !picked.jobDone) return picked
+    if (picked?.kind === 'video' && (!picked.jobDone || opts.skipIfDone === false)) return picked
     if (picked?.kind === 'quiz' && /测验|作业/.test(String(opts.label || ''))) return picked
+    // 点名的已完成：本节还有没看完的就改播它；本节都完了回 null，由调用方报 alreadyDone，不许偷跳下一节
     return leftVideo()
   }
   return leftVideo()
@@ -357,6 +361,7 @@ export const playPanelStudy = async (
       await waitForStudyPlayerReady(id).catch(() => null)
     }
     const played = await tapChaoxingPlay(id)
+    void kickParserClock(id)
     return { ...packPlayed(played), via: 'visible', panel: agentPanel(id) }
   }
   const href = await liveStudyHref(id)
@@ -392,6 +397,7 @@ export const playPanelStudy = async (
       await waitForStudyPlayerReady(id).catch(() => null)
     }
     const played = await tapChaoxingPlay(id)
+    void kickParserClock(id)
     return { ...packPlayed(played), via: 'visible', panel: agentPanel(id) }
   }
   const playJob = async (job: ChapterJobItem) => {
@@ -405,6 +411,20 @@ export const playPanelStudy = async (
     label: opts?.label,
     skipIfDone: opts?.skipIfDone ?? true,
   })
+  if (!job && (opts?.videoIndex || opts?.label)) {
+    const named = pickJob(jobs, { videoIndex: opts?.videoIndex, label: opts?.label })
+    if (named?.kind === 'video' && named.jobDone) {
+      return {
+        ok: false,
+        alreadyDone: true,
+        error: `${named.label || `视频${opts?.videoIndex || ''}`} 已完成，没有播放；要重播请带 skipIfDone=false`,
+        job: named.label,
+        mid: named.mid,
+        via: 'panel',
+        panel: agentPanel(id),
+      }
+    }
+  }
   if (job?.kind === 'video') return playJob(job)
   if (jobs.some((item) => item.kind === 'video')) return nextPanelStudy(id)
   if (job && job.kind !== 'video') return playJob(job)
@@ -466,7 +486,7 @@ export const nextPanelStudy = async (browserId: string) => {
     hasVideo: afterJobs.some((job) => job.kind === 'video'),
     via: 'panel',
     hint: afterJobs.length
-      ? `已打开「${nextChapter.title}」，没有自动播。看 thisSection.jobs，用 browser_study_play 指定 videoIndex / label。`
+      ? `已打开「${nextChapter.title}」，没有自动播。看 thisSection.jobs，用 看快照 指定 videoIndex / label。`
       : `已打开「${nextChapter.title}」，任务点还没出来。再看 thisSection.jobs；仍空再 next。`,
     panel: agentPanel(id),
   }

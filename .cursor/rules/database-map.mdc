@@ -1,0 +1,17 @@
+---
+description: 改题库、练习或知识图谱时按 SQL 域找文件
+globs: src/services/app/database.ts,src/services/app/database/**/*.ts,src-tauri/src/database/**/*.rs
+alwaysApply: false
+---
+
+# 数据库按域
+
+前端 `database.ts` 只再导出。实现按域：
+
+- 题 / 文件夹 → `questions.rs` + `src/services/app/database/questions.ts`
+- 练习记录 → `practice.rs` + `src/services/app/database/practice.ts`
+- 知识图谱 / 遗忘 → `study_graph.rs` + `forgetting.rs` + `src/services/app/database/studyGraph.ts`
+- 请求日志 → `request_logs.rs`
+- 类型 → `src/services/app/database/types.ts` 与 `src-tauri/src/database/types.rs`
+
+不要在 Vue 里拼 SQL，也不要把新查询塞进 `schema.rs`。

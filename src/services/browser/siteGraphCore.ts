@@ -32,6 +32,19 @@ export type SiteGraphFrame = {
   patterns?: string[]
 }
 
+/** 卡片上画出来的页面结构，不是给 Agent 读的长文。 */
+export type SiteGraphSketchKind = 'full' | 'host-tabs' | 'host-side' | 'nested'
+
+export type SiteGraphSketch = {
+  kind: SiteGraphSketchKind
+  shell?: string
+  caption?: string
+  side?: string[]
+  tabs?: string[]
+  pane?: string
+  stack?: string[]
+}
+
 /** 可序列化节点：patterns 为 URL 正则（命中任一即匹配）。 */
 export type SiteGraphNodeData = {
   id: string
@@ -43,6 +56,8 @@ export type SiteGraphNodeData = {
   /** 页内框：host=外壳套着 iframe。同一框多个页签用 frames */
   frame?: SiteGraphFrame
   frames?: SiteGraphFrame[]
+  /** 画在卡片上的页面结构 */
+  sketch?: SiteGraphSketch
   row: number
   col: number
   patterns: string[]
@@ -165,6 +180,7 @@ bindChaoxingSiteGraph((data) => {
 
 void reloadLearnedSiteGraphs()
 
+
 const sanitizePatterns = (patterns: unknown) => {
   if (!Array.isArray(patterns)) return [] as string[]
   return patterns.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 12)
@@ -207,6 +223,39 @@ const sanitizeFrame = (raw: unknown, prev?: SiteGraphFrame): SiteGraphFrame | un
   }
 }
 
+const SKETCH_KINDS = new Set<SiteGraphSketchKind>(['full', 'host-tabs', 'host-side', 'nested'])
+
+const clipWords = (raw: unknown, max = 6, each = 16) => (
+  (Array.isArray(raw) ? raw : [])
+    .map((item) => String(item || '').trim().slice(0, each))
+    .filter(Boolean)
+    .slice(0, max)
+)
+
+const sanitizeSketch = (raw: unknown, prev?: SiteGraphSketch): SiteGraphSketch | undefined => {
+  const src = raw && typeof raw === 'object' ? raw as Record<string, unknown> : prev
+  if (!src) return undefined
+  const kind = SKETCH_KINDS.has(src.kind as SiteGraphSketchKind)
+    ? src.kind as SiteGraphSketchKind
+    : (prev?.kind || 'full')
+  const shell = String(src.shell || prev?.shell || '').trim().slice(0, 36)
+  const caption = String(src.caption || prev?.caption || '').trim().slice(0, 48)
+  const pane = String(src.pane || prev?.pane || '').trim().slice(0, 36)
+  const side = clipWords(src.side ?? prev?.side)
+  const tabs = clipWords(src.tabs ?? prev?.tabs)
+  const stack = clipWords(src.stack ?? prev?.stack, 4, 24)
+  if (!shell && !caption && !side.length && !tabs.length && !stack.length && !pane) return undefined
+  return {
+    kind,
+    ...(shell ? { shell } : {}),
+    ...(caption ? { caption } : {}),
+    ...(pane ? { pane } : {}),
+    ...(side.length ? { side } : {}),
+    ...(tabs.length ? { tabs } : {}),
+    ...(stack.length ? { stack } : {}),
+  }
+}
+
 const sanitizeFrames = (raw: unknown, prev?: SiteGraphFrame[], prevOne?: SiteGraphFrame) => {
   const list = Array.isArray(raw) ? raw : Array.isArray(prev) && prev.length ? prev : prevOne ? [prevOne] : []
   return list
@@ -227,7 +276,7 @@ const bumpGraphs = () => {
   liveSiteGraphs.value = liveSiteGraphs.value.map((site) => cloneGraph(site))
 }
 
-const replaceLiveSite = (data: SiteGraphData) => {
+export const replaceLiveSite = (data: SiteGraphData) => {
   const next = cloneGraph(data)
   liveSiteGraphs.value = liveSiteGraphs.value.map((item) => (item.id === next.id ? next : item))
   if (!liveSiteGraphs.value.some((item) => item.id === next.id)) {
@@ -236,10 +285,21 @@ const replaceLiveSite = (data: SiteGraphData) => {
   bumpGraphs()
 }
 
+export type SiteGraphChanged = {
+  kind: 'site' | 'node' | 'edge' | 'notes'
+  id?: string
+  from?: string
+  to?: string
+  label?: string
+}
+
 export type SiteGraphPatchResult = {
   ok: boolean
   error?: string
+  persist?: boolean
   site?: SiteGraphData
+  sites?: SiteGraphData[]
+  changed?: SiteGraphChanged
   hint?: string
 }
 
@@ -269,7 +329,18 @@ export const applySiteGraphPatch = (
     return {
       ok: true,
       site: cloneGraph(target),
-      hint: '这是当前图谱。用 upsert_node / upsert_edge 改内存；要留下就写回对应 Skill 的 site-graph.json。',
+      hint: '这是当前图谱。用 upsert_node / upsert_edge 增改，每次自动保存。不要整文件写 site-graph.json。',
+    }
+  }
+
+  if (action === 'save') {
+    const target = site || liveSiteGraphs.value[0]
+    if (!target) return { ok: false, error: '还没有任何站点图谱' }
+    return {
+      ok: true,
+      persist: true,
+      site: cloneGraph(target),
+      hint: `保存站点 ${target.id}。`,
     }
   }
 
@@ -300,8 +371,10 @@ export const applySiteGraphPatch = (
     replaceLiveSite(next)
     return {
       ok: true,
+      persist: true,
+      changed: { kind: 'site', id: siteId },
       site: cloneGraph(findLiveSite(siteId)!),
-      hint: existing ? `已更新站点 ${siteId}。` : `已新建站点 ${siteId}。接着 upsert_node，再写回 site-learn 的 sites/${host}/site-graph.json。`,
+      hint: existing ? `已更新站点 ${siteId}。` : `已新建站点 ${siteId}。接着 upsert_node。`,
     }
   }
 
@@ -324,7 +397,13 @@ export const applySiteGraphPatch = (
         : []
     site.notes = notes
     bumpGraphs()
-    return { ok: true, site: cloneGraph(site), hint: '已更新备注。' }
+    return {
+      ok: true,
+      persist: true,
+      changed: { kind: 'notes' },
+      site: cloneGraph(site),
+      hint: '已更新备注。',
+    }
   }
 
   if (action === 'upsert_node') {
@@ -344,17 +423,25 @@ export const applySiteGraphPatch = (
     const parserIds = sanitizeParserIds(args.parserIds ?? prev?.parserIds)
     const frame = sanitizeFrame(args.frame, prev?.frame)
     const frames = sanitizeFrames(args.frames, prev?.frames, frame)
+    const sketch = sanitizeSketch(args.sketch, prev?.sketch)
     const next: SiteGraphNodeData = {
       id, title, path, summary, row, col, patterns, parserIds,
       ...(structure ? { structure } : {}),
       ...(frame ? { frame } : {}),
       ...(frames.length ? { frames } : {}),
+      ...(sketch ? { sketch } : {}),
     }
     const index = site.nodes.findIndex((node) => node.id === id)
     if (index >= 0) site.nodes[index] = next
     else site.nodes.push(next)
     bumpGraphs()
-    return { ok: true, site: cloneGraph(findLiveSite(site.id)!), hint: `已写入节点「${title}」。` }
+    return {
+      ok: true,
+      persist: true,
+      changed: { kind: 'node', id },
+      site: cloneGraph(findLiveSite(site.id)!),
+      hint: `已写入节点「${title}」。`,
+    }
   }
 
   if (action === 'remove_node') {
@@ -363,7 +450,13 @@ export const applySiteGraphPatch = (
     site.nodes = site.nodes.filter((node) => node.id !== id)
     site.edges = site.edges.filter((edge) => edge.from !== id && edge.to !== id)
     bumpGraphs()
-    return { ok: true, site: cloneGraph(findLiveSite(site.id)!), hint: `已删除节点 ${id}。` }
+    return {
+      ok: true,
+      persist: true,
+      changed: { kind: 'node', id },
+      site: cloneGraph(findLiveSite(site.id)!),
+      hint: `已删除节点 ${id}。`,
+    }
   }
 
   if (action === 'upsert_edge') {
@@ -381,7 +474,13 @@ export const applySiteGraphPatch = (
     if (index >= 0) site.edges[index] = next
     else site.edges.push(next)
     bumpGraphs()
-    return { ok: true, site: cloneGraph(findLiveSite(site.id)!), hint: `已写入边 ${from} → ${to}。` }
+    return {
+      ok: true,
+      persist: true,
+      changed: { kind: 'edge', from, to, label },
+      site: cloneGraph(findLiveSite(site.id)!),
+      hint: `已写入边 ${from} → ${to}。`,
+    }
   }
 
   if (action === 'remove_edge') {
@@ -395,12 +494,18 @@ export const applySiteGraphPatch = (
       && (!label || edge.label === label)
     ))
     bumpGraphs()
-    return { ok: true, site: cloneGraph(findLiveSite(site.id)!), hint: `已删除边 ${from} → ${to}。` }
+    return {
+      ok: true,
+      persist: true,
+      changed: { kind: 'edge', from, to, label: label || undefined },
+      site: cloneGraph(findLiveSite(site.id)!),
+      hint: `已删除边 ${from} → ${to}。`,
+    }
   }
 
   return {
     ok: false,
-    error: 'action 必须是 list/get / upsert_site / upsert_node / remove_node / upsert_edge / remove_edge / set_notes / reset',
+    error: 'action 必须是 list/get / upsert_site / upsert_node / remove_node / upsert_edge / remove_edge / set_notes / save / reset',
   }
 }
 
@@ -433,6 +538,46 @@ export const siteGraphNodeForUrl = (url: string, site = siteGraphForUrl(url)) =>
 export const siteGraphNodeId = (url: string) => siteGraphNodeForUrl(url)?.id || ''
 
 export const siteGraphParserIds = (url: string) => siteGraphNodeForUrl(url)?.parserIds || []
+
+/** 节点 id → 页面身份。homework-do 这类 id 不等于 role。 */
+const NODE_ID_ROLE: Record<string, string> = {
+  'homework-do': 'homework',
+  'homework-list': 'homework',
+}
+
+/** 这一页要不要跑内容解析。login / captcha 是叠层，不算。 */
+export const contentParserIdsOf = (
+  node: Pick<SiteGraphNodeData, 'parserIds'> | null | undefined,
+) => (node?.parserIds || []).filter((id) => id && id !== 'login' && id !== 'captcha')
+
+/**
+ * 跑哪种解析。只有节点 id 本身是 study / homework 才用学习通那两套面板。
+ * 别的站 parserIds 里写了 study，仍然走通用卡。
+ */
+export const parserPageKindOf = (
+  node: Pick<SiteGraphNodeData, 'id' | 'parserIds'> | null | undefined,
+): 'study' | 'homework' | 'site' | null => {
+  if (!node || !contentParserIdsOf(node).length) return null
+  const role = pageRoleOfNode(node)
+  if (node.id === 'study' && role === 'study') return 'study'
+  if (role === 'homework') return 'homework'
+  return 'site'
+}
+
+/**
+ * 页面身份，不是能力清单。
+ * 节点 id 对得上 role（或别名）就用它；parserIds 只是本页还能干什么。
+ * captcha 是叠层，不当主角色。
+ */
+export const pageRoleOfNode = (
+  node: Pick<SiteGraphNodeData, 'id' | 'parserIds'> | null | undefined,
+): string | null => {
+  if (!node) return null
+  const aliased = NODE_ID_ROLE[node.id]
+  if (aliased) return aliased
+  if (node.parserIds.includes(node.id)) return node.id
+  return node.parserIds.find((id) => id && id !== 'captcha') || null
+}
 
 const GRAPH_RANK: Record<string, number> = {
   'homework-do': 80,

@@ -197,7 +197,7 @@ describe('study collectSteps', () => {
   })
 
   it('宿主 studyControlApi 露出 collectSteps / locate', async () => {
-    const { studyControlApi } = await import('../../../src/services/parser/studyRuntime')
+    const { studyControlApi } = await import('../../../src/services/chaoxing/host/studyHost')
     const api = studyControlApi()
     expect(typeof api.collectSteps).toBe('function')
     expect(typeof api.locate).toBe('function')

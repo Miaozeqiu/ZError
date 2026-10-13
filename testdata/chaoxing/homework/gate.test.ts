@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { classifyBrowserPage } from '../../../src/services/agent/browserLoop'
 import { homeworkEnteringList, homeworkPageUrl, isHomeworkCourseShell } from '../../../src/services/agent/homeworkGate'
 import { siteGraphNodeForUrl } from '../../../src/services/browser/siteGraphCore'
 
@@ -16,7 +17,8 @@ describe('homework list gate', () => {
   it('stucoursemiddle + work/list iframe 认成作业列表', () => {
     const page = homeworkPageUrl(middle, [workList])
     expect(page).toBe(workList)
-    expect(siteGraphNodeForUrl(page)?.id).toBe('homework-list')
+    expect(siteGraphNodeForUrl(page)?.id).toBe('course')
+    expect(classifyBrowserPage(page)).toBe('homework-list')
     expect(siteGraphNodeForUrl(middle)?.id).toBe('course')
     expect(homeworkEnteringList(adapter, 'list', middle, page)).toBe(true)
   })

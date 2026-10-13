@@ -5,7 +5,10 @@
   "hostPattern": "chaoxing\\.com",
   "notes": [
     "任务 / 章节 / 作业是课程壳侧栏页签（frames），不是并列顶层页面。",
-    "章节里夹带的测验仍在播放页内；只有课程作业作答才是独立页。"
+    "点侧栏「章节」只换中间目录 iframe，不是播放页，不能 play / next / watch。",
+    "学习通几乎全是套 iframe。侧栏、目录、作业名单点完，顶层网址经常不变。不要用网址变不变判断点没点到，也不要当成已经进了播放页。",
+    "节点 id 是页面身份；parserIds 是本页能力。只有 studentstudy 才是播放页身份。",
+    "章节里夹带的测验仍在播放页内（study 挂 homework 能力）；只有课程作业作答才是独立页。"
   ],
   "nodes": [
     {
@@ -14,6 +17,7 @@
       "path": "passport2.chaoxing.com/login?newversion=true",
       "summary": "账号密码登录。",
       "structure": "整页。#phone / #pwd / #loginBtn，无 iframe。",
+      "sketch": { "kind": "full", "shell": "passport2 登录页", "caption": "整页表单 · 无 iframe" },
       "row": 0,
       "col": 0,
       "patterns": ["passport2\\.chaoxing\\.com"],
@@ -25,13 +29,20 @@
       "path": "i.chaoxing.com · #frame_content",
       "summary": "登录后的个人空间。课表在同一块 iframe 里切页签。",
       "structure": "外壳。#frame_content 里切页签。点「我学的课」后框内会到 visit/courses，但外壳 iframe.src 常仍是最初的 visit/interaction，不要用 src 属性判断页签。看 get_state.spaceTab。",
+      "sketch": {
+        "kind": "host-tabs",
+        "shell": "i.chaoxing.com",
+        "tabs": ["我教的课", "我学的课"],
+        "pane": "/visit/interaction",
+        "caption": "页签在 #frame_content 里 · 外壳地址常不变"
+      },
       "frame": { "name": "#frame_content", "title": "课表", "open": "top", "kind": "host" },
       "frames": [
         {
           "id": "taught",
           "tab": "我教的课",
           "name": "/visit/interaction",
-          "title": "默认页，不是学生课表",
+          "title": "我教的课",
           "open": "stay",
           "patterns": ["visit/interaction"]
         },
@@ -39,7 +50,7 @@
           "id": "learned",
           "tab": "我学的课",
           "name": "/visit/courses",
-          "title": "学生课表，点课名进课",
+          "title": "我学的课",
           "open": "stay",
           "patterns": ["visit/courses", "courselist"]
         }
@@ -59,15 +70,22 @@
       "id": "course",
       "title": "课程",
       "path": "/mycourse/stu · 侧栏页签",
-      "summary": "一门课的外壳。侧栏切换中间 iframe：任务 / 章节 / 作业 / 讨论。刚进课常默认「任务」。",
-      "structure": "顶层 mycourse/stu（或 stucoursemiddle）。侧栏点「章节」→ studentcourse 目录；点「作业」→ work/list；点「任务」→ 活动列表。目录里点节名才进播放页。不要把侧栏页签画成独立顶层节点。",
-      "frame": { "name": "course-iframe", "title": "侧栏内容", "open": "stay", "kind": "host" },
+      "summary": "一门课的外壳。侧栏只换中间 iframe。刚进课常默认「任务」。点「章节」= 打开目录，到不了播放器。",
+      "structure": "顶层一直是 mycourse/stu（或 stucoursemiddle），点侧栏常常只改 pageHeader / 中间框，网址看起来没跳。章节框是 studentcourse 目录；必须再点一条节名，顶层才会变成 studentstudy。任务列表里也有「章节测验」这类字，不要点那些。作业框是 work/list。",
+      "sketch": {
+        "kind": "host-side",
+        "shell": "mycourse/stu 外壳",
+        "side": ["任务", "章节", "作业"],
+        "pane": "stuActiveList",
+        "caption": "点章节=目录，点节名才播放"
+      },
+      "frame": { "name": "中间框", "title": "侧栏内容", "open": "stay", "kind": "host" },
       "frames": [
         {
           "id": "tasks",
           "tab": "任务",
-          "name": "pageHeader=0",
-          "title": "任务/活动列表（刚进课默认）",
+          "name": "stuActiveList",
+          "title": "任务列表",
           "open": "stay",
           "patterns": ["[?&]pageHeader=0(?:&|$)", "stuActiveList", "\\/active\\/stu"]
         },
@@ -75,7 +93,7 @@
           "id": "chapters",
           "tab": "章节",
           "name": "studentcourse",
-          "title": "章节目录（已完成任务点 x/y）",
+          "title": "章节目录",
           "open": "stay",
           "patterns": ["[?&]pageHeader=1(?:&|$)", "studentcourse"]
         },
@@ -83,7 +101,7 @@
           "id": "homework",
           "tab": "作业",
           "name": "work/list",
-          "title": "课程作业名单（待交/已完成）",
+          "title": "作业名单",
           "open": "stay",
           "patterns": [
             "[?&]pageHeader=8(?:&|$)",
@@ -103,7 +121,7 @@
         "\\/active\\/stu",
         "\\/work\\/(?:list|index|view)(?:[/?#]|$)"
       ],
-      "parserIds": []
+      "parserIds": ["course"]
     },
     {
       "id": "study",
@@ -111,6 +129,13 @@
       "path": "/mycourse/studentstudy",
       "summary": "独立播放页。切节、任务点、验证码、本节测验都在本页。",
       "structure": "顶层 studentstudy。中间两层同源 iframe：knowledge/cards → ananas/video 或章节测验题卡。左侧 #coursetree。章节里夹带的作业/测验不是独立「作业作答」页，仍用本页 homework/study 工具。",
+      "sketch": {
+        "kind": "nested",
+        "shell": "studentstudy 播放页",
+        "side": ["节目录"],
+        "stack": ["knowledge/cards", "视频 / 本节测验"],
+        "caption": "只有这一页才能 play"
+      },
       "frame": { "name": "cards → ananas/video|work", "title": "播放器/本节测验", "open": "stay", "kind": "host" },
       "row": 3,
       "col": 0,
@@ -123,6 +148,7 @@
       "path": "/work/dowork",
       "summary": "课程作业的独立作答页（从课程壳「作业」名单打开）。",
       "structure": "整页题干/选项。仅课程作业名单点进去才到这里。章节播放里夹带的测验不要认成本节点。",
+      "sketch": { "kind": "full", "shell": "作业作答页", "caption": "整页题卡 · 无套框" },
       "row": 3,
       "col": 1,
       "patterns": [
@@ -140,7 +166,7 @@
     { "from": "space", "to": "course", "label": "点课名" },
     { "from": "course", "to": "space", "label": "回空间", "kind": "back" },
     { "from": "course", "to": "course", "label": "侧栏切页签", "kind": "loop" },
-    { "from": "course", "to": "study", "label": "点节名" },
+    { "from": "course", "to": "study", "label": "目录里点节名" },
     { "from": "course", "to": "homework-do", "label": "打开一份作业" },
     { "from": "study", "to": "course", "label": "回课程", "kind": "back" },
     { "from": "study", "to": "study", "label": "切节", "kind": "loop" },

@@ -3,7 +3,7 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { JSDOM } from 'jsdom'
 import { describe, expect, it } from 'vitest'
-import { homeworkCaptureScript } from '../../../src/services/parser/homeworkRuntime'
+import { homeworkCaptureScript } from '../../../src/services/chaoxing/host/homeworkHost'
 import {
   enrichQuestionsFromLiveText,
   homeworkQuestionsHollow,
@@ -13,13 +13,13 @@ import {
 
 const dir = dirname(fileURLToPath(import.meta.url))
 const helpersSrc = readFileSync(
-  resolve(dir, '../../../src/services/agent/skills/bundled/chaoxing/parsers/homework/helpers.js'),
+      resolve(dir, '../../../src/services/chaoxing/host/homework/helpers.js'),
   'utf8',
 )
 const parseSrc = [
   helpersSrc,
   readFileSync(
-    resolve(dir, '../../../src/services/agent/skills/bundled/chaoxing/parsers/homework/parse.js'),
+    resolve(dir, '../../../src/services/chaoxing/host/homework/parse.js'),
     'utf8',
   ),
 ].join('\n')

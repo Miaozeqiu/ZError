@@ -1,8 +1,5 @@
 import { hasAgentWait, wakeAgentWait } from '../../agent/agentWait'
-import {
-  readChaoxingVideo,
-  videoIsPlaying,
-} from '../../browser/appBrowser'
+import { readChaoxingVideo, videoIsPlaying } from '../study/video'
 import { packAgentPanel, playPanelStudy } from './panelStudy'
 import { solveChaoxingCaptcha } from './captcha'
 import {
@@ -59,13 +56,13 @@ const formatWatchPrompt = (check: VideoWatchCheck) => {
   const clock = `${formatVideoClock(state.current)} / ${formatVideoClock(state.duration)}`
   const base = `【播放监控】${state.title || '当前节'} ${clock}（${state.percent}%）paused=${state.paused} ended=${state.ended} jobDone=${state.jobDone}${watchVideoLine(state)}`
   if (check.kind === 'captcha') {
-    return `${base}\n学习通弹出图片验证码（9010）。图会附上或页面上有 #ccc。用 browser_captcha 填 4 位后再 play。`
+    return `${base}\n学习通弹出图片验证码（9010）。图会附上或页面上有 #ccc。认出 4 位后填进输入框再点播放。`
   }
   if (check.kind === 'quiz') {
-    return `${base}\n当前是章节测验。系统会按 ocs 流程自动搜题/随机/暂存；若失败再 inspect/guess，然后 browser_study_next。`
+    return `${base}\n当前是章节测验。系统会按 ocs 流程自动搜题/随机/暂存；若失败再 inspect/guess，然后 看快照。`
   }
   if (check.kind === 'done') {
-    return `${base}\n这个视频已经结束。不要自动点开下一段。看 jobs，用 browser_study_play 指定 videoIndex / label；只剩测验就 browser_study_next。`
+    return `${base}\n这个视频已经结束。不要自动点开下一段。看 jobs，用 看快照 指定 videoIndex / label；只剩测验就 看快照。`
   }
   if (check.kind === 'lost') {
     return `${base}\n播放器丢了或页面不对。可 play；还不行就回目录点当前节名再 play。`
@@ -119,7 +116,7 @@ const maybeTakeoverFromPanel = (check: VideoWatchCheck) => {
     notifyPanelTakeover(
       check.sessionId,
       `解析面板 · ${panel.thisSection.title || '本节'} 视频已完成，还剩测验`,
-      '解析面板有事件：本节视频已完成，还剩测验。刷课默认跳过测验。立刻 browser_study_next，不要 homework / fill / eval。',
+      '解析面板有事件：本节视频已完成，还剩测验。刷课默认跳过测验。立刻 看快照，不要 homework / fill / eval。',
       check.browserId,
     )
     return true
@@ -127,7 +124,7 @@ const maybeTakeoverFromPanel = (check: VideoWatchCheck) => {
   notifyPanelTakeover(
     check.sessionId,
     `解析面板 · ${panel.thisSection.title || '本节'} 任务点已完成`,
-    '解析面板有事件：本节任务点都已完成。调用 browser_study_next 去下一未完成节。',
+    '解析面板有事件：本节任务点都已完成。调用 看快照 去下一未完成节。',
     check.browserId,
   )
   return true
@@ -155,7 +152,7 @@ const captchaImageFile = (image?: string) => {
 
 const notifyCaptchaWithImage = (sessionId: string, image?: string, error?: string) => {
   pendingCaptchaNotices.delete(sessionId)
-  const hint = `学习通弹出图片验证码（9010）。${error ? `自动识别失败：${error}。` : ''}图已附上或页面上有 #ccc。立刻认出 4 位字母或数字，调用 browser_captcha。不要问用户。提交后再 study 或 play。`
+  const hint = `学习通弹出图片验证码（9010）。${error ? `自动识别失败：${error}。` : ''}图已附上或页面上有 #ccc。立刻认出 4 位字母或数字并填进去。不要问用户。提交后再点播放。`
   if (wakeAgentWait(sessionId, {
     reason: 'captcha',
     display: '进度检查 · 遇到验证码',
@@ -193,7 +190,7 @@ const runAfterCaptcha = async <T extends { captcha?: boolean; hint?: string }>(
     filled: false,
     hint: solved.ok
       ? result.hint
-      : `${solved.error || '验证码没自动认出来'}。图会随后附上，立刻认出 4 位并 browser_captcha，然后继续 study。不要问用户。`,
+      : `${solved.error || '验证码没自动认出来'}。图会随后附上，立刻认出 4 位并填进去，然后继续播放。不要问用户。`,
   }
 }
 
@@ -240,13 +237,13 @@ const recoverPlayback = async (check: VideoWatchCheck) => {
     notifyWatch(
       sessionId,
       formatWatchDisplay(check),
-      `${formatWatchPrompt(check)}\n系统已自动点过播放仍没起来（第 ${attempts} 次）。立刻再 browser_study_play；页面不对就回目录 click_text 节名再 play。不要问用户。`,
+      `${formatWatchPrompt(check)}\n系统已自动点过播放仍没起来（第 ${attempts} 次）。立刻再 看快照；页面不对就回目录 click_text 节名再 play。不要问用户。`,
     )
   } catch (error) {
     notifyWatch(
       sessionId,
       formatWatchDisplay(check),
-      `${formatWatchPrompt(check)}\n自动恢复失败：${error instanceof Error ? error.message : String(error)}。立刻 browser_study_play；页面不对就回目录点节名。`,
+      `${formatWatchPrompt(check)}\n自动恢复失败：${error instanceof Error ? error.message : String(error)}。立刻 看快照；页面不对就回目录点节名。`,
     )
   } finally {
     recoveringBrowsers.delete(browserId)
@@ -276,7 +273,7 @@ const handleCaptchaWatch = async (check: VideoWatchCheck) => {
     notifyWatch(
       sessionId,
       '进度检查 · 已填写验证码',
-      '验证码已自动填写并提交。立刻 browser_study_play；页面不对就回目录 click_text 节名再 play。不要问用户。',
+      '验证码已自动填写并提交。立刻 看快照；页面不对就回目录 click_text 节名再 play。不要问用户。',
     )
     return
   }
@@ -293,7 +290,7 @@ const handleChapterQuizWatch = async (check: VideoWatchCheck) => {
   notifyPanelTakeover(
     sessionId,
     '解析面板 · 出现测验',
-    '解析面板有事件：当前是章节测验。立刻 browser_homework inspect/fill/guess/save，完成后 browser_study_next。',
+    '解析面板有事件：当前是章节测验。看卡片，用 看快照 按 handle 作答。',
     browserId,
   )
 }
@@ -306,8 +303,8 @@ const handleVideoDone = (check: VideoWatchCheck) => {
     check.sessionId,
     `解析面板 · ${panel?.thisSection.title || '本节'} 一段视频已完成`,
     nextJob
-      ? `解析面板有事件：这段视频已完成。下一步是${nextJob.label}。看 jobs 后 browser_study_play 指定 videoIndex / label，不要自动点开视频。`
-      : '解析面板有事件：这段视频已完成。看 jobs：还有未完成视频就 play 指定任务点；只剩测验就 browser_study_next 去下一节。不要自动点开视频。',
+      ? `解析面板有事件：这段视频已完成。下一步是${nextJob.label}。看 jobs 后 看快照 指定 videoIndex / label，不要自动点开视频。`
+      : '解析面板有事件：这段视频已完成。看 jobs：还有未完成视频就 play 指定任务点；只剩测验就 看快照 去下一节。不要自动点开视频。',
     check.browserId,
   )
 }

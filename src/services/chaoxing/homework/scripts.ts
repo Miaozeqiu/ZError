@@ -7,7 +7,7 @@ import {
   homeworkReadFillStateScript,
   homeworkReadLiveScript,
   homeworkReadPickedScript,
-} from '../../parser/homeworkRuntime'
+} from '../host/homeworkHost'
 
 export const READ_HOMEWORK_DOM = () => homeworkReadDomScript()
 export const READ_HOMEWORK_LIVE = () => homeworkReadLiveScript()

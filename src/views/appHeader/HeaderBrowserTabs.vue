@@ -15,6 +15,17 @@
       >
         <span class="tab-title">{{ labelOf(item) }}</span>
         <span
+          v-if="item.id === liveBrowserTabId"
+          class="tab-refresh"
+          title="刷新"
+          @click.stop="reloadCurrent"
+        >
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M13.2 8a5.2 5.2 0 1 1-1.5-3.6" />
+            <path d="M13.2 2.4V5.6H10" />
+          </svg>
+        </span>
+        <span
           class="tab-close"
           title="关闭"
           @click.stop="browserTabHandlers?.closeTab(item.id)"
@@ -33,7 +44,7 @@
 
 <script setup lang="ts">
 import type { AppBrowser } from '../../services/browser/appBrowser'
-import { hostnameOf, isBrowserHome } from '../../services/browser/appBrowser'
+import { hostnameOf, isBrowserHome, reloadBrowserView } from '../../services/browser/appBrowser'
 import {
   browserTabHandlers,
   liveBrowserTabId,
@@ -43,6 +54,12 @@ import {
 const props = defineProps<{
   activeTab?: string
 }>()
+
+const reloadCurrent = () => {
+  const id = liveBrowserTabId.value
+  if (!id) return
+  void reloadBrowserView(id)
+}
 
 const labelOf = (item: AppBrowser) => {
   if (browserTabHandlers.value) return browserTabHandlers.value.tabLabel(item)
@@ -112,6 +129,33 @@ const labelOf = (item: AppBrowser) => {
   white-space: nowrap;
   font-size: 12px;
   text-align: left;
+}
+
+.tab-refresh {
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  color: var(--text-secondary, #94a3b8);
+}
+
+.tab-refresh svg {
+  display: block;
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.tab-refresh:hover {
+  background: var(--hover-bg, rgba(0, 0, 0, 0.06));
+  color: var(--text-primary, #2d3748);
 }
 
 .tab-close {

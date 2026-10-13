@@ -62,10 +62,17 @@ describe('liveJobsBelongHere', () => {
     )).toBe(true)
   })
 
-  it('chapterId 不同也不算', () => {
+  it('节名对上时，过期 chapterId 不能否决本节任务点', () => {
     expect(liveJobsBelongHere(
-      { title: '1.2 函数（二）', chapterId: '12' },
-      { title: '1.2 函数（二）', chapterId: '11' },
+      { title: '2.7 函数的微分', chapterId: '1065429965' },
+      { title: '函数的微分', chapterId: '1065429974' },
+    )).toBe(true)
+  })
+
+  it('没有节名时才用 chapterId', () => {
+    expect(liveJobsBelongHere(
+      { title: '', chapterId: '12' },
+      { title: '', chapterId: '11' },
     )).toBe(false)
   })
 })
@@ -107,6 +114,30 @@ describe('ingestChapterSnap 切章后任务点', () => {
     expect(next?.jobs).toEqual([])
     expect(next?.expectChapterTitle).toBe('1.2 函数（二）')
   })
+
+  it('播放页同节目录刷新保留已解析的视频任务点', () => {
+    browserChapterStates.value = { t1: baseState({
+      current: '1.1 函数（一）',
+      currentTitle: '1.1 函数（一）',
+      jobChapterId: '11',
+      chapters: [
+        section('1.1 函数（一）', '11', true),
+        section('1.2 函数（二）', '12'),
+      ],
+    }) }
+    const next = ingestChapterSnap('t1', {
+      page: 'player',
+      url: 'https://mooc1.chaoxing.com/mycourse/studentstudy?chapterId=11',
+      current: '1.1 函数（一）',
+      unfinished: ['1.1 函数（一）'],
+      chapters: [
+        { title: '1.1 函数（一）', unfinished: true, jobs: 5, chapterId: '11' },
+        { title: '1.2 函数（二）', unfinished: true, jobs: 2, chapterId: '12' },
+      ],
+    })
+    expect(next?.jobs.map((job) => job.label)).toEqual(staleJobs.map((job) => job.label))
+    expect(next?.jobChapterId).toBe('11')
+  })
 })
 
 describe('studyNeedsFullJobRead', () => {
@@ -118,6 +149,12 @@ describe('studyNeedsFullJobRead', () => {
     expect(studyNeedsFullJobRead({
       jobs: [{ kind: 'video' }],
     })).toBe(false)
+  })
+
+  it('只有测验没有视频时仍要整页重读', () => {
+    expect(studyNeedsFullJobRead({
+      jobs: [{ kind: 'quiz' }],
+    })).toBe(true)
   })
 })
 

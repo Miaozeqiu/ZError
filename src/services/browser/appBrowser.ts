@@ -1,11 +1,14 @@
+/** 标签 / eval / 点选。学习通动作不在这里，走 platform adapter。 */
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { clickByLocator, fillByLocator } from './engine/act'
 import { clickLabelMatches } from './engine/clickFind'
-import { clickSpaceTab, isSpaceListTopUrl } from './engine/spaceTab'
+import { pageSnapAbandoned, rememberPageSnap } from './engine/pageSnap'
 import { publicRefs, rememberPageRefs, type PageRef } from './engine/refs'
 import { formatAriaSnapshot } from './engine/snapshot'
 import { askFrames, asObject, evalBrowserView, isCefEngine, waitMs } from './eval'
+import { claimClickText, guardNavigate } from './pageHooks'
+import { act, clearCookies, cookies, setCookies, wait } from './protocol'
 
 export {
   SAME_ORIGIN_FRAMES,
@@ -14,44 +17,12 @@ export {
   browserEngine,
   evalBrowserFrames,
   evalBrowserView,
+  evalBrowserViewInFrame,
+  evalBrowserViewMain,
   isCefEngine,
   waitMs,
 } from './eval'
-export type { ChaoxingHomeworkInfo, HomeworkCard, HomeworkLiveState } from '../chaoxing/homework'
-export {
-  applyHomeworkLiveState,
-  fillChaoxingHomework,
-  inspectChaoxingHomework,
-  installHomeworkLiveSync,
-  openChaoxingHomeworkItem,
-  openChaoxingHomeworkList,
-  pickHomeworkOption,
-  readHomeworkLiveState,
-  saveChaoxingHomework,
-  submitChaoxingHomework,
-} from '../chaoxing/homework'
-export type { ChaoxingChapterSnap, ChaoxingVideoInfo, ChaoxingVideoTick } from '../chaoxing/study'
-export {
-  dumpChaoxingParseHtml,
-  fillChaoxingCaptcha,
-  installChaoxingChapterHook,
-  installChaoxingVideoHook,
-  openChaoxingChapter,
-  openChaoxingChapters,
-  openNextChaoxingChapter,
-  openNextChaoxingStep,
-  parseChaoxingChapters,
-  playChaoxingVideo,
-  readChaoxingCaptcha,
-  readChaoxingCaptchaImage,
-  readChaoxingChapterSnap,
-  readChaoxingChapterTick,
-  readChaoxingVideo,
-  readChaoxingVideoTick,
-  refreshChaoxingCaptcha,
-  studyChaoxingUnfinished,
-  videoIsPlaying,
-} from '../chaoxing/study'
+export { evaluate } from './protocol'
 export {
   hideNativeVideo,
   playNativeVideo,
@@ -264,9 +235,8 @@ export const hostBounds = (el: HTMLElement | null): BrowserBounds | null => {
 }
 
 export const openBrowserView = (id: string, url: string, bounds: BrowserBounds) => {
-  if (isSpaceListTopUrl(url)) {
-    return Promise.reject(new Error('禁止顶层打开课表地址。只点 iframe 里的「我学的课」页签。'))
-  }
+  const blocked = guardNavigate(url)
+  if (blocked) return Promise.reject(new Error(blocked))
   return invoke('browser_open', { id, url: normalizeBrowserUrl(url), ...bounds })
 }
 
@@ -296,9 +266,8 @@ export const hideBrowserView = (id: string) => invoke('browser_hide', { id })
 export const hideAllBrowserViews = () => invoke('browser_hide_all')
 export const closeBrowserView = (id: string) => invoke('browser_close', { id })
 export const navigateBrowserView = (id: string, url: string) => {
-  if (isSpaceListTopUrl(url)) {
-    return Promise.reject(new Error('禁止顶层打开课表地址。只点 iframe 里的「我学的课」页签。'))
-  }
+  const blocked = guardNavigate(url)
+  if (blocked) return Promise.reject(new Error(blocked))
   return invoke('browser_navigate', { id, url: normalizeBrowserUrl(url) })
 }
 const loadPhase = new Map<string, { phase: string; at: number; url: string }>()
@@ -380,13 +349,30 @@ export const readBrowserFrameSrcs = async (id: string) => {
   return (Array.isArray(raw) ? raw : []).map((item) => String(item || '')).filter(Boolean)
 }
 
+export type ReadPageOptions = {
+  /** 只附带网址里包含这段的那个子 frame（动作后）。 */
+  frame?: string
+  /** 只拍顶层；有 frame 时再加那一个子 frame。 */
+  acted?: boolean
+  /** get_page 的子 frame 上限，最大 8。 */
+  maxFrames?: number
+  /** 超时作废时不要把晚到的结果写进 ref 缓存。 */
+  gen?: number
+}
+
 /** Playwright 风格可读快照：role / name / ref，不灌 innerText、不塞站点解析器。 */
 
-export const readBrowserPage = async (id: string) => {
+export const readBrowserPage = async (id: string, opts: ReadPageOptions = {}) => {
   try {
-    const cdp = asObject(await invoke('browser_cdp_snapshot', { id }))
+    const { callProtocol } = await import('./protocol')
+    const cdp = asObject(await callProtocol(id, 'snapshot', {
+      ...(opts.frame ? { frame: opts.frame } : {}),
+      ...(opts.acted ? { acted: true } : {}),
+      maxFrames: opts.acted ? 2 : (opts.maxFrames ?? 8),
+    }))
     const refs = (Array.isArray(cdp.refs) ? cdp.refs : []) as PageRef[]
-    rememberPageRefs(id, refs)
+    const commit = opts.gen == null || !pageSnapAbandoned(id, opts.gen)
+    if (commit) rememberPageRefs(id, refs)
     const frames = (Array.isArray(cdp.frames) ? cdp.frames : []).map((item) => {
       const row = asObject(item)
       return {
@@ -397,7 +383,7 @@ export const readBrowserPage = async (id: string) => {
       }
     }).filter((item) => item.url || item.snapshot)
     const preferred = asObject(cdp.preferredFrame)
-    return {
+    const page = {
       url: String(cdp.url || ''),
       title: String(cdp.title || ''),
       snapshot: String(cdp.snapshot || '') || formatAriaSnapshot(refs),
@@ -417,7 +403,17 @@ export const readBrowserPage = async (id: string) => {
           refCount: Number(preferred.refCount) || 0,
         }
         : null,
+      framesCapped: Boolean(cdp.framesCapped),
     }
+    if (commit) {
+      rememberPageSnap(id, {
+        url: page.url,
+        title: page.title,
+        snapshot: page.snapshot,
+        refs,
+      }, opts.gen)
+    }
+    return page
   } catch (error) {
     const state = await getBrowserState(id).catch(() => null)
     return {
@@ -429,6 +425,7 @@ export const readBrowserPage = async (id: string) => {
       iframes: [],
       frames: [],
       preferredFrame: null,
+      framesCapped: false,
       error: String((error as Error)?.message || error || '页面读取失败'),
     }
   }
@@ -446,11 +443,9 @@ export const clickBrowserElement = async (id: string, selector: string) => {
 
 export const clickBrowserText = async (id: string, text: string) => {
   const want = String(text || '').trim()
-  if (/^(我学的课|已学的课|我教的课)$/.test(want)) {
-    return clickSpaceTab(id, want === '我教的课' ? 'taught' : 'student')
-  }
+  const claimed = await claimClickText(id, want)
+  if (claimed) return claimed
   try {
-    const { act } = await import('./protocol')
     const acted = await act(id, { op: 'click', at: { by: 'text', value: want } })
     const got = String(acted.text || '')
     if (acted.ok && (clickLabelMatches(want, got) || !got)) return { ok: true, text: got || want, via: 'cdp' }
@@ -475,24 +470,91 @@ export const typeBrowserElement = async (id: string, selector: string, text: str
 }
 
 export const scrollBrowserView = async (id: string, amount: number) => {
-  const delta = Number(amount) || 0
-  try {
-    const cdp = asObject(await invoke('browser_cdp_scroll', { id, amount: delta }))
-    if (cdp.ok) return { ok: true, via: 'cdp' }
-    return { ok: false, error: String(cdp.error || '滚动失败') }
-  } catch (error) {
-    return { ok: false, error: String((error as Error)?.message || error || '滚动失败') }
-  }
+  const acted = await act(id, { op: 'scroll', amount: Number(amount) || 0 })
+  if (acted.ok) return { ok: true, via: 'cdp' }
+  return { ok: false, error: String(acted.error || '滚动失败') }
 }
 
 export const hoverBrowserElement = async (id: string, input: { text?: string; selector?: string }) => {
-  const cdp = asObject(await invoke('browser_cdp_hover', { id, text: input.text, selector: input.selector }))
-  return { ok: Boolean(cdp.ok), text: String(cdp.text || input.text || ''), error: cdp.error ? String(cdp.error) : undefined, via: 'cdp' }
+  const selector = String(input.selector || '').trim()
+  const text = String(input.text || '').trim()
+  if (!selector && !text) return { ok: false, error: 'hover 缺少定位', via: 'cdp' }
+  const acted = await act(id, {
+    op: 'hover',
+    at: selector ? { by: 'css', value: selector } : { by: 'text', value: text },
+  })
+  return {
+    ok: Boolean(acted.ok),
+    text: String(acted.text || text),
+    error: acted.error,
+    via: 'cdp',
+  }
 }
 
 export const pressBrowserKey = async (id: string, key: string) => {
-  const cdp = asObject(await invoke('browser_cdp_press', { id, key }))
-  return { ok: Boolean(cdp.ok), text: String(cdp.text || key), error: cdp.error ? String(cdp.error) : undefined, via: 'cdp' }
+  const acted = await act(id, { op: 'press', key })
+  return {
+    ok: Boolean(acted.ok),
+    text: String(acted.text || key),
+    error: acted.error,
+    via: 'cdp',
+  }
+}
+
+export const readBrowserCookies = (id: string, url?: string) => cookies(id, url)
+export const setBrowserCookies = (
+  id: string,
+  list: Parameters<typeof setCookies>[1],
+  url?: string,
+) => setCookies(id, list, url)
+export const clearBrowserCookies = (
+  id: string,
+  filter?: { name?: string; url?: string; domain?: string },
+) => clearCookies(id, filter)
+
+export const waitForPage = (
+  id: string,
+  input: {
+    url?: string
+    text?: string
+    selector?: string
+    ref?: string
+    fn?: string
+    response?: string
+    frame?: string
+    timeout?: number
+  },
+) => wait(id, input)
+
+export const dblclickBrowserElement = async (id: string, selector: string) => {
+  const acted = await act(id, { op: 'dblclick', at: { by: 'css', value: selector } })
+  return { ok: Boolean(acted.ok), text: acted.text, error: acted.error, via: 'cdp' }
+}
+
+export const rightclickBrowserElement = async (id: string, input: { text?: string; selector?: string }) => {
+  const selector = String(input.selector || '').trim()
+  const text = String(input.text || '').trim()
+  if (!selector && !text) return { ok: false, error: 'rightclick 缺少定位', via: 'cdp' }
+  const acted = await act(id, {
+    op: 'rightclick',
+    at: selector ? { by: 'css', value: selector } : { by: 'text', value: text },
+  })
+  return { ok: Boolean(acted.ok), text: acted.text, error: acted.error, via: 'cdp' }
+}
+
+export const checkBrowserElement = async (id: string, selector: string) => {
+  const acted = await act(id, { op: 'check', at: { by: 'css', value: selector } })
+  return { ok: Boolean(acted.ok), text: acted.text, error: acted.error, via: 'cdp' }
+}
+
+export const uncheckBrowserElement = async (id: string, selector: string) => {
+  const acted = await act(id, { op: 'uncheck', at: { by: 'css', value: selector } })
+  return { ok: Boolean(acted.ok), text: acted.text, error: acted.error, via: 'cdp' }
+}
+
+export const selectBrowserOption = async (id: string, selector: string, value: string) => {
+  const acted = await act(id, { op: 'select', at: { by: 'css', value: selector }, value })
+  return { ok: Boolean(acted.ok), text: acted.text, error: acted.error, via: 'cdp' }
 }
 
 

@@ -7,37 +7,32 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { browserVideoWatches, formatVideoClock } from '../../services/chaoxing/browser/watch'
+import { agentWatchBusy, formatVideoClock, videoWatchFor } from '../../services/platform/panelAccess'
+import { coursePlanState, coursePlanSummary } from '../../services/browser/coursePlan'
 
 const props = defineProps<{
   browserId?: string
 }>()
 
-const watch = computed(() => {
-  const id = String(props.browserId || '').trim()
-  return id ? browserVideoWatches.value[id] || null : null
-})
+const watch = computed(() => videoWatchFor(props.browserId))
 
 const status = computed(() => watch.value?.status || '')
 
-const active = computed(() => {
-  const now = status.value
-  return now === 'watching'
-    || now === 'paused'
-    || now === 'stalled'
-    || now === 'captcha'
-    || now === 'quiz'
-})
+const active = computed(() => agentWatchBusy(props.browserId))
 
 const text = computed(() => {
-  if (!active.value || !watch.value) return ''
-  const live = watch.value
-  const title = live.title || '视频'
-  const clock = `${formatVideoClock(live.current)} / ${formatVideoClock(live.duration)}`
-  if (live.status === 'captcha') return `验证码 · ${title}`
-  if (live.status === 'quiz') return `测验将跳过 · ${title}`
-  if (live.status === 'paused' || live.status === 'stalled') return `已暂停 · ${title} ${clock}`
-  return `监控中 · ${title} ${clock}`
+  const plan = coursePlanSummary(coursePlanState.byBrowser[props.browserId || ''])
+  let liveText = ''
+  if (active.value && watch.value) {
+    const live = watch.value
+    const title = live.title || '视频'
+    const clock = `${formatVideoClock(live.current)} / ${formatVideoClock(live.duration)}`
+    if (live.status === 'captcha') liveText = `验证码 · ${title}`
+    else if (live.status === 'quiz') liveText = `测验将跳过 · ${title}`
+    else if (live.status === 'paused' || live.status === 'stalled') liveText = `已暂停 · ${title} ${clock}`
+    else liveText = `监控中 · ${title} ${clock}`
+  }
+  return [plan, liveText].filter(Boolean).join(' · ')
 })
 </script>
 

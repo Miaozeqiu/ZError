@@ -15,6 +15,7 @@ alwaysApply: true
 - **locate 失败后禁止退回去播当前视频再报成功**。要点视频2却播了视频1，必须 `ok: false`。
 - `CHEAP_FIND_VIDEO` 会先命中正在播、已有 src 的旧 video。指定任务点时必须按 mid 进对应 iframe，跳过其它 `ananas/modules/video`。
 - **进度必须跟 mid 走**。叠着的视频暂停后廉价扫描会退回第一条，监测会停在视频1、丢掉视频2。点播/切任务点后钉住 mid；`applyVideo` / watch / 面板进度条都按 mid 写回对应任务点。
+- 进度先看 `readLastTick`（Rust `browser_push_last` / `app-browser-tick`），`ageMs <= 4000` 且 mid 与钉住的任务点一致才用缓存；过期或 mid 对不上才 `evaluate` 廉价 tick。
 - 有的 ananas 播放器 `video.duration` 是 `NaN`、`readyState=0`，但 `currentTime` 还在、`window.duration` 有总时长。廉价 tick 必须读 `window.duration` / videojs，不能只信 `video.duration`。`duration` 未就绪时仍要留下 current/src，不能当成没播放器。
 - 面板进度条不能只画 `active && duration`。没有 active、或只有 percent 没有 clock，用户会以为监测坏了。
 
@@ -23,6 +24,17 @@ alwaysApply: true
 - 切章后 20+ iframe 在重建。禁止注入 helpers、禁止全帧慢扫、禁止 `video.play()` 的 Promise。
 - 只浅走已 ready 的文档，跳过 `loading` / `about:blank`。先等播放器挂上（src 或 duration），再点播放。
 - 任务点扫描用廉价 collect；不要为了不卡死就空着 jobs 复用上一节。
+- 切章必须清 `pinnedPlayMid`（`clearChaoxingPlayMid`）。旧 mid 留着，裸 `play` 会拿它当目标：播起来了也判「不是那条」，14 次循环点成暂停。钉住的 mid 只是提示，调用方点名的 `opts.mid` 才是硬要求。
+- `readChaoxingChapterJobTick` 读 cards 帧 HTML 时必须从 `cards.url` 带回 `knowledgeid` 作 `chapterId`。没有 `jobChapterId`，每次目录轮询都把 jobs 判成「不属于本节」清空。
+- Rust 在主框架 / `knowledge/cards` 的 `frameNavigated` 时 `cef::forget(owner)` 清 tick 缓存；否则新一节的空白监测先吃到旧视频那条「还在播」的缓存。
+
+## 监测（store）与 push 钩子
+
+- `browserVideoWatches[id]` 一条两用：`sessionId` 空 = 面板空白监测，非空 = Agent watch。`videoWatchFor` 只回 Agent 的；面板 / `tickFromWatch` 用 `videoLiveFor`。把空白监测当 watch 会让目录轮询停、watch 工具说「已在监测」、接管把「还没播」当「暂停」。
+- 空白监测跟着「正在播的那条」换 mid；Agent watch 钉住不动（done / lost 后可换）。条目被删（切章 / 停 watch）时 `chapterSync` 的 Vue watcher 立刻补一个空白监测。
+- `jobs` 有四个写入者：`applySnap`（pinChapterView 决定保不保）、`applyVideo`、`publishPlayerJobs`、`writeVideoFromStore`。凡是重读页面写 jobs 的，写完立刻 `writeVideoFromStore` 补回 active / 进度。谁在改看 `cx-study-live.md` 的「监测（store）」段。
+- `ze-tick.js` 守卫挂 `document` 不挂 `window`：iframe 从初始 about:blank 同源导航时 Chromium 复用 window，document-start 脚本跑两次，挂 window 第二份直接退出，第一份闭包里是作废的旧 document，`<video>` 永远没人绑。另有 1.5s 慢扫兜底 MutationObserver 失效。
+- 排查 push 断了：`protocol push_last` 看 `ageMs`；手动在帧里调 `window.__zeXXXX(JSON)` 能到 Rust 就是页内没绑，到不了看 `/live` 的 `unowned` 与终端 `[push] session 未登记`。
 
 ## 不要做
 

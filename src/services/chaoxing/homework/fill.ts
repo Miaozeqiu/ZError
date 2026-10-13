@@ -1,18 +1,13 @@
 import { writeDebugDump } from '../../agent/debugLog'
 import { asObject, evalBrowserView, waitMs } from '../../browser/eval'
+import { locatorsForHomeworkBlank, locatorsForHomeworkControl } from '../locators'
 import { clickHomeworkBox, fillHomeworkBox } from './act'
 import { inspectChaoxingHomework } from './inspect'
+import { readLastTick } from '../../browser/pushEvents'
 import { applyHomeworkLiveState, readHomeworkLiveState } from './live'
 import { toHomeworkCard } from './parse'
 import {
   DEBUG_HW_BOX,
-  INVOKE_HW_CONFIRM,
-  INVOKE_HW_SAVE,
-  INVOKE_HW_SUBMIT,
-  LOCATE_HW_BLANK,
-  LOCATE_HW_CONFIRM,
-  LOCATE_HW_SAVE,
-  LOCATE_HW_SUBMIT,
   READ_HW_FILL_STATE,
   READ_HW_PICKED,
 } from './scripts'
@@ -37,7 +32,13 @@ export const fillChaoxingHomework = async (id: string, answers: unknown) => {
       else if (/错误|错/.test(ans)) want = 'B'
     }
     if (!index || !want) return false
-    const state = asObject(await evalBrowserView(id, READ_HW_PICKED(index)).catch(() => null))
+    const cached = await readLastTick(id, '', 'hw').catch(() => null)
+    const fromPush = cached?.ok && cached.ageMs <= 2000
+      ? cached.states?.find((row) => Number(row.index) === index)
+      : null
+    const state = fromPush
+      ? { picked: fromPush.selected }
+      : asObject(await evalBrowserView(id, READ_HW_PICKED(index)).catch(() => null))
     const picked = String(state.picked || '')
     return want.split('').every((letter) => picked.includes(letter))
   }
@@ -55,7 +56,7 @@ export const fillChaoxingHomework = async (id: string, answers: unknown) => {
       const texts = parts.length ? parts : [ans]
       let ok = false
       for (let slot = 0; slot < texts.length; slot += 1) {
-        const typed = await fillHomeworkBox(id, LOCATE_HW_BLANK(index, slot), texts[slot]).catch(() => ({ ok: false }))
+        const typed = await fillHomeworkBox(id, locatorsForHomeworkBlank(index, slot), texts[slot]).catch(() => ({ ok: false }))
         if (typed.ok) ok = true
       }
       return ok
@@ -171,7 +172,7 @@ export const guessChaoxingHomework = async (id: string) => {
       next: 'save',
       hint: skipped.length
         ? `第 ${skipped.join('、')} 题是图像/公式，当前没有视觉模型，已跳过。其余已填过则 save / next。`
-        : '题都已填过，save 或 submit，再 browser_study_next 继续。',
+        : '题都已填过，save 或 submit，再 看快照 继续。',
     }
   }
   const filled = await fillChaoxingHomework(id, answers)
@@ -183,28 +184,21 @@ export const guessChaoxingHomework = async (id: string) => {
     hint: skipped.length
       ? `已随机 ${answers.length} 道文字题。第 ${skipped.join('、')} 题是图像/公式，当前没有视觉模型，已跳过。`
       : filled.ok
-      ? `已随机填 ${answers.length} 道。save 暂存或 submit，再 browser_study_next 继续刷课。`
+      ? `已随机填 ${answers.length} 道。save 暂存或 submit，再 看快照 继续刷课。`
       : (filled as { hint?: string }).hint || '随机填写失败，再 inspect 一次后 guess。',
   }
 }
 
 const clickConfirmIfAny = async (id: string) => {
   await waitMs(500)
-  const invoked = asObject(await evalBrowserView(id, INVOKE_HW_CONFIRM()).catch(() => null))
-  if (invoked?.ok) return true
-  const box = await clickHomeworkBox(id, LOCATE_HW_CONFIRM()).catch(() => null)
+  const box = await clickHomeworkBox(id, locatorsForHomeworkControl('confirm')).catch(() => null)
   if (box?.ok) return true
   const text = await clickBrowserText(id, '确定').catch(() => null) as { ok?: boolean } | null
   return Boolean(text?.ok)
 }
 
 export const saveChaoxingHomework = async (id: string) => {
-  const invoked = asObject(await evalBrowserView(id, INVOKE_HW_SAVE()).catch(() => null))
-  let ok = Boolean(invoked?.ok)
-  if (!ok) {
-    const box = await clickHomeworkBox(id, LOCATE_HW_SAVE()).catch(() => null)
-    ok = Boolean(box?.ok)
-  }
+  let ok = Boolean((await clickHomeworkBox(id, locatorsForHomeworkControl('save')).catch(() => null))?.ok)
   if (!ok) {
     const text = await clickBrowserText(id, '暂时保存').catch(() => null) as { ok?: boolean } | null
     ok = Boolean(text?.ok)
@@ -219,12 +213,7 @@ export const saveChaoxingHomework = async (id: string) => {
 }
 
 export const submitChaoxingHomework = async (id: string) => {
-  const invoked = asObject(await evalBrowserView(id, INVOKE_HW_SUBMIT()).catch(() => null))
-  let ok = Boolean(invoked?.ok)
-  if (!ok) {
-    const box = await clickHomeworkBox(id, LOCATE_HW_SUBMIT()).catch(() => null)
-    ok = Boolean(box?.ok)
-  }
+  let ok = Boolean((await clickHomeworkBox(id, locatorsForHomeworkControl('submit')).catch(() => null))?.ok)
   if (!ok) {
     const text = await clickBrowserText(id, '提交').catch(() => null) as { ok?: boolean } | null
     ok = Boolean(text?.ok)

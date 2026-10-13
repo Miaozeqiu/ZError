@@ -4,7 +4,7 @@
   "host": "zhihuishu.com",
   "hostPattern": "zhihuishu\\.com",
   "notes": [
-    "第二站烟测：课程列表出卡，open 用 list 包的 work handle。选择器在 parsers/list/helpers.js。"
+    "第二站烟测：课程列表出卡，open 用 list 包的 work handle。看见的值在 parsers/list/see.json。"
   ],
   "nodes": [
     {

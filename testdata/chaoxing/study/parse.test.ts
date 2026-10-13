@@ -5,11 +5,17 @@ import { JSDOM } from 'jsdom'
 import { describe, expect, it } from 'vitest'
 import { LOCATE_CHAPTER } from '../../../src/services/chaoxing/study/cdpScripts'
 import { scanStudyDocument } from '../../../src/services/chaoxing/study/parsePage'
-import { studyParseApi } from '../../../src/services/parser/studyRuntime'
+import { studyParseApi, studyParseSource } from '../../../src/services/chaoxing/host/studyHost'
 
 const dir = dirname(fileURLToPath(import.meta.url))
 
 describe('study catalog parse', () => {
+  it('宿主目录脚本仍能扫章节', () => {
+    const source = studyParseSource()
+    expect(source).toContain('function __zeScanOne')
+    expect(source).toContain('function collectSteps')
+  })
+
   it('player-tree.html 本地能读到未完成节', () => {
     const html = readFileSync(resolve(dir, 'player-tree.html'), 'utf8')
     const href = 'https://mooc1.chaoxing.com/mycourse/studentstudy?chapterId=102'

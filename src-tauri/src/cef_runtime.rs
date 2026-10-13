@@ -153,6 +153,9 @@ wrap_app! {
         "disable-site-isolation-trials",
         // 开源 CEF 无 H.264 时，学习通视频走本机 1430。自编译带编码的框架不再需要。允许 https 页加载 localhost 媒体。
         "allow-running-insecure-content",
+        // 窗口被挡住时页面仍算可见，否则 CDP 鼠标事件发不进渲染进程。
+        "disable-renderer-backgrounding",
+        "disable-backgrounding-occluded-windows",
       ] {
         let sw = CefString::from(flag);
         cmd.append_switch(Some(&sw));
@@ -604,6 +607,7 @@ pub fn initialize_browser_process(app: &tauri::AppHandle) -> Result<(), String> 
     no_sandbox: 1,
     external_message_pump: 1,
     remote_debugging_port: port,
+    // 会话 cookie 写进 profile，重启后还在。cache_path 同样落在应用数据目录。
     persist_session_cookies: 1,
     browser_subprocess_path: CefString::from(helper.to_string_lossy().as_ref()),
     framework_dir_path: CefString::from(framework_path.to_string_lossy().as_ref()),

@@ -19,10 +19,17 @@ export const intentFromText = (text: string): BrowserTaskIntent => {
   return 'unknown'
 }
 
+// 「你完成下成衣课程的播放任务」里课名是「成衣课程」，前面的「你完成下」是说话的语气，不是课名
+const FOCUS_LEAD = /^(?:你|您|请|帮我|帮忙|给我|把|先|再|去|来|完成|做|刷|播放|播|看|下|一下|那个|这个|我的|要)+/
+
 export const focusFromText = (text: string) => {
   const raw = String(text || '').trim()
   const hit = raw.match(FOCUS_RE)
-  return String(hit?.[1] || hit?.[2] || '').trim() || undefined
+  const found = String(hit?.[1] || hit?.[2] || '').trim()
+  if (!found) return undefined
+  if (hit?.[1]) return found
+  const focus = found.replace(FOCUS_LEAD, '').trim()
+  return focus.length >= 2 ? focus : undefined
 }
 
 export const rememberBrowserTaskIntent = (sessionId: string, text: string) => {
@@ -37,6 +44,19 @@ export const rememberBrowserTaskIntent = (sessionId: string, text: string) => {
   }
   bySession.set(id, next)
   return next.intent
+}
+
+export const setBrowserTaskIntent = (sessionId: string, intent: BrowserTaskIntent) => {
+  const id = String(sessionId || '').trim()
+  if (!id || intent === 'unknown') return
+  const prev = bySession.get(id)
+  bySession.set(id, { intent, focus: prev?.focus })
+}
+
+export const intentFromTodoItems = (items: string[]): BrowserTaskIntent => {
+  const raw = items.join('\n')
+  if (/跳过作业|不做题|只看视频|只刷视频/.test(raw)) return 'play'
+  return intentFromText(raw)
 }
 
 export const browserTaskIntent = (sessionId?: string): BrowserTaskIntent => {

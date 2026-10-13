@@ -1,5 +1,5 @@
 import { createPageDocument } from '../../browser/pageDom'
-import { studyParseApi } from '../../parser/studyRuntime'
+import { studyParseApi } from '../host/studyHost'
 import type { ChaoxingChapterSnap } from './types'
 
 type StudyScan = ChaoxingChapterSnap & { score?: number }
@@ -11,8 +11,8 @@ const hintOf = (snap: StudyScan, href: string) => {
   const onPlayer = snap.page === 'player' || /studentstudy/i.test(href)
   if (left > 0) {
     return onPlayer || snap.onUnfinished
-      ? `已在播放页「${snap.current || first || ''}」。立刻 browser_study_play，禁止 get_page / eval / 再点章节。`
-      : `未完成第一节点「${short}」（不要带 1.1）。进 studentstudy 后立刻 browser_study_play，不要 get_page / eval。`
+      ? `已在播放页「${snap.current || first || ''}」。立刻 看快照，禁止 get_page / eval / 再点章节。`
+      : `未完成第一节点「${short}」（不要带 1.1）。进 studentstudy 后立刻 看快照，不要 get_page / eval。`
   }
   return snap.progress
     ? `已完成任务点 ${snap.progress.done}/${snap.progress.total}。`

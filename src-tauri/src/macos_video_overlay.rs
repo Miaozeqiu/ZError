@@ -1,7 +1,7 @@
 //! 开源 CEF 解不了 H.264。学习通页面仍在 CEF，画面交给系统 AVPlayer。
 #![cfg(target_os = "macos")]
 
-use crate::cef_browser;
+use crate::cef as cef_browser;
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2::{msg_send, MainThreadMarker};

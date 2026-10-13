@@ -1,0 +1,14 @@
+---
+description: 改站点经验、快照、site-learn 热加载时走这一层
+globs: src/services/agent/skillRuntime.ts,src/services/agent/sitePack.ts,src/services/agent/browserTools.ts,src/services/agent/prompts.ts,src/services/agent/agentLessons.ts,src/services/browser/abstractions.ts,src/services/browser/engine/snapshot.ts,src/services/agent/skills/bundled/site-learn/**/*
+alwaysApply: false
+---
+
+# 站点经验
+
+- 人写的步骤：`site-learn/sites/<host>/SKILL.md`。固定写哪一页、点哪个字、在哪个框、坑在哪。
+- 自动轨迹：`agentLessons.ts` 的【做过】。成功且网址或页面变了的 `browser_click` / `click_text` / `type` / `navigate` 才记，按主机和图谱节点去重。
+- 注入：`chatStudy` 拼当前节点那一段 SKILL，`browserLoop` 拼【做过】和【教训】。图谱本身不进主输入。
+- 页面刷新闹钟：`browser/pageClock.ts`。目录 / 作业向它登记 runner。视频进度仍走 `ze-tick` push。
+- 快照按 iframe 分段，带 `framePath`。学习通同进程多层框要 pierce，隐藏框不进快照。
+- 抽象层跟图谱节点身份走。播放页默认「章节」；本节测验用 `abstractionDrill`。

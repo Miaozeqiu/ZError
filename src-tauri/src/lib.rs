@@ -7,7 +7,7 @@ pub mod app_browser;
 #[cfg(target_os = "macos")]
 pub mod cdp_client;
 #[cfg(target_os = "macos")]
-pub mod cef_browser;
+pub mod cef;
 #[cfg(target_os = "macos")]
 pub mod cef_runtime;
 #[cfg(target_os = "macos")]
@@ -356,18 +356,11 @@ pub fn run() {
             crate::app_browser::browser_eval_frames,
             crate::app_browser::browser_set_app_above_page,
             crate::app_browser::browser_engine,
-            crate::app_browser::browser_cdp_click_text,
-            crate::app_browser::browser_cdp_click,
-            crate::app_browser::browser_cdp_locate,
-            crate::app_browser::browser_cdp_click_box,
-            crate::app_browser::browser_cdp_fill_box,
-            crate::app_browser::browser_cdp_fill,
-            crate::app_browser::browser_cdp_hover,
-            crate::app_browser::browser_cdp_scroll,
-            crate::app_browser::browser_cdp_press,
-            crate::app_browser::browser_cdp_type_focused,
-            crate::app_browser::browser_cdp_snapshot,
+            crate::app_browser::browser_protocol,
             crate::app_browser::browser_screenshot,
+            crate::app_browser::browser_cookies,
+            crate::app_browser::browser_set_cookies,
+            crate::app_browser::browser_clear_cookies,
             crate::app_browser::browser_video_overlay_tick,
             crate::app_browser::browser_video_overlay_state,
             crate::app_browser::browser_video_overlay_play,

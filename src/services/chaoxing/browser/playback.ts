@@ -92,7 +92,7 @@ export const playbackContextLine = (live: LiveStudyPlayback) => {
     return `【播放】「${title}」确认在播${clock}。已交给监控。不要 reload，不要 get_page 空转，不要再 play。接着 browser_wait 等面板事件。`
   }
   if (live.watching && live.paused) {
-    return `【播放】监控中「${title}」已暂停${clock}。立刻 browser_study_play。`
+    return `【播放】监控中「${title}」已暂停${clock}。看卡片，用 看快照 点这一条。`
   }
   if (live.ended) {
     return `【播放】「${title}」刚播完${clock}。等系统切下一个，不要 reload。`

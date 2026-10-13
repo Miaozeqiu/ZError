@@ -53,7 +53,7 @@
 
     <template v-if="activePane === 'accounts'">
     <div class="pane-intro">
-      <p class="group-hint">浏览器 Agent 登录学习通等平台时会用这里的账号。也可在对话里说出账号密码自动记住。</p>
+      <p class="group-hint">浏览器 Agent 登录学习通、智慧树、在浙学时会用这里的账号。也可在对话里说出账号密码自动记住；只说「密码是 xxx」时按当前网页站点更新。</p>
       <button
         type="button"
         class="add-btn"

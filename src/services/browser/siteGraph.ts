@@ -3,13 +3,16 @@ import {
   abstractionMenuOpen,
   BROWSER_ABSTRACTIONS,
   currentBrowserUrl,
+  lastSiteCard,
   type BrowserAbstractionId,
 } from './abstractions'
+import chaoxingBundledGraph from '../agent/skills/bundled/chaoxing/site-graph.json'
 import {
   activeFrameOf,
   hydrateSite,
   liveSiteGraphs,
   nodeFrames,
+  replaceLiveSite,
   siteGraphForUrl,
   siteGraphNodeForUrl,
   type SiteGraphData,
@@ -32,6 +35,7 @@ export {
 } from './siteGraphCore'
 export type {
   SiteGraph,
+  SiteGraphChanged,
   SiteGraphData,
   SiteGraphEdge,
   SiteGraphEdgeKind,
@@ -69,18 +73,57 @@ const parserOf = (id: BrowserAbstractionId | SiteGraphParserId): SiteGraphParser
   }
 }
 
-const MAP_W = 444
-const NODE_W = 172
-const NODE_H = 40
+const MAP_W = 560
+const NODE_W = 220
+const NODE_H = 56
 const GAP_X = 36
-const GAP_Y = 28
-const PAD_Y = 20
+const GAP_Y = 36
+const PAD_Y = 24
 const PAD_X = 32
+
+const nodeHeightOf = (node: { sketch?: unknown; frame?: unknown; frames?: unknown[] }) => {
+  if (node.sketch || node.frame || (node.frames && node.frames.length)) return 156
+  return NODE_H
+}
 
 const colX = (col: number) => {
   if (col < 0) return PAD_X
   if (col > 0) return MAP_W - PAD_X - NODE_W
   return (MAP_W - NODE_W) / 2
+}
+
+export const sketchOf = (node?: {
+  title?: string
+  path?: string
+  summary?: string
+  sketch?: import('./siteGraphCore').SiteGraphSketch
+  frame?: { name?: string; title?: string; open?: string }
+  frames?: Array<{ tab?: string; title?: string; open?: string }>
+} | null) => {
+  if (node?.sketch) return node.sketch
+  const tabs = (node?.frames || []).map((item) => item.tab).filter(Boolean) as string[]
+  if (tabs.length) {
+    return {
+      kind: 'host-tabs' as const,
+      shell: node?.frame?.name || node?.title || '外壳',
+      tabs,
+      pane: node?.frame?.title || tabs.join(' / '),
+      caption: node?.summary || '',
+    }
+  }
+  if (node?.frame) {
+    return {
+      kind: 'host-tabs' as const,
+      shell: node.title || '页面',
+      pane: `${node.frame.name} · ${node.frame.title}`,
+      caption: node.frame.open === 'stay' ? '内容在 iframe 里，网址常不变' : '',
+    }
+  }
+  return {
+    kind: 'full' as const,
+    shell: node?.title || '页面',
+    caption: node?.path || '整页',
+  }
 }
 
 const loopLabelsOf = (nodeId: string, edges: SiteGraphEdge[] = []) => (
@@ -89,8 +132,6 @@ const loopLabelsOf = (nodeId: string, edges: SiteGraphEdge[] = []) => (
     .map((edge) => edge.label)
     .filter(Boolean)
 )
-
-const nodeHeight = () => NODE_H
 
 export const graphCardsOverlap = (
   a: { x: number; y: number; w: number; h: number },
@@ -128,20 +169,28 @@ const edgeKindOf = (edge: SiteGraphEdge): SiteGraphEdgeKind => {
   return 'forward'
 }
 
+type WireBox = { id: string; x: number; y: number; w: number; h: number; cx: number; cy: number; col: number }
+
+const clamp = (n: number, min: number, max: number) => Math.min(max, Math.max(min, n))
+const EDGE = 7
+
+const backSideOf = (from: WireBox, to: WireBox) => (
+  from.col > 0 || to.col > 0 ? 1 : -1
+)
+
 const wireOf = (
-  from: { id: string; x: number; y: number; w: number; h: number; cx: number; cy: number; col: number },
-  to: { id: string; x: number; y: number; w: number; h: number; cx: number; cy: number; col: number },
+  from: WireBox,
+  to: WireBox,
   edge: SiteGraphEdge,
+  lane = 0,
 ) => {
   const kind = edgeKindOf(edge)
   if (kind === 'loop') {
     const side = from.col > 0 ? 1 : -1
     const x = side < 0 ? from.x : from.x + from.w
-    const y1 = from.y + 12
-    const y2 = from.y + from.h - 12
-    const bulge = side < 0
-      ? Math.max(14, x - 26)
-      : Math.min(MAP_W - 14, x + 26)
+    const y1 = from.y + 14
+    const y2 = from.y + from.h - 14
+    const bulge = clamp(x + side * 28, 16, MAP_W - 16)
     return {
       d: `M ${x} ${y1} C ${bulge} ${y1}, ${bulge} ${y2}, ${x} ${y2}`,
       lx: bulge,
@@ -150,44 +199,155 @@ const wireOf = (
     }
   }
   if (kind === 'back') {
-    const sameCol = from.col === to.col
-    const side = sameCol
-      ? (from.col > 0 ? -1 : 1)
-      : (Math.min(from.col, to.col) < 0 ? -1 : 1)
-    const x1 = side < 0 ? from.x : from.x + from.w
-    const x2 = side < 0 ? to.x : to.x + to.w
-    const mid = side < 0
-      ? Math.max(18, Math.min(x1, x2) - 14)
-      : Math.min(MAP_W - 18, Math.max(x1, x2) + 14)
+    const side = backSideOf(from, to)
+    const x1 = side < 0 ? from.x - 1 : from.x + from.w + 1
+    const x2 = side < 0 ? to.x - 1 : to.x + to.w + 1
+    const y1 = from.cy
+    const y2 = to.cy
+    const gutter = clamp(
+      (side < 0 ? Math.min(x1, x2) : Math.max(x1, x2)) + side * (18 + lane * 14),
+      16,
+      MAP_W - 16,
+    )
+    const r = 9
+    const dir = y2 >= y1 ? 1 : -1
     return {
-      d: `M ${x1} ${from.cy} C ${mid} ${from.cy}, ${mid} ${to.cy}, ${x2} ${to.cy}`,
-      lx: mid,
-      ly: (from.cy + to.cy) / 2,
-      kind,
-    }
-  }
-  const x1 = from.cx
-  const y1 = from.y + from.h
-  const x2 = to.cx
-  const y2 = to.y
-  if (Math.abs(x1 - x2) < 2) {
-    return {
-      d: `M ${x1} ${y1} L ${x2} ${y2}`,
-      lx: x1 + 16,
+      d: [
+        `M ${x1} ${y1}`,
+        `L ${gutter - side * r} ${y1}`,
+        `Q ${gutter} ${y1} ${gutter} ${y1 + dir * r}`,
+        `L ${gutter} ${y2 - dir * r}`,
+        `Q ${gutter} ${y2} ${gutter - side * r} ${y2}`,
+        `L ${x2} ${y2}`,
+      ].join(' '),
+      lx: gutter,
       ly: (y1 + y2) / 2,
       kind,
     }
   }
-  const midY = (y1 + y2) / 2
+  const x1 = from.cx
+  const y1 = from.y + from.h + EDGE
+  const x2 = to.cx
+  const y2 = to.y - EDGE
+  if (Math.abs(x1 - x2) < 8) {
+    const pull = Math.max(18, Math.abs(y2 - y1) * 0.38)
+    return {
+      d: `M ${x1} ${y1} C ${x1} ${y1 + pull}, ${x2} ${y2 - pull}, ${x2} ${y2}`,
+      lx: x1 + 15,
+      ly: (y1 + y2) / 2,
+      kind,
+    }
+  }
+  const midY = y1 + (y2 - y1) * 0.48
+  const r = clamp(Math.min(Math.abs(x2 - x1), Math.abs(y2 - y1)) / 2, 8, 14)
+  const s = x2 >= x1 ? 1 : -1
   return {
-    d: `M ${x1} ${y1} C ${x1} ${midY}, ${x2} ${midY}, ${x2} ${y2}`,
+    d: [
+      `M ${x1} ${y1}`,
+      `L ${x1} ${midY - r}`,
+      `Q ${x1} ${midY} ${x1 + s * r} ${midY}`,
+      `L ${x2 - s * r} ${midY}`,
+      `Q ${x2} ${midY} ${x2} ${midY + r}`,
+      `L ${x2} ${y2}`,
+    ].join(' '),
     lx: (x1 + x2) / 2,
     ly: midY,
     kind,
   }
 }
 
+const planWires = (
+  byId: Map<string, WireBox>,
+  edges: SiteGraphEdge[],
+  currentId = '',
+) => {
+  const rows = edges.filter((edge) => edgeKindOf(edge) !== 'loop' && edge.from !== edge.to)
+  const backs = rows.filter((edge) => edgeKindOf(edge) === 'back')
+  const laneOf = new Map<string, number>()
+  const left: SiteGraphEdge[] = []
+  const right: SiteGraphEdge[] = []
+  for (const edge of backs) {
+    const from = byId.get(edge.from)
+    const to = byId.get(edge.to)
+    if (!from || !to) continue
+    ;(backSideOf(from, to) < 0 ? left : right).push(edge)
+  }
+  const assign = (list: SiteGraphEdge[]) => {
+    [...list]
+      .sort((a, b) => (byId.get(a.from)?.y || 0) - (byId.get(b.from)?.y || 0))
+      .forEach((edge, idx) => laneOf.set(`${edge.from}>${edge.to}>${edge.label}`, idx))
+  }
+  assign(left)
+  assign(right)
+  return rows.flatMap((edge) => {
+    const from = byId.get(edge.from)
+    const to = byId.get(edge.to)
+    if (!from || !to) return []
+    const lane = laneOf.get(`${edge.from}>${edge.to}>${edge.label}`) || 0
+    return [{
+      ...edge,
+      ...wireOf(from, to, edge, lane),
+      active: currentId === from.id || currentId === to.id,
+    }]
+  })
+}
+
 export const siteGraphMenuOpen = ref(false)
+export const liveCourseTab = ref('')
+export const liveCourseTabVia = ref('')
+export const liveSpaceTab = ref('')
+/** 活页顶层 / iframe 认出来的地址。图谱用它，不要只信地址栏。 */
+export const liveGraphHref = ref('')
+let courseTabCourseId = ''
+
+const courseIdOfHref = (url: string) => (
+  (String(url || '').match(/[?&](?:courseid|courseId)=(\d+)/i) || [])[1] || ''
+)
+
+export const resetCourseTab = () => {
+  liveCourseTab.value = ''
+  liveCourseTabVia.value = ''
+  liveSpaceTab.value = ''
+  liveGraphHref.value = ''
+  courseTabCourseId = ''
+  lastSiteCard.value = null
+}
+
+export const noteCourseTab = (tab: string, via = 'note', url = '') => {
+  const next = String(tab || '').trim()
+  if (!next) return
+  liveCourseTab.value = next
+  liveCourseTabVia.value = via
+  const id = courseIdOfHref(url)
+  if (id) courseTabCourseId = id
+}
+
+/** 课程壳当前侧栏页签。探到的侧栏/iframe 优先，不要信滞后的 pageHeader=0。 */
+export const courseTabOf = (
+  url: string,
+  node?: { id?: string; frame?: { tab?: string }; frames?: Array<{ tab?: string; patterns?: string[] }> } | null,
+) => {
+  const href = String(url || '')
+  if (node && node.id && node.id !== 'course') return ''
+  if (/studentcourse/i.test(href)) return '章节'
+  if (/\/work\/(?:list|index|view)/i.test(href)) return '作业'
+  if (/stuActiveList|\/active\/stu/i.test(href)) return '任务'
+  const header = (href.match(/[?&]pageHeader=(\d+)/i) || [])[1] || ''
+  if (header === '1') return '章节'
+  if (header === '8') return '作业'
+  const cardTab = lastSiteCard.value?.role === 'course' ? String(lastSiteCard.value.current || '') : ''
+  if (cardTab === '章节' || cardTab === '任务' || cardTab === '作业') return cardTab
+  const courseId = courseIdOfHref(href)
+  const probed = liveCourseTabVia.value === 'probe'
+    && liveCourseTab.value
+    && (!courseTabCourseId || !courseId || courseTabCourseId === courseId)
+    ? liveCourseTab.value
+    : ''
+  if (probed) return probed
+  if (header === '0') return '任务'
+  const hit = node ? activeFrameOf(node, href) : null
+  return hit?.tab || '任务'
+}
 
 const siteGraphViewFromSite = (
   site: ReturnType<typeof hydrateSite> | null,
@@ -196,7 +356,14 @@ const siteGraphViewFromSite = (
   url = '',
 ) => {
   const rowSet = [...new Set((site?.nodes || []).map((node) => node.row))].sort((a, b) => a - b)
-  const active = current ? activeFrameOf(current, url) : null
+  const activeTab = current?.id === 'course'
+    ? courseTabOf(url, current)
+    : current?.id === 'space'
+      ? (liveSpaceTab.value || activeFrameOf(current, url)?.tab || '')
+      : ''
+  const active = (current?.id === 'course' || current?.id === 'space') && activeTab
+    ? (nodeFrames(current).find((item) => item.tab === activeTab) || activeFrameOf(current, url))
+    : activeFrameOf(current, url)
   const placed: Array<{
     id: string
     col: number
@@ -222,7 +389,7 @@ const siteGraphViewFromSite = (
     let x = single ? colX(items[0].col) : PAD_X
     let lineH = 0
     for (const node of items) {
-      const h = nodeHeight()
+      const h = nodeHeightOf(node)
       if (!single && x > PAD_X && x + NODE_W > MAP_W - PAD_X) {
         cursorY += lineH + GAP_Y
         x = PAD_X
@@ -230,7 +397,11 @@ const siteGraphViewFromSite = (
       }
       const panes = nodeFrames(node).map((item) => ({
         ...item,
-        on: Boolean(current?.id === node.id && active && (active.id || active.tab) === (item.id || item.tab)),
+        on: Boolean(current?.id === node.id && (
+          activeTab
+            ? item.tab === activeTab
+            : active && (active.id || active.tab) === (item.id || item.tab)
+        )),
       }))
       placed.push({
         ...node,
@@ -260,18 +431,7 @@ const siteGraphViewFromSite = (
   const nodes = separateNodes(placed)
   const bottom = nodes.reduce((max, node) => Math.max(max, node.y + node.h), PAD_Y)
   const byId = new Map(nodes.map((node) => [node.id, node]))
-  const wires = (site?.edges || []).flatMap((edge) => {
-    if (edgeKindOf(edge) === 'loop' || edge.from === edge.to) return []
-    const from = byId.get(edge.from)
-    const to = byId.get(edge.to)
-    if (!from || !to) return []
-    const wire = wireOf(from, to, edge)
-    return [{
-      ...edge,
-      ...wire,
-      active: current?.id === from.id || current?.id === to.id,
-    }]
-  })
+  const wires = planWires(byId, site?.edges || [], current?.id || '')
   return {
     site,
     current,
@@ -283,11 +443,22 @@ const siteGraphViewFromSite = (
   }
 }
 
+const graphHrefOf = (url: string) => {
+  const topId = siteGraphNodeForUrl(url)?.id || ''
+  if (topId === 'study' || topId === 'homework-do' || topId === 'login') return url
+  return liveGraphHref.value || url
+}
+
 export const siteGraphView = (url: string) => {
   void liveSiteGraphs.value
-  const site = siteGraphForUrl(url)
-  const current = site ? siteGraphNodeForUrl(url, site) : null
-  return siteGraphViewFromSite(site, current, Boolean(url) && !site, url)
+  void liveCourseTab.value
+  void liveSpaceTab.value
+  void liveGraphHref.value
+  void lastSiteCard.value
+  const href = graphHrefOf(url)
+  const site = siteGraphForUrl(href)
+  const current = site ? siteGraphNodeForUrl(href, site) : null
+  return siteGraphViewFromSite(site, current, Boolean(url) && !site, href)
 }
 
 export const applyMeasuredGraphHeights = <T extends {
@@ -316,12 +487,7 @@ export const applyMeasuredGraphHeights = <T extends {
     cursorY += tallest + GAP_Y
   }
   const byId = new Map(nodes.map((node) => [node.id, node]))
-  const wires = view.wires.map((wire) => {
-    const from = byId.get(wire.from)
-    const to = byId.get(wire.to)
-    if (!from || !to) return wire
-    return { ...wire, ...wireOf(from, to, wire) }
-  })
+  const wires = planWires(byId, view.wires, view.nodes.find((node) => (node as { current?: boolean }).current)?.id || '')
   return {
     ...view,
     nodes,
@@ -347,16 +513,24 @@ export const siteGraphAgentSnap = (url: string) => {
   const view = siteGraphView(url)
   if (!view.site) return null
   const current = view.nodes.find((node) => node.current) || null
+  const pane = current?.id === 'course'
+    ? (nodeFrames(current).find((item) => item.tab === courseTabOf(url, current)) || activeFrameOf(current, url))
+    : activeFrameOf(current, url)
+  const page = current?.id === 'course' && pane?.tab === '章节'
+    ? '章节目录'
+    : current?.id === 'course' && pane?.tab
+      ? `${current.title} · ${pane.tab}`
+      : (current?.title || null)
   return {
     site: view.site.name,
     siteId: view.site.id,
-    page: current?.title || null,
+    page,
     path: current?.path || null,
     summary: current?.summary || '',
     structure: current?.structure || current?.summary || '',
-    tab: activeFrameOf(current, url)?.tab || '',
+    tab: pane?.tab || '',
+    playable: current?.id === 'study',
     frame: (() => {
-      const pane = activeFrameOf(current, url)
       const host = current?.frame?.name
       if (!pane && !host) return ''
       const where = pane?.tab || pane?.title || host || ''
@@ -372,6 +546,7 @@ export const siteGraphAgentSnap = (url: string) => {
       to: jump.toTitle,
     })),
     stays: current?.loops || [],
+    sketch: current ? sketchOf(current) : undefined,
     note: (view.site.notes || []).filter(Boolean).join(' '),
     editable: true,
   }
@@ -380,29 +555,20 @@ export const siteGraphAgentSnap = (url: string) => {
 export const siteGraphAgentContext = (url: string) => {
   const snap = siteGraphAgentSnap(url)
   if (!snap) return ''
-  const bits = [`【网站图谱】${snap.site}`]
-  bits[0] += snap.page ? ` · 当前在「${snap.page}」` : ' · 当前页未匹配已知路由'
-  if (snap.path) bits.push(snap.path)
-  if (snap.structure) bits.push(`结构：${snap.structure}`)
-  if (snap.frame) bits.push(`iframe：${snap.frame}`)
-  if (snap.tab) bits.push(`页签：${snap.tab}`)
-  if (snap.parsers.length) {
-    bits.push(`可挂解析器：${snap.parsers.map((item) => `${item.name}（${item.tool}）`).join('、')}`)
-  } else if (snap.page) {
-    bits.push('本页不挂解析器')
-  }
-  if (snap.stays.length) {
-    bits.push(`本页：${snap.stays.join('、')}`)
-  }
-  if (snap.jumps.length) {
-    bits.push(`边：${snap.jumps.map((item) => `${item.label} → ${item.to}`).join('；')}`)
-  }
-  if (snap.note) bits.push(snap.note)
-  return bits.join('。')
+  const bits = [`${snap.site}${snap.page ? ` · ${snap.page}` : ''}`]
+  if (snap.tab) bits.push(`tab=${snap.tab}`)
+  if (snap.playable) bits.push('playable')
+  if (snap.page === '章节目录' || (snap.tab === '章节' && !snap.playable)) bits.push('目录不是播放页')
+  return bits.join(' · ')
 }
 
 export const siteGraphButtonLabel = computed(() => {
-  const view = siteGraphView(currentBrowserUrl.value)
+  const href = currentBrowserUrl.value
+  const view = siteGraphView(href)
+  if (view.current?.id === 'course') {
+    const tab = courseTabOf(href, view.current)
+    return tab ? `图谱 · 课程 · ${tab}` : '图谱 · 课程'
+  }
   if (view.current) return `图谱 · ${view.current.title}`
   if (view.site) return `图谱 · ${view.site.name}`
   return '图谱'
@@ -418,4 +584,12 @@ export const toggleAbstractionMenu = () => {
   const next = !abstractionMenuOpen.value
   abstractionMenuOpen.value = next
   if (next) siteGraphMenuOpen.value = false
+}
+
+if (import.meta.hot) {
+  replaceLiveSite(chaoxingBundledGraph as SiteGraphData)
+  import.meta.hot.accept('../agent/skills/bundled/chaoxing/site-graph.json', (mod) => {
+    const data = (mod as { default?: SiteGraphData } | undefined)?.default
+    if (data?.id) replaceLiveSite(data)
+  })
 }

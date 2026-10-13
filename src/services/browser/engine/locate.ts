@@ -1,6 +1,5 @@
 import { SAME_ORIGIN_FRAMES } from '../eval'
-import { siteSelectorsForText } from './clickFind'
-import type { ActReason, BrowserLocator } from './types'
+import { locatorScriptArg, normalizeLocator, type ActReason, type BrowserLocator } from './types'
 
 /** 可再探：节点还没好。ambiguous / disabled / invalid 立刻失败。 */
 export const RETRYABLE_REASONS: ActReason[] = [
@@ -17,13 +16,9 @@ export const isRetryableReason = (reason?: ActReason | string) => (
 )
 
 export const locatorsToTry = (locator: BrowserLocator): BrowserLocator[] => {
-  const value = String(locator.value || '').trim()
-  if (!value) return []
-  if (locator.by === 'text' || locator.by === 'label') {
-    const css = siteSelectorsForText(value).map((sel) => ({ by: 'css' as const, value: sel }))
-    return [...css, { ...locator, value }]
-  }
-  return [{ ...locator, value }]
+  const next = normalizeLocator(locator)
+  if (!next.value) return []
+  return [next]
 }
 
 /** 元素中心 → 顶层 page CSS 像素，给 CDP Input 用。与学习通 LOCATE_* 的 boxOf 同语义。 */
@@ -69,7 +64,7 @@ export const BOX_OF_PAGE = `function boxOf(el){
   return pos;
 }`
 
-const LOCATE_HELPERS = `function __zeCompact(s){ return String(s || '').replace(/\\s+/g, ''); }
+export const LOCATE_HELPERS = `function __zeCompact(s){ return String(s || '').replace(/\\s+/g, ''); }
 function __zeLabel(el){
   if (!el) return '';
   var t = '';
@@ -119,6 +114,25 @@ function __zeHit(el){
       n = n.parentElement;
     }
     if (el.contains && el.contains(top)) return { ok: true, cover: '' };
+    var clickable = function(node){
+      var cur = node;
+      for (var i = 0; i < 6 && cur; i++) {
+        var tag = String(cur.tagName || '').toLowerCase();
+        var role = '';
+        try { role = String(cur.getAttribute('role') || ''); } catch (eR) {}
+        if (tag === 'a' || tag === 'button' || tag === 'label' || role === 'button' || role === 'link' || role === 'tab' || role === 'menuitem' || role === 'treeitem' || role === 'listitem') return cur;
+        try { if (cur.getAttribute('onclick')) return cur; } catch (eC) {}
+        cur = cur.parentElement;
+      }
+      return null;
+    };
+    var fromEl = clickable(el);
+    var fromTop = clickable(top);
+    if (fromEl && fromTop && fromEl === fromTop) return { ok: true, cover: '' };
+    try {
+      var st = (doc.defaultView || window).getComputedStyle(top);
+      if (st && st.pointerEvents === 'none') return { ok: true, cover: '' };
+    } catch (eS) {}
     return { ok: false, cover: __zeLabel(top).slice(0, 40) };
   } catch (e) {
     return { ok: true, cover: '' };
@@ -128,13 +142,10 @@ function __zeClickable(el){
   var cur = el;
   for (var i = 0; i < 5 && cur; i++) {
     var tag = String(cur.tagName || '').toLowerCase();
-    try {
-      if (cur.getAttribute('coursetype') || /\\btab-item\\b/.test(String(cur.className || ''))) return cur;
-    } catch (eTab) {}
     if (tag === 'a' || tag === 'button' || tag === 'label' || tag === 'input' || tag === 'textarea' || tag === 'select') return cur;
     try {
       var role = String(cur.getAttribute('role') || '');
-      if (role === 'tab' || role === 'button' || role === 'link' || role === 'menuitem') return cur;
+      if (role === 'tab' || role === 'button' || role === 'link' || role === 'menuitem' || role === 'treeitem' || role === 'listitem') return cur;
       if (cur.getAttribute('onclick') || cur.getAttribute('data-url') || cur.getAttribute('href')) return cur;
     } catch (e) {}
     var parent = cur.parentElement;
@@ -162,7 +173,7 @@ function __zeRoleOf(el){
   if (tag === 'select') return 'combobox';
   return '';
 }
-function __zeFindText(doc, want){
+function __zeFindText(doc, want, exactOnly){
   if (!doc || !doc.body || !want) return [];
   var walker = null;
   var showText = (window.NodeFilter && window.NodeFilter.SHOW_TEXT) || 4;
@@ -178,7 +189,7 @@ function __zeFindText(doc, want){
     if (!tx || tx.length > 64) continue;
     if (tx.indexOf('删除') >= 0 && want.indexOf('删除') < 0) continue;
     var hit = tx === want;
-    var near = !hit && tx.length <= want.length + 8 && tx.indexOf(want) >= 0;
+    var near = !exactOnly && !hit && tx.length <= want.length + 8 && tx.indexOf(want) >= 0;
     if (!hit && !near) continue;
     var el = n.parentElement;
     if (!el) continue;
@@ -204,7 +215,7 @@ function __zeCollect(loc){
   var exact = !!loc.exact;
   var out = [];
   if (!value) return out;
-  var frames = __sameFrames(window, 0);
+  var frames = __zePickFrames(__sameFrames(window, 0), String(loc.framePath || ''), String(loc.frame || ''));
   var want = __zeCompact(value);
   for (var i = 0; i < frames.length; i++) {
     var doc = null;
@@ -220,7 +231,7 @@ function __zeCollect(loc){
         var labels = doc.querySelectorAll('label');
         for (var L = 0; L < labels.length; L++) {
           var lt = __zeCompact(__zeLabel(labels[L]));
-          if (lt !== want && lt.indexOf(want) < 0) continue;
+          if (exact ? lt !== want : (lt !== want && lt.indexOf(want) < 0)) continue;
           var forId = labels[L].getAttribute('for');
           var ctrl = forId ? doc.getElementById(forId) : labels[L].querySelector('input, textarea, select');
           out.push(ctrl || labels[L]);
@@ -228,12 +239,12 @@ function __zeCollect(loc){
         continue;
       }
       if (by === 'text') {
-        var texts = __zeFindText(doc, want);
+        var texts = __zeFindText(doc, want, exact);
         for (var t = 0; t < texts.length && out.length < 24; t++) out.push(texts[t]);
         var tagged = doc.querySelectorAll('a, button, input, label, [role="tab"], [role="button"], [role="link"], [title], [aria-label]');
         for (var g = 0; g < tagged.length && out.length < 24; g++) {
           var gl = __zeCompact(__zeLabel(tagged[g]));
-          if (gl === want || gl.indexOf(want) === 0) out.push(tagged[g]);
+          if (gl === want || (!exact && gl.indexOf(want) === 0)) out.push(tagged[g]);
         }
         continue;
       }
@@ -245,7 +256,7 @@ function __zeCollect(loc){
         var label = __zeCompact(__zeLabel(el));
         if (by === 'role') {
           if (__zeRoleOf(el) !== wantRole) continue;
-          if (wantName && label !== wantName && label.indexOf(wantName) < 0) continue;
+          if (wantName && (exact ? label !== wantName : (label !== wantName && label.indexOf(wantName) < 0))) continue;
           out.push(el);
           continue;
         }
@@ -267,6 +278,11 @@ function __zePick(list, loc){
   }
   var pool = visible.length ? visible : list;
   if (!pool.length) return { el: null, extra: [] };
+  var nth = Number(loc.nth) || 0;
+  if (nth > 0) {
+    if (nth > pool.length) return { el: null, extra: pool, miss: 'nth' };
+    return { el: pool[nth - 1], extra: [] };
+  }
   if (pool.length === 1) return { el: pool[0], extra: [] };
   var want = __zeCompact(String(loc.name || loc.value || ''));
   var exact = [];
@@ -305,7 +321,7 @@ function __zeReady(el, loc){
   var pos = boxOf(el);
   if (!pos) return __zeFail('hidden', { text: label });
   var box = [Math.round(pos.x), Math.round(pos.y)].join(',');
-  var sig = String(loc.by || '') + ':' + String(loc.value || '') + ':' + String(loc.name || '');
+  var sig = [loc.by, loc.value, loc.name, loc.nth || 0, loc.frame || ''].join(':');
   var prev = window.__ZE_LOCATE_BOX__ || null;
   if (prev && prev.sig === sig && prev.box !== box) {
     window.__ZE_LOCATE_BOX__ = { sig: sig, box: box };
@@ -323,21 +339,14 @@ function __zeReady(el, loc){
   };
 }`
 
-export const buildLocateBoxScript = (locator: BrowserLocator) => `(function(){
-${SAME_ORIGIN_FRAMES}
-${BOX_OF_PAGE}
-${LOCATE_HELPERS}
-  var loc = ${JSON.stringify({
-    by: locator.by,
-    value: String(locator.value || '').trim(),
-    name: locator.name || '',
-    exact: Boolean(locator.exact),
-  })};
-  if (!loc.value) return __zeFail('invalid', { retry: false });
+const LOCATE_PICK = `  if (!loc.value) return __zeFail('invalid', { retry: false });
   var list = __zeCollect(loc);
-  if (!list.length) return __zeFail('not_found');
+  if (!list.length) return __zeFail('not_found', loc.frame ? { error: '指定框里没有找到元素' } : {});
   var picked = __zePick(list, loc);
   if (!picked.el) {
+    if (picked.miss === 'nth') {
+      return __zeFail('not_found', { error: '第 ' + loc.nth + ' 个元素不存在', retry: true });
+    }
     var names = [];
     var extra = picked.extra || [];
     for (var i = 0; i < extra.length && names.length < 6; i++) {
@@ -345,6 +354,23 @@ ${LOCATE_HELPERS}
       if (nm) names.push({ text: nm, reason: 'ambiguous' });
     }
     return __zeFail('ambiguous', { retry: false, candidates: names });
-  }
+  }`
+
+export const buildLocateBoxScript = (locator: BrowserLocator) => `(function(){
+${SAME_ORIGIN_FRAMES}
+${BOX_OF_PAGE}
+${LOCATE_HELPERS}
+  var loc = ${JSON.stringify(locatorScriptArg(locator))};
+${LOCATE_PICK}
   return __zeReady(picked.el, loc);
+})()`
+
+export const buildLocatedActionScript = (locator: BrowserLocator, afterPick: string) => `(function(){
+${SAME_ORIGIN_FRAMES}
+${BOX_OF_PAGE}
+${LOCATE_HELPERS}
+  var loc = ${JSON.stringify(locatorScriptArg(locator))};
+${LOCATE_PICK}
+  var el = picked.el;
+  ${afterPick}
 })()`

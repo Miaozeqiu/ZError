@@ -36,6 +36,7 @@ const HELP = {
     { name: 'screenshot', group: 'browser' },
     { name: 'snapshot', group: 'browser', hint: '无障碍快照，类似 Playwright' },
     { name: 'eval', group: 'browser', args: 'script' },
+    { name: 'protocol', group: 'browser', args: 'op, ...' },
     { name: 'chapter', group: 'parser', hint: '完整目录 + 本节任务点' },
     { name: 'chapter_open', group: 'parser', args: 'title | index | chapterId' },
     { name: 'play', group: 'parser', args: 'videoIndex | label | title' },
@@ -86,6 +87,7 @@ const writeLiveFile = (row) => {
       `browserId: ${row.browserId || ''}`,
       `url: ${row.url || ''}`,
       `title: ${row.title || ''}`,
+      row.cdp ? String(row.cdp) : '',
       '',
       row.lastText || '',
       '',
@@ -132,6 +134,9 @@ const waitResult = (id, timeoutMs) => new Promise((resolve, reject) => {
 const queueCmd = (body) => {
   const id = String(body.id || `rpc-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`)
   const cmd = { id, action: String(body.action || 'help'), args: body.args || {} }
+  // 应用侧默认 10s 就报「动作超时」；把调用方的 timeoutMs 一起带过去，切章 + 播放才等得起。
+  const timeoutMs = Number(body.timeoutMs) || (/screenshot|chapter_open|play|next|goto/.test(cmd.action) ? 45_000 : 0)
+  if (timeoutMs > 0) cmd.timeoutMs = timeoutMs
   cmds.push(cmd)
   return cmd
 }

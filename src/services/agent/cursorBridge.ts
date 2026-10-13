@@ -30,10 +30,17 @@ const postResult = (payload: Record<string, unknown>) => {
 
 let lastInboxId = ''
 
+/** 拉命令的 fetch 必须带超时：一条挂死的连接会让 busy 永远是 true，桥从此不再收命令。 */
+const fetchWithin = (url: string, ms = 4_000) => {
+  const ctl = new AbortController()
+  const timer = setTimeout(() => ctl.abort(), ms)
+  return fetch(url, { signal: ctl.signal }).finally(() => clearTimeout(timer))
+}
+
 const pullCmd = async (): Promise<BridgeCmd | null> => {
   for (const base of BRIDGES) {
     try {
-      const res = await fetch(`${base}/cmd`)
+      const res = await fetchWithin(`${base}/cmd`)
       if (res.status === 204) continue
       const type = res.headers.get('content-type') || ''
       if (!type.includes('json')) continue
@@ -44,7 +51,7 @@ const pullCmd = async (): Promise<BridgeCmd | null> => {
     }
   }
   try {
-    const res = await fetch(`${VITE}/__agent-inbox.json?t=${Date.now()}`)
+    const res = await fetchWithin(`${VITE}/__agent-inbox.json?t=${Date.now()}`)
     if (!res.ok) return null
     const cmd = await res.json()
     if (cmd?.id && cmd.id !== lastInboxId) {
@@ -96,23 +103,32 @@ const pushLive = () => {
     const browserId = await resolveBrowserId().catch(() => '')
     const { listAppBrowsers } = await import('../browser/appBrowser')
     const item = listAppBrowsers().find((browser) => browser.id === browserId)
+    const { readCdpStats } = await import('../browser/cdpStats')
+    const cdp = await readCdpStats().catch(() => null)
     postJson('/live', {
       browserId,
       url: item?.url || '',
       title: item?.title || item?.name || '',
-      lastText: '',
+      lastText: cdp?.line || '',
+      cdp: cdp?.line || '',
     })
   })()
 }
 
 const waitMs = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
+let busySince = 0
+
 const tick = async () => {
-  if (busy) return
+  // busy 超过 90s 一定是某个 await 没回来（fetch 挂死 / 动作卡住）；放开让下一轮继续拉命令。
+  if (busy && Date.now() - busySince < 90_000) return
   busy = true
+  busySince = Date.now()
   try {
     const cmd = await pullCmd()
     if (cmd?.id) {
+      // 切章 + 等播放器 + 点播放常超过 10s；调用方带 timeoutMs 就按它来，上限 60s。
+      const cap = Math.min(60_000, Math.max(3_000, Number((cmd as { timeoutMs?: unknown }).timeoutMs) || 10_000))
       const result = await Promise.race([
         runBridgeAction(cmd).catch((error) => ({
           ok: false,
@@ -120,7 +136,7 @@ const tick = async () => {
           action: cmd.action,
           error: error instanceof Error ? error.message : String(error),
         })),
-        waitMs(10_000).then(() => ({
+        waitMs(cap).then(() => ({
           ok: false,
           id: cmd.id,
           action: cmd.action,

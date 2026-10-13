@@ -30,11 +30,11 @@
         >
           <svg class="graph-wires" :viewBox="`0 0 ${map.width} ${map.height}`">
             <defs>
-              <marker :id="`${markerId}-arrow`" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
-                <path class="graph-arrow" d="M 1 1 L 9 5 L 1 9 z" />
+              <marker :id="`${markerId}-arrow`" viewBox="0 0 12 12" refX="9" refY="6" markerWidth="8" markerHeight="8" orient="auto">
+                <path class="graph-arrow" d="M2.2 2.2 L9.6 6 L2.2 9.8 Z" />
               </marker>
-              <marker :id="`${markerId}-arrow-on`" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
-                <path class="graph-arrow-on" d="M 1 1 L 9 5 L 1 9 z" />
+              <marker :id="`${markerId}-arrow-on`" viewBox="0 0 12 12" refX="9" refY="6" markerWidth="8" markerHeight="8" orient="auto">
+                <path class="graph-arrow-on" d="M2.2 2.2 L9.6 6 L2.2 9.8 Z" />
               </marker>
             </defs>
             <path
@@ -67,49 +67,42 @@
             }"
             :style="{ left: `${node.x}px`, top: `${node.y}px`, width: `${node.w}px`, height: `${node.h}px` }"
           >
-            <div class="graph-node-row">
-              <strong>{{ node.title }}</strong>
-              <em v-if="node.current">当前</em>
-            </div>
+            <SiteGraphPageSketch
+              compact
+              :title="node.title"
+              :badge="node.current ? node.frames?.find((item) => item.on)?.tab : ''"
+              :live="node.current"
+              :sketch="sketchOf(node)"
+              :on-tab="node.frames?.find((item) => item.on)?.tab"
+              :frame-name="node.frame?.name"
+              :pane="node.frames?.find((item) => item.on)?.name || node.frames?.[0]?.name"
+              :doc-title="node.frames?.find((item) => item.on)?.title || node.frames?.find((item) => item.on)?.tab"
+              :stay="(node.frames?.find((item) => item.on)?.open || node.frames?.[0]?.open) === 'stay'"
+            />
           </article>
         </div>
       </div>
 
       <section v-if="picked" :key="picked.id" class="graph-detail">
         <header class="graph-detail-head">
-          <div class="graph-detail-title">
-            <strong>{{ picked.title }}</strong>
-            <em v-if="picked.current">当前</em>
-          </div>
           <button type="button" class="graph-detail-close" @click="selectedId = ''">收起</button>
         </header>
         <p v-if="picked.path" class="graph-detail-path">{{ picked.path }}</p>
+        <SiteGraphPageSketch
+          :title="picked.title"
+          :badge="picked.frames?.find((item) => item.on)?.tab"
+          :live="picked.current"
+          :sketch="sketchOf(picked)"
+          :on-tab="picked.frames?.find((item) => item.on)?.tab"
+          :frame-name="picked.frame?.name"
+          :pane="picked.frames?.find((item) => item.on)?.name || picked.frames?.[0]?.name"
+          :doc-title="picked.frames?.find((item) => item.on)?.title || picked.frames?.find((item) => item.on)?.tab"
+          :caption="picked.frames?.find((item) => item.on)?.tab
+            ? `框里是「${picked.frames.find((item) => item.on)?.tab}」`
+            : ''"
+          :stay="(picked.frames?.find((item) => item.on)?.open || picked.frames?.[0]?.open) === 'stay'"
+        />
         <p class="graph-structure">{{ picked.structure || picked.summary }}</p>
-        <div
-          v-if="picked.frame || picked.frames?.length"
-          class="graph-frame"
-          :class="{ 'is-stay': (picked.frame?.open || picked.frames?.[0]?.open) === 'stay' }"
-        >
-          <span class="graph-frame-bar">
-            <i>iframe</i>
-            <small>{{ picked.frame?.name || picked.frames?.[0]?.name }}</small>
-          </span>
-          <div v-if="picked.frames?.some((item) => item.tab)" class="graph-tabs">
-            <span
-              v-for="pane in picked.frames"
-              :key="pane.id || pane.tab"
-              class="graph-tab"
-              :class="{ 'is-on': pane.on }"
-            >
-              {{ pane.tab }}
-              <small>{{ pane.id === 'learned' ? '进课' : pane.id === 'taught' ? '默认' : '' }}</small>
-            </span>
-          </div>
-          <span v-else class="graph-frame-body">
-            {{ picked.frame?.title || picked.frames?.[0]?.title }}
-            · {{ (picked.frame?.open || picked.frames?.[0]?.open) === 'stay' ? '留在框里' : '可顶层打开' }}
-          </span>
-        </div>
         <div v-if="picked.loops?.length" class="graph-loops">
           <span v-for="label in picked.loops" :key="label" class="graph-loop">本页{{ label }}</span>
         </div>
@@ -137,11 +130,13 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { abstractionMenuOpen } from '../../services/browser/abstractions'
+import SiteGraphPageSketch from './SiteGraphPageSketch.vue'
 import {
   applyMeasuredGraphHeights,
   siteGraphMenuOpen,
   siteGraphView,
   siteGraphViewFromData,
+  sketchOf,
   type SiteGraphData,
 } from '../../services/browser/siteGraph'
 
@@ -161,7 +156,32 @@ const sourceMap = computed(() => (
   fromFile.value ? siteGraphViewFromData(props.data ?? null) : siteGraphView(props.url || '')
 ))
 const fitted = ref<ReturnType<typeof siteGraphView> | null>(null)
-const map = computed(() => fitted.value || sourceMap.value)
+
+const overlayLiveGraph = (
+  live: ReturnType<typeof siteGraphView>,
+  layout: ReturnType<typeof siteGraphView> | null,
+) => {
+  if (!layout?.nodes.length) return live
+  const fresh = new Map(live.nodes.map((node) => [node.id, node]))
+  return {
+    ...live,
+    width: layout.width,
+    height: layout.height,
+    nodes: layout.nodes.map((box) => {
+      const node = fresh.get(box.id)
+      if (!node) return box
+      return { ...node, x: box.x, y: box.y, w: box.w, h: box.h, cx: box.cx, cy: box.cy }
+    }),
+    wires: layout.wires.map((wire) => {
+      const next = live.wires.find((item) => (
+        item.from === wire.from && item.to === wire.to && item.label === wire.label
+      ))
+      return next ? { ...wire, active: next.active } : wire
+    }),
+  }
+}
+
+const map = computed(() => overlayLiveGraph(sourceMap.value, fitted.value))
 const selectedId = ref('')
 const picked = computed(() => (
   map.value.nodes.find((node) => node.id === selectedId.value) || null
@@ -174,7 +194,9 @@ const headHint = computed(() => {
   const site = map.value.site
   if (!site) return ''
   if (props.preview) return `${site.host} · ${map.value.nodes.length} 个页面`
-  const where = map.value.current ? `当前在「${map.value.current.title}」` : site.host
+  const here = map.value.current
+  const tab = here?.frames?.find((item) => item.on)?.tab
+  const where = here ? `当前在「${here.title}${tab ? ` · ${tab}` : ''}」` : site.host
   return picked.value ? where : `${where} · 点卡片看结构`
 })
 const scrollRef = ref<HTMLElement | null>(null)
@@ -392,7 +414,7 @@ watch(() => sourceMap.value.site?.id, async () => {
   fitMap(true)
 })
 
-watch(() => sourceMap.value.nodes.map((node) => `${node.id}:${node.structure}`).join('|'), async () => {
+watch(() => sourceMap.value.nodes.map((node) => `${node.id}:${node.structure}:${JSON.stringify(node.sketch || '')}`).join('|'), async () => {
   fitted.value = null
   await measureNodes()
 })
@@ -510,35 +532,42 @@ onBeforeUnmount(() => {
 
 .graph-wire {
   fill: none;
-  stroke: color-mix(in srgb, var(--text-primary, #1d1d1f) 22%, transparent);
-  stroke-width: 1.2;
+  stroke: color-mix(in srgb, var(--text-primary, #1d1d1f) 18%, transparent);
+  stroke-width: 1.35;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .graph-wire.is-back,
 .graph-wire.is-loop {
-  stroke-dasharray: 3.5 3;
+  stroke: color-mix(in srgb, var(--text-primary, #1d1d1f) 14%, transparent);
+  stroke-dasharray: 4 5;
 }
 
 .graph-wire.is-on {
-  stroke: color-mix(in srgb, var(--color-primary, #667eea) 72%, transparent);
+  stroke: color-mix(in srgb, var(--color-primary, #667eea) 78%, transparent);
+  stroke-width: 1.7;
 }
 
 .graph-arrow {
-  fill: color-mix(in srgb, var(--text-primary, #1d1d1f) 28%, transparent);
+  fill: color-mix(in srgb, var(--text-primary, #1d1d1f) 24%, transparent);
 }
 
 .graph-arrow-on {
-  fill: color-mix(in srgb, var(--color-primary, #667eea) 80%, transparent);
+  fill: color-mix(in srgb, var(--color-primary, #667eea) 86%, transparent);
 }
 
 .graph-edge {
   position: absolute;
   z-index: 2;
   transform: translate(-50%, -50%);
-  padding: 0 4px;
-  border-radius: 4px;
-  background: var(--bg-secondary, #fff);
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-secondary, #fff) 92%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--text-primary, #1d1d1f) 6%, transparent);
   font-size: 10px;
+  font-weight: 560;
+  letter-spacing: -0.01em;
   line-height: 1.2;
   color: var(--text-secondary, #86868b);
   white-space: nowrap;
@@ -546,6 +575,8 @@ onBeforeUnmount(() => {
 }
 
 .graph-edge.is-on {
+  background: color-mix(in srgb, var(--color-primary, #667eea) 10%, var(--bg-secondary, #fff));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-primary, #667eea) 22%, transparent);
   color: var(--color-primary, #667eea);
 }
 
@@ -554,12 +585,12 @@ onBeforeUnmount(() => {
   z-index: 3;
   box-sizing: border-box;
   display: flex;
-  align-items: center;
-  padding: 0 10px;
-  overflow: hidden;
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--bg-tertiary, #f5f5f7) 88%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-primary, #e2e8f0) 80%, transparent);
+  flex-direction: column;
+  padding: 0;
+  overflow: visible;
+  border: none;
+  background: transparent;
+  box-shadow: none;
   cursor: pointer;
 }
 
@@ -567,14 +598,22 @@ onBeforeUnmount(() => {
   transform: scale(0.97);
 }
 
-.graph-node.is-current {
-  background: color-mix(in srgb, var(--color-primary, #667eea) 10%, var(--bg-secondary, #fff));
-  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--color-primary, #667eea) 55%, transparent);
+.graph-node.is-current :deep(.win) {
+  box-shadow:
+    0 1px 0 color-mix(in srgb, #fff 70%, transparent) inset,
+    0 1px 2px color-mix(in srgb, var(--text-primary, #1d1d1f) 16%, transparent),
+    0 6px 12px color-mix(in srgb, var(--color-primary, #667eea) 22%, transparent),
+    0 16px 24px color-mix(in srgb, var(--color-primary, #667eea) 16%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--color-primary, #667eea) 40%, transparent);
 }
 
-.graph-node.is-picked {
-  background: color-mix(in srgb, var(--color-primary, #667eea) 16%, var(--bg-secondary, #fff));
-  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--color-primary, #667eea) 70%, transparent);
+.graph-node.is-picked :deep(.win) {
+  box-shadow:
+    0 1px 0 color-mix(in srgb, #fff 70%, transparent) inset,
+    0 1px 2px color-mix(in srgb, var(--text-primary, #1d1d1f) 18%, transparent),
+    0 8px 14px color-mix(in srgb, var(--color-primary, #667eea) 26%, transparent),
+    0 18px 28px color-mix(in srgb, var(--color-primary, #667eea) 18%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--color-primary, #667eea) 52%, transparent);
 }
 
 .graph-detail {
@@ -593,30 +632,7 @@ onBeforeUnmount(() => {
 .graph-detail-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.graph-detail-title {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-
-.graph-detail-title strong {
-  font-size: 14px;
-  font-weight: 650;
-  letter-spacing: -0.02em;
-  color: var(--text-primary, #1d1d1f);
-}
-
-.graph-detail-title em,
-.graph-node-row em {
-  flex-shrink: 0;
-  font-size: 10px;
-  font-style: normal;
-  color: var(--color-primary, #667eea);
+  justify-content: flex-end;
 }
 
 .graph-detail-close {
@@ -645,24 +661,6 @@ onBeforeUnmount(() => {
   font-size: 11px;
   line-height: 1.4;
   color: var(--text-secondary, #86868b);
-}
-
-.graph-node-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  width: 100%;
-}
-
-.graph-node-row strong {
-  overflow: hidden;
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 1.3;
-  color: var(--text-primary, #1d1d1f);
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .graph-structure {

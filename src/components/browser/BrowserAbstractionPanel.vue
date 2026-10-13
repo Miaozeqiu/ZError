@@ -1,6 +1,6 @@
 <template>
   <div class="abs-panel" role="region" :aria-label="panelLabel">
-    <div v-if="!layer" class="abs-empty">
+    <div v-if="!showSiteCard && !layer" class="abs-empty">
       {{ parsing ? '正在识别当前页…' : emptyHint }}
     </div>
 
@@ -196,21 +196,16 @@
             </div>
           </div>
           <div v-if="item.jobList?.length" class="abs-ch-joblist">
-            <button
+            <div
               v-for="(job, jobIdx) in item.jobList"
               :key="`job-${job.mid || job.jobid || job.label}-${jobIdx}`"
-              type="button"
-              class="abs-ch-job is-go"
+              class="abs-ch-job"
               :class="{
                 'is-active': job.active,
                 'is-done': job.jobDone,
                 'is-busy': openingKey === jobKey(item.key, job, jobIdx),
                 [`is-${job.kind}`]: true,
               }"
-              :title="job.kind === 'video'
-                ? (job.active && job.paused === false ? '暂停此视频' : '播放此视频')
-                : job.kind === 'quiz' ? '打开测验' : '打开任务点'"
-              @click.stop="playJob(item, job, jobIdx)"
             >
               <div class="abs-ch-job-row">
                 <span
@@ -229,15 +224,26 @@
                 </span>
                 <span class="abs-ch-job-label">{{ job.label }}</span>
                 <i v-if="openingKey === jobKey(item.key, job, jobIdx)" class="abs-spin abs-spin-sm" aria-hidden="true" />
-                <span
-                  v-else-if="job.kind === 'video'"
-                  class="abs-ch-job-state abs-media"
-                  :aria-label="job.active && job.paused === false ? '暂停' : '播放'"
+                <button
+                  v-else
+                  type="button"
+                  class="abs-ch-job-act"
+                  :class="{
+                    'is-media': job.kind === 'video',
+                    'is-on': jobPlaying(job),
+                  }"
+                  :title="jobActTitle(job)"
+                  :aria-label="jobActTitle(job)"
+                  @click.stop="playJob(item, job, jobIdx)"
                 >
-                  <AbsMediaIcon :kind="job.active && job.paused === false ? 'pause' : 'play'" />
-                </span>
-                <span v-else-if="job.kind === 'quiz'" class="abs-ch-job-state">测验</span>
-                <span v-else-if="job.kind === 'doc'" class="abs-ch-job-state">文档</span>
+                  <AbsMediaIcon
+                    v-if="job.kind === 'video'"
+                    :kind="jobPlaying(job) ? 'pause' : 'play'"
+                  />
+                  <span v-else-if="job.kind === 'quiz'">测验</span>
+                  <span v-else-if="job.kind === 'doc'">文档</span>
+                  <span v-else>打开</span>
+                </button>
               </div>
               <div
                 v-if="job.kind === 'video' && (job.duration || job.current || job.clock)"
@@ -249,16 +255,10 @@
                 </div>
                 <div class="abs-ch-watch-meta">
                   <span>{{ job.clock }}</span>
-                  <span
-                    class="abs-media"
-                    :aria-label="job.paused ? '暂停' : '播放中'"
-                  >
-                    <AbsMediaIcon :kind="job.paused ? 'pause' : 'play'" />
-                  </span>
                   <span>{{ job.percent || 0 }}%</span>
                 </div>
               </div>
-            </button>
+            </div>
           </div>
         </li>
       </ol>
@@ -271,13 +271,66 @@
         />
       </div>
       <div v-else class="abs-empty abs-body">{{ studyEmpty }}</div>
+      <div v-if="cdpLine" class="abs-debug">{{ cdpLine }}</div>
+    </article>
+
+    <article v-else-if="showSiteCard" class="abs-card">
+      <header class="abs-head">
+        <div>
+          <div class="abs-title">{{ siteCard?.title || siteCard?.page || '解析' }}</div>
+          <div class="abs-sub">{{ siteCardSub }}</div>
+        </div>
+      </header>
+      <div
+        v-if="siteVideo"
+        class="abs-ch-watch"
+        :class="`is-${siteVideo.status}`"
+      >
+        <div class="abs-ch-watch-bar" aria-hidden="true">
+          <span :style="{ width: `${siteVideo.percent}%` }" />
+        </div>
+        <div class="abs-ch-watch-meta">
+          <span>{{ siteVideo.clock }}</span>
+          <span v-if="siteVideo.title">{{ siteVideo.title }}</span>
+          <span>{{ siteVideo.percent }}%</span>
+        </div>
+      </div>
+      <div v-if="siteControls.length" class="abs-controls">
+        <span
+          v-for="item in siteControls"
+          :key="item.name"
+          class="abs-ctl"
+          :class="`is-${item.state}`"
+        >
+          {{ item.name }}
+          <em>{{ item.label }}</em>
+        </span>
+      </div>
+      <template v-for="group in siteGroups" :key="group.name">
+        <div class="abs-group">{{ group.label }}</div>
+        <ul class="abs-works abs-body">
+          <li
+            v-for="(row, index) in group.rows"
+            :key="`${group.name}-${index}`"
+            :class="{ 'is-on': row.on }"
+          >
+            <button type="button" class="abs-work" @click="openSiteRow(row.title)">
+              <span>{{ row.title }}</span>
+              <span>{{ row.meta }}</span>
+            </button>
+          </li>
+        </ul>
+      </template>
+      <div v-if="!siteGroups.length && !siteControls.length" class="abs-empty abs-body">
+        这一页还没读出名单或按钮
+      </div>
     </article>
 
     <article v-else class="abs-card">
       <header class="abs-head">
         <div>
-          <div class="abs-title">{{ layer.name }}</div>
-          <div class="abs-sub">{{ layer.summary }}</div>
+          <div class="abs-title">{{ siteCard?.title || layer.name.replace(/^学习通|^智慧树/, '') }}</div>
+          <div class="abs-sub">{{ siteCard?.current ? `当前「${siteCard.current}」` : (siteCard?.hint || layer.summary) }}</div>
         </div>
       </header>
     </article>
@@ -290,8 +343,9 @@ import {
   abstractionDrill,
   abstractionParsing,
   clearAbstractionDrill,
-  isStudyUrl,
+  parserPageKind,
   lastHomeworkCard,
+  lastSiteCard,
   primaryAbstraction,
   abstractionRole,
   setAbstractionDrill,
@@ -299,6 +353,8 @@ import {
 import QuestionIndexSwitcher from '../ui/QuestionIndexSwitcher.vue'
 import { stopBrowserAgent } from '../../services/agent/chat'
 import {
+  applyVideo,
+  publishPlayerJobs,
   chapterStateFor,
   openChapterFromCard,
   playChapterJobFromCard,
@@ -310,6 +366,7 @@ import {
   formatVideoClock,
   videoWatchFor,
 } from '../../services/chaoxing/browser/watch'
+import { formatNativeClock, nativeWatchFor } from '../../services/browser/videoWatch'
 import {
   inspectChaoxingHomework,
   pickHomeworkOption,
@@ -355,14 +412,43 @@ const chapter = computed(() => chapterStateFor(props.browserId))
 watch(
   () => [props.browserId, props.url] as const,
   ([id, url]) => {
-    if (!id || !isStudyUrl(url || '')) return
+    if (!id || parserPageKind(url || '') !== 'study') return
     abstractionParsing.value = false
     startChaoxingChapterParser(id)
     void refreshChapterCard(id)
   },
   { immediate: true },
 )
+
+watch(
+  () => [
+    props.browserId,
+    chapter.value?.kind,
+    chapter.value?.jobs?.length || 0,
+    chapter.value?.video?.duration || 0,
+  ] as const,
+  ([id, kind, jobs]) => {
+    if (!id || kind !== 'player' || Number(jobs) > 0) return
+    void publishPlayerJobs(id).catch(() => null)
+    void applyVideo(id, { force: true }).catch(() => null)
+  },
+  { immediate: true },
+)
 const videoWatch = computed(() => videoWatchFor(props.browserId))
+const cdpLine = ref('')
+let cdpTimer = 0
+if (import.meta.env.DEV) {
+  const tickCdp = () => {
+    void import('../../services/browser/cdpStats').then(({ readCdpStats }) => (
+      readCdpStats().then((snap) => { cdpLine.value = snap.line })
+    )).catch(() => null)
+  }
+  tickCdp()
+  cdpTimer = window.setInterval(tickCdp, 2000)
+}
+onUnmounted(() => {
+  if (cdpTimer) window.clearInterval(cdpTimer)
+})
 const layer = computed(() => primaryAbstraction(props.url || ''))
 const layerRole = computed(() => abstractionRole(layer.value))
 const chapterQuizDrill = computed(() => {
@@ -371,8 +457,14 @@ const chapterQuizDrill = computed(() => {
   if (props.browserId && drill.browserId !== props.browserId) return null
   return drill
 })
-const showHomework = computed(() => layerRole.value === 'homework' || Boolean(chapterQuizDrill.value))
-const showStudy = computed(() => layerRole.value === 'study' && !chapterQuizDrill.value)
+const pageKind = computed(() => parserPageKind(props.url || ''))
+const showHomework = computed(() => pageKind.value === 'homework' || Boolean(chapterQuizDrill.value))
+const showStudy = computed(() => pageKind.value === 'study' && !chapterQuizDrill.value)
+const showSiteCard = computed(() => (
+  (pageKind.value === 'site' || Boolean(siteCard.value?.ok))
+  && !showHomework.value
+  && !showStudy.value
+))
 const isPlayerStudy = computed(() => chapter.value?.kind === 'player' || /studentstudy/i.test(String(chapter.value?.url || '')))
 const chapterProgressLabel = computed(() => {
   const progress = chapter.value?.progress
@@ -391,6 +483,100 @@ const panelLabel = computed(() => {
 const emptyHint = computed(() => {
   if (/passport2|login/i.test(props.url || '')) return '当前是登录页，没有章节或题卡'
   return '当前页没有可解析的章节或题卡'
+})
+const siteCard = computed(() => lastSiteCard.value)
+const siteVideo = computed(() => {
+  const watch = nativeWatchFor(props.browserId)
+  if (!watch || !(watch.duration > 1 || watch.current > 0.2 || watch.status === 'watching')) return null
+  const clock = watch.duration
+    ? `${formatNativeClock(watch.current)} / ${formatNativeClock(watch.duration)}`
+    : formatNativeClock(watch.current)
+  return {
+    status: watch.status,
+    percent: Math.round(watch.percent),
+    clock,
+    title: watch.title,
+  }
+})
+const CONTROL_LABEL: Record<string, string> = {
+  ready: '可点',
+  active: '当前',
+  disabled: '不可点',
+  missing: '没有',
+}
+const siteControls = computed(() => (
+  Object.entries(siteCard.value?.controls || {}).map(([name, state]) => ({
+    name,
+    state,
+    label: CONTROL_LABEL[state] || state,
+  }))
+))
+const rowTitle = (row: Record<string, unknown>) => {
+  for (const key of ['title', 'label', 'name', 'stem']) {
+    const text = String(row[key] ?? '').trim()
+    if (text) return text
+  }
+  if (row.index != null && row.index !== '') return `第 ${row.index} 题`
+  return ''
+}
+const rowMeta = (row: Record<string, unknown>) => {
+  const bits = [
+    row.status,
+    row.done === true ? '完成' : '',
+    row.active === true ? '当前' : '',
+    row.filled === true ? '已填' : '',
+    typeof row.pending === 'number' && row.pending > 0 ? `未完成 ${row.pending}` : '',
+    row.typeName || row.kind || '',
+  ].map((item) => String(item ?? '').trim()).filter(Boolean)
+  return bits.join(' · ')
+}
+const siteGroups = computed(() => {
+  const card = siteCard.value as Record<string, unknown> | null
+  if (!card) return [] as Array<{ name: string; label: string; rows: Array<{ title: string; meta: string; on: boolean }> }>
+  const skip = new Set([
+    'handles', 'locators', 'diagnostics', 'controls', 'ok', 'page', 'role', 'url', 'title',
+    'hint', 'next', 'confidence', 'current', 'unfinished', 'capabilities', 'questionCount',
+    'filledCount', 'pendingCount',
+  ])
+  const preferred = ['works', 'jobs', 'chapters', 'questions']
+  const names = [
+    ...preferred.filter((name) => Array.isArray(card[name])),
+    ...Object.keys(card).filter((name) => !skip.has(name) && !preferred.includes(name) && Array.isArray(card[name])),
+  ]
+  return names.flatMap((name) => {
+    const rows = (card[name] as unknown[]).filter((item) => item && typeof item === 'object' && !Array.isArray(item)) as Record<string, unknown>[]
+    const view = rows.map((row) => ({
+      title: rowTitle(row),
+      meta: rowMeta(row),
+      on: row.active === true || row.selected === true,
+    })).filter((row) => row.title)
+    const label = name === 'chapters' ? '章节' : name === 'jobs' ? '本节' : name === 'works' ? '列表' : name === 'questions' ? '题目' : name
+    return view.length ? [{ name, label, rows: view }] : []
+  })
+})
+const openSiteRow = (title: string) => {
+  const id = String(props.browserId || '').trim()
+  const card = siteCard.value
+  const text = String(title || '').trim()
+  if (!id || !card || !text) return
+  const handle = (card.handles || []).find((item) => {
+    const row = item as { label?: string; title?: string }
+    return row.label === text || row.title === text
+  })
+  if (!handle) return
+  runOpen(`site:${text}`, async () => {
+    const { clickBrowserText } = await import('../../services/browser/appBrowser')
+    await clickBrowserText(id, text)
+  })
+}
+const siteCardSub = computed(() => {
+  const card = siteCard.value
+  if (!card) return ''
+  if (card.current) return `当前「${card.current}」`
+  const count = siteGroups.value.reduce((sum, group) => sum + group.rows.length, 0)
+  if (count) return `${count} 项`
+  if (parsing.value) return '正在读取…'
+  return card.hint || card.page || ''
 })
 const homework = computed(() => lastHomeworkCard.value)
 const homeworkQuestions = computed(() => (homework.value?.questions || []).slice(0, 40))
@@ -660,6 +846,23 @@ const overlayJob = (job: ChapterJobItem, watch: PanelWatch | null, videoOrd: num
 }
 
 const jobsWithWatch = (jobs: ChapterJobItem[], watch: PanelWatch | null) => {
+  if (!jobs.length && watch && (watch.duration > 1 || watch.videoCount > 0 || watch.current > 0.2)) {
+    const count = Math.max(1, Number(watch.videoCount) || 1)
+    const activeIndex = Math.max(1, Number(watch.videoIndex) || 1)
+    jobs = Array.from({ length: Math.min(count, 8) }, (_, idx) => ({
+      mid: idx + 1 === activeIndex ? watch.mid : '',
+      jobid: '',
+      label: count > 1 ? `视频${idx + 1}` : '视频',
+      kind: 'video' as const,
+      jobDone: false,
+      unfinished: true,
+      active: idx + 1 === activeIndex,
+      current: idx + 1 === activeIndex ? watch.current : undefined,
+      duration: idx + 1 === activeIndex ? watch.duration : undefined,
+      percent: idx + 1 === activeIndex ? watch.percent : undefined,
+      paused: idx + 1 === activeIndex ? watch.status === 'paused' : undefined,
+    }))
+  }
   const videos = jobs.filter((job) => job.kind === 'video')
   let jobList = jobs.map((job) => overlayJob(job, watch, videos.indexOf(job) + 1))
   const fromParsed = jobList.filter((job) => job.kind === 'video').length
@@ -685,10 +888,28 @@ const jobsWithWatch = (jobs: ChapterJobItem[], watch: PanelWatch | null) => {
 
 const inactiveTreeRows = new WeakMap<CatalogRow, ChapterTreeRow>()
 
+const fallbackVideoJobs = (): ChapterJobItem[] => {
+  const video = chapter.value?.video
+  if (!video || !(video.duration > 1 || video.current > 0.2)) return []
+  return [{
+    mid: '',
+    jobid: '',
+    label: '视频',
+    kind: 'video',
+    jobDone: Boolean(video.ended),
+    unfinished: !video.ended,
+    active: true,
+    current: video.current,
+    duration: video.duration,
+    percent: video.percent,
+    paused: video.paused,
+  }]
+}
+
 const chapterTree = computed(() => {
   const rows = chapterCatalog.value
   const watch = panelWatch.value
-  const chapterJobs = (chapter.value?.jobs || []) as ChapterJobItem[]
+  const chapterJobs = ((chapter.value?.jobs?.length ? chapter.value.jobs : fallbackVideoJobs()) || []) as ChapterJobItem[]
   const mapped = rows.map((item) => {
     const matched = item.active
     if (!matched) {
@@ -796,6 +1017,17 @@ const jobKey = (
   job: { mid?: string; jobid?: string; label?: string },
   jobIdx: number,
 ) => `${chapterKey}-job-${job.mid || job.jobid || job.label || jobIdx}`
+
+const jobPlaying = (job: { kind?: string; active?: boolean; paused?: boolean }) => (
+  job.kind === 'video' && job.active && job.paused === false
+)
+
+const jobActTitle = (job: { kind?: string; active?: boolean; paused?: boolean }) => {
+  if (job.kind === 'video') return jobPlaying(job) ? '暂停' : '播放'
+  if (job.kind === 'quiz') return '打开测验'
+  if (job.kind === 'doc') return '打开文档'
+  return '打开任务点'
+}
 
 const openChapter = (item: {
   key: string
@@ -1009,6 +1241,16 @@ const pickOption = (item: { index: number }, opt: { letter: string }) => {
   .abs-skel {
     animation: none;
   }
+
+  .abs-ch-job-act,
+  .abs-ch-row.is-go {
+    transition: none;
+  }
+
+  .abs-ch-job-act:active,
+  .abs-ch-row.is-go:active {
+    transform: none;
+  }
 }
 
 .abs-empty {
@@ -1053,7 +1295,8 @@ const pickOption = (item: { index: number }, opt: { letter: string }) => {
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
-  padding-bottom: 14px;
+  padding: 0 2px 14px 0;
+  scrollbar-gutter: stable;
   scrollbar-width: thin;
 }
 
@@ -1066,6 +1309,13 @@ const pickOption = (item: { index: number }, opt: { letter: string }) => {
 
 .abs-sub {
   font-size: 12px;
+  color: var(--text-secondary, #86868b);
+}
+
+.abs-debug {
+  flex-shrink: 0;
+  padding: 4px 2px 8px;
+  font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
   color: var(--text-secondary, #86868b);
 }
 
@@ -1117,6 +1367,44 @@ const pickOption = (item: { index: number }, opt: { letter: string }) => {
   list-style: none;
 }
 
+.abs-group {
+  padding: 8px 16px 0;
+  font-size: 11px;
+  color: var(--text-secondary, #86868b);
+}
+
+.abs-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 4px 16px 0;
+}
+
+.abs-ctl {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-primary, #000) 5%, transparent);
+  font-size: 12px;
+}
+
+.abs-ctl em {
+  font-style: normal;
+  font-size: 11px;
+  color: var(--text-secondary, #86868b);
+}
+
+.abs-ctl.is-ready em,
+.abs-ctl.is-active em {
+  color: #248a3d;
+}
+
+.abs-works li.is-on {
+  background: color-mix(in srgb, #34c759 10%, transparent);
+}
+
 .abs-tree {
   padding: 0 0 16px;
 }
@@ -1126,6 +1414,7 @@ const pickOption = (item: { index: number }, opt: { letter: string }) => {
   flex-direction: column;
   align-items: stretch;
   gap: 0;
+  min-width: 0;
   min-height: 22px;
   padding: 1px 0 1px calc(var(--depth, 0) * 10px);
 }
@@ -1161,7 +1450,9 @@ const pickOption = (item: { index: number }, opt: { letter: string }) => {
 }
 
 .abs-ch-watch {
-  margin: 5px 6px 0 calc(6px + var(--watch-indent, 0px));
+  box-sizing: border-box;
+  margin: 5px 6px 0 0;
+  padding-left: calc(6px + var(--watch-indent, 0px));
   min-width: 0;
 }
 
@@ -1170,11 +1461,13 @@ const pickOption = (item: { index: number }, opt: { letter: string }) => {
 }
 
 .abs-ch-joblist {
-  margin: 4px 6px 0 var(--watch-indent, 0px);
-  padding: 0;
+  box-sizing: border-box;
+  margin: 4px 0 0;
+  padding: 0 6px 0 var(--watch-indent, 0px);
   display: flex;
   flex-direction: column;
   gap: 4px;
+  min-width: 0;
   position: relative;
   z-index: 2;
 }
@@ -1207,28 +1500,18 @@ const pickOption = (item: { index: number }, opt: { letter: string }) => {
 }
 
 .abs-ch-job {
+  box-sizing: border-box;
   display: block;
   width: 100%;
+  min-width: 0;
   margin: 0;
-  padding: 3px 5px;
+  padding: 3px 6px 3px 8px;
   border: none;
   border-radius: 6px;
   text-align: left;
   font: inherit;
   color: inherit;
   background: color-mix(in srgb, var(--text-primary, #000) 3.5%, transparent);
-  cursor: pointer;
-  -webkit-appearance: none;
-  appearance: none;
-  transition: transform 100ms ease-out, background-color 140ms ease-out;
-}
-
-.abs-ch-job.is-go:active {
-  transform: scale(0.97);
-}
-
-.abs-ch-job.is-go:hover {
-  background: color-mix(in srgb, var(--text-primary, #2d3748) 8%, transparent);
 }
 
 .abs-ch-job.is-busy {
@@ -1311,11 +1594,45 @@ const pickOption = (item: { index: number }, opt: { letter: string }) => {
   color: var(--text-primary, #3a3a3c);
 }
 
-.abs-ch-job-state {
+.abs-ch-job-act {
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  margin: 0;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--text-primary, #2d3748) 8%, transparent);
+  color: var(--text-primary, #3a3a3c);
+  font: inherit;
   font-size: 10px;
-  font-variant-numeric: tabular-nums;
-  color: var(--text-secondary, #86868b);
+  font-weight: 550;
+  line-height: 1;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+  transition: transform 100ms ease-out, background-color 120ms ease-out, color 120ms ease-out;
+}
+
+.abs-ch-job-act.is-media {
+  width: 22px;
+  padding: 0;
+}
+
+.abs-ch-job-act:hover {
+  background: color-mix(in srgb, var(--text-primary, #2d3748) 14%, transparent);
+}
+
+.abs-ch-job-act:active {
+  transform: scale(0.94);
+}
+
+.abs-ch-job-act.is-on {
+  background: color-mix(in srgb, var(--color-primary, #667eea) 16%, transparent);
+  color: var(--color-primary, #5b6fd6);
 }
 
 .abs-media {
@@ -1332,17 +1649,19 @@ const pickOption = (item: { index: number }, opt: { letter: string }) => {
   fill: currentColor;
 }
 
-.abs-ch-job-state.abs-media {
-  width: 14px;
-  height: 14px;
+.abs-ch-job-act .abs-media-svg {
+  width: 12px;
+  height: 12px;
 }
 
+.abs-ch.is-chapter .abs-ch-job .abs-ch-watch,
 .abs-ch-job .abs-ch-watch {
   margin-left: 0;
+  padding-left: 0;
 }
 
 .abs-ch.is-chapter .abs-ch-watch {
-  margin-left: calc(1.6ch + 8px);
+  padding-left: calc(1.6ch + 8px);
 }
 
 .abs-ch-watch-bar {
@@ -1720,5 +2039,20 @@ const pickOption = (item: { index: number }, opt: { letter: string }) => {
 .abs-works li span:last-child {
   color: var(--text-secondary, #86868b);
   font-size: 12px;
+}
+
+.abs-works .abs-work {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 </style>

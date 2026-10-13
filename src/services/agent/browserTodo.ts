@@ -87,13 +87,32 @@ export const applyBrowserTodo = (
 export const pendingTodos = (todos?: AgentTodoItem[] | null) =>
   (todos || []).filter((item) => item.status === 'pending')
 
-export const formatTodoNudge = (todos: AgentTodoItem[]) => {
+const toolRoundsWithoutTodo = new Map<string, number>()
+
+export const noteToolRoundForTodo = (sessionId: string, hadTodos: boolean, isTodoTool: boolean) => {
+  const id = String(sessionId || '').trim()
+  if (!id || isTodoTool) return
+  if (hadTodos) {
+    toolRoundsWithoutTodo.delete(id)
+    return
+  }
+  toolRoundsWithoutTodo.set(id, (toolRoundsWithoutTodo.get(id) || 0) + 1)
+}
+
+export const toolRoundsWithoutTodoOf = (sessionId: string) => (
+  toolRoundsWithoutTodo.get(String(sessionId || '').trim()) || 0
+)
+
+export const formatTodoNudge = (todos: AgentTodoItem[], opts?: { mustSet?: boolean }) => {
   const pending = pendingTodos(todos)
   if (!todos.length) {
-    return '还没有任务清单。多步任务可以用 browser_todo action=set 记下步骤；不是行动许可，可以直接探路。'
+    if (opts?.mustSet) {
+      return '多步任务必须先 browser_todo action=set 写下 3–8 步，再 invoke / 配方。清单是行动许可。'
+    }
+    return '还没有任务清单。多步任务先 browser_todo action=set；单步（读页、点一下）可以先做。'
   }
   if (pending.length) {
-    return `清单未完成：${pending.map((item) => item.text).join('、')}。做完一项就 check。`
+    return `清单未完成：${pending.map((item) => item.text).join('、')}。做完一项就 check。没勾完不能 finish(done)。`
   }
   return '清单项都已完成。用自己的话写 summary，再 browser_finish(status=done|watching|blocked)。'
 }

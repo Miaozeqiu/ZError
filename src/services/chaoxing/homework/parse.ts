@@ -1,4 +1,4 @@
-import { homeworkParseApi } from '../../parser/homeworkRuntime'
+import { homeworkParseApi } from '../host/homeworkHost'
 import { createPageDocument } from '../../browser/pageDom'
 import type { ChaoxingHomeworkInfo, HomeworkQuestion } from './types'
 

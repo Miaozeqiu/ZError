@@ -1,12 +1,16 @@
+/** CDP 开章 / 读目录。面板状态在 ../browser/chapters.ts，不要把 Vue ref 写进这里。 */
 import { READ_PAGE_DOM } from '../../browser/pageDom'
+import { readFrameHtml, useLegacyEval } from '../../browser/domRead'
 import { asObject, evalBrowserViewMain, evalBrowserViewMainNow, waitMs } from '../../browser/eval'
+import { locatorsForChapter, locatorsForStudyControl } from '../locators'
 import { clickHomeworkBox } from '../homework/act'
-import { LOCATE_CHAPTER, LOCATE_CHAPTER_TAB, LOCATE_NEXT_STEP, READ_CATALOG_READY, READ_CATALOG_SLIM } from './cdpScripts'
+import { READ_CATALOG_READY, READ_CATALOG_SLIM } from './cdpScripts'
+import { catalogReadyFromHtml } from './localJobs'
 import { cardFromStudyHtml } from './parsePage'
 import { CAPTCHA_HINT, readChaoxingCaptcha } from './captcha'
 import { dumpChaoxingParseHtml } from './dump'
 import type { ChaoxingChapterSnap } from './types'
-import { playChaoxingVideo, readChaoxingVideo, readChaoxingVideoTick, videoIsPlaying } from './video'
+import { clearChaoxingPlayMid, playChaoxingVideo, readChaoxingVideo, readChaoxingVideoTick, videoIsPlaying } from './video'
 
 /** 排查 webview / 题卡问题时可先关掉章节解析。 */
 export const CHAPTER_PARSER_ENABLED = true
@@ -23,8 +27,13 @@ const evalCatalog = async (id: string, script: string) => (
   asObject(await evalBrowserViewMain(id, script))
 )
 
-const catalogReadySnap = (id: string) =>
-  evalBrowserViewMain(id, READ_CATALOG_READY()) as Promise<{
+const catalogReadySnap = async (id: string) => {
+  if (!useLegacyEval()) {
+    const tree = await readFrameHtml(id, 'coursetree')
+    const main = tree.html ? tree : await readFrameHtml(id, 'main')
+    if (main.html) return catalogReadyFromHtml(main.html, main.url || tree.url)
+  }
+  return evalBrowserViewMain(id, READ_CATALOG_READY()) as Promise<{
     href?: string
     onCatalog?: boolean
     hasProgress?: boolean
@@ -32,6 +41,7 @@ const catalogReadySnap = (id: string) =>
     catalogLi?: number
     sample?: string
   } | null>
+}
 
 const hasChapterData = (snap: ChaoxingChapterSnap | null | undefined) => Boolean(
   snap
@@ -119,7 +129,7 @@ const chaptersWaiting = (extra?: Record<string, unknown>) => ({
   unfinished: [] as string[],
   unfinishedCount: 0,
   ...extra,
-  hint: String(extra?.hint || '目录还没读到「已完成任务点」。再调一次 browser_study_chapters；仍空用 browser_get_page。'),
+  hint: String(extra?.hint || '目录还没读到「已完成任务点」。再调一次 get_state；仍空用 browser_get_page。'),
 })
 
 const diagnoseCatalogGap = async (id: string) => {
@@ -155,7 +165,7 @@ const diagnoseCatalogGap = async (id: string) => {
     return chaptersWaiting({
       reason: 'not_chapter_tab',
       pageHeader,
-      hint: '还在课程壳其它页签。先点「章节」（pageHeader=1），再 browser_study_chapters。',
+      hint: '还在课程壳其它页签。先点「章节」（pageHeader=1），再 get_state。',
     })
   }
   if (probe.onCourse && !hasStudentcourse && !(Number(slim.catalogLi) > 0) && !slim.hasProgress) {
@@ -163,7 +173,7 @@ const diagnoseCatalogGap = async (id: string) => {
       reason: 'iframe_missing',
       pageHeader,
       iframes: iframeSrcs,
-      hint: '章节页签已开，但目录 iframe（studentcourse）还没挂上。等 1–2 秒再调 browser_study_chapters；仍空用 browser_get_page 看 frames。',
+      hint: '章节页签已开，但目录 iframe（studentcourse）还没挂上。等 1–2 秒再调 get_state；仍空用 browser_get_page 看 frames。',
     })
   }
   if (Number(slim.catalogLi) > 0 || slim.hasProgress || String(slim.text || '').includes('已完成任务点')) {
@@ -171,7 +181,7 @@ const diagnoseCatalogGap = async (id: string) => {
       reason: 'parse_empty',
       pageHeader,
       ...diag,
-      hint: '目录帧在，但未解析出未完成节名。再调一次 browser_study_chapters。',
+      hint: '目录帧在，但未解析出未完成节名。再调一次 get_state。',
     })
   }
   return chaptersWaiting({
@@ -196,7 +206,7 @@ export const openChaoxingChapters = async (id: string) => {
     };
   })()`).catch(() => null) as { onCourse?: boolean; hasTab?: boolean; pageHeader?: string } | null
   if (probe?.onCourse && probe.hasTab && probe.pageHeader !== '1') {
-    await clickHomeworkBox(id, LOCATE_CHAPTER_TAB()).catch(() => null)
+    await clickHomeworkBox(id, locatorsForStudyControl('chapter-tab')).catch(() => null)
     await waitForChaoxingCatalog(id, 3200)
   } else if (probe?.onCourse) {
     await waitForChaoxingCatalog(id, 2800)
@@ -216,10 +226,10 @@ const withNextPlay = (snap: ChaoxingChapterSnap | null) => {
   if (unfinished.length || (snap.unfinishedCount || 0) > 0) {
     return {
       ...snap,
-      next: 'browser_study_play',
+      next: 'click',
       hint: snap.hint || (first
-        ? `未完成：${unfinished.slice(0, 8).join('、')}${unfinished.length > 8 ? '…' : ''}。立刻 browser_study_play（会打开「${first}」），不要 get_page。`
-        : '有未完成任务点。立刻 browser_study_play，不要 get_page。'),
+        ? `未完成：${unfinished.slice(0, 8).join('、')}${unfinished.length > 8 ? '…' : ''}。`
+        : '有未完成任务点。'),
     }
   }
   return snap
@@ -314,12 +324,25 @@ const unfinishedFromCatalogText = (text: string) => {
     chapters: rows.map((item) => ({ title: item.title, jobs: item.jobs, unfinished: item.unfinished })),
     via: 'frames',
     hint: unfinished.length
-      ? (`未完成：${unfinished.slice(0, 8).join('、')}${unfinished.length > 8 ? '…' : ''}。点「${String(unfinished[0] || '').replace(/^\d+(?:\.\d+)+\s*/, '').trim() || unfinished[0]}」（不要带 1.1），进 studentstudy 后立刻 browser_study_play。`)
+      ? (`未完成：${unfinished.slice(0, 8).join('、')}${unfinished.length > 8 ? '…' : ''}。点「${String(unfinished[0] || '').replace(/^\d+(?:\.\d+)+\s*/, '').trim() || unfinished[0]}」（不要带 1.1），进 studentstudy 后立刻 看快照。`)
       : (progress ? `已完成任务点 ${progress.done}/${progress.total}。` : '没有读到未完成章节。'),
   } as ChaoxingChapterSnap
 }
 
 const unfinishedFromPageDom = async (id: string) => {
+  if (!useLegacyEval()) {
+    const tree = await readFrameHtml(id, 'coursetree')
+    const page = tree.html ? tree : await readFrameHtml(id, 'main')
+    if (page.html) {
+      const fromHtml = cardFromStudyHtml({ url: page.url, html: page.html })
+      if (hasChapterData(fromHtml)) return { ...fromHtml, via: 'dom-html' } as ChaoxingChapterSnap
+      const text = page.html.replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<[^>]+>/g, ' ')
+      const fromText = unfinishedFromCatalogText(text)
+      if (hasChapterData(fromText)) {
+        return { ...fromText, url: page.url || fromText?.url || '', via: 'dom-text' } as ChaoxingChapterSnap
+      }
+    }
+  }
   // 课程壳目录在同源 studentcourse iframe：穿透取节点，再本地兜底
   const slim = await evalCatalog(id, READ_CATALOG_SLIM())
   const slimUrl = String(slim.url || '')
@@ -407,32 +430,14 @@ export const openChaoxingChapter = async (id: string, title: string, hint?: Open
   const want = keepChapterTitle(title) || bareChapterTitle(title) || String(hint?.index || '').trim()
   const chapterId = String(hint?.chapterId || '').replace(/\D/g, '')
   if (!want && !chapterId) return { ok: false, error: '缺少节名' }
-  const cheap = asObject(await evalBrowserViewMainNow(id, `(function(){
-    var want = ${JSON.stringify(want)}.replace(/\\s+/g, ' ').trim();
-    var wantId = ${JSON.stringify(chapterId)};
-    var nodes = document.querySelectorAll('#coursetree .posCatalog_name, #coursetree .posCatalog_title');
-    for (var i = 0; i < nodes.length; i++) {
-      var el = nodes[i];
-      var t = String(el.getAttribute('title') || el.textContent || '').replace(/\\s+/g, ' ').trim();
-      var row = el.closest('.posCatalog_select, [id], li, dd');
-      var id = '';
-      try {
-        var raw = row ? String(row.id || row.getAttribute('id') || row.getAttribute('data-id') || '') : '';
-        var m = raw.match(/(\\d{6,})/);
-        if (m) id = m[1];
-      } catch (e0) {}
-      var hit = (wantId && id && id === wantId) || (want && t && (t === want || t.indexOf(want) >= 0 || want.indexOf(t) >= 0));
-      if (!hit) continue;
-      try { el.click(); } catch (e1) {}
-      return { ok: true, text: t, chapterId: id, via: 'catalog' };
-    }
-    return { ok: false, n: nodes.length };
-  })()`).catch(() => null))
-  if (cheap.ok) {
+  const clicked = await clickHomeworkBox(id, locatorsForChapter(want, chapterId)).catch(() => ({ ok: false }))
+  if (clicked.ok) {
+    // 换节了，上一节钉住的 mid 作废
+    clearChaoxingPlayMid(id)
     await settleAfterChapterClick(id, chapterId)
-    return { ...cheap, title: want, via: 'catalog' }
+    return { ok: true, title: want, chapterId, via: 'catalog', text: clicked.text }
   }
-  return { ok: false, error: String(cheap.error || `目录里没有「${want}」`), want, n: cheap.n }
+  return { ok: false, error: clicked.error || `目录里没有「${want}」`, want }
 }
 
 /** 资料/讨论等可跳；测验/考试/作业留着让 Agent 用题卡作答。 */
@@ -448,26 +453,14 @@ const clickChapterOrNext = async (id: string, name?: string) => {
 }
 
 export const openNextChaoxingStep = async (id: string) => {
-  const hit = asObject(await evalBrowserViewMain(id, LOCATE_NEXT_STEP()).catch(() => null))
-  const clicked = hit.found
-    ? asObject(await clickHomeworkBox(id, LOCATE_NEXT_STEP()).catch(() => ({ ok: false })))
-    : { ok: false }
+  const clicked = asObject(await clickHomeworkBox(id, locatorsForStudyControl('next')).catch(() => ({ ok: false })))
   const moved = {
-    ...hit,
-    ok: Boolean(clicked.ok) && !hit.quiz && !hit.chapterDone,
-    opened: Boolean(clicked.ok || hit.opened),
-  }
-  if (moved.quiz) {
-    await waitMs(1000)
-    return { quiz: true, step: String(moved.step || ''), hasVideo: false, more: false, opened: Boolean(moved.opened) }
+    ok: Boolean(clicked.ok),
+    opened: Boolean(clicked.ok),
+    step: String(clicked.text || ''),
   }
   if (!moved.ok) {
-    return {
-      ok: false,
-      chapterDone: Boolean(hit.chapterDone),
-      more: Boolean(hit.more),
-      videoCount: Number(moved.videoCount) || 0,
-    }
+    return { ok: false, chapterDone: false, more: false, videoCount: 0 }
   }
   await waitMs(1000)
   const page = await readChaoxingVideo(id).catch(() => null)
@@ -566,7 +559,7 @@ export const studyChaoxingUnfinished = async (id: string, title?: string) => {
   if (!hasChapterData(parsed)) {
     const onStudent = await evalBrowserViewMain(id, `(function(){ return /\\/mycourse\\/stu/.test(location.href || ''); })()`).catch(() => false)
     if (onStudent) {
-      await clickHomeworkBox(id, LOCATE_CHAPTER_TAB()).catch(() => null)
+      await clickHomeworkBox(id, locatorsForStudyControl('chapter-tab')).catch(() => null)
       await waitForChaoxingCatalog(id, 1500)
       parsed = await parseChaoxingChapters(id).catch((error) => {
         parseError = String(error?.message || error || parseError)
@@ -601,7 +594,7 @@ export const studyChaoxingUnfinished = async (id: string, title?: string) => {
         progress,
         page: parsed?.page,
         url: parsed?.url,
-        hint: `页面显示还有 ${progressLeft} 个未完成任务点（已完成 ${progress?.done}/${progress?.total}），但目录项没对上。不要说全部完成。点「章节」后再 browser_study_chapters；点节用中文短名，进 studentstudy 后立刻 browser_study_play。`,
+        hint: `页面显示还有 ${progressLeft} 个未完成任务点（已完成 ${progress?.done}/${progress?.total}），但目录项没对上。不要说全部完成。点「章节」后再 get_state；点节用中文短名，进 studentstudy 后立刻 看快照。`,
       }
     }
     const stillNotCatalog = parsed?.page !== 'chapters' && parsed?.page !== 'player' && !progress
@@ -616,7 +609,7 @@ export const studyChaoxingUnfinished = async (id: string, title?: string) => {
         url: parsed?.url,
         error: parseError || undefined,
         hint: parseError
-          ? `解析目录失败：${parseError}。不要说全部完成。立刻 browser_get_page / browser_eval 自己读页面：找「已完成任务点 x/y」和节名旁的数字，读到未完成节名就 click_text，再 browser_study_play。`
+          ? `解析目录失败：${parseError}。不要说全部完成。立刻 browser_get_page / browser_eval 自己读页面：找「已完成任务点 x/y」和节名旁的数字，读到未完成节名就 click_text，再 看快照。`
           : '课程壳或目录 iframe 还没读到未完成节。不要说全部完成。点「章节」后等两秒，再用 browser_get_page 看 iframe 正文，或 browser_eval 扫 .catalog_title / #coursetree。',
       }
     }
@@ -706,7 +699,7 @@ export const studyChaoxingUnfinished = async (id: string, title?: string) => {
       quiz: false,
       hint: playing
         ? `已打开并确认在播「${openedTitle}」。进度在 Agent 面板，系统会定时核对，不要再 click_text。`
-        : `已打开「${openedTitle}」，但还没播起来。再 browser_study_play；不行就回目录重点节名。`,
+        : `已打开「${openedTitle}」，但还没播起来。再 看快照；不行就回目录重点节名。`,
     }
   }
 
@@ -717,6 +710,6 @@ export const studyChaoxingUnfinished = async (id: string, title?: string) => {
     unfinishedCount: Number(parsed?.unfinishedCount) || unfinished.length || progressLeft,
     progress,
     skipped,
-    hint: `未完成还有：${unfinished.join('、') || `任务点 ${progressLeft}`}。尝试打开失败或都是资料节。不要说全部完成，可再 click_text 下一节或 browser_study_next。`,
+    hint: `未完成还有：${unfinished.join('、') || `任务点 ${progressLeft}`}。尝试打开失败或都是资料节。不要说全部完成，可再 click_text 下一节或 看快照。`,
   }
 }

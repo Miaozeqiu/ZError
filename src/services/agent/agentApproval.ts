@@ -2,12 +2,16 @@ import { reactive } from 'vue'
 
 export type AgentApprovalKind = 'submit' | 'write_skill'
 
+export const SKILL_AUTO_ALLOW_MS = 5000
+
 export type AgentApprovalRequest = {
   id: string
   sessionId: string
   kind: AgentApprovalKind
   title: string
   detail: string
+  /** 写入 Skill 时，到这个时间点还没拒绝就自动允许。 */
+  autoAllowAt?: number
 }
 
 type Waiter = {
@@ -20,8 +24,12 @@ export const agentApprovalState = reactive({
 })
 
 const waiters = new Map<string, Waiter>()
+const timers = new Map<string, ReturnType<typeof setTimeout>>()
 
 const drop = (id: string) => {
+  const timer = timers.get(id)
+  if (timer) clearTimeout(timer)
+  timers.delete(id)
   waiters.delete(id)
   if (agentApprovalState.pending?.id === id) agentApprovalState.pending = null
 }
@@ -50,6 +58,7 @@ export const requestAgentApproval = (input: {
     kind: input.kind,
     title: input.title,
     detail: String(input.detail || '').trim(),
+    autoAllowAt: input.kind === 'write_skill' ? Date.now() + SKILL_AUTO_ALLOW_MS : undefined,
   }
   const onAbort = () => {
     if (!waiters.has(id)) return
@@ -70,6 +79,12 @@ export const requestAgentApproval = (input: {
   })
   agentApprovalState.pending = pending
   input.signal?.addEventListener('abort', onAbort, { once: true })
+  if (input.kind === 'write_skill') {
+    timers.set(id, setTimeout(() => {
+      if (!waiters.has(id)) return
+      waiters.get(id)?.resolve(true)
+    }, SKILL_AUTO_ALLOW_MS))
+  }
 })
 
 export const resolveAgentApproval = (id: string, allow: boolean) => {

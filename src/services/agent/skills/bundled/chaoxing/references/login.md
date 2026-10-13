@@ -12,13 +12,13 @@
 
 ## 进课
 
-只 `click_text`，不要搜课名、不要 eval、不要再 navigate 中间页：
+课表在页内框，用 `click_text` 点页签和课名：
 
 1. `我学的课`（不要点顶栏「课程」，空间首页那几门不是课表）
 2. 课名，如 `应用高等数学`
 
-页签在 `#frame_content` 里。`spaceTab` 看的是框内 `.tab-item.current` / `#courseType`，不是外壳 `iframe.src`（点完页签 src 也不会变）。直接 `click_text「我学的课」`。不要 eval 找页签、不要点快照里的合成按钮「我教的课 我学的课 体验新版」。切过去后再 `click_text` 课名。禁止 navigate / 改 iframe src / 点 `visit/courses` 链接，不要 reload。
+页签在 `#frame_content` 里。`spaceTab` 看的是框内 `.tab-item.current` / `#courseType`，不是外壳 `iframe.src`（点完页签 src 也不会变）。下一步：`click_text「我学的课」`，再 `click_text` 课名。课表在页内框，不要用 `navigate` 打开 `visit/courses`，也不要点快照里的合成按钮「我教的课 我学的课 体验新版」。
 
 空间首页搜索框搜的是「我教的课」，找不到「应用高等数学」。已经搜过也不要再搜。
 
-进到 `mycourse/stu` 后：刚进课常默认侧栏「任务」页签，等 1–2 秒再点。作业点「作业」后用 `get_page` / `eval` 看名单，或 `browser_homework list`。刷课点「章节」只切目录 iframe，再 `browser_study_chapters`；不要点「第N章」标题。刷课读 `references/study.md`。
+进到 `mycourse/stu` 后：刚进课常默认侧栏「任务」页签，等 1–2 秒再点。作业点「作业」后用 `get_page` 看名单。刷课点「章节」只切目录 iframe，再 `get_state`；不要点「第N章」标题。刷课读 `references/study.md`。

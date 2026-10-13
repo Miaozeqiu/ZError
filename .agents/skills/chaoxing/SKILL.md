@@ -15,4 +15,4 @@ description: >-
 
 执行前 `read_agent_skill(chaoxing)`；附属文件用 `read_agent_skill_file`。
 
-专用工具：`browser_study_chapters` / `play` / `watch` / `wait` / `next` / `homework` / `captcha`。登录还用通用 `browser_navigate`、`get_state`、`type`、`click_text`、`todo`、`finish`。
+没有站点专用工具。看网站地图和快照，用 ref 点，播起来后 `browser_watch`。整门课交给 `browser_course_plan`。登录用 `browser_navigate`、`get_state`、`type`、`click_text`。

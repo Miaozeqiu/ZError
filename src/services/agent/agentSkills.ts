@@ -3,6 +3,9 @@ import {
   listBundledSkillFiles,
   readBundledSkillFile,
 } from './skills/builtinSkillAssets'
+const isParserScriptPath = (path: string) => (
+  /(?:^|\/)parsers\/[^/]+\/[^/]+\.js$/i.test(String(path || '').replace(/\\/g, '/'))
+)
 import { CHAOXING_SKILL_DESCRIPTION } from './skills/chaoxing'
 
 export type SkillScope = 'browser' | 'learning' | 'both'
@@ -145,28 +148,28 @@ const BUILTIN_SKILLS: Record<string, BuiltinSkillDef> = {
   },
   'site-graph': {
     name: '网站图谱',
-    description: '查看、改正并持久化浏览器网站图谱（节点、边、URL 正则、解析器挂载）。',
-    triggerHint: '用户要改网站图谱，或任务中 URL 对不上节点、缺边、新站点没图时，先 read_agent_skill(site-graph)。',
+    description: '改正网站节点、边、网址规则。用图谱工具一条条改，会自动保存。',
+    triggerHint: '用户要改网站图谱，或任务中网址对不上节点、缺边、新站点没图时，先 read_agent_skill(site-graph)。',
     defaultEnabled: true,
     scope: 'browser',
   },
   'site-learn': {
     name: '认识新站点',
-    description: '在未知网站上探路、记下页面结构和操作步骤，并写入该站的图谱与 Skill。',
-    triggerHint: '当前站点没有对应 Skill、图谱对不上、或没有专用工具时，先 read_agent_skill(site-learn)。',
+    description: '当前网址没有现成刷课步骤时：探路、写下目录样例卡和图谱。先读这个 Skill，再读 sites/<主机>/SKILL.md。',
+    triggerHint: '当前站点没有对应步骤、图谱对不上、或没有专用工具时，先 read_agent_skill(site-learn)。',
     defaultEnabled: true,
     scope: 'browser',
   },
   parser: {
     name: '解析器',
-    description: '阅读并改写站点解析包（helpers / parse / locate），保存后立即生效。',
+    description: '新站先看快照摸路，走通后把步骤写进 sites/<主机>/SKILL.md。细则在 files 的 references。',
     triggerHint: '用户要改解析器，或刷课/作业同一失败点连续两次时，先 read_agent_skill(parser)。',
     defaultEnabled: true,
     scope: 'browser',
   },
   'skill-edit': {
     name: '编辑 Skill',
-    description: '列出、阅读、改写或恢复 Agent Skill 文件（SKILL.md、references、解析器、图谱）。',
+    description: '列出、阅读、改写或恢复 Agent Skill 文件。先读这个 Skill，写文件细则在 references/edit.md。',
     triggerHint: '用户要改 Skill、问失败原因或要优化流程时，先 read_agent_skill(skill-edit)。',
     defaultEnabled: true,
     scope: 'both',
@@ -488,7 +491,7 @@ export const listSkillFiles = async (id: string): Promise<string[]> => {
     }
   }
   if (!files.size) files.add(SKILL_MAIN_FILE)
-  return [...files].sort((a, b) => {
+  return [...files].filter((path) => !isParserScriptPath(path)).sort((a, b) => {
     if (a === SKILL_MAIN_FILE) return -1
     if (b === SKILL_MAIN_FILE) return 1
     return a.localeCompare(b, 'en')
@@ -543,13 +546,11 @@ const buildItems = async (config: SkillConfigFile): Promise<AgentSkillItem[]> =>
     const customized = await hasSkillOverride(id)
     let name = def.name
     let description = def.description
-    if (customized) {
-      const override = await readSkillOverride(id)
-      if (override) {
-        const parsed = parseSkillFrontmatter(override)
-        if (parsed.name) name = parsed.name
-        if (parsed.description) description = parsed.description
-      }
+    const markdown = (customized ? await readSkillOverride(id) : null) || readBundledSkillFile(id, SKILL_MAIN_FILE)
+    if (markdown) {
+      const parsed = parseSkillFrontmatter(markdown)
+      if (parsed.name) name = parsed.name
+      if (parsed.description) description = parsed.description
     }
     items.push({
       id,
@@ -758,21 +759,96 @@ export const getSkillPromptBlocksByIds = async (ids: string[]): Promise<SkillPro
   return blocks
 }
 
+export const skillSurfaceFiles = (files: string[]) => files.filter((path) => {
+  if (path === SKILL_MAIN_FILE) return true
+  if (/^references\/[^/]+\.md$/i.test(path)) return true
+  if (/^sites\/[^/]+\/SKILL\.md$/i.test(path)) return true
+  return false
+})
+
+const nextSkillHint = (id: string, files: string[]) => {
+  if (id === 'site-learn') {
+    return '这是总说明。本站步骤：read_agent_skill_file 读 files 里 sites/<当前网址主机>/SKILL.md。目录卡写法见 references/workflow.md。'
+  }
+  if (id === 'parser') {
+    return '新站写法：read_agent_skill_file(parser, references/format.md)。学习通对照表：references/chaoxing.md。'
+  }
+  if (id === 'site-graph') {
+    return '操作表：read_agent_skill_file(site-graph, references/edit.md)。用 browser_site_graph 一条条改。'
+  }
+  if (id === 'skill-edit') {
+    return '写文件细则：read_agent_skill_file(skill-edit, references/edit.md)。'
+  }
+  if (id === 'chaoxing') {
+    return '按任务读 files 里 references/login.md、study.md 或 homework.md。'
+  }
+  if (files.some((file) => file === 'references/workflow.md')) {
+    return '细则：read_agent_skill_file 读 references/workflow.md。'
+  }
+  if (files.length) return '附属文件用 read_agent_skill_file 读。编辑也用它读原文再写回。'
+  return undefined
+}
+
+export const nextSkillFileHint = (id: string, path: string, files: string[]) => {
+  if (path === SKILL_MAIN_FILE) return nextSkillHint(id, files)
+  const site = path.match(/^sites\/([^/]+)\/SKILL\.md$/)
+  if (id === 'site-learn' && site) {
+    const host = site[1]
+    const fixture = files.find((file) => file.startsWith(`sites/${host}/fixtures/`))
+    return [
+      `本站步骤写在 sites/${host}/SKILL.md。`,
+      fixture ? `样例页：${fixture}。` : '',
+      '播放页同一节常有多条视频，当前条只是其中一条。走通后把点了哪个字写回 SKILL.md。',
+    ].filter(Boolean).join('')
+  }
+  if (id === 'site-learn' && path === 'references/workflow.md') {
+    return '本站步骤：sites/<当前网址主机>/SKILL.md。写哪一页、点哪个字、在哪个框、坑在哪。'
+  }
+  if (id === 'parser' && path === 'references/format.md') {
+    return '站点步骤写 SKILL.md。学习通细则在 references。'
+  }
+  if (id === 'parser' && path === 'references/chaoxing.md') {
+    return '学习通改完用原来的刷课或作业工具再试。'
+  }
+  if (id === 'chaoxing' && /^references\//.test(path)) {
+    return '按当前页【建议】做。结构变了再 read_agent_skill(parser)。'
+  }
+  return undefined
+}
+
+const PARSER_PATH = /(?:^|\/)parsers\/|(?:see|schema|locators)(?:\.[\w-]+)?\.json$/
+
+/** 新站文件在 sites/<主机>/SKILL.md。解析器路径一律改去写经验。 */
+export const placeSiteLearnPath = (relativePath: string, host: string) => {
+  const path = String(relativePath || '').trim().replace(/\\/g, '/').replace(/^\.\//, '')
+  if (PARSER_PATH.test(path)) {
+    const where = host ? `sites/${host}/SKILL.md` : 'sites/<主机>/SKILL.md'
+    return {
+      path,
+      error: `不要写解析器。把步骤写进 ${where}：哪一页、点哪个字、在哪个框、坑在哪。`,
+    }
+  }
+  if (/^fixtures\//.test(path)) {
+    if (!host) return { path, error: '路径要带站点，例如 sites/zjooc.cn/SKILL.md。' }
+    return { path: `sites/${host}/${path}` }
+  }
+  return { path }
+}
+
 export const readAgentSkillContent = async (id: string) => {
   const item = skillItemOf(id)
   if (!item || !item.enabled) return null
   const block = await getSkillPromptBlock(item)
   if (!block) return null
   const files = await listSkillFiles(id)
+  const surface = skillSurfaceFiles(files)
   return {
     id: item.id,
     name: item.name,
     description: item.description,
     content: `${block.triggerHint}${block.prompt}`.trim(),
-    files,
-    hint: files.length
-      ? '编辑请用 read_agent_skill_file 读原文（含 SKILL.md），改完 write_agent_skill_file 写回。'
-      : undefined,
+    files: surface,
+    hint: nextSkillHint(id, files),
   }
 }
 
@@ -793,7 +869,7 @@ export const readAgentSkillFileContent = async (id: string, relativePath: string
     content = await readInstalledSkillFile(id, path)
   }
   if (content == null) return null
-  return { id: item.id, path, content }
+  return { id: item.id, path, content, hint: nextSkillFileHint(id, path, files) }
 }
 
 export const listAgentSkillsForAgent = async () => {
@@ -808,7 +884,7 @@ export const listAgentSkillsForAgent = async () => {
       builtin: item.builtin,
       scope: item.scope,
       customized: Boolean(item.customized),
-      files: await listSkillFiles(item.id),
+      files: skillSurfaceFiles(await listSkillFiles(item.id)),
     })
   }
   return { skills }
@@ -819,18 +895,25 @@ export const writeAgentSkillFileContent = async (id: string, relativePath: strin
   if (!item) return { error: `Skill "${id}" 不存在` }
   const path = normalizeSkillRelativePath(relativePath)
   if (!path) return { error: '无效的文件路径' }
+  const { siteGraphWriteBlocked } = await import('../browser/siteGraphSave')
+  const graphBlocked = siteGraphWriteBlocked(path)
+  if (graphBlocked) return { ok: false, error: graphBlocked }
+  if (isParserScriptPath(path) || PARSER_PATH.test(path)) {
+    return { error: '不要写解析器。把步骤写进 sites/<主机>/SKILL.md。' }
+  }
   const text = String(content ?? '')
   if (new TextEncoder().encode(text).length > MAX_SKILL_FILE_BYTES) {
     return { error: `文件超过 ${MAX_SKILL_FILE_BYTES} 字节` }
   }
   try {
     await saveSkillFileContent(id, path, text)
+    const files = await listSkillFiles(id)
     return {
       ok: true,
       id,
       path,
-      hint: '已写入。学习通的 site-graph.json / parsers/*，以及 site-learn 的 sites/*/site-graph.json 和 sites/*/parsers/* 会立刻热加载。',
-      files: await listSkillFiles(id),
+      hint: '已写入。图谱会热加载。站点步骤写在 SKILL.md。',
+      files,
     }
   } catch (error) {
     const message = error instanceof Error && error.message
@@ -911,6 +994,7 @@ export const saveSkillFileContent = async (id: string, relativePath: string, con
   const item = skillItemOf(id)
   if (!item) throw new Error('Skill 不存在')
   const path = normalizeSkillRelativePath(relativePath) || SKILL_MAIN_FILE
+  if (isParserScriptPath(path)) throw new Error('不要写解析脚本。把步骤写进 sites/<主机>/SKILL.md。')
   const text = String(content ?? '')
   if (!text.trim() && path === SKILL_MAIN_FILE) throw new Error('Skill 内容不能为空')
 
@@ -938,7 +1022,6 @@ export const saveSkillFileContent = async (id: string, relativePath: string, con
   try {
     const {
       applyChaoxingImplContent,
-      applyLearnedParserContent,
       applyLearnedSiteGraphContent,
       isChaoxingImplPath,
       isLearnedParserPath,
@@ -946,10 +1029,16 @@ export const saveSkillFileContent = async (id: string, relativePath: string, con
       reloadChaoxingImpl,
       SITE_GRAPH_PATH,
     } = await import('./skillRuntime')
+    const parserTouched = (id === 'site-learn' && (isLearnedSiteGraphPath(path) || isLearnedParserPath(path)))
+      || (id === 'chaoxing' && (path === SITE_GRAPH_PATH || isChaoxingImplPath(path)))
     if (id === 'site-learn' && isLearnedSiteGraphPath(path)) applyLearnedSiteGraphContent(text)
-    else if (id === 'site-learn' && isLearnedParserPath(path)) applyLearnedParserContent(path, text)
+    else if (id === 'site-learn' && isLearnedParserPath(path)) {
+      const { reloadLearnedSiteGraphs } = await import('./skillRuntime')
+      await reloadLearnedSiteGraphs()
+    }
     else if (id === 'chaoxing' && path === SITE_GRAPH_PATH) applyChaoxingImplContent(path, text)
     else if (id === 'chaoxing' && isChaoxingImplPath(path)) await reloadChaoxingImpl(path)
+    void parserTouched
   } catch (error) {
     console.warn('[site skill] 热加载失败', error)
   }

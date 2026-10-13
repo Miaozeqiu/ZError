@@ -195,12 +195,12 @@ import {
 } from '../services/browser/appBrowser'
 import { ensureBrowserChat } from '../services/agent/chat'
 import {
-  inspectChaoxingHomework,
   startHomeworkBackgroundParse,
   startHomeworkLiveSync,
   stopHomeworkBackgroundParse,
   stopHomeworkLiveSync,
 } from '../services/chaoxing/homework'
+import { kickParserClock, unwatchParserClock } from '../services/browser/pageClock'
 import { questionHasContent } from '../services/chaoxing/homework/parse'
 import {
   chapterStateFor,
@@ -215,13 +215,14 @@ import {
   abstractionParsing,
   abstractionPanelTitle,
   clearAbstractionDrill,
-  isHomeworkUrl,
-  isStudyUrl,
   lastHomeworkCard,
+  parserPageKind,
   publishHomeworkCard,
   setCurrentBrowserPage,
 } from '../services/browser/abstractions'
 import { siteGraphMenuOpen } from '../services/browser/siteGraph'
+import { stopWatchCourseTab, watchCourseTab } from '../services/platform/chaoxing/courseTab'
+import { isChaoxingCourseUrl } from '../services/platform/chaoxing/nav'
 
 const props = defineProps<{
   active?: boolean
@@ -433,6 +434,7 @@ const closeTab = async (id: string) => {
   const fallback = list[index + 1] || list[index - 1] || list[0]
   removeAppBrowser(id)
   stopChaoxingChapterParser(id)
+  unwatchParserClock(id)
   void closeBrowserView(id).catch(() => undefined)
   if (shownId === id) shownId = ''
   const nextId = selectedId.value === id ? fallback?.id || '' : selectedId.value
@@ -633,7 +635,7 @@ watch(
       bindHost()
       await syncView()
     } else {
-      stopParseLoop()
+      stopSiteClock(selectedId.value)
       if (selectedId.value) {
         stopChaoxingChapterParser(selectedId.value)
       }
@@ -641,9 +643,15 @@ watch(
       stopHomeworkLiveSync()
       abstractionMenuOpen.value = false
       siteGraphMenuOpen.value = false
+      stopWatchCourseTab()
       await hideAllBrowserViews().catch(() => undefined)
     }
   },
+)
+
+watch(
+  () => parserPageKind(address.value || selected.value?.url || ''),
+  () => { void refreshCurrentParse(true) },
 )
 
 watch(selectedId, async (id, prev) => {
@@ -663,23 +671,29 @@ watch(
   ([id, url], prev) => {
     if (!id) return
     const href = url || selected.value?.url || ''
-    if (!isStudyUrl(href)) {
+    const kind = parserPageKind(href)
+    if (kind !== 'study') {
       if (url) stopChaoxingChapterParser(id)
-      if (!isHomeworkUrl(href)) stopHomeworkBackgroundParse()
+      if (kind !== 'homework') stopHomeworkBackgroundParse()
       return
     }
     if (href && href !== prev?.[1]) syncChaoxingChapterUrl(id, href)
     else startChaoxingChapterParser(id)
-    if (isHomeworkUrl(href)) startHomeworkBackgroundParse(id)
-    else stopHomeworkBackgroundParse()
+    stopHomeworkBackgroundParse()
   },
 )
 
-let parseTimer = 0
-let liveTimer = 0
-let parseBusy = false
+watch(
+  () => [selectedId.value, address.value, siteGraphMenuOpen.value] as const,
+  ([id, url, graphOpen]) => {
+    const href = url || selected.value?.url || ''
+    if (id && (isChaoxingCourseUrl(href) || (graphOpen && /chaoxing\.com/i.test(href)))) {
+      watchCourseTab(id, graphOpen)
+    } else stopWatchCourseTab()
+  },
+)
+
 let lastInspectUrl = ''
-const PARSE_TIMER_KEY = '__zeHwParseTimer'
 
 const homeworkCardUseful = () => {
   const card = lastHomeworkCard.value
@@ -695,84 +709,44 @@ const homeworkCardUseful = () => {
   return questions.every(questionHasContent)
 }
 
-const ensureHomeworkParseLoop = () => {
-  const leaked = Number((window as Window & { [PARSE_TIMER_KEY]?: number })[PARSE_TIMER_KEY] || 0)
-  if (leaked && leaked !== parseTimer) {
-    window.clearInterval(leaked)
-    ;(window as Window & { [PARSE_TIMER_KEY]?: number })[PARSE_TIMER_KEY] = 0
-  }
-  if (parseTimer) return
-  parseTimer = window.setInterval(() => {
-    void refreshCurrentParse(false)
-  }, 2000)
-  ;(window as Window & { [PARSE_TIMER_KEY]?: number })[PARSE_TIMER_KEY] = parseTimer
+const stopSiteClock = (id = selectedId.value) => {
+  if (id) unwatchParserClock(id, 'site')
 }
 
 const refreshCurrentParse = async (force = false) => {
   const current = selected.value
-  if (!current || parseBusy) return
+  if (!current) return
   const url = address.value || current.url || ''
-  if (isStudyUrl(url)) {
-    // 章节解析后台跑；章节测验题卡也后台探测，不依赖打开面板
-    stopParseLoop()
+  stopSiteClock(current.id)
+  const kind = parserPageKind(url)
+  if (kind === 'study') {
     abstractionParsing.value = false
     startChaoxingChapterParser(current.id)
     stopHomeworkBackgroundParse()
     lastInspectUrl = url
+    if (force) await kickParserClock(current.id)
     return
   }
   stopChaoxingChapterParser(current.id)
-  if (!isHomeworkUrl(url)) {
-    stopParseLoop()
-    stopHomeworkBackgroundParse()
-    stopHomeworkLiveSync()
-    if (lastHomeworkCard.value) publishHomeworkCard(null)
-    lastInspectUrl = ''
-    return
-  }
-  // 独立作业页同样后台轮询
-  startHomeworkBackgroundParse(current.id)
-  ensureHomeworkParseLoop()
-  if (!force && homeworkCardUseful() && lastInspectUrl === url) {
-    await startHomeworkLiveSync(current.id).catch(() => null)
-    return
-  }
-  parseBusy = true
-  abstractionParsing.value = true
-  const watchdog = window.setTimeout(() => {
-    parseBusy = false
-    abstractionParsing.value = false
-  }, 12000)
-  try {
+  if (kind === 'homework') {
+    startHomeworkBackgroundParse(current.id)
+    if (!force && homeworkCardUseful() && lastInspectUrl === url) {
+      await startHomeworkLiveSync(current.id).catch(() => null)
+      return
+    }
     lastInspectUrl = url
-    await inspectChaoxingHomework(current.id, { vision: false })
-    await startHomeworkLiveSync(current.id).catch(() => null)
-  } catch {
-    // keep last card
-  } finally {
-    window.clearTimeout(watchdog)
-    parseBusy = false
-    abstractionParsing.value = false
+    await kickParserClock(current.id)
+    return
   }
-}
-
-const stopParseLoop = () => {
-  const leaked = Number((window as Window & { [PARSE_TIMER_KEY]?: number })[PARSE_TIMER_KEY] || 0)
-  if (leaked) window.clearInterval(leaked)
-  ;(window as Window & { [PARSE_TIMER_KEY]?: number })[PARSE_TIMER_KEY] = 0
-  if (parseTimer) {
-    window.clearInterval(parseTimer)
-    parseTimer = 0
-  }
-  if (liveTimer) {
-    window.clearInterval(liveTimer)
-    liveTimer = 0
-  }
+  stopHomeworkBackgroundParse()
+  stopHomeworkLiveSync()
+  if (lastHomeworkCard.value) publishHomeworkCard(null)
+  lastInspectUrl = ''
 }
 
 if (import.meta.hot) {
   import.meta.hot.dispose(() => {
-    stopParseLoop()
+    stopSiteClock()
     stopHomeworkBackgroundParse()
     stopHomeworkLiveSync()
   })
@@ -824,7 +798,7 @@ onMounted(async () => {
     }
     if (!urlChanged) {
       // 同址切章（chapterId 变了有时仍走 state）时也保持解析器
-      if (selectedId.value === state.id && isStudyUrl(url)) {
+      if (selectedId.value === state.id && parserPageKind(url) === 'study') {
         startChaoxingChapterParser(state.id)
       }
       return
@@ -840,7 +814,7 @@ onMounted(async () => {
     else if (state.phase === 'finished') {
       finishLoadLine(state.id)
       const href = state.url || address.value || ''
-      if (selectedId.value === state.id && isStudyUrl(href)) resyncChaoxingStudy(state.id, href)
+      if (selectedId.value === state.id && parserPageKind(href) === 'study') resyncChaoxingStudy(state.id, href)
     }
   }).catch(() => null)
   window.addEventListener('resize', updateBounds)
@@ -872,9 +846,10 @@ onUnmounted(() => {
   boundsRaf = 0
   window.removeEventListener('resize', updateBounds)
   window.removeEventListener('keydown', onAbsKey)
-  stopParseLoop()
+  stopSiteClock()
   stopHomeworkBackgroundParse()
   stopHomeworkLiveSync()
+  stopWatchCourseTab()
   abstractionMenuOpen.value = false
   siteGraphMenuOpen.value = false
   void hideAllBrowserViews().catch(() => undefined)

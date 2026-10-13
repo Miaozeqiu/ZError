@@ -1,0 +1,24 @@
+/** 题库 / 学习对话工具表。按域拆在同目录其它文件。 */
+import {
+  LIST_AGENT_SKILLS_TOOL,
+  READ_AGENT_SKILL_FILE_TOOL,
+  READ_AGENT_SKILL_TOOL,
+  RESET_AGENT_SKILL_FILE_TOOL,
+  WRITE_AGENT_SKILL_FILE_TOOL,
+} from '../skillTools'
+import { FOLDER_QUESTION_TOOLS } from './folderQuestionTools'
+import { CAMPUS_TOOLS } from './campusTools'
+import { PRACTICE_QUIZ_TOOLS } from './practiceQuizTools'
+import { STUDY_GRAPH_TOOLS } from './studyGraphTools'
+
+export const CHAT_TOOLS = [
+  ...FOLDER_QUESTION_TOOLS,
+  ...CAMPUS_TOOLS,
+  ...PRACTICE_QUIZ_TOOLS,
+  ...STUDY_GRAPH_TOOLS,
+  LIST_AGENT_SKILLS_TOOL,
+  READ_AGENT_SKILL_TOOL,
+  READ_AGENT_SKILL_FILE_TOOL,
+  WRITE_AGENT_SKILL_FILE_TOOL,
+  RESET_AGENT_SKILL_FILE_TOOL,
+]

@@ -35,6 +35,8 @@ export interface ImportTaskStep {
   result?: string
   /** 工具开始时助手正文长度，用于对话里按时间线插入，而不是全部堆在顶部 */
   atContentLength?: number
+  jobId?: string
+  children?: ImportTaskStep[]
 }
 
 export interface ImportTask {

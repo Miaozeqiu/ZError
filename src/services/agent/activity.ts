@@ -5,6 +5,7 @@ export const describeActivity = (name: string, args: any, status: ImportTaskStep
   const browserLabels: Record<string, [string, string, string]> = {
     browser_get_state: ['正在查看网页', '查看网页失败', '查看了当前网页'],
     browser_get_page: ['正在读取网页', '读取网页失败', '读取了当前网页'],
+    browser_find: ['正在搜索快照', '搜索快照失败', '在快照里搜到了内容'],
     browser_navigate: ['正在打开网页', '打开网页失败', extra?.url || args?.url ? `打开了 ${extra?.url || args?.url}` : '打开了网页'],
     browser_reload: ['正在刷新', '刷新失败', '刷新了网页'],
     browser_go_back: ['正在后退', '后退失败', '后退了一页'],
@@ -44,11 +45,30 @@ export const describeActivity = (name: string, args: any, status: ImportTaskStep
         ? '正在等网址'
         : args?.until === 'selector'
           ? '正在等元素'
+          : args?.until === 'fn'
+            ? '正在等脚本条件'
+            : args?.until === 'response'
+              ? '正在等接口'
           : args?.until === 'idle'
             ? '正在等页面稳定'
             : '正在等待',
       '等待失败',
       args?.seconds ? `等了 ${args.seconds} 秒` : '等待了一会儿',
+    ],
+    browser_task: [
+      args?.kind === 'explore'
+        ? '正在派出探路子 Agent'
+        : args?.kind === 'parser'
+          ? '正在派出改解析器子 Agent'
+          : '正在派出执行子 Agent',
+      extra?.error ? `子任务失败 · ${extra.error}` : '子任务失败',
+      extra?.summary
+        ? String(extra.summary).slice(0, 80)
+        : args?.kind === 'explore'
+          ? '探路子 Agent 已返回'
+          : args?.kind === 'parser'
+            ? '改解析器子 Agent 已返回'
+            : '执行子 Agent 已返回',
     ],
     browser_todo: [
       args?.action === 'check' ? '正在勾选任务' : args?.action === 'add' ? '正在追加任务' : '正在整理任务清单',
@@ -62,6 +82,11 @@ export const describeActivity = (name: string, args: any, status: ImportTaskStep
             : Array.isArray(args?.items)
               ? `写下了 ${args.items.length} 步任务`
               : '更新了任务清单',
+    ],
+    browser_course_plan: [
+      '正在推进课程计划',
+      extra?.error ? `课程计划失败 · ${extra.error}` : '课程计划失败',
+      extra?.summary ? String(extra.summary) : '更新了课程计划',
     ],
     browser_site_graph: [
       args?.action === 'list' || args?.action === 'get'
@@ -82,7 +107,11 @@ export const describeActivity = (name: string, args: any, status: ImportTaskStep
                 ? '重置了网站图谱'
                 : args?.action === 'set_notes'
                   ? '更新了图谱备注'
-                  : '查看了网站图谱',
+                  : args?.action === 'save'
+                    ? '保存了网站图谱'
+                    : args?.action === 'upsert_site'
+                      ? '更新了站点图谱'
+                      : '查看了网站图谱',
     ],
     browser_study_chapters: ['正在读取章节', '读取章节失败', '读取了章节目录'],
     browser_study_play: [
@@ -95,6 +124,7 @@ export const describeActivity = (name: string, args: any, status: ImportTaskStep
           : '已控制视频',
     ],
     browser_study_watch: ['正在监控进度', '监控失败', '开始监控视频进度'],
+    browser_watch: ['正在监控进度', '监控失败', '开始监控视频进度'],
     browser_study_next: ['正在打开下一节', '打开下一节失败', '打开了下一节视频'],
     browser_homework: [
       args?.action === 'inspect'

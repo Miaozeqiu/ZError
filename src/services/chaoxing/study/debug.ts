@@ -1,4 +1,5 @@
 import { writeDebugDump } from '../../agent/debugLog'
+import { readCdpStats } from '../../browser/cdpStats'
 
 export type StudyParserStep = {
   label?: string
@@ -22,9 +23,20 @@ export type StudyParserLive = {
   error?: string
 }
 
-let last: StudyParserLive = {
+let last: StudyParserLive & { cdp?: string; store?: string } = {
   ts: '',
   via: '',
+}
+
+const storeRing: string[] = []
+
+/** 面板侧状态写入者的最近几笔（谁改了 jobs / video），和页内 tick 分开看。 */
+export const noteStudyStore = (line: string) => {
+  const stamp = new Date().toISOString().slice(11, 23)
+  storeRing.push(`${stamp} ${String(line || '')}`)
+  while (storeRing.length > 8) storeRing.shift()
+  last.store = storeRing.join('\n')
+  write(last, false)
 }
 
 let lastWrite = 0
@@ -72,6 +84,7 @@ const formatLive = (snap: StudyParserLive) => {
     `href: ${snap.href || ''}`,
     `playing: ${snap.playing ?? ''}`,
     `error: ${snap.error || ''}`,
+    last.cdp || '',
     '',
     `## Handle`,
     Object.keys(handle).length
@@ -83,6 +96,9 @@ const formatLive = (snap: StudyParserLive) => {
     '',
     `## Tick`,
     `hasVideo=${tick.hasVideo ?? ''}  paused=${tick.paused ?? ''}  ended=${tick.ended ?? ''}  jobDone=${tick.jobDone ?? ''}  ${clock}  src=${String(tick.src || '').slice(0, 80)}`,
+    '',
+    `## 监测（store）`,
+    last.store || '（无）',
     '',
     `## 任务点`,
     ...(snap.steps?.length
@@ -126,10 +142,17 @@ export const noteStudyParser = (patch: {
     tick: slim(patch.tick) ?? last.tick,
     steps: slimSteps(patch.steps ?? patch.jobs) ?? last.steps,
     playing: patch.playing ?? last.playing,
-    error: patch.error ?? last.error,
+    // 错误只属于产生它的那次事件。之后 jobs / tick 正常写入就清掉，
+    // 不然启动时一句「CDP 尚未就绪」会一直挂在实时文件里误导排查。
+    error: patch.error ?? (/error|lost/i.test(patch.via) ? last.error : ''),
   }
   const important = /play|pause|step|done|lost|error/i.test(patch.via)
-  write(last, Boolean(patch.force || important))
+  void readCdpStats().then((stats) => {
+    last.cdp = stats.line
+    write(last, Boolean(patch.force || important))
+  }).catch(() => {
+    write(last, Boolean(patch.force || important))
+  })
 }
 
 export const lastStudyParser = () => last

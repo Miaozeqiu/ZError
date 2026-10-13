@@ -1,0 +1,58 @@
+{
+  "id": "zjooc",
+  "name": "在浙学",
+  "host": "zjooc.cn",
+  "hostPattern": "zjooc\\.cn",
+  "notes": [
+    "先做章节目录卡再刷课。账号走 siteAccounts，不要把密码写进图谱。"
+  ],
+  "nodes": [
+    {
+      "id": "login",
+      "title": "登录",
+      "path": "/login",
+      "summary": "手机号登录。",
+      "row": 0,
+      "col": -1,
+      "patterns": ["zjooc\\.cn.*login", "passport"],
+      "parserIds": ["login"]
+    },
+    {
+      "id": "course-list",
+      "title": "课程列表",
+      "path": "/course",
+      "summary": "我学的课。点课名进学习。",
+      "row": 0,
+      "col": 0,
+      "patterns": ["ucenter/student/course/build", "usercenter/student/course/build"]
+    },
+    {
+      "id": "course-study-plan",
+      "title": "章节目录",
+      "path": "/plan",
+      "summary": "el-tree 任务点。点叶子进播放页。",
+      "structure": "Element UI el-tree。叶子 icon-shipin=视频，icon-iconset0387=文档。目录卡 parsers/study。",
+      "row": 0,
+      "col": 1,
+      "patterns": ["course/study/[^/]+/plan$", "/plan$"],
+      "parserIds": ["study"]
+    },
+    {
+      "id": "course-study-player",
+      "title": "播放页",
+      "path": "/plan/detail",
+      "summary": "ckplayer 原生 video（blob src）。invoke play 后 browser_watch。",
+      "structure": "页面内 <video>，没有学习通 iframe。",
+      "row": 1,
+      "col": 1,
+      "patterns": ["course/study/[^/]+/plan/detail", "/plan/detail"],
+      "parserIds": ["study"]
+    }
+  ],
+  "edges": [
+    { "from": "login", "to": "course-list", "label": "登录", "kind": "forward" },
+    { "from": "course-list", "to": "course-study-plan", "label": "进课", "kind": "forward" },
+    { "from": "course-study-plan", "to": "course-study-player", "label": "打开任务点", "kind": "forward" },
+    { "from": "course-study-player", "to": "course-study-plan", "label": "回目录", "kind": "back" }
+  ]
+}

@@ -9,16 +9,16 @@ export const inspectEvalScript = (script: string, policy: BrowserEvalPolicy): st
   if (!raw.trim()) return '缺少 script'
   if (raw.length > 20_000) return '脚本过长（上限 20000 字）'
   if (NAV_RE.test(raw)) {
-    return '禁止用 eval 改 location 或 iframe.src。跳转用 browser_navigate / click；课表页签只用 click_text。'
+    return '跳转用 browser_navigate / click；课表页签用 click_text。eval 不要改 location 或 iframe.src。'
   }
   if (FRAME_DOM_RE.test(raw)) {
-    return '禁止 iframe.contentDocument / contentWindow。脚本已在每帧执行，直接写 document。'
+    return '指定框用 frame 参数；默认只跑顶层。eval 不要碰 iframe.contentDocument / contentWindow。'
   }
   if (policy === 'deny') {
-    return '当前页禁止 eval。刷课用 browser_study_play / next，不要自己点播放器。'
+    return '当前是播放页。当前看得见的视频只是其中一条。用快照里那一条的 ref 点页签再播放。'
   }
   if (policy === 'read' && MUTATE_RE.test(raw)) {
-    return '当前页只允许只读 eval。要点击或播放请用 click_text / browser_study_play。'
+    return '当前页 eval 只读。要点击或播放请用 click_text / browser_click。'
   }
   return null
 }

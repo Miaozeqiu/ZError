@@ -1,0 +1,18 @@
+---
+description: 浏览器 Agent 用快照和站点经验做事。改刷课、作业、图谱时必须遵守。
+alwaysApply: true
+---
+
+# 经验与 Agent
+
+目标：任意网站都能看快照做事，并把做成的步骤写成站点经验。学习通是第一站，不是唯一架构。
+
+1. **图谱是「在哪一页」的唯一真值。** 学习通正则只放 `platform/chaoxing/fallback.ts`，由 `nav.ts` 在图谱未命中时兜底。不要在 `browserLoop` / `browserTools` 再写一套。
+2. **Agent 看快照点。** `get_state` 给网址、图谱节点、经验和快照。做事用 `browser_click` / `click_text` / `browser_type` / `browser_watch`。不要写 see.json、schema、locators，也不要再加 `browser_invoke`。
+3. **经验记做成过的事。** 人写的步骤在 `site-learn/sites/<host>/SKILL.md`。宿主把成功且页面有变化的点击记成【做过】，失败记成【教训】。按当前图谱节点注入。
+4. **能力按能力注册，不按站点。** watch / tick / 播放器 / iframe 真地址 / 截题是宿主能力（学习通在 `src/services/chaoxing/host/`）。Agent 不准写 `parsers/**/*.js`。
+5. **节点 id 是页面身份。** 课程壳侧栏「章节」是目录框，身份仍是 course；只有 `studentstudy` 才是播放页。本节测验用钻入（`abstractionDrill`）。学习通点在 iframe 里，顶层网址常不变，不能当跳转证据。
+6. **单 Agent 看快照做事。** `browser_task` 只派 explore / execute。`finish(done)` 必须过宿主门闩。同参失败两次由 failGate 打断。
+7. **四层只能向下。** engine 不懂站点；站点字符串只活在 `platform/chaoxing` 和站点 SKILL。图谱不进模型主输入。
+
+刷课坑见 `chaoxing-study-player.mdc`。

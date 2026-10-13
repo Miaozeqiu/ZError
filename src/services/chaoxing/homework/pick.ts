@@ -1,9 +1,11 @@
 import { writeDebugDump } from '../../agent/debugLog'
 import { lastHomeworkCard } from '../../browser/abstractions'
 import { asObject, evalBrowserView, waitMs } from '../../browser/eval'
+import { locatorsForHomeworkOption } from '../locators'
 import { clickHomeworkBox } from './act'
+import { readLastTick } from '../../browser/pushEvents'
 import { applyHomeworkLiveState, beginHomeworkPick, endHomeworkPick, readHomeworkLiveState } from './live'
-import { LOCATE_HW_PICK, INVOKE_HW_PICK, READ_HW_PICKED } from './scripts'
+import { READ_HW_PICKED } from './scripts'
 
 const formatPickDebug = (report: Record<string, unknown>) => {
   const frames = (Array.isArray(report.frames) ? report.frames : []) as Array<Record<string, unknown>>
@@ -65,22 +67,23 @@ export const pickHomeworkOption = async (id: string, index: number, letter: stri
 
   beginHomeworkPick()
   try {
-    const before = asObject(await evalBrowserView(id, READ_HW_PICKED(at)).catch(() => ({})))
+    const cachedBefore = await readLastTick(id, '', 'hw').catch(() => null)
+    const before = cachedBefore?.ok && cachedBefore.ageMs <= 2000 && cachedBefore.states
+      ? { found: true, picked: cachedBefore.states.find((row) => Number(row.index) === at)?.selected || '' }
+      : asObject(await evalBrowserView(id, READ_HW_PICKED(at)).catch(() => ({})))
     const alreadyOn = String(before.picked || '').includes(want)
     const topFill: Record<string, unknown> = {}
     let pick: Record<string, unknown> = {}
     const needClick = turningOff ? (alreadyOn || !before.found) : !alreadyOn
     if (needClick) {
-      // 章节测验在嵌套 iframe：优先帧内 addChoice/click，CDP 鼠标坐标常偏
-      const invoked = asObject(await evalBrowserView(id, INVOKE_HW_PICK(at, want)).catch((err) => ({ error: String(err) })))
-      pick = invoked
-      if (!invoked.ok) {
-        pick = asObject(await clickHomeworkBox(id, LOCATE_HW_PICK(at, want)).catch((err) => ({ error: String(err) })))
-        if (pick.ok) pick = { ...pick, via: 'cdp' }
-      }
+      pick = asObject(await clickHomeworkBox(id, locatorsForHomeworkOption(at, want)).catch((err) => ({ error: String(err) })))
+      if (pick.ok) pick = { ...pick, via: 'cdp' }
     }
     await waitMs(80)
-    const after = asObject(await evalBrowserView(id, READ_HW_PICKED(at)).catch(() => ({})))
+    const cachedAfter = await readLastTick(id, '', 'hw').catch(() => null)
+    const after = cachedAfter?.ok && cachedAfter.ageMs <= 2000 && cachedAfter.states
+      ? { found: true, picked: cachedAfter.states.find((row) => Number(row.index) === at)?.selected || '' }
+      : asObject(await evalBrowserView(id, READ_HW_PICKED(at)).catch(() => ({})))
     const pickedAfter = String(after.picked || pick.picked || '')
     const fillOk = Number(topFill.filledCount) > 0 || Boolean(topFill.ok)
     const readOk = Boolean(after.found)

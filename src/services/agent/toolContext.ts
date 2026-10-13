@@ -1,5 +1,7 @@
 import type { ModelToolCall } from '../model/runner'
-import type { AgentChatAttachment } from './chatTypes'
+import type { AgentChatAttachment, AgentSubagentKind } from './chatTypes'
+
+export type AgentToolRole = 'parent' | AgentSubagentKind
 
 export type ChatToolContext = {
   sessionId: string
@@ -14,6 +16,11 @@ export type ChatToolContext = {
   scheduleEval: (input: { subjectId: number; hint?: string; stepId: string }) => void
   getTodos?: () => import('./chatTypes').AgentTodoItem[]
   setTodos?: (todos: import('./chatTypes').AgentTodoItem[]) => void
+  role?: AgentToolRole
+  parentSessionId?: string
+  parentAssistantId?: string
+  parentStepId?: string
+  jobId?: string
 }
 
 export type ChatToolHandler = (input: {

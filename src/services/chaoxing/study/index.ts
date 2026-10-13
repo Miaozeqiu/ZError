@@ -30,6 +30,7 @@ export {
   playChaoxingVideo,
   tapChaoxingPlay,
   pinChaoxingPlayMid,
+  clearChaoxingPlayMid,
   pauseChaoxingVideo,
   clickChaoxingStep,
   readChaoxingChapterJobTick,

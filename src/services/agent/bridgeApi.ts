@@ -16,18 +16,13 @@ import {
   scrollBrowserView,
   typeBrowserElement,
   getSelectedBrowserId,
+  peekAppBrowserUrl,
 } from '../browser/appBrowser'
 import { evalBrowserView, evalBrowserViewMain, waitMs } from '../browser/eval'
 import { siteGraphAgentSnap } from '../browser/siteGraph'
-import {
-  ensurePanelStudy,
-  nextPanelStudy,
-  openPanelChapter,
-  playPanelStudy,
-  readPanelStudy,
-} from '../chaoxing/browser/panelStudy'
-import { fillChaoxingCaptcha } from '../chaoxing/study/captcha'
-import { readChaoxingVideoTick } from '../chaoxing/study/video'
+import { ensurePanelStudy, nextPanelStudy, openPanelChapter, playPanelStudy, readPanelStudy } from '../chaoxing/browser/panelStudy'
+import { fillChaoxingCaptcha, readChaoxingVideoTick } from '../chaoxing/study'
+import { runPanelHomework } from '../chaoxing/homework/panelHomework'
 
 export type BridgeCmd = {
   id?: string
@@ -117,7 +112,7 @@ const pageSnap = async (browserId: string, withImage: boolean) => {
 }
 
 const parserSnap = async (browserId: string, refresh = false) => {
-  if (refresh) await ensurePanelStudy(browserId)
+  if (refresh) await ensurePanelStudy(browserId).catch(() => null)
   return readPanelStudy(browserId)
 }
 
@@ -160,18 +155,14 @@ const homeworkOf = async (
   action: string,
   args: Record<string, unknown>,
 ) => {
-  const homework = await import('../chaoxing/homework')
-  if (action === 'list') return homework.openChaoxingHomeworkList(browserId)
-  if (action === 'open') {
-    const title = arg(args, 'title')
-    if (!title) return { ok: false, error: '缺少 title' }
-    return homework.openChaoxingHomeworkItem(browserId, title)
-  }
-  if (action === 'fill') return homework.fillChaoxingHomework(browserId, args.answers ?? args.answer)
-  if (action === 'guess') return homework.guessChaoxingHomework(browserId)
-  if (action === 'save') return homework.saveChaoxingHomework(browserId)
-  if (action === 'submit') return homework.submitChaoxingHomework(browserId)
-  return homework.inspectChaoxingHomework(browserId)
+  const hwAction = ['list', 'open', 'inspect', 'fill', 'guess', 'save', 'submit'].includes(action)
+    ? action
+    : 'inspect'
+  return runPanelHomework(browserId, {
+    action: hwAction,
+    title: arg(args, 'title') || undefined,
+    answers: args.answers ?? args.answer,
+  })
 }
 
 const sendInApp = async (browserId: string, text: string) => {
@@ -397,7 +388,7 @@ export const runBridgeAction = async (cmd: BridgeCmd) => {
       title: arg(args, 'title') || undefined,
       index: arg(args, 'index') || undefined,
       chapterId: arg(args, 'chapterId') || undefined,
-      videoIndex: num(args, 'videoIndex'),
+      videoIndex: num(args, 'videoIndex') || undefined,
       label: arg(args, 'label') || undefined,
       skipIfDone: args.skipIfDone !== false,
     })
@@ -415,7 +406,7 @@ export const runBridgeAction = async (cmd: BridgeCmd) => {
   }
 
   if (action === 'probe') {
-    const tick = await readChaoxingVideoTick(browserId)
+    const tick = await readChaoxingVideoTick(browserId).catch(() => null)
     return { ok: Boolean(tick?.hasVideo), id, action, browserId, tick, chapter: await parserSnap(browserId, false) }
   }
 
@@ -428,6 +419,17 @@ export const runBridgeAction = async (cmd: BridgeCmd) => {
     const hwAction = arg(args, 'action') || 'inspect'
     const card = await homeworkOf(browserId, hwAction, args)
     return { ok: true, id, action, browserId, homework: hwAction, card }
+  }
+
+  if (action === 'protocol') {
+    const op = arg(args, 'op')
+    if (!op) return { ok: false, id, action, error: '缺少 op' }
+    const extra = (args.args && typeof args.args === 'object' && !Array.isArray(args.args))
+      ? args.args as Record<string, unknown>
+      : Object.fromEntries(Object.entries(args).filter(([key]) => !['op', 'args', 'browserId', 'id'].includes(key)))
+    const { callProtocol } = await import('../browser/protocol')
+    const result = await callProtocol(browserId, op, extra)
+    return { ok: result.ok !== false, id, action, browserId, op, ...result }
   }
 
   if (action === 'captcha') {

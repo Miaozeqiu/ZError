@@ -744,8 +744,12 @@ const onThreadSelectStart = (event: Event) => {
 const isThreadNearBottom = (pane: HTMLElement) =>
   pane.scrollHeight - pane.clientHeight - pane.scrollTop <= THREAD_PIN_PX
 
+let followLock = false
+let contentObserver: ResizeObserver | null = null
+let childObserver: MutationObserver | null = null
+
 const updateThreadPinned = () => {
-  if (threadJumping) return
+  if (threadJumping || followLock) return
   const pane = threadRef.value
   threadPinned.value = !pane || isThreadNearBottom(pane)
   hideSelectionMenu()
@@ -762,7 +766,9 @@ const cancelThreadJump = () => {
 const snapThreadToBottom = () => {
   const pane = threadRef.value
   if (!pane) return
+  followLock = true
   pane.scrollTop = pane.scrollHeight
+  followLock = false
   threadScroll.update()
 }
 
@@ -784,7 +790,9 @@ const jumpThreadToBottom = () => {
     const target = pane.scrollHeight - pane.clientHeight
     const t = Math.min(1, (now - startedAt) / duration)
     const eased = 1 - (1 - t) ** 3
+    followLock = true
     pane.scrollTop = start + (target - start) * eased
+    followLock = false
     threadScroll.update()
     if (t < 1) {
       threadJumpAnim = requestAnimationFrame(step)
@@ -954,8 +962,25 @@ watch(
   }
 )
 
+const observeThreadGrowth = () => {
+  const pane = threadRef.value
+  if (!pane || typeof ResizeObserver === 'undefined') return
+  contentObserver?.disconnect()
+  childObserver?.disconnect()
+  contentObserver = new ResizeObserver(() => {
+    if (threadPinned.value) snapThreadToBottom()
+  })
+  const watchChildren = () => {
+    for (const child of pane.children) contentObserver?.observe(child)
+  }
+  watchChildren()
+  childObserver = new MutationObserver(watchChildren)
+  childObserver.observe(pane, { childList: true })
+}
+
 onMounted(() => {
   threadScroll.bind()
+  observeThreadGrowth()
   bindSelectionLayout()
   scheduleHighlight()
   void nextTick(() => {
@@ -972,6 +997,10 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  contentObserver?.disconnect()
+  childObserver?.disconnect()
+  contentObserver = null
+  childObserver = null
   cancelThreadSettle()
   if (threadScrollFrame) cancelAnimationFrame(threadScrollFrame)
   if (selectionPaintFrame) cancelAnimationFrame(selectionPaintFrame)
@@ -1013,6 +1042,7 @@ defineExpose({
   position: absolute;
   inset: 0;
   overflow: auto;
+  overflow-anchor: none;
   scrollbar-width: none;
   -ms-overflow-style: none;
 }

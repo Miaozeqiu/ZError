@@ -1,10 +1,10 @@
-/** 刷课页内脚本。认节 / 任务点 / 播放器在 parsers/study/helpers.js + locate.js。 */
+/** 刷课页内脚本。认节 / 任务点 / 播放器在宿主 `chaoxing/host/study/`。 */
 import {
   studyHelpersSource,
   studyLocateScript,
   studyPageScript,
   studyTickScript,
-} from '../../parser/studyRuntime'
+} from '../host/studyHost'
 
 /** 测试用：helpers 里的 collectSteps / boxOf。 */
 export const COLLECT_STEPS = studyHelpersSource()

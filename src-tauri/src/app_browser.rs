@@ -432,8 +432,8 @@ const BROWSER_HOME_LAUNCH: &str = r#"(function(){
   }, true);
 })();"#;
 
-/// 注入到每一个 frame（含跨域）。用 postMessage 把子 frame 文本/点击回传到顶层，
-/// 顶层提供 `__ZE_ASK_FRAMES__` / `__ZE_FRAME_SNAPS__`，供 get_page / click_text 使用。
+/// 旧跨域快照桥。CDP `browser_cdp_snapshot` 已替代，不再注入每个站点。
+#[allow(dead_code)]
 const CHAOXING_FRAME_BRIDGE: &str = r#"(function(){
   if (window.__ZE_FRAME_BRIDGE__) return;
   window.__ZE_FRAME_BRIDGE__ = true;
@@ -926,7 +926,7 @@ pub async fn browser_open(
   }
   #[cfg(target_os = "macos")]
   if crate::cef_runtime::cef_enabled() {
-    return crate::cef_browser::open(app, id, url, x, y, width, height).await;
+    return crate::cef::open(app, id, url, x, y, width, height).await;
   }
   {
   let label = label_for(&id)?;
@@ -954,7 +954,6 @@ pub async fn browser_open(
     .accept_first_mouse(true)
     .user_agent(SAFARI_UA)
     .initialization_script_for_all_frames(BROWSER_HOME_LAUNCH)
-    .initialization_script_for_all_frames(CHAOXING_FRAME_BRIDGE)
     .initialization_script_for_all_frames(CHAOXING_BBS_CARDS)
     .on_new_window(move |url, _features| {
       if url.scheme() != "http" && url.scheme() != "https" {
@@ -1037,7 +1036,7 @@ pub async fn browser_set_bounds(
 ) -> Result<(), String> {
   #[cfg(target_os = "macos")]
   if crate::cef_runtime::cef_enabled() {
-    return crate::cef_browser::set_bounds(app, id, x, y, width, height, notify.unwrap_or(false));
+    return crate::cef::set_bounds(app, id, x, y, width, height, notify.unwrap_or(false));
   }
   {
   let webview = find_browser(&app, &id)?;
@@ -1052,7 +1051,7 @@ pub async fn browser_set_bounds(
 pub async fn browser_show(app: AppHandle, id: String) -> Result<(), String> {
   #[cfg(target_os = "macos")]
   if crate::cef_runtime::cef_enabled() {
-    return crate::cef_browser::show(app, id);
+    return crate::cef::show(app, id);
   }
   {
   let label = label_for(&id)?;
@@ -1070,7 +1069,7 @@ pub async fn browser_show(app: AppHandle, id: String) -> Result<(), String> {
 pub async fn browser_hide(app: AppHandle, id: String) -> Result<(), String> {
   #[cfg(target_os = "macos")]
   if crate::cef_runtime::cef_enabled() {
-    return crate::cef_browser::hide(app, id);
+    return crate::cef::hide(app, id);
   }
   {
   if let Ok(webview) = find_browser(&app, &id) {
@@ -1085,7 +1084,7 @@ pub async fn browser_hide(app: AppHandle, id: String) -> Result<(), String> {
 pub async fn browser_hide_all(app: AppHandle) -> Result<(), String> {
   #[cfg(target_os = "macos")]
   if crate::cef_runtime::cef_enabled() {
-    return crate::cef_browser::hide_all(app);
+    return crate::cef::hide_all(app);
   }
   {
   hide_all_browsers(&app);
@@ -1098,7 +1097,7 @@ pub async fn browser_hide_all(app: AppHandle) -> Result<(), String> {
 pub async fn browser_close(app: AppHandle, id: String) -> Result<(), String> {
   #[cfg(target_os = "macos")]
   if crate::cef_runtime::cef_enabled() {
-    return crate::cef_browser::close(app, id);
+    return crate::cef::close(app, id);
   }
   {
   if let Ok(webview) = find_browser(&app, &id) {
@@ -1113,7 +1112,7 @@ pub async fn browser_close(app: AppHandle, id: String) -> Result<(), String> {
 pub async fn browser_navigate(app: AppHandle, id: String, url: String) -> Result<(), String> {
   #[cfg(target_os = "macos")]
   if crate::cef_runtime::cef_enabled() {
-    return crate::cef_browser::navigate(app, id, url);
+    return crate::cef::navigate(app, id, url);
   }
   {
   let webview = find_browser(&app, &id)?;
@@ -1147,7 +1146,7 @@ pub async fn browser_navigate(app: AppHandle, id: String, url: String) -> Result
 pub async fn browser_reload(app: AppHandle, id: String) -> Result<(), String> {
   #[cfg(target_os = "macos")]
   if crate::cef_runtime::cef_enabled() {
-    return crate::cef_browser::reload(app, id);
+    return crate::cef::reload(app, id);
   }
   {
   find_browser(&app, &id)?
@@ -1160,7 +1159,7 @@ pub async fn browser_reload(app: AppHandle, id: String) -> Result<(), String> {
 pub async fn browser_go_back(app: AppHandle, id: String) -> Result<(), String> {
   #[cfg(target_os = "macos")]
   if crate::cef_runtime::cef_enabled() {
-    return crate::cef_browser::go_back(app, id);
+    return crate::cef::go_back(app, id);
   }
   {
   find_browser(&app, &id)?
@@ -1173,7 +1172,7 @@ pub async fn browser_go_back(app: AppHandle, id: String) -> Result<(), String> {
 pub async fn browser_go_forward(app: AppHandle, id: String) -> Result<(), String> {
   #[cfg(target_os = "macos")]
   if crate::cef_runtime::cef_enabled() {
-    return crate::cef_browser::go_forward(app, id);
+    return crate::cef::go_forward(app, id);
   }
   {
   find_browser(&app, &id)?
@@ -1186,7 +1185,7 @@ pub async fn browser_go_forward(app: AppHandle, id: String) -> Result<(), String
 pub async fn browser_set_zoom(app: AppHandle, id: String, zoom: f64) -> Result<(), String> {
   #[cfg(target_os = "macos")]
   if crate::cef_runtime::cef_enabled() {
-    return crate::cef_browser::set_zoom(app, id, zoom);
+    return crate::cef::set_zoom(app, id, zoom);
   }
   {
   let zoom = if zoom.is_finite() {
@@ -1204,7 +1203,7 @@ pub async fn browser_set_zoom(app: AppHandle, id: String, zoom: f64) -> Result<(
 pub async fn browser_get_state(app: AppHandle, id: String) -> Result<BrowserPageState, String> {
   #[cfg(target_os = "macos")]
   if crate::cef_runtime::cef_enabled() {
-    return crate::cef_browser::get_state(app, id).await;
+    return crate::cef::get_state(app, id).await;
   }
   {
   let webview = find_browser(&app, &id)?;
@@ -1255,7 +1254,7 @@ pub async fn browser_cdp_click(
 ) -> Result<CdpActResult, String> {
   #[cfg(target_os = "macos")]
   if crate::cef_runtime::cef_enabled() {
-    return crate::cef_browser::cdp_click(app, id, text, selector).await;
+    return crate::cef::cdp_click(app, id, text, selector).await;
   }
   {
     let _ = (app, id, text, selector);
@@ -1272,12 +1271,103 @@ pub async fn browser_cdp_fill(
 ) -> Result<CdpActResult, String> {
   #[cfg(target_os = "macos")]
   if crate::cef_runtime::cef_enabled() {
-    return crate::cef_browser::cdp_fill(app, id, selector, text).await;
+    return crate::cef::cdp_fill(app, id, selector, text).await;
   }
   {
     let _ = (app, id, selector, text);
     Err("当前平台浏览区不是 Chromium".into())
   }
+}
+
+#[tauri::command]
+pub async fn browser_cdp_find(
+  app: AppHandle,
+  id: String,
+  locator: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+  #[cfg(target_os = "macos")]
+  if crate::cef_runtime::cef_enabled() {
+    return crate::cef::cdp_find(app, id, locator).await;
+  }
+  let _ = (app, id, locator);
+  Err("当前平台浏览区不是 Chromium".into())
+}
+
+#[tauri::command]
+pub async fn browser_cdp_find_wait(
+  app: AppHandle,
+  id: String,
+  locator: serde_json::Value,
+  timeout_ms: Option<u64>,
+) -> Result<serde_json::Value, String> {
+  #[cfg(target_os = "macos")]
+  if crate::cef_runtime::cef_enabled() {
+    return crate::cef::cdp_find_wait(app, id, locator, timeout_ms).await;
+  }
+  let _ = (app, id, locator, timeout_ms);
+  Err("当前平台浏览区不是 Chromium".into())
+}
+
+#[tauri::command]
+pub async fn browser_push_last(
+  app: AppHandle,
+  id: String,
+  mid: Option<String>,
+  kind: Option<String>,
+) -> Result<serde_json::Value, String> {
+  #[cfg(target_os = "macos")]
+  if crate::cef_runtime::cef_enabled() {
+    let _ = app;
+    if kind.as_deref() == Some("hw") {
+      return Ok(crate::cef::last_hw(&id));
+    }
+    return Ok(crate::cef::last_tick(&id, mid.as_deref()));
+  }
+  let _ = (app, id, mid, kind);
+  Err("当前平台浏览区不是 Chromium".into())
+}
+
+#[tauri::command]
+pub async fn browser_dom_html(
+  app: AppHandle,
+  id: String,
+  frame: Option<String>,
+) -> Result<serde_json::Value, String> {
+  #[cfg(target_os = "macos")]
+  if crate::cef_runtime::cef_enabled() {
+    return crate::cef::dom_frame_html(app, id, frame).await;
+  }
+  let _ = (app, id, frame);
+  Err("当前平台浏览区不是 Chromium".into())
+}
+
+#[tauri::command]
+pub async fn browser_cdp_stats(app: AppHandle) -> Result<serde_json::Value, String> {
+  #[cfg(target_os = "macos")]
+  if crate::cef_runtime::cef_enabled() {
+    let _ = app;
+    return Ok(crate::cdp_client::snapshot_stats());
+  }
+  let _ = app;
+  Err("当前平台浏览区不是 Chromium".into())
+}
+
+#[tauri::command]
+pub async fn browser_cdp_click_at(
+  app: AppHandle,
+  id: String,
+  x: f64,
+  y: f64,
+  button: Option<String>,
+  click_count: Option<i64>,
+  session: Option<String>,
+) -> Result<CdpActResult, String> {
+  #[cfg(target_os = "macos")]
+  if crate::cef_runtime::cef_enabled() {
+    return crate::cef::cdp_click_at(app, id, x, y, button, click_count, session).await;
+  }
+  let _ = (app, id, x, y, button, click_count, session);
+  Err("当前平台浏览区不是 Chromium".into())
 }
 
 #[tauri::command]
@@ -1288,7 +1378,7 @@ pub async fn browser_cdp_locate(
 ) -> Result<serde_json::Value, String> {
   #[cfg(target_os = "macos")]
   if crate::cef_runtime::cef_enabled() {
-    return crate::cef_browser::cdp_locate(app, id, script).await;
+    return crate::cef::cdp_locate(app, id, script).await;
   }
   let _ = (app, id, script);
   Err("当前平台浏览区不是 Chromium".into())
@@ -1299,12 +1389,14 @@ pub async fn browser_cdp_click_box(
   app: AppHandle,
   id: String,
   script: String,
+  button: Option<String>,
+  click_count: Option<i64>,
 ) -> Result<CdpActResult, String> {
   #[cfg(target_os = "macos")]
   if crate::cef_runtime::cef_enabled() {
-    return crate::cef_browser::cdp_click_box(app, id, script).await;
+    return crate::cef::cdp_click_box(app, id, script, button, click_count).await;
   }
-  let _ = (app, id, script);
+  let _ = (app, id, script, button, click_count);
   Err("当前平台浏览区不是 Chromium".into())
 }
 
@@ -1317,7 +1409,7 @@ pub async fn browser_cdp_fill_box(
 ) -> Result<CdpActResult, String> {
   #[cfg(target_os = "macos")]
   if crate::cef_runtime::cef_enabled() {
-    return crate::cef_browser::cdp_fill_box(app, id, script, text).await;
+    return crate::cef::cdp_fill_box(app, id, script, text).await;
   }
   let _ = (app, id, script, text);
   Err("当前平台浏览区不是 Chromium".into())
@@ -1332,7 +1424,7 @@ pub async fn browser_cdp_hover(
 ) -> Result<CdpActResult, String> {
   #[cfg(target_os = "macos")]
   if crate::cef_runtime::cef_enabled() {
-    return crate::cef_browser::cdp_hover(app, id, text, selector).await;
+    return crate::cef::cdp_hover(app, id, text, selector).await;
   }
   let _ = (app, id, text, selector);
   Err("当前平台浏览区不是 Chromium".into())
@@ -1346,7 +1438,7 @@ pub async fn browser_cdp_scroll(
 ) -> Result<CdpActResult, String> {
   #[cfg(target_os = "macos")]
   if crate::cef_runtime::cef_enabled() {
-    return crate::cef_browser::cdp_scroll(app, id, amount).await;
+    return crate::cef::cdp_scroll(app, id, amount).await;
   }
   let _ = (app, id, amount);
   Err("当前平台浏览区不是 Chromium".into())
@@ -1360,13 +1452,43 @@ pub async fn browser_cdp_press(
 ) -> Result<CdpActResult, String> {
   #[cfg(target_os = "macos")]
   if crate::cef_runtime::cef_enabled() {
-    return crate::cef_browser::cdp_press(app, id, key).await;
+    return crate::cef::cdp_press(app, id, key).await;
   }
   let _ = (app, id, key);
   Err("当前平台浏览区不是 Chromium".into())
 }
 
 #[tauri::command]
+pub async fn browser_cdp_focus_node(
+  app: AppHandle,
+  id: String,
+  backend: i64,
+  session: Option<String>,
+) -> Result<CdpActResult, String> {
+  #[cfg(target_os = "macos")]
+  if crate::cef_runtime::cef_enabled() {
+    return crate::cef::cdp_focus_node(app, id, backend, session).await;
+  }
+  let _ = (app, id, backend, session);
+  Err("当前引擎不支持 focus_node".into())
+}
+
+pub async fn browser_cdp_click_node(
+  app: AppHandle,
+  id: String,
+  backend: i64,
+  session: Option<String>,
+  button: Option<String>,
+  click_count: Option<i64>,
+) -> Result<CdpActResult, String> {
+  #[cfg(target_os = "macos")]
+  if crate::cef_runtime::cef_enabled() {
+    return crate::cef::cdp_click_node(app, id, backend, session, button, click_count).await;
+  }
+  let _ = (app, id, backend, session, button, click_count);
+  Err("当前引擎不支持 click_node".into())
+}
+
 pub async fn browser_cdp_type_focused(
   app: AppHandle,
   id: String,
@@ -1374,7 +1496,7 @@ pub async fn browser_cdp_type_focused(
 ) -> Result<CdpActResult, String> {
   #[cfg(target_os = "macos")]
   if crate::cef_runtime::cef_enabled() {
-    return crate::cef_browser::cdp_type_focused(app, id, text).await;
+    return crate::cef::cdp_type_focused(app, id, text).await;
   }
   let _ = (app, id, text);
   Err("当前平台浏览区不是 Chromium".into())
@@ -1431,7 +1553,16 @@ pub async fn browser_cdp_snapshot(
 ) -> Result<serde_json::Value, String> {
   #[cfg(target_os = "macos")]
   if crate::cef_runtime::cef_enabled() {
-    return crate::cef_browser::cdp_snapshot(app, id).await;
+    return crate::cef::cdp_snapshot(
+      app,
+      id,
+      crate::cef::SnapshotQuery {
+        frame: None,
+        max_frames: 8,
+        acted: false,
+      },
+    )
+    .await;
   }
   {
     let _ = (app, id);
@@ -1446,12 +1577,112 @@ pub async fn browser_screenshot(
 ) -> Result<serde_json::Value, String> {
   #[cfg(target_os = "macos")]
   if crate::cef_runtime::cef_enabled() {
-    return crate::cef_browser::cdp_screenshot(app, id).await;
+    return crate::cef::cdp_screenshot(app, id).await;
   }
   {
     let _ = (app, id);
     Err("当前平台浏览区不是 Chromium".into())
   }
+}
+
+#[tauri::command]
+pub async fn browser_cookies(
+  app: AppHandle,
+  id: String,
+  url: Option<String>,
+) -> Result<serde_json::Value, String> {
+  let target = {
+    let raw = url.unwrap_or_default();
+    if raw.trim().is_empty() {
+      remembered_url(&id)
+    } else {
+      raw
+    }
+  };
+  if target.trim().is_empty() {
+    return Ok(serde_json::json!({
+      "ok": true,
+      "url": "",
+      "header": "",
+      "cookies": [],
+    }));
+  }
+  #[cfg(target_os = "macos")]
+  if crate::cef_runtime::cef_enabled() {
+    let cookies = crate::cef::cookies_json(&id, &target).await?;
+    let header = crate::cef::cookie_header_from(&cookies);
+    return Ok(serde_json::json!({
+      "ok": true,
+      "url": target,
+      "header": header,
+      "cookies": cookies,
+    }));
+  }
+  let _ = app;
+  Err("当前平台浏览区不是 Chromium".into())
+}
+
+fn cookie_target(id: &str, url: Option<String>) -> String {
+  let raw = url.unwrap_or_default();
+  if raw.trim().is_empty() {
+    remembered_url(id)
+  } else {
+    raw
+  }
+}
+
+#[tauri::command]
+pub async fn browser_set_cookies(
+  app: AppHandle,
+  id: String,
+  cookies: Vec<serde_json::Value>,
+  url: Option<String>,
+) -> Result<serde_json::Value, String> {
+  let target = cookie_target(&id, url);
+  #[cfg(target_os = "macos")]
+  if crate::cef_runtime::cef_enabled() {
+    return crate::cef::set_cookies(&id, cookies, &target).await;
+  }
+  let _ = (app, cookies);
+  Err("当前平台浏览区不是 Chromium".into())
+}
+
+#[tauri::command]
+pub async fn browser_network_watch(app: AppHandle, id: String) -> Result<serde_json::Value, String> {
+  #[cfg(target_os = "macos")]
+  if crate::cef_runtime::cef_enabled() {
+    return crate::cef::watch_network(&id).await;
+  }
+  let _ = (app, id);
+  Err("当前平台浏览区不是 Chromium".into())
+}
+
+#[tauri::command]
+pub async fn browser_network_recent(app: AppHandle, id: String) -> Result<serde_json::Value, String> {
+  #[cfg(target_os = "macos")]
+  if crate::cef_runtime::cef_enabled() {
+    let _ = app;
+    return Ok(crate::cef::recent_network(&id));
+  }
+  let _ = (app, id);
+  Err("当前平台浏览区不是 Chromium".into())
+}
+
+#[tauri::command]
+pub async fn browser_clear_cookies(
+  app: AppHandle,
+  id: String,
+  url: Option<String>,
+  name: Option<String>,
+  domain: Option<String>,
+) -> Result<serde_json::Value, String> {
+  let target = cookie_target(&id, url);
+  #[cfg(target_os = "macos")]
+  if crate::cef_runtime::cef_enabled() {
+    return crate::cef::clear_cookies(&id, &target, name, domain).await;
+  }
+  let _ = (app, name, domain);
+  Err("当前平台浏览区不是 Chromium".into())
 }
 
 /// Agent 用：在每个 CDP frame 执行同一脚本，返回多帧结果（内部工具仍用 browser_eval 取 best）。
@@ -1463,7 +1694,7 @@ pub async fn browser_eval_frames(
 ) -> Result<serde_json::Value, String> {
   #[cfg(target_os = "macos")]
   if crate::cef_runtime::cef_enabled() {
-    return crate::cef_browser::eval_script_frames(app, id, script).await;
+    return crate::cef::eval_script_frames(app, id, script).await;
   }
   {
     let value = browser_eval(app, id, script).await?;
@@ -1475,6 +1706,93 @@ pub async fn browser_eval_frames(
       "hint": "当前内核未走多帧 CDP；不要写 iframe.contentDocument。"
     }))
   }
+}
+
+/// 只把深度 0 上的 return / const / let / 分号当成语句。嵌在函数里的 return 仍是表达式。
+fn top_level_statement(script: &str) -> bool {
+  let chars: Vec<char> = script.chars().collect();
+  let mut i = 0;
+  let mut depth = 0i32;
+  let mut quote = '\0';
+  while i < chars.len() {
+    let ch = chars[i];
+    if quote != '\0' {
+      if ch == '\\' {
+        i += 2;
+        continue;
+      }
+      if ch == quote {
+        quote = '\0';
+      }
+      i += 1;
+      continue;
+    }
+    if ch == '"' || ch == '\'' || ch == '`' {
+      quote = ch;
+      i += 1;
+      continue;
+    }
+    if ch == '/' && i + 1 < chars.len() && chars[i + 1] == '/' {
+      while i < chars.len() && chars[i] != '\n' {
+        i += 1;
+      }
+      continue;
+    }
+    if ch == '/' && i + 1 < chars.len() && chars[i + 1] == '*' {
+      i += 2;
+      while i + 1 < chars.len() && !(chars[i] == '*' && chars[i + 1] == '/') {
+        i += 1;
+      }
+      i = (i + 2).min(chars.len());
+      continue;
+    }
+    if ch == '(' || ch == '{' || ch == '[' {
+      depth += 1;
+      i += 1;
+      continue;
+    }
+    if ch == ')' || ch == '}' || ch == ']' {
+      depth = (depth - 1).max(0);
+      i += 1;
+      continue;
+    }
+    if depth == 0 {
+      if ch == ';' {
+        return true;
+      }
+      if ch == '_' || ch == '$' || ch.is_ascii_alphabetic() {
+        let start = i;
+        i += 1;
+        while i < chars.len()
+          && (chars[i] == '_' || chars[i] == '$' || chars[i].is_ascii_alphanumeric())
+        {
+          i += 1;
+        }
+        let word: String = chars[start..i].iter().collect();
+        if matches!(
+          word.as_str(),
+          "return"
+            | "const"
+            | "let"
+            | "var"
+            | "function"
+            | "class"
+            | "if"
+            | "for"
+            | "while"
+            | "do"
+            | "switch"
+            | "try"
+            | "throw"
+        ) {
+          return true;
+        }
+        continue;
+      }
+    }
+    i += 1;
+  }
+  false
 }
 
 pub(crate) fn prepare_eval_script(script: &str) -> String {
@@ -1491,22 +1809,67 @@ pub(crate) fn prepare_eval_script(script: &str) -> String {
   if already {
     return trimmed.to_string();
   }
-  // 一律包成 IIFE：裸 return / 多语句在 CDP 顶层都是语法错。
-  if trimmed.contains("return ")
-    || trimmed.starts_with("return")
-    || trimmed.contains(';')
-    || trimmed.contains('\n')
-  {
+  // 顶层 return / const / let 才包成函数体。嵌套 return 仍按表达式 return。
+  if top_level_statement(trimmed) {
     return format!("(function(){{\n{trimmed}\n}})()");
   }
   format!("(function(){{ return ({trimmed}); }})()")
 }
 
+fn syntax_place(raw: &str, script: &str) -> String {
+  let col = serde_json::from_str::<serde_json::Value>(raw)
+    .ok()
+    .and_then(|v| {
+      v.get("columnNumber")
+        .and_then(|n| n.as_u64())
+        .or_else(|| v.pointer("/exceptionDetails/columnNumber").and_then(|n| n.as_u64()))
+    });
+  let Some(col) = col else {
+    return "脚本里".into();
+  };
+  let chars: Vec<char> = script.chars().collect();
+  if chars.is_empty() {
+    return format!("第 {col} 列");
+  }
+  let idx = (col as usize).min(chars.len().saturating_sub(1));
+  let start = idx.saturating_sub(10);
+  let end = (idx + 10).min(chars.len());
+  let near: String = chars[start..end].iter().collect();
+  if near.is_empty() {
+    format!("第 {col} 列")
+  } else {
+    format!("第 {col} 列附近「{near}」")
+  }
+}
+
 /// 把 CDP exceptionDetails JSON 收成短中文，方便 Agent 看。
 pub(crate) fn format_eval_error(raw: &str) -> String {
+  format_eval_error_near(raw, "")
+}
+
+pub(crate) fn format_eval_error_near(raw: &str, script: &str) -> String {
   let lower = raw.to_ascii_lowercase();
+  let syntax = lower.contains("syntaxerror")
+    || lower.contains("unexpected token")
+    || lower.contains("illegal return");
+  let place = syntax_place(raw, script);
   if lower.contains("illegal return statement") {
-    return "脚本语法错：顶层不能写 return。已应自动包装；若仍失败，改成 (function(){ return … })()。".into();
+    return format!(
+      "脚本语法错：顶层不能写 return。错在{place}。多数信息在 get_page 的 video 行、[done] 标记里。"
+    );
+  }
+  if syntax {
+    let desc = serde_json::from_str::<serde_json::Value>(raw)
+      .ok()
+      .and_then(|v| {
+        v.pointer("/exception/description")
+          .or_else(|| v.pointer("/exception/value"))
+          .and_then(|x| x.as_str())
+          .map(|text| text.chars().take(120).collect::<String>())
+      })
+      .filter(|text| !text.is_empty())
+      .unwrap_or_else(|| "脚本语法错".into());
+    return format!("{desc}。错在{place}。多数信息在 get_page 的 video 行、[done] 标记里。");
   }
   if raw.contains("contentDocument")
     || raw.contains("Blocked a frame")
@@ -1568,7 +1931,7 @@ async fn eval_wait_title(
 pub async fn browser_eval_main(app: AppHandle, id: String, script: String) -> Result<String, String> {
   #[cfg(target_os = "macos")]
   if crate::cef_runtime::cef_enabled() {
-    return crate::cef_browser::eval_script_main(app, id, script).await;
+    return crate::cef::eval_script_main(app, id, script).await;
   }
   browser_eval(app, id, script).await
 }
@@ -1577,7 +1940,7 @@ pub async fn browser_eval_main(app: AppHandle, id: String, script: String) -> Re
 pub async fn browser_eval(app: AppHandle, id: String, script: String) -> Result<String, String> {
   #[cfg(target_os = "macos")]
   if crate::cef_runtime::cef_enabled() {
-    return crate::cef_browser::eval_script(app, id, script).await;
+    return crate::cef::eval_script(app, id, script).await;
   }
   {
   let script = script.trim();
@@ -1639,6 +2002,204 @@ pub async fn browser_eval(app: AppHandle, id: String, script: String) -> Result<
   }
 }
 
+fn protocol_arg_str(args: &serde_json::Value, key: &str) -> Option<String> {
+  args.get(key).and_then(|v| v.as_str()).map(str::to_string).filter(|s| !s.is_empty())
+}
+
+fn protocol_arg_f64(args: &serde_json::Value, key: &str) -> f64 {
+  args
+    .get(key)
+    .and_then(|v| v.as_f64().or_else(|| v.as_i64().map(|n| n as f64)))
+    .unwrap_or(0.0)
+}
+
+fn protocol_json<T: serde::Serialize>(value: T) -> Result<serde_json::Value, String> {
+  serde_json::to_value(value).map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub async fn browser_protocol(
+  app: AppHandle,
+  id: String,
+  op: String,
+  args: Option<serde_json::Value>,
+) -> Result<serde_json::Value, String> {
+  let args = args.unwrap_or(serde_json::Value::Null);
+  let first = dispatch_browser_protocol(app.clone(), id.clone(), op.clone(), args.clone()).await;
+  #[cfg(target_os = "macos")]
+  if let Err(err) = &first {
+    if crate::cef_runtime::cef_enabled() && crate::cdp_client::is_session_dead(err) {
+      crate::cef::drop_page_bind(&id);
+      return match dispatch_browser_protocol(app, id, op, args).await {
+        Err(again) if crate::cdp_client::is_session_dead(&again) => {
+          Err(crate::cdp_client::HOST_CHANNEL_DOWN.into())
+        }
+        other => other,
+      };
+    }
+  }
+  first
+}
+
+async fn dispatch_browser_protocol(
+  app: AppHandle,
+  id: String,
+  op: String,
+  args: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+  match op.as_str() {
+    "find" => {
+      browser_cdp_find(app, id, args.get("locator").cloned().unwrap_or(serde_json::Value::Null)).await
+    }
+    "find_wait" => {
+      let timeout = args
+        .get("timeoutMs")
+        .or_else(|| args.get("timeout_ms"))
+        .and_then(|v| v.as_u64());
+      browser_cdp_find_wait(
+        app,
+        id,
+        args.get("locator").cloned().unwrap_or(serde_json::Value::Null),
+        timeout,
+      )
+      .await
+    }
+    "locate" => browser_cdp_locate(app, id, protocol_arg_str(&args, "script").unwrap_or_default()).await,
+    "click_at" => protocol_json(
+      browser_cdp_click_at(
+        app,
+        id,
+        protocol_arg_f64(&args, "x"),
+        protocol_arg_f64(&args, "y"),
+        protocol_arg_str(&args, "button"),
+        args
+          .get("clickCount")
+          .or_else(|| args.get("click_count"))
+          .and_then(|v| v.as_i64()),
+        protocol_arg_str(&args, "session"),
+      )
+      .await?,
+    ),
+    "click" => protocol_json(
+      browser_cdp_click(app, id, protocol_arg_str(&args, "text"), protocol_arg_str(&args, "selector")).await?,
+    ),
+    "type_focused" => {
+      protocol_json(browser_cdp_type_focused(app, id, protocol_arg_str(&args, "text").unwrap_or_default()).await?)
+    }
+    "focus_node" => protocol_json(
+      browser_cdp_focus_node(
+        app,
+        id,
+        args
+          .get("backend")
+          .or_else(|| args.get("backendNodeId"))
+          .and_then(|v| v.as_i64())
+          .unwrap_or(0),
+        protocol_arg_str(&args, "session"),
+      )
+      .await?,
+    ),
+    "click_node" => protocol_json(
+      browser_cdp_click_node(
+        app,
+        id,
+        args
+          .get("backend")
+          .or_else(|| args.get("backendNodeId"))
+          .and_then(|v| v.as_i64())
+          .unwrap_or(0),
+        protocol_arg_str(&args, "session"),
+        protocol_arg_str(&args, "button"),
+        args
+          .get("clickCount")
+          .or_else(|| args.get("click_count"))
+          .and_then(|v| v.as_i64()),
+      )
+      .await?,
+    ),
+    "hover" => protocol_json(
+      browser_cdp_hover(app, id, protocol_arg_str(&args, "text"), protocol_arg_str(&args, "selector")).await?,
+    ),
+    "scroll" => protocol_json(browser_cdp_scroll(app, id, protocol_arg_f64(&args, "amount")).await?),
+    "press" => protocol_json(browser_cdp_press(app, id, protocol_arg_str(&args, "key").unwrap_or_default()).await?),
+    "rebind" => {
+      #[cfg(target_os = "macos")]
+      if crate::cef_runtime::cef_enabled() {
+        crate::cef::drop_page_bind(&id);
+      }
+      Ok(serde_json::json!({ "ok": true }))
+    }
+    "snapshot" => {
+      #[cfg(target_os = "macos")]
+      if crate::cef_runtime::cef_enabled() {
+        return crate::cef::cdp_snapshot(
+          app,
+          id,
+          crate::cef::SnapshotQuery {
+            frame: protocol_arg_str(&args, "frame"),
+            max_frames: args
+              .get("maxFrames")
+              .or_else(|| args.get("max_frames"))
+              .and_then(|v| v.as_u64())
+              .unwrap_or(8) as usize,
+            acted: args.get("acted").and_then(|v| v.as_bool()).unwrap_or(false),
+          },
+        )
+        .await;
+      }
+      browser_cdp_snapshot(app, id).await
+    }
+    "evaluate" => {
+      let script = protocol_arg_str(&args, "script").unwrap_or_default();
+      #[cfg(target_os = "macos")]
+      if crate::cef_runtime::cef_enabled() {
+        return crate::cef::eval_main_json(&id, &script).await;
+      }
+      let _ = (app, script);
+      Err("当前平台浏览区不是 Chromium".into())
+    }
+    "dom_html" => browser_dom_html(app, id, protocol_arg_str(&args, "frame")).await,
+    "push_last" => {
+      browser_push_last(app, id, protocol_arg_str(&args, "mid"), protocol_arg_str(&args, "kind")).await
+    }
+    "cdp_stats" => browser_cdp_stats(app).await,
+    "cookies" => {
+      let action = protocol_arg_str(&args, "action").unwrap_or_else(|| "list".into());
+      let url = protocol_arg_str(&args, "url");
+      match action.as_str() {
+        "set" => {
+          let cookies = args
+            .get("cookies")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+          browser_set_cookies(app, id, cookies, url).await
+        }
+        "clear" => {
+          browser_clear_cookies(
+            app,
+            id,
+            url,
+            protocol_arg_str(&args, "name"),
+            protocol_arg_str(&args, "domain"),
+          )
+          .await
+        }
+        _ => browser_cookies(app, id, url).await,
+      }
+    }
+    "network" => {
+      let action = protocol_arg_str(&args, "action").unwrap_or_else(|| "recent".into());
+      if action == "watch" {
+        browser_network_watch(app, id).await
+      } else {
+        browser_network_recent(app, id).await
+      }
+    }
+    other => Err(format!("未知协议动作 {other}")),
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use super::{is_course_entry_url, is_homework_do_url, is_space_list_url, popup_should_drop};
@@ -1691,6 +2252,10 @@ mod tests {
       prepare_eval_script("(function(){ return 1 })()"),
       "(function(){ return 1 })()"
     );
+    let nested = "JSON.stringify([1].map(function(v){return v;}))";
+    let wrapped = prepare_eval_script(nested);
+    assert!(wrapped.contains("return (JSON.stringify"), "{wrapped}");
+    assert!(!wrapped.contains("\nJSON.stringify"), "{wrapped}");
   }
 
   #[test]

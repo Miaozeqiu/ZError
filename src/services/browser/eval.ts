@@ -1,17 +1,29 @@
 import { invoke } from '@tauri-apps/api/core'
+import { FRAME_SCOPE } from './engine/frame'
 import { VIRTUAL_MOUSE_JS } from './engine/virtualMouse'
 
 /** 同源 iframe 遍历 + 点击/取链，注入到页面 eval 里复用。 */
-export const SAME_ORIGIN_FRAMES = `${VIRTUAL_MOUSE_JS}
+export const SAME_ORIGIN_FRAMES = `${import.meta.env.DEV ? VIRTUAL_MOUSE_JS : ''}
+${FRAME_SCOPE}
 function __sameFrames(win, depth){
   var out = [win];
-  if ((depth || 0) > 4) return out;
+  if ((depth || 0) >= 4) return out;
   try {
     var list = win.document.querySelectorAll('iframe');
     for (var i = 0; i < list.length; i++) {
       try {
         var child = list[i].contentWindow;
-        if (child && child.document) out = out.concat(__sameFrames(child, (depth || 0) + 1));
+        var href = '';
+        try { href = String((child && child.location && child.location.href) || ''); } catch (eH) {}
+        var emptyBlank = href === 'about:blank' || /^(?:about:|javascript:)/i.test(href);
+        if (emptyBlank) {
+          var filled = false;
+          try { filled = !!(child.document && child.document.body && child.document.body.childElementCount); } catch (eB) {}
+          if (!filled) continue;
+        }
+        if (child && child.document && child.document.readyState !== 'loading') {
+          out = out.concat(__sameFrames(child, (depth || 0) + 1));
+        }
       } catch (e) {}
     }
   } catch (e) {}
@@ -110,6 +122,56 @@ function __navHref(el){
 }
 `
 
+const TOP_LEVEL_WORD = /^(return|const|let|var|function|class|if|for|while|do|switch|try|throw)$/
+
+/** 深度 0 上的 return / const / let / 分号才是语句。函数里面的 return 不算。 */
+export const hasTopLevelStatement = (script: string) => {
+  const source = String(script || '')
+  let depth = 0
+  let quote = ''
+  for (let i = 0; i < source.length; i += 1) {
+    const ch = source[i]
+    if (quote) {
+      if (ch === '\\') {
+        i += 1
+        continue
+      }
+      if (ch === quote) quote = ''
+      continue
+    }
+    if (ch === '"' || ch === '\'' || ch === '`') {
+      quote = ch
+      continue
+    }
+    if (ch === '/' && source[i + 1] === '/') {
+      while (i < source.length && source[i] !== '\n') i += 1
+      continue
+    }
+    if (ch === '/' && source[i + 1] === '*') {
+      i += 2
+      while (i < source.length && !(source[i] === '*' && source[i + 1] === '/')) i += 1
+      i += 1
+      continue
+    }
+    if (ch === '(' || ch === '{' || ch === '[') {
+      depth += 1
+      continue
+    }
+    if (ch === ')' || ch === '}' || ch === ']') {
+      depth = Math.max(0, depth - 1)
+      continue
+    }
+    if (depth !== 0) continue
+    if (ch === ';') return true
+    if (/[A-Za-z_$]/.test(ch)) {
+      const word = source.slice(i).match(/^[A-Za-z_$][\w$]*/)?.[0] || ''
+      if (TOP_LEVEL_WORD.test(word)) return true
+      i += Math.max(0, word.length - 1)
+    }
+  }
+  return false
+}
+
 /** 顶层 `return` 在 CDP 里是语法错误，包成 IIFE；单表达式也包一层保证可返回。 */
 export const wrapEvalExpression = (script: string) => {
   const trimmed = script.trim()
@@ -122,10 +184,50 @@ export const wrapEvalExpression = (script: string) => {
   ) {
     return trimmed
   }
-  if (/\breturn\b/.test(trimmed) || /;|\n/.test(trimmed)) {
+  if (hasTopLevelStatement(trimmed)) {
     return `(function(){\n${trimmed}\n})()`
   }
   return `(function(){ return (${trimmed}); })()`
+}
+
+const videoEvalNoted = new Set<string>()
+
+/** 脚本在读播放器，而快照里已经有 video 行时，提示一次。 */
+export const videoSnapshotNote = (browserId: string, script: string, snapshot: string) => {
+  const id = String(browserId || '').trim() || '_'
+  if (videoEvalNoted.has(id)) return ''
+  if (!/currentTime|\bpaused\b|\.duration\b|readyState/.test(String(script || ''))) return ''
+  if (!/^\s*- video\b/m.test(String(snapshot || ''))) return ''
+  videoEvalNoted.add(id)
+  return '快照里已有 video 行。'
+}
+
+/** 语法错带上列号附近的原文，并指向快照里已经有的状态。 */
+export const explainEvalError = (message: string, script: string) => {
+  const raw = String(message || '')
+  if (!raw) return raw
+  if (raw.includes('video 行')) return raw
+  const lower = raw.toLowerCase()
+  const syntax = lower.includes('syntaxerror') || lower.includes('unexpected token') || lower.includes('illegal return')
+  if (!syntax) return raw
+  let column = 0
+  try {
+    const parsed = JSON.parse(raw) as { columnNumber?: number }
+    column = Number(parsed.columnNumber) || 0
+  } catch {
+    const match = raw.match(/column(?:Number)?"?\s*[:=]\s*(\d+)/i)
+    column = match ? Number(match[1]) : 0
+  }
+  const chars = Array.from(String(script || ''))
+  let place = '脚本里'
+  if (column > 0 && chars.length) {
+    const idx = Math.min(column, chars.length - 1)
+    const near = chars.slice(Math.max(0, idx - 10), Math.min(chars.length, idx + 10)).join('')
+    place = near ? `第 ${column} 列附近「${near}」` : `第 ${column} 列`
+  }
+  const desc = raw.includes('SyntaxError') ? raw.replace(/^\{[\s\S]*"description":"([^"]+)".*$/, '$1') : raw
+  const head = desc.startsWith('SyntaxError') || desc.startsWith('脚本') ? desc.slice(0, 120) : `脚本语法错：${desc.slice(0, 80)}`
+  return `${head}。错在${place}。多数信息在 get_page 的 video 行、[done] 标记里。`
 }
 
 /** browser_eval 是 `var value = SCRIPT`，前面不能直接写 function 声明。 */
@@ -150,16 +252,16 @@ export const asObject = (value: unknown): Record<string, unknown> => {
   return {}
 }
 
-/** act=点击/Agent；probe=视频 tick。两通道互不堵，同通道仍串行。 */
-type EvalLane = 'act' | 'probe'
+/** 每 page session 一条 in-flight evaluate。act 排队；probe 拿不到锁就丢。 */
+type EvalWaiter = { resolve: (got: boolean) => void }
 
-const evalBusy = new Map<string, Set<EvalLane>>()
-const evalWaiters = new Map<string, Array<{ lane: EvalLane; resolve: () => void }>>()
+const evalBusy = new Set<string>()
+const evalWaiters = new Map<string, EvalWaiter[]>()
 
 if (import.meta.hot) {
   import.meta.hot.dispose(() => {
     for (const list of evalWaiters.values()) {
-      for (const item of list) item.resolve()
+      for (const item of list) item.resolve(true)
     }
     evalBusy.clear()
     evalWaiters.clear()
@@ -168,36 +270,48 @@ if (import.meta.hot) {
 
 const evalKey = (id: string) => String(id || '').trim() || '_'
 
-const takeEval = (key: string, lane: EvalLane) => {
-  const held = evalBusy.get(key)
-  if (held?.has(lane)) return false
-  const next = held ?? new Set<EvalLane>()
-  next.add(lane)
-  evalBusy.set(key, next)
+const takeEval = (key: string) => {
+  if (evalBusy.has(key)) return false
+  evalBusy.add(key)
   return true
 }
 
-const releaseEval = (key: string, lane: EvalLane) => {
-  const held = evalBusy.get(key)
-  held?.delete(lane)
-  if (held && held.size === 0) evalBusy.delete(key)
+const releaseEval = (key: string) => {
+  evalBusy.delete(key)
   const list = evalWaiters.get(key)
   if (!list?.length) {
     evalWaiters.delete(key)
     return
   }
-  const idx = list.findIndex((item) => takeEval(key, item.lane))
-  if (idx < 0) return
-  const next = list.splice(idx, 1)[0]
+  if (!takeEval(key)) return
+  const next = list.shift()
   if (!list.length) evalWaiters.delete(key)
-  next.resolve()
+  next?.resolve(true)
 }
 
-const waitEval = (key: string, lane: EvalLane) => new Promise<void>((resolve) => {
-  const list = evalWaiters.get(key) || []
-  list.push({ lane, resolve })
-  evalWaiters.set(key, list)
-})
+const waitEval = (key: string, timeoutMs?: number) =>
+  new Promise<boolean>((resolve) => {
+    const item: EvalWaiter = { resolve }
+    const list = evalWaiters.get(key) || []
+    list.push(item)
+    evalWaiters.set(key, list)
+    if (timeoutMs == null || timeoutMs <= 0) return
+    window.setTimeout(() => {
+      const cur = evalWaiters.get(key)
+      const idx = cur?.indexOf(item) ?? -1
+      if (idx < 0) return
+      cur!.splice(idx, 1)
+      if (!cur!.length) evalWaiters.delete(key)
+      resolve(false)
+    }, timeoutMs)
+  })
+
+const acquireEval = async (key: string, timeoutMs?: number) => {
+  if (takeEval(key)) return true
+  return waitEval(key, timeoutMs)
+}
+
+export const isEvalActBusy = (id: string) => evalBusy.has(evalKey(id))
 
 export const withIdleEval = async <T>(fn: () => Promise<T>): Promise<T> => {
   // 后台轮询用：占线时跳过这一轮，不要把全局 eval 都标成 idle。
@@ -234,21 +348,23 @@ const runEvalScript = async (id: string, script: string) => {
 
 export const evalBrowserViewIdle = async (id: string, script: string) => {
   const key = evalKey(id)
-  if (!takeEval(key, 'probe')) return null
+  if (!takeEval(key)) return null
   try {
     return await runEvalScript(id, script)
   } finally {
-    releaseEval(key, 'probe')
+    releaseEval(key)
   }
 }
 
 export const evalBrowserView = async (id: string, script: string) => {
   const key = evalKey(id)
-  while (!takeEval(key, 'act')) await waitEval(key, 'act')
+  if (!await acquireEval(key, 2500)) {
+    throw new Error('页面正忙，eval 排队超时')
+  }
   try {
     return await runEvalScript(id, script)
   } finally {
-    releaseEval(key, 'act')
+    releaseEval(key)
   }
 }
 
@@ -266,39 +382,60 @@ const runEvalMain = async (id: string, script: string) => {
   }
 }
 
+/** 顶层执行，再在匹配的同源 iframe 里 eval。不扫跨域帧。 */
+export const evalBrowserViewInFrame = async (id: string, script: string, frame: string) => {
+  const want = String(frame || '').trim()
+  if (!want) return evalBrowserViewMain(id, script)
+  const body = wrapEvalExpression(script)
+  const wrapped = `(function(){
+    var want = ${JSON.stringify(want)};
+    var frames = __sameFrames(window, 0);
+    var target = null;
+    for (var i = 0; i < frames.length; i++) {
+      if (__zeFrameOk(frames[i], want)) { target = frames[i]; break; }
+    }
+    if (!target) return { ok: false, error: ${JSON.stringify(`没有匹配的 iframe：${want}`)} };
+    try {
+      return target.eval(${JSON.stringify(body)});
+    } catch (e) {
+      return { ok: false, error: String((e && e.message) || e || '框内执行失败') };
+    }
+  })()`
+  return evalBrowserViewMain(id, withSameFrames(wrapped))
+}
+
 /** 只在顶层 page 执行。脚本自己 walk iframe（任务点/播放器），避免 CDP 扫每一帧。 */
 export const evalBrowserViewMain = async (id: string, script: string) => {
   const key = evalKey(id)
-  const started = Date.now()
-  while (!takeEval(key, 'act')) {
-    if (Date.now() - started > 1600) {
-      releaseEval(key, 'act')
-      if (!takeEval(key, 'act')) break
-      break
-    }
-    await Promise.race([waitEval(key, 'act'), waitMs(200)])
+  if (!await acquireEval(key, 1600)) {
+    throw new Error('页面正忙，eval 排队超时')
   }
-  if (!evalBusy.get(key)?.has('act')) takeEval(key, 'act')
   try {
     return await runEvalMain(id, script)
   } finally {
-    releaseEval(key, 'act')
+    releaseEval(key)
   }
 }
 
-/** 切章/播放：不要排在目录轮询后面。顶层短脚本直接打。 */
-export const evalBrowserViewMainNow = async (id: string, script: string) => (
-  runEvalMain(id, script)
-)
+/** 顶层短脚本：有空位就打，占线就丢。 */
+export const evalBrowserViewMainNow = async (id: string, script: string) => {
+  const key = evalKey(id)
+  if (!takeEval(key)) return null
+  try {
+    return await runEvalMain(id, script)
+  } finally {
+    releaseEval(key)
+  }
+}
 
 /** 顶层探测：占线就跳过，不要再排队把播放器卡死。 */
 export const evalBrowserViewMainIdle = async (id: string, script: string) => {
   const key = evalKey(id)
-  if (!takeEval(key, 'probe')) return null
+  if (!takeEval(key)) return null
   try {
     return await runEvalMain(id, script)
   } finally {
-    releaseEval(key, 'probe')
+    releaseEval(key)
   }
 }
 
@@ -332,7 +469,9 @@ const clipEvalValue = (value: unknown, depth = 0): unknown => {
 /** Agent 专用：多帧 CDP 结果。内部解析器继续用 evalBrowserView（取 best）。 */
 export const evalBrowserFrames = async (id: string, script: string) => {
   const key = evalKey(id)
-  while (!takeEval(key, 'act')) await waitEval(key, 'act')
+  if (!await acquireEval(key, 2500)) {
+    throw new Error('页面正忙，eval 排队超时')
+  }
   try {
     const raw = asObject(await invoke('browser_eval_frames', {
       id,
@@ -353,7 +492,7 @@ export const evalBrowserFrames = async (id: string, script: string) => {
       error: raw.error ? String(raw.error) : undefined,
     }
   } finally {
-    releaseEval(key, 'act')
+    releaseEval(key)
   }
 }
 
@@ -361,7 +500,8 @@ export const clickFrameText = async (id: string, text: string) => {
   const want = String(text || '').trim()
   if (!want) return { ok: false, text: '', href: '' }
   try {
-    const cdp = asObject(await invoke('browser_cdp_click_text', { id, text: want }))
+    const { callProtocol } = await import('./protocol')
+    const cdp = asObject(await callProtocol(id, 'click', { text: want }))
     if (cdp.ok) {
       return { ok: true, text: String(cdp.text || want), href: String(cdp.href || '') }
     }

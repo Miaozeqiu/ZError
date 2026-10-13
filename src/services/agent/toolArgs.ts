@@ -36,6 +36,41 @@ const extractJsonArrayField = (raw: string, key: string) => {
   return null
 }
 
+/** 模型漏写引号或花括号时的常见形状，逐条补。 */
+const repairJson = (value: string) => {
+  let text = value
+  // `"handle": kind": "step"` → `"handle": {"kind": "step"`
+  text = text.replace(/:\s*([A-Za-z_][\w-]*)"\s*:/g, ': {"$1":')
+  // `{"handle": {"kind": ...}}}` 多一个 / 少一个右括号：按数量补齐
+  const opens = (text.match(/\{/g) || []).length
+  const closes = (text.match(/\}/g) || []).length
+  if (closes > opens) {
+    let extra = closes - opens
+    while (extra > 0 && /\}\s*$/.test(text)) {
+      text = text.replace(/\}\s*$/, '')
+      extra -= 1
+    }
+  } else if (opens > closes) {
+    text += '}'.repeat(opens - closes)
+  }
+  return text
+}
+
+/** 解析彻底失败时，至少把 `"键": "字符串" / 数字 / 布尔` 这种顶层标量捞回来。 */
+const recoverScalarsFromRaw = (raw: string): Record<string, unknown> => {
+  const out: Record<string, unknown> = {}
+  const re = /"([A-Za-z_][\w-]*)"\s*:\s*(?:"((?:\\.|[^"\\])*)"|(-?\d+(?:\.\d+)?)|(true|false))/g
+  let match: RegExpExecArray | null
+  while ((match = re.exec(raw))) {
+    const key = match[1]
+    if (key in out) continue
+    if (match[2] != null) out[key] = unescapeJsonString(match[2])
+    else if (match[3] != null) out[key] = Number(match[3])
+    else if (match[4] != null) out[key] = match[4] === 'true'
+  }
+  return out
+}
+
 const recoverFieldsFromRaw = (raw: string): Record<string, unknown> => {
   const out: Record<string, unknown> = {}
   const mermaid = extractJsonStringField(raw, 'mermaid')
@@ -69,15 +104,21 @@ export const parseToolArgs = (raw: string) => {
       .replace(/\{\s*,/g, '{')
       .replace(/,\s*,/g, ',')
       .replace(/,\s*\}/g, '}')
-  for (const candidate of [text, normalize(text)]) {
+  const direct = tryParse(text)
+  if (direct) return { ...recoverFieldsFromRaw(text), ...direct }
+  for (const candidate of [normalize(text), repairJson(text), repairJson(normalize(text))]) {
     const parsed = tryParse(candidate)
     if (parsed) return { ...recoverFieldsFromRaw(text), ...parsed }
   }
   const start = text.indexOf('{')
   const end = text.lastIndexOf('}')
   if (start >= 0 && end > start) {
-    const nested = tryParse(normalize(text.slice(start, end + 1)))
-    if (nested) return { ...recoverFieldsFromRaw(text), ...nested }
+    const inner = text.slice(start, end + 1)
+    for (const candidate of [normalize(inner), repairJson(inner)]) {
+      const nested = tryParse(candidate)
+      if (nested) return { ...recoverFieldsFromRaw(text), ...nested }
+    }
   }
-  return recoverFieldsFromRaw(text)
+  // 什么都拼不回来：顶层标量（kind / label / title…）总比空对象强
+  return { ...recoverScalarsFromRaw(text), ...recoverFieldsFromRaw(text) }
 }

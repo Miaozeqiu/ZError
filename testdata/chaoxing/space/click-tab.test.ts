@@ -1,7 +1,7 @@
 import { JSDOM } from 'jsdom'
 import { describe, expect, it } from 'vitest'
-import { CHROME_HELPERS } from '../../../src/services/browser/engine/chrome'
-import { CLICK_FIND_HELPERS, clickLabelMatches } from '../../../src/services/browser/engine/clickFind'
+import { CHROME_HELPERS } from '../../../src/services/platform/chaoxing/chrome'
+import { CLICK_FIND_HELPERS, clickLabelMatches } from '../../../src/services/platform/chaoxing/clickFind'
 import { SAME_ORIGIN_FRAMES } from '../../../src/services/browser/eval'
 
 const SPACE_TABS = `
@@ -55,6 +55,8 @@ describe('空间页签点击', () => {
     expect(clickLabelMatches('我学的课', '已删除课程')).toBe(false)
     expect(clickLabelMatches('我学的课', '我学的课')).toBe(true)
     expect(clickLabelMatches('我学的课', '已学的课')).toBe(true)
+    expect(clickLabelMatches('章节', '章节测验')).toBe(false)
+    expect(clickLabelMatches('章节', '章节')).toBe(true)
   })
 
   it('快照不把删除入口标成「我学的课」', () => {
@@ -73,6 +75,17 @@ describe('空间页签点击', () => {
     expect(hit?.tag).toBe('DIV')
     expect(hit?.text).toBe('我学的课')
     expect(findClick(`<a href="https://mooc1-1.chaoxing.com/visit/courses">我学的课</a>`, '我学的课')).toBeNull()
+  })
+
+  it('课程侧栏「章节」不点任务列表里的章节测验', () => {
+    const hit = findClick(
+      `<div class="side"><a data-url="/mycourse/studentcourse?courseid=1" title="章节">章节</a></div>
+       <iframe></iframe>
+       <a class="activity">章节测验</a>`,
+      '章节',
+    )
+    expect(hit?.text).toBe('章节')
+    expect(hit?.text).not.toContain('测验')
   })
 
   it('没有 href 的 span 页签也能认出「我学的课」', () => {

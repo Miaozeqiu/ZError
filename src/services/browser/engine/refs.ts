@@ -7,6 +7,7 @@ export type PageRef = {
   name: string
   value?: string
   checked?: boolean
+  framePath?: string
   locator: BrowserLocator
 }
 
@@ -22,9 +23,25 @@ export const rememberPageRefs = (browserId: string, refs: PageRef[]) => {
       value: ref.locator.value,
       name: ref.locator.name,
       exact: ref.locator.exact,
+      nth: ref.locator.nth,
+      frame: ref.locator.frame,
+      framePath: ref.locator.framePath,
+      role: ref.role || ref.locator.role,
+      backend: Number(ref.locator.backend) > 0 ? Number(ref.locator.backend) : undefined,
     }
   }
   cache.set(browserId, map)
+}
+
+export const listCachedPageRefs = (browserId: string): PageRef[] => {
+  const map = cache.get(browserId)
+  if (!map) return []
+  return Object.entries(map).map(([id, locator]) => ({
+    id,
+    role: String(locator.role || ''),
+    name: String(locator.name || (locator.by === 'text' || locator.by === 'label' ? locator.value : '') || ''),
+    locator: { ...locator },
+  }))
 }
 
 export const locatorFromCache = (browserId: string, ref: string) => (
@@ -64,7 +81,11 @@ export const resolveRefLocator = async (browserId: string, ref: string) => {
     by: String(row.by) as BrowserLocator['by'],
     value: String(row.value),
     name: row.name ? String(row.name) : undefined,
-    exact: Boolean(row.exact),
+    exact: row.exact ? true : undefined,
+    nth: Number(row.nth) > 0 ? Number(row.nth) : undefined,
+    frame: row.frame ? String(row.frame) : undefined,
+    framePath: row.framePath ? String(row.framePath) : undefined,
+    role: row.role ? String(row.role) : undefined,
   }
 }
 

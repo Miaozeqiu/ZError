@@ -2,7 +2,7 @@ export const READ_AGENT_SKILL_TOOL = {
   type: 'function' as const,
   function: {
     name: 'read_agent_skill',
-    description: '读取已启用 Skill 的 SKILL.md 正文。返回 content 与 files（含 SKILL.md 及附属文件）。执行任务前必须先调用；编辑文件请用 read_agent_skill_file 读原文。',
+    description: '读取已启用 Skill 的 SKILL.md。返回正文和 files 列表。先读这个，再按 hint 去读附属文件。',
     parameters: {
       type: 'object',
       properties: {
@@ -17,12 +17,12 @@ export const READ_AGENT_SKILL_FILE_TOOL = {
   type: 'function' as const,
   function: {
     name: 'read_agent_skill_file',
-    description: '读取 Skill 文件原文（包括 SKILL.md）。编辑前必须先读。path 为相对路径。',
+    description: '读取 Skill 某个文件的原文（包括 SKILL.md）。path 为相对路径，例如 sites/zjooc.cn/SKILL.md。',
     parameters: {
       type: 'object',
       properties: {
         skill_id: { type: 'string', description: 'Skill id' },
-        path: { type: 'string', description: '相对路径，如 SKILL.md、references/login.md、parsers/study/catalog.js' },
+        path: { type: 'string', description: '相对路径，例如 SKILL.md、sites/zjooc.cn/SKILL.md、references/format.md' },
       },
       required: ['skill_id', 'path'],
     },
@@ -33,7 +33,7 @@ export const LIST_AGENT_SKILLS_TOOL = {
   type: 'function' as const,
   function: {
     name: 'list_agent_skills',
-    description: '列出全部 Skill（含未启用）及每个 Skill 的文件列表。编辑或查找 Skill 时先调用。',
+    description: '列出全部 Skill（含未启用）及每个 Skill 的文件列表。不知道读哪份时先调用。',
     parameters: { type: 'object', properties: {} },
   },
 }
@@ -42,7 +42,7 @@ export const WRITE_AGENT_SKILL_FILE_TOOL = {
   type: 'function' as const,
   function: {
     name: 'write_agent_skill_file',
-    description: '写入 Skill 文件并保存。path 可以是已有文件或新建文本文件。content 必须是该文件完整正文。声明了热加载的站点文件（site-graph.json、parsers/*）保存后立刻生效。',
+    description: '写入 Skill 文件并保存。path 可以是已有文件或新建文本文件。content 必须是该文件完整正文。站点步骤写 SKILL.md，导航配方写 course.json。图谱用 browser_site_graph 一条条保存。',
     parameters: {
       type: 'object',
       properties: {

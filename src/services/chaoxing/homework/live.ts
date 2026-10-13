@@ -1,12 +1,14 @@
 import { lastHomeworkCard, publishHomeworkCard } from '../../browser/abstractions'
 import { asObject, evalBrowserView } from '../../browser/eval'
+import { createDebounce, onHomeworkChanged, readLastTick } from '../../browser/pushEvents'
 import { READ_HW_FILL_STATE } from './scripts'
 import type { HomeworkLiveState } from './types'
 
-let liveTimer = 0
+let liveOff: (() => void) | null = null
 let liveId = ''
 let pickLock = 0
 let quietUntil = 0
+const debounceLive = createDebounce(300)
 
 export const beginHomeworkPick = () => {
   pickLock += 1
@@ -47,6 +49,10 @@ export const applyHomeworkLiveState = (state: HomeworkLiveState | null | undefin
 }
 
 export const readHomeworkLiveState = async (id: string) => {
+  const cached = await readLastTick(id, '', 'hw').catch(() => null)
+  if (cached?.ok && cached.states?.length && cached.ageMs <= 2000) {
+    return { states: cached.states } as HomeworkLiveState
+  }
   const state = asObject(await evalBrowserView(id, READ_HW_FILL_STATE()).catch(() => null))
   if (!state || !Array.isArray(state.states)) return null
   return state as HomeworkLiveState
@@ -59,8 +65,8 @@ const tickHomeworkLive = async (id: string) => {
 }
 
 export const stopHomeworkLiveSync = () => {
-  if (liveTimer) window.clearInterval(liveTimer)
-  liveTimer = 0
+  liveOff?.()
+  liveOff = null
   liveId = ''
 }
 
@@ -70,12 +76,16 @@ export const startHomeworkLiveSync = async (id: string) => {
     stopHomeworkLiveSync()
     return null
   }
-  if (liveId !== next || !liveTimer) {
+  if (liveId !== next || !liveOff) {
     stopHomeworkLiveSync()
     liveId = next
-    liveTimer = window.setInterval(() => {
-      void tickHomeworkLive(next)
-    }, 400)
+    liveOff = onHomeworkChanged(next, (_id, states) => {
+      debounceLive(() => {
+        if (pickLock || liveId !== next || Date.now() < quietUntil) return
+        if (states.length) applyHomeworkLiveState({ states })
+        else void tickHomeworkLive(next)
+      })
+    })
   }
   const state = await readHomeworkLiveState(next).catch(() => null)
   if (state) applyHomeworkLiveState(state)

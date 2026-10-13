@@ -1,0 +1,16 @@
+---
+description: 改对话 / 工具 / 刷课 Agent 时按文件找，不要再往 chat.ts 堆逻辑
+globs: src/services/agent/**/*.ts
+alwaysApply: false
+---
+
+# Agent 对话
+
+- `chat.ts` 只再导出，不要往里加发送逻辑
+- 会话列表 / 持久化 / 停止 → `chatStore.ts`
+- 压缩上下文 / 学习评估 / 回合前缀 → `chatStudy.ts`
+- `sendChatMessage` → `chatLoop.ts`
+- 从题库或学习页拉起对话 → `chatStarters.ts`
+- 工具表 `tools.ts`（定义在 `toolDefs/`），执行 `executeChatTool.ts`，刷课 / 通用页 `browserTools.ts`
+- 视频进度监控直接挂：学习通 `chaoxing/browser/watch.ts`，其它站 `browser/videoWatch.ts`。Agent 用 `browser_watch`
+- 页面身份只看网站地图。卡和 Handle 走 `parser/`：`get_state.card`、`browser_invoke`、`browser_parser_dryrun`。不要再加平台适配器

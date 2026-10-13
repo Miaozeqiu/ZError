@@ -47,7 +47,6 @@ export type FrameHint = 'page' | 'homework' | 'catalog' | 'video' | 'any'
 export type LocateQuery =
   | { by: 'text'; value: string }
   | { by: 'css'; value: string }
-  | { by: 'script'; value: string }   // 短脚本，返回 {found,x,y}
 
 export type Act =
   | { op: 'click'; at: LocateQuery }
@@ -87,9 +86,9 @@ export function act(id: string, action: Act): Promise<{
 | 现在 | 改成 |
 |---|---|
 | `evalBrowserView(id, READ_PAGE_DOM())` | `read(id, 'homework' \| 'catalog')`，再本地 `parse.js` |
-| `evalBrowserView(id, LOCATE_HW_PICK)` + `clickHomeworkBox` | `act(id, { op:'click', at:{ by:'script', value } })` |
+| `evalBrowserView(id, LOCATE_HW_PICK)` + `clickHomeworkBox` | `evaluate(id, locateScript)` → `act(id, { op:'click', x, y })` |
 | `invoke('browser_cdp_click_text', { text:'作业' })` | `act(id, { op:'click', at:{ by:'text', value:'作业' } })` |
-| `invoke('browser_cdp_fill_box', { script, text })` | `act(id, { op:'type', text, at:{ by:'script', value:script } })` |
+| `invoke('browser_cdp_fill_box', { script, text })` | `evaluate` 拿盒子 → `act(id, { op:'click', x, y })` → `act(id, { op:'type', text })` |
 | `READ_VIDEO_TICK` | `read(id, 'video')` 带短脚本，或 `read` 返回 html 后本地读 |
 
 `hint` 传给 Rust，沿用现在的 `eval_score`（`questionLi` / `catalogLi` / 视频时长）。对不上就 `found: false`，不要退回主 frame 乱点。
@@ -129,10 +128,10 @@ Agent 看见的是适配器工具（`fill` / `play`）。模型不写 locate 脚
 
 ```
 read     → browser_eval（eval_all_frames 已按分数挑帧）
-locate   → 同一条 eval，脚本只返回 {found,x,y}
-act.click → locate 成功后 browser_cdp_click_box（已有坐标点击）
-         或 text/css 仍走 browser_cdp_click / click_text
-act.type → browser_cdp_fill_box / type_focused
+locate   → text/css 走引擎 probe（CDP find）
+act.click → text/css 走引擎；坐标走 browser_cdp_click_at
+act.type → 有 at 走引擎 fill；无 at 走 browser_cdp_type_focused
+站点 locate 脚本走 evaluate，再 act({ op:'click', x, y })
 act.press / scroll / hover → 现有同名命令
 ```
 
@@ -157,7 +156,7 @@ Rust 里已经具备 Playwright 内核在做的事：
 
 1. 加 `src/services/browser/protocol.ts`（上面三个函数）。
 2. 先迁两条最短路径，证明调用方不再直接碰 CDP 命令名：
-   - `src/services/chaoxing/homework/act.ts` → `act({ op:'click'|'type', at:{ by:'script' } })`
+   - `src/services/chaoxing/homework/act.ts` → `evaluate` + `act({ op:'click', x, y })`
    - `clickBrowserText` / `appBrowser.ts` 里的 `click_text` → `act({ op:'click', at:{ by:'text' } })`
 3. `read` 先包 `evalBrowserView` + `READ_PAGE_DOM`，作业 `inspect.ts` 改走 `read(id, 'homework')`。
 4. **不改** Agent 工具表、不改 CEF、不装 Playwright、不加 Node sidecar。
@@ -192,7 +191,40 @@ Rust 里已经具备 Playwright 内核在做的事：
 
 ---
 
-## 6. 一句话
+## 6. 推送（进度 / 题卡 / 元素等待）
+
+进度读数是**唯一保留的页内 JS**，而且是推不是拉：
+
+1. `bind_page` 给 page session 装 `Runtime.addBinding('__zeTick')`，并注入 `ZE_TICK_HOOK`（`src-tauri/src/cef_push.rs`）。
+2. 页内 video 事件 / 作业点选调用 `__zeTick` → CDP `Runtime.bindingCalled` → Rust 写 `last_tick` 缓存并 `app.emit('app-browser-tick', { id, kind, tick })`。
+3. 前端 `src/services/browser/pushEvents.ts` 听该事件，按 browser id 分发给 `watch.ts` / `live.ts`。
+4. `readChaoxingVideoTick` 先 `invoke('browser_push_last')`；`ageMs <= 4000` 且 mid 对得上才用缓存，否则才 `evaluate` 廉价 tick。
+
+元素等待不再由前端 120ms 轮询 `browser_cdp_find`：
+
+- 主路径一次 `invoke('browser_cdp_find_wait', { id, locator, timeoutMs })`。
+- Rust 先 find；未命中则等 `Page.frameStoppedLoading` / `Page.frameNavigated` / `Network.loadingFinished` / `DOM.documentUpdated` / `Accessibility.nodesUpdated`（防抖 60ms）再 find，另加 250ms 稀疏兜底。
+- 命令不存在（非 macOS / 旧内核）时，`act.ts` 降级 `actByPolling`。
+
+不要用 Media 域，不要订阅全量 DOM 变更。跨源 OOPIF 这次不覆盖，钩子够不到的仍退回 evaluate。
+
+DOM 定位（`src-tauri/src/cef/locate.rs`）的几条硬约束，踩过一次都别再踩：
+
+- `DOM.getDocument` 会作废该 target 之前所有 nodeId。一次定位只调一次；定位与整帧读 HTML（`dom_html`）按浏览器 id 串行（`cef::dom_lock`），否则元素明明在页上却 `not_found`。
+- 同进程 iframe 不是独立 target。学习通播放器在 main → `knowledge/cards` → `ananas/modules/video` 里，`Target.getTargets` 看不见；定位器从父文档 `iframe` 节点 `describeNode` 拿 `contentDocument` 再 pierce 进去。`frame` 提示按 iframe 的 id / name / mid / data-mid / src 匹配，站点侧给提示（如 `ananas/modules/video`）就不必把二十多个帧都查一遍。
+- 「被挡」判断：命中节点的盒子完全落在目标盒子里（自己的文字 span / 图标）不算挡；目标是文字节点时被父元素包住也不算挡。只有伸出目标盒子的才是遮罩。
+- css 多命中按文档顺序取第一个（同 `querySelector`）；文案完全相同的多个可点节点取 AX 顺序第一个，文案不同才报 `ambiguous`。
+- `Input.dispatchMouseEvent` 的 `mouseReleased` 回执在点击触发同步跳转时常不来；事件已送达，超时不算失败。
+
+---
+
+## 7. 验收指标
+
+播放页稳态 `Runtime.evaluate` **0 次/秒**，作业页 **0 次/秒**。`find_wait` 触发时全方法合计 ≤ **7 次/秒**。看 `/live` 或 `cx-study-live.md` 的 `cdp: evaluate x/s find y/s total z`。
+
+---
+
+## 8. 一句话
 
 **应用内协议 = 前端三个函数 + 现有 Rust CDP，形状学 Playwright，运行时没有 Node。**  
 开发机上的 Playwright 是另一条线，给人和写代码的 AI，不进用户包。
