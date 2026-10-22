@@ -6,6 +6,7 @@ pub mod app_activity;
 pub mod commands;
 pub mod database;
 pub mod logger;
+pub mod mcp;
 pub mod server;
 pub mod types;
 pub mod window_size;
@@ -25,6 +26,7 @@ pub use database::{
     clear_folder_questions, delete_folder, delete_question, delete_questions, move_folder,
     rename_folder,
 };
+pub use mcp::mcp_stdio_search;
 pub use server::{get_server_status, start_server, stop_server};
 use tauri::Manager;
 pub use types::*;
@@ -262,6 +264,7 @@ pub fn run() {
             read_file_range,
             convert_doc_to_docx,
             segment_text,
+            mcp_stdio_search,
             read_config,
             write_config,
             read_model_config,

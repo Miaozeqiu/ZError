@@ -197,6 +197,10 @@
             @click="activeTab = 'modelResponse'">
             AI 模型响应
           </button>
+          <button class="tab-button" :class="{ active: activeTab === 'search' }"
+            @click="activeTab = 'search'">
+            联网搜索
+          </button>
           <button class="tab-button" :class="{ active: activeTab === 'requestBody' }"
             @click="activeTab = 'requestBody'">
             请求体
@@ -284,6 +288,66 @@
                 <span v-if="selectedLog && !selectedLog.status">处理中，响应体暂未生成...</span>
                 <span v-else>暂无响应体数据</span>
               </span>
+            </div>
+          </div>
+
+          <!-- 联网搜索 -->
+          <div v-if="activeTab === 'search'" class="detail-section">
+            <div v-if="selectedLog && selectedLog.searchTraces && selectedLog.searchTraces.length" class="search-trace-list">
+              <div v-for="(trace, index) in selectedLog.searchTraces" :key="trace.id" class="search-trace-card">
+                <div class="search-trace-header">
+                  <div class="search-trace-title">
+                    第 {{ index + 1 }} 次搜索
+                    <span class="search-trace-model">{{ trace.modelName }}</span>
+                  </div>
+                  <span class="search-trace-status" :class="trace.status">
+                    {{ trace.status === 'searching' ? '搜索中…' : trace.status === 'success' ? '成功' : '失败' }}
+                  </span>
+                </div>
+
+                <div class="search-trace-meta">
+                  <span>{{ trace.mode === 'local' ? '本地 stdio' : '远程 HTTP' }}</span>
+                  <span>{{ trace.toolName }}</span>
+                  <span v-if="trace.durationMs !== undefined">{{ trace.durationMs }}ms</span>
+                </div>
+
+                <div class="search-trace-query">{{ trace.query }}</div>
+
+                <div v-if="trace.error" class="search-trace-error">{{ trace.error }}</div>
+
+                <div v-if="trace.results.length" class="search-trace-results">
+                  <div v-for="(item, itemIndex) in trace.results" :key="item.url || itemIndex" class="search-result-row">
+                    <div class="search-result-head">
+                      <span class="search-result-index">{{ itemIndex + 1 }}</span>
+                      <a
+                        v-if="item.url"
+                        class="search-result-title"
+                        :href="item.url"
+                        @click.prevent="openSearchResultUrl(item.url)"
+                      >{{ item.title }}</a>
+                      <span v-else class="search-result-title">{{ item.title }}</span>
+                    </div>
+                    <div v-if="item.url" class="search-result-url">{{ item.url }}</div>
+                    <div v-if="item.snippet" class="search-result-snippet">{{ item.snippet }}</div>
+                  </div>
+                </div>
+
+                <div v-else-if="trace.status === 'searching'" class="search-trace-loading">
+                  <div class="loading-spinner"></div>
+                  <span>正在请求 MCP 搜索…</span>
+                </div>
+                <div v-else-if="trace.status === 'success'" class="no-data">
+                  <span class="no-data-text">没有解析到结构化结果</span>
+                </div>
+
+                <details v-if="trace.rawText" class="search-raw-details">
+                  <summary>查看原始返回</summary>
+                  <pre>{{ trace.rawText.slice(0, 6000) }}</pre>
+                </details>
+              </div>
+            </div>
+            <div v-else class="no-data">
+              <span class="no-data-text">本次请求没有联网搜索记录</span>
             </div>
           </div>
 
@@ -513,7 +577,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed, nextTick, watch } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, computed, nextTick, watch } from 'vue'
 import { useSettings } from '../services/settings'
 import { useModelConfig } from '../services/modelConfig'
 import type { AIModel } from '../services/modelConfig'
@@ -539,6 +603,11 @@ import {
 } from '../utils/urlQuestion'
 import { normalizeAnswerJsonContent } from '../utils/answerNormalize'
 import { buildAnswerChatMessages } from '../utils/answerFewShot'
+import {
+  performWebSearch,
+  formatSearchContextForModel,
+  type SearchTrace
+} from '../services/searchService'
 
 
 
@@ -628,6 +697,7 @@ interface RequestLog {
     modelId: string
   }
   multiModelResponses?: MultiModelResponse[] // 多模型并发响应
+  searchTraces?: SearchTrace[] // 本次请求的联网搜索记录
   urlQuestion?: { // URL 题目数据（视觉分析）
     title: string
     options: string
@@ -987,6 +1057,7 @@ const releaseRequestLogPayload = (log: RequestLog) => {
   log.streamingReasoning = undefined
   log.reasoningContent = undefined
   log.multiModelResponses = undefined
+  log.searchTraces = undefined
   log.modelInfo = undefined
   log.headers = {}
   if (log.urlQuestion) {
@@ -1626,6 +1697,16 @@ const showRequestDetails = (log: RequestLog) => {
   })
 }
 
+const openSearchResultUrl = async (url: string) => {
+  if (!url) return
+  try {
+    const { openUrl } = await import('@tauri-apps/plugin-opener')
+    await openUrl(url)
+  } catch {
+    window.open(url, '_blank', 'noopener,noreferrer')
+  }
+}
+
 // 关闭请求详情
 const closeRequestDetails = () => {
   slideInActive.value = false
@@ -2020,7 +2101,8 @@ const callModelWithStreaming = async (
   query: string,
   requestId: string,
   onChunk?: (content: string) => void,
-  onReasoning?: (text: string) => void
+  onReasoning?: (text: string) => void,
+  searchContext?: string
 ) => {
   if (isRequestCancelled(requestId)) {
     throw createCancelledRequestError()
@@ -2045,8 +2127,18 @@ const callModelWithStreaming = async (
   }
 
   // 构建测试输入数据（普通答题注入典型例题多轮对话）
+  const chatMessages = buildAnswerChatMessages(query)
+  if (searchContext) {
+    // 搜索结果只注入最后一条用户消息，避免影响题型 few-shot 识别
+    const lastUserMessage = [...chatMessages].reverse().find(message => message.role === 'user')
+    if (lastUserMessage) {
+      lastUserMessage.content = `${searchContext}\n\n${lastUserMessage.content}`
+    } else {
+      chatMessages.push({ role: 'user', content: searchContext })
+    }
+  }
   const testInput: any = {
-    messages: buildAnswerChatMessages(query),
+    messages: chatMessages,
     model: runtimeModelId,
     stream: true,
     tools: []
@@ -2584,6 +2676,111 @@ const dispatchModelCallRequest = (requestId: string, query: string) => {
   void callModelAPI(requestId, query).finally(done)
 }
 
+// ===== 联网搜索（全局设置控制，所有模型共用） =====
+
+const searchHeartbeatTimers = new Map<string, number>()
+
+const getSearchQuestionText = (requestId: string): string => {
+  const log = requestLogs.value.find(item => item.id === requestId)
+  if (log?.urlQuestion) {
+    return [log.urlQuestion.title, log.urlQuestion.options]
+      .map(item => (item || '').trim())
+      .filter(Boolean)
+      .join('\n')
+  }
+
+  if (log?.requestBody) {
+    try {
+      const body = JSON.parse(log.requestBody)
+      const title = String(body.title || body.question || '').trim()
+      const options = String(body.options || '').trim()
+      if (title || options) {
+        return [title, options].filter(Boolean).join('\n')
+      }
+    } catch {
+      // ignore malformed request body
+    }
+  }
+
+  return ''
+}
+
+const startSearchHeartbeat = (requestId: string) => {
+  if (searchHeartbeatTimers.has(requestId)) return
+  const timerId = window.setInterval(() => {
+    void sendModelProgressToBackend(requestId, 'searching')
+  }, 2000)
+  searchHeartbeatTimers.set(requestId, timerId)
+}
+
+const stopSearchHeartbeat = (requestId: string) => {
+  const timerId = searchHeartbeatTimers.get(requestId)
+  if (timerId === undefined) return
+  clearInterval(timerId)
+  searchHeartbeatTimers.delete(requestId)
+}
+
+/**
+ * 按全局搜索设置执行一次搜索。
+ * 搜索失败只记录 trace，不阻断答题。
+ */
+const runSearchForRequest = async (
+  requestId: string,
+  rawQuery: string,
+  modelName: string
+): Promise<{ context: string; trace: SearchTrace } | null> => {
+  const config = settings.search
+  if (!config?.enabled) return null
+
+  // 去掉图片/网页链接，避免把纯 URL 当成检索词
+  const searchQuery = (rawQuery || '')
+    .replace(/https?:\/\/\S+/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (!searchQuery) return null
+
+  const log = requestLogs.value.find(item => item.id === requestId)
+  const trace = reactive<SearchTrace>({
+    id: `${requestId}-search-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    query: searchQuery,
+    modelId: '',
+    modelName,
+    mode: config.mode,
+    toolName: config.toolName,
+    status: 'searching',
+    startedAt: Date.now(),
+    results: []
+  })
+
+  if (log) {
+    if (!log.searchTraces) log.searchTraces = []
+    log.searchTraces.push(trace)
+  }
+
+  startSearchHeartbeat(requestId)
+  void sendModelProgressToBackend(requestId, 'searching')
+
+  try {
+    const outcome = await performWebSearch(searchQuery, { ...config })
+    trace.status = 'success'
+    trace.durationMs = outcome.durationMs
+    trace.results = outcome.results
+    trace.rawText = outcome.rawText
+    trace.mode = outcome.mode
+    trace.toolName = outcome.toolName
+    return { context: formatSearchContextForModel(outcome), trace }
+  } catch (error) {
+    trace.status = 'error'
+    trace.durationMs = Date.now() - trace.startedAt
+    trace.error = formatModelCallError(error, '联网搜索失败')
+    console.warn('[联网搜索失败]', error)
+    return null
+  } finally {
+    stopSearchHeartbeat(requestId)
+    void sendModelProgressToBackend(requestId, 'search-finished')
+  }
+}
+
 const callModelAPI = async (requestId: string, query: string) => {
   let finalOutput = ''
   console.log('开始调用模型API:', { requestId, query })
@@ -2635,6 +2832,15 @@ const callModelAPI = async (requestId: string, query: string) => {
       })
     }
 
+    // 全局搜索设置开启时，所有文本/视觉模型共用同一次搜索结果
+    const searchResult = await runSearchForRequest(
+      requestId,
+      getSearchQuestionText(requestId),
+      selectedModels.length > 1 ? '联网搜索（多模型共用）' : (selectedModels[0]?.displayName || '联网搜索')
+    )
+    const searchContext = searchResult?.context || ''
+    if (isRequestCancelled(requestId)) return
+
     // 启动心跳（缩短间隔，减轻后台 setInterval 节流影响）
     if (serverRunning.value && serverUrl.value && !heartbeatIntervals.has(requestId)) {
       const timerId = window.setInterval(() => {
@@ -2678,7 +2884,8 @@ const callModelAPI = async (requestId: string, query: string) => {
               query,
               requestId,
               (content) => updateMultiModelStreamingResponse(requestId, model.id, stripMarkdownCodeBlock(content)),
-              (reasoning) => updateMultiModelStreamingReasoning(requestId, model.id, reasoning)
+              (reasoning) => updateMultiModelStreamingReasoning(requestId, model.id, reasoning),
+              searchContext
             )
           },
           (attempt, maxAttempts) => {
@@ -2777,7 +2984,7 @@ const callModelAPI = async (requestId: string, query: string) => {
 
 用户原始问题：
 ${query}
-
+${searchContext ? `\n联网搜索结果：\n${searchContext}\n` : ''}
 模型回答内容：
 ${baseCombinedResponse}
 
@@ -4121,6 +4328,17 @@ const analyzeUrlQuestion = async (requestId: string) => {
     if (!platform) throw new Error('找不到视觉模型对应的平台')
 
     const { title, options, questionType } = log.urlQuestion
+
+    // 全局搜索开启时，视觉模型也先联网搜索；搜索结果作为独立文本块注入，
+    // 不参与 buildMultimodalContent 的 URL 图片解析，避免把搜索结果链接当图片抓取。
+    const visionSearch = await runSearchForRequest(
+      requestId,
+      [title, options].filter(Boolean).join('\n'),
+      `视觉模型: ${visionModel.displayName}`
+    )
+    const searchContext = visionSearch?.context || ''
+    if (isRequestCancelled(requestId)) return
+
     const mode = classifyUrlQuestionMode(questionType, options)
     const optionMap = buildUrlOptionMapForMode(mode, options)
     const { optionsText, answerRule, typeHint } = buildUrlQuestionPromptParts(
@@ -4136,7 +4354,10 @@ const analyzeUrlQuestion = async (requestId: string) => {
     // 图片会先在本地拉取并转为 base64，再发送给视觉模型
     const fullText = title + optionsText + instruction
     const multimodalContent = await buildMultimodalContent(fullText)
-    const preparedMultimodalContent = await prepareVisionRequestContent(multimodalContent)
+    const multimodalContentWithSearch = searchContext
+      ? [{ type: 'text', text: searchContext }, ...multimodalContent]
+      : multimodalContent
+    const preparedMultimodalContent = await prepareVisionRequestContent(multimodalContentWithSearch)
 
     const analysisInput = {
       messages: [{ role: 'user', content: preparedMultimodalContent }],
@@ -5047,6 +5268,7 @@ body.resizing {
 /* 标签页导航样式 */
 .detail-tabs {
   display: flex;
+  flex-wrap: wrap;
   border-bottom: 1px solid var(--bg-primary);
   margin-bottom: 0;
   /* 下方内容区自身有内边距 */
@@ -5840,5 +6062,193 @@ body.resizing {
 .retry-btn-sm:hover {
   background: var(--color-primary, #007acc);
   color: white;
+}
+
+/* ===== 联网搜索详情 ===== */
+.search-trace-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.search-trace-card {
+  padding: 14px;
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 10px;
+  background: var(--bg-secondary, #f8fafc);
+}
+
+.search-trace-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.search-trace-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.search-trace-model {
+  margin-left: 6px;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-secondary);
+}
+
+.search-trace-status {
+  flex-shrink: 0;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--bg-tertiary, rgba(0, 0, 0, 0.06));
+  color: var(--text-secondary);
+}
+
+.search-trace-status.success {
+  color: #38a169;
+  background: rgba(56, 161, 105, 0.12);
+}
+
+.search-trace-status.error {
+  color: #e53e3e;
+  background: rgba(229, 62, 62, 0.12);
+}
+
+.search-trace-status.searching {
+  color: #3182ce;
+  background: rgba(49, 130, 206, 0.12);
+}
+
+.search-trace-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.search-trace-meta span {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--bg-tertiary, rgba(0, 0, 0, 0.05));
+}
+
+.search-trace-query {
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--bg-primary);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.search-trace-error {
+  margin-bottom: 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #e53e3e;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.search-trace-results {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.search-result-row {
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color, #e2e8f0);
+  background: var(--bg-primary);
+}
+
+.search-result-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.search-result-index {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  background: var(--bg-tertiary, rgba(0, 0, 0, 0.06));
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+}
+
+.search-result-title {
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--text-primary);
+  text-decoration: none;
+  word-break: break-word;
+}
+
+a.search-result-title:hover {
+  color: var(--color-primary, #007acc);
+  text-decoration: underline;
+}
+
+.search-result-url {
+  margin: 0 0 5px 26px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--color-primary, #007acc);
+  word-break: break-all;
+}
+
+.search-result-snippet {
+  margin-left: 26px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.search-trace-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.search-raw-details {
+  margin-top: 10px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.search-raw-details summary {
+  cursor: pointer;
+}
+
+.search-raw-details pre {
+  margin: 8px 0 0;
+  padding: 10px;
+  max-height: 260px;
+  overflow: auto;
+  border-radius: 8px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color, #e2e8f0);
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 </style>
