@@ -7187,7 +7187,7 @@ dependencies = [
 
 [[package]]
 name = "zerror"
-version = "2.2.7"
+version = "2.2.8"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -7196,6 +7196,7 @@ dependencies = [
  "futures",
  "futures-util",
  "jieba-rs",
+ "libc",
  "objc2 0.6.3",
  "objc2-foundation 0.3.2",
  "parking_lot",
