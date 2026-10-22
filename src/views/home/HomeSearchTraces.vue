@@ -13,8 +13,6 @@
                 </div>
 
                 <div class="search-trace-meta">
-                  <span>{{ trace.mode === 'local' ? '本地 stdio' : '远程 HTTP' }}</span>
-                  <span>{{ trace.toolName }}</span>
                   <span v-if="trace.durationMs !== undefined">{{ trace.durationMs }}ms</span>
                 </div>
 

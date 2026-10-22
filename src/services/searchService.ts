@@ -1,4 +1,3 @@
-import { invoke } from '@tauri-apps/api/core'
 import type { SearchSettings } from './app/settings'
 
 export interface SearchResultItem {
@@ -12,7 +11,7 @@ export interface SearchResultItem {
 export interface WebSearchOutcome {
   query: string
   toolName: string
-  mode: 'remote' | 'local'
+  mode: 'remote'
   durationMs: number
   results: SearchResultItem[]
   rawText: string
@@ -23,7 +22,7 @@ export interface SearchTrace {
   query: string
   modelId: string
   modelName: string
-  mode: 'remote' | 'local'
+  mode: 'remote'
   toolName: string
   status: 'searching' | 'success' | 'error'
   startedAt: number
@@ -34,6 +33,10 @@ export interface SearchTrace {
 }
 
 const MCP_PROTOCOL_VERSION = '2025-03-26'
+const EXA_URL = 'https://mcp.exa.ai/mcp'
+const EXA_TOOL_NAME = 'web_search_exa'
+const MAX_RESULTS = 5
+const SEARCH_TIMEOUT_MS = 30_000
 const SEARCH_CACHE_TTL_MS = 5 * 60 * 1000
 const SEARCH_CACHE_MAX_ENTRIES = 50
 
@@ -48,18 +51,9 @@ const isTauriEnvironment = (): boolean => {
   )
 }
 
-const clampNumber = (value: unknown, min: number, max: number, fallback: number): number => {
-  const parsed = Number(value)
-  if (!Number.isFinite(parsed)) return fallback
-  return Math.min(max, Math.max(min, Math.round(parsed)))
-}
-
 const normalizeConfig = (config: SearchSettings): SearchSettings => ({
-  ...config,
-  remoteUrl: (config.remoteUrl || '').trim(),
-  toolName: (config.toolName || 'web_search_exa').trim() || 'web_search_exa',
-  maxResults: clampNumber(config.maxResults, 1, 10, 5),
-  timeoutSeconds: clampNumber(config.timeoutSeconds, 5, 300, 30)
+  enabled: config.enabled === true,
+  apiKey: typeof config.apiKey === 'string' ? config.apiKey.trim() : '',
 })
 
 const getFetchImpl = async (): Promise<typeof fetch> => {
@@ -78,59 +72,18 @@ const getFetchImpl = async (): Promise<typeof fetch> => {
   return fetch.bind(globalThis) as typeof fetch
 }
 
-const parseJsonObject = (text: string, label: string): Record<string, any> => {
-  const trimmed = (text || '').trim()
-  if (!trimmed) return {}
-  try {
-    const parsed = JSON.parse(trimmed)
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      throw new Error('not an object')
-    }
-    return parsed as Record<string, any>
-  } catch {
-    throw new Error(`${label}不是合法的 JSON 对象`)
-  }
-}
+const buildHeaders = (config: SearchSettings): Record<string, string> => ({
+  'Content-Type': 'application/json',
+  Accept: 'application/json, text/event-stream',
+  'MCP-Protocol-Version': MCP_PROTOCOL_VERSION,
+  ...(config.apiKey ? { 'x-api-key': config.apiKey } : {}),
+})
 
-const buildHeaders = (config: SearchSettings): Record<string, string> => {
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    Accept: 'application/json, text/event-stream',
-    'MCP-Protocol-Version': MCP_PROTOCOL_VERSION
-  }
-
-  if (config.apiKey && config.authMode === 'x-api-key') {
-    headers['x-api-key'] = config.apiKey
-  } else if (config.apiKey && config.authMode === 'bearer') {
-    headers.Authorization = `Bearer ${config.apiKey}`
-  }
-
-  Object.assign(headers, parseJsonObject(config.customHeaders, '自定义请求头'))
-  return headers
-}
-
-const buildSearchArguments = (
-  query: string,
-  config: SearchSettings
-): Record<string, any> => {
-  const effectiveQuery = (query || '').trim()
-  if (!effectiveQuery) {
-    throw new Error('搜索关键词为空')
-  }
-
-  const args: Record<string, any> = {
-    query: effectiveQuery,
-    numResults: clampNumber(config.maxResults, 1, 10, 5)
-  }
-
-  // Exa 的 web_search_exa 当前要求 objective（必填）；其他 MCP 工具不强行附加
-  if (/^web_search(_advanced)?_exa$/i.test(config.toolName)) {
-    args.objective = `查找能直接回答以下题目的权威资料，提取答案、定义或解析：${effectiveQuery}`
-  }
-
-  Object.assign(args, parseJsonObject(config.extraArguments, '额外参数'))
-  return args
-}
+const buildSearchArguments = (query: string): Record<string, any> => ({
+  query,
+  numResults: MAX_RESULTS,
+  objective: `查找能直接回答以下题目的权威资料，提取答案、定义或解析：${query}`,
+})
 
 const parseSseMessages = (body: string): any[] => {
   const messages: any[] = []
@@ -292,16 +245,12 @@ const callRemoteMcp = async (
   config: SearchSettings,
   signal: AbortSignal
 ): Promise<{ text: string; raw: any }> => {
-  if (!config.remoteUrl) {
-    throw new Error('未配置远程 MCP 地址')
-  }
-
   const fetchImpl = await getFetchImpl()
   const headers = buildHeaders(config)
-  const toolArguments = buildSearchArguments(query, config)
+  const toolArguments = buildSearchArguments(query)
   const initResponse = await postMcp({
     fetchImpl,
-    url: config.remoteUrl,
+    url: EXA_URL,
     headers,
     signal,
     body: {
@@ -328,7 +277,7 @@ const callRemoteMcp = async (
 
   const initializedResponse = await postMcp({
     fetchImpl,
-    url: config.remoteUrl,
+    url: EXA_URL,
     headers,
     signal,
     sessionId,
@@ -342,7 +291,7 @@ const callRemoteMcp = async (
 
   const callResponse = await postMcp({
     fetchImpl,
-    url: config.remoteUrl,
+    url: EXA_URL,
     headers,
     signal,
     sessionId,
@@ -351,7 +300,7 @@ const callRemoteMcp = async (
       id: 2,
       method: 'tools/call',
       params: {
-        name: config.toolName,
+        name: EXA_TOOL_NAME,
         arguments: toolArguments
       }
     }
@@ -368,112 +317,6 @@ const callRemoteMcp = async (
   }
 
   return { text: extractContentText(result), raw: result }
-}
-
-const splitCommandLine = (input: string): string[] => {
-  const text = (input || '').trim()
-  if (!text) return []
-
-  const args: string[] = []
-  let current = ''
-  let quote: '"' | "'" | null = null
-  let started = false
-
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i]
-    if (quote) {
-      if (ch === quote) {
-        quote = null
-      } else if (ch === '\\' && quote === '"' && text[i + 1] === '"') {
-        current += text[++i]
-      } else {
-        current += ch
-      }
-      continue
-    }
-
-    if (ch === '"' || ch === "'") {
-      quote = ch
-      started = true
-      continue
-    }
-    if (/\s/.test(ch)) {
-      if (started) {
-        args.push(current)
-        current = ''
-        started = false
-      }
-      continue
-    }
-    current += ch
-    started = true
-  }
-
-  if (quote) throw new Error('命令参数的引号未闭合')
-  if (started) args.push(current)
-  return args
-}
-
-const parseEnvLines = (input: string): Record<string, string> => {
-  const env: Record<string, string> = {}
-  for (const raw of (input || '').split(/\r?\n/)) {
-    const line = raw.trim()
-    if (!line || line.startsWith('#')) continue
-    const eq = line.indexOf('=')
-    if (eq <= 0) continue
-    const key = line.slice(0, eq).trim()
-    const value = line.slice(eq + 1).trim()
-    if (key) env[key] = value
-  }
-  return env
-}
-
-const callLocalMcp = async (
-  query: string,
-  config: SearchSettings,
-  timeoutMs: number,
-  signal: AbortSignal
-): Promise<{ text: string; raw: any }> => {
-  if (!isTauriEnvironment()) {
-    throw new Error('本地 stdio MCP 只能在桌面应用中使用')
-  }
-  if (!config.localCommand.trim()) {
-    throw new Error('未配置本地 MCP 启动命令')
-  }
-
-  const environment = parseEnvLines(config.localEnv)
-  const args = splitCommandLine(config.localArgs)
-  const toolArguments = buildSearchArguments(query, config)
-  // Prepare the cancellation handle before starting the process, so even an
-  // abort between IPC calls cannot race ahead of backend registration.
-  const searchId = await invoke<string>('mcp_stdio_prepare')
-  const cancel = () => { void invoke('mcp_stdio_cancel', { searchId }).catch(() => {}) }
-  if (signal.aborted) {
-    cancel()
-    throw abortReason(signal)
-  }
-  signal.addEventListener('abort', cancel, { once: true })
-  try {
-    const result = await abortable(invoke<any>('mcp_stdio_search', {
-      searchId,
-      command: config.localCommand.trim(),
-      args,
-      env: Object.keys(environment).length ? environment : null,
-      toolName: config.toolName,
-      arguments: toolArguments,
-      timeoutSecs: Math.ceil(timeoutMs / 1000)
-    }), signal)
-
-    if (result?.isError) {
-      throw new Error(extractContentText(result) || '本地搜索工具返回错误')
-    }
-
-    return { text: extractContentText(result), raw: result }
-  } finally {
-    signal.removeEventListener('abort', cancel)
-    // Also release a prepared handle if starting the search failed.
-    cancel()
-  }
 }
 
 const cleanText = (text: string): string =>
@@ -595,20 +438,7 @@ const parseSearchResults = (text: string, maxResults: number): SearchResultItem[
 }
 
 const buildCacheKey = (query: string, config: SearchSettings): string =>
-  JSON.stringify([
-    config.mode,
-    config.remoteUrl,
-    config.localCommand,
-    config.localArgs,
-    config.localEnv,
-    config.toolName,
-    config.maxResults,
-    config.apiKey,
-    config.authMode,
-    config.customHeaders,
-    config.extraArguments,
-    query
-  ])
+  JSON.stringify([config.apiKey, query])
 
 const cloneOutcome = (outcome: WebSearchOutcome): WebSearchOutcome => ({
   ...outcome,
@@ -644,24 +474,22 @@ export const performWebSearch = async (
   }
 
   const startedAt = Date.now()
-  const timeoutMs = config.timeoutSeconds * 1000
+  const timeoutMs = SEARCH_TIMEOUT_MS
   const controller = new AbortController()
   const onAbort = () => controller.abort(options.signal?.reason)
   options.signal?.addEventListener('abort', onAbort, { once: true })
   const timeout = setTimeout(() => {
-    controller.abort(new DOMException(`MCP 搜索超时（${config.timeoutSeconds} 秒）`, 'TimeoutError'))
+    controller.abort(new DOMException('搜索超时（30 秒）', 'TimeoutError'))
   }, timeoutMs)
   try {
-    const operation = config.mode === 'local'
-      ? callLocalMcp(effectiveQuery, config, timeoutMs, controller.signal)
-      : callRemoteMcp(effectiveQuery, config, controller.signal)
+    const operation = callRemoteMcp(effectiveQuery, config, controller.signal)
     const { text, raw } = await abortable(operation, controller.signal)
 
-    const results = parseSearchResults(text, config.maxResults)
+    const results = parseSearchResults(text, MAX_RESULTS)
     const outcome: WebSearchOutcome = {
       query: effectiveQuery,
-      toolName: config.toolName,
-      mode: config.mode,
+      toolName: EXA_TOOL_NAME,
+      mode: 'remote',
       durationMs: Date.now() - startedAt,
       results,
       rawText: (text || (raw ? JSON.stringify(raw) : '')).slice(0, 20000)

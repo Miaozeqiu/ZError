@@ -2,20 +2,15 @@ import assert from 'node:assert/strict'
 import { afterEach, beforeEach, vi, test } from 'vitest'
 
 let fetchImpl
-let invokeImpl
-vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args) => invokeImpl(...args) }))
 vi.mock('@tauri-apps/plugin-http', () => ({ fetch: (...args) => fetchImpl(...args) }))
 const { performWebSearch, formatSearchContextForModel } = await import('../../src/services/searchService.ts')
 const config = {
-  enabled: true, mode: 'remote', remoteUrl: 'https://example.test/mcp', apiKey: '', authMode: 'none',
-  toolName: 'web_search_exa', maxResults: 5, timeoutSeconds: 5, customHeaders: '', extraArguments: '',
-  localCommand: 'node', localArgs: '', localEnv: ''
+  enabled: true, apiKey: '',
 }
 const result = { content: [{ type: 'text', text: JSON.stringify([
   { title: 'Example', url: 'https://example.test', text: 'Relevant answer' }
 ]) }] }
 const json = payload => new Response(JSON.stringify(payload), { headers: { 'content-type': 'application/json' } })
-const flush = () => new Promise(resolve => setImmediate(resolve))
 const deferred = () => {
   let resolve
   const promise = new Promise(done => { resolve = done })
@@ -37,10 +32,6 @@ beforeEach(() => {
     const request = JSON.parse(init.body)
     if (!request.id) return new Response(null, { status: 202 })
     return json({ jsonrpc: '2.0', id: request.id, result: request.method === 'initialize' ? {} : result })
-  }
-  invokeImpl = async name => {
-    if (name === 'mcp_stdio_prepare') return 'test-search'
-    if (name === 'mcp_stdio_search') return result
   }
 })
 afterEach(() => {
@@ -65,6 +56,29 @@ test('remote handshake shares its session and injects search excerpts', async ()
   assert.match(formatSearchContextForModel(outcome), /Relevant answer/)
 })
 
+test('Exa key authentication is automatic and legacy connection options are ignored', async () => {
+  const requests = []
+  const normalFetch = fetchImpl
+  fetchImpl = async (url, init) => { requests.push({ url, ...init }); return normalFetch(url, init) }
+  await performWebSearch('key authentication', {
+    ...config, apiKey: '  example-key  ', mode: 'local', remoteUrl: 'https://legacy.invalid',
+    toolName: 'old_tool', customHeaders: '{"x-api-key":"obsolete"}',
+  } as any, { force: true })
+  assert.ok(requests.every(request => request.url === 'https://mcp.exa.ai/mcp'))
+  assert.ok(requests.every(request => request.headers['x-api-key'] === 'example-key'))
+  const call = JSON.parse(requests[2].body)
+  assert.equal(call.params.name, 'web_search_exa')
+  assert.equal(call.params.arguments.numResults, 5)
+})
+
+test('empty Exa keys use the keyless connection', async () => {
+  const requests = []
+  const normalFetch = fetchImpl
+  fetchImpl = async (url, init) => { requests.push(init); return normalFetch(url, init) }
+  await performWebSearch('keyless connection', config, { force: true })
+  assert.ok(requests.every(request => !('x-api-key' in request.headers)))
+})
+
 test('timeout covers stalled headers even if HTTP ignores abort', async t => {
   vi.useFakeTimers({ toFake: ['setTimeout'] })
   let signal
@@ -73,7 +87,7 @@ test('timeout covers stalled headers even if HTTP ignores abort', async t => {
   const pending = performWebSearch('stalled headers', config, { force: true })
   const rejected = assert.rejects(pending, { name: 'TimeoutError' })
   await started.promise
-  vi.advanceTimersByTime(5001)
+  vi.advanceTimersByTime(30001)
   await rejected
   assert.equal(signal.aborted, true)
 })
@@ -88,7 +102,7 @@ test('timeout remains active while reading a stalled response body', async t => 
   }
   const rejected = assert.rejects(performWebSearch('stalled body', config, { force: true }), { name: 'TimeoutError' })
   await body.reading
-  vi.advanceTimersByTime(5001)
+  vi.advanceTimersByTime(30001)
   await rejected
   assert.equal(signal.aborted, true)
   body.close()
@@ -99,7 +113,7 @@ test('one timeout budget includes initialization and the tool response', async t
   const normalFetch = fetchImpl
   const body = stalledBody()
   fetchImpl = async (url, init) => {
-    vi.advanceTimersByTime(1500)
+    vi.advanceTimersByTime(9000)
     if (JSON.parse(init.body).method === 'tools/call') {
       return body.response
     }
@@ -107,7 +121,7 @@ test('one timeout budget includes initialization and the tool response', async t
   }
   const rejected = assert.rejects(performWebSearch('total budget', config, { force: true }), { name: 'TimeoutError' })
   await body.reading
-  vi.advanceTimersByTime(501)
+  vi.advanceTimersByTime(3001)
   await rejected
   body.close()
 })
@@ -152,57 +166,4 @@ test('an already aborted request cannot return a cached search', async () => {
   const controller = new AbortController()
   controller.abort()
   await assert.rejects(performWebSearch('cached cancellation', config, { signal: controller.signal }), { name: 'AbortError' })
-})
-
-test('local arguments preserve Windows paths, UNC paths, spaces and empty args', async () => {
-  let args
-  invokeImpl = async (name, payload) => {
-    if (name === 'mcp_stdio_prepare') return 'path-test'
-    if (name === 'mcp_stdio_search') { args = payload.args; return result }
-  }
-  await performWebSearch('Windows args', {
-    ...config, mode: 'local',
-    localArgs: String.raw`"C:\Users\Alice\My Server\server.js" "" "\\server\shared folder\server.js" "--name=\"Alice\""`
-  }, { force: true })
-  assert.deepEqual(args, [String.raw`C:\Users\Alice\My Server\server.js`, '', String.raw`\\server\shared folder\server.js`, '--name="Alice"'])
-})
-
-test('unclosed quotes fail before starting a backend process', async () => {
-  let calls = 0
-  invokeImpl = async () => { calls++ }
-  await assert.rejects(performWebSearch('bad quotes', { ...config, mode: 'local', localArgs: '"unfinished' }, { force: true }), /引号未闭合/)
-  assert.equal(calls, 0)
-})
-
-test('local cancellation releases a handle that finishes preparing after abort', async () => {
-  let prepared
-  const calls = []
-  invokeImpl = async (name, payload) => {
-    calls.push([name, payload])
-    if (name === 'mcp_stdio_prepare') return new Promise(resolve => { prepared = resolve })
-  }
-  const controller = new AbortController()
-  const rejected = assert.rejects(performWebSearch('prepare race', { ...config, mode: 'local' }, { signal: controller.signal, force: true }), { name: 'AbortError' })
-  controller.abort()
-  await rejected
-  prepared('late-handle')
-  await flush()
-  assert.equal(calls.some(([name]) => name === 'mcp_stdio_search'), false)
-  assert.ok(calls.some(([name, payload]) => name === 'mcp_stdio_cancel' && payload.searchId === 'late-handle'))
-})
-
-test('cancelling an active local search reaches Rust and rejects promptly', async () => {
-  const calls = []
-  invokeImpl = async (name, payload) => {
-    calls.push([name, payload])
-    if (name === 'mcp_stdio_prepare') return 'running-handle'
-    if (name === 'mcp_stdio_search') return new Promise(() => {})
-  }
-  const controller = new AbortController()
-  const rejected = assert.rejects(performWebSearch('local abort', { ...config, mode: 'local' }, { signal: controller.signal, force: true }), { name: 'AbortError' })
-  await flush()
-  controller.abort()
-  await rejected
-  assert.ok(calls.some(([name, payload]) => name === 'mcp_stdio_cancel' && payload.searchId === 'running-handle'))
-  assert.equal(calls.find(([name]) => name === 'mcp_stdio_search')[1].timeoutSecs, 5)
 })

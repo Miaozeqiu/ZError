@@ -3,9 +3,7 @@ import { DEFAULT_SEARCH_SETTINGS } from '../../src/services/app/settings'
 
 vi.mock('../../src/services/app/settings', () => ({
   DEFAULT_SEARCH_SETTINGS: {
-    enabled: true, mode: 'remote', remoteUrl: 'https://example.test/mcp', apiKey: '', authMode: 'none',
-    toolName: 'web_search_exa', maxResults: 5, timeoutSeconds: 5, customHeaders: '', extraArguments: '',
-    localCommand: '', localArgs: '', localEnv: '',
+    enabled: true, apiKey: '',
   },
 }))
 vi.mock('../../src/services/questionServer/deps', () => ({ settingsApi: { settings: { search: null } } }))

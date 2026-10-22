@@ -65,44 +65,23 @@ export interface AlgorithmConfig {
   code: string
 }
 
-export type SearchMode = 'remote' | 'local'
-export type SearchAuthMode = 'none' | 'x-api-key' | 'bearer'
-
-/**
- * 联网搜索（MCP）设置
- * - remote：Remote MCP（Streamable HTTP），默认 Exa 免密免费版
- * - local：本地 stdio MCP，由 Rust 侧启动命令并通过 stdin/stdout 通信
- */
+/** Exa 联网搜索设置，连接参数由软件管理。 */
 export interface SearchSettings {
   enabled: boolean
-  mode: SearchMode
-  remoteUrl: string
   apiKey: string
-  authMode: SearchAuthMode
-  toolName: string
-  maxResults: number
-  timeoutSeconds: number
-  customHeaders: string
-  extraArguments: string
-  localCommand: string
-  localArgs: string
-  localEnv: string
 }
 
 export const DEFAULT_SEARCH_SETTINGS: SearchSettings = {
   enabled: true,
-  mode: 'remote',
-  remoteUrl: 'https://mcp.exa.ai/mcp',
   apiKey: '',
-  authMode: 'none',
-  toolName: 'web_search_exa',
-  maxResults: 5,
-  timeoutSeconds: 30,
-  customHeaders: '',
-  extraArguments: '',
-  localCommand: '',
-  localArgs: '',
-  localEnv: ''
+}
+
+export const normalizeSearchSettings = (value: unknown): SearchSettings => {
+  const saved = value && typeof value === 'object' ? value as Partial<SearchSettings> : {}
+  return {
+    enabled: typeof saved.enabled === 'boolean' ? saved.enabled : DEFAULT_SEARCH_SETTINGS.enabled,
+    apiKey: typeof saved.apiKey === 'string' ? saved.apiKey.trim() : '',
+  }
 }
 
 // 默认设置
@@ -175,7 +154,7 @@ class SettingsManager {
           ...DEFAULT_SETTINGS,
           ...parsedSettings,
           network: { ...DEFAULT_SETTINGS.network, ...(parsedSettings.network || {}) },
-          search: { ...DEFAULT_SEARCH_SETTINGS, ...(parsedSettings.search || {}) }
+          search: normalizeSearchSettings(parsedSettings.search)
         }
       }
 
@@ -183,7 +162,7 @@ class SettingsManager {
     } catch (error) {
       console.warn('加载设置失败，使用默认设置:', error)
     }
-    return { ...DEFAULT_SETTINGS }
+    return { ...DEFAULT_SETTINGS, search: normalizeSearchSettings(null) }
   }
 
   /**
@@ -201,7 +180,7 @@ class SettingsManager {
           ...DEFAULT_SETTINGS,
           ...parsed,
           network: { ...DEFAULT_SETTINGS.network, ...(parsed.network || {}) },
-          search: { ...DEFAULT_SEARCH_SETTINGS, ...(parsed.search || {}) }
+          search: normalizeSearchSettings(parsed.search)
         })
         console.log('已从配置文件加载设置')
       }
@@ -362,7 +341,7 @@ class SettingsManager {
       if (this.validateSettings(importedSettings)) {
         this.update({
           ...importedSettings,
-          search: { ...DEFAULT_SEARCH_SETTINGS, ...(importedSettings.search || {}) }
+          search: normalizeSearchSettings(importedSettings.search)
         })
       } else {
         throw new Error('导入的设置格式无效')
@@ -395,7 +374,8 @@ class SettingsManager {
       ),
       () => !settings.search || (
         typeof settings.search === 'object' &&
-        (settings.search.mode === undefined || ['remote', 'local'].includes(settings.search.mode))
+        (settings.search.enabled === undefined || typeof settings.search.enabled === 'boolean') &&
+        (settings.search.apiKey === undefined || typeof settings.search.apiKey === 'string')
       )
     ]
 

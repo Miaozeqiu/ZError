@@ -7698,7 +7698,6 @@ dependencies = [
  "futures",
  "futures-util",
  "jieba-rs",
- "libc",
  "objc2 0.6.3",
  "objc2-app-kit",
  "objc2-av-foundation",
