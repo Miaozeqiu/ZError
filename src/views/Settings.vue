@@ -18,9 +18,6 @@
               <svg v-else-if="category.id === 'general'" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M14 17H5"/><path d="M19 7h-9"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/>
               </svg>
-              <svg v-else-if="category.id === 'search'" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>
-              </svg>
               <svg v-else-if="category.id === 'about'" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>
               </svg>
@@ -57,15 +54,6 @@
 
 
 
-        <!-- 搜索设置 -->
-        <div v-if="activeCategory === 'search'" class="settings-section">
-          <div class="settings-inner-wrapper search-scroll-wrap">
-            <div class="settings-content-wrapper search-scroll-content">
-              <SearchSettings />
-            </div>
-          </div>
-        </div>
-
         <!-- 关于应用 -->
         <div v-if="activeCategory === 'about'" class="settings-section">
           <div class="settings-inner-wrapper about-scroll-wrap">
@@ -92,7 +80,6 @@ import { useSettingsManager } from '../composables/useSettingsManager'
 import { useTheme } from '../composables/useTheme'
 import GeneralSettings from './settings/GeneralSettings.vue'
 import ModelSettings from './settings/ModelSettings.vue'
-import SearchSettings from './settings/SearchSettings.vue'
 import AboutApp from './settings/AboutApp.vue'
 
 const emit = defineEmits<{
@@ -147,11 +134,6 @@ const categories = [
   {
     id: 'general',
     name: '常规设置',
-    icon: ''
-  },
-  {
-    id: 'search',
-    name: '搜索设置',
     icon: ''
   },
   {
@@ -593,15 +575,13 @@ const onAboutScrollbarMouseup = () => {
 }
 
 .general-scroll-wrap,
-.about-scroll-wrap,
-.search-scroll-wrap {
+.about-scroll-wrap {
   position: relative;
   overflow: hidden;
 }
 
 .general-scroll-content,
-.about-scroll-content,
-.search-scroll-content {
+.about-scroll-content {
   height: 100%;
   overflow-y: scroll;
   scrollbar-width: none;
@@ -609,8 +589,7 @@ const onAboutScrollbarMouseup = () => {
 }
 
 .general-scroll-content::-webkit-scrollbar,
-.about-scroll-content::-webkit-scrollbar,
-.search-scroll-content::-webkit-scrollbar {
+.about-scroll-content::-webkit-scrollbar {
   display: none;
 }
 
@@ -630,11 +609,6 @@ const onAboutScrollbarMouseup = () => {
 }
 
 .about-scroll-content.settings-content-wrapper {
-  padding: 16px;
-  padding-top: 0;
-}
-
-.search-scroll-content.settings-content-wrapper {
   padding: 16px;
   padding-top: 0;
 }
