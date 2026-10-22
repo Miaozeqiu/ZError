@@ -7187,7 +7187,7 @@ dependencies = [
 
 [[package]]
 name = "zerror"
-version = "2.2.7"
+version = "2.2.8"
 dependencies = [
  "base64 0.22.1",
  "bytes",

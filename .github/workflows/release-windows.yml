@@ -1,0 +1,94 @@
+name: Build Windows Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prepare version and unsigned build
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $version = $tag.TrimStart('v')
+          if ($version -notmatch '^\d+\.\d+\.\d+([.-].+)?$') {
+            throw "Tag must look like v2.2.8, got $tag"
+          }
+
+          $confPath = 'src-tauri/tauri.conf.json'
+          $conf = Get-Content $confPath -Raw | ConvertFrom-Json
+          $conf.version = $version
+          $conf.bundle.createUpdaterArtifacts = $false
+          $conf | ConvertTo-Json -Depth 100 | Set-Content $confPath -Encoding utf8
+
+          $cargoPath = 'src-tauri/Cargo.toml'
+          $cargo = Get-Content $cargoPath -Raw
+          $cargo = $cargo -replace '(?m)^version\s*=\s*"[^"]+"', "version = `"$version`""
+          Set-Content $cargoPath $cargo -Encoding utf8
+
+          Write-Host "Building ZError $version (unsigned NSIS)"
+
+      - name: Build NSIS installer
+        run: npm run tauri -- build --bundles nsis
+
+      - name: List bundle output
+        shell: pwsh
+        run: Get-ChildItem -Recurse src-tauri/target/release/bundle/nsis | Format-Table Name, Length
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ZError-${{ github.ref_name }}-windows-x64
+          path: src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ZError ${{ github.ref_name }}
+          body: |
+            Windows 10/11 x64 NSIS 安装包。
+
+            - 版本：${{ github.ref_name }}
+            - 本次构建未启用 Tauri updater 签名，安装包可直接安装；不支持应用内自动更新。
+          files: src-tauri/target/release/bundle/nsis/*.exe
+          fail_on_unmatched_files: true
+          draft: false
+          prerelease: false
