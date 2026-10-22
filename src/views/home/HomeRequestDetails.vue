@@ -41,11 +41,16 @@
           <button class="tab-button" :class="{ active: activeTab === 'headers' }" @click="activeTab = 'headers'">
             请求头
           </button>
+          <button class="tab-button" :class="{ active: activeTab === 'search' }" @click="activeTab = 'search'">
+            联网搜索
+          </button>
         </div>
 
         <!-- 标签页内容 -->
         <div class="detail-scroll-wrap">
           <div class="tab-content" ref="contentRef">
+
+          <HomeSearchTraces v-if="activeTab === 'search'" :log="log" />
 
           <!-- 基本信息 -->
           <div v-if="activeTab === 'basic'" class="detail-section">
@@ -321,6 +326,7 @@ import { nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import AIOutputRender from '../../components/agent/AIOutputRender.vue'
 import { useCustomScrollbar } from '../../composables/useCustomScrollbar'
 import JsonCodeViewer from './JsonCodeViewer.vue'
+import HomeSearchTraces from './HomeSearchTraces.vue'
 import {
   formatJSON,
   formatTime,

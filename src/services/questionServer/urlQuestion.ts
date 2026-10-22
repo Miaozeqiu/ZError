@@ -7,6 +7,7 @@ import {
   resolveUrlAnswer,
 } from '../../utils/answer/urlQuestion'
 import { modelApi } from './deps'
+import { runSearchForRequest } from './search'
 import {
   createCancelledRequestError,
   formatModelCallError,
@@ -441,8 +442,15 @@ export const analyzeUrlQuestion = async (requestId: string) => {
     // 将 title + options + instruction 拼成完整文本，按 URL 拆分为交错多模态内容
     // 图片会先在本地拉取并转为 base64，再发送给视觉模型
     const fullText = title + optionsText + instruction
+    const searchResult = await runSearchForRequest(
+      requestId, [title, options].filter(Boolean).join('\n'), visionModel.displayName || '视觉模型',
+    )
+    if (isRequestCancelled(requestId)) return
     const multimodalContent = await buildMultimodalContent(fullText)
-    const preparedMultimodalContent = await prepareVisionRequestContent(multimodalContent)
+    const contentWithSearch = searchResult?.context
+      ? [{ type: 'text', text: searchResult.context }, ...multimodalContent]
+      : multimodalContent
+    const preparedMultimodalContent = await prepareVisionRequestContent(contentWithSearch)
 
     const analysisInput = {
       messages: [{ role: 'user', content: preparedMultimodalContent }],

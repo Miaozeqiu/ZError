@@ -1,3 +1,5 @@
+import type { SearchTrace } from '../searchService'
+
 export interface MultiModelResponse {
   modelId: string
   modelName: string
@@ -31,6 +33,7 @@ export interface RequestLog {
     modelId: string
   }
   multiModelResponses?: MultiModelResponse[]
+  searchTraces?: SearchTrace[]
   urlQuestion?: {
     title: string
     options: string

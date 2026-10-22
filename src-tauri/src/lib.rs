@@ -15,6 +15,7 @@ pub mod macos_video_overlay;
 pub mod commands;
 pub mod database;
 pub mod logger;
+pub mod mcp;
 pub mod server;
 pub mod types;
 pub mod window_size;
@@ -35,6 +36,7 @@ pub use database::{
     clear_folder_questions, delete_folder, delete_question, delete_questions, move_folder,
     rename_folder,
 };
+pub use mcp::{mcp_stdio_cancel, mcp_stdio_prepare, mcp_stdio_search};
 pub use server::{get_server_status, start_server, stop_server};
 use tauri::Manager;
 pub use types::*;
@@ -225,6 +227,7 @@ pub fn run() {
     ensure_tmpdir_same_volume_as_exe();
 
     let mut builder = tauri::Builder::default()
+        .manage(mcp::McpSearchState::default())
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { .. } = event {
                 if window.label() == "main" {
@@ -278,6 +281,9 @@ pub fn run() {
             read_file_range,
             convert_doc_to_docx,
             segment_text,
+            mcp_stdio_search,
+            mcp_stdio_prepare,
+            mcp_stdio_cancel,
             read_config,
             write_config,
             read_model_config,

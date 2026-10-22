@@ -11,6 +11,7 @@ export const showLogDetails = ref(false)
 export const slideInActive = ref(false)
 
 export const heartbeatIntervals = new Map<string, number>()
+export const searchHeartbeatTimers = new Map<string, number>()
 export const activeModelAbortControllers = new Map<string, Set<AbortController>>()
 export const cancelledRequestIds = new Set<string>()
 export const finalModelResponseState = new Map<string, 'success' | 'error'>()
@@ -48,6 +49,18 @@ export const clearRequestHeartbeat = (requestId: string) => {
   }
 }
 
+export const startSearchHeartbeat = (requestId: string, onHeartbeat: () => void) => {
+  if (searchHeartbeatTimers.has(requestId)) return
+  searchHeartbeatTimers.set(requestId, window.setInterval(onHeartbeat, 2000))
+}
+
+export const stopSearchHeartbeat = (requestId: string) => {
+  const timerId = searchHeartbeatTimers.get(requestId)
+  if (timerId === undefined) return
+  window.clearInterval(timerId)
+  searchHeartbeatTimers.delete(requestId)
+}
+
 /** 清空单条日志上的大字段，便于 GC（即使别处仍短暂持有引用） */
 export const releaseRequestLogPayload = (log: RequestLog) => {
   log.requestBody = ''
@@ -56,6 +69,7 @@ export const releaseRequestLogPayload = (log: RequestLog) => {
   log.streamingReasoning = undefined
   log.reasoningContent = undefined
   log.multiModelResponses = undefined
+  log.searchTraces = undefined
   log.modelInfo = undefined
   log.headers = {}
   if (log.urlQuestion) {
@@ -78,12 +92,14 @@ export const evictRequestSideState = (requestIds: Iterable<string>, { force = fa
     const inFlight = isRequestInFlight(requestId)
     if (force || !inFlight) {
       clearRequestHeartbeat(requestId)
+      stopSearchHeartbeat(requestId)
       finalModelResponseState.delete(requestId)
       processedRequestIds.delete(requestId)
       cancelledRequestIds.delete(requestId)
       activeUrlAnalysisRequestIds.delete(requestId)
     }
     if (force && inFlight) {
+      stopSearchHeartbeat(requestId)
       const controllers = activeModelAbortControllers.get(requestId)
       if (controllers) {
         controllers.forEach((controller) => {
@@ -119,6 +135,7 @@ export const clearAllRequestRuntimeState = () => {
   const allIds = new Set<string>([
     ...requestLogs.value.map((log) => log.id),
     ...heartbeatIntervals.keys(),
+    ...searchHeartbeatTimers.keys(),
     ...activeModelAbortControllers.keys(),
     ...cancelledRequestIds,
     ...finalModelResponseState.keys(),
@@ -135,6 +152,7 @@ export const clearAllRequestRuntimeState = () => {
   processedRequestIds.clear()
   activeUrlAnalysisRequestIds.clear()
   for (const id of [...heartbeatIntervals.keys()]) clearRequestHeartbeat(id)
+  for (const id of [...searchHeartbeatTimers.keys()]) stopSearchHeartbeat(id)
   requestLogs.value = []
   selectedLog.value = null
   showLogDetails.value = false
@@ -193,12 +211,14 @@ export const cancelAllInFlightModelRequests = (message = MODEL_REQUEST_CANCELLED
   const requestIds = new Set<string>([
     ...activeModelAbortControllers.keys(),
     ...heartbeatIntervals.keys(),
+    ...searchHeartbeatTimers.keys(),
     ...activeUrlAnalysisRequestIds,
   ])
 
   requestIds.forEach((requestId) => {
     cancelledRequestIds.add(requestId)
     clearRequestHeartbeat(requestId)
+    stopSearchHeartbeat(requestId)
     markRequestAsCancelled(requestId, message)
   })
 

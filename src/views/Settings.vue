@@ -40,6 +40,14 @@
             </div>
           </div>
 
+          <div v-else-if="activeCategory === 'search'" key="search" class="settings-section">
+            <div class="settings-inner-wrapper">
+              <div class="settings-content-wrapper">
+                <SearchSettings />
+              </div>
+            </div>
+          </div>
+
           <div v-else-if="activeCategory === 'about'" key="about" class="settings-section">
             <div class="settings-inner-wrapper about-scroll-wrap">
               <div class="settings-content-wrapper about-scroll-content" ref="aboutScrollContent" @scroll="onAboutScroll">
@@ -65,6 +73,7 @@ import AgentSettings from './settings/AgentSettings.vue'
 import ModelSettings from './settings/ModelSettings.vue'
 import AboutApp from './settings/AboutApp.vue'
 import SettingsNav from './settings/SettingsNav.vue'
+import SearchSettings from './settings/SearchSettings.vue'
 
 const emit = defineEmits<{
   'open-question-folder': [folderId: number]

@@ -27,6 +27,7 @@ import {
 } from './runtime'
 import { serverRunning, serverUrl } from './serverRefs'
 import type { MultiModelResponse } from './types'
+import { getSearchQuestionText, runSearchForRequest } from './search'
 
 const {
   platforms,
@@ -169,6 +170,13 @@ export const callModelAPI = async (requestId: string, query: string) => {
       })
     }
 
+    const searchResult = await runSearchForRequest(
+      requestId, getSearchQuestionText(requestId),
+      selectedModels.length > 1 ? '联网搜索（多模型共用）' : selectedModels[0].displayName,
+    )
+    const searchContext = searchResult?.context || ''
+    if (isRequestCancelled(requestId)) return
+
     // 启动心跳（缩短间隔，减轻后台 setInterval 节流影响）
     if (serverRunning.value && serverUrl.value && !heartbeatIntervals.has(requestId)) {
       const timerId = window.setInterval(() => {
@@ -212,7 +220,8 @@ export const callModelAPI = async (requestId: string, query: string) => {
               query,
               requestId,
               (content) => updateMultiModelStreamingResponse(requestId, model.id, stripMarkdownCodeBlock(content)),
-              (reasoning) => updateMultiModelStreamingReasoning(requestId, model.id, reasoning)
+              (reasoning) => updateMultiModelStreamingReasoning(requestId, model.id, reasoning),
+              searchContext
             )
           },
           (attempt, maxAttempts) => {
@@ -311,6 +320,7 @@ export const callModelAPI = async (requestId: string, query: string) => {
 
 用户原始问题：
 ${query}
+${searchContext ? `\n联网搜索结果：\n${searchContext}\n` : ''}
 
 模型回答内容：
 ${baseCombinedResponse}

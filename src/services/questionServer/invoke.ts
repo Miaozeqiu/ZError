@@ -139,7 +139,8 @@ export const callModelWithStreaming = async (
   query: string,
   requestId: string,
   onChunk?: (content: string) => void,
-  onReasoning?: (text: string) => void
+  onReasoning?: (text: string) => void,
+  searchContext?: string
 ) => {
   if (isRequestCancelled(requestId)) {
     throw createCancelledRequestError()
@@ -163,8 +164,14 @@ export const callModelWithStreaming = async (
   }
 
   // 构建测试输入数据（普通答题注入典型例题多轮对话）
+  const chatMessages = buildAnswerChatMessages(query)
+  if (searchContext) {
+    const lastUserMessage = [...chatMessages].reverse().find(message => message.role === 'user')
+    if (lastUserMessage) lastUserMessage.content = `${searchContext}\n\n${lastUserMessage.content}`
+    else chatMessages.push({ role: 'user', content: searchContext })
+  }
   const testInput: any = {
-    messages: buildAnswerChatMessages(query),
+    messages: chatMessages,
     model: runtimeModelId,
     stream: true,
     tools: []
