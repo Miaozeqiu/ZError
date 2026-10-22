@@ -18,6 +18,19 @@ const result = { content: [{ type: 'text', text: JSON.stringify([
 ]) }] }
 const json = payload => new Response(JSON.stringify(payload), { headers: { 'content-type': 'application/json' } })
 const flush = () => new Promise(resolve => setImmediate(resolve))
+const deferred = () => {
+  let resolve
+  const promise = new Promise(done => { resolve = done })
+  return { promise, resolve }
+}
+const stalledBody = () => {
+  let stream
+  const started = deferred()
+  const response = new Response(new ReadableStream({ start(controller) { stream = controller } }))
+  const read = response.text.bind(response)
+  response.text = () => { const pending = read(); started.resolve(); return pending }
+  return { response, reading: started.promise, close: () => stream.close() }
+}
 const originalWindow = globalThis.window
 
 beforeEach(() => {
@@ -56,10 +69,11 @@ test('remote handshake shares its session and injects search excerpts', async ()
 test('timeout covers stalled headers even if HTTP ignores abort', async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] })
   let signal
-  fetchImpl = async (_url, init) => { signal = init.signal; return new Promise(() => {}) }
+  const started = deferred()
+  fetchImpl = async (_url, init) => { signal = init.signal; started.resolve(); return new Promise(() => {}) }
   const pending = performWebSearch('stalled headers', config, { force: true })
   const rejected = assert.rejects(pending, { name: 'TimeoutError' })
-  await flush()
+  await started.promise
   t.mock.timers.tick(5001)
   await rejected
   assert.equal(signal.aborted, true)
@@ -67,51 +81,52 @@ test('timeout covers stalled headers even if HTTP ignores abort', async t => {
 
 test('timeout remains active while reading a stalled response body', async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] })
-  let signal, stream
+  let signal
+  const body = stalledBody()
   fetchImpl = async (_url, init) => {
     signal = init.signal
-    return new Response(new ReadableStream({ start(controller) { stream = controller } }))
+    return body.response
   }
   const rejected = assert.rejects(performWebSearch('stalled body', config, { force: true }), { name: 'TimeoutError' })
-  await flush()
+  await body.reading
   t.mock.timers.tick(5001)
   await rejected
   assert.equal(signal.aborted, true)
-  stream.close()
+  body.close()
 })
 
 test('one timeout budget includes initialization and the tool response', async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] })
   const normalFetch = fetchImpl
-  let stream
+  const body = stalledBody()
   fetchImpl = async (url, init) => {
     t.mock.timers.tick(1500)
     if (JSON.parse(init.body).method === 'tools/call') {
-      return new Response(new ReadableStream({ start(controller) { stream = controller } }))
+      return body.response
     }
     return normalFetch(url, init)
   }
   const rejected = assert.rejects(performWebSearch('total budget', config, { force: true }), { name: 'TimeoutError' })
-  await flush()
-  assert.ok(stream)
+  await body.reading
   t.mock.timers.tick(501)
   await rejected
-  stream.close()
+  body.close()
 })
 
 test('caller cancellation interrupts a body after response headers arrive', async () => {
-  let stream, signal
+  let signal
+  const body = stalledBody()
   fetchImpl = async (_url, init) => {
     signal = init.signal
-    return new Response(new ReadableStream({ start(controller) { stream = controller } }))
+    return body.response
   }
   const controller = new AbortController()
   const rejected = assert.rejects(performWebSearch('abort body', config, { signal: controller.signal, force: true }), { name: 'AbortError' })
-  await flush()
+  await body.reading
   controller.abort()
   await rejected
   assert.equal(signal.aborted, true)
-  stream.close()
+  body.close()
 })
 
 test('SSE accepts the matching result without waiting for EOF or taking another ID', async () => {
