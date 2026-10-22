@@ -241,7 +241,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, toRef, type Ref } from 'vue'
+import { ref, toRef, onUnmounted, type Ref } from 'vue'
 import Toggle from '../../components/Toggle.vue'
 import { useSettingsManager } from '../../composables/useSettingsManager'
 import { DEFAULT_SEARCH_SETTINGS, type SearchSettings as SearchSettingsType } from '../../services/settings'
@@ -263,6 +263,8 @@ const testQuery = ref('')
 const testing = ref(false)
 const testError = ref('')
 const testOutcome = ref<WebSearchOutcome | null>(null)
+let testController: AbortController | null = null
+onUnmounted(() => testController?.abort())
 
 const handleApiKeyInput = () => {
   if (search.value.apiKey && search.value.authMode === 'none') {
@@ -292,14 +294,20 @@ const runTest = async () => {
   }
 
   testing.value = true
+  const controller = new AbortController()
+  testController = controller
   testError.value = ''
   testOutcome.value = null
 
   try {
-    testOutcome.value = await performWebSearch(query, { ...search.value, enabled: true }, { force: true })
+    testOutcome.value = await performWebSearch(query, { ...search.value, enabled: true }, {
+      force: true,
+      signal: controller.signal
+    })
   } catch (error) {
     testError.value = error instanceof Error ? error.message : String(error)
   } finally {
+    if (testController === controller) testController = null
     testing.value = false
   }
 }

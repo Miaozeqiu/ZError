@@ -207,47 +207,90 @@ const mcpErrorMessage = (error: any): string => {
   return error.message || error.data?.message || JSON.stringify(error)
 }
 
+const abortReason = (signal: AbortSignal): unknown =>
+  signal.reason ?? new DOMException('搜索已取消', 'AbortError')
+
+// Native HTTP / IPC promises do not always reject promptly when their signal aborts.
+const abortable = <T>(promise: Promise<T>, signal: AbortSignal): Promise<T> =>
+  new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(abortReason(signal))
+    if (signal.aborted) onAbort()
+    else signal.addEventListener('abort', onAbort, { once: true })
+    promise.then(
+      value => {
+        signal.removeEventListener('abort', onAbort)
+        resolve(value)
+      },
+      error => {
+        signal.removeEventListener('abort', onAbort)
+        reject(error)
+      }
+    )
+  })
+
 const postMcp = async (params: {
   fetchImpl: typeof fetch
   url: string
   headers: Record<string, string>
   body: any
-  timeoutMs: number
-  signal?: AbortSignal
+  signal: AbortSignal
   sessionId?: string
 }): Promise<Response> => {
-  const controller = new AbortController()
-  const timeout = setTimeout(() => {
-    controller.abort(new DOMException('搜索请求超时', 'TimeoutError'))
-  }, params.timeoutMs)
+  if (params.signal.aborted) throw abortReason(params.signal)
+  return abortable(params.fetchImpl(params.url, {
+    method: 'POST',
+    headers: {
+      ...params.headers,
+      ...(params.sessionId ? { 'Mcp-Session-Id': params.sessionId } : {})
+    },
+    body: JSON.stringify(params.body),
+    signal: params.signal
+  }), params.signal)
+}
 
-  const onAbort = () => controller.abort(params.signal?.reason)
-  if (params.signal) {
-    if (params.signal.aborted) onAbort()
-    else params.signal.addEventListener('abort', onAbort, { once: true })
+const readMcpResponse = async (
+  response: Response,
+  id: number,
+  signal: AbortSignal
+): Promise<any> => {
+  if (!response.ok) {
+    const body = await abortable(response.text(), signal)
+    throw new Error(`MCP 请求失败：HTTP ${response.status} ${body.slice(0, 300)}`)
+  }
+  const contentType = response.headers.get('content-type') || ''
+  if (!contentType.includes('text/event-stream') || !response.body) {
+    const payload = parseMcpPayload(await abortable(response.text(), signal), contentType)
+    if (payload?.id !== id) throw new Error('MCP 响应 ID 与请求不匹配')
+    return payload
   }
 
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
   try {
-    return await params.fetchImpl(params.url, {
-      method: 'POST',
-      headers: {
-        ...params.headers,
-        ...(params.sessionId ? { 'Mcp-Session-Id': params.sessionId } : {})
-      },
-      body: JSON.stringify(params.body),
-      signal: controller.signal
-    })
+    while (true) {
+      const { done, value } = await abortable(reader.read(), signal)
+      buffer += done ? decoder.decode() : decoder.decode(value, { stream: true })
+      const blocks = buffer.split(/\r?\n\r?\n/)
+      buffer = done ? '' : blocks.pop() || ''
+      for (const block of blocks) {
+        const payload = parseSseMessages(block).find(message =>
+          message?.id === id && (message.result !== undefined || message.error !== undefined)
+        )
+        if (payload) return payload
+      }
+      if (done) throw new Error('MCP SSE 流结束，未返回匹配的响应')
+    }
   } finally {
-    clearTimeout(timeout)
-    params.signal?.removeEventListener('abort', onAbort)
+    // A matching response completes the request even if the server keeps SSE open.
+    void reader.cancel().catch(() => {})
   }
 }
 
 const callRemoteMcp = async (
   query: string,
   config: SearchSettings,
-  timeoutMs: number,
-  signal?: AbortSignal
+  signal: AbortSignal
 ): Promise<{ text: string; raw: any }> => {
   if (!config.remoteUrl) {
     throw new Error('未配置远程 MCP 地址')
@@ -256,20 +299,10 @@ const callRemoteMcp = async (
   const fetchImpl = await getFetchImpl()
   const headers = buildHeaders(config)
   const toolArguments = buildSearchArguments(query, config)
-  const deadline = Date.now() + timeoutMs
-  const remainingTimeout = (): number => {
-    const remaining = deadline - Date.now()
-    if (remaining <= 0) {
-      throw new Error(`MCP 搜索超时（${Math.round(timeoutMs / 1000)} 秒）`)
-    }
-    return remaining
-  }
-
   const initResponse = await postMcp({
     fetchImpl,
     url: config.remoteUrl,
     headers,
-    timeoutMs: remainingTimeout(),
     signal,
     body: {
       jsonrpc: '2.0',
@@ -283,12 +316,7 @@ const callRemoteMcp = async (
     }
   })
 
-  const initBody = await initResponse.text()
-  if (!initResponse.ok) {
-    throw new Error(`MCP 初始化失败：HTTP ${initResponse.status} ${initBody.slice(0, 300)}`)
-  }
-
-  const initPayload = parseMcpPayload(initBody, initResponse.headers.get('content-type') || '')
+  const initPayload = await readMcpResponse(initResponse, 1, signal)
   if (initPayload?.error) {
     throw new Error(`MCP 初始化失败：${mcpErrorMessage(initPayload.error)}`)
   }
@@ -302,13 +330,12 @@ const callRemoteMcp = async (
     fetchImpl,
     url: config.remoteUrl,
     headers,
-    timeoutMs: remainingTimeout(),
     signal,
     sessionId,
     body: { jsonrpc: '2.0', method: 'notifications/initialized' }
   })
   // 规范允许 202；部分服务会返回 200。读取掉响应体避免连接悬挂。
-  await initializedResponse.text().catch(() => '')
+  await abortable(initializedResponse.text(), signal)
   if (!initializedResponse.ok && initializedResponse.status !== 202) {
     throw new Error(`MCP 初始化确认失败：HTTP ${initializedResponse.status}`)
   }
@@ -317,7 +344,6 @@ const callRemoteMcp = async (
     fetchImpl,
     url: config.remoteUrl,
     headers,
-    timeoutMs: remainingTimeout(),
     signal,
     sessionId,
     body: {
@@ -331,12 +357,7 @@ const callRemoteMcp = async (
     }
   })
 
-  const callBody = await callResponse.text()
-  if (!callResponse.ok) {
-    throw new Error(`MCP 搜索失败：HTTP ${callResponse.status} ${callBody.slice(0, 300)}`)
-  }
-
-  const callPayload = parseMcpPayload(callBody, callResponse.headers.get('content-type') || '')
+  const callPayload = await readMcpResponse(callResponse, 2, signal)
   if (callPayload?.error) {
     throw new Error(`MCP 搜索失败：${mcpErrorMessage(callPayload.error)}`)
   }
@@ -356,13 +377,14 @@ const splitCommandLine = (input: string): string[] => {
   const args: string[] = []
   let current = ''
   let quote: '"' | "'" | null = null
+  let started = false
 
   for (let i = 0; i < text.length; i++) {
     const ch = text[i]
     if (quote) {
       if (ch === quote) {
         quote = null
-      } else if (ch === '\\' && quote === '"' && i + 1 < text.length) {
+      } else if (ch === '\\' && quote === '"' && text[i + 1] === '"') {
         current += text[++i]
       } else {
         current += ch
@@ -372,19 +394,23 @@ const splitCommandLine = (input: string): string[] => {
 
     if (ch === '"' || ch === "'") {
       quote = ch
+      started = true
       continue
     }
     if (/\s/.test(ch)) {
-      if (current) {
+      if (started) {
         args.push(current)
         current = ''
+        started = false
       }
       continue
     }
     current += ch
+    started = true
   }
 
-  if (current) args.push(current)
+  if (quote) throw new Error('命令参数的引号未闭合')
+  if (started) args.push(current)
   return args
 }
 
@@ -405,7 +431,8 @@ const parseEnvLines = (input: string): Record<string, string> => {
 const callLocalMcp = async (
   query: string,
   config: SearchSettings,
-  timeoutMs: number
+  timeoutMs: number,
+  signal: AbortSignal
 ): Promise<{ text: string; raw: any }> => {
   if (!isTauriEnvironment()) {
     throw new Error('本地 stdio MCP 只能在桌面应用中使用')
@@ -415,20 +442,38 @@ const callLocalMcp = async (
   }
 
   const environment = parseEnvLines(config.localEnv)
-  const result = await invoke<any>('mcp_stdio_search', {
-    command: config.localCommand.trim(),
-    args: splitCommandLine(config.localArgs),
-    env: Object.keys(environment).length ? environment : null,
-    toolName: config.toolName,
-    arguments: buildSearchArguments(query, config),
-    timeoutSecs: Math.max(10, Math.ceil(timeoutMs / 1000) + 15)
-  })
-
-  if (result?.isError) {
-    throw new Error(extractContentText(result) || '本地搜索工具返回错误')
+  const args = splitCommandLine(config.localArgs)
+  const toolArguments = buildSearchArguments(query, config)
+  // Prepare the cancellation handle before starting the process, so even an
+  // abort between IPC calls cannot race ahead of backend registration.
+  const searchId = await invoke<string>('mcp_stdio_prepare')
+  const cancel = () => { void invoke('mcp_stdio_cancel', { searchId }).catch(() => {}) }
+  if (signal.aborted) {
+    cancel()
+    throw abortReason(signal)
   }
+  signal.addEventListener('abort', cancel, { once: true })
+  try {
+    const result = await abortable(invoke<any>('mcp_stdio_search', {
+      searchId,
+      command: config.localCommand.trim(),
+      args,
+      env: Object.keys(environment).length ? environment : null,
+      toolName: config.toolName,
+      arguments: toolArguments,
+      timeoutSecs: Math.ceil(timeoutMs / 1000)
+    }), signal)
 
-  return { text: extractContentText(result), raw: result }
+    if (result?.isError) {
+      throw new Error(extractContentText(result) || '本地搜索工具返回错误')
+    }
+
+    return { text: extractContentText(result), raw: result }
+  } finally {
+    signal.removeEventListener('abort', cancel)
+    // Also release a prepared handle if starting the search failed.
+    cancel()
+  }
 }
 
 const cleanText = (text: string): string =>
@@ -579,6 +624,7 @@ export const performWebSearch = async (
   settings: SearchSettings,
   options: { signal?: AbortSignal; force?: boolean } = {}
 ): Promise<WebSearchOutcome> => {
+  if (options.signal?.aborted) throw abortReason(options.signal)
   const config = normalizeConfig(settings)
   if (!config.enabled) {
     throw new Error('联网搜索未启用')
@@ -599,28 +645,39 @@ export const performWebSearch = async (
 
   const startedAt = Date.now()
   const timeoutMs = config.timeoutSeconds * 1000
-  const { text, raw } =
-    config.mode === 'local'
-      ? await callLocalMcp(effectiveQuery, config, timeoutMs)
-      : await callRemoteMcp(effectiveQuery, config, timeoutMs, options.signal)
+  const controller = new AbortController()
+  const onAbort = () => controller.abort(options.signal?.reason)
+  options.signal?.addEventListener('abort', onAbort, { once: true })
+  const timeout = setTimeout(() => {
+    controller.abort(new DOMException(`MCP 搜索超时（${config.timeoutSeconds} 秒）`, 'TimeoutError'))
+  }, timeoutMs)
+  try {
+    const operation = config.mode === 'local'
+      ? callLocalMcp(effectiveQuery, config, timeoutMs, controller.signal)
+      : callRemoteMcp(effectiveQuery, config, controller.signal)
+    const { text, raw } = await abortable(operation, controller.signal)
 
-  const results = parseSearchResults(text, config.maxResults)
-  const outcome: WebSearchOutcome = {
-    query: effectiveQuery,
-    toolName: config.toolName,
-    mode: config.mode,
-    durationMs: Date.now() - startedAt,
-    results,
-    rawText: (text || (raw ? JSON.stringify(raw) : '')).slice(0, 20000)
+    const results = parseSearchResults(text, config.maxResults)
+    const outcome: WebSearchOutcome = {
+      query: effectiveQuery,
+      toolName: config.toolName,
+      mode: config.mode,
+      durationMs: Date.now() - startedAt,
+      results,
+      rawText: (text || (raw ? JSON.stringify(raw) : '')).slice(0, 20000)
+    }
+
+    searchCache.set(cacheKey, { at: Date.now(), outcome })
+    if (searchCache.size > SEARCH_CACHE_MAX_ENTRIES) {
+      const oldest = [...searchCache.entries()].sort((a, b) => a[1].at - b[1].at)[0]
+      if (oldest) searchCache.delete(oldest[0])
+    }
+
+    return cloneOutcome(outcome)
+  } finally {
+    clearTimeout(timeout)
+    options.signal?.removeEventListener('abort', onAbort)
   }
-
-  searchCache.set(cacheKey, { at: Date.now(), outcome })
-  if (searchCache.size > SEARCH_CACHE_MAX_ENTRIES) {
-    const oldest = [...searchCache.entries()].sort((a, b) => a[1].at - b[1].at)[0]
-    if (oldest) searchCache.delete(oldest[0])
-  }
-
-  return cloneOutcome(outcome)
 }
 
 export const formatSearchContextForModel = (outcome: WebSearchOutcome, maxChars = 8000): string => {

@@ -908,6 +908,7 @@ let logUpdateInterval: NodeJS.Timeout | null = null
 let sseEventSource: EventSource | null = null
 // 维护每个请求的心跳定时器，确保在没有内容流入时也能向后端发送进度心跳
 const heartbeatIntervals = new Map<string, number>()
+const searchHeartbeatTimers = new Map<string, number>()
 const activeModelAbortControllers = new Map<string, Set<AbortController>>()
 const cancelledRequestIds = new Set<string>()
 const finalModelResponseState = new Map<string, 'success' | 'error'>()
@@ -1080,12 +1081,14 @@ const evictRequestSideState = (requestIds: Iterable<string>, { force = false } =
     const inFlight = isRequestInFlight(requestId)
     if (force || !inFlight) {
       clearRequestHeartbeat(requestId)
+      stopSearchHeartbeat(requestId)
       finalModelResponseState.delete(requestId)
       processedRequestIds.delete(requestId)
       cancelledRequestIds.delete(requestId)
       activeUrlAnalysisRequestIds.delete(requestId)
     }
     if (force && inFlight) {
+      stopSearchHeartbeat(requestId)
       const controllers = activeModelAbortControllers.get(requestId)
       if (controllers) {
         controllers.forEach((controller) => {
@@ -1121,6 +1124,7 @@ const clearAllRequestRuntimeState = () => {
   const allIds = new Set<string>([
     ...requestLogs.value.map((log) => log.id),
     ...heartbeatIntervals.keys(),
+    ...searchHeartbeatTimers.keys(),
     ...activeModelAbortControllers.keys(),
     ...cancelledRequestIds,
     ...finalModelResponseState.keys(),
@@ -1137,6 +1141,7 @@ const clearAllRequestRuntimeState = () => {
   processedRequestIds.clear()
   activeUrlAnalysisRequestIds.clear()
   for (const id of [...heartbeatIntervals.keys()]) clearRequestHeartbeat(id)
+  for (const id of [...searchHeartbeatTimers.keys()]) stopSearchHeartbeat(id)
   requestLogs.value = []
   selectedLog.value = null
   showLogDetails.value = false
@@ -1196,12 +1201,14 @@ const cancelAllInFlightModelRequests = (message = MODEL_REQUEST_CANCELLED_MESSAG
   const requestIds = new Set<string>([
     ...activeModelAbortControllers.keys(),
     ...heartbeatIntervals.keys(),
+    ...searchHeartbeatTimers.keys(),
     ...activeUrlAnalysisRequestIds,
   ])
 
   requestIds.forEach((requestId) => {
     cancelledRequestIds.add(requestId)
     clearRequestHeartbeat(requestId)
+    stopSearchHeartbeat(requestId)
     markRequestAsCancelled(requestId, message)
   })
 
@@ -2678,8 +2685,6 @@ const dispatchModelCallRequest = (requestId: string, query: string) => {
 
 // ===== 联网搜索（全局设置控制，所有模型共用） =====
 
-const searchHeartbeatTimers = new Map<string, number>()
-
 const getSearchQuestionText = (requestId: string): string => {
   const log = requestLogs.value.find(item => item.id === requestId)
   if (log?.urlQuestion) {
@@ -2738,6 +2743,7 @@ const runSearchForRequest = async (
     .replace(/\s+/g, ' ')
     .trim()
   if (!searchQuery) return null
+  if (isRequestCancelled(requestId)) throw createCancelledRequestError()
 
   const log = requestLogs.value.find(item => item.id === requestId)
   const trace = reactive<SearchTrace>({
@@ -2757,11 +2763,13 @@ const runSearchForRequest = async (
     log.searchTraces.push(trace)
   }
 
+  const abortController = new AbortController()
+  registerAbortController(requestId, abortController)
   startSearchHeartbeat(requestId)
   void sendModelProgressToBackend(requestId, 'searching')
 
   try {
-    const outcome = await performWebSearch(searchQuery, { ...config })
+    const outcome = await performWebSearch(searchQuery, { ...config }, { signal: abortController.signal })
     trace.status = 'success'
     trace.durationMs = outcome.durationMs
     trace.results = outcome.results
@@ -2773,9 +2781,13 @@ const runSearchForRequest = async (
     trace.status = 'error'
     trace.durationMs = Date.now() - trace.startedAt
     trace.error = formatModelCallError(error, '联网搜索失败')
+    if (abortController.signal.aborted || isRequestCancelled(requestId)) {
+      throw createCancelledRequestError()
+    }
     console.warn('[联网搜索失败]', error)
     return null
   } finally {
+    unregisterAbortController(requestId, abortController)
     stopSearchHeartbeat(requestId)
     void sendModelProgressToBackend(requestId, 'search-finished')
   }
