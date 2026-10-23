@@ -127,7 +127,7 @@ export const handleUrlQuestionRequest = async (requestId: string, rawTitle: stri
         } else if (retries >= 30) {
           clearInterval(timer)
           console.warn('handleUrlQuestionRequest: log 未在 3 秒内出现，放弃:', requestId)
-          void sendModelResponseToBackend(requestId, '错误: 未找到对应请求日志，无法处理 URL 题目', false)
+          void sendModelResponseToBackend(requestId, '错误: 未找到对应请求日志，无法处理 URL 题目', false, '', 'url')
         }
       }, 100)
     }
@@ -407,7 +407,7 @@ export const analyzeUrlQuestion = async (requestId: string) => {
     log.urlQuestion.reasoningContent = ''
     log.modelResponse = `错误: ${errorMessage}`
     log.isModelCalling = false
-    await sendModelResponseToBackend(requestId, `错误: ${errorMessage}`, false)
+    await sendModelResponseToBackend(requestId, `错误: ${errorMessage}`, false, '', 'url')
     return
   }
 
@@ -563,9 +563,9 @@ export const analyzeUrlQuestion = async (requestId: string) => {
     if (isRequestCancelled(requestId)) return
 
     if (answer) {
-      await sendModelResponseToBackend(requestId, JSON.stringify({ answer }), true, fullReasoning)
+      await sendModelResponseToBackend(requestId, JSON.stringify({ answer }), true, fullReasoning, 'url')
     } else {
-      await sendModelResponseToBackend(requestId, fullResponse, true, fullReasoning)
+      await sendModelResponseToBackend(requestId, fullResponse, true, fullReasoning, 'url')
     }
 
   } catch (err: unknown) {
@@ -585,7 +585,7 @@ export const analyzeUrlQuestion = async (requestId: string) => {
 
     if (l) l.isModelCalling = false
     // 通知后端分析失败，让 wait_for_model_response 尽快返回错误
-    await sendModelResponseToBackend(requestId, `错误: ${detail}`, false)
+    await sendModelResponseToBackend(requestId, `错误: ${detail}`, false, '', 'url')
   } finally {
     clearRequestHeartbeat(requestId)
     unregisterAbortController(requestId, abortController)

@@ -23,15 +23,18 @@ export const getRequestOptionsFromLog = (requestId: string): string => {
   }
 }
 
-export const sendModelResponseToBackend = async (requestId: string, content: string, isSuccess: boolean = true, reasoningContent = '') => {
+export const sendModelResponseToBackend = async (requestId: string, content: string, isSuccess: boolean = true, reasoningContent = '', phase: string = 'answer') => {
+  // 去重只针对同一阶段：上一阶段的成功状态不得吞掉本阶段的结果（同题判断 → 答题复用同一 requestId）
   const existingState = finalModelResponseState.get(requestId)
-  if (existingState === 'success') {
-    console.warn('忽略重复的模型最终响应（已成功发送）:', { requestId, isSuccess })
-    return
-  }
-  if (existingState === 'error' && !isSuccess) {
-    console.warn('忽略重复的模型错误响应:', { requestId })
-    return
+  if (existingState && existingState.phase === phase) {
+    if (existingState.state === 'success') {
+      console.warn('忽略重复的模型最终响应（已成功发送）:', { requestId, phase, isSuccess })
+      return
+    }
+    if (!isSuccess) {
+      console.warn('忽略重复的模型错误响应:', { requestId, phase })
+      return
+    }
   }
 
   // 去掉 A./B. 前缀，纯字母映射为选项正文，避免 OCS 收到带序号的答案
@@ -62,7 +65,7 @@ export const sendModelResponseToBackend = async (requestId: string, content: str
       throw new Error(`HTTP error! status: ${response.status}`)
     }
 
-    finalModelResponseState.set(requestId, isSuccess ? 'success' : 'error')
+    finalModelResponseState.set(requestId, { phase, state: isSuccess ? 'success' : 'error' })
     if (isSuccess && normalizedContent !== content) {
       const log = requestLogs.value.find(l => l.id === requestId)
       if (log) log.modelResponse = normalizedContent

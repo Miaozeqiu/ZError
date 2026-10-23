@@ -68,14 +68,14 @@ export const handleSameQuestionCheckRequest = async (requestId: string, payloadJ
     payload = JSON.parse(payloadJson)
   } catch (error) {
     console.error('解析同题判断 payload 失败:', error)
-    await sendModelResponseToBackend(requestId, JSON.stringify({ same: false }), true)
+    await sendModelResponseToBackend(requestId, JSON.stringify({ same: false }), true, '', 'same')
     return
   }
 
   const model = globalSelectedTextModels.value[0] || globalSelectedTextModel.value
   if (!model) {
     console.warn('同题判断：未选择文本模型，回落为不同题')
-    await sendModelResponseToBackend(requestId, JSON.stringify({ same: false }), true)
+    await sendModelResponseToBackend(requestId, JSON.stringify({ same: false }), true, '', 'same')
     return
   }
 
@@ -133,7 +133,7 @@ export const handleSameQuestionCheckRequest = async (requestId: string, payloadJ
       log.modelResponse = resultJson
     }
 
-    await sendModelResponseToBackend(requestId, resultJson, true)
+    await sendModelResponseToBackend(requestId, resultJson, true, '', 'same')
   } catch (error) {
     console.error('同题判断失败:', error)
     const fallback = JSON.stringify({ same: false })
@@ -146,6 +146,6 @@ export const handleSameQuestionCheckRequest = async (requestId: string, payloadJ
         log.multiModelResponses[0].response = fallback
       }
     }
-    await sendModelResponseToBackend(requestId, fallback, true)
+    await sendModelResponseToBackend(requestId, fallback, true, '', 'same')
   }
 }
