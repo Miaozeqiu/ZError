@@ -10,12 +10,14 @@ import { FOLDER_QUESTION_TOOLS } from './folderQuestionTools'
 import { CAMPUS_TOOLS } from './campusTools'
 import { PRACTICE_QUIZ_TOOLS } from './practiceQuizTools'
 import { STUDY_GRAPH_TOOLS } from './studyGraphTools'
+import { WEB_SEARCH_TOOLS } from './webSearchTools'
 
 export const CHAT_TOOLS = [
   ...FOLDER_QUESTION_TOOLS,
   ...CAMPUS_TOOLS,
   ...PRACTICE_QUIZ_TOOLS,
   ...STUDY_GRAPH_TOOLS,
+  ...WEB_SEARCH_TOOLS,
   LIST_AGENT_SKILLS_TOOL,
   READ_AGENT_SKILL_TOOL,
   READ_AGENT_SKILL_FILE_TOOL,

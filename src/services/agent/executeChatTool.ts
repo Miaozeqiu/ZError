@@ -6,6 +6,7 @@ import { campusToolHandlers } from './toolHandlers/campus'
 import { folderToolHandlers } from './toolHandlers/folder'
 import { quizToolHandlers } from './toolHandlers/quiz'
 import { studyToolHandlers } from './toolHandlers/study'
+import { searchToolHandlers } from './toolHandlers/search'
 import { parseToolArgs } from './toolArgs'
 import type { ChatToolContext, ChatToolHandler } from './toolContext'
 import { getAgentPolicy } from './agentPolicy'
@@ -51,6 +52,7 @@ const CHAT_TOOL_HANDLERS: Record<string, ChatToolHandler> = {
   ...campusToolHandlers,
   ...quizToolHandlers,
   ...studyToolHandlers,
+  ...searchToolHandlers,
 }
 
 const waitWithAbort = (signal: AbortSignal) => (ms: number) => new Promise<void>((resolve, reject) => {
