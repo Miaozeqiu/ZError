@@ -28,6 +28,16 @@ describe('agent language', () => {
 })
 
 describe('skill 渐进披露', () => {
+  it('旧配置中启用的 parser 也不再注入 Agent Skill 索引', async () => {
+    const { agentSkillsState, getEnabledSkillCatalog } = await import('../../src/services/agent/agentSkills')
+    const prev = agentSkillsState.items
+    try {
+      agentSkillsState.items = [{ id: 'parser', name: '旧解析器', description: '遗留配置', enabled: true, builtin: true, customized: false, scope: 'browser' }]
+      expect(getEnabledSkillCatalog('browser').some(item => item.id === 'parser')).toBe(false)
+    } finally {
+      agentSkillsState.items = prev
+    }
+  })
   it('site-learn 主文件指向本站 SKILL 和 workflow，不塞别站细则', () => {
     const text = readFileSync(resolve(bundled, 'site-learn/SKILL.md'), 'utf8')
     expect(text).toContain('sites/<当前网址主机>/SKILL.md')

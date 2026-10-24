@@ -4,8 +4,12 @@
           <div
             ref="threadRef"
             class="chat-thread"
+            tabindex="0"
+            aria-label="对话内容"
             @scroll.passive="updateThreadPinned"
-            @wheel.passive="onThreadWheel"
+            @wheel.capture.passive="onThreadWheel"
+            @touchstart.passive="onThreadTouchStart"
+            @touchmove.passive="onThreadTouchMove"
             @pointerdown="onThreadPointerDown"
             @contextmenu.prevent="onThreadContextMenu"
           >
@@ -73,15 +77,57 @@
                     v-if="block.type === 'step'"
                     class="activity-entry"
                   >
-                    <div class="activity-line" :class="[`is-${block.step.status}`]">
+                    <div
+                      class="activity-line"
+                      :class="[`is-${block.step.status}`, { 'is-search-toggle': block.step.name === 'web_search' && block.step.status === 'done' }]"
+                      :aria-expanded="block.step.name === 'web_search' ? expandedSearchSteps.has(block.step.id) : undefined"
+                      @click="block.step.name === 'web_search' && block.step.status === 'done' && toggleSearchResults(block.step.id)"
+                    >
                       <span class="activity-icon" aria-hidden="true">
-                        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                          <path v-for="(d, index) in iconPaths(block.step.name)" :key="index" :d="d" />
-                        </svg>
+                        <Icon :icon="activityIconName(block.step.name)" width="14" height="14" />
                       </span>
-                      <span class="activity-text" :class="{ 'is-live': block.step.status === 'running' }">{{ block.step.label }}</span>
+                      <span class="activity-text" :class="{ 'is-live': block.step.status === 'running', 'is-url': /https?:\/\//i.test(block.step.label) }" :title="/https?:\/\//i.test(block.step.label) ? block.step.label : undefined">{{ block.step.name === 'web_search' ? `正在搜索 ${searchQueryFor(block.step) || '网页资料'}` : block.step.label }}</span>
+                      <Icon
+                        v-if="block.step.name === 'web_search' && block.step.status === 'done'"
+                        class="search-results-chevron"
+                        :icon="expandedSearchSteps.has(block.step.id) ? 'lucide:chevron-down' : 'lucide:chevron-right'"
+                        width="14"
+                        height="14"
+                        aria-hidden="true"
+                      />
                     </div>
                     <p v-if="block.step.status === 'failed' && block.step.detail" class="activity-detail">{{ block.step.detail }}</p>
+
+                    <div v-if="block.step.name === 'web_search' && block.step.status === 'done'" class="search-results-block">
+                      <div v-if="expandedSearchSteps.has(block.step.id)" class="search-results-content" @wheel="onSearchResultsWheel">
+                        <TransitionGroup name="search-result-item" tag="div" class="search-results-list">
+                          <button
+                            v-for="item in searchResultsFor(block.step)"
+                            :key="item.url"
+                            class="search-result-card"
+                            type="button"
+                            @click="openSearchResult(item.url)"
+                          >
+                            <span class="search-result-title-row">
+                              <span class="search-result-favicon-wrap">
+                                <Icon icon="lucide:globe" width="14" height="14" />
+                                <img
+                                  class="search-result-favicon"
+                                  :src="item.siteIcon || faviconUrlFor(item.url)"
+                                  alt=""
+                                  loading="lazy"
+                                  @error="hideBrokenFavicon"
+                                />
+                              </span>
+                              <span class="search-result-title">{{ item.title }}</span>
+                            </span>
+                            <span v-if="item.snippet" class="search-result-snippet">{{ item.snippet }}</span>
+                            <span class="search-result-url">{{ item.url }}</span>
+                          </button>
+                        </TransitionGroup>
+                        <span v-if="!searchResultsFor(block.step).length" class="search-empty">没有找到可展示的搜索结果</span>
+                      </div>
+                    </div>
 
                     <div
                       v-if="isQuizStep(block.step)"
@@ -225,7 +271,7 @@
             class="custom-scrollbar"
             :class="{ 'is-visible': threadScroll.visible }"
             ref="threadBarRef"
-            @mousedown="threadScroll.onMousedown"
+            @mousedown="onThreadScrollbarDown"
           >
             <div class="custom-scrollbar-thumb" ref="threadThumbRef"></div>
           </div>
@@ -246,10 +292,14 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
+import { Icon } from '@iconify/vue/offline'
 import { activeChat, activeChatId, parseMessageParts } from '../../services/agent/chat'
 import { themeState } from '../../composables/useTheme'
 import { useCustomScrollbar } from '../../composables/useCustomScrollbar'
+
+import { createThreadScroll } from '../../utils/ui/threadScroll'
 import { hljs } from '../../utils/ui/highlightSetup'
+import { activityIconName } from '../../utils/ui/agentIcons'
 import { fileTypeLabel, fileTypeOf } from '../../utils/ui/fileKind'
 import { parseOptions } from '../../utils/question/quizPractice'
 import UnifiedContextMenu, { type MenuItem } from '../../components/ui/UnifiedContextMenu.vue'
@@ -258,8 +308,9 @@ import AgentChatFeatureCards from './AgentChatFeatureCards.vue'
 import {
   assistantTimeline,
   filesForMessage,
-  iconPaths,
   imagesForMessage,
+  searchQueryFor,
+  searchResultsFor,
   isBrowseQuizStep,
   isQuizStep,
   isThinking,
@@ -302,17 +353,60 @@ const isDiskPath = (path?: string) => {
   return Boolean(value) && !value.startsWith('image:') && !value.startsWith('folder:') && !value.startsWith('data:')
 }
 
+const openSearchResult = async (url: string) => {
+  if (!/^https?:\/\//i.test(url)) return
+  try {
+    const { openUrl } = await import('@tauri-apps/plugin-opener')
+    await openUrl(url)
+  } catch {
+    window.open(url, '_blank', 'noopener,noreferrer')
+  }
+}
+
+const expandedSearchSteps = ref(new Set<string>())
+const onSearchResultsWheel = (event: WheelEvent) => {
+  if (event.ctrlKey || event.metaKey || !event.cancelable) return
+  const list = (event.currentTarget as HTMLElement).querySelector<HTMLElement>('.search-results-list')
+  if (!list || list.scrollWidth <= list.clientWidth) return
+  // Native horizontal gestures already scroll this list. Vertical wheel input is
+  // mapped once, without adding another animation to native smoothed events.
+  if (Math.abs(event.deltaX) >= Math.abs(event.deltaY)) return
+  const unit = event.deltaMode === 1 ? 20 : event.deltaMode === 2 ? list.clientWidth : 1
+  const before = list.scrollLeft
+  list.scrollLeft += event.deltaY * unit
+  if (list.scrollLeft !== before) { event.preventDefault(); event.stopPropagation() }
+}
+
+const toggleSearchResults = (stepId: string) => {
+  const next = new Set(expandedSearchSteps.value)
+  if (next.has(stepId)) next.delete(stepId)
+  else next.add(stepId)
+  expandedSearchSteps.value = next
+}
+
+const faviconUrlFor = (url: string) => {
+  try {
+    return `${new URL(url).origin}/favicon.ico`
+  } catch {
+    return ''
+  }
+}
+
+const hideBrokenFavicon = (event: Event) => {
+  const image = event.currentTarget as HTMLImageElement
+  image.style.display = 'none'
+}
+
+// Chat must remain scrollable even while messages render. Keep wheel movement
+// native; only observe intent in capture phase to suspend automatic following.
 const threadScroll = useCustomScrollbar()
 const threadRef = threadScroll.contentRef
 const threadBarRef = threadScroll.barRef
 const threadThumbRef = threadScroll.thumbRef
 
-const THREAD_PIN_PX = 72
-let threadScrollFrame = 0
-let threadJumping = false
-let threadJumpAnim = 0
-let threadSettleAnim = 0
-let threadSettleDeadline = 0
+const scrollController = createThreadScroll(() => threadRef.value, (following) => {
+  threadPinned.value = following
+})
 const selectionBoxes = ref<{ left: number; top: number; width: number; height: number }[]>([])
 let customSelectionRange: Range | null = null
 let selectionAnchor: Range | null = null
@@ -696,6 +790,7 @@ const updateCustomSelection = (x: number, y: number) => {
 
 const onThreadPointerDown = (event: PointerEvent) => {
   if (event.button !== 0) return
+  scrollController.hold()
   if (!isThreadSelectableTarget(event.target)) {
     if (!(event.target instanceof Element) || !event.target.closest('.chat-selection')) {
       clearCustomSelection()
@@ -741,120 +836,41 @@ const onThreadSelectStart = (event: Event) => {
   if (isThreadSelectableTarget(event.target)) event.preventDefault()
 }
 
-const isThreadNearBottom = (pane: HTMLElement) =>
-  pane.scrollHeight - pane.clientHeight - pane.scrollTop <= THREAD_PIN_PX
-
-let followLock = false
 let contentObserver: ResizeObserver | null = null
 let childObserver: MutationObserver | null = null
 
 const updateThreadPinned = () => {
-  if (threadJumping || followLock) return
-  const pane = threadRef.value
-  threadPinned.value = !pane || isThreadNearBottom(pane)
+  scrollController.observe()
   hideSelectionMenu()
   scheduleSelectionPaint()
 }
-
-const cancelThreadJump = () => {
-  if (!threadJumping) return
-  cancelAnimationFrame(threadJumpAnim)
-  threadJumping = false
-  threadJumpAnim = 0
+const jumpThreadToBottom = () => scrollController.jump()
+const scheduleThreadFollow = () => scrollController.changed()
+const onThreadWheel = (event: WheelEvent) => {
+  if (event.ctrlKey || event.metaKey || event.shiftKey || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return
+  scrollController.input(event.deltaY)
 }
-
-const snapThreadToBottom = () => {
-  const pane = threadRef.value
-  if (!pane) return
-  followLock = true
-  pane.scrollTop = pane.scrollHeight
-  followLock = false
-  threadScroll.update()
+let touchY: number | null = null
+const onThreadTouchStart = (event: TouchEvent) => {
+  touchY = event.touches.length === 1 ? event.touches[0].clientY : null
+  scrollController.hold()
 }
-
-const jumpThreadToBottom = () => {
-  threadPinned.value = true
-  const pane = threadRef.value
-  if (!pane) return
-  const start = pane.scrollTop
-  const distance = () => pane.scrollHeight - pane.clientHeight - start
-  if (distance() <= 2) {
-    snapThreadToBottom()
-    return
+const onThreadTouchMove = (event: TouchEvent) => {
+  const next = event.touches.length === 1 ? event.touches[0].clientY : null
+  if (touchY != null && next != null) scrollController.input(touchY - next)
+  touchY = next
+}
+const onThreadScrollbarDown = (event: MouseEvent) => {
+  scrollController.drag()
+  threadScroll.onMousedown(event)
+}
+const onThreadNavigationKey = (event: KeyboardEvent) => {
+  if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)
+    && event.target instanceof Element && threadRef.value?.contains(event.target)
+    && !event.target.closest('input, textarea, [contenteditable="true"]')) {
+    const upward = ['ArrowUp', 'PageUp', 'Home'].includes(event.key) || (event.key === ' ' && event.shiftKey)
+    scrollController.input(upward ? -1 : 1)
   }
-  cancelThreadJump()
-  threadJumping = true
-  const startedAt = performance.now()
-  const duration = Math.min(420, Math.max(220, distance() * 0.35))
-  const step = (now: number) => {
-    const target = pane.scrollHeight - pane.clientHeight
-    const t = Math.min(1, (now - startedAt) / duration)
-    const eased = 1 - (1 - t) ** 3
-    followLock = true
-    pane.scrollTop = start + (target - start) * eased
-    followLock = false
-    threadScroll.update()
-    if (t < 1) {
-      threadJumpAnim = requestAnimationFrame(step)
-      return
-    }
-    threadJumping = false
-    threadJumpAnim = 0
-    threadPinned.value = true
-  }
-  threadJumpAnim = requestAnimationFrame(step)
-}
-
-const scrollThreadToBottom = () => {
-  if (!threadPinned.value) return
-  snapThreadToBottom()
-}
-
-const cancelThreadSettle = () => {
-  threadSettleDeadline = 0
-  if (!threadSettleAnim) return
-  cancelAnimationFrame(threadSettleAnim)
-  threadSettleAnim = 0
-}
-
-// 历史会话的 Markdown、代码高亮、图片会在挂载后继续撑高内容，
-// 只贴底一次会停在半空，所以持续贴底直到高度不再变化。
-const settleThreadToBottom = (duration = 900) => {
-  if (!threadRef.value) return
-  threadSettleDeadline = performance.now() + duration
-  if (threadSettleAnim) return
-  let lastHeight = -1
-  const step = () => {
-    threadSettleAnim = 0
-    const pane = threadRef.value
-    if (!pane || !threadPinned.value) {
-      threadSettleDeadline = 0
-      return
-    }
-    if (pane.scrollHeight !== lastHeight) {
-      lastHeight = pane.scrollHeight
-      snapThreadToBottom()
-    }
-    if (performance.now() >= threadSettleDeadline) {
-      threadSettleDeadline = 0
-      return
-    }
-    threadSettleAnim = requestAnimationFrame(step)
-  }
-  threadSettleAnim = requestAnimationFrame(step)
-}
-
-const onThreadWheel = () => {
-  cancelThreadJump()
-  cancelThreadSettle()
-}
-
-const scheduleThreadFollow = () => {
-  if (!threadPinned.value || threadScrollFrame) return
-  threadScrollFrame = requestAnimationFrame(() => {
-    threadScrollFrame = 0
-    scrollThreadToBottom()
-  })
 }
 
 const CODE_LANG_LABELS: Record<string, string> = {
@@ -936,16 +952,14 @@ const scheduleHighlight = () => {
 }
 
 watch(activeChatId, async () => {
+  scrollController.reset()
   openedWriteStepId.value = null
-  cancelThreadJump()
-  cancelThreadSettle()
   threadPinned.value = true
   clearCustomSelection()
   await nextTick()
   threadScroll.bind()
   scheduleHighlight()
-  snapThreadToBottom()
-  settleThreadToBottom()
+  scheduleThreadFollow()
 })
 
 watch(
@@ -968,10 +982,18 @@ const observeThreadGrowth = () => {
   contentObserver?.disconnect()
   childObserver?.disconnect()
   contentObserver = new ResizeObserver(() => {
-    if (threadPinned.value) snapThreadToBottom()
+    scheduleThreadFollow()
   })
+  contentObserver.observe(pane)
+  const observed = new Set<Element>()
   const watchChildren = () => {
-    for (const child of pane.children) contentObserver?.observe(child)
+    const children = new Set(pane.children)
+    for (const child of observed) {
+      if (!children.has(child)) { contentObserver?.unobserve(child); observed.delete(child) }
+    }
+    for (const child of children) {
+      if (!observed.has(child)) { contentObserver?.observe(child); observed.add(child) }
+    }
   }
   watchChildren()
   childObserver = new MutationObserver(watchChildren)
@@ -979,13 +1001,13 @@ const observeThreadGrowth = () => {
 }
 
 onMounted(() => {
+  document.addEventListener('keydown', onThreadNavigationKey, true)
   threadScroll.bind()
   observeThreadGrowth()
   bindSelectionLayout()
   scheduleHighlight()
   void nextTick(() => {
-    snapThreadToBottom()
-    settleThreadToBottom()
+    scheduleThreadFollow()
   })
   document.addEventListener('pointermove', onThreadPointerMove)
   document.addEventListener('pointerup', onThreadPointerUp)
@@ -997,12 +1019,12 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  document.removeEventListener('keydown', onThreadNavigationKey, true)
   contentObserver?.disconnect()
   childObserver?.disconnect()
   contentObserver = null
   childObserver = null
-  cancelThreadSettle()
-  if (threadScrollFrame) cancelAnimationFrame(threadScrollFrame)
+  scrollController.dispose()
   if (selectionPaintFrame) cancelAnimationFrame(selectionPaintFrame)
   selectionResizeObs?.disconnect()
   selectionResizeObs = null
@@ -1124,7 +1146,7 @@ defineExpose({
   flex-direction: column;
   align-items: center;
   gap: 14px;
-  overscroll-behavior: contain;
+  overscroll-behavior: none;
 }
 
 .assistant-text,
@@ -1152,6 +1174,7 @@ defineExpose({
 }
 
 .chat-thread > * {
+  flex-shrink: 0;
   width: 100%;
   max-width: var(--chat-max-width);
 }
@@ -1321,8 +1344,21 @@ defineExpose({
 
 .activity-line {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 8px;
+}
+
+.activity-line.is-search-toggle {
+  cursor: pointer;
+}
+
+.search-results-chevron {
+  flex: 0 0 auto;
+  margin-left: 0;
+}
+
+.activity-line.is-search-toggle .activity-text {
+  flex: 0 0 auto;
 }
 
 .activity-icon {
@@ -1331,7 +1367,6 @@ defineExpose({
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--text-secondary, #718096);
 }
 
 .activity-text,
@@ -1341,9 +1376,141 @@ defineExpose({
   color: color-mix(in srgb, var(--text-primary, #2d3748) 86%, transparent);
 }
 
+.assistant-text {
+  font-size: 14px;
+  font-weight: 450;
+}
+
+.activity-icon,
+.activity-text,
+.search-results-chevron {
+  color: color-mix(in srgb, var(--text-secondary, #718096) 85%, transparent);
+}
+
+.search-results-block {
+  margin: 2px 0 4px 24px;
+  max-width: min(640px, calc(100% - 24px));
+}
+
+.search-results-list {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 2px 0 6px;
+  scrollbar-width: thin;
+  scroll-snap-type: x proximity;
+}
+
+.search-result-item-enter-active,
+.search-result-item-leave-active {
+  overflow: hidden;
+  transform-origin: top center;
+  transition: opacity .14s ease, transform .16s cubic-bezier(.2, .8, .2, 1);
+}
+
+.search-result-item-enter-from,
+.search-result-item-leave-to {
+  opacity: 0;
+  transform: translateY(-4px) scale(.98);
+}
+
+.search-result-item-move {
+  transition: transform .16s ease;
+}
+
+.search-result-card {
+  display: grid;
+  flex: 0 0 240px;
+  min-width: 0;
+  max-width: 100%;
+  align-content: start;
+  gap: 3px;
+  scroll-snap-align: start;
+  padding: 9px 11px;
+  border: 1px solid var(--border-primary, #e2e8f0);
+  border-radius: 9px;
+  background: var(--bg-secondary, #fff);
+  color: var(--text-primary, #2d3748);
+  text-align: left;
+  cursor: pointer;
+  transition: box-shadow .15s ease;
+}
+
+.search-result-card:hover {
+  box-shadow: 0 2px 6px color-mix(in srgb, var(--text-primary, #2d3748) 12%, transparent);
+}
+
+.search-result-title {
+  overflow: hidden;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.search-result-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.search-result-favicon-wrap {
+  position: relative;
+  display: flex;
+  flex: 0 0 14px;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  color: var(--text-secondary, #718096);
+}
+
+.search-result-favicon {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  object-fit: contain;
+  background: var(--bg-secondary, #fff);
+}
+
+.search-result-snippet {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--text-secondary, #718096);
+  font-size: 11px;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.search-result-url {
+  overflow: hidden;
+  color: var(--color-primary, #667eea);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.search-empty {
+  color: var(--text-secondary, #718096);
+  font-size: 11px;
+}
+
+/* Offscreen Markdown must retain its real height. Markstream's default auto
+   visibility substitutes a 600px estimate, changing the scroll range as short
+   tool-interleaved blocks enter view (even after generation has finished). */
+.assistant-text :deep(.markdown-renderer) {
+  content-visibility: visible;
+  contain-intrinsic-size: none;
+}
+
 .assistant-text :deep(.markstream-vue) {
   --fade-duration: 0.32s;
-  --ms-text-body: 13px;
+  --ms-text-body: 14px;
   --ms-text-h1: 18px;
   --ms-text-h2: 16px;
   --ms-text-h3: 14px;
@@ -1370,12 +1537,24 @@ defineExpose({
   --diagram-header-bg: var(--code-bg);
   --ms-shadow-subtle: none;
   --vscode-editor-font-size: 12px;
-  font-size: 13px;
+  font-size: 14px;
+  font-weight: inherit;
   line-height: 1.65;
 }
 
 .activity-text {
+  min-width: 0;
   white-space: pre-wrap;
+}
+
+.activity-text.is-url {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.activity-icon {
+  flex-shrink: 0;
 }
 
 .activity-line.is-failed .activity-text {
@@ -1585,7 +1764,6 @@ defineExpose({
 }
 
 .activity-text.is-live {
-  color: color-mix(in srgb, var(--text-primary, #2d3748) 62%, transparent);
   animation: chat-think-pulse 1.2s ease-in-out infinite;
 }
 

@@ -82,7 +82,7 @@
       />
       <div class="composer-toolbar">
         <button class="composer-add" type="button" title="添加文件" @click="emit('add-file')">
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
             <path d="M12 5v14" />
             <path d="M5 12h14" />
           </svg>
@@ -94,14 +94,14 @@
           title="添加图片"
           @click="emit('add-image')"
         >
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <rect x="3" y="5" width="18" height="14" rx="2" />
             <circle cx="8.5" cy="10" r="1.5" />
             <path d="M21 16l-5-5-4 4-2-2-5 5" />
           </svg>
         </button>
         <button class="composer-add" type="button" title="添加文件夹" @mousedown.prevent="saveComposerSelection" @click="emit('add-folder')">
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" />
           </svg>
         </button>
@@ -142,7 +142,7 @@
           title="终止对话"
           @click="emit('stop')"
         >
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
             <rect x="7" y="7" width="10" height="10" rx="2" />
           </svg>
         </button>
@@ -153,7 +153,7 @@
           :disabled="!canSubmit"
           aria-label="发送"
         >
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M12 19V5" />
             <path d="M5 12l7-7 7 7" />
           </svg>
@@ -511,8 +511,8 @@ const syncDraftFromComposer = () => {
   draft.value = text.trim() ? text : ''
 }
 
-const COMPOSER_LINE_HEIGHT = 20
-const COMPOSER_MAX_HEIGHT = 100
+const COMPOSER_LINE_HEIGHT = 22
+const COMPOSER_MAX_HEIGHT = 110
 
 const resizeComposer = () => {
   const input = composerRef.value
@@ -524,7 +524,6 @@ const resizeComposer = () => {
 }
 
 const onComposerInput = () => {
-  if (!props.threadPinned) emit('jump-thread')
   if (composing.value) {
     resizeComposer()
     return
@@ -601,7 +600,6 @@ const fillComposer = async (text: string) => {
 
 const onComposerCompositionStart = () => {
   composing.value = true
-  if (!props.threadPinned) emit('jump-thread')
 }
 
 const onComposerCompositionEnd = () => {

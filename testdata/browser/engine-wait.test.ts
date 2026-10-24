@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import { isWaitTruthy, pageHostMatches, responseMatches } from '../../src/services/browser/engine'
+import { snapshotContentChanged } from '../../src/services/browser/engine/pageSnap'
+
+describe('点击后页面变化证据', () => {
+  it('相同页面重新生成 ref 不算发生变化', () => {
+    expect(snapshotContentChanged('- button "提交" [ref=e1]', '- button "提交" [ref=e99]')).toBe(false)
+    expect(snapshotContentChanged('- checkbox "A" [ref=e1] [checked=false]', '- checkbox "A" [ref=e99] [checked=true]')).toBe(true)
+    expect(snapshotContentChanged('', '- button "提交" [ref=e99]')).toBe(false)
+  })
+})
 
 describe('wait 真值', () => {
   it('普通 JS 真值', () => {

@@ -166,12 +166,14 @@ describe('browser page loop', () => {
       { id: 'e2', role: 'textbox', name: '密码' },
       { id: 'e3', role: 'button', name: '登录' },
       { id: 'e4', role: 'heading', name: '欢迎' },
+      { id: 'e5', role: 'button', name: '下一页', disabled: true },
     ], 12)
-    expect(slim).toContain('【可点】')
+    expect(slim).toContain('【页面控件】')
     expect(slim).toContain('e1:textbox「手机号」')
     expect(slim).toContain('e3:button「登录」')
     expect(slim).not.toContain('heading')
-    expect(slim).toMatch(/SKILL\.md/)
+    expect(slim).not.toContain('e5')
+    expect(slim).toMatch(/browser_find/)
     const live = formatBrowserLiveContext({
       url: login,
       sessionId: 's',
@@ -180,7 +182,7 @@ describe('browser page loop', () => {
         { id: 'e2', role: 'button', name: '登录' },
       ],
     })
-    expect(live).toContain('【可点】')
+    expect(live).toContain('【页面控件】')
     expect(live).toContain('e1:textbox')
     lastSiteCard.value = {
       ok: true,
@@ -193,7 +195,7 @@ describe('browser page loop', () => {
       sessionId: 's',
       refs: [{ id: 'e9', role: 'button', name: '播放' }],
     })
-    expect(blocked).toContain('【可点】')
+    expect(blocked).toContain('【页面控件】')
     expect(blocked).toContain('e9:button')
     lastSiteCard.value = null
   })

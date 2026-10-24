@@ -1,6 +1,5 @@
 /** browser_task：父派出隔离子 Agent，同步等待结构化回执。 */
 import { listAppBrowsers, peekAppBrowserUrl } from '../../browser/appBrowser'
-import { lastSiteCard } from '../../browser/abstractions'
 import { getProfileForKind } from '../agentProfiles'
 import { getEnabledSkillCatalog } from '../agentSkills'
 import { applyBrowserTodo } from '../browserTodo'
@@ -21,7 +20,6 @@ import { hostCapabilitiesFor } from '../hostCapabilities'
 import {
   BROWSER_EXECUTE_PROMPT,
   BROWSER_EXPLORE_PROMPT,
-  BROWSER_PARSER_PROMPT,
   buildBrowserSystemPrompt,
 } from '../prompts'
 import { assembleBrowserTools } from '../tools'
@@ -34,12 +32,10 @@ import { runAgentTurnLoop } from './runtime'
 const DEFAULT_ROUNDS: Record<AgentSubagentKind, number> = {
   explore: 24,
   execute: 40,
-  parser: 16,
 }
 
 const promptOf = (kind: AgentSubagentKind) => {
   if (kind === 'explore') return BROWSER_EXPLORE_PROMPT
-  if (kind === 'parser') return BROWSER_PARSER_PROMPT
   return BROWSER_EXECUTE_PROMPT
 }
 
@@ -207,7 +203,6 @@ export const runBrowserTask = async (input: {
     const childNow = liveSession(childId)
     const finish = lastFinishOf(childNow)
     const playback = liveStudyPlayback(browserId)
-    const card = lastSiteCard.value
     const ok = !result.failed && !result.aborted && finish?.ok !== false
     const summary = String(finish?.summary || childNow?.messages.find((item) => item.id === assistantId)?.content || result.text || goal)
       .replace(/\s+/g, ' ')
@@ -219,7 +214,6 @@ export const runBrowserTask = async (input: {
       summary: summary || (result.aborted ? '已中止' : result.failed || '子任务结束'),
       url: peekAppBrowserUrl(browserId) || url,
       error: result.failed || (result.aborted ? '已中止' : finish && finish.ok === false ? String(finish.error || '') : undefined),
-      card: card?.ok ? { title: card.title, role: card.role, handles: card.handles?.length, jobs: card.jobs?.length } : undefined,
       playing: playback?.playing,
       jobs: packAgentPanel(browserId)?.jobLine,
       wrote: childNow?.messages.some((message) => (message.steps || []).some((step) => step.name === 'write_agent_skill_file' && step.status === 'done')),
@@ -239,7 +233,6 @@ export const runBrowserTask = async (input: {
             status: result.aborted ? 'stopped' : receipt.ok ? 'done' : 'failed',
             summary: receipt.summary,
             url: receipt.url,
-            card: receipt.card,
             error: receipt.error,
             endedAt: Date.now(),
           }

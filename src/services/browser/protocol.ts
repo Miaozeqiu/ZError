@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { READ_PAGE_DOM } from './pageDom'
+import { browserAutomationArgs } from './control'
 
 const asObject = (value: unknown): Record<string, unknown> => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
@@ -11,7 +12,8 @@ export const callProtocol = async (
   id: string,
   op: string,
   args: Record<string, unknown> = {},
-) => asObject(await invoke('browser_protocol', { id: String(id || ''), op, args }))
+  control?: { expectedEpoch: number },
+) => asObject(await invoke('browser_protocol', { id: String(id || ''), op, args, ...(control || browserAutomationArgs(id)) }))
 
 /** 应用内唯一入口。业务代码不要直接 invoke browser_cdp_*。Agent 看不到这一层。 */
 export type FrameHint = string

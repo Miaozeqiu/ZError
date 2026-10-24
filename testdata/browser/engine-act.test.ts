@@ -67,4 +67,62 @@ describe('actOnBrowser', () => {
     expect(result.ok).toBe(true)
     expect(invoke.mock.calls.filter((row) => row[1]?.op === 'find').length).toBeGreaterThan(0)
   })
+
+  it.each([
+    { text: 'abc', password: false },
+    { text: '', password: false },
+    { text: 'secret', password: true },
+  ])('填写与验证固定在定位结果的 session，支持清空和密码脱敏：%j', async ({ text, password }) => {
+    const { fillByLocator } = await import('../../src/services/browser/engine/act')
+    invoke.mockImplementation(async (_cmd: string, payload: any) => {
+      if (payload.op === 'find') return { ok: true, x: 10, y: 20, backend: 42, session: 'quiz-session', frameId: 'quiz', loaderId: 'doc' }
+      if (payload.op === 'fill_node') {
+        expect(payload.args).toEqual({ backend: 42, session: 'quiz-session', text })
+        return { ok: true, filled: true, length: text.length, password, text: password ? undefined : text }
+      }
+      throw new Error(`unexpected ${payload.op}`)
+    })
+    const result = await fillByLocator('b1', { by: 'css', value: '#answer', frameId: 'quiz', loaderId: 'doc' }, text)
+    expect(result).toMatchObject({ ok: true, filled: true, length: text.length, frameId: 'quiz' })
+    if (password) expect(JSON.stringify(result)).not.toContain(text)
+    expect(invoke.mock.calls.map(row => row[1].op)).toEqual(['find', 'fill_node'])
+  })
+
+  it('已更换文档的引用终止，不重试到别的框', async () => {
+    const { clickByLocator } = await import('../../src/services/browser/engine/act')
+    invoke.mockResolvedValue({ ok: false, reason: 'invalid', error: '目标 frame 文档已更换，请重新读取页面快照' })
+    const result = await clickByLocator('b1', { by: 'text', value: '提交', frameId: 'quiz', loaderId: 'old' })
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain('文档已更换')
+    expect(invoke).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('uncertain clicks', () => {
+  it('waits for pre-click layout stability without issuing a duplicate click', async () => {
+    invoke.mockReset()
+    invoke.mockImplementation(async (_cmd, payload) => {
+      if (payload.op === 'find') return { ok: false, reason: 'unstable', retry: true }
+      if (payload.op === 'find_wait') return { ok: true, x: 20, y: 20, backend: 123, session: 'frame-session' }
+      if (payload.op === 'set_checked') return { ok: true, checked: true }
+      throw new Error(`unexpected op: ${payload.op}`)
+    })
+    const { setCheckedByLocator } = await import('../../src/services/browser/engine/act')
+    expect((await setCheckedByLocator('b', { by: 'css', value: 'label', nth: 2 }, true)).ok).toBe(true)
+    expect(invoke.mock.calls.filter(call => call[1].op === 'set_checked')).toHaveLength(1)
+  })
+  it('does not click twice after an unconfirmed option state', async () => {
+    invoke.mockReset()
+    invoke.mockImplementation(async (_cmd, payload) => {
+      if (payload.op === 'find') return { ok: true, x: 20, y: 20, backend: 123, session: 'frame-session' }
+      if (payload.op === 'click_node') return { ok: false, error: '选项状态未改变' }
+      throw new Error(`unexpected retry: ${payload.op}`)
+    })
+    const { actOnBrowser } = await import('../../src/services/browser/engine/act')
+    const result = await actOnBrowser('b', { op: 'click', locator: { by: 'css', value: '.el-checkbox', nth: 1 } })
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain('选项状态未改变')
+    expect(invoke.mock.calls.filter(call => call[1].op === 'click_node')).toHaveLength(1)
+    expect(invoke.mock.calls.filter(call => call[1].op === 'find_wait')).toHaveLength(0)
+  })
 })

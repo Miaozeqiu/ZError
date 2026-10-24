@@ -9,7 +9,6 @@ import Settings from "./views/Settings.vue";
 import QuestionBank from "./views/QuestionBank.vue";
 import CampusBank from "./views/CampusBank.vue";
 import Study from "./views/Study.vue";
-import Browser from "./views/Browser.vue";
 import Agent from "./views/Agent.vue";
 import LoginDialog from "./components/ui/LoginDialog.vue";
 import { restoreAuthSession } from "./services/app/auth";
@@ -20,6 +19,7 @@ import { initializationService } from "./services/app/initialization";
 import { initGlobalTheme } from "./composables/useTheme";
 import { useAppUpdate } from "./composables/useAppUpdate";
 import { useExclusiveMenu } from "./composables/useExclusiveMenu";
+import { agentBrowserExpanded } from './services/agent/agentBrowser';
 
 // 当前活跃的页面
 const activeTab = ref('home');
@@ -84,6 +84,10 @@ const handleNavigateTab = (event: Event) => {
 }
 
 const handleNavigate = (tab: string) => {
+  if (tab === 'browser') {
+    agentBrowserExpanded.value = true;
+    tab = 'agent';
+  }
   if (tab === 'import-tasks') {
     tab = 'agent'
   }
@@ -475,12 +479,8 @@ onUnmounted(() => {
           <Study />
         </div>
 
-        <div v-show="activeTab === 'browser'" class="content-view is-fixed">
-          <Browser :active="activeTab === 'browser'" />
-        </div>
-
         <div v-show="activeTab === 'agent' || activeTab === 'import-tasks'" class="content-view">
-          <Agent @open-folder="handleOpenQuestionFolder" />
+          <Agent :active="activeTab === 'agent' || activeTab === 'import-tasks'" :browser-obscured="loginDialogVisible || showUpdateDialog" @open-folder="handleOpenQuestionFolder" />
         </div>
 
         <div v-show="activeTab === 'settings'" class="content-view">

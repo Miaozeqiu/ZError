@@ -87,9 +87,14 @@ export const useCustomScrollbar = () => {
     cleanup?.()
     const content = contentRef.value
     if (!content) return
+    let thumbFrame = 0
+    const scheduleThumb = () => {
+      if (thumbFrame) return
+      thumbFrame = requestAnimationFrame(() => { thumbFrame = 0; updateThumb() })
+    }
 
     const onScroll = () => {
-      updateThumb()
+      scheduleThumb()
       show()
     }
     const onPointerEnter = () => {
@@ -101,15 +106,14 @@ export const useCustomScrollbar = () => {
     content.addEventListener('mouseenter', onPointerEnter)
     content.addEventListener('mouseleave', updateThumb)
 
-    const resizeObserver = new ResizeObserver(updateThumb)
+    const resizeObserver = new ResizeObserver(scheduleThumb)
     resizeObserver.observe(content)
-    const mutationObserver = new MutationObserver(() => {
-      requestAnimationFrame(updateThumb)
-    })
+    const mutationObserver = new MutationObserver(scheduleThumb)
     mutationObserver.observe(content, { childList: true, subtree: true, characterData: true })
 
-    requestAnimationFrame(updateThumb)
+    scheduleThumb()
     cleanup = () => {
+      cancelAnimationFrame(thumbFrame)
       content.removeEventListener('scroll', onScroll)
       content.removeEventListener('mouseenter', onPointerEnter)
       content.removeEventListener('mouseleave', updateThumb)

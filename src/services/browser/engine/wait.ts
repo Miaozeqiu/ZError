@@ -9,6 +9,7 @@ import {
   beginPageSnap,
   cachedPageSnap,
   clipSnapshot,
+  snapshotContentChanged,
 } from './pageSnap'
 import { resolveRefLocator } from './refs'
 import type { ActResult, BrowserLocator } from './types'
@@ -320,7 +321,8 @@ export const attachActionSnapshot = async <T extends ActResult>(
     ])
     if (!page) {
       abandonPageSnap(id, gen)
-      const clip = clipSnapshot(prev?.snapshot || '')
+      const changedPage = result.url && prev?.url && result.url !== prev.url
+      const clip = clipSnapshot(changedPage ? '' : prev?.snapshot || '')
       return {
         ...result,
         url: String(result.url || prev?.url || ''),
@@ -328,8 +330,13 @@ export const attachActionSnapshot = async <T extends ActResult>(
         ...(clip.text ? { snapshot: clip.text } : {}),
         snapshotStale: true,
         ...(clip.truncated ? { snapshotTruncated: true } : {}),
-        hint: [result.hint, '快照过期，用的是上一份缓存。用其中的 ref；没有就 get_page。'].filter(Boolean).join(' '),
+        hint: [result.hint, '新快照尚未就绪；缓存仅供参考，先 get_page 更新后再使用 ref。'].filter(Boolean).join(' '),
       }
+    }
+    if ('error' in page && page.error) {
+      abandonPageSnap(id, gen)
+      return { ...result, snapshotError: page.error, snapshotStale: true,
+        hint: [result.hint, `动作后的页面读取失败：${page.error}。不能据此认定页面为空或操作已完成。`].filter(Boolean).join(' ') }
     }
     const clip = clipSnapshot(page.snapshot || '')
     return {
@@ -352,7 +359,7 @@ export const attachActionSnapshot = async <T extends ActResult>(
       url: String(result.url || prev?.url || ''),
       ...(clip.text ? { snapshot: clip.text } : {}),
       snapshotStale: true,
-      hint: [result.hint, '快照过期，用的是上一份缓存。用其中的 ref；没有就 get_page。'].filter(Boolean).join(' '),
+      hint: [result.hint, '页面读取失败，缓存仅供参考；先 get_page 更新后再使用 ref。'].filter(Boolean).join(' '),
     }
   } finally {
     if (timer) window.clearTimeout(timer)
@@ -412,8 +419,17 @@ export const observeAfterClick = async (
   }
   const seen = await attachActionSnapshot(id, base, frame)
   if (result.ok) {
+    const landed = String(seen.url || '').split('#')[0]
+    const from = String(fromUrl || '').split('#')[0]
+    if (landed && from && landed !== from && !seen.navigated) {
+      seen.navigated = true
+      noteCourseNavigation(id, from, landed)
+    }
     const after = String(seen.snapshot || '')
-    seen.domChanged = Boolean(seen.navigated) || (beforeSnap.length > 0 && after.length > 0 && beforeSnap !== after)
+    const before = clipSnapshot(beforeSnap).text
+    const frameScope = (text: string) => (text.match(/^- iframe .*$/gm) || []).sort().join('\n')
+    const comparable = frameScope(before) === frameScope(after)
+    seen.domChanged = Boolean(seen.navigated) || (!seen.snapshotStale && comparable && snapshotContentChanged(before, after))
   }
   return seen
 }

@@ -6,7 +6,7 @@ import { chapterStateFor, packAgentPanel, videoWatchFor } from '../platform/pane
 export type AgentWaitUntil = 'panel' | 'url' | 'selector' | 'idle' | 'fn' | 'response'
 
 export type AgentWaitResult = {
-  ok: true
+  ok: boolean
   reason: 'timeout' | 'panel' | 'watch' | 'captcha' | 'url' | 'selector' | 'idle' | 'fn' | 'response'
   waited: number
   until: AgentWaitUntil
@@ -153,7 +153,7 @@ const snapshot = (
   started: number,
   extra: Omit<AgentWaitResult, 'ok' | 'waited'>,
 ): AgentWaitResult => ({
-  ok: true,
+  ok: extra.reason !== 'timeout',
   waited: Math.max(0, Math.round((Date.now() - started) / 1000)),
   ...extra,
   url: extra.url || cachedHref(browserId),

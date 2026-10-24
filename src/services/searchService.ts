@@ -6,6 +6,8 @@ export interface SearchResultItem {
   snippet: string
   published?: string
   author?: string
+  summary?: string
+  siteIcon?: string
 }
 
 export interface WebSearchOutcome {
@@ -54,6 +56,8 @@ const isTauriEnvironment = (): boolean => {
 const normalizeConfig = (config: SearchSettings): SearchSettings => ({
   enabled: config.enabled === true,
   apiKey: typeof config.apiKey === 'string' ? config.apiKey.trim() : '',
+  provider: config.provider === 'deepseek' ? 'deepseek' : 'exa',
+  deepseekApiKey: typeof config.deepseekApiKey === 'string' ? config.deepseekApiKey.trim() : '',
 })
 
 const getFetchImpl = async (): Promise<typeof fetch> => {
@@ -283,8 +287,9 @@ const callRemoteMcp = async (
     sessionId,
     body: { jsonrpc: '2.0', method: 'notifications/initialized' }
   })
-  // 规范允许 202；部分服务会返回 200。读取掉响应体避免连接悬挂。
-  await abortable(initializedResponse.text(), signal)
+  // 通知请求没有响应 ID，也不需要等待响应体结束。部分 MCP 服务会保持
+  // 这个连接打开，等待 body 结束会让 Agent 在搜索后一直卡住。
+  void initializedResponse.body?.cancel().catch(() => {})
   if (!initializedResponse.ok && initializedResponse.status !== 202) {
     throw new Error(`MCP 初始化确认失败：HTTP ${initializedResponse.status}`)
   }
@@ -438,12 +443,48 @@ const parseSearchResults = (text: string, maxResults: number): SearchResultItem[
 }
 
 const buildCacheKey = (query: string, config: SearchSettings): string =>
-  JSON.stringify([config.apiKey, query])
+  JSON.stringify([config.provider, config.provider === 'deepseek' ? config.deepseekApiKey : config.apiKey, query])
 
 const cloneOutcome = (outcome: WebSearchOutcome): WebSearchOutcome => ({
   ...outcome,
   results: outcome.results.map(item => ({ ...item }))
 })
+
+const callDeepSeekSearch = async (query: string, config: SearchSettings, signal: AbortSignal) => {
+  if (!config.deepseekApiKey) throw new Error('请先填写 DeepSeek API Key')
+  if (Array.from(query).length > 128) throw new Error('DeepSeek 搜索关键词不能超过 128 个字符，请精简后重试')
+  const fetchImpl = await getFetchImpl()
+  const response = await abortable(fetchImpl('https://api.deepseek.com/v1/tools/search', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${config.deepseekApiKey}`,
+    },
+    body: JSON.stringify({ query, count: MAX_RESULTS, need_content: false }),
+    signal,
+  }), signal)
+  const text = await abortable(response.text(), signal)
+  let payload: any
+  try { payload = JSON.parse(text) } catch {
+    throw new Error(`DeepSeek 搜索返回无效响应（HTTP ${response.status}）`)
+  }
+  if (!response.ok || payload?.error) {
+    throw new Error(`DeepSeek 搜索失败（HTTP ${response.status}）：${String(payload?.error?.message || '请求失败').slice(0, 300)}`)
+  }
+  if (!Array.isArray(payload?.results)) throw new Error('DeepSeek 搜索响应缺少结果列表')
+  const results: SearchResultItem[] = payload.results
+    .filter((item: any) => item && typeof item.url === 'string' && typeof item.title === 'string')
+    .slice(0, MAX_RESULTS)
+    .map((item: any) => ({
+      title: item.title,
+      url: item.url,
+      snippet: String(item.snippet || '').slice(0, 1200),
+      summary: String(item.summary || '').slice(0, 1200),
+      ...(typeof item.date === 'string' ? { published: item.date } : {}),
+      ...(typeof item.site_icon === 'string' && /^https?:\/\//i.test(item.site_icon) ? { siteIcon: item.site_icon } : {}),
+    }))
+  return { text, results }
+}
 
 /**
  * 执行一次联网搜索。
@@ -482,17 +523,20 @@ export const performWebSearch = async (
     controller.abort(new DOMException('搜索超时（30 秒）', 'TimeoutError'))
   }, timeoutMs)
   try {
-    const operation = callRemoteMcp(effectiveQuery, config, controller.signal)
-    const { text, raw } = await abortable(operation, controller.signal)
-
-    const results = parseSearchResults(text, MAX_RESULTS)
+    const deepseek = config.provider === 'deepseek'
+    const operation: Promise<{ text: string; results?: SearchResultItem[] }> = deepseek
+      ? callDeepSeekSearch(effectiveQuery, config, controller.signal)
+      : callRemoteMcp(effectiveQuery, config, controller.signal)
+    const response = await abortable(operation, controller.signal)
+    const { text } = response
+    const results = response.results ?? parseSearchResults(text, MAX_RESULTS)
     const outcome: WebSearchOutcome = {
       query: effectiveQuery,
-      toolName: EXA_TOOL_NAME,
+      toolName: deepseek ? 'deepseek_search' : EXA_TOOL_NAME,
       mode: 'remote',
       durationMs: Date.now() - startedAt,
       results,
-      rawText: (text || (raw ? JSON.stringify(raw) : '')).slice(0, 20000)
+      rawText: text.slice(0, 20000)
     }
 
     searchCache.set(cacheKey, { at: Date.now(), outcome })
@@ -521,7 +565,7 @@ export const formatSearchContextForModel = (outcome: WebSearchOutcome, maxChars 
         `${index + 1}. ${item.title}`,
         item.url ? `URL: ${item.url}` : '',
         meta ? meta : '',
-        item.snippet ? `摘要：${item.snippet}` : ''
+        item.summary || item.snippet ? `摘要：${item.summary || item.snippet}` : ''
       ]
         .filter(Boolean)
         .join('\n')

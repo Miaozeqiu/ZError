@@ -68,6 +68,10 @@
         @graph-select="onGraphSelect"
         @width-change="scheduleSelectionPaint"
       />
+      <AgentBrowserPane
+        :active="active && ((!paneQuiz && !openedWriteStep && !paneGraphView) || agentBrowserExpanded)"
+        :obscured="browserObscured || showModelSelector || folderPickerVisible || !!previewImage"
+      />
     </div>
 
     <ModelSelectorDialog
@@ -165,6 +169,8 @@ import AgentChatComposer from './agentChat/AgentChatComposer.vue'
 import AgentChatSidebar from './agentChat/AgentChatSidebar.vue'
 import AgentChatThread from './agentChat/AgentChatThread.vue'
 import AgentChatWritePane from './agentChat/AgentChatWritePane.vue'
+import AgentBrowserPane from './agentChat/AgentBrowserPane.vue'
+import { agentBrowserExpanded } from '../services/agent/agentBrowser'
 import AgentD2Block from '../components/agent/AgentD2Block.vue'
 import AgentHtmlBlock from '../components/agent/AgentHtmlBlock.vue'
 import AgentCodeBlock from '../components/agent/AgentCodeBlock.vue'
@@ -207,6 +213,7 @@ setCustomComponents('agent-chat', {
 defineEmits<{
   'open-folder': [folderId: number]
 }>()
+withDefaults(defineProps<{ active?: boolean; browserObscured?: boolean }>(), { active: true, browserObscured: false })
 
 const {
   availableModels,
@@ -306,6 +313,9 @@ const folderPickerInitialId = computed(() => {
   return tokens.at(-1)?.folderId ?? null
 })
 const showFeatureCards = computed(() => !(activeChat.value?.messages.length))
+watch([paneQuiz, openedWriteStep, paneGraphView], ([quiz, write, graph]) => {
+  if (quiz || write || graph) agentBrowserExpanded.value = false
+})
 const approvalPending = computed(() => (
   Boolean(agentApprovalState.pending && agentApprovalState.pending.sessionId === activeChat.value?.id)
 ))
@@ -663,6 +673,7 @@ onUnmounted(() => {
 }
 
 .chat-workspace {
+  position: relative;
   flex: 1;
   min-width: 0;
   min-height: 0;

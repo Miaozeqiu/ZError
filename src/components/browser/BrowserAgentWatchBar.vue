@@ -43,7 +43,7 @@ const text = computed(() => {
   gap: 8px;
   padding: 8px 12px;
   border-radius: 12px;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.4;
   color: color-mix(in srgb, var(--text-primary, #2d3748) 78%, transparent);
   background: color-mix(in srgb, var(--text-primary, #2d3748) 5%, transparent);

@@ -44,6 +44,9 @@ const asResult = (raw: unknown): ActResult => {
     candidates,
     retry,
     box: row.box ? String(row.box) : undefined,
+    frameId: row.frameId ? String(row.frameId) : undefined,
+    loaderId: row.loaderId ? String(row.loaderId) : undefined,
+    password: row.password === true,
     filled: row.filled == null ? undefined : Boolean(row.filled),
     length: row.length == null ? undefined : Number(row.length) || 0,
   }
@@ -54,6 +57,9 @@ const finish = (result: ActResult, locator: BrowserLocator): ActResult => {
     return {
       ok: true,
       text: result.text,
+      frameId: result.frameId,
+      loaderId: result.loaderId,
+      password: result.password,
       filled: result.filled,
       length: result.length,
     }
@@ -119,19 +125,11 @@ const fireBox = async (id: string, op: ActOp, found: Record<string, unknown>, te
   const session = found.session ? String(found.session) : undefined
   if (op === 'fill') {
     const backend = Number(found.backend)
-    // 优先按 AX backend 聚焦：坐标常因 DPR / 离屏点偏，click_at 会拖到超时
     if (Number.isFinite(backend) && backend > 0) {
-      const focused = asObject(await callProtocol(id, 'focus_node', { backend, session }).catch(() => ({ ok: false })))
-      if (focused.ok !== false && !focused.error) {
-        const typed = asObject(await callProtocol(id, 'type_focused', { text: text || '' }))
-        if (typed.ok) return typed
-      }
+      return asObject(await callProtocol(id, 'fill_node', { backend, session, text: text ?? '' }))
     }
-    await Promise.race([
-      callProtocol(id, 'click_at', { x, y, session }).catch(() => null),
-      waitMs(900),
-    ])
-    return asObject(await callProtocol(id, 'type_focused', { text: text || '' }))
+    // 没有节点身份时不能用全局焦点猜测输入目标。
+    return { ok: false, reason: 'invalid', error: '输入目标缺少节点身份，请重新读取页面' }
   }
   const click = op === 'dblclick'
     ? { button: 'left', clickCount: 2 }
@@ -140,13 +138,13 @@ const fireBox = async (id: string, op: ActOp, found: Record<string, unknown>, te
       : { button: 'left', clickCount: 1 }
   const backend = Number(found.backend)
   if (Number.isFinite(backend) && backend > 0) {
-    const hit = asObject(await callProtocol(id, 'click_node', { backend, session, ...click }).catch(() => ({ ok: false })))
+    const hit = asObject(await callProtocol(id, 'click_node', { backend, session, ...click }).catch(error => ({ ok: false, error: String(error) })))
     if (hit.ok) return hit
     // 定位时的 x/y 可能是别的候选滚过之后留下的，不能拿来再点一次。
     return asResult({
       ...hit,
       reason: hit.reason || 'unstable',
-      retry: true,
+      retry: false,
       text: hit.text || found.text,
     })
   }
@@ -167,7 +165,10 @@ const fireReady = async (
   if (cdp.ok) {
     return finish({
       ok: true,
-      text: String(cdp.text || found.text || fallback),
+      text: op === 'fill' ? (cdp.password ? undefined : String(cdp.text ?? '')) : String(cdp.text || found.text || fallback),
+      frameId: found.frameId ? String(found.frameId) : undefined,
+      loaderId: found.loaderId ? String(found.loaderId) : undefined,
+      password: cdp.password === true,
       filled: op === 'fill' ? true : undefined,
       length: cdp.length == null ? undefined : Number(cdp.length) || 0,
     }, { by: 'css', value: fallback })
@@ -175,7 +176,7 @@ const fireReady = async (
   return asResult({
     ...cdp,
     reason: cdp.reason || 'unstable',
-    retry: true,
+    retry: cdp.retry !== false,
     text: cdp.text || found.text,
   })
 }
@@ -197,6 +198,7 @@ const actByPolling = async (
       if (hit.ready) {
         const next = await fireReady(id, op, hit.found, text, locator.value)
         if (next.ok) return next
+        if (next.retry === false) return finish(next, locator)
         last = next
       } else if (!last.retry) {
         return finish(last, locator)
@@ -229,6 +231,7 @@ export const actOnBrowser = async (
     if (probe.ready) {
       const first = await fireReady(id, input.op, probe.found, input.text, locator.value)
       if (first.ok) return first
+      if (first.retry === false) return finish(first, locator)
       const again = await locateWait(id, tried, Math.min(4000, timeout))
       if (again.ready) {
         const second = await fireReady(id, input.op, again.found, input.text, locator.value)
@@ -274,6 +277,20 @@ export const probeOnBrowser = async (id: string, locator: BrowserLocator): Promi
 export const clickByLocator = (id: string, locator: BrowserLocator, timeout?: number) => (
   actOnBrowser(id, { op: 'click', locator, timeout })
 )
+
+/** 幂等选项操作。发送一次点击后只读状态，不能在不确定时再次切换。 */
+export const setCheckedByLocator = async (id: string, locator: BrowserLocator, checked: boolean) => {
+  const locators = [normalizeLocator(locator)]
+  let hit = await locateOnce(id, locators)
+  // 仅在投递点击之前等滚动/遮挡稳定；点击一旦投递，就只读状态而不补点。
+  if (!hit.ready && hit.result.retry && ['unstable', 'covered', 'hidden'].includes(hit.result.reason || '')) {
+    hit = await locateWait(id, locators, 2000)
+  }
+  if (!hit.ready) return finish(hit.result, locator)
+  const backend = Number(hit.found.backend)
+  if (!Number.isFinite(backend) || backend <= 0) return { ok: false, error: '选项缺少节点身份，请重新读取页面' }
+  return asObject(await callProtocol(id, 'set_checked', { backend, session: hit.found.session, checked }))
+}
 
 export const fillByLocator = (id: string, locator: BrowserLocator, text: string, timeout?: number) => (
   actOnBrowser(id, { op: 'fill', locator, text, timeout })

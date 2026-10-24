@@ -39,7 +39,7 @@
 
                 <div v-else-if="trace.status === 'searching'" class="search-trace-loading">
                   <div class="loading-spinner"></div>
-                  <span>正在请求 MCP 搜索…</span>
+                  <span>正在联网搜索…</span>
                 </div>
                 <div v-else-if="trace.status === 'success'" class="no-data">
                   <span class="no-data-text">没有解析到结构化结果</span>

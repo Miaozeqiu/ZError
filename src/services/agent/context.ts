@@ -1,14 +1,19 @@
 import { isImageAttachment } from './folderTokens'
 import { messageHistoryText } from './modelHistory'
-import { BROWSER_SYSTEM_PROMPT, SYSTEM_PROMPT } from './prompts'
-import { BROWSER_TOOLS, CHAT_TOOLS } from './tools'
+import { AGENT_SYSTEM_PROMPT } from './prompts'
+import { assembleAgentTools } from './tools'
+import { peekAppBrowserUrl } from '../browser/appBrowser'
+import { buildModelHistory } from './modelHistory'
+import { compactAgentRequestMessages } from '../model/agentRequestContext'
 import type { AgentChatSession, AgentContextSummary, AgentContextUsage } from './chatTypes'
 
 export const AGENT_CONTEXT_LIMIT = 256 * 1024
 // 达到这个用量就在后台把早期对话压成摘要
 export const AGENT_CONTEXT_COMPACT_AT = 192 * 1024
+export const BROWSER_CONTEXT_COMPACT_AT = 32 * 1024
 // 压缩后保留的近期原文预算，留足空间让摘要 + 近况都能进请求
 export const CONTEXT_KEEP_TOKENS = 48 * 1024
+export const BROWSER_CONTEXT_KEEP_TOKENS = 12 * 1024
 export const CONTEXT_KEEP_MIN_MESSAGES = 4
 export const CONTEXT_COMPACT_MIN_MESSAGES = 4
 export const CONTEXT_COMPACT_INPUT_TOKENS = 100 * 1024
@@ -45,9 +50,8 @@ export const messagePlainText = (content: unknown) => {
 }
 
 let cachedSystemTokens = 0
+let cachedToolSignature = ''
 let cachedToolTokens = 0
-let cachedBrowserSystemTokens = 0
-let cachedBrowserToolTokens = 0
 
 // 摘要之后的消息才会原文进请求，摘要之前的只由摘要代表。
 // 摘要里的 coveredThrough 找不到时视为失效，退回全量原文。
@@ -71,19 +75,20 @@ export const estimateAgentContext = (
   draftText = '',
   pendingImages = 0,
 ): AgentContextUsage => {
-  const isBrowser = Boolean(session?.browserId)
-  if (isBrowser) {
-    if (!cachedBrowserSystemTokens) cachedBrowserSystemTokens = estimateTextTokens(BROWSER_SYSTEM_PROMPT)
-    if (!cachedBrowserToolTokens) cachedBrowserToolTokens = estimateTextTokens(JSON.stringify(BROWSER_TOOLS))
-  } else {
-    if (!cachedSystemTokens) cachedSystemTokens = estimateTextTokens(SYSTEM_PROMPT)
-    if (!cachedToolTokens) cachedToolTokens = estimateTextTokens(JSON.stringify(CHAT_TOOLS))
+  if (!cachedSystemTokens) cachedSystemTokens = estimateTextTokens(AGENT_SYSTEM_PROMPT)
+  const systemTokens = cachedSystemTokens
+  const tools = assembleAgentTools(peekAppBrowserUrl(session?.browserId || ''))
+  const toolSignature = tools.map(tool => tool.function.name).join(',')
+  if (toolSignature !== cachedToolSignature) {
+    cachedToolSignature = toolSignature
+    cachedToolTokens = estimateTextTokens(JSON.stringify(tools))
   }
-  const systemTokens = isBrowser ? cachedBrowserSystemTokens : cachedSystemTokens
-  const toolTokens = isBrowser ? cachedBrowserToolTokens : cachedToolTokens
+  const toolTokens = cachedToolTokens
   const { summary, kept, compactedCount } = splitCompactedHistory(session)
   const summaryTokens = summary ? estimateTextTokens(contextSummaryPrompt(summary)) : 0
-  const history = estimateTextTokens(kept.map((item) => messageHistoryText(item)).join('\n'))
+  // 使用实际回放结构估算，不能拿每条工具仅 1200 字符的展示摘要代替。
+  const replay = buildModelHistory(kept)
+  const history = estimateTextTokens(JSON.stringify(compactAgentRequestMessages(replay)))
   const study = session?.studySubjectId ? estimateTextTokens(STUDY_PREFIX_SAMPLE) : 0
   const draft = estimateTextTokens(draftText)
   const imageCount = kept.reduce((sum, item) => (

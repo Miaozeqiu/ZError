@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
+import { browserAutomationArgs } from './control'
 import { FRAME_SCOPE } from './engine/frame'
 import { VIRTUAL_MOUSE_JS } from './engine/virtualMouse'
 
@@ -333,7 +334,7 @@ export const browserEngine = async () => {
 export const isCefEngine = async () => (await browserEngine()) === 'cef'
 
 const runEvalScript = async (id: string, script: string) => {
-  const raw = await invoke<string>('browser_eval', { id, script: wrapEvalExpression(script) })
+  const raw = await invoke<string>('browser_eval', { id, script: wrapEvalExpression(script), ...browserAutomationArgs(id) })
   try {
     const parsed = JSON.parse(raw)
     if (parsed && typeof parsed === 'object' && '__error' in parsed) {
@@ -369,7 +370,7 @@ export const evalBrowserView = async (id: string, script: string) => {
 }
 
 const runEvalMain = async (id: string, script: string) => {
-  const raw = await invoke<string>('browser_eval_main', { id, script: wrapEvalExpression(script) })
+  const raw = await invoke<string>('browser_eval_main', { id, script: wrapEvalExpression(script), ...browserAutomationArgs(id) })
   try {
     const parsed = JSON.parse(raw)
     if (parsed && typeof parsed === 'object' && '__error' in parsed) {
@@ -382,26 +383,14 @@ const runEvalMain = async (id: string, script: string) => {
   }
 }
 
-/** 顶层执行，再在匹配的同源 iframe 里 eval。不扫跨域帧。 */
+/** 在指定 frame 的独立 CDP 上下文执行，支持同进程跨域与 OOPIF。 */
 export const evalBrowserViewInFrame = async (id: string, script: string, frame: string) => {
   const want = String(frame || '').trim()
   if (!want) return evalBrowserViewMain(id, script)
-  const body = wrapEvalExpression(script)
-  const wrapped = `(function(){
-    var want = ${JSON.stringify(want)};
-    var frames = __sameFrames(window, 0);
-    var target = null;
-    for (var i = 0; i < frames.length; i++) {
-      if (__zeFrameOk(frames[i], want)) { target = frames[i]; break; }
-    }
-    if (!target) return { ok: false, error: ${JSON.stringify(`没有匹配的 iframe：${want}`)} };
-    try {
-      return target.eval(${JSON.stringify(body)});
-    } catch (e) {
-      return { ok: false, error: String((e && e.message) || e || '框内执行失败') };
-    }
-  })()`
-  return evalBrowserViewMain(id, withSameFrames(wrapped))
+  const { callProtocol } = await import('./protocol')
+  const raw = await callProtocol(id, 'frame_eval', { frame: want, script: wrapEvalExpression(script) })
+  if (raw.ok === false) throw new Error(String(raw.error || '目标 frame 读取失败'))
+  return raw.result
 }
 
 /** 只在顶层 page 执行。脚本自己 walk iframe（任务点/播放器），避免 CDP 扫每一帧。 */
@@ -475,6 +464,7 @@ export const evalBrowserFrames = async (id: string, script: string) => {
   try {
     const raw = asObject(await invoke('browser_eval_frames', {
       id,
+      ...browserAutomationArgs(id),
       script: wrapEvalExpression(script),
     }))
     const frames = (Array.isArray(raw.frames) ? raw.frames : []).map((item) => {

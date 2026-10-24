@@ -1,4 +1,3 @@
-import { lastHomeworkCard } from '../browser/abstractions'
 import { siteGraphForUrl, siteGraphNodeForUrl, activeFrameOf } from '../browser/siteGraphCore'
 import type { PageRef } from '../browser/engine'
 import {
@@ -63,7 +62,7 @@ const kindFromNode = (url: string, nodeId: string): BrowserPageKind | null => {
   const href = String(url || '')
   const node = siteGraphNodeForUrl(href)
   const id = String(nodeId || node?.id || '')
-  if (id === 'login' || node?.parserIds.includes('login')) return 'login'
+  if (id === 'login') return 'login'
   if (id === 'study' || /player/i.test(id) || /\/plan\/detail/i.test(href)) return 'player'
   if (id === 'homework-do') return 'homework-do'
   if (id === 'homework-list') return 'homework-list'
@@ -142,18 +141,9 @@ export const displaySiteName = (
   site?: { id?: string; name?: string; host?: string } | null,
 ) => String(site?.name || '').trim()
 
-const homeworkRecipe = (kind: BrowserPageKind, card = lastHomeworkCard.value) => {
+const homeworkRecipe = (kind: BrowserPageKind) => {
   if (kind === 'homework-do') {
-    const count = Number(card?.questionCount || card?.questions?.length || 0)
-    const filled = Number(card?.filledCount || 0)
-    const next = String(card?.next || '')
-    const saved = /已暂时保存|已暂存答案|已提交/.test(String(card?.hint || ''))
-    if (count && filled >= count && saved) return '建议：题已填并暂存，可以 finish。'
-    if (count && (filled >= count || next === 'save' || next === 'done')) {
-      return '建议：题已填完。用快照 ref 点暂时保存。'
-    }
-    if (count > 0 || next === 'fill') return '建议：作答页已有题。用快照 ref 一次填一题。'
-    return '建议：已在作答页。用快照看题，再点选项。'
+    return '建议：已在作答页。用快照读取完整题干和选项，用 ref 作答；按用户目标保存或提交，以页面回执核对结果。'
   }
   if (kind === 'homework-list') return '建议：在作业列表。用快照 ref 打开用户点名的那一份。'
   if (kind === 'course') return '建议：课程壳。点侧栏「作业」进入作业列表。步骤见 chaoxing Skill。'
@@ -307,15 +297,15 @@ const SLIM_REF_ROLES = new Set([
 /** 旁白用：只要可点/可填的，截短名字，别整页 dump。 */
 export const formatSlimRefs = (refs: PageRef[] | undefined | null, limit = 20) => {
   const rows = (refs || [])
-    .filter((item) => SLIM_REF_ROLES.has(String(item.role || '').toLowerCase()))
+    .filter((item) => !item.disabled && SLIM_REF_ROLES.has(String(item.role || '').toLowerCase()))
     .slice(0, Math.max(1, limit))
   if (!rows.length) return ''
-  return `【可点】${rows.map((item) => {
+  return `【页面控件】${rows.map((item) => {
     const role = String(item.role || 'item')
     const name = String(item.name || '').replace(/\s+/g, ' ').trim().slice(0, 28)
     const value = item.value ? `=${String(item.value).slice(0, 12)}` : ''
     return `${item.id}:${role}${name ? `「${name}」` : ''}${value}`
-  }).join(' · ')}。点/填用这些 ref；没有对的就 get_page 再看，登录步骤可写进本站 SKILL.md。`
+  }).join(' · ')}。使用对应 ref 操作；更多内容用 browser_find，失效再 get_page。`
 }
 
 /** 有卡也带上缓存里的瘦 ref。卡是捷径，不把可点项藏起来。 */
@@ -327,7 +317,7 @@ export const formatBrowserLiveContext = (input: {
   todos?: AgentTodoItem[]
   panel?: BrowserLoopPanel | null
   browserId?: string
-  role?: 'parent' | 'explore' | 'execute' | 'parser'
+  role?: 'parent' | 'explore' | 'execute'
   /** 当前页可点项（瘦）。登录/无卡时由调用方快照后传入。 */
   refs?: PageRef[] | null
 }) => {

@@ -10,7 +10,13 @@ test('saved search settings retain the toggle and key while dropping old connect
     authMode: 'bearer', customHeaders: '{invalid', timeoutSeconds: 100,
   } }))
   const { settingsManager } = await import('../../src/services/app/settings')
-  expect(settingsManager.get('search')).toEqual({ enabled: false, apiKey: 'existing-key' })
+  expect(settingsManager.get('search')).toEqual({ enabled: false, apiKey: 'existing-key', provider: 'exa', deepseekApiKey: '' })
   settingsManager.import(JSON.stringify({ search: { enabled: true, apiKey: ' imported-key ', mode: 'local' } }))
-  expect(settingsManager.get('search')).toEqual({ enabled: true, apiKey: 'imported-key' })
+  expect(settingsManager.get('search')).toEqual({ enabled: true, apiKey: 'imported-key', provider: 'exa', deepseekApiKey: '' })
+})
+
+test('DeepSeek provider and its independent key survive import', async () => {
+  const { settingsManager } = await import('../../src/services/app/settings')
+  settingsManager.import(JSON.stringify({ search: { enabled: true, provider: 'deepseek', apiKey: 'exa-key', deepseekApiKey: ' ds-key ' } }))
+  expect(settingsManager.get('search')).toEqual({ enabled: true, provider: 'deepseek', apiKey: 'exa-key', deepseekApiKey: 'ds-key' })
 })

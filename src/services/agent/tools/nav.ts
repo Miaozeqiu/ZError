@@ -57,6 +57,10 @@ export const handleNavTools = async (ctx: Record<string, any>): Promise<string |
           hint: '再试一次 get_page。快照够用就用 ref。',
         })
       }
+      if (page.error) {
+        emptyPageSnaps.delete(browserId)
+        return JSON.stringify({ ok: false, url: page.url || url, error: page.error })
+      }
       if (!page.snapshot && !page.refs?.length) {
         const stateUrl = String((await getBrowserState(browserId).catch(() => null))?.url || peekAppBrowserUrl(browserId) || '')
         const here = page.url || stateUrl || url
@@ -68,6 +72,10 @@ export const handleNavTools = async (ctx: Record<string, any>): Promise<string |
           if (again?.snapshot || again?.refs?.length) {
             emptyPageSnaps.delete(browserId)
             return JSON.stringify({ ...again, url: again.url || here, hint: '快照是重连浏览器通道后读到的。' })
+          }
+          if (again?.error) {
+            emptyPageSnaps.delete(browserId)
+            return JSON.stringify({ ok: false, url: again.url || here, error: again.error })
           }
         }
         const sameLogin = graphNodeId(here) === 'login' || /\/login/i.test(here)

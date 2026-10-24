@@ -53,7 +53,7 @@
 
     <template v-if="activePane === 'accounts'">
     <div class="pane-intro">
-      <p class="group-hint">浏览器 Agent 登录学习通、智慧树、在浙学时会用这里的账号。也可在对话里说出账号密码自动记住；只说「密码是 xxx」时按当前网页站点更新。</p>
+      <p class="group-hint">Agent 登录学习通、智慧树、在浙学时会用这里的账号。也可在对话里说出账号密码自动记住；只说「密码是 xxx」时按当前网页站点更新。</p>
       <button
         type="button"
         class="add-btn"
@@ -178,7 +178,7 @@
     </template>
 
     <template v-else>
-      <p class="group-hint pane-intro-hint">浏览器对话用「浏览器」配置，题库对话用「学习」配置。可复制后改附加规则和 Skill 集。预设改坏可以恢复。</p>
+      <p class="group-hint pane-intro-hint">同一个 Agent 同时使用学习与网页能力。学习配置用于通用任务，浏览器配置的附加规则仅用于网页操作，两边启用的 Skill 会合并。可复制配置并设为对应能力的默认值。</p>
       <div class="pane-intro">
         <button type="button" class="add-btn" :disabled="!selectedProfile" @click="duplicateSelected">复制</button>
       </div>
@@ -202,7 +202,7 @@
                 </span>
                 <span v-if="isDefaultProfile(profile)" class="skill-badge customized">默认</span>
               </div>
-              <p class="skill-desc">{{ profile.kind === 'browser' ? '浏览器窗口对话' : '题库与学习对话' }}</p>
+              <p class="skill-desc">{{ profile.kind === 'browser' ? '网页操作能力' : '通用与学习能力' }}</p>
             </div>
           </div>
         </div>

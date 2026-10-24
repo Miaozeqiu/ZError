@@ -25,6 +25,8 @@ import {
 } from './chatStore'
 import {
   AGENT_CONTEXT_COMPACT_AT,
+  BROWSER_CONTEXT_COMPACT_AT,
+  BROWSER_CONTEXT_KEEP_TOKENS,
   CONTEXT_COMPACT_INPUT_TOKENS,
   CONTEXT_COMPACT_MIN_MESSAGES,
   CONTEXT_COMPACT_MSG_CHARS,
@@ -56,6 +58,9 @@ const describeFolders = (items?: AgentChatAttachment[]) => {
 
 export const loadLiveExploreRefs = async (browserId: string, url: string) => {
   if (!browserId || !shouldAttachLiveRefs(url)) return null
+  const { userControlsBrowser } = await import('../browser/control')
+  const owner = sessions.value.find(session => session.browserId === browserId || session.browserIds?.includes(browserId))
+  if (owner && userControlsBrowser(owner.id)) return null
   const { isEvalActBusy } = await import('../browser/eval')
   const { listCachedPageRefs } = await import('../browser/engine')
   // 模型刚从 get_state / get_page 拿到的 e3 必须还能点到同一个元素。
@@ -238,6 +243,7 @@ const compactPrompt = (previous: string, transcript: string, browser = false) =>
       '【已完成子 Agent】（每个一句 summary，不要内部 click 流水）',
       '【做过】（成功的 handle / 节点）',
       '【打开过的页面】',
+      '【题库与学习】（关联科目、文件夹等 id，讲解结论、练习与作答情况）',
       '【工具调用与失败】（工具名、关键参数、error；同参失败要记下）',
       '【待办与约定】',
     ]
@@ -251,13 +257,13 @@ const compactPrompt = (previous: string, transcript: string, browser = false) =>
   '只输出摘要正文。',
 ].filter(Boolean).join('\n')
 
-const pickCompactBoundary = (kept: AgentChatMessage[]) => {
+const pickCompactBoundary = (kept: AgentChatMessage[], keepTokens = CONTEXT_KEEP_TOKENS) => {
   let tokens = 0
   let start = kept.length
   for (let i = kept.length - 1; i >= 0; i -= 1) {
     const size = estimateTextTokens(messageHistoryText(kept[i]))
     const overMin = kept.length - i > CONTEXT_KEEP_MIN_MESSAGES
-    if (overMin && tokens + size > CONTEXT_KEEP_TOKENS) break
+    if (overMin && tokens + size > keepTokens) break
     tokens += size
     start = i
   }
@@ -296,7 +302,7 @@ const runContextCompaction = async (sessionId: string) => {
   const session = sessions.value.find((item) => item.id === sessionId)
   if (!session) return
   const { summary, kept } = splitCompactedHistory(session)
-  const start = pickCompactBoundary(kept)
+  const start = pickCompactBoundary(kept, session.browserId ? BROWSER_CONTEXT_KEEP_TOKENS : CONTEXT_KEEP_TOKENS)
   if (start < CONTEXT_COMPACT_MIN_MESSAGES) return
   const archived = kept.slice(0, start)
   if (archived.some((item) => item.status === 'streaming')) return
@@ -340,7 +346,7 @@ export const maybeCompactContext = (sessionId: string) => {
   const session = sessions.value.find((item) => item.id === sessionId)
   if (!session || compactInFlightIds.value.includes(sessionId)) return
   if (sessionIsStreaming(session)) return
-  if (estimateAgentContext(session).used < AGENT_CONTEXT_COMPACT_AT) return
+  if (estimateAgentContext(session).used < (session.browserId ? BROWSER_CONTEXT_COMPACT_AT : AGENT_CONTEXT_COMPACT_AT)) return
   compactInFlightIds.value = [...compactInFlightIds.value, sessionId]
   void runContextCompaction(sessionId)
     .catch((error) => {

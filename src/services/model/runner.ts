@@ -4,6 +4,7 @@ import { settingsManager } from '../app/settings'
 import { logAgentDebug } from '../agent/debugLog'
 import { takeToolImages, visionAttachParts } from './toolImages'
 import { mergeToolArgs, mergeToolCalls } from './toolCallMerge'
+import { compactAgentRequestMessages } from './agentRequestContext'
 
 export interface ModelToolCall {
   id: string
@@ -35,6 +36,8 @@ export const isModelStopped = (error: unknown) => {
 }
 
 export interface RunTextModelOptions {
+  beforeComplete?: (remainingRounds: number) => string | undefined
+  compactBrowserContext?: boolean
   timeoutMs?: number
   tools?: any[]
   systemPrompt?: string
@@ -55,6 +58,8 @@ export interface RunTextModelOptions {
   /** 每轮发给模型前按当前页刷新工具列表（进学习通后再挂上 study_*） */
   liveTools?: () => any[] | Promise<any[]>
   executeTool?: (call: ModelToolCall) => Promise<string>
+  /** 人工接管期间暂停轮次预算，等待不计入模型响应超时。 */
+  subscribePause?: (changed: (paused: boolean) => void) => () => void
   onEvent?: (event: ModelRunEvent) => void
   /** 本轮追加的 assistant / tool 消息，供跨轮按回合回放 */
   onTurnTranscript?: (messages: Array<{
@@ -149,11 +154,10 @@ const applyLiveContext = async (
     item?.role === 'system' && String(item.content || '').startsWith(LIVE_CONTEXT_MARK)
   ))
   if (idx >= 0) {
-    messages[idx] = { role: 'system', content }
-    return
+    messages.splice(idx, 1)
   }
-  if (messages[0]?.role === 'system') messages.splice(1, 0, { role: 'system', content })
-  else messages.unshift({ role: 'system', content })
+  // 动态网页状态放在尾部，避免每轮改写长历史前面的缓存前缀。
+  messages.push({ role: 'system', content })
 }
 
 const sortJson = (value: unknown): unknown => {
@@ -302,9 +306,10 @@ export async function runTextModel(
   }
   messages.push({ role: 'user', content: options?.userContent ?? prompt })
   const transcriptFrom = messages.length
+  const toolImageMessages = new Set<any>()
 
   const emitTurnTranscript = (spoken: string) => {
-    const turn = messages
+    const turn: NonNullable<RunTextModelOptions['history']> = messages
       .slice(transcriptFrom)
       .filter((item) => item?.role === 'assistant' || item?.role === 'tool')
       .map((item) => ({
@@ -354,13 +359,16 @@ export async function runTextModel(
     }
   }
   let timeoutHandle: ReturnType<typeof setTimeout> | null = null
+  let suspended = false
   const armTimeout = () => {
     if (timeoutHandle) clearTimeout(timeoutHandle)
+    if (suspended) { timeoutHandle = null; return }
     timeoutHandle = setTimeout(() => {
       abortController.abort(new DOMException(`模型响应超时（${Math.round(timeoutMs / 1000)} 秒）`, 'TimeoutError'))
     }, timeoutMs)
   }
   armTimeout()
+  let stopPause: (() => void) | undefined
   throwIfStopped()
 
   const tauriHttp = await import('@tauri-apps/plugin-http')
@@ -456,6 +464,7 @@ export async function runTextModel(
   }
 
   try {
+    stopPause = options?.subscribePause?.(paused => { suspended = paused; armTimeout() })
     for (let round = 0; round < maxRounds; round += 1) {
       throwIfStopped()
       armTimeout()
@@ -470,10 +479,13 @@ export async function runTextModel(
       }
       await applyLiveContext(input.messages, options?.liveContext)
       options?.onEvent?.({ type: 'round_start' })
-      logModelIo({ kind: 'model_request', round, messages: ioSafeMessages(input.messages) })
+      const requestInput = options?.compactBrowserContext
+        ? { ...input, messages: compactAgentRequestMessages(input.messages, toolImageMessages) }
+        : input
+      logModelIo({ kind: 'model_request', round, messages: ioSafeMessages(requestInput.messages) })
       let result: any
       try {
-        result = await processModel(input, config, tauriFetch, abortController.signal)
+        result = await processModel(requestInput, config, tauriFetch, abortController.signal)
       } catch (error) {
         if (isRepetitiveToolError(error) && gatewayRepeatHits < 2) {
           gatewayRepeatHits += 1
@@ -490,9 +502,11 @@ export async function runTextModel(
 
       let toolCalls: any[] = []
       let toolPendingSent = false
+      let roundUsage: Record<string, unknown> | undefined
       if (result[Symbol.asyncIterator]) {
         for await (const chunk of result) {
           throwIfStopped()
+          if (chunk?.usage && typeof chunk.usage === 'object') roundUsage = { ...roundUsage, ...chunk.usage }
           if (chunk?.tool_calls) {
             mergeToolCalls(toolCalls, chunk.tool_calls, 'delta')
             if (!toolPendingSent && toolCalls.length) {
@@ -511,6 +525,7 @@ export async function runTextModel(
           }
         }
       } else {
+        if (result?.usage && typeof result.usage === 'object') roundUsage = result.usage
         mergeToolCalls(toolCalls, normalizeToolCalls(result), 'snapshot')
         const response = collectContent(result)
         if (response) {
@@ -524,6 +539,7 @@ export async function runTextModel(
       logModelIo({
         kind: 'model_response',
         round,
+        usage: roundUsage,
         text: fullResponse.slice(0, 4000),
         toolCalls: toolCalls.map((tc) => ({ name: tc?.function?.name, args: String(tc?.function?.arguments || '').slice(0, 600) })),
       })
@@ -544,6 +560,12 @@ export async function runTextModel(
 
       if (!toolCalls.length || !options?.executeTool) {
         const spoken = fullResponse.trim()
+        const reminder = options?.beforeComplete?.(maxRounds - round - 1)
+        if (reminder && round + 1 < maxRounds) {
+          if (spoken) input.messages.push({ role: 'assistant', content: spoken })
+          input.messages.push({ role: 'system', content: reminder })
+          continue
+        }
         emitTurnTranscript(spoken)
         return spoken
       }
@@ -626,10 +648,12 @@ export async function runTextModel(
           }
         })
       if (attached.length) {
-        input.messages.push({
+        const imageMessage = {
           role: 'user',
           content: visionAttachParts(attached),
-        })
+        }
+        input.messages.push(imageMessage)
+        toolImageMessages.add(imageMessage)
       }
 
       fullResponse = ''
@@ -645,6 +669,7 @@ export async function runTextModel(
     }
     throw formatRunnerError(error)
   } finally {
+    stopPause?.()
     if (timeoutHandle) clearTimeout(timeoutHandle)
   }
 }

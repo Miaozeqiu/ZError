@@ -3,6 +3,7 @@
 
 pub mod browser;
 pub mod dom;
+pub mod frames;
 pub mod h264;
 pub mod locate;
 pub mod push;

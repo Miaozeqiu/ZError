@@ -125,12 +125,15 @@ export const paneGraphView = computed(() => {
 })
 
 export const loadPaneGraph = async (id: number) => {
+  const sessionId = activeChat.value?.id
   try {
     const payload = await databaseService.getStudyGraph(id)
+    if (openedGraphSubjectId.value !== id || activeChat.value?.id !== sessionId) return
     paneGraph.value = payload.nodes.length ? graphFromPayload(payload) : null
     paneGraphName.value = payload.subject?.name || paneGraph.value?.name || '知识图谱'
     paneGraphCount.value = payload.nodes.length
   } catch {
+    if (openedGraphSubjectId.value !== id || activeChat.value?.id !== sessionId) return
     paneGraph.value = null
     paneGraphCount.value = 0
   }
@@ -200,7 +203,65 @@ export const openedWriteStep = computed(() => {
   return null
 })
 
+export type AgentPane = 'browser' | 'quiz' | 'graph' | 'write'
+const rememberedPanes = ref<Record<string, { quiz?: string; write?: string; graph?: number }>>({})
+const rememberedPane = computed(() => rememberedPanes.value[activeChat.value?.id || ''] || {})
+export const availableQuizKey = computed(() => {
+  const key = rememberedPane.value.quiz
+  const [messageId, stepId] = key?.split('\t') || []
+  const message = activeChat.value?.messages.find(item => item.id === messageId)
+  const exists = message && stepId && (stepId.endsWith('-md')
+    ? fallbackQuizCards(message).length
+    : message.steps.some(step => step.id === stepId && isQuizStep(step)))
+  return exists ? key! : latestQuizKey.value
+})
+export const availableWriteStepId = computed(() => {
+  const steps = (activeChat.value?.messages || []).flatMap(message => message.steps || [])
+    .filter(step => step.name === 'save_questions' && step.preview?.length)
+  return steps.find(step => step.id === rememberedPane.value.write)?.id || steps.at(-1)?.id || null
+})
+export const availableGraphSubjectId = computed(() => rememberedPane.value.graph ?? activeChat.value?.studySubjectId ?? null)
+export const selectedAgentPane = computed<AgentPane>(() =>
+  paneQuiz.value ? 'quiz' : openedWriteStep.value ? 'write' : paneGraphView.value ? 'graph' : 'browser',
+)
+
+export const selectAgentPane = (pane: AgentPane) => {
+  if (pane === selectedAgentPane.value) return
+  if (pane === 'quiz' && !availableQuizKey.value) return
+  if (pane === 'write' && !availableWriteStepId.value) return
+  if (pane === 'graph') {
+    if (availableGraphSubjectId.value != null) openGraphPane(availableGraphSubjectId.value)
+    return
+  }
+  const quiz = pane === 'quiz' ? availableQuizKey.value : null
+  const write = pane === 'write' ? availableWriteStepId.value : null
+  openedGraphSubjectId.value = null
+  openedQuizKey.value = quiz
+  openedWriteStepId.value = write
+}
+
 export const bindAgentChatPanes = () => {
+  let resettingPanes = false
+  // Remember each conversation's selected content when its panel is hidden.
+  watch(() => activeChat.value?.id, () => {
+    resettingPanes = true
+    openedQuizKey.value = null
+    openedWriteStepId.value = null
+    openedGraphSubjectId.value = null
+    resettingPanes = false
+  }, { flush: 'sync' })
+  watch([openedQuizKey, openedWriteStepId, openedGraphSubjectId], ([quiz, write, graph]) => {
+    const id = activeChat.value?.id
+    if (!id || resettingPanes) return
+    const previous = rememberedPanes.value[id] || {}
+    rememberedPanes.value[id] = {
+      ...previous,
+      ...(quiz ? { quiz } : {}),
+      ...(write ? { write } : {}),
+      ...(graph != null ? { graph } : {}),
+    }
+  }, { flush: 'sync' })
+
   watch(
     () => activeChat.value?.messages.map((message) => `${message.id}:${message.status}:${message.content.length}`).join('|'),
     () => {

@@ -1,3 +1,4 @@
+import { callProtocol } from '../../browser/protocol'
 import { readFrameHtml, useLegacyEval } from '../../browser/domRead'
 import { asObject, evalBrowserViewMain, evalBrowserViewMainNow, waitMs } from '../../browser/eval'
 import { readLastTick, tickMatchesMid } from '../../browser/pushEvents'
@@ -742,7 +743,7 @@ export const readChaoxingVideoTick = async (id: string) => {
       return tick
     }
   }
-  const cheap = await evalBrowserViewMainNow(id, cheapTickScript(pin)).catch(() => null)
+  const cheap = await callProtocol(id, 'media_tick', { mid: pin }).catch(() => null)
   const tick = asVideoTick(asObject(cheap))
   rememberPlayTick(id, tick)
   return tick

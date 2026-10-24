@@ -1,8 +1,42 @@
-import { describe, expect, it } from 'vitest'
-import { judgeFinish } from '../../src/services/agent/finishGate'
+import { describe, expect, it, vi } from 'vitest'
+import { collectFinishEvidence, judgeFinish } from '../../src/services/agent/finishGate'
 import { applyBrowserTodo, pendingTodos } from '../../src/services/agent/browserTodo'
+import * as appBrowser from '../../src/services/browser/appBrowser'
+import { lastHomeworkCard } from '../../src/services/browser/abstractions'
+import { clearBrowserTaskIntent, setBrowserTaskIntent } from '../../src/services/agent/browserTask'
 
 describe('finishGate', () => {
+  it('遗留未填题卡缓存不能干扰已完成的通用浏览器任务', async () => {
+    const prev = lastHomeworkCard.value
+    const peek = vi.spyOn(appBrowser, 'peekAppBrowserUrl').mockReturnValue('https://www.zjooc.cn/ucenter/student/course/build/homework')
+    lastHomeworkCard.value = { questionCount: 10, filledCount: 0, next: 'fill', url: 'https://another.example/old-work' }
+    setBrowserTaskIntent('legacy-test', 'homework')
+    try {
+      const evidence = await collectFinishEvidence('current-tab', 'legacy-test', {
+        todos: [{ id: '1', text: '提交并核对回执', status: 'done' }],
+      })
+      expect(judgeFinish('done', '绦虫作业已批阅，20/20', evidence).ok).toBe(true)
+    } finally {
+      lastHomeworkCard.value = prev
+      clearBrowserTaskIntent('legacy-test')
+      peek.mockRestore()
+    }
+  })
+  it('通用浏览器提交作业后可以结束，不依赖已删除的题卡计数', () => {
+    const judged = judgeFinish('done', '绦虫作业已提交，列表显示20/20、已批阅', {
+      intent: 'homework', kind: 'unknown', multiStep: true,
+      url: 'https://www.zjooc.cn/ucenter/student/course/build/homework',
+      todos: ['打开作业', '读取题目', '作答核对', '提交并核对回执'].map((text, i) => ({ id: String(i), text, status: 'done' as const })),
+    })
+    expect(judged.ok).toBe(true)
+  })
+
+  it('作答页不要求解析器字段，未完成清单仍拦截', () => {
+    const evidence = { intent: 'homework' as const, kind: 'homework-do' as const, todos: [{ id: '1', text: '保存答案', status: 'done' as const }] }
+    expect(judgeFinish('done', '已保存，页面显示保存成功', evidence).ok).toBe(true)
+    expect(judgeFinish('done', '做完了', { ...evidence, todos: [{ id: '1', text: '保存答案', status: 'pending' }] }).ok).toBe(false)
+  })
+
   it('暂停视频拒绝 done', () => {
     const judged = judgeFinish('done', '已经播完这节', {
       intent: 'play',
@@ -34,7 +68,6 @@ describe('finishGate', () => {
       kind: 'player',
       playing: true,
       watching: true,
-      hasCard: false,
       url: 'https://www.zjooc.cn/ucenter/student/course/study/abc/plan/detail/xyz',
       todos: [{ id: 't1', text: '播完当前课', status: 'done' }],
     })

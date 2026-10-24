@@ -20,8 +20,10 @@ export const searchToolHandlers: Record<string, ChatToolHandler> = {
     } catch (error) {
       if (ctx.abort.aborted) throw error
       return JSON.stringify({
+        ok: false,
+        query,
         error: error instanceof Error ? error.message : String(error),
-        hint: '联网搜索失败，可以根据已有知识回答，或稍后重试。',
+        hint: '本次未取得联网证据。不要声称已检索或核实；存在不确定结论时明确说明，不能把搜索失败当成答案正确的依据。',
       })
     }
   },

@@ -651,8 +651,8 @@ fn start_pump(_app: &tauri::AppHandle) {
     };
     let timer = CFRunLoopTimerCreate(
       std::ptr::null(),
-      CFAbsoluteTimeGetCurrent() + 0.024,
-      0.024,
+      CFAbsoluteTimeGetCurrent() + 1.0 / 60.0,
+      1.0 / 60.0,
       0,
       0,
       on_runloop_pump,
@@ -662,7 +662,9 @@ fn start_pump(_app: &tauri::AppHandle) {
       eprintln!("[cef] 无法在主 RunLoop 上建泵");
       return;
     }
-    CFRunLoopTimerSetTolerance(timer, 0.008);
+    // 原来 24ms 周期再容许 8ms 偏移，缩放重绘可能额外晚近两帧。
+    // 保持 RunLoop 定时泵（不向 GCD 连续塞任务），以 60Hz 跟进 CEF 工作。
+    CFRunLoopTimerSetTolerance(timer, 0.001);
     CFRunLoopAddTimer(CFRunLoopGetMain(), timer, kCFRunLoopCommonModes);
   }
 }

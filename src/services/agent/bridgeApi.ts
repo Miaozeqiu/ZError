@@ -166,10 +166,11 @@ const homeworkOf = async (
 }
 
 const sendInApp = async (browserId: string, text: string) => {
-  const { ensureBrowserChat, sendChatMessage, stopChat } = await import('./chat')
+  const { ensureBrowserChat, sendChatMessage, stopChat, selectChat } = await import('./chat')
   const { modelConfigManager } = await import('../model/config')
   const session = ensureBrowserChat({ browserId })
   if (!session) return { ok: false, error: '没有浏览器对话' }
+  selectChat(session.id)
   const agent = modelConfigManager.getSelectedAgentModel() || modelConfigManager.getSelectedTextModel()
   if (!agent) return { ok: false, error: '没有可用的 agent 模型', sessionId: session.id }
   if (session.messages.some((item) => item.status === 'streaming')) stopChat(session.id)
@@ -213,17 +214,17 @@ export const runBridgeAction = async (cmd: BridgeCmd) => {
   if (!browserId) return { ok: false, id, action, error: '没有打开的浏览器' }
 
   if (/^(goto|chapter|chapter_open|play|pause|next|probe|snapshot)$/.test(action)) {
+    const { ensureBrowserChat, selectChat } = await import('./chat')
+    const session = ensureBrowserChat({ browserId })
+    if (session) selectChat(session.id)
     window.dispatchEvent(new CustomEvent('navigate-tab', { detail: 'browser' }))
-    const { showBrowserView } = await import('../browser/appBrowser')
-    await Promise.race([
-      showBrowserView(browserId).catch(() => null),
-      waitMs(600),
-    ])
+    const { ensureAgentBrowser } = await import('./agentBrowser')
+    if (session) await ensureAgentBrowser(session.id)
   }
 
   if (action === 'stop') {
     const { browserChatSessions, stopChat } = await import('./chat')
-    const session = browserChatSessions.value.find((item) => item.browserId === browserId)
+    const session = browserChatSessions.value.find(item => item.browserId === browserId || item.browserIds?.includes(browserId))
       || browserChatSessions.value[0]
     if (session) stopChat(session.id)
     return { ok: true, id, action, sessionId: session?.id || '', stopped: Boolean(session) }
@@ -236,9 +237,10 @@ export const runBridgeAction = async (cmd: BridgeCmd) => {
   }
 
   if (action === 'chat') {
+    const { controlForSession } = await import('../browser/control')
     const { browserChatSessions } = await import('./chat')
     const { modelConfigManager } = await import('../model/config')
-    const session = browserChatSessions.value.find((item) => item.browserId === browserId)
+    const session = browserChatSessions.value.find(item => item.browserId === browserId || item.browserIds?.includes(browserId))
       || browserChatSessions.value[0]
       || null
     const last = session?.messages[session.messages.length - 1]
@@ -249,6 +251,7 @@ export const runBridgeAction = async (cmd: BridgeCmd) => {
       browserId: session?.browserId || browserId,
       sessionId: session?.id || '',
       streaming: last?.status === 'streaming',
+      browserControl: controlForSession(session?.id || '') || null,
       agentModel: modelConfigManager.getSelectedAgentModel()?.displayName
         || modelConfigManager.getSelectedTextModel()?.displayName
         || '',

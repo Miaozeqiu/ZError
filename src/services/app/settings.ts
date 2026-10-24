@@ -65,15 +65,19 @@ export interface AlgorithmConfig {
   code: string
 }
 
-/** Exa 联网搜索设置，连接参数由软件管理。 */
+/** 联网搜索设置，连接参数由软件管理。 */
 export interface SearchSettings {
   enabled: boolean
   apiKey: string
+  provider?: 'exa' | 'deepseek'
+  deepseekApiKey?: string
 }
 
 export const DEFAULT_SEARCH_SETTINGS: SearchSettings = {
   enabled: true,
   apiKey: '',
+  provider: 'exa',
+  deepseekApiKey: '',
 }
 
 export const normalizeSearchSettings = (value: unknown): SearchSettings => {
@@ -81,6 +85,8 @@ export const normalizeSearchSettings = (value: unknown): SearchSettings => {
   return {
     enabled: typeof saved.enabled === 'boolean' ? saved.enabled : DEFAULT_SEARCH_SETTINGS.enabled,
     apiKey: typeof saved.apiKey === 'string' ? saved.apiKey.trim() : '',
+    provider: saved.provider === 'deepseek' ? 'deepseek' : 'exa',
+    deepseekApiKey: typeof saved.deepseekApiKey === 'string' ? saved.deepseekApiKey.trim() : '',
   }
 }
 

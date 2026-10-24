@@ -133,6 +133,17 @@ fn shared_data_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
   Ok(dir)
 }
 
+#[cfg(target_os = "macos")]
+pub(crate) fn round_browser_view(view: &objc2_app_kit::NSView) {
+  // Native child views sit above the app's WKWebView, so CSS overflow cannot clip them.
+  // Match .browser-screen's 12px radius minus its 1px border; leave page scaling untouched.
+  view.setWantsLayer(true);
+  if let Some(layer) = view.layer() {
+    layer.setCornerRadius(11.0);
+    layer.setMasksToBounds(true);
+  }
+}
+
 fn apply_bounds(webview: &tauri::Webview, x: f64, y: f64, width: f64, height: f64) -> Result<(), String> {
   let width = width.max(1.0);
   let height = height.max(1.0);
@@ -145,8 +156,6 @@ fn apply_bounds(webview: &tauri::Webview, x: f64, y: f64, width: f64, height: f6
     .map_err(|err| err.to_string())?;
   Ok(())
 }
-
-const SLEEP_AFTER: Duration = Duration::from_secs(10 * 60);
 
 fn hidden_since() -> &'static Mutex<HashMap<String, Instant>> {
   static MAP: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
@@ -208,31 +217,6 @@ fn hide_all_browsers(app: &AppHandle) {
   }
 }
 
-fn sleep_stale_browsers(app: &AppHandle, keep_label: Option<&str>) {
-  let now = Instant::now();
-  let stale: Vec<String> = browser_labels(app)
-    .into_iter()
-    .filter(|label| keep_label.map_or(true, |keep| label != keep))
-    .filter(|label| {
-      id_from_label(label).is_some_and(|id| {
-        hidden_since()
-          .lock()
-          .ok()
-          .and_then(|map| map.get(id).copied())
-          .is_some_and(|at| now.saturating_duration_since(at) >= SLEEP_AFTER)
-      })
-    })
-    .collect();
-  for label in stale {
-    if let Some(webview) = app.get_webview(&label) {
-      let _ = webview.close();
-    }
-    if let Some(id) = id_from_label(&label) {
-      forget_view(id);
-    }
-  }
-}
-
 pub(crate) fn new_browser_id() -> String {
   format!(
     "{:x}{:x}",
@@ -266,14 +250,10 @@ pub(crate) fn emit_load(app: &AppHandle, id: &str, phase: &str, url: String) {
   );
 }
 
-pub(crate) fn emit_opened(app: &AppHandle, id: &str, url: String) {
+pub(crate) fn emit_opened(app: &AppHandle, id: &str, url: String, opener_id: Option<&str>) {
   let _ = app.emit(
     "app-browser-opened",
-    BrowserPageState {
-      id: id.to_string(),
-      url,
-      title: String::new(),
-    },
+    serde_json::json!({ "id": id, "url": url, "title": "", "openerId": opener_id }),
   );
 }
 
@@ -392,10 +372,24 @@ fn handle_deferred_popup(app: &AppHandle, opener_id: &str, opener_url: &str, raw
     return;
   }
   // 作业等真实顶层页：开新标签并让前端自动切过去
-  emit_opened(app, &new_browser_id(), raw.to_string());
+  emit_opened(app, &new_browser_id(), raw.to_string(), Some(opener_id));
 }
 
 /// 导航页点卡片：立刻清空画面并通知宿主，再 no-referrer 跳转。
+// 备用 WebView 没有 CDP 注入输入；真实 DOM 输入在所有 frame 接管，脚本 .click 不触发。
+const BROWSER_USER_INPUT: &str = r#"(function(){
+  if (window.__ZE_CONTROL_INPUT__) return; window.__ZE_CONTROL_INPUT__=true;
+  var last=0;
+  function relay(){
+    if(Date.now()-last<600) return; last=Date.now();
+    var title=document.title; document.title='ZR_USER_CONTROL';
+    setTimeout(function(){if(document.title==='ZR_USER_CONTROL') document.title=title;},0);
+  }
+  if(window===window.top) window.addEventListener('message',function(e){if(e.data==='ZR_USER_CONTROL') relay();});
+  function claim(e){ if(!e.isTrusted) return; if(window===window.top) relay(); else window.top.postMessage('ZR_USER_CONTROL','*'); }
+  ['pointerdown','keydown','wheel'].forEach(function(name){window.addEventListener(name,claim,{capture:true,passive:true});});
+})();"#;
+
 const BROWSER_HOME_LAUNCH: &str = r#"(function(){
   try {
     if (!/\/browser-home\.html(?:$|[?#])/i.test(String(location.href || ''))) return;
@@ -920,20 +914,23 @@ pub async fn browser_open(
   y: f64,
   width: f64,
   height: f64,
+  hidden: Option<bool>,
 ) -> Result<(), String> {
   if is_space_list_url(&url) {
     return Err("禁止顶层打开课表地址。只点 iframe 里的「我学的课」页签。".into());
   }
   #[cfg(target_os = "macos")]
   if crate::cef_runtime::cef_enabled() {
-    return crate::cef::open(app, id, url, x, y, width, height).await;
+    return crate::cef::open(app, id, url, x, y, width, height, hidden.unwrap_or(false)).await;
   }
   {
   let label = label_for(&id)?;
   let parsed = open_webview_url(&url)?;
-  sleep_stale_browsers(&app, Some(&label));
-  hide_other_browsers(&app, &label);
+  if !hidden.unwrap_or(false) {
+    hide_other_browsers(&app, &label);
+  }
   if let Some(existing) = app.get_webview(&label) {
+    if hidden.unwrap_or(false) { return Ok(()); }
     apply_bounds(&existing, x, y, width, height)?;
     existing.show().map_err(|err| err.to_string())?;
     mark_shown(&id);
@@ -950,9 +947,10 @@ pub async fn browser_open(
 
   let mut builder = WebviewBuilder::new(&label, parsed)
     .data_directory(data_dir)
-    .focused(true)
+    .focused(!hidden.unwrap_or(false))
     .accept_first_mouse(true)
     .user_agent(SAFARI_UA)
+    .initialization_script_for_all_frames(BROWSER_USER_INPUT)
     .initialization_script_for_all_frames(BROWSER_HOME_LAUNCH)
     .initialization_script_for_all_frames(CHAOXING_BBS_CARDS)
     .on_new_window(move |url, _features| {
@@ -984,6 +982,10 @@ pub async fn browser_open(
       }
     })
     .on_document_title_changed(move |webview, title| {
+      if title == "ZR_USER_CONTROL" {
+        let _ = crate::browser_control::set_owner(webview.app_handle(), &title_id, "user");
+        return;
+      }
       let url = webview
         .url()
         .map(|value| value.to_string())
@@ -1009,6 +1011,7 @@ pub async fn browser_open(
       let msg = err.to_string();
       if msg.contains("already exists") {
         if let Some(existing) = app.get_webview(&label) {
+          if hidden.unwrap_or(false) { return Ok(()); }
           apply_bounds(&existing, x, y, width, height)?;
           existing.show().map_err(|e| e.to_string())?;
           mark_shown(&id);
@@ -1018,8 +1021,16 @@ pub async fn browser_open(
       return Err(msg);
     }
   };
-  webview.show().map_err(|err| err.to_string())?;
-  mark_shown(&id);
+  #[cfg(target_os = "macos")]
+  webview.with_webview(|platform| unsafe {
+    round_browser_view(&*(platform.inner() as *const objc2_app_kit::NSView));
+  }).map_err(|err| err.to_string())?;
+  if hidden.unwrap_or(false) {
+    hide_webview(&webview, &id);
+  } else {
+    webview.show().map_err(|err| err.to_string())?;
+    mark_shown(&id);
+  }
   Ok(())
   }
 }
@@ -1033,10 +1044,11 @@ pub async fn browser_set_bounds(
   width: f64,
   height: f64,
   notify: Option<bool>,
+  layout: Option<crate::browser_geometry::BrowserViewportLayout>,
 ) -> Result<(), String> {
   #[cfg(target_os = "macos")]
   if crate::cef_runtime::cef_enabled() {
-    return crate::cef::set_bounds(app, id, x, y, width, height, notify.unwrap_or(false));
+    return crate::cef::set_bounds(app, id, x, y, width, height, notify.unwrap_or(false), layout);
   }
   {
   let webview = find_browser(&app, &id)?;
@@ -1055,7 +1067,6 @@ pub async fn browser_show(app: AppHandle, id: String) -> Result<(), String> {
   }
   {
   let label = label_for(&id)?;
-  sleep_stale_browsers(&app, Some(&label));
   hide_other_browsers(&app, &label);
   find_browser(&app, &id)?
     .show()
@@ -1075,7 +1086,6 @@ pub async fn browser_hide(app: AppHandle, id: String) -> Result<(), String> {
   if let Ok(webview) = find_browser(&app, &id) {
     hide_webview(&webview, &id);
   }
-  sleep_stale_browsers(&app, None);
   Ok(())
   }
 }
@@ -1088,7 +1098,6 @@ pub async fn browser_hide_all(app: AppHandle) -> Result<(), String> {
   }
   {
   hide_all_browsers(&app);
-  sleep_stale_browsers(&app, None);
   Ok(())
   }
 }
@@ -1109,10 +1118,12 @@ pub async fn browser_close(app: AppHandle, id: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn browser_navigate(app: AppHandle, id: String, url: String) -> Result<(), String> {
+pub async fn browser_navigate(app: AppHandle, id: String, url: String, user_initiated: Option<bool>, expected_epoch: Option<u64>) -> Result<(), String> {
+  let control_id = id.clone();
+  crate::browser_control::run_at(&control_id, user_initiated.unwrap_or(false), expected_epoch, async move {
   #[cfg(target_os = "macos")]
   if crate::cef_runtime::cef_enabled() {
-    return crate::cef::navigate(app, id, url);
+    return crate::cef::navigate(app, id, url).await;
   }
   {
   let webview = find_browser(&app, &id)?;
@@ -1140,10 +1151,14 @@ pub async fn browser_navigate(app: AppHandle, id: String, url: String) -> Result
   }
   webview.navigate(target).map_err(|err| err.to_string())
   }
+
+  }).await
 }
 
 #[tauri::command]
-pub async fn browser_reload(app: AppHandle, id: String) -> Result<(), String> {
+pub async fn browser_reload(app: AppHandle, id: String, user_initiated: Option<bool>, expected_epoch: Option<u64>) -> Result<(), String> {
+  let control_id = id.clone();
+  crate::browser_control::run_at(&control_id, user_initiated.unwrap_or(false), expected_epoch, async move {
   #[cfg(target_os = "macos")]
   if crate::cef_runtime::cef_enabled() {
     return crate::cef::reload(app, id);
@@ -1153,32 +1168,42 @@ pub async fn browser_reload(app: AppHandle, id: String) -> Result<(), String> {
     .reload()
     .map_err(|err| err.to_string())
   }
+
+  }).await
 }
 
 #[tauri::command]
-pub async fn browser_go_back(app: AppHandle, id: String) -> Result<(), String> {
+pub async fn browser_go_back(app: AppHandle, id: String, user_initiated: Option<bool>, expected_epoch: Option<u64>) -> Result<(), String> {
+  let control_id = id.clone();
+  crate::browser_control::run_at(&control_id, user_initiated.unwrap_or(false), expected_epoch, async move {
   #[cfg(target_os = "macos")]
   if crate::cef_runtime::cef_enabled() {
-    return crate::cef::go_back(app, id);
+    return crate::cef::go_back(app, id).await;
   }
   {
   find_browser(&app, &id)?
     .eval("history.back()")
     .map_err(|err| err.to_string())
   }
+
+  }).await
 }
 
 #[tauri::command]
-pub async fn browser_go_forward(app: AppHandle, id: String) -> Result<(), String> {
+pub async fn browser_go_forward(app: AppHandle, id: String, user_initiated: Option<bool>, expected_epoch: Option<u64>) -> Result<(), String> {
+  let control_id = id.clone();
+  crate::browser_control::run_at(&control_id, user_initiated.unwrap_or(false), expected_epoch, async move {
   #[cfg(target_os = "macos")]
   if crate::cef_runtime::cef_enabled() {
-    return crate::cef::go_forward(app, id);
+    return crate::cef::go_forward(app, id).await;
   }
   {
   find_browser(&app, &id)?
     .eval("history.forward()")
     .map_err(|err| err.to_string())
   }
+
+  }).await
 }
 
 #[tauri::command]
@@ -1197,6 +1222,16 @@ pub async fn browser_set_zoom(app: AppHandle, id: String, zoom: f64) -> Result<(
     .set_zoom(zoom)
     .map_err(|err| err.to_string())
   }
+}
+
+#[tauri::command]
+pub async fn browser_set_audio_muted(app: AppHandle, id: String, muted: bool) -> Result<(), String> {
+  #[cfg(target_os = "macos")]
+  if crate::cef_runtime::cef_enabled() {
+    return crate::cef::set_audio_muted(app, id, muted);
+  }
+  let _ = (app, id, muted);
+  Err("当前浏览器引擎暂不支持整页静音".into())
 }
 
 #[tauri::command]
@@ -1636,8 +1671,9 @@ pub async fn browser_set_cookies(
   app: AppHandle,
   id: String,
   cookies: Vec<serde_json::Value>,
-  url: Option<String>,
-) -> Result<serde_json::Value, String> {
+  url: Option<String>, expected_epoch: Option<u64>) -> Result<serde_json::Value, String> {
+  let control_id = id.clone();
+  crate::browser_control::run_at(&control_id, false, expected_epoch, async move {
   let target = cookie_target(&id, url);
   #[cfg(target_os = "macos")]
   if crate::cef_runtime::cef_enabled() {
@@ -1645,6 +1681,8 @@ pub async fn browser_set_cookies(
   }
   let _ = (app, cookies);
   Err("当前平台浏览区不是 Chromium".into())
+
+  }).await
 }
 
 #[tauri::command]
@@ -1674,8 +1712,9 @@ pub async fn browser_clear_cookies(
   id: String,
   url: Option<String>,
   name: Option<String>,
-  domain: Option<String>,
-) -> Result<serde_json::Value, String> {
+  domain: Option<String>, expected_epoch: Option<u64>) -> Result<serde_json::Value, String> {
+  let control_id = id.clone();
+  crate::browser_control::run_at(&control_id, false, expected_epoch, async move {
   let target = cookie_target(&id, url);
   #[cfg(target_os = "macos")]
   if crate::cef_runtime::cef_enabled() {
@@ -1683,6 +1722,8 @@ pub async fn browser_clear_cookies(
   }
   let _ = (app, name, domain);
   Err("当前平台浏览区不是 Chromium".into())
+
+  }).await
 }
 
 /// Agent 用：在每个 CDP frame 执行同一脚本，返回多帧结果（内部工具仍用 browser_eval 取 best）。
@@ -1690,14 +1731,15 @@ pub async fn browser_clear_cookies(
 pub async fn browser_eval_frames(
   app: AppHandle,
   id: String,
-  script: String,
-) -> Result<serde_json::Value, String> {
+  script: String, expected_epoch: Option<u64>) -> Result<serde_json::Value, String> {
+  let control_id = id.clone();
+  crate::browser_control::run_at(&control_id, false, expected_epoch, async move {
   #[cfg(target_os = "macos")]
   if crate::cef_runtime::cef_enabled() {
     return crate::cef::eval_script_frames(app, id, script).await;
   }
   {
-    let value = browser_eval(app, id, script).await?;
+    let value = browser_eval(app, id, script, None).await?;
     let parsed: serde_json::Value =
       serde_json::from_str(&value).unwrap_or_else(|_| serde_json::Value::String(value));
     Ok(serde_json::json!({
@@ -1706,6 +1748,8 @@ pub async fn browser_eval_frames(
       "hint": "当前内核未走多帧 CDP；不要写 iframe.contentDocument。"
     }))
   }
+
+  }).await
 }
 
 /// 只把深度 0 上的 return / const / let / 分号当成语句。嵌在函数里的 return 仍是表达式。
@@ -1928,16 +1972,22 @@ async fn eval_wait_title(
 }
 
 #[tauri::command]
-pub async fn browser_eval_main(app: AppHandle, id: String, script: String) -> Result<String, String> {
+pub async fn browser_eval_main(app: AppHandle, id: String, script: String, expected_epoch: Option<u64>) -> Result<String, String> {
+  let control_id = id.clone();
+  crate::browser_control::run_at(&control_id, false, expected_epoch, async move {
   #[cfg(target_os = "macos")]
   if crate::cef_runtime::cef_enabled() {
     return crate::cef::eval_script_main(app, id, script).await;
   }
-  browser_eval(app, id, script).await
+  browser_eval(app, id, script, None).await
+
+  }).await
 }
 
 #[tauri::command]
-pub async fn browser_eval(app: AppHandle, id: String, script: String) -> Result<String, String> {
+pub async fn browser_eval(app: AppHandle, id: String, script: String, expected_epoch: Option<u64>) -> Result<String, String> {
+  let control_id = id.clone();
+  crate::browser_control::run_at(&control_id, false, expected_epoch, async move {
   #[cfg(target_os = "macos")]
   if crate::cef_runtime::cef_enabled() {
     return crate::cef::eval_script(app, id, script).await;
@@ -2000,6 +2050,8 @@ pub async fn browser_eval(app: AppHandle, id: String, script: String) -> Result<
   }
   Err("执行结果过长".into())
   }
+
+  }).await
 }
 
 fn protocol_arg_str(args: &serde_json::Value, key: &str) -> Option<String> {
@@ -2022,8 +2074,9 @@ pub async fn browser_protocol(
   app: AppHandle,
   id: String,
   op: String,
-  args: Option<serde_json::Value>,
-) -> Result<serde_json::Value, String> {
+  args: Option<serde_json::Value>, expected_epoch: Option<u64>) -> Result<serde_json::Value, String> {
+  let control_id = id.clone();
+  crate::browser_control::run_at(&control_id, false, expected_epoch, async move {
   let args = args.unwrap_or(serde_json::Value::Null);
   let first = dispatch_browser_protocol(app.clone(), id.clone(), op.clone(), args.clone()).await;
   #[cfg(target_os = "macos")]
@@ -2039,6 +2092,8 @@ pub async fn browser_protocol(
     }
   }
   first
+
+  }).await
 }
 
 async fn dispatch_browser_protocol(
@@ -2048,6 +2103,42 @@ async fn dispatch_browser_protocol(
   args: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
   match op.as_str() {
+    "frame_eval" => {
+      #[cfg(target_os = "macos")]
+      if crate::cef_runtime::cef_enabled() {
+        return crate::cef::frames::evaluate_hint(id,
+          protocol_arg_str(&args, "frame").unwrap_or_default(), protocol_arg_str(&args, "script").unwrap_or_default()).await;
+      }
+      Err("当前平台浏览区不是 Chromium".into())
+    }
+    "media_tick" => {
+      #[cfg(target_os = "macos")]
+      if crate::cef_runtime::cef_enabled() {
+        return crate::cef::frames::media_tick(id, args.get("locator").cloned().unwrap_or_default(),
+          protocol_arg_str(&args, "mid").unwrap_or_default()).await;
+      }
+      Err("当前平台浏览区不是 Chromium".into())
+    }
+    "set_checked" => {
+      #[cfg(target_os = "macos")]
+      if crate::cef_runtime::cef_enabled() {
+        let checked = args.get("checked").and_then(serde_json::Value::as_bool).ok_or("缺少 checked 布尔值")?;
+        return crate::cef::cdp_set_checked(app, id,
+          args.get("backend").and_then(serde_json::Value::as_i64).unwrap_or(0),
+          protocol_arg_str(&args, "session"), checked).await;
+      }
+      Err("当前引擎不支持选项状态操作".into())
+    }
+    "fill_node" => {
+      #[cfg(target_os = "macos")]
+      if crate::cef_runtime::cef_enabled() {
+        return crate::cef::cdp_fill_node(
+          id, args.get("backend").and_then(|v| v.as_i64()).unwrap_or(0),
+          protocol_arg_str(&args, "session"), protocol_arg_str(&args, "text").unwrap_or_default(),
+        ).await;
+      }
+      Err("当前平台浏览区不是 Chromium".into())
+    }
     "find" => {
       browser_cdp_find(app, id, args.get("locator").cloned().unwrap_or(serde_json::Value::Null)).await
     }
@@ -2173,7 +2264,7 @@ async fn dispatch_browser_protocol(
             .and_then(|v| v.as_array())
             .cloned()
             .unwrap_or_default();
-          browser_set_cookies(app, id, cookies, url).await
+          browser_set_cookies(app, id, cookies, url, None).await
         }
         "clear" => {
           browser_clear_cookies(
@@ -2182,6 +2273,7 @@ async fn dispatch_browser_protocol(
             url,
             protocol_arg_str(&args, "name"),
             protocol_arg_str(&args, "domain"),
+            None,
           )
           .await
         }

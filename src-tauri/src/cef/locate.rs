@@ -2,7 +2,7 @@
 #![cfg(target_os = "macos")]
 
 use crate::cdp_client::CdpConn;
-use crate::cef::{bind_page, dispatch_click, is_child_target, owner_of_session_exact};
+use crate::cef::{bind_page, dispatch_click, owner_of_session_exact};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
@@ -18,6 +18,9 @@ struct Locator {
   nth: i64,
   frame: String,
   frame_path: String,
+  frame_id: String,
+  loader_id: String,
+  backend: i64,
 }
 
 impl Locator {
@@ -30,11 +33,14 @@ impl Locator {
       nth: raw.get("nth").and_then(|v| v.as_i64()).unwrap_or(0),
       frame: raw.get("frame").and_then(|v| v.as_str()).unwrap_or("").trim().to_string(),
       frame_path: raw.get("framePath").and_then(|v| v.as_str()).unwrap_or("").trim().to_string(),
+      frame_id: raw.get("frameId").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+      loader_id: raw.get("loaderId").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+      backend: raw.get("backend").and_then(Value::as_i64).unwrap_or(0),
     }
   }
 
   fn sig(&self) -> String {
-    format!("{}:{}:{}:{}:{}:{}", self.by, self.value, self.name, self.nth, self.frame, self.frame_path)
+    format!("{}:{}:{}:{}:{}:{}:{}:{}:{}", self.by, self.value, self.name, self.nth, self.frame, self.frame_path, self.frame_id, self.loader_id, self.backend)
   }
 }
 
@@ -122,6 +128,7 @@ fn remember_box(id: &str, loc: &Locator, box_key: &str) -> bool {
   true
 }
 
+#[cfg(test)]
 fn frame_hint_ok(hint: &str, url: &str, name: &str, target_id: &str) -> bool {
   let w = compact(hint).to_ascii_lowercase();
   if w.is_empty() {
@@ -134,21 +141,6 @@ fn frame_hint_ok(hint: &str, url: &str, name: &str, target_id: &str) -> bool {
     let v = item.to_ascii_lowercase();
     !v.is_empty() && v.contains(&w)
   })
-}
-
-fn flatten_frames(tree: &Value, out: &mut Vec<(String, String, String)>) {
-  let frame = tree.get("frame").cloned().unwrap_or(Value::Null);
-  let id = frame.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-  let url = frame.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string();
-  let name = frame.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
-  if !id.is_empty() || !url.is_empty() {
-    out.push((id, url, name));
-  }
-  if let Some(kids) = tree.get("childFrames").and_then(|v| v.as_array()) {
-    for kid in kids {
-      flatten_frames(kid, out);
-    }
-  }
 }
 
 async fn enable_dom(conn: &CdpConn, session: Option<&str>) {
@@ -171,95 +163,6 @@ struct DocRoot {
   node_id: i64,
   /// 空串表示主文档；子文档带 frameId 给 AX 树用。
   frame_id: String,
-  /// ananas 播放器帧：只有 css 定位（播放/暂停键）会进去，文案定位跳过。
-  player: bool,
-}
-
-fn attr_map(node: &Value) -> HashMap<String, String> {
-  let mut out = HashMap::new();
-  if let Some(attrs) = node.get("attributes").and_then(|v| v.as_array()) {
-    let mut it = attrs.iter();
-    while let (Some(k), Some(v)) = (it.next(), it.next()) {
-      if let (Some(k), Some(v)) = (k.as_str(), v.as_str()) {
-        out.insert(k.to_ascii_lowercase(), v.to_string());
-      }
-    }
-  }
-  out
-}
-
-/// 同进程 iframe 不是独立 target，`Target.getTargets` 里没有它，只能从父文档一层层 pierce 进去。
-/// 学习通播放页：main → `#iframe`(knowledge/cards) → ananas video，都在一个进程里。
-/// `hint` 为空收集全部子文档（文档顺序）；非空只收 id / name / mid / data-mid / src / frameId 含 hint 的。
-const FRAME_WALK_BUDGET: usize = 28;
-
-async fn child_docs(
-  conn: &CdpConn,
-  session: Option<&str>,
-  root: i64,
-  hint: &str,
-  depth: u8,
-  budget: &mut usize,
-  out: &mut Vec<DocRoot>,
-) {
-  if depth > 3 || *budget == 0 {
-    return;
-  }
-  let raw = conn
-    .call("DOM.querySelectorAll", json!({ "nodeId": root, "selector": "iframe, frame" }), session)
-    .await
-    .unwrap_or(Value::Null);
-  let ids: Vec<i64> = raw
-    .get("nodeIds")
-    .and_then(|v| v.as_array())
-    .map(|list| list.iter().filter_map(|v| v.as_i64()).collect())
-    .unwrap_or_default();
-  let want = compact(hint).to_ascii_lowercase();
-  for node_id in ids {
-    if *budget == 0 {
-      return;
-    }
-    *budget -= 1;
-    let Ok(described) = conn
-      .call("DOM.describeNode", json!({ "nodeId": node_id, "depth": 0 }), session)
-      .await
-    else {
-      continue;
-    };
-    let node = described.get("node").cloned().unwrap_or(Value::Null);
-    let attrs = attr_map(&node);
-    let src = attrs.get("src").cloned().unwrap_or_default();
-    if src.is_empty() || src == "about:blank" || src.starts_with("javascript:") {
-      continue;
-    }
-    let frame_id = node.get("frameId").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let content = node.get("contentDocument").cloned().unwrap_or(Value::Null);
-    let backend = content.get("backendNodeId").and_then(|v| v.as_i64()).unwrap_or(0);
-    if backend <= 0 {
-      // 跨进程 / 还没挂文档：走不进去，交给 pick_frame_session 的 target 路径。
-      continue;
-    }
-    let ident_hit = ["id", "name", "mid", "data-mid"].iter().filter_map(|k| attrs.get(*k)).any(|v| {
-      compact(v).eq_ignore_ascii_case(&want)
-    });
-    let src_hit = attrs
-      .get("src")
-      .map(|v| v.to_ascii_lowercase().contains(&want))
-      .unwrap_or(false)
-      || (!frame_id.is_empty() && frame_id.to_ascii_lowercase().contains(&want));
-    let matched = want.is_empty() || ident_hit || src_hit;
-    let Some(doc_id) = push_backend(conn, session, backend).await else {
-      continue;
-    };
-    if matched {
-      let player = src.contains("ananas/modules/video") || src.contains("insertvideo");
-      out.push(DocRoot { node_id: doc_id, frame_id: frame_id.clone(), player });
-      if !want.is_empty() {
-        continue;
-      }
-    }
-    Box::pin(child_docs(conn, session, doc_id, hint, depth + 1, budget, out)).await;
-  }
 }
 
 async fn css_nodes(conn: &CdpConn, session: Option<&str>, root: i64, selector: &str) -> Vec<i64> {
@@ -414,53 +317,7 @@ async fn covered(
   x: f64,
   y: f64,
 ) -> Option<String> {
-  let hit = conn
-    .call(
-      "DOM.getNodeForLocation",
-      json!({ "x": x.round() as i64, "y": y.round() as i64, "includeUserAgentShadowDOM": false }),
-      session,
-    )
-    .await
-    .ok()?;
-  let found = hit.get("backendNodeId").and_then(|v| v.as_i64()).unwrap_or(0);
-  if found <= 0 || found == backend {
-    return None;
-  }
-  let target = border_rect(conn, session, node_id).await?;
-  let hit_node = match hit.get("nodeId").and_then(|v| v.as_i64()).filter(|id| *id > 0) {
-    Some(id) => id,
-    None => push_backend(conn, session, found).await?,
-  };
-  let Some(hit_rect) = border_rect(conn, session, hit_node).await else {
-    return None;
-  };
-  if rect_inside(hit_rect, target, 2.0) {
-    return None;
-  }
-  if is_text && rect_inside(target, hit_rect, 2.0) {
-    return None;
-  }
-  let name = conn
-    .call("DOM.describeNode", json!({ "nodeId": hit_node }), session)
-    .await
-    .ok()
-    .and_then(|v| {
-      let node = v.get("node")?;
-      let tag = node.get("localName").and_then(|x| x.as_str()).unwrap_or("").to_string();
-      let attrs = node.get("attributes").and_then(|x| x.as_array())?;
-      let mut out = tag;
-      let mut it = attrs.iter();
-      while let (Some(k), Some(v)) = (it.next(), it.next()) {
-        match k.as_str() {
-          Some("id") => out.push_str(&format!("#{}", v.as_str().unwrap_or(""))),
-          Some("class") => out.push_str(&format!(".{}", v.as_str().unwrap_or("").split_whitespace().collect::<Vec<_>>().join("."))),
-          _ => {}
-        }
-      }
-      Some(out)
-    })
-    .unwrap_or_default();
-  Some(name)
+  crate::cef::click_landed_elsewhere(conn, session, backend, x, y).await
 }
 
 struct Ready {
@@ -468,6 +325,7 @@ struct Ready {
   y: f64,
   text: String,
   backend: i64,
+  frame_id: String,
 }
 
 async fn ready_of(
@@ -486,6 +344,12 @@ async fn ready_of(
   if readonly {
     return Err(fail("readonly", json!({ "text": text })));
   }
+  let backend = crate::cef::visible_control_backend(conn, session, backend).await
+    .map_err(|error| fail("invalid", json!({"error":error})))?;
+  let node_id = push_backend(conn, session, backend).await
+    .ok_or_else(|| fail("invalid", json!({"error":"目标节点已失效"})))?;
+  // 只滚动已确定的这一颗节点，布局稳定后由点击阶段再次验证。
+  let _ = conn.call("DOM.scrollIntoViewIfNeeded", json!({"backendNodeId":backend}), session).await;
   let Some((x, y, _area)) = node_box(conn, session, node_id).await else {
     return Err(fail("hidden", json!({ "text": text })));
   };
@@ -497,13 +361,23 @@ async fn ready_of(
     y,
     text: text.to_string(),
     backend,
+    frame_id: String::new(),
   })
 }
 
 /// 在一个文档根里按 css 找；命中就量盒子。
+fn select_candidates<T>(rows: Vec<T>, nth: i64) -> Result<Vec<T>, Value> {
+  if nth <= 0 { return Ok(rows); }
+  rows.into_iter().nth((nth - 1) as usize).map(|row| vec![row])
+    .ok_or_else(|| fail("not_found", json!({ "error": format!("第 {nth} 个元素不存在") })))
+}
+
 async fn css_in_root(conn: &CdpConn, session: Option<&str>, root: i64, loc: &Locator) -> Vec<Result<Ready, Value>> {
   let mut ready = Vec::new();
-  for node_id in css_nodes(conn, session, root, &loc.value).await {
+  let nodes = match select_candidates(css_nodes(conn, session, root, &loc.value).await, loc.nth.max(1)) {
+    Ok(nodes) => nodes, Err(error) => return vec![Err(error)],
+  };
+  for node_id in nodes {
     let backend = conn
       .call("DOM.describeNode", json!({ "nodeId": node_id }), session)
       .await
@@ -519,7 +393,10 @@ async fn css_in_root(conn: &CdpConn, session: Option<&str>, root: i64, loc: &Loc
 async fn ax_in_root(conn: &CdpConn, session: Option<&str>, frame_id: &str, loc: &Locator) -> Vec<Result<Ready, Value>> {
   let nodes = ax_nodes(conn, session, frame_id).await;
   let mut ready = Vec::new();
-  for (backend, name, disabled, readonly) in collect_ax(loc, &nodes) {
+  let candidates = match select_candidates(collect_ax(loc, &nodes), loc.nth) {
+    Ok(rows) => rows, Err(error) => return vec![Err(error)],
+  };
+  for (backend, name, disabled, readonly) in candidates {
     let Some(node_id) = push_backend(conn, session, backend).await else {
       continue;
     };
@@ -535,139 +412,59 @@ async fn ax_in_root(conn: &CdpConn, session: Option<&str>, frame_id: &str, loc: 
   ready
 }
 
-/// 快照上的序号链 `0/2/1`：按 iframe 在父文档里的顺序往下 pierce。
-async fn doc_at_path(conn: &CdpConn, session: Option<&str>, root: i64, path: &str) -> Option<DocRoot> {
-  let parts: Vec<usize> = path.split('/').filter_map(|part| part.parse::<usize>().ok()).collect();
-  if parts.is_empty() || parts.len() > 4 {
-    return None;
-  }
-  let mut current = root;
-  for (step, index) in parts.iter().enumerate() {
-    let ids = css_nodes(conn, session, current, "iframe, frame").await;
-    let node_id = *ids.get(*index)?;
-    let described = conn
-      .call("DOM.describeNode", json!({ "nodeId": node_id, "depth": 0 }), session)
-      .await
-      .ok()?;
-    let node = described.get("node")?;
-    let attrs = attr_map(node);
-    let src = attrs.get("src").cloned().unwrap_or_default();
-    let frame_id = node.get("frameId").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let backend = node
-      .get("contentDocument")
-      .and_then(|v| v.get("backendNodeId"))
-      .and_then(|v| v.as_i64())
-      .unwrap_or(0);
-    if backend <= 0 {
-      return None;
-    }
-    let doc_id = push_backend(conn, session, backend).await?;
-    let player = src.contains("ananas/modules/video") || src.contains("insertvideo");
-    if step + 1 == parts.len() {
-      return Some(DocRoot { node_id: doc_id, frame_id, player });
-    }
-    current = doc_id;
-  }
-  None
-}
-
 async fn rows_in_doc(conn: &CdpConn, session: Option<&str>, doc: &DocRoot, loc: &Locator) -> Vec<Result<Ready, Value>> {
-  if loc.by == "css" {
+  let mut rows = if loc.backend > 0 {
+    // frame / loader 身份已在 cdp_find 中验证。ref 指向这一颗节点，不能再按同名 nth 改找别的。
+    let Some(node_id) = push_backend(conn, session, loc.backend).await else {
+      return vec![Err(fail("invalid", json!({ "error": "快照节点已移除，请重新读取页面" })))];
+    };
+    let partial = conn.call("Accessibility.getPartialAXTree", json!({ "backendNodeId": loc.backend, "fetchRelatives": false }), session).await.unwrap_or(Value::Null);
+    let node = partial["nodes"].as_array().and_then(|nodes| nodes.iter().find(|n| n["backendDOMNodeId"].as_i64() == Some(loc.backend)));
+    vec![ready_of(conn, session, node_id, loc.backend, false, if loc.name.is_empty() { &loc.value } else { &loc.name },
+      node.is_some_and(|n| ax_bool(n, "disabled")), node.is_some_and(|n| ax_bool(n, "readonly"))).await]
+  } else if loc.by == "css" {
     css_in_root(conn, session, doc.node_id, loc).await
   } else {
     ax_in_root(conn, session, &doc.frame_id, loc).await
-  }
+  };
+  for hit in rows.iter_mut().filter_map(|r| r.as_mut().ok()) { hit.frame_id = doc.frame_id.clone(); }
+  rows
 }
 
-/// `frame` 提示落到同进程 iframe 时（target 列表里没有它，session 还是主页），
-/// 或没提示但主文档里没有时，往同进程子文档里 pierce。
-async fn locate_in_session(
-  conn: &CdpConn,
-  session: Option<&str>,
-  loc: &Locator,
-  frame_resolved: bool,
-) -> Result<Vec<Result<Ready, Value>>, Value> {
+/// 已解析的 frame：同进程取 owner.contentDocument，OOPIF 取自己的文档根。
+async fn locate_frame(conn: &CdpConn, session: Option<&str>, loc: &Locator) -> Result<Vec<Result<Ready, Value>>, Value> {
   enable_dom(conn, session).await;
   let Some(root) = root_id(conn, session).await else {
     return Err(fail("not_found", json!({ "error": "文档还没就绪" })));
   };
-  // 提示已经命中独立 target（跨进程 iframe），该 session 的主文档就是目标帧。
-  let hint = if frame_resolved { "" } else { loc.frame.as_str() };
-  let frame_path = if frame_resolved { "" } else { loc.frame_path.as_str() };
-  if !frame_path.is_empty() {
-    if let Some(doc) = doc_at_path(conn, session, root, frame_path).await {
-      let rows = rows_in_doc(conn, session, &doc, loc).await;
-      if rows.iter().any(|row| row.is_ok()) || hint.is_empty() {
-        return if rows.is_empty() {
-          Err(fail("not_found", json!({ "error": format!("指定框 {frame_path} 里没有找到元素") })))
-        } else {
-          Ok(rows)
-        };
-      }
-    } else if hint.is_empty() {
-      return Err(fail("not_found", json!({ "error": format!("没有序号为 {frame_path} 的帧") })));
-    }
-  }
-  let mut roots: Vec<DocRoot> = Vec::new();
-  if hint.is_empty() {
-    roots.push(DocRoot { node_id: root, frame_id: String::new(), player: false });
+  let tree = conn.call("Page.getFrameTree", json!({}), session).await.unwrap_or(Value::Null);
+  let own_id = tree.pointer("/frameTree/frame/id").and_then(Value::as_str).unwrap_or("");
+  let doc = if own_id == loc.frame_id {
+    DocRoot { node_id: root, frame_id: loc.frame_id.clone() }
   } else {
-    let mut budget = FRAME_WALK_BUDGET;
-    child_docs(conn, session, root, hint, 0, &mut budget, &mut roots).await;
-    if roots.is_empty() {
-      return Err(fail("not_found", json!({ "error": format!("没有匹配「{}」的帧", loc.frame) })));
-    }
-  }
-  let mut fallback_walked = false;
-  let mut idx = 0;
-  // 某帧里有节点但全是 hidden / covered（叠着的四个播放器只有一个可见），继续看下一帧，
-  // 最后没一个可点的再把第一份失败原因带回去。
-  let mut only_errs: Option<Vec<Result<Ready, Value>>> = None;
-  while idx < roots.len() {
-    let doc = roots[idx].clone();
-    idx += 1;
-    let rows = if loc.by == "css" {
-      css_in_root(conn, session, doc.node_id, loc).await
-    } else {
-      ax_in_root(conn, session, &doc.frame_id, loc).await
-    };
-    if rows.iter().any(|row| row.is_ok()) {
-      return Ok(rows);
-    }
-    if !rows.is_empty() && only_errs.is_none() {
-      only_errs = Some(rows);
-    }
-    // 主文档没命中且没给帧提示：按文档顺序进同进程 iframe 再找一遍（播放器、作业都在 iframe 里）。
-    // 文案定位每帧都要拉一棵 AX 树，很贵：只看前几帧，且跳过播放器帧（里面没有可点文案）。
-    if hint.is_empty() && !fallback_walked {
-      fallback_walked = true;
-      let mut budget = if loc.by == "css" { FRAME_WALK_BUDGET } else { 10 };
-      let mut more = Vec::new();
-      child_docs(conn, session, root, "", 0, &mut budget, &mut more).await;
-      if loc.by != "css" {
-        more.retain(|doc| !doc.player);
-      }
-      roots.extend(more);
-    }
-  }
-  if let Some(rows) = only_errs {
-    return Ok(rows);
-  }
-  Err(fail("not_found", json!({})))
+    let owner = conn.call("DOM.getFrameOwner", json!({ "frameId": loc.frame_id }), session).await
+      .map_err(|_| fail("invalid", json!({ "error": "目标 frame 已移除，请重新读取页面快照" })))?;
+    let described = conn.call("DOM.describeNode", json!({ "backendNodeId": owner["backendNodeId"] }), session).await
+      .map_err(|_| fail("invalid", json!({ "error": "目标 frame 尚未就绪" })))?;
+    let backend = described.pointer("/node/contentDocument/backendNodeId").and_then(Value::as_i64).unwrap_or(0);
+    let node_id = push_backend(conn, session, backend).await
+      .ok_or_else(|| fail("invalid", json!({ "error": "目标 frame 文档已失效，请重新读取页面快照" })))?;
+    DocRoot { node_id, frame_id: loc.frame_id.clone() }
+  };
+  let rows = rows_in_doc(conn, session, &doc, loc).await;
+  if rows.is_empty() { Err(fail("not_found", json!({}))) } else { Ok(rows) }
 }
 
 fn pick_ready(rows: Vec<Result<Ready, Value>>, loc: &Locator) -> Result<Ready, Value> {
+  // nth 已在 DOM/AX 候选中选择；目标不可点时返回它的真实错误，不能跳到下一颗。
+  if loc.nth > 0 {
+    return rows.into_iter().next().unwrap_or_else(|| Err(fail("not_found", json!({}))));
+  }
   // 元素在页上但量不到 / 被挡，要把真实原因带出去，不能一律说 not_found。
   let first_err = rows.iter().find_map(|row| row.as_ref().err().cloned());
   let ok: Vec<Ready> = rows.into_iter().filter_map(|row| row.ok()).collect();
   if ok.is_empty() {
     return Err(first_err.unwrap_or_else(|| fail("not_found", json!({}))));
-  }
-  if loc.nth > 0 {
-    let idx = (loc.nth - 1) as usize;
-    return ok.get(idx).cloned().ok_or_else(|| {
-      fail("not_found", json!({ "error": format!("第 {} 个元素不存在", loc.nth), "retry": true }))
-    });
   }
   if ok.len() == 1 {
     return Ok(ok.into_iter().next().unwrap());
@@ -706,50 +503,9 @@ impl Clone for Ready {
       y: self.y,
       text: self.text.clone(),
       backend: self.backend,
+      frame_id: self.frame_id.clone(),
     }
   }
-}
-
-async fn pick_frame_session(page: &crate::cef::PageBind, hint: &str) -> Option<String> {
-  if hint.is_empty() {
-    return page.session.clone();
-  }
-  let tree = page
-    .conn
-    .call("Page.getFrameTree", json!({}), page.session.as_deref())
-    .await
-    .ok()?;
-  let mut frames = Vec::new();
-  flatten_frames(tree.get("frameTree").unwrap_or(&tree), &mut frames);
-  let matched: Vec<(String, String, String)> = frames
-    .into_iter()
-    .filter(|(_, url, name)| frame_hint_ok(hint, url, name, ""))
-    .collect();
-  if matched.is_empty() {
-    return None;
-  }
-  let want_url = matched[0].1.clone();
-  let targets = page.conn.pages().await.ok()?;
-  let mut count = 0;
-  for t in targets {
-    if !is_child_target(&t, &page.target_id, &page.url) {
-      continue;
-    }
-    let url = t.get("url").and_then(|v| v.as_str()).unwrap_or("");
-    let tid = t.get("targetId").and_then(|v| v.as_str()).unwrap_or("");
-    if !frame_hint_ok(hint, url, "", tid) && !(!want_url.is_empty() && url.contains(&want_url)) {
-      continue;
-    }
-    count += 1;
-    if count > 4 {
-      break;
-    }
-    if let Ok(sid) = page.conn.attach(tid).await {
-      let _ = page.conn.call("DOM.enable", json!({}), Some(&sid)).await;
-      return Some(sid);
-    }
-  }
-  page.session.clone()
 }
 
 fn locators_of(raw: &Value) -> Vec<Locator> {
@@ -786,6 +542,8 @@ async fn finish_find(
     "space": "page",
     "text": picked.text,
     "backend": picked.backend,
+    "frameId": picked.frame_id,
+    "loaderId": loc.loader_id,
     "session": session.unwrap_or_default(),
   }))
 }
@@ -799,36 +557,44 @@ pub async fn cdp_find(_app: AppHandle, id: String, locator: Value) -> Result<Val
   // getDocument → nodeId 链路要独占，否则被并发的整帧读 HTML 作废 nodeId。
   let lock = crate::cef::dom_lock(&id);
   let _held = lock.lock().await;
-  let mut sessions: HashMap<String, Option<String>> = HashMap::new();
+  let contexts = crate::cef::frames::contexts(&page).await?;
   let mut last = fail("not_found", json!({}));
-  // 某个定位已经给出终局结论（歧义 / 禁用），后面的备选又只是 not_found 时，
-  // 要把终局结论带回去，否则 find_wait 会为一个永远不会出现的备选空等到超时。
   let mut settled: Option<Value> = None;
   for loc in &locs {
-    let picked = if let Some(found) = sessions.get(&loc.frame) {
-      found.clone()
-    } else {
-      let found = pick_frame_session(&page, &loc.frame).await;
-      sessions.insert(loc.frame.clone(), found.clone());
-      found
-    };
-    // 提示命中了独立 target 才算「帧已解析」；同进程 iframe 或按 mid 提示的，回到主 session 里 pierce。
-    let frame_resolved = !loc.frame.is_empty()
-      && picked.is_some()
-      && picked != page.session;
-    let session = picked.or_else(|| page.session.clone());
-    match locate_in_session(&page.conn, session.as_deref(), loc, frame_resolved).await {
-      Ok(rows) => {
-        let hit = finish_find(&id, loc, session, rows).await?;
-        if hit.get("ok").and_then(|v| v.as_bool()) == Some(true) {
-          return Ok(hit);
-        }
-        if settled.is_none() && find_wait_done(&hit) {
-          settled = Some(hit.clone());
-        }
-        last = hit;
+    let mut candidates = Vec::new();
+    if !loc.frame_id.is_empty() {
+      match crate::cef::frames::select(&contexts, &json!({ "frameId": loc.frame_id, "loaderId": loc.loader_id })) {
+        Ok(Some(frame)) => candidates.push(frame),
+        Err(error) => return Ok(fail("invalid", json!({ "error": error }))),
+        _ => {},
       }
-      Err(err) => last = err,
+    } else {
+      for frame in &contexts {
+        if !loc.frame_path.is_empty() && frame.path != loc.frame_path { continue; }
+        if !loc.frame.is_empty() && !crate::cef::frames::hint_matches(&page, &contexts, frame, &loc.frame).await { continue; }
+        candidates.push(frame);
+      }
+    }
+    let mut visible_count = 0;
+    for frame in candidates {
+      if !crate::cef::frames::visible(&page, &contexts, frame).await {
+        last = fail("hidden", json!({}));
+        continue;
+      }
+      visible_count += 1;
+      if visible_count > crate::cef::frames::MAX_FRAMES { break; }
+      let mut target = loc.clone();
+      target.frame_id = frame.id.clone();
+      target.loader_id = frame.loader_id.clone();
+      match locate_frame(&page.conn, frame.session.as_deref(), &target).await {
+        Ok(rows) => {
+          let hit = finish_find(&id, &target, frame.session.clone(), rows).await?;
+          if hit["ok"].as_bool() == Some(true) || find_wait_done(&hit) { return Ok(hit); }
+          if settled.is_none() && hit["reason"].as_str() != Some("not_found") { settled = Some(hit.clone()); }
+          last = hit;
+        }
+        Err(err) => last = err,
+      }
     }
   }
   Ok(settled.unwrap_or(last))
@@ -991,11 +757,71 @@ pub async fn cdp_click_at(
   })
 }
 
+/// 聚焦、选择、输入和回读都固定在同一节点/target，不扫描全局 activeElement。
+pub async fn cdp_fill_node(id: String, backend: i64, session: Option<String>, text: String) -> Result<Value, String> {
+  if backend <= 0 { return Ok(fail("invalid", json!({}))); }
+  let page = bind_page(&id).await?;
+  let sid = session.filter(|s| !s.is_empty()).or(page.session.clone());
+  let resolved = page.conn.call("DOM.resolveNode", json!({ "backendNodeId": backend }), sid.as_deref()).await?;
+  let object = resolved.pointer("/object/objectId").and_then(Value::as_str).ok_or("输入节点已失效，请重新读取页面")?;
+  let result = async {
+    let selected = page.conn.call("Runtime.callFunctionOn", json!({
+      "objectId": object, "returnByValue": true, "functionDeclaration": r#"function(){
+        if (!this.isConnected || this.disabled || this.readOnly) return false;
+        var tag = this.tagName.toLowerCase();
+        if (tag !== 'input' && tag !== 'textarea' && !this.isContentEditable) return false;
+        this.scrollIntoView({block:'center',inline:'nearest'}); this.focus();
+        if (this.ownerDocument.activeElement !== this) return false;
+        if (this.isContentEditable) {
+          var r=this.ownerDocument.createRange(); r.selectNodeContents(this);
+          var s=this.ownerDocument.defaultView.getSelection(); s.removeAllRanges(); s.addRange(r);
+        } else this.select();
+        return true;
+      }"#,
+    }), sid.as_deref()).await?;
+    if selected.pointer("/result/value").and_then(Value::as_bool) != Some(true) {
+      return Ok(fail("invalid", json!({ "error": "输入节点不可编辑或无法聚焦" })));
+    }
+    // insertText('') 不保证删除当前选择，清空用 Backspace。
+    if text.is_empty() {
+      for kind in ["keyDown", "keyUp"] {
+        page.conn.call("Input.dispatchKeyEvent", json!({ "type": kind, "key": "Backspace", "code": "Backspace", "windowsVirtualKeyCode": 8 }), sid.as_deref()).await?;
+      }
+    } else {
+      page.conn.call("Input.insertText", json!({ "text": text }), sid.as_deref()).await?;
+    }
+    tokio::time::sleep(Duration::from_millis(80)).await;
+    let check = page.conn.call("Runtime.callFunctionOn", json!({
+      "objectId": object, "returnByValue": true, "arguments": [{ "value": text }],
+      "functionDeclaration": r#"function(want){
+        var got=this.isContentEditable?String(this.textContent||''):String(this.value||'');
+        var password=String(this.type||'').toLowerCase()==='password';
+        var ok=this.isConnected && got===want;
+        return {ok:ok,filled:ok,length:got.length,password:password,text:password?undefined:got,
+          error:ok?undefined:'目标输入框内容与要求不一致，请重新读取页面'};
+      }"#,
+    }), sid.as_deref()).await?;
+    if let Some(error) = check.get("exceptionDetails") { return Err(error.to_string()); }
+    Ok(check.pointer("/result/value").cloned().unwrap_or_else(|| fail("invalid", json!({}))))
+  }.await;
+  let _ = page.conn.call("Runtime.releaseObject", json!({ "objectId": object }), sid.as_deref()).await;
+  result
+}
+
 #[cfg(test)]
 mod tests {
   use super::ax_name_ok;
 
   #[test]
+  fn nth_selects_before_actionability_filtering() {
+    let rows: Vec<Result<i32, &str>> = vec![Err("covered"), Ok(2), Ok(3)];
+    let selected = super::select_candidates(rows, 2).unwrap();
+    assert_eq!(selected, vec![Ok(2)]);
+    let rows: Vec<Result<i32, &str>> = vec![Err("hidden"), Ok(2)];
+    assert_eq!(super::select_candidates(rows, 1).unwrap(), vec![Err("hidden")]);
+    assert!(super::select_candidates(vec![1, 2], 3).is_err());
+  }
+
   #[test]
   fn frame_hint_name_exact_url_substring() {
     assert!(super::frame_hint_ok("cards", "https://mooc1.chaoxing.com/knowledge/cards", "", ""));

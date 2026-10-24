@@ -671,7 +671,13 @@ input[type="password"].api-key-input::-ms-reveal {
 
 .input-suffix-btn {
   position: absolute;
+  top: 50%;
   right: 8px;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
   background: none;
   border: none;
   cursor: pointer;

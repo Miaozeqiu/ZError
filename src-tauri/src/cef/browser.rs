@@ -8,6 +8,7 @@ use crate::app_browser::{
   remembered_url, CdpActResult,
 };
 use crate::cdp_client::{connect_loop, CdpConn};
+use crate::browser_geometry::{AnchoredBrowserGeometry, BrowserViewportLayout};
 use futures_util::future::join_all;
 use std::time::Duration;
 use crate::cef::h264::claim_h264_bundle;
@@ -16,18 +17,50 @@ use cef::{self, *};
 use objc2::rc::Retained;
 use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadOnly};
 use objc2::MainThreadMarker;
-use objc2_app_kit::{NSAutoresizingMaskOptions, NSView};
-use objc2_foundation::{NSPoint, NSRect, NSSize};
+use objc2_app_kit::{
+  NSAutoresizingMaskOptions, NSBorderType, NSClipView, NSColor, NSScrollElasticity, NSScrollView, NSView,
+};
+use objc2_foundation::{NSArray, NSPoint, NSRect, NSRunLoopCommonModes, NSSize};
 use std::cell::Cell;
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use tauri::{AppHandle, Emitter, Manager};
 
 const CHROME_UA_NOTE: &str = "浏览内核已换 Chromium，学习通需重新登录。";
+
+/// 网页布局永远按这个 CSS 视口。洞口只负责把整页缩放进可见区域，不改页面大小。
+const PAGE_W: f64 = 1920.0;
+const PAGE_H: f64 = 1080.0;
+
+/// 取能把 1920x1080 整页放进洞口的缩放。小于 1 是缩小，大于 1 是放大。
+fn fit_scale(hole_w: f64, hole_h: f64) -> f64 {
+  if !hole_w.is_finite() || !hole_h.is_finite() || hole_w < 1.0 || hole_h < 1.0 {
+    return 1.0;
+  }
+  (hole_w / PAGE_W).min(hole_h / PAGE_H)
+}
+
+fn stage_points(hole_w: f64, hole_h: f64) -> (f64, f64) {
+  let s = fit_scale(hole_w, hole_h);
+  let w = (PAGE_W * s).floor().min(hole_w.floor()).max(1.0);
+  let h = (PAGE_H * s).floor().min(hole_h.floor()).max(1.0);
+  (w, h)
+}
+
+/// 舞台是整数像素，两条边不能同时刚好是 16:9。取较小的一边做缩放，另一边的 CSS 尺寸只多出不到 1 像素。
+fn page_fit(stage_w: f64, stage_h: f64) -> f64 {
+  let sx = stage_w / PAGE_W;
+  let sy = stage_h / PAGE_H;
+  if sx.is_finite() && sy.is_finite() && sx > 0.0 && sy > 0.0 {
+    sx.min(sy)
+  } else {
+    1.0
+  }
+}
 
 #[derive(Clone, Copy)]
 struct ViewPtr(*mut c_void);
@@ -37,7 +70,11 @@ unsafe impl Sync for ViewPtr {}
 struct Tab {
   id: String,
   wrapper: ViewPtr,
+  /// 固定页面舞台。CEF 的父 view，尺寸是 1920s x 1080s，不是洞口。
+  stage: ViewPtr,
   browser_id: i32,
+  /// 原生 Browser 对应的 DevTools target，独立于网址、跳转和 WebSocket 会话。
+  target_id: String,
   url: String,
   title: String,
   hidden: bool,
@@ -93,7 +130,7 @@ unsafe fn frame_in_parent(parent: &NSView, x: f64, y: f64, width: f64, height: f
   NSRect::new(origin, NSSize::new(width, height))
 }
 
-/// CEF 洞口：AppKit 一改真实尺寸就 was_resized。
+/// CEF 洞口：只决定把 1920x1080 缩放到多大。网页布局尺寸不跟洞口走。
 /// 不要把网页布局交给 JS 防抖；拖窗口/分栏时 JS 只对齐位置，不负责通知 Chromium。
 struct ZeCefHoleIvars {
   last_w: Cell<f64>,
@@ -101,6 +138,15 @@ struct ZeCefHoleIvars {
   browser_id: Cell<i32>,
   ticking: Cell<bool>,
   pending: Cell<bool>,
+  scroll: Cell<ViewPtr>,
+  stage: Cell<ViewPtr>,
+  /// 用户缩放。真正套到 CEF 的是 user_zoom * fit。
+  user_zoom: Cell<f64>,
+  /// 舞台宽 / 1920。洞口更小则小于 1，更大则大于 1。
+  fit: Cell<f64>,
+  stage_w: Cell<f64>,
+  stage_h: Cell<f64>,
+  layout: Cell<Option<AnchoredBrowserGeometry>>,
 }
 
 define_class!(
@@ -113,28 +159,143 @@ define_class!(
   impl ZeCefHoleView {
     #[unsafe(method(setFrameSize:))]
     fn set_frame_size(&self, size: NSSize) {
+      let prev_w = self.ivars().last_w.get();
+      let prev_h = self.ivars().last_h.get();
       let _: () = unsafe { msg_send![super(self), setFrameSize: size] };
       // 创建浏览器和 JS setFrame 都走这里。这里同步动 CEF 会把主线程卡死。
       self.ivars().last_w.set(size.width);
       self.ivars().last_h.set(size.height);
+      let changed = (size.width - prev_w).abs() >= 0.5 || (size.height - prev_h).abs() >= 0.5;
+      // 舞台还没挂上（initWithFrame）时不要排刷新。下一圈再改舞台，避免和 AppKit 布局重入。
+      if changed && !self.ivars().stage.get().0.is_null() {
+        schedule_was_resized(self, self.ivars().browser_id.get());
+      }
     }
 
     #[unsafe(method(resizeWithOldSuperviewSize:))]
     fn resize_with_old_superview_size(&self, old_superview_size: NSSize) {
+      // 直接在 AppKit 的 autoresize 回调计算洞口，避开 DOM/IPC 的一帧往返。
+      // 只设置洞口 frame；舞台与 CEF 重绘仍排到 CommonModes 的下一圈，禁止同步重入。
+      if let Some(layout) = self.ivars().layout.get() {
+        let view: &NSView = self;
+        if let Some(parent) = unsafe { view.superview() } {
+          let size = parent.bounds().size;
+          let (x, y, w, h) = layout.bounds(size.width, size.height);
+          let frame = unsafe { frame_in_parent(&parent, x, y, w, h) };
+          if !frames_close(view.frame(), frame) { view.setFrame(frame); }
+          hole_size_tick(self);
+          return;
+        }
+      }
       let _: () = unsafe { msg_send![super(self), resizeWithOldSuperviewSize: old_superview_size] };
       hole_size_tick(self);
     }
 
     #[unsafe(method(zeFlushWasResized))]
     fn ze_flush_was_resized(&self) {
-      HOLE_RESIZE_PENDING.store(false, Ordering::SeqCst);
-      let bid = self.ivars().browser_id.get();
-      if bid > 0 {
+      self.ivars().pending.set(false);
+      let ns: &NSView = self;
+      // 隐藏标签不参与前台缩放重绘；显示时统一按最新洞口刷新。
+      // 其固定 CSS 视口和现有 fit 保留，后台 Agent 仍可正常读页和输入。
+      if ns.isHidden() { return; }
+      let size = ns.bounds().size;
+      let (stage_w, stage_h) = stage_points(size.width, size.height);
+      let fit = page_fit(stage_w, stage_h);
+      let iv = self.ivars();
+      let size_changed = (stage_w - iv.stage_w.get()).abs() >= 0.5 || (stage_h - iv.stage_h.get()).abs() >= 0.5;
+      let fit_changed = (fit - iv.fit.get()).abs() >= 0.001;
+      if size_changed {
+        iv.stage_w.set(stage_w);
+        iv.stage_h.set(stage_h);
+        resize_stage(iv.stage.get(), stage_w, stage_h);
+      }
+      if fit_changed {
+        iv.fit.set(fit);
+      }
+      if size_changed || fit_changed {
+        eprintln!(
+          "[cef] stage {:.0}x{:.0} fit={:.3} hole={:.0}x{:.0}",
+          stage_w, stage_h, fit, size.width, size.height
+        );
+      }
+      let bid = iv.browser_id.get();
+      if bid <= 0 {
+        return;
+      }
+      // 舞台像素没变就不要 was_resized。洞口变了会改舞台大小和缩放，CSS 视口仍是 1920x1080。
+      if size_changed {
         notify_browser_resized(bid);
+      }
+      if fit_changed {
+        apply_browser_zoom(bid, iv.user_zoom.get() * fit);
       }
     }
   }
 );
+
+/// 文档比可视区域小时居中，多出来的一边留白。
+struct ZeCenterClipIvars {
+  _unused: Cell<u8>,
+}
+
+define_class!(
+  #[unsafe(super(NSClipView))]
+  #[thread_kind = MainThreadOnly]
+  #[name = "ZeCenterClipView"]
+  #[ivars = ZeCenterClipIvars]
+  struct ZeCenterClipView;
+
+  impl ZeCenterClipView {
+    #[unsafe(method(constrainBoundsRect:))]
+    fn constrain_bounds_rect(&self, proposed: NSRect) -> NSRect {
+      let mut constrained: NSRect = unsafe { msg_send![super(self), constrainBoundsRect: proposed] };
+      let doc: Option<Retained<NSView>> = unsafe { msg_send![self, documentView] };
+      let Some(doc) = doc else { return constrained };
+      let frame = doc.frame();
+      if constrained.size.width > frame.size.width {
+        constrained.origin.x = (frame.size.width - constrained.size.width) / 2.0;
+      }
+      if constrained.size.height > frame.size.height {
+        constrained.origin.y = (frame.size.height - constrained.size.height) / 2.0;
+      }
+      constrained
+    }
+  }
+);
+
+impl ZeCenterClipView {
+  fn create(mtm: MainThreadMarker, frame: NSRect) -> Retained<Self> {
+    let this = Self::alloc(mtm).set_ivars(ZeCenterClipIvars { _unused: Cell::new(0) });
+    unsafe { msg_send![super(this), initWithFrame: frame] }
+  }
+}
+
+/// 网页舞台。左上角为原点，CEF 子 view 铺满它。尺寸只在刷新时改。
+struct ZeCefStageIvars {
+  _unused: Cell<u8>,
+}
+
+define_class!(
+  #[unsafe(super(NSView))]
+  #[thread_kind = MainThreadOnly]
+  #[name = "ZeCefStage"]
+  #[ivars = ZeCefStageIvars]
+  struct ZeCefStage;
+
+  impl ZeCefStage {
+    #[unsafe(method(isFlipped))]
+    fn is_flipped(&self) -> bool {
+      true
+    }
+  }
+);
+
+impl ZeCefStage {
+  fn create(mtm: MainThreadMarker, frame: NSRect) -> Retained<Self> {
+    let this = Self::alloc(mtm).set_ivars(ZeCefStageIvars { _unused: Cell::new(0) });
+    unsafe { msg_send![super(this), initWithFrame: frame] }
+  }
+}
 
 impl ZeCefHoleView {
   fn create(mtm: MainThreadMarker, frame: NSRect) -> Retained<Self> {
@@ -144,6 +305,13 @@ impl ZeCefHoleView {
       browser_id: Cell::new(0),
       ticking: Cell::new(false),
       pending: Cell::new(false),
+      scroll: Cell::new(ViewPtr(std::ptr::null_mut())),
+      stage: Cell::new(ViewPtr(std::ptr::null_mut())),
+      user_zoom: Cell::new(1.0),
+      fit: Cell::new(1.0),
+      stage_w: Cell::new(0.0),
+      stage_h: Cell::new(0.0),
+      layout: Cell::new(None),
     });
     unsafe { msg_send![super(this), initWithFrame: frame] }
   }
@@ -171,19 +339,21 @@ fn hole_size_tick(view: &ZeCefHoleView) {
   }
 }
 
-static HOLE_RESIZE_PENDING: AtomicBool = AtomicBool::new(false);
-
 fn schedule_was_resized(view: &ZeCefHoleView, _bid: i32) {
-  if HOLE_RESIZE_PENDING.swap(true, Ordering::SeqCst) {
+  if view.ivars().pending.replace(true) {
     return;
   }
   // 已在主线程。不要 run_on_main_thread，下一圈再 was_resized，避免和 AppKit 布局重入。
+  // 拖窗口时 RunLoop 在事件跟踪模式，默认模式的 afterDelay 要等松手才跑。
+  // CommonModes 同时覆盖默认模式和拖动模式，所以缩放能跟着边沿走。
   unsafe {
+    let modes = NSArray::arrayWithObject(NSRunLoopCommonModes);
     let _: () = msg_send![
       view,
-      performSelector: sel!(zeFlushWasResized)
-      withObject: std::ptr::null::<objc2::runtime::AnyObject>()
-      afterDelay: 0.0f64
+      performSelector: sel!(zeFlushWasResized),
+      withObject: std::ptr::null::<objc2::runtime::AnyObject>(),
+      afterDelay: 0.0f64,
+      inModes: &*modes,
     ];
   }
 }
@@ -197,27 +367,122 @@ fn bind_hole_browser(ptr: ViewPtr, bid: i32) {
   }
 }
 
-fn create_wrapper(parent_ptr: *mut c_void, x: f64, y: f64, w: f64, h: f64) -> Result<ViewPtr, String> {
+struct WrapperViews {
+  hole: ViewPtr,
+  stage: ViewPtr,
+}
+
+// AppKit 本地事件在发送给 CEF 子视图之前到达；CDP 的 Input.* 不经过这里。
+fn install_user_input_monitor() {
+  use objc2_app_kit::{NSEvent, NSEventMask, NSEventType};
+  use std::ptr::NonNull;
+  static INSTALLED: AtomicBool = AtomicBool::new(false);
+  if INSTALLED.swap(true, Ordering::SeqCst) { return; }
+  let mask = NSEventMask::LeftMouseDown | NSEventMask::RightMouseDown | NSEventMask::OtherMouseDown
+    | NSEventMask::LeftMouseDragged | NSEventMask::RightMouseDragged | NSEventMask::ScrollWheel | NSEventMask::KeyDown;
+  let block = block2::RcBlock::new(move |raw: NonNull<NSEvent>| -> *mut NSEvent {
+    let event = unsafe { raw.as_ref() };
+    let id = (|| {
+      let window = event.window(MainThreadMarker::new()?)?;
+      let reg = registry().lock().ok()?;
+      for tab in reg.tabs.values() {
+        if tab.hidden || tab.wrapper.0.is_null() { continue; }
+        let view = unsafe { &*wrapper_view(tab.wrapper) };
+        if view.window()?.windowNumber() != window.windowNumber() { continue; }
+        let inside = if event.r#type() == NSEventType::KeyDown {
+          let responder = window.firstResponder()?;
+          let is_view: bool = unsafe { msg_send![&*responder, isKindOfClass: objc2::class!(NSView)] };
+          is_view && unsafe { (&*(Retained::as_ptr(&responder) as *const NSView)).isDescendantOf(view) }
+        } else {
+          let point = view.convertPoint_fromView(event.locationInWindow(), None);
+          let bounds = view.bounds();
+          point.x >= bounds.origin.x && point.y >= bounds.origin.y
+            && point.x < bounds.origin.x + bounds.size.width && point.y < bounds.origin.y + bounds.size.height
+        };
+        if inside { return Some(tab.id.clone()); }
+      }
+      None
+    })();
+    if let Some(id) = id {
+      let app = app_handle().lock().ok().and_then(|handle| handle.clone());
+      if let Some(app) = app { let _ = crate::browser_control::set_owner(&app, &id, "user"); }
+    }
+    raw.as_ptr()
+  });
+  let token = unsafe { NSEvent::addLocalMonitorForEventsMatchingMask_handler(mask, &block) };
+  if let Some(token) = token { let _ = Retained::into_raw(token); } else { INSTALLED.store(false, Ordering::SeqCst); }
+}
+
+fn create_wrapper(parent_ptr: *mut c_void, x: f64, y: f64, w: f64, h: f64, hidden: bool) -> Result<WrapperViews, String> {
+  install_user_input_monitor();
   unsafe {
     let parent = &*(parent_ptr as *const NSView);
     let frame = frame_in_parent(parent, x, y, w, h);
     let mtm = MainThreadMarker::new().ok_or_else(|| "必须在主线程创建浏览区".to_string())?;
     let view = ZeCefHoleView::create(mtm, frame);
-    view.setHidden(false);
+    view.setHidden(hidden);
     view.setClipsToBounds(true);
+    crate::app_browser::round_browser_view(&view);
     view.setAutoresizingMask(stretch_mask());
+
+    let hole_size = NSSize::new(frame.size.width.max(1.0), frame.size.height.max(1.0));
+    let scroll = NSScrollView::initWithFrame(
+      mtm.alloc::<NSScrollView>(),
+      NSRect::new(NSPoint::new(0.0, 0.0), hole_size),
+    );
+    scroll.setAutoresizingMask(stretch_mask());
+    scroll.setHasHorizontalScroller(false);
+    scroll.setHasVerticalScroller(false);
+    scroll.setHorizontalScrollElasticity(NSScrollElasticity::None);
+    scroll.setVerticalScrollElasticity(NSScrollElasticity::None);
+    scroll.setAutomaticallyAdjustsContentInsets(false);
+    scroll.setBorderType(NSBorderType::NoBorder);
+    scroll.setDrawsBackground(true);
+    scroll.setBackgroundColor(&NSColor::whiteColor());
+    let content = scroll.contentView();
+    let clip = ZeCenterClipView::create(mtm, content.frame());
+    let clip_view: &NSClipView = &clip;
+    scroll.setContentView(clip_view);
+
+    let (page_w, page_h) = stage_points(hole_size.width, hole_size.height);
+    let stage = ZeCefStage::create(
+      mtm,
+      NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(page_w, page_h)),
+    );
+    stage.setAutoresizingMask(NSAutoresizingMaskOptions::ViewNotSizable);
+    let stage_view: &NSView = &stage;
+    scroll.setDocumentView(Some(stage_view));
+    recenter_stage(stage_view);
+
+    let hole_view: &NSView = &view;
+    hole_view.addSubview(&scroll);
+    let scroll_ptr = ViewPtr(Retained::as_ptr(&scroll) as *mut c_void);
+    let stage_ptr = ViewPtr(Retained::as_ptr(&stage) as *mut c_void);
+    let iv = view.ivars();
+    iv.scroll.set(scroll_ptr);
+    iv.stage.set(stage_ptr);
+    iv.fit.set(page_fit(page_w, page_h));
+    iv.stage_w.set(page_w);
+    iv.stage_h.set(page_h);
+    iv.user_zoom.set(1.0);
+
     // 盖在铺满窗口的 WKWebView 上面，否则只能看到 Vue 里空的 .browser-host（白屏）
     parent.addSubview_positioned_relativeTo(&view, objc2_app_kit::NSWindowOrderingMode::Above, None);
     eprintln!(
-      "[cef] wrapper frame origin=({:.0},{:.0}) size=({:.0}x{:.0}) parentH={:.0} flipped={}",
+      "[cef] wrapper frame origin=({:.0},{:.0}) size=({:.0}x{:.0}) stage=({:.0}x{:.0}) parentH={:.0} flipped={}",
       frame.origin.x,
       frame.origin.y,
       frame.size.width,
       frame.size.height,
+      page_w,
+      page_h,
       parent.frame().size.height,
       parent.isFlipped()
     );
-    Ok(ViewPtr(Retained::into_raw(view) as *mut c_void))
+    Ok(WrapperViews {
+      hole: ViewPtr(Retained::into_raw(view) as *mut c_void),
+      stage: stage_ptr,
+    })
   }
 }
 
@@ -233,12 +498,42 @@ fn apply_stretch_mask(view: &NSView) {
   view.setAutoresizingMask(stretch_mask());
 }
 
-fn stretch_wrapper_children(ptr: ViewPtr) {
+fn stretch_wrapper_children(hole: ViewPtr, stage: ViewPtr) {
   unsafe {
-    let view = &*wrapper_view(ptr);
+    let view = &*wrapper_view(hole);
     apply_stretch_mask(view);
     view.setClipsToBounds(true);
-    fit_cef_children(view);
+    fit_hole_scroll(hole);
+    fit_stage_children(stage);
+  }
+}
+
+/// 只把滚动视图拉满洞口。播放器浮层也挂在洞口上，不能一起被拉大。
+fn fit_hole_scroll(ptr: ViewPtr) {
+  if ptr.0.is_null() {
+    return;
+  }
+  unsafe {
+    let hole = &*wrapper_view(ptr);
+    let scroll = (*(ptr.0 as *const ZeCefHoleView)).ivars().scroll.get();
+    if scroll.0.is_null() {
+      return;
+    }
+    let sub = &*wrapper_view(scroll);
+    apply_stretch_mask(sub);
+    let inner = hole.bounds();
+    if !frames_close(sub.frame(), inner) {
+      sub.setFrame(inner);
+    }
+  }
+}
+
+fn fit_stage_children(stage: ViewPtr) {
+  if stage.0.is_null() {
+    return;
+  }
+  unsafe {
+    fit_cef_children(&*wrapper_view(stage));
   }
 }
 
@@ -250,6 +545,27 @@ fn fit_cef_children(view: &NSView) {
       sub.setFrame(inner);
     }
   }
+}
+
+fn resize_stage(stage: ViewPtr, w: f64, h: f64) {
+  if stage.0.is_null() {
+    return;
+  }
+  unsafe {
+    let view = &*wrapper_view(stage);
+    let size = view.frame().size;
+    if (size.width - w).abs() >= 0.5 || (size.height - h).abs() >= 0.5 {
+      view.setFrameSize(NSSize::new(w, h));
+    }
+    fit_cef_children(view);
+    recenter_stage(view);
+  }
+}
+
+fn recenter_stage(stage: &NSView) {
+  let Some(clip) = (unsafe { stage.superview() }) else { return };
+  let origin = clip.bounds().origin;
+  let _: () = unsafe { msg_send![&*clip, scrollToPoint: origin] };
 }
 
 fn frames_close(a: NSRect, b: NSRect) -> bool {
@@ -278,14 +594,20 @@ fn apply_wrapper_bounds_ex(ptr: ViewPtr, x: f64, y: f64, w: f64, h: f64, raise: 
     apply_stretch_mask(view);
     if let Some(parent) = view.superview() {
       // 拖窗口：autoresizing 已经在跟手改真实尺寸。JS 坐标慢一拍，套上去会来回拽。
-      if !raise && view.window().is_some_and(|w| w.inLiveResize()) {
+      if !raise && wrapper_in_live_resize(ptr) {
         return;
       }
+      // JS 的测量可能比原生窗口旧一帧；有锚点规则时按当前窗口尺寸重新计算。
+      let layout = (*(ptr.0 as *const ZeCefHoleView)).ivars().layout.get();
+      let (x, y, w, h) = layout.map(|layout| {
+        let size = parent.bounds().size;
+        layout.bounds(size.width, size.height)
+      }).unwrap_or((x, y, w, h));
       let frame = frame_in_parent(&parent, x, y, w, h);
       if !frames_close(view.frame(), frame) {
         view.setFrame(frame);
       }
-      fit_cef_children(view);
+      fit_hole_scroll(ptr);
       if raise {
         parent.addSubview_positioned_relativeTo(view, objc2_app_kit::NSWindowOrderingMode::Above, None);
       }
@@ -309,19 +631,15 @@ fn set_wrapper_hidden(ptr: ViewPtr, hidden: bool) {
     let view = &*wrapper_view(ptr);
     view.setHidden(hidden);
     if !hidden {
-      if let Some(parent) = view.superview() {
-        parent.addSubview_positioned_relativeTo(
-          view,
-          objc2_app_kit::NSWindowOrderingMode::Above,
-          None,
-        );
-      }
+      let hole = &*(ptr.0 as *const ZeCefHoleView);
+      schedule_was_resized(hole, hole.ivars().browser_id.get());
     }
+    // 切走浏览页只藏起来，z-order 还在最上面。回来时不要 addSubview，否则整窗会卡一下。
   }
 }
 
 wrap_life_span_handler! {
-  pub struct ZeLifeSpan;
+  pub struct ZeLifeSpan { tab_id: String }
 
   impl LifeSpanHandler {
     fn on_after_created(&self, browser: Option<&mut Browser>) {
@@ -329,14 +647,17 @@ wrap_life_span_handler! {
       let bid = browser.identifier();
       eprintln!("[cef] on_after_created browser={bid}");
       if let Ok(mut reg) = registry().lock() {
-        if let Some(tab) = reg.tabs.values_mut().find(|t| t.browser_id == 0) {
+        if let Some(tab) = reg.tabs.get_mut(&self.tab_id) {
           tab.browser_id = bid;
           let id = tab.id.clone();
           let wrapper = tab.wrapper;
+          let stage = tab.stage;
           reg.by_browser.insert(bid, id);
           drop(reg);
           bind_hole_browser(wrapper, bid);
-          stretch_wrapper_children(wrapper);
+          stretch_wrapper_children(wrapper, stage);
+          notify_browser_resized(bid);
+          apply_browser_zoom(bid, hole_page_scale(wrapper));
           return;
         }
       }
@@ -393,7 +714,7 @@ wrap_life_span_handler! {
         if let Some(app) = h.as_ref() {
           let new_id = new_browser_id();
           eprintln!("[cef] popup open tab {new_id} → {raw}");
-          emit_opened(app, &new_id, raw);
+          emit_opened(app, &new_id, raw, id.as_deref());
         }
       }
       1
@@ -402,11 +723,12 @@ wrap_life_span_handler! {
     fn on_before_close(&self, browser: Option<&mut Browser>) {
       let Some(browser) = browser else { return };
       let bid = browser.identifier();
-      if let Ok(mut reg) = registry().lock() {
-        if let Some(id) = reg.by_browser.remove(&bid) {
-          reg.tabs.remove(&id);
-        }
-      }
+      let closed = if let Ok(mut reg) = registry().lock() {
+        let id = reg.by_browser.remove(&bid);
+        if let Some(id) = id.as_ref() { reg.tabs.remove(id); }
+        id
+      } else { None };
+      if let Some(id) = closed { forget_target(&id); }
     }
   }
 }
@@ -449,15 +771,16 @@ wrap_load_handler! {
             let bid = browser.identifier();
             if let Ok(mut reg) = registry().lock() {
               if let Some(id) = reg.by_browser.get(&bid).cloned() {
-                let zoom = if let Some(tab) = reg.tabs.get_mut(&id) {
+                let (zoom, wrapper) = if let Some(tab) = reg.tabs.get_mut(&id) {
                   tab.url = url.clone();
-                  tab.zoom
+                  (tab.zoom, tab.wrapper)
                 } else {
-                  1.0
+                  (1.0, ViewPtr(std::ptr::null_mut()))
                 };
                 remember_url(&id, &url);
                 drop(reg);
-                apply_browser_zoom(bid, zoom);
+                set_hole_user_zoom(wrapper, zoom);
+                apply_browser_zoom(bid, zoom * hole_fit(wrapper));
                 if let Ok(h) = app_handle().lock() {
                   if let Some(app) = h.as_ref() {
                     emit_load(app, &id, "finished", url.clone());
@@ -507,8 +830,8 @@ wrap_client! {
   }
 }
 
-fn make_client() -> Client {
-  ZeClient::new(ZeLifeSpan::new(), ZeLoad::new())
+fn make_client(tab_id: &str) -> Client {
+  ZeClient::new(ZeLifeSpan::new(tab_id.to_string()), ZeLoad::new())
 }
 
 pub fn parent_window_nsview(app: &AppHandle) -> Result<*mut c_void, String> {
@@ -545,6 +868,105 @@ pub fn tab_css_frame(id: &str) -> Option<(f64, f64, f64, f64)> {
       frame.origin.y
     };
     Some((frame.origin.x, y, w, h))
+  }
+}
+
+/// 舞台左上角在窗口里的 CSS 坐标（已扣掉滚动），以及洞口裁剪矩形。
+/// `scale` 是 1 个 CSS 像素对应多少点：用户缩放乘以放大倍数。
+#[derive(Clone, Copy, Debug)]
+pub struct PageOrigin {
+  pub x: f64,
+  pub y: f64,
+  pub scale: f64,
+  pub clip_x: f64,
+  pub clip_y: f64,
+  pub clip_w: f64,
+  pub clip_h: f64,
+}
+
+pub fn tab_hole_view(id: &str) -> Option<*mut c_void> {
+  let reg = registry().lock().ok()?;
+  let tab = reg.tabs.get(id)?;
+  if tab.hidden || tab.wrapper.0.is_null() {
+    return None;
+  }
+  Some(tab.wrapper.0)
+}
+
+pub fn tab_page_origin(id: &str) -> Option<PageOrigin> {
+  let (hole, stage, scale) = {
+    let reg = registry().lock().ok()?;
+    let tab = reg.tabs.get(id)?;
+    if tab.hidden || tab.stage.0.is_null() {
+      return None;
+    }
+    (tab.wrapper, tab.stage, hole_page_scale(tab.wrapper))
+  };
+  page_origin(hole, stage, scale)
+}
+
+fn page_origin(hole: ViewPtr, stage: ViewPtr, scale: f64) -> Option<PageOrigin> {
+  unsafe {
+    let hole_view = &*wrapper_view(hole);
+    let stage_view = &*wrapper_view(stage);
+    let parent = hole_view.superview()?;
+    let top_left = stage_view.convertPoint_toView(NSPoint::new(0.0, 0.0), Some(&parent));
+    let parent_h = parent.frame().size.height;
+    let x = top_left.x;
+    let y = if parent.isFlipped() { top_left.y } else { parent_h - top_left.y };
+    let frame = hole_view.frame();
+    let clip_w = frame.size.width;
+    let clip_h = frame.size.height;
+    let clip_y = if parent.isFlipped() {
+      frame.origin.y
+    } else {
+      parent_h - frame.origin.y - clip_h
+    };
+    Some(PageOrigin {
+      x,
+      y,
+      scale,
+      clip_x: frame.origin.x,
+      clip_y,
+      clip_w,
+      clip_h,
+    })
+  }
+}
+
+fn set_hole_user_zoom(ptr: ViewPtr, zoom: f64) {
+  if ptr.0.is_null() {
+    return;
+  }
+  unsafe {
+    let hole = &*(ptr.0 as *const ZeCefHoleView);
+    hole.ivars().user_zoom.set(zoom);
+  }
+}
+
+fn hole_fit(ptr: ViewPtr) -> f64 {
+  if ptr.0.is_null() {
+    return 1.0;
+  }
+  unsafe {
+    let hole = &*(ptr.0 as *const ZeCefHoleView);
+    let fit = hole.ivars().fit.get();
+    if fit.is_finite() && fit > 0.0 { fit } else { 1.0 }
+  }
+}
+
+fn hole_page_scale(ptr: ViewPtr) -> f64 {
+  if ptr.0.is_null() {
+    return 1.0;
+  }
+  unsafe {
+    let hole = &*(ptr.0 as *const ZeCefHoleView);
+    let iv = hole.ivars();
+    let user = iv.user_zoom.get();
+    let fit = iv.fit.get();
+    let user = if user.is_finite() && user > 0.0 { user } else { 1.0 };
+    let fit = if fit.is_finite() && fit > 0.0 { fit } else { 1.0 };
+    user * fit
   }
 }
 
@@ -1011,13 +1433,19 @@ async fn ensure_event_pump() -> Result<(), String> {
   let pump_conn = conn.clone();
   tokio::spawn(async move {
     loop {
-      match rx.recv().await {
-        Ok(event) => on_cdp_event(&pump_conn, &event),
-        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+      tokio::select! {
+        result = rx.recv() => match result {
+          Ok(event) => on_cdp_event(&pump_conn, &event),
+          Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+          Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+        },
+        // CdpConn 自身持有广播 sender，断线时不能仅靠 recv() 返回 Closed。
+        _ = tokio::time::sleep(Duration::from_millis(250)) => {
+          if !pump_conn.is_alive() { break; }
+        }
       }
     }
-    reset_cdp_state();
+    // 只由 ensure_cdp 在连接锁内重置断线状态。旧泵退出不能清掉刚建立的新连接。
   });
   Ok(())
 }
@@ -1091,19 +1519,21 @@ pub async fn open(
   y: f64,
   width: f64,
   height: f64,
+  hidden: bool,
 ) -> Result<(), String> {
   if is_space_list_url(&url) {
     return Err("禁止顶层打开课表地址。只点 iframe 里的「我学的课」页签。".into());
   }
   remember_handle(&app);
-  remember_url(&id, &url);
   let exists = registry()
     .lock()
     .ok()
     .is_some_and(|r| r.tabs.contains_key(&id));
   if exists {
+    if hidden { return Ok(()); }
     return show_at(&app, &id, x, y, width, height);
   }
+  remember_url(&id, &url);
   let parsed = crate::app_browser::parse_browser_url(&url)?;
   let target = cef_target_url(&app, &url, &parsed)?;
   let app2 = app.clone();
@@ -1113,18 +1543,21 @@ pub async fn open(
     cef_runtime::ensure(&app2)?;
     let window = parent_window(&app2)?;
     let parent = parent_nsview(&window)?;
-    hide_other(&id2);
-    let wrapper = create_wrapper(parent, x, y, width, height)?;
-    let parent_handle = wrapper.0 as cef::sys::cef_window_handle_t;
+    if !hidden {
+      hide_other(&id2);
+    }
+    let views = create_wrapper(parent, x, y, width, height, hidden)?;
+    let parent_handle = views.stage.0 as cef::sys::cef_window_handle_t;
+    let (page_w, page_h) = stage_points(width, height);
     let bounds = Rect {
       x: 0,
       y: 0,
-      width: width.max(1.0) as i32,
-      height: height.max(1.0) as i32,
+      width: page_w.max(1.0) as i32,
+      height: page_h.max(1.0) as i32,
     };
     let mut info = WindowInfo::default().set_as_child(parent_handle, &bounds);
     info.runtime_style = RuntimeStyle::ALLOY;
-    let mut client = make_client();
+    let mut client = make_client(&id2);
     retain_client(&client);
     let mut settings = BrowserSettings::default();
     settings.background_color = 0xFFFF_FFFF;
@@ -1134,16 +1567,18 @@ pub async fn open(
         id2.clone(),
         Tab {
           id: id2.clone(),
-          wrapper,
+          wrapper: views.hole,
+          stage: views.stage,
           browser_id: 0,
+          target_id: String::new(),
           url: target.clone(),
           title: String::new(),
-          hidden: false,
+          hidden,
           zoom: 1.0,
         },
       );
     }
-    eprintln!("[cef] create_browser {target} bounds={}x{}", bounds.width, bounds.height);
+    eprintln!("[cef] create_browser {target} bounds={}x{} hidden={hidden}", bounds.width, bounds.height);
     let created = browser_host_create_browser(
       Some(&info),
       Some(&mut client),
@@ -1155,7 +1590,9 @@ pub async fn open(
     if created != 1 {
       return Err("创建 CEF 浏览器失败".into());
     }
-    for _ in 0..40 {
+    // 预热时少泵几圈，剩下交给常驻消息泵，避免启动后首页跟着卡。
+    let pumps = if hidden { 8 } else { 40 };
+    for _ in 0..pumps {
       cef_runtime::pump_now();
     }
     let bid = registry()
@@ -1175,7 +1612,7 @@ fn show_at(app: &AppHandle, id: &str, x: f64, y: f64, w: f64, h: f64) -> Result<
   let id = id.to_string();
   on_main(app, move || {
     hide_other(&id);
-    let (wrapper, bid) = {
+    let wrapper = {
       let Ok(mut reg) = registry().lock() else {
         return Ok(());
       };
@@ -1183,11 +1620,11 @@ fn show_at(app: &AppHandle, id: &str, x: f64, y: f64, w: f64, h: f64) -> Result<
         return Ok(());
       };
       tab.hidden = false;
-      (tab.wrapper, tab.browser_id)
+      tab.wrapper
     };
+    // 尺寸变化由 setFrameSize 排到下一圈刷新舞台。这里不要直接 was_resized，否则会按洞口重排网页。
     apply_wrapper_bounds_ex(wrapper, x, y, w, h, true);
     set_wrapper_hidden(wrapper, false);
-    notify_browser_resized(bid);
     Ok(())
   })?
 }
@@ -1200,33 +1637,25 @@ pub fn set_bounds(
   width: f64,
   height: f64,
   _notify: bool,
+  layout: Option<BrowserViewportLayout>,
 ) -> Result<(), String> {
   on_main(&app, move || {
-    let Some((wrapper, bid, live, hidden)) = (|| {
+    let Some(wrapper) = (|| {
       let reg = registry().lock().ok()?;
       let tab = reg.tabs.get(&id)?;
-      Some((
-        tab.wrapper,
-        tab.browser_id,
-        wrapper_in_live_resize(tab.wrapper),
-        tab.hidden,
-      ))
+      Some(tab.wrapper)
     })() else {
       return Ok(());
     };
+    unsafe {
+      (*(wrapper.0 as *const ZeCefHoleView)).ivars().layout.set(
+        layout.and_then(|rule| AnchoredBrowserGeometry::new(rule, x, y, width, height)),
+      );
+    }
     // 先放手再 setFrame。hole_size_tick / was_resized 不能再抢同一把锁。
+    // 洞口 setFrameSize 会在下一圈按 1920x1080 刷新舞台，这里不要按洞口 was_resized。
     apply_wrapper_bounds_ex(wrapper, x, y, width, height, false);
-    if hidden {
-      if let Ok(mut reg) = registry().lock() {
-        if let Some(tab) = reg.tabs.get_mut(&id) {
-          tab.hidden = false;
-        }
-      }
-      set_wrapper_hidden(wrapper, false);
-    }
-    if bid > 0 && !live {
-      notify_browser_resized(bid);
-    }
+    // 位置同步不能唤醒已收起的网页，显示由 browser_show 单独控制。
     Ok(())
   })?
 }
@@ -1283,11 +1712,13 @@ pub fn close(app: AppHandle, id: String) -> Result<(), String> {
         }
       }
     }
+    forget_target(&id);
     Ok(())
   })?
 }
 
 fn navigate_tab(id: &str, url: &str) {
+  let permit = crate::browser_control::current_permit();
   // 先清 CDP 绑定，再 load_url。不要先 remember_url 成目标站：
   // bind_page 会按新 host 找 target，学习通播放页常有多个 page target，找不到就
   // Page.navigate 空会话，地址栏已是新站、主框架还停在旧页。
@@ -1297,6 +1728,7 @@ fn navigate_tab(id: &str, url: &str) {
   if let Ok(h) = app_handle().lock() {
     if let Some(app) = h.clone() {
       let _ = on_main(&app, move || {
+        if let Some(permit) = permit { permit.check()?; }
         if let Ok(reg) = registry().lock() {
           if let Some(tab) = reg.tabs.get(&id) {
             if let Some(browser) = browser_by_id(tab.browser_id) {
@@ -1317,7 +1749,7 @@ fn browser_by_id(id: i32) -> Option<Browser> {
   browser_host_get_browser_by_identifier(id)
 }
 
-pub fn navigate(app: AppHandle, id: String, url: String) -> Result<(), String> {
+pub async fn navigate(app: AppHandle, id: String, url: String) -> Result<(), String> {
   if is_space_list_url(&url) {
     return Err("禁止顶层打开课表地址。只点 iframe 里的「我学的课」页签。".into());
   }
@@ -1331,62 +1763,49 @@ pub fn navigate(app: AppHandle, id: String, url: String) -> Result<(), String> {
   if from_home && !crate::app_browser::is_home(&target) {
     // 从应用首页离开：先绑当前首页会话再 location.replace，去掉 Referer。
     // remembered_url 仍是首页，bind_page 才能命中；失败再走主框架 load_url。
-    let id2 = id.clone();
-    let target2 = target.clone();
-    tauri::async_runtime::spawn(async move {
-      if let Ok((conn, session)) = page_session(&id2).await {
-        let js = format!(
-          "(function(){{var m=document.querySelector('meta[name=\"referrer\"]');if(!m){{m=document.createElement('meta');m.name='referrer';document.head.appendChild(m);}}m.content='no-referrer';location.replace({});}})()",
-          serde_json::to_string(&target2).unwrap_or_else(|_| format!("\"{target2}\""))
-        );
-        if conn.evaluate(&js, session.as_deref()).await.is_ok() {
-          if let Ok(h) = app_handle().lock() {
-            if let Some(app) = h.as_ref() {
-              emit_load(app, &id2, "started", target2.clone());
-            }
-          }
-          return;
-        }
+    if let Ok((conn, session)) = page_session(&id).await {
+      let js = format!(
+        "(function(){{var m=document.querySelector('meta[name=\"referrer\"]');if(!m){{m=document.createElement('meta');m.name='referrer';document.head.appendChild(m);}}m.content='no-referrer';location.replace({});}})()",
+        serde_json::to_string(&target).map_err(|e| e.to_string())?
+      );
+      if conn.evaluate(&js, session.as_deref()).await.is_ok() {
+        emit_load(&app, &id, "started", target);
+        return Ok(());
       }
-      navigate_tab(&id2, &target2);
-    });
-    return Ok(());
+    }
+    crate::browser_control::check_current()?;
   }
   navigate_tab(&id, &target);
   Ok(())
 }
 
-pub fn reload(_app: AppHandle, id: String) -> Result<(), String> {
+pub fn reload(app: AppHandle, id: String) -> Result<(), String> {
+  let permit = crate::browser_control::current_permit();
   forget_target(&id);
-  tauri::async_runtime::spawn(async move {
-    if let Ok((conn, session)) = page_session(&id).await {
-      let _ = conn.call("Page.reload", json!({}), session.as_deref()).await;
-    }
-    forget_target(&id);
-  });
-  Ok(())
+  // 刷新是修复调试通道的恢复手段，不能反过来依赖已经损坏的 CDP 绑定。
+  on_main(&app, move || {
+    if let Some(permit) = permit { permit.check()?; }
+    let bid = registry().lock().map_err(|_| "浏览器注册表不可用".to_string())?
+      .tabs.get(&id).map(|tab| tab.browser_id).ok_or_else(|| "标签页已关闭".to_string())?;
+    let browser = browser_by_id(bid).ok_or_else(|| "标签页尚未就绪".to_string())?;
+    browser.reload();
+    Ok(())
+  })?
 }
 
-pub fn go_back(_app: AppHandle, id: String) -> Result<(), String> {
-  tauri::async_runtime::spawn(async move {
-    if let Ok((conn, session)) = page_session(&id).await {
-      let _ = conn.evaluate("history.back()", session.as_deref()).await;
-    }
-  });
-  Ok(())
+pub async fn go_back(_app: AppHandle, id: String) -> Result<(), String> {
+  let (conn, session) = page_session(&id).await?;
+  conn.evaluate("history.back()", session.as_deref()).await.map(|_| ())
 }
 
-pub fn go_forward(_app: AppHandle, id: String) -> Result<(), String> {
-  tauri::async_runtime::spawn(async move {
-    if let Ok((conn, session)) = page_session(&id).await {
-      let _ = conn.evaluate("history.forward()", session.as_deref()).await;
-    }
-  });
-  Ok(())
+pub async fn go_forward(_app: AppHandle, id: String) -> Result<(), String> {
+  let (conn, session) = page_session(&id).await?;
+  conn.evaluate("history.forward()", session.as_deref()).await.map(|_| ())
 }
 
 fn scale_to_zoom_level(scale: f64) -> f64 {
-  let scale = if scale.is_finite() { scale.clamp(0.25, 5.0) } else { 1.0 };
+  // 下限留给「窗口缩小后的整页适配」。用户缩放本身仍在 set_zoom 里限制在 0.25–5 倍。
+  let scale = if scale.is_finite() { scale.clamp(0.05, 16.0) } else { 1.0 };
   if (scale - 1.0).abs() < 0.001 {
     0.0
   } else {
@@ -1408,14 +1827,26 @@ fn apply_browser_zoom(browser_id: i32, scale: f64) {
 pub fn set_zoom(app: AppHandle, id: String, zoom: f64) -> Result<(), String> {
   let zoom = if zoom.is_finite() { zoom.clamp(0.25, 5.0) } else { 1.0 };
   on_main(&app, move || {
-    let bid = registry().lock().ok().and_then(|mut reg| {
+    let found = registry().lock().ok().and_then(|mut reg| {
       let tab = reg.tabs.get_mut(&id)?;
       tab.zoom = zoom;
-      Some(tab.browser_id)
+      Some((tab.browser_id, tab.wrapper))
     });
-    if let Some(bid) = bid {
-      apply_browser_zoom(bid, zoom);
+    if let Some((bid, wrapper)) = found {
+      set_hole_user_zoom(wrapper, zoom);
+      apply_browser_zoom(bid, zoom * hole_fit(wrapper));
     }
+    Ok::<(), String>(())
+  })?
+}
+
+pub fn set_audio_muted(app: AppHandle, id: String, muted: bool) -> Result<(), String> {
+  on_main(&app, move || {
+    let bid = registry().lock().map_err(|_| "浏览器状态不可用".to_string())?
+      .tabs.get(&id).map(|tab| tab.browser_id).ok_or_else(|| "浏览器标签页不存在".to_string())?;
+    let browser = browser_by_id(bid).ok_or_else(|| "浏览器尚未就绪".to_string())?;
+    let host = browser.host().ok_or_else(|| "浏览器音频控制不可用".to_string())?;
+    host.set_audio_muted(if muted { 1 } else { 0 });
     Ok::<(), String>(())
   })?
 }
@@ -1475,33 +1906,72 @@ pub(crate) struct PageBind {
   pub url: String,
 }
 
-fn remembered_targets() -> &'static Mutex<HashMap<String, String>> {
-  static MAP: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
-  MAP.get_or_init(|| Mutex::new(HashMap::new()))
+fn native_target_result(success: i32, result: &[u8]) -> Result<String, String> {
+  let value: Value = serde_json::from_slice(result).map_err(|e| format!("读取原生页面身份失败：{e}"))?;
+  if success != 1 {
+    return Err(format!("读取原生页面身份失败：{value}"));
+  }
+  value.get("targetInfo").filter(|t| is_page_target(t))
+    .map(target_id_of).filter(|id| !id.is_empty()).map(str::to_string)
+    .ok_or_else(|| "原生标签页没有返回有效的 page target".to_string())
 }
 
-fn remember_target(id: &str, target_id: &str) {
-  if id.is_empty() || target_id.is_empty() {
-    return;
-  }
-  if let Ok(mut map) = remembered_targets().lock() {
-    map.retain(|tab, tid| tab == id || tid != target_id);
-    map.insert(id.to_string(), target_id.to_string());
+type TargetReply = Arc<Mutex<Option<tokio::sync::oneshot::Sender<Result<String, String>>>>>;
+
+wrap_dev_tools_message_observer! {
+  struct NativeTargetObserver { message_id: i32, reply: TargetReply }
+
+  impl DevToolsMessageObserver {
+    fn on_dev_tools_method_result(
+      &self, _browser: Option<&mut Browser>, message_id: i32, success: i32, result: Option<&[u8]>,
+    ) {
+      if message_id != self.message_id { return; }
+      if let Ok(mut reply) = self.reply.lock() {
+        if let Some(tx) = reply.take() {
+          let _ = tx.send(native_target_result(success, result.unwrap_or(b"{}")));
+        }
+      }
+    }
   }
 }
 
-fn remembered_target(id: &str) -> String {
-  remembered_targets()
-    .lock()
-    .ok()
-    .and_then(|map| map.get(id).cloned())
-    .unwrap_or_default()
+/// 通过这个 Browser 自身的 DevTools 通道取身份，绝不按 URL 或页面数量猜另一个标签。
+async fn native_page_target(id: &str) -> Result<String, String> {
+  let (bid, known) = registry().lock().map_err(|_| "浏览器注册表不可用".to_string())?
+    .tabs.get(id).map(|t| (t.browser_id, t.target_id.clone()))
+    .ok_or_else(|| "标签页已关闭，请选择仍然打开的标签页".to_string())?;
+  if bid == 0 { return Err("原生标签页尚未创建完成，请稍后重试".into()); }
+  if !known.is_empty() { return Ok(known); }
+  let app = app_handle().lock().ok().and_then(|h| h.clone())
+    .ok_or_else(|| "浏览器尚未初始化".to_string())?;
+  let (tx, rx) = tokio::sync::oneshot::channel();
+  static NEXT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(1);
+  let message_id = NEXT.fetch_add(1, Ordering::Relaxed);
+  let registration = on_main(&app, move || -> Result<Registration, String> {
+    let host = browser_by_id(bid).and_then(|b| b.host())
+      .ok_or_else(|| "原生标签页不可用".to_string())?;
+    let mut observer = NativeTargetObserver::new(message_id, Arc::new(Mutex::new(Some(tx))));
+    let registration = host.add_dev_tools_message_observer(Some(&mut observer))
+      .ok_or_else(|| "无法观察原生页面身份".to_string())?;
+    let method = CefString::from("Target.getTargetInfo");
+    if host.execute_dev_tools_method(message_id, Some(&method), None) == 0 {
+      return Err("无法查询原生页面身份".into());
+    }
+    Ok(registration)
+  })??;
+  let result = tokio::time::timeout(Duration::from_secs(3), rx).await
+    .map_err(|_| "读取原生页面身份超时".to_string())
+    .and_then(|v| v.map_err(|_| "原生页面身份通道已关闭".to_string())).and_then(|v| v);
+  on_main(&app, move || drop(registration))?;
+  let target = result?;
+  let mut reg = registry().lock().map_err(|_| "浏览器注册表不可用".to_string())?;
+  let tab = reg.tabs.get_mut(id).filter(|t| t.browser_id == bid)
+    .ok_or_else(|| "读取页面身份时标签页已关闭".to_string())?;
+  tab.target_id = target.clone();
+  Ok(target)
 }
 
 fn forget_target(id: &str) {
-  if let Ok(mut map) = remembered_targets().lock() {
-    map.remove(id);
-  }
   forget_bind(id);
 }
 
@@ -1509,7 +1979,6 @@ fn forget_target(id: &str) {
 struct BindSession {
   target_id: String,
   session: String,
-  url: String,
 }
 
 fn bind_sessions() -> &'static Mutex<HashMap<String, BindSession>> {
@@ -1521,7 +1990,7 @@ fn cached_bind(id: &str) -> Option<BindSession> {
   bind_sessions().lock().ok()?.get(id).cloned()
 }
 
-fn remember_bind(id: &str, target_id: &str, session: &str, url: &str) {
+fn remember_bind(id: &str, target_id: &str, session: &str) {
   if id.is_empty() || target_id.is_empty() || session.is_empty() {
     return;
   }
@@ -1532,7 +2001,6 @@ fn remember_bind(id: &str, target_id: &str, session: &str, url: &str) {
       BindSession {
         target_id: target_id.to_string(),
         session: session.to_string(),
-        url: url.to_string(),
       },
     );
   }
@@ -1560,58 +2028,6 @@ fn target_url_of(t: &Value) -> &str {
   t.get("url").and_then(|v| v.as_str()).unwrap_or("")
 }
 
-fn url_host_path(raw: &str) -> (String, String) {
-  let rest = raw.split("://").nth(1).unwrap_or(raw);
-  let rest = rest.split('@').next_back().unwrap_or(rest);
-  let (hostport, pathq) = rest.split_once('/').unwrap_or((rest, ""));
-  let host = hostport
-    .split(':')
-    .next()
-    .unwrap_or(hostport)
-    .trim()
-    .trim_start_matches("www.")
-    .to_ascii_lowercase();
-  let path = pathq.split('?').next().unwrap_or(pathq).split('#').next().unwrap_or(pathq);
-  let path = format!("/{}", path.trim_start_matches('/'))
-    .trim_end_matches('/')
-    .to_string();
-  (host, path)
-}
-
-fn urls_same_page(want: &str, got: &str) -> bool {
-  if want.is_empty() || got.is_empty() {
-    return false;
-  }
-  let want_base = want.split('#').next().unwrap_or(want);
-  let got_base = got.split('#').next().unwrap_or(got);
-  if got.contains(want_base) || want.contains(got_base) {
-    return true;
-  }
-  let (wh, wp) = url_host_path(want);
-  let (gh, gp) = url_host_path(got);
-  !wh.is_empty() && wh == gh && wp == gp
-}
-
-/** 同站：主机相等，或同属一个根域（zjooc.cn / chaoxing.com）。 */
-fn urls_same_host(want: &str, got: &str) -> bool {
-  let (wh, _) = url_host_path(want);
-  let (gh, _) = url_host_path(got);
-  if wh.is_empty() || gh.is_empty() {
-    return false;
-  }
-  if wh == gh {
-    return true;
-  }
-  fn site_root(host: &str) -> String {
-    let parts: Vec<&str> = host.split('.').filter(|p| !p.is_empty()).collect();
-    if parts.len() <= 2 {
-      return host.to_string();
-    }
-    format!("{}.{}", parts[parts.len() - 2], parts[parts.len() - 1])
-  }
-  site_root(&wh) == site_root(&gh)
-}
-
 fn session_of_target(target_id: &str) -> String {
   if target_id.is_empty() {
     return String::new();
@@ -1629,167 +2045,71 @@ fn session_of_target(target_id: &str) -> String {
     .unwrap_or_default()
 }
 
-fn taken_targets(except: &str) -> HashSet<String> {
-  let mut out = HashSet::new();
-  if let Ok(map) = remembered_targets().lock() {
-    for (tab, tid) in map.iter() {
-      if tab != except && !tid.is_empty() {
-        out.insert(tid.clone());
-      }
-    }
-  }
-  if let Ok(map) = bind_sessions().lock() {
-    for (tab, bind) in map.iter() {
-      if tab != except && !bind.target_id.is_empty() {
-        out.insert(bind.target_id.clone());
-      }
-    }
-  }
-  out
+fn exact_page_target<'a>(pages: &'a [Value], target: &str) -> Option<&'a Value> {
+  if target.is_empty() { return None; }
+  pages.iter().find(|page| is_page_target(page) && target_id_of(page) == target)
 }
 
-fn cached_bind_matches(cached: &BindSession, want: &str) -> bool {
-  if cached.target_id.is_empty() || cached.session.is_empty() {
-    return false;
+async fn prepare_background_page(conn: &CdpConn, session: &str, id: &str) -> Result<(), String> {
+  if !tab_is_visible(id) {
+    // 收起的是原生展示层，不能同时关闭后台 Agent 的输入能力。
+    // 使用 Chromium 的逻辑焦点，不显示 NSView、不抢系统窗口焦点；仍受自动化 epoch 检查。
+    conn.call("Emulation.setFocusEmulationEnabled", json!({ "enabled": true }), Some(session)).await
+      .map_err(|error| format!("激活后台浏览器失败：{error}"))?;
   }
-  if want.is_empty() {
-    return true;
-  }
-  if cached.url.is_empty() {
-    return false;
-  }
-  urls_same_page(want, &cached.url) || urls_same_host(want, &cached.url)
-}
-
-fn pick_page_target_in<'a>(
-  pages: &'a [Value],
-  want: &str,
-  cached: &str,
-  skip: &str,
-  taken: &HashSet<String>,
-) -> Option<&'a Value> {
-  let usable = |t: &'a Value| {
-    is_page_target(t) && target_id_of(t) != skip && !taken.contains(target_id_of(t))
-  };
-  if !cached.is_empty() {
-    if let Some(hit) = pages.iter().find(|t| usable(t) && target_id_of(t) == cached) {
-      let url = target_url_of(hit);
-      if want.is_empty() || urls_same_page(want, url) || urls_same_host(want, url) {
-        return Some(hit);
-      }
-    }
-  }
-  if !want.is_empty() {
-    if let Some(hit) = pages.iter().find(|t| usable(t) && urls_same_page(want, target_url_of(t))) {
-      return Some(hit);
-    }
-    let hosts: Vec<_> = pages
-      .iter()
-      .filter(|t| usable(t) && urls_same_host(want, target_url_of(t)))
-      .collect();
-    if hosts.len() == 1 {
-      return Some(hosts[0]);
-    }
-  }
-  let rest: Vec<_> = pages.iter().filter(|t| usable(*t)).collect();
-  if rest.len() == 1 {
-    return Some(rest[0]);
-  }
-  None
-}
-
-fn pick_page_target<'a>(pages: &'a [Value], id: &str, skip: &str) -> Option<&'a Value> {
-  pick_page_target_in(
-    pages,
-    &remembered_url(id),
-    &remembered_target(id),
-    skip,
-    &taken_targets(id),
-  )
+  Ok(())
 }
 
 pub(crate) async fn bind_page(id: &str) -> Result<PageBind, String> {
+  // 冷绑定串行，防止同一标签的并发快照/推送创建多个会话并互相覆盖缓存。
+  static BIND: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+  let _guard = BIND.lock().await;
+  let target_id = native_page_target(id).await?;
   let conn = ensure_cdp().await?;
-  let _ = ensure_event_pump().await;
+  ensure_event_pump().await?;
   if let Some(cached) = cached_bind(id) {
-    let want = remembered_url(id);
-    if cached_bind_matches(&cached, &want) {
-      return Ok(PageBind {
-        conn,
-        session: Some(cached.session),
-        target_id: cached.target_id,
-        url: want,
-      });
-    }
-    forget_target(id);
-  }
-  let pages = conn.pages().await.unwrap_or_default();
-  let mut skip = String::new();
-  for _ in 0..3 {
-    let page = pick_page_target(&pages, id, &skip).or_else(|| {
-      // 主机对不上时仍要能绑上唯一未占用的 page，否则 Runtime.evaluate 会落到浏览器根会话 → -32601
-      let taken = taken_targets(id);
-      let rest: Vec<_> = pages
-        .iter()
-        .filter(|t| is_page_target(t) && target_id_of(t) != skip && !taken.contains(target_id_of(t)))
-        .collect();
-      if rest.len() == 1 {
-        Some(rest[0])
-      } else {
-        None
-      }
-    });
-    let target_id = page
-      .and_then(|t| t.get("targetId").and_then(|v| v.as_str()))
-      .unwrap_or("")
-      .to_string();
-    let url = page
-      .and_then(|t| t.get("url").and_then(|v| v.as_str()))
-      .unwrap_or("")
-      .to_string();
-    if target_id.is_empty() {
-      break;
-    }
-    let attached = match conn.attach(&target_id).await {
-      Ok(sid) => Some(sid),
-      Err(_) => {
-        // autoAttach 已挂上时 attach 可能失败；用事件里记的 session
-        let existing = session_of_target(&target_id);
-        if existing.is_empty() {
-          None
-        } else {
-          Some(existing)
+    if cached.target_id == target_id && !cached.session.is_empty() {
+      // detached 事件可能尚未处理；先确认会话确实仍然指向这个原生页面。
+      if let Ok(info) = conn.call("Target.getTargetInfo", json!({}), Some(&cached.session)).await {
+        if info.get("targetInfo").is_some_and(|t| is_page_target(t) && target_id_of(t) == target_id) {
+          let url = target_url_of(&info["targetInfo"]).to_string();
+          prepare_background_page(&conn, &cached.session, id).await?;
+          return Ok(PageBind { conn, session: Some(cached.session), target_id, url });
         }
       }
-    };
-    if let Some(sid) = attached {
-      remember_target(id, &target_id);
-      let _ = conn.call("Runtime.enable", json!({}), Some(&sid)).await;
-      let _ = conn.call("Page.enable", json!({}), Some(&sid)).await;
-      let h264 = claim_h264_bundle();
-      let _ = conn
-        .call(
-          "Page.addScriptToEvaluateOnNewDocument",
-          json!({ "source": h264 }),
-          Some(&sid),
-        )
-        .await;
-      let _ = conn.evaluate(&h264, Some(&sid)).await;
-      let _ = crate::cef::install_push(&conn, Some(&sid)).await;
-      remember_bind(id, &target_id, &sid, &url);
-      // 不要在每次 eval 里 attach 全部 iframe。studentstudy 常有 20+ 框（视频/作业/讨论），
-      // 任一子 target 卡住，章节轮询就永远回不来，面板会一直停在「加载中」。
-      return Ok(PageBind { conn, session: Some(sid), target_id, url });
     }
     forget_target(id);
-    skip = target_id;
   }
-  Ok(PageBind {
-    conn,
-    session: None,
-    target_id: String::new(),
-    url: String::new(),
-  })
+  let pages = conn.pages().await.map_err(|e| format!("读取 CDP 页面列表失败：{e}"))?;
+  let page = exact_page_target(&pages, &target_id).ok_or_else(|| format!(
+    "当前原生标签页暂未出现在 CDP 页面列表中（发现 {} 个页面），请稍后重试",
+    pages.iter().filter(|p| is_page_target(p)).count()
+  ))?;
+  let url = target_url_of(page).to_string();
+  let sid = match conn.attach(&target_id).await {
+    Ok(sid) => sid,
+    Err(error) => {
+      let existing = session_of_target(&target_id);
+      if existing.is_empty() { return Err(format!("附加当前标签页失败：{error}")); }
+      existing
+    }
+  };
+  conn.call("Page.enable", json!({}), Some(&sid)).await
+    .map_err(|e| format!("当前标签页会话不可用：{e}"))?;
+  conn.call("Runtime.enable", json!({}), Some(&sid)).await
+    .map_err(|e| format!("当前标签页脚本通道不可用：{e}"))?;
+  prepare_background_page(&conn, &sid, id).await?;
+  let h264 = claim_h264_bundle();
+  let _ = conn.call("Page.addScriptToEvaluateOnNewDocument", json!({ "source": h264 }), Some(&sid)).await;
+  let _ = conn.evaluate(&h264, Some(&sid)).await;
+  let _ = crate::cef::install_push(&conn, Some(&sid)).await;
+  // 关闭回调可能在 attach 期间到来，不能再给已经关闭的标签留下占用记录。
+  if !registry().lock().ok().is_some_and(|r| r.tabs.contains_key(id)) {
+    let _ = conn.call("Target.detachFromTarget", json!({ "sessionId": sid }), None).await;
+    return Err("绑定期间标签页已关闭".into());
+  }
+  remember_bind(id, &target_id, &sid);
+  Ok(PageBind { conn, session: Some(sid), target_id, url })
 }
 
 async fn page_session(id: &str) -> Result<(CdpConn, Option<String>), String> {
@@ -1804,12 +2124,10 @@ pub(crate) fn reset_cdp_state() {
   if let Ok(mut map) = bind_sessions().lock() {
     map.clear();
   }
-  if let Ok(mut map) = remembered_targets().lock() {
-    map.clear();
-  }
   if let Ok(mut log) = network_log().lock() {
     log.owner.clear();
     log.targets.clear();
+    log.session_targets.clear();
     log.last_browser.clear();
     log.pump = false;
   }
@@ -1842,6 +2160,11 @@ fn forget_session(session: &str) {
 fn forget_by_target(target_id: &str) {
   if target_id.is_empty() {
     return;
+  }
+  if let Ok(mut reg) = registry().lock() {
+    for tab in reg.tabs.values_mut().filter(|tab| tab.target_id == target_id) {
+      tab.target_id.clear();
+    }
   }
   let page_ids: Vec<String> = bind_sessions()
     .lock()
@@ -1876,6 +2199,8 @@ fn emit_frame(id: &str, url: &str) {
 }
 
 async fn ensure_cdp() -> Result<CdpConn, String> {
+  static CONNECT: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+  let _guard = CONNECT.lock().await;
   if let Ok(g) = cdp().lock() {
     if let Some(c) = g.clone() {
       if c.is_alive() {
@@ -2034,18 +2359,6 @@ async fn eval_all_frames(id: &str, expression: &str) -> Result<Value, String> {
   Ok(Value::Null)
 }
 
-async fn eval_one_target(
-  conn: &CdpConn,
-  session: Option<&str>,
-  expression: &str,
-  url_hint: &str,
-) -> (String, Result<Value, String>) {
-  match conn.evaluate_ms(expression, session, 600).await {
-    Ok(value) => (url_hint.to_string(), Ok(value)),
-    Err(err) => (url_hint.to_string(), Err(err)),
-  }
-}
-
 fn skip_child_eval_url(url: &str) -> bool {
   let raw = url.trim();
   raw.is_empty()
@@ -2056,123 +2369,42 @@ fn skip_child_eval_url(url: &str) -> bool {
     || raw.starts_with("chrome-extension:")
 }
 
-async fn probe_child_frame(
-  conn: CdpConn,
-  tid: String,
-  hint: String,
-  expression: String,
-) -> (String, Result<Value, String>) {
-  let sid = match conn.attach_ms(&tid, 350).await {
-    Ok(sid) => sid,
-    Err(err) => return (hint, Err(err)),
-  };
-  match conn.evaluate_ms(&expression, Some(&sid), 600).await {
-    Ok(value) => (hint, Ok(value)),
-    Err(err) => (hint, Err(err)),
-  }
-}
-
-async fn eval_child_targets(
-  page: &PageBind,
-  expression: &str,
-) -> Vec<(String, Result<Value, String>)> {
-  let targets = match tokio::time::timeout(Duration::from_millis(500), page.conn.pages()).await {
-    Ok(Ok(list)) => list,
-    _ => return Vec::new(),
-  };
-  let mut jobs = Vec::new();
-  for t in targets {
-    if jobs.len() >= 12 {
-      break;
-    }
-    let Some(tid) = t.get("targetId").and_then(|v| v.as_str()) else {
-      continue;
-    };
-    if tid == page.target_id {
-      continue;
-    }
-    if !is_child_target(&t, &page.target_id, &page.url) {
-      continue;
-    }
-    let hint = t.get("url").and_then(|v| v.as_str()).unwrap_or("");
-    if skip_child_eval_url(hint) {
-      continue;
-    }
-    jobs.push(probe_child_frame(
-      page.conn.clone(),
-      tid.to_string(),
-      hint.to_string(),
-      expression.to_string(),
-    ));
-  }
-  if jobs.is_empty() {
-    return Vec::new();
-  }
-  match tokio::time::timeout(Duration::from_millis(1600), join_all(jobs)).await {
-    Ok(rows) => rows,
-    Err(_) => Vec::new(),
-  }
-}
-
 async fn eval_frames_inner(id: &str, expression: &str) -> Result<Value, String> {
   let page = bind_page(id).await?;
-  let mut rows: Vec<(String, Result<Value, String>)> = Vec::new();
-  rows.push(
-    eval_one_target(
-      &page.conn,
-      page.session.as_deref(),
-      expression,
-      &page.url,
-    )
-    .await,
-  );
-  let children = eval_child_targets(&page, expression).await;
-  rows.extend(children);
-
-  let mut frames: Vec<Value> = Vec::new();
+  let mut rows = vec![(String::new(), page.url.clone(), page.conn.evaluate_ms(expression, page.session.as_deref(), 600).await)];
+  let deadline = std::time::Instant::now() + Duration::from_millis(1600);
+  if let Ok(Ok(contexts)) = tokio::time::timeout(Duration::from_millis(700), crate::cef::frames::contexts(&page)).await {
+    let children: Vec<_> = contexts.iter().filter(|frame| !frame.path.is_empty() && !skip_child_eval_url(&frame.url)).collect();
+    for batch in children.chunks(8) {
+      if std::time::Instant::now() >= deadline { break; }
+      let results = join_all(batch.iter().map(|frame| async {
+        let result = tokio::time::timeout(Duration::from_millis(400), crate::cef::frames::evaluate(&page, frame, expression)).await
+          .unwrap_or_else(|_| Err("frame 执行超时".into()));
+        (frame.id.clone(), frame.url.clone(), result)
+      })).await;
+      rows.extend(results);
+    }
+  }
+  let mut frames = Vec::new();
   let mut best = Value::Null;
   let mut best_score = -1;
   let mut last_err = String::new();
-  let mut seen: HashSet<String> = HashSet::new();
-  for (url, result) in rows {
-    if !url.is_empty() && !seen.insert(url.clone()) {
-      if let Ok(ref v) = result {
-        let score = eval_score(v);
-        if score > best_score {
-          best = v.clone();
-          best_score = score;
-          if let Some(slot) = frames
-            .iter_mut()
-            .find(|f| f.get("url").and_then(|x| x.as_str()) == Some(url.as_str()))
-          {
-            *slot = json!({ "url": url, "result": v, "error": Value::Null });
-          }
-        }
-      }
-      continue;
-    }
+  // 同 URL 的多个播放器是不同 frame，不能按 URL 去重。
+  for (frame_id, url, result) in rows {
     match result {
-      Ok(v) => {
-        let score = eval_score(&v);
-        if score > best_score {
-          best = v.clone();
-          best_score = score;
-        }
-        frames.push(json!({ "url": url, "result": v, "error": Value::Null }));
+      Ok(value) => {
+        let score = eval_score(&value);
+        if score > best_score { best = value.clone(); best_score = score; }
+        frames.push(json!({ "frameId": frame_id, "url": url, "result": value, "error": Value::Null }));
       }
-      Err(err) => {
-        let nice = format_eval_error_near(&err, expression);
+      Err(error) => {
+        let nice = format_eval_error_near(&error, expression);
         last_err = nice.clone();
-        frames.push(json!({ "url": url, "result": Value::Null, "error": nice }));
+        frames.push(json!({ "frameId": frame_id, "url": url, "result": Value::Null, "error": nice }));
       }
     }
   }
-
-  Ok(json!({
-    "frames": frames,
-    "result": best,
-    "error": if best_score < 0 { last_err } else { String::new() },
-  }))
+  Ok(json!({ "frames": frames, "result": best, "error": if best_score < 0 { last_err } else { String::new() } }))
 }
 
 pub async fn eval_script(_app: AppHandle, id: String, script: String) -> Result<String, String> {
@@ -2398,6 +2630,20 @@ const FIND_SEL: &str = r#"(function(){
 const COLLECT_DOM: &str = r#"(function(){
   var out = [];
   var seen = {};
+
+  function locatorOf(el){
+    var parts=[];
+    for(var n=el;n && n.nodeType===1;n=n.parentElement){
+      var tag=n.tagName.toLowerCase(), i=1;
+      for(var prev=n.previousElementSibling;prev;prev=prev.previousElementSibling) if(prev.tagName===n.tagName) i++;
+      parts.unshift(tag+':nth-of-type('+i+')');
+    }
+    return {by:'css',value:parts.join(' > ')};
+  }
+  function painted(el){
+    var st=(el.ownerDocument.defaultView||window).getComputedStyle(el), r=el.getBoundingClientRect();
+    return st.display!=='none' && st.visibility!=='hidden' && st.visibility!=='collapse' && r.width>=2 && r.height>=2;
+  }
   function hookOf(el){
     try { return String(el.getAttribute('data-url') || el.getAttribute('href') || el.getAttribute('onclick') || el.href || ''); } catch (e) { return ''; }
   }
@@ -2451,9 +2697,12 @@ const COLLECT_DOM: &str = r#"(function(){
   function add(el, role){
     var name = nameOf(el);
     var cap = (role === 'treeitem' || role === 'listitem' || role === 'option') ? 120 : 96;
-    if (!name || name.length > cap || seen[role + ':' + name]) return;
-    seen[role + ':' + name] = 1;
-    var row = { role: role || 'generic', name: name.slice(0, cap) };
+    if (!painted(el) || !name || name.length > cap) return;
+    var locator=locatorOf(el);
+    if (seen[locator.value]) return;
+    seen[locator.value]=1;
+    var row = { role: role || 'generic', name: name.slice(0, cap), locator:locator, disabled:el.matches(':disabled') || el.getAttribute('aria-disabled')==='true' };
+    if(role==='checkbox'||role==='radio') row.checked=el.checked===true || el.getAttribute('aria-checked')==='true';
     if (role === 'treeitem' || role === 'listitem' || role === 'link' || role === 'tab') {
       var mark = markOf(el);
       if (mark) row.mark = mark;
@@ -2566,9 +2815,12 @@ const COLLECT_DOM: &str = r#"(function(){
       if (!role) {
         if (tag === 'a') role = 'link';
         else if (tag === 'button') role = 'button';
+        else if (tag === 'input' && /^(checkbox|radio)$/.test(el.type)) role=el.type;
         else if (tag === 'input' || tag === 'textarea') role = 'textbox';
+        else if (tag === 'select') role='combobox';
         else if (el.classList && el.classList.contains('el-tree-node__content')) role = 'treeitem';
-        else role = 'button';
+        else if (el.hasAttribute('onclick') || el.hasAttribute('data-url') || el.hasAttribute('coursetype') || /(?:^|\s)tab-item(?:\s|$)/.test(el.className||'')) role='button';
+        else continue;
       }
       if (role === 'treeitem' || (el.classList && el.classList.contains('el-tree-node__content'))) {
         var tree = el.closest && el.closest('[role="treeitem"]');
@@ -2600,6 +2852,16 @@ const COLLECT_DOM: &str = r#"(function(){
 
 /// 同进程 iframe 不是独立 target。从主文档 pierce，按序号链把每一框的可点节点分开。
 const COLLECT_FRAMES: &str = r#"(function(){
+
+  function locatorOf(el){
+    var parts=[];
+    for(var n=el;n && n.nodeType===1;n=n.parentElement){
+      var tag=n.tagName.toLowerCase(), i=1;
+      for(var prev=n.previousElementSibling;prev;prev=prev.previousElementSibling) if(prev.tagName===n.tagName) i++;
+      parts.unshift(tag+':nth-of-type('+i+')');
+    }
+    return {by:'css',value:parts.join(' > ')};
+  }
   function painted(el){
     if (!el || !el.ownerDocument) return false;
     try {
@@ -2627,14 +2889,15 @@ const COLLECT_FRAMES: &str = r#"(function(){
       if (!role) {
         if (tag === 'a') role = 'link';
         else if (tag === 'button') role = 'button';
+        else if (tag === 'input' && /^(checkbox|radio)$/.test(el.type)) role=el.type;
         else if (tag === 'input' || tag === 'textarea') role = 'textbox';
         else if (tag === 'select') role = 'combobox';
         else if (tag === 'video') role = 'video';
         else if (tag === 'audio') role = 'audio';
-        else role = 'button';
+        else continue;
       }
       var name = '';
-      try { name = String(el.getAttribute('aria-label') || el.getAttribute('title') || el.getAttribute('placeholder') || el.innerText || el.textContent || el.value || ''); } catch (eN) {}
+      try { name = String(el.getAttribute('aria-label') || el.getAttribute('title') || el.getAttribute('placeholder') || el.innerText || el.textContent || ''); } catch (eN) {}
       name = name.replace(/\s+/g, ' ').trim();
       if (!name && (tag === 'input' || tag === 'textarea')) {
         var inputType = '';
@@ -2644,7 +2907,8 @@ const COLLECT_FRAMES: &str = r#"(function(){
       if (!name && role === 'video') name = '视频';
       if (!name && role === 'audio') name = '音频';
       if (!name || name.length > 96) continue;
-      var row = { role: role, name: name.slice(0, 96) };
+      var row = { role: role, name: name.slice(0, 96), locator:locatorOf(el), disabled:el.matches(':disabled') || el.getAttribute('aria-disabled')==='true' };
+      if(role==='checkbox'||role==='radio') row.checked=el.checked===true || el.getAttribute('aria-checked')==='true';
       if (role === 'video' || role === 'audio') {
         var total = el.duration;
         if (!(total > 0)) {
@@ -2695,14 +2959,17 @@ const COLLECT_FRAMES: &str = r#"(function(){
     }
     return out;
   }
+  var visibleCount = 0;
+  var visitedCount = 0;
   function walk(win, path, depth, out){
-    if (!win || depth > 4 || out.length >= 24) return;
+    if (!win || depth >= 16 || visibleCount >= 128 || visitedCount >= 2048) return;
     var doc = null;
     try { doc = win.document; } catch (e) { return; }
     if (!doc) return;
     var list = [];
     try { list = doc.querySelectorAll('iframe, frame'); } catch (eList) { return; }
-    for (var i = 0; i < list.length && out.length < 24; i++) {
+    for (var i = 0; i < list.length && visibleCount < 128 && visitedCount < 2048; i++) {
+      visitedCount += 1;
       var fe = list[i];
       var childPath = path ? (path + '/' + i) : String(i);
       var id = fe.id || '';
@@ -2722,6 +2989,7 @@ const COLLECT_FRAMES: &str = r#"(function(){
         href = String((child && child.location && child.location.href) || '');
       } catch (eCross) { cross = true; }
       if (!child || cross) {
+        visibleCount += 1;
         out.push({ path: childPath, label: label || srcAttr, src: srcAttr, cross: true, hidden: false, nodes: [] });
         continue;
       }
@@ -2732,6 +3000,7 @@ const COLLECT_FRAMES: &str = r#"(function(){
         try { filled = !!(child.document.body && child.document.body.childElementCount); } catch (eFill) {}
       }
       if (ready === 'loading' || (blank && !filled)) continue;
+      visibleCount += 1;
       out.push({ path: childPath, label: label, src: href || srcAttr, cross: false, hidden: false, nodes: scan(child.document) });
       walk(child, childPath, depth + 1, out);
     }
@@ -3501,72 +3770,127 @@ async fn same_click_target(conn: &CdpConn, session: Option<&str>, hit: i64, targ
   false
 }
 
-async fn click_landed_elsewhere(
-  conn: &CdpConn,
-  session: Option<&str>,
-  backend: i64,
-  x: f64,
-  y: f64,
+// 使用目标节点所在文档的 CSS 坐标命中测试，避免 CEF 缩放时
+// DOM.getNodeForLocation 与 getBoxModel 的坐标空间不一致。
+pub(crate) async fn click_landed_elsewhere(
+  conn: &CdpConn, session: Option<&str>, backend: i64, _x: f64, _y: f64,
 ) -> Option<String> {
-  let hit = conn
-    .call(
-      "DOM.getNodeForLocation",
-      json!({ "x": x.round() as i64, "y": y.round() as i64, "includeUserAgentShadowDOM": false }),
-      session,
-    )
-    .await
-    .ok()?;
-  let found = hit.get("backendNodeId").and_then(|v| v.as_i64()).unwrap_or(0);
-  if found <= 0 || found == backend || same_click_target(conn, session, found, backend).await {
-    return None;
-  }
-  if shared_clickable(conn, session, found, backend).await {
-    return None;
-  }
-  if let Some(node_id) = hit.get("nodeId").and_then(|v| v.as_i64()).filter(|id| *id > 0) {
-    let _ = conn.call("CSS.enable", json!({}), session).await;
-    if let Ok(style) = conn
-      .call("CSS.getComputedStyleForNode", json!({ "nodeId": node_id }), session)
-      .await
-    {
-      let pass = style
-        .get("computedStyle")
-        .and_then(|v| v.as_array())
-        .map(|list| {
-          list.iter().any(|item| {
-            item.get("name").and_then(|v| v.as_str()) == Some("pointer-events")
-              && item.get("value").and_then(|v| v.as_str()) == Some("none")
-          })
-        })
-        .unwrap_or(false);
-      if pass {
-        return None;
+  let result: Result<Option<String>, String> = async {
+    let resolved = conn.call("DOM.resolveNode", json!({"backendNodeId":backend}), session).await?;
+    let object = resolved.pointer("/object/objectId").and_then(Value::as_str).ok_or("目标节点已失效")?;
+    let probe = conn.call("Runtime.callFunctionOn", json!({
+      "objectId": object, "returnByValue": true,
+      "functionDeclaration": r#"function(){
+        var el=this.nodeType===3?this.parentElement:this;
+        if(!el || !el.isConnected) return '目标节点已失效';
+        var r=el.getBoundingClientRect(), doc=el.ownerDocument;
+        if(r.width<2 || r.height<2) return '目标元素不可见';
+        var hit=doc.elementFromPoint(r.left+r.width/2,r.top+r.height/2);
+        if(!hit || !(hit===el || el.contains(hit))) return '真实落点被 '+(hit?hit.tagName.toLowerCase():'视口外区域')+' 遮挡';
+        // 同源嵌套 frame 的上层遮罩也必须检查。
+        var win=doc.defaultView;
+        try {
+          while(win && win.frameElement){
+            var frame=win.frameElement, box=frame.getBoundingClientRect();
+            var sx=box.width/(frame.offsetWidth||box.width), sy=box.height/(frame.offsetHeight||box.height);
+            var x=box.left+(r.left+r.width/2+frame.clientLeft)*sx;
+            var y=box.top+(r.top+r.height/2+frame.clientTop)*sy;
+            var outer=frame.ownerDocument.elementFromPoint(x,y);
+            if(outer!==frame && !frame.contains(outer)) return 'iframe 上层存在遮挡';
+            r={left:x,top:y,width:0,height:0}; win=frame.ownerDocument.defaultView;
+          }
+        }catch(e){}
+        return null;
+      }"#
+    }), session).await;
+    let _ = conn.call("Runtime.releaseObject", json!({"objectId":object}), session).await;
+    let value = probe?;
+    if value.get("exceptionDetails").is_some() { return Err("落点验证脚本失败".into()); }
+    Ok(value.pointer("/result/value").and_then(Value::as_str).map(str::to_string))
+  }.await;
+  match result { Ok(blocked) => blocked, Err(error) => Some(format!("无法验证点击目标：{error}")) }
+}
+
+pub(crate) async fn visible_control_backend(conn: &CdpConn, session: Option<&str>, backend: i64) -> Result<i64, String> {
+  let resolved=conn.call("DOM.resolveNode", json!({"backendNodeId":backend}), session).await?;
+  let object=resolved.pointer("/object/objectId").and_then(Value::as_str).ok_or("目标节点已失效")?;
+  let result=conn.call("Runtime.callFunctionOn", json!({
+    "objectId":object,
+    "functionDeclaration":r#"function(){
+      var el=this.nodeType===3?this.parentElement:this;
+      if(!el) return this;
+      var label=el.closest && el.closest('label');
+      if(!label && el.labels) label=Array.from(el.labels).find(function(l){var r=l.getBoundingClientRect();return r.width>1&&r.height>1;});
+      if(!label && el.querySelectorAll){
+        var controls=el.querySelectorAll('input[type=checkbox],input[type=radio]');
+        if(controls.length===1) label=controls[0].closest('label');
       }
-    }
+      if(label && (label.control && /^(checkbox|radio)$/.test(label.control.type) || label.querySelector('input[type=checkbox],input[type=radio]'))) return label;
+      return el;
+    }"#
+  }),session).await;
+  let value=match result { Ok(value)=>value, Err(error)=>{let _=conn.call("Runtime.releaseObject",json!({"objectId":object}),session).await;return Err(error);} };
+  let next=value.pointer("/result/objectId").and_then(Value::as_str);
+  let described=if let Some(next)=next {conn.call("DOM.describeNode",json!({"objectId":next}),session).await} else {Err("可见点击节点不存在".into())};
+  if let Some(next)=next {if next!=object {let _=conn.call("Runtime.releaseObject",json!({"objectId":next}),session).await;}}
+  let _=conn.call("Runtime.releaseObject",json!({"objectId":object}),session).await;
+  described?.pointer("/node/backendNodeId").and_then(Value::as_i64).ok_or_else(||"点击节点身份不可用".into())
+}
+
+async fn check_node_state(page: &PageBind, backend: i64, session: Option<&str>) -> Result<Value, String> {
+  let resolved = page.conn.call("DOM.resolveNode", json!({ "backendNodeId": backend }), session).await?;
+  let object = resolved.pointer("/object/objectId").and_then(Value::as_str).ok_or("选项节点已失效")?;
+  let result = page.conn.call("Runtime.callFunctionOn", json!({
+    "objectId": object, "returnByValue": true,
+    "functionDeclaration": r#"function(){
+      var el=this, input=null;
+      if(el.matches && el.matches('input[type=checkbox],input[type=radio]')) input=el;
+      else if(el.control && /^(checkbox|radio)$/.test(el.control.type)) input=el.control;
+      else if(el.querySelectorAll){
+        var controls=el.querySelectorAll('input[type=checkbox],input[type=radio]');
+        if(controls.length>1) return {supported:false};
+        input=controls[0]||null;
+      }
+      var role=el.getAttribute && el.getAttribute('role');
+      var kind=input?input.type:role;
+      if(kind!=='checkbox' && kind!=='radio') return {supported:false};
+      var state=input?!!input.checked:el.getAttribute('aria-checked');
+      if(!input && state!=='true' && state!=='false') return {supported:false};
+      return {supported:true,kind:kind,connected:!!el.isConnected,
+        checked:input?state:state==='true', disabled:input?input.disabled:el.getAttribute('aria-disabled')==='true'};
+    }"#
+  }), session).await;
+  let _ = page.conn.call("Runtime.releaseObject", json!({ "objectId": object }), session).await;
+  let value = result?;
+  if value.get("exceptionDetails").is_some() { return Err("读取选项状态失败，请重新读取页面".into()); }
+  value.pointer("/result/value").cloned().ok_or_else(|| "读取选项状态失败".into())
+}
+
+async fn wait_checked(page: &PageBind, backend: i64, session: Option<&str>, checked: bool) -> Result<bool, String> {
+  let started = std::time::Instant::now();
+  let mut confirmed = 0;
+  loop {
+    let state = check_node_state(page, backend, session).await?;
+    if state["connected"] != true { return Err("选项节点已替换，请重新读取页面后确认".into()); }
+    if state["checked"].as_bool() == Some(checked) { confirmed += 1; } else { confirmed = 0; }
+    if confirmed >= 2 { return Ok(true); }
+    if started.elapsed() >= std::time::Duration::from_millis(1500) { return Ok(false); }
+    tokio::time::sleep(std::time::Duration::from_millis(80)).await;
   }
-  let target = conn
-    .call("DOM.getBoxModel", json!({ "backendNodeId": backend }), session)
-    .await
-    .ok()?;
-  let Some((x1, y1, x2, y2)) = quad_bounds(&target, "border") else {
-    return None;
-  };
-  let hit_box = conn
-    .call("DOM.getBoxModel", json!({ "backendNodeId": found }), session)
-    .await
-    .ok()?;
-  if let Some((hx1, hy1, hx2, hy2)) = quad_bounds(&hit_box, "border") {
-    if hx1 >= x1 - 2.0 && hy1 >= y1 - 2.0 && hx2 <= x2 + 2.0 && hy2 <= y2 + 2.0 {
-      return None;
-    }
-  }
-  let described = conn
-    .call("DOM.describeNode", json!({ "backendNodeId": found }), session)
-    .await
-    .ok()?;
-  let node = described.get("node")?;
-  let tag = node.get("localName").and_then(|v| v.as_str()).unwrap_or("元素");
-  Some(format!("「{tag}」上"))
+}
+
+pub async fn cdp_set_checked(app: AppHandle, id: String, backend: i64, session: Option<String>, checked: bool) -> Result<Value, String> {
+  let page = bind_page(&id).await?;
+  let sid = session.or_else(|| page.session.clone());
+  let state = check_node_state(&page, backend, sid.as_deref()).await?;
+  if state["supported"] != true || state["connected"] != true { return Ok(json!({"ok":false,"error":"目标不是可读取状态的复选框或单选框"})); }
+  if state["checked"].as_bool() == Some(checked) { return Ok(json!({"ok":true,"checked":checked,"already":true})); }
+  if state["disabled"] == true { return Ok(json!({"ok":false,"error":"选项已禁用"})); }
+  if state["kind"] == "radio" && !checked { return Ok(json!({"ok":false,"error":"单选项不能直接取消，请选择同组另一项"})); }
+  let result = cdp_click_node(app, id, backend, sid.clone(), None, None).await?;
+  if !result.ok { return Ok(json!({"ok":false,"error":result.error})); }
+  let ok = wait_checked(&page, backend, sid.as_deref(), checked).await?;
+  Ok(json!({"ok":ok,"checked":if ok {Some(checked)} else {None},"error":if ok {None} else {Some("点击后未达到预期选中状态，请重新读取页面确认，不要盲目重复点击")} }))
 }
 
 pub async fn cdp_click_node(
@@ -3590,27 +3914,19 @@ pub async fn cdp_click_node(
     .conn
     .call("DOM.scrollIntoViewIfNeeded", json!({ "backendNodeId": backend }), sid.as_deref())
     .await;
-  let model = page
-    .conn
-    .call("DOM.getBoxModel", json!({ "backendNodeId": backend }), sid.as_deref())
-    .await
-    .map_err(|err| {
-      if crate::cdp_client::is_session_dead(&err) {
-        crate::cdp_client::HOST_CHANNEL_DOWN.to_string()
-      } else {
-        format!("取不到元素盒子: {err}")
-      }
-    })?;
-  let quad = model
-    .get("model")
-    .and_then(|row| row.get("content"))
-    .and_then(|v| v.as_array())
-    .cloned()
-    .unwrap_or_default();
-  let nums: Vec<f64> = quad.iter().filter_map(|v| v.as_f64()).collect();
-  if nums.len() < 8 {
-    return Ok(miss("元素没有可点的盒子".into()));
-  }
+  // 页面滚动/布局未稳定时不投递鼠标事件，避免点到移动中的其它选项。
+  let started = std::time::Instant::now();
+  let mut previous: Option<Vec<f64>> = None;
+  let nums = loop {
+    let model = page.conn.call("DOM.getBoxModel", json!({ "backendNodeId": backend }), sid.as_deref()).await?;
+    let nums: Vec<f64> = model.pointer("/model/content").and_then(Value::as_array)
+      .map(|quad| quad.iter().filter_map(Value::as_f64).collect()).unwrap_or_default();
+    if nums.len() != 8 { return Ok(miss("元素没有可点的盒子".into())); }
+    if previous.as_ref().is_some_and(|before| before.iter().zip(&nums).all(|(a,b)| (a-b).abs() < 0.5)) { break nums; }
+    if started.elapsed() >= std::time::Duration::from_millis(1000) { return Ok(miss("元素位置尚未稳定，请重新定位后再点".into())); }
+    previous = Some(nums);
+    tokio::time::sleep(std::time::Duration::from_millis(60)).await;
+  };
   let x = (nums[0] + nums[2] + nums[4] + nums[6]) / 4.0;
   let y = (nums[1] + nums[3] + nums[5] + nums[7]) / 4.0;
   let vis = page
@@ -3628,7 +3944,14 @@ pub async fn cdp_click_node(
   }
   let btn = if button.as_deref() == Some("right") { "right" } else { "left" };
   let count = click_count.unwrap_or(1).clamp(1, 2);
+  let before = check_node_state(&page, backend, sid.as_deref()).await?;
   dispatch_click(&page.conn, x, y, sid.as_deref(), btn, count).await?;
+  if btn == "left" && count == 1 && before["supported"] == true {
+    let want = before["kind"] == "radio" || before["checked"] != true;
+    if !wait_checked(&page, backend, sid.as_deref(), want).await? {
+      return Ok(miss("鼠标事件已发送，但选项状态未改变；请重新读取页面确认".into()));
+    }
+  }
   Ok(CdpActResult {
     ok: true,
     error: None,
@@ -3788,9 +4111,13 @@ fn rewrite_textbox_refs(refs: &mut [Value], raw_fields: &Value) {
     let Some(css) = input_css(field) else {
       continue;
     };
+    let backend = node.pointer("/locator/backend").and_then(Value::as_i64).unwrap_or(0);
     if let Some(obj) = node.as_object_mut() {
       obj.insert("name".into(), json!(show));
       obj.insert("locator".into(), json!({ "by": "css", "value": css, "name": show }));
+      if backend > 0 {
+        if let Some(locator) = obj.get_mut("locator") { locator["backend"] = json!(backend); }
+      }
     }
   }
 }
@@ -3843,6 +4170,7 @@ fn clip_ax_name(role: &str, raw_in: &str) -> Option<String> {
   Some(raw.to_string())
 }
 
+#[cfg(test)]
 fn usable_frame_url(url: &str) -> bool {
   let u = url.trim().to_ascii_lowercase();
   !(u.is_empty() || u == "about:blank" || u.starts_with("about:") || u.starts_with("javascript:"))
@@ -3930,7 +4258,7 @@ fn push_named_ref(
   // 同名按钮各记一颗。按名字去重会把五门课的「进入学习」收成一个。
   let key = if matches!(role, "video" | "audio") {
     format!("{role}:{nth}:{name}")
-  } else if backend > 0 && matches!(role, "button" | "link") {
+  } else if backend > 0 {
     format!("{role}:{backend}")
   } else {
     format!("{role}:{name}")
@@ -3962,7 +4290,7 @@ fn push_named_ref(
   lines.push(format_snap_line("", role, &name, &id, href, media, mark));
   let locator = if matches!(role, "video" | "audio") {
     json!({ "by": "css", "value": role, "nth": if nth > 0 { nth } else { 1 }, "name": name, "role": role })
-  } else if backend > 0 && matches!(role, "button" | "link") {
+  } else if backend > 0 {
     json!({ "by": "role", "value": role, "name": name, "exact": true, "backend": backend })
   } else if matches!(role, "textbox" | "searchbox" | "combobox") {
     json!({ "by": "role", "value": role, "name": name, "exact": true })
@@ -3989,6 +4317,7 @@ fn push_ax_nodes(
   limit: usize,
 ) {
   for node in nodes {
+    if node["ignored"].as_bool() == Some(true) { continue; }
     if refs.len() >= limit {
       break;
     }
@@ -4006,7 +4335,22 @@ fn push_ax_nodes(
       .unwrap_or("generic");
     let backend = node.get("backendDOMNodeId").and_then(|v| v.as_i64()).unwrap_or(0);
     let url = ax_prop(node, "url").unwrap_or("");
+    let before = refs.len();
     push_named_ref(lines, refs, seen, role, &name, backend, limit, url, "", "", 0);
+    if refs.len() > before {
+      if let Some(out) = refs.last_mut().and_then(Value::as_object_mut) {
+        if let Some(props) = node["properties"].as_array() {
+          for prop in props {
+            let key = prop["name"].as_str().unwrap_or("");
+            if matches!(key, "checked" | "disabled") {
+              let value = &prop["value"]["value"];
+              if value.is_boolean() { out.insert(key.into(), value.clone()); }
+              else if value == "true" || value == "false" { out.insert(key.into(), json!(value == "true")); }
+            }
+          }
+        }
+      }
+    }
   }
 }
 
@@ -4024,7 +4368,15 @@ fn push_dom_nodes(
     let media = node.get("media").and_then(|v| v.as_str()).unwrap_or("");
     let mark = node.get("mark").and_then(|v| v.as_str()).unwrap_or("");
     let nth = node.get("nth").and_then(|v| v.as_i64()).unwrap_or(0);
-    push_named_ref(lines, refs, seen, role, name, 0, limit, "", media, mark, nth);
+    if refs.iter().any(|r| r["role"] == role && r["name"] == name && r["locator"]["backend"].as_i64().unwrap_or(0) > 0) { continue; }
+    if let Some(selector) = node.pointer("/locator/value").and_then(Value::as_str).filter(|s| !s.is_empty()) {
+      if refs.len() >= limit || !seen.insert(format!("dom:{selector}")) { continue; }
+      let mut row = node.clone();
+      row["id"] = json!(format!("e{}", refs.len() + 1));
+      refs.push(row);
+    } else {
+      push_named_ref(lines, refs, seen, role, name, 0, limit, "", media, mark, nth);
+    }
   }
 }
 
@@ -4059,6 +4411,7 @@ struct FrameSnap {
   /// 标签页自己的文档。它的网址不能写进 locator.frame，否则查找会去子 frame 里找，主文档上的输入框直接丢失。
   top: bool,
   cross: bool,
+  identity: Option<crate::cef::frames::FrameContext>,
 }
 
 async fn collect_frame_snap(
@@ -4067,6 +4420,7 @@ async fn collect_frame_snap(
   url_hint: &str,
   limit: usize,
   top: bool,
+  context: Option<&crate::cef::frames::FrameContext>,
 ) -> FrameSnap {
   let url = conn
     .evaluate("location.href", session)
@@ -4078,7 +4432,7 @@ async fn collect_frame_snap(
   let mut refs = Vec::new();
   let mut seen = HashSet::new();
   let _ = conn.call("Accessibility.enable", json!({}), session).await;
-  push_ax_nodes(&ax_of(conn, session, "").await, &mut lines, &mut refs, &mut seen, limit);
+  push_ax_nodes(&ax_of(conn, session, context.map(|f| f.id.as_str()).unwrap_or("")).await, &mut lines, &mut refs, &mut seen, limit);
   if let Ok(dom) = conn.evaluate(COLLECT_DOM, session).await {
     push_dom_nodes(&dom, &mut lines, &mut refs, &mut seen, limit);
   }
@@ -4095,6 +4449,7 @@ async fn collect_frame_snap(
     priority,
     top,
     cross: false,
+    identity: context.cloned(),
   }
 }
 
@@ -4188,6 +4543,7 @@ fn snap_from_dom(path: &str, label: &str, src: &str, nodes: &Value, cross: bool)
     priority: frame_snap_priority(src, count),
     top: false,
     cross,
+    identity: None,
   }
 }
 
@@ -4195,6 +4551,7 @@ fn assign_nth(nodes: &mut [Value]) {
   let mut groups: HashMap<String, Vec<usize>> = HashMap::new();
   for (index, node) in nodes.iter().enumerate() {
     let locator = node.get("locator").cloned().unwrap_or(json!({}));
+    if locator["backend"].as_i64().unwrap_or(0) > 0 { continue; }
     let by = locator.get("by").and_then(|v| v.as_str()).unwrap_or("");
     let value = locator.get("value").and_then(|v| v.as_str()).unwrap_or("");
     let name = locator.get("name").and_then(|v| v.as_str()).unwrap_or("");
@@ -4212,8 +4569,9 @@ fn assign_nth(nodes: &mut [Value]) {
   }
 }
 
+#[cfg(test)]
 fn frame_tree_rows(node: &Value, path: &str, depth: u8, out: &mut Vec<(String, String, String)>) {
-  if depth > 4 {
+  if depth as usize > crate::cef::frames::MAX_FRAME_DEPTH {
     return;
   }
   let frame = node.get("frame").unwrap_or(node);
@@ -4231,95 +4589,47 @@ fn frame_tree_rows(node: &Value, path: &str, depth: u8, out: &mut Vec<(String, S
 
 pub async fn cdp_snapshot(_app: AppHandle, id: String, query: SnapshotQuery) -> Result<Value, String> {
   let page = bind_page(&id).await?;
-  let mut frames: Vec<FrameSnap> = Vec::new();
-  let child_cap = child_frame_cap(&query);
-  let attempt_cap = if query.acted { 3 } else { 12 };
-  let mut attached = 0usize;
-  let mut attempts = 0usize;
+  let contexts = crate::cef::frames::contexts(&page).await?;
+  let metadata = page.conn.evaluate(COLLECT_FRAMES, page.session.as_deref()).await.unwrap_or(json!([]));
+  let mut frames = Vec::new();
   let mut frames_capped = false;
-
-  // 动作后只拍顶层 + 点击所在的那一个 frame。get_page 最多 8 个非空白 frame。
-  // 跳过 about:blank / loading，避免切章时把 20+ iframe 全 attach 上。
-  if child_cap > 0 {
-    if let Ok(targets) = page.conn.pages().await {
-      for t in &targets {
-        if attached >= child_cap || attempts >= attempt_cap {
-          frames_capped = attached >= child_cap;
-          break;
-        }
-        if !is_child_target(t, &page.target_id, &page.url) {
-          continue;
-        }
-        let Some(tid) = t.get("targetId").and_then(|v| v.as_str()) else { continue };
-        let hint = t.get("url").and_then(|v| v.as_str()).unwrap_or("");
-        if !usable_frame_url(hint) {
-          continue;
-        }
-        if query.acted {
-          let want = query.frame.as_deref().unwrap_or("");
-          if !frame_url_matches(hint, want) {
-            continue;
-          }
-        }
-        attempts += 1;
-        let Ok(sid) = page.conn.attach(tid).await else { continue };
-        let _ = page.conn.call("Runtime.enable", json!({}), Some(&sid)).await;
-        let state = page.conn.evaluate("document.readyState", Some(&sid)).await.ok();
-        if state.as_ref().and_then(|v| v.as_str()) == Some("loading") {
-          continue;
-        }
-        frames.push(collect_frame_snap(&page.conn, Some(&sid), hint, 220, false).await);
-        attached += 1;
-      }
+  let mut cross_count = 0;
+  let mut selected = 0;
+  for context in &contexts {
+    let top = context.path.is_empty();
+    let meta = metadata.as_array().and_then(|rows| rows.iter().find(|row| row["path"].as_str() == Some(context.path.as_str())));
+    if meta.and_then(|m| m["hidden"].as_bool()) == Some(true) { continue; }
+    let label = meta.and_then(|m| m["label"].as_str()).filter(|s| !s.is_empty()).unwrap_or(&context.name);
+    if !top && meta.is_none() && !crate::cef::frames::visible(&page, &contexts, context).await { continue; }
+    if !top && selected >= crate::cef::frames::MAX_FRAMES { frames_capped = true; continue; }
+    if !top && query.acted {
+      let want = query.frame.as_deref().unwrap_or("");
+      if want.is_empty() || !(want == context.id || want == context.path || want == label || frame_url_matches(&context.url, want)) { continue; }
+      if selected >= 1 { frames_capped = true; continue; }
     }
-  }
-  frames.push(collect_frame_snap(&page.conn, page.session.as_deref(), &page.url, 220, true).await);
-  let mut dom_frames = json!([]);
-  if !query.acted {
-    if let Ok(raw) = page.conn.evaluate(COLLECT_FRAMES, page.session.as_deref()).await {
-      dom_frames = raw;
-    }
-  }
-  if let Some(list) = dom_frames.as_array() {
-    let mut tree_rows = Vec::new();
-    if let Ok(tree) = page.conn.call("Page.getFrameTree", json!({}), page.session.as_deref()).await {
-      if let Some(root) = tree.get("frameTree") {
-        frame_tree_rows(root, "", 0, &mut tree_rows);
+    let cross = context.session != page.session;
+    if !top && cross && cross_count >= child_frame_cap(&query) { frames_capped = true; continue; }
+    let mut snap = if top {
+      collect_frame_snap(&page.conn, context.session.as_deref(), &context.url, 220, true, Some(context)).await
+    } else if let Some(meta) = meta.filter(|m| m["cross"].as_bool() != Some(true)) {
+      snap_from_dom(&context.path, label, &context.url, &meta["nodes"], false)
+    } else {
+      // 同进程跨域和 OOPIF 都在 frame 自己的上下文读取，不从父窗口穿越 document。
+      let nodes = crate::cef::frames::evaluate(&page, context, COLLECT_DOM).await.unwrap_or(json!([]));
+      let mut snap = snap_from_dom(&context.path, label, &context.url, &nodes, false);
+      if snap.refs.is_empty() {
+        let mut seen = HashSet::new();
+        push_ax_nodes(&ax_of(&page.conn, context.session.as_deref(), &context.id).await,
+          &mut snap.lines, &mut snap.refs, &mut seen, 110);
       }
-    }
-    let _ = page.conn.call("Accessibility.enable", json!({}), page.session.as_deref()).await;
-    for item in list {
-      let path = item.get("path").and_then(|v| v.as_str()).unwrap_or("");
-      if path.is_empty() {
-        continue;
-      }
-      if item.get("hidden").and_then(|v| v.as_bool()).unwrap_or(false) {
-        continue;
-      }
-      let cross = item.get("cross").and_then(|v| v.as_bool()).unwrap_or(false);
-      let label = item.get("label").and_then(|v| v.as_str()).unwrap_or("").to_string();
-      let src = item.get("src").and_then(|v| v.as_str()).unwrap_or("").to_string();
-      if frames.iter().any(|frame| !frame.top && !src.is_empty() && frame.url == src) {
-        continue;
-      }
-      let nodes = item.get("nodes").cloned().unwrap_or(json!([]));
-      let mut snap = snap_from_dom(path, &label, &src, &nodes, cross);
-      if !cross && snap.refs.is_empty() {
-        if let Some((_, fid, _)) = tree_rows.iter().find(|(row_path, _, _)| row_path == path) {
-          if !fid.is_empty() {
-            let mut seen = HashSet::new();
-            push_ax_nodes(
-              &ax_of(&page.conn, page.session.as_deref(), fid).await,
-              &mut snap.lines,
-              &mut snap.refs,
-              &mut seen,
-              110,
-            );
-          }
-        }
-      }
-      frames.push(snap);
-    }
+      snap
+    };
+    snap.identity = Some(context.clone());
+    snap.path = context.path.clone();
+    snap.label = label.to_string();
+    if !top { selected += 1; }
+    if cross { cross_count += 1; }
+    frames.push(snap);
   }
 
   // 顶层先出，子框按序号。名额按框分，目录长也不会把视频框挤掉。
@@ -4375,11 +4685,15 @@ pub async fn cdp_snapshot(_app: AppHandle, id: String, query: SnapshotQuery) -> 
       if !seen.insert(key) {
         continue;
       }
-      let id = format!("e{}", refs.len() + 1);
+      // 新快照不能把旧的 e3 重新绑定到另一颗元素。
+      static SNAPSHOT_REF_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+      let id = format!("e{}", SNAPSHOT_REF_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
       let indent = if frame.top { "" } else { "  " };
       let media = node.get("media").and_then(|v| v.as_str()).unwrap_or("");
       let mark = node.get("mark").and_then(|v| v.as_str()).unwrap_or("");
-      let line = format_snap_line(indent, role, name, &id, "", media, mark);
+      let mut line = format_snap_line(indent, role, name, &id, "", media, mark);
+      if node["disabled"].as_bool() == Some(true) { line.push_str(" [disabled]"); }
+      if let Some(checked) = node["checked"].as_bool() { line.push_str(if checked { " [checked=true]" } else { " [checked=false]" }); }
       lines.push(line.clone());
       local_lines.push(line);
       let mut locator = node
@@ -4387,6 +4701,10 @@ pub async fn cdp_snapshot(_app: AppHandle, id: String, query: SnapshotQuery) -> 
         .cloned()
         .unwrap_or_else(|| json!({ "by": "text", "value": name, "exact": true }));
       if let Some(obj) = locator.as_object_mut() {
+        if let Some(identity) = &frame.identity {
+          obj.insert("frameId".into(), json!(identity.id));
+          obj.insert("loaderId".into(), json!(identity.loader_id));
+        }
         if !frame.top {
           if !frame.path.is_empty() {
             obj.insert("framePath".into(), json!(frame.path));
@@ -4404,6 +4722,8 @@ pub async fn cdp_snapshot(_app: AppHandle, id: String, query: SnapshotQuery) -> 
         "name": name,
         "frame": if frame.top { Value::Null } else { json!(if frame.label.is_empty() { &frame.url } else { &frame.label }) },
         "framePath": frame.path,
+        "disabled": node["disabled"].as_bool().unwrap_or(false),
+        "checked": node["checked"],
         "locator": locator,
       }));
     }
@@ -4520,6 +4840,75 @@ pub async fn cdp_screenshot(_app: AppHandle, id: String) -> Result<Value, String
 mod tests {
   use super::*;
   use std::collections::HashSet;
+
+  #[test]
+  fn snapshot_merges_ax_dom_without_inventing_second_button() {
+    let mut refs = Vec::new();
+    let mut lines = Vec::new();
+    let mut seen = HashSet::new();
+    push_ax_nodes(&vec![json!({ "role":{"value":"button"}, "name":{"value":"提交"}, "backendDOMNodeId":17,
+      "properties":[{"name":"disabled","value":{"value":true}}] })], &mut lines, &mut refs, &mut seen, 20);
+    push_dom_nodes(&json!([{ "role":"button", "name":"提交", "locator":{"by":"css","value":"body > button"} }]), &mut lines, &mut refs, &mut seen, 20);
+    assign_nth(&mut refs);
+    assert_eq!(refs.len(), 1);
+    assert_eq!(refs[0]["locator"]["backend"], 17);
+    assert!(refs[0]["locator"].get("nth").is_none());
+    assert_eq!(refs[0]["disabled"], true);
+  }
+
+  #[test]
+  fn snapshot_keeps_same_name_controls_with_distinct_backends() {
+    let mut refs = Vec::new();
+    let mut lines = Vec::new();
+    let mut seen = HashSet::new();
+    let nodes: Vec<_> = [17, 23].into_iter().map(|id| json!({ "role":{"value":"button"}, "name":{"value":"提交"}, "backendDOMNodeId":id })).collect();
+    push_ax_nodes(&nodes, &mut lines, &mut refs, &mut seen, 20);
+    assign_nth(&mut refs);
+    assert_eq!(refs.len(), 2);
+    assert_ne!(refs[0]["locator"]["backend"], refs[1]["locator"]["backend"]);
+    assert!(refs.iter().all(|r| r["locator"].get("nth").is_none()));
+  }
+
+  #[test]
+  fn snapshot_ignores_hidden_ax_and_preserves_checkbox_state() {
+    let mut refs = Vec::new();
+    push_ax_nodes(&vec![
+      json!({ "ignored":true, "role":{"value":"button"}, "name":{"value":"隐藏提交"}, "backendDOMNodeId":17 }),
+      json!({ "role":{"value":"checkbox"}, "name":{"value":"A"}, "backendDOMNodeId":23,
+        "properties":[{"name":"checked","value":{"value":"true"}}] }),
+    ], &mut Vec::new(), &mut refs, &mut HashSet::new(), 20);
+    assert_eq!(refs.len(), 1);
+    assert_eq!(refs[0]["locator"]["backend"], 23);
+    assert_eq!(refs[0]["checked"], true);
+  }
+
+  #[test]
+  fn fit_scale_fits_the_whole_page_on_the_smaller_axis() {
+    assert!((fit_scale(1280.0, 800.0) - 1280.0 / 1920.0).abs() < 1e-9);
+    assert!((fit_scale(1920.0, 1080.0) - 1.0).abs() < 1e-9);
+    assert!((fit_scale(1919.0, 2000.0) - 1919.0 / 1920.0).abs() < 1e-9);
+    assert!((fit_scale(960.0, 540.0) - 0.5).abs() < 1e-9);
+    assert_eq!(fit_scale(0.0, 1080.0), 1.0);
+    assert_eq!(fit_scale(f64::NAN, 1080.0), 1.0);
+    let (w, h) = stage_points(1280.0, 800.0);
+    assert!(w <= 1280.0 && h <= 800.0);
+    assert!((w - 1280.0).abs() < 1.0);
+  }
+
+  #[test]
+  fn fit_scale_grows_and_shrinks_with_the_smaller_axis() {
+    assert!((fit_scale(3840.0, 2160.0) - 2.0).abs() < 1e-9);
+    assert!((fit_scale(3840.0, 1200.0) - 1200.0 / 1080.0).abs() < 1e-9);
+    assert!((fit_scale(2400.0, 2000.0) - 2400.0 / 1920.0).abs() < 1e-9);
+    assert_eq!(stage_points(3840.0, 2160.0), (3840.0, 2160.0));
+    assert_eq!(stage_points(960.0, 540.0), (960.0, 540.0));
+    let (w, h) = stage_points(777.0, 654.0);
+    assert!(w <= 777.0 && h <= 654.0);
+    let fit = page_fit(w, h);
+    assert!(w / fit + 0.01 >= PAGE_W);
+    assert!(h / fit + 0.01 >= PAGE_H);
+    assert!((w / fit - PAGE_W).abs() < 1.0 || (h / fit - PAGE_H).abs() < 1.0);
+  }
 
   #[test]
   fn long_ax_name_is_kept_truncated() {
@@ -4787,78 +5176,28 @@ mod tests {
   }
 
   #[test]
-  fn pick_page_does_not_steal_other_tab() {
-    let cx = "https://mooc1.chaoxing.com/mycourse/studentstudy?chapterId=1065429967";
-    let live = "https://mooc1.chaoxing.com/mycourse/studentstudy?chapterId=1065429853";
-    let zjooc = "https://background.zjooc.cn/gxptLogin?redirect_url=https://www.zjooc.cn";
-    let pages = vec![
-      page("z", zjooc),
-      page("c", live),
-    ];
-    let empty = HashSet::new();
-    let hit = pick_page_target_in(&pages, cx, "", "", &empty).unwrap();
-    assert_eq!(target_id_of(hit), "c");
-    let taken = HashSet::from(["c".to_string()]);
-    let other = pick_page_target_in(&pages, zjooc, "", "", &taken).unwrap();
-    assert_eq!(target_id_of(other), "z");
+  fn exact_target_handles_same_url_tabs_and_redirects() {
+    let pages = vec![page("other", "https://example.com/login"), page("native", "https://example.com/login")];
+    assert_eq!(target_id_of(exact_page_target(&pages, "native").unwrap()), "native");
+    // URL 和旧缓存归属不参与选择；原生身份在跨站导航后依然有效。
+    let redirected = vec![page("other", "https://example.com/login"), page("native", "https://another.test/home")];
+    assert_eq!(target_id_of(exact_page_target(&redirected, "native").unwrap()), "native");
   }
 
   #[test]
-  fn pick_page_skips_cached_target_on_other_host() {
-    let cx = "https://mooc1.chaoxing.com/mycourse/studentstudy?chapterId=1";
-    let pages = vec![
-      page("z", "https://background.zjooc.cn/gxptLogin"),
-      page("c", cx),
-    ];
-    let empty = HashSet::new();
-    let hit = pick_page_target_in(&pages, cx, "z", "", &empty).unwrap();
-    assert_eq!(target_id_of(hit), "c");
+  fn exact_target_never_steals_the_only_other_page() {
+    let pages = vec![page("other", "https://example.com/login")];
+    assert!(exact_page_target(&pages, "closed-native").is_none());
+    assert!(exact_page_target(&pages, "").is_none());
+    let frame = vec![json!({ "type": "iframe", "targetId": "native" })];
+    assert!(exact_page_target(&frame, "native").is_none());
   }
 
   #[test]
-  fn pick_page_does_not_guess_when_two_pages_mismatch() {
-    let pages = vec![
-      page("z", "https://background.zjooc.cn/gxptLogin"),
-      page("c", "https://mooc1.chaoxing.com/mycourse/studentstudy"),
-    ];
-    let empty = HashSet::new();
-    assert!(pick_page_target_in(&pages, "https://www.example.com/", "", "", &empty).is_none());
-  }
-
-  #[test]
-  fn urls_same_host_accepts_site_subdomain() {
-    assert!(urls_same_host(
-      "https://www.zjooc.cn/",
-      "https://background.zjooc.cn/gxptLogin?redirect_url=https://www.zjooc.cn"
-    ));
-    assert!(urls_same_host(
-      "https://mooc1.chaoxing.com/a",
-      "https://i.chaoxing.com/base"
-    ));
-    assert!(!urls_same_host(
-      "https://www.zjooc.cn/",
-      "https://mooc1.chaoxing.com/a"
-    ));
-  }
-
-  #[test]
-  fn cached_bind_rejects_other_host() {
-    let cached = BindSession {
-      target_id: "z".into(),
-      session: "s".into(),
-      url: "https://background.zjooc.cn/gxptLogin".into(),
-    };
-    assert!(!cached_bind_matches(
-      &cached,
-      "https://mooc1.chaoxing.com/mycourse/studentstudy?chapterId=1"
-    ));
-    assert!(cached_bind_matches(
-      &cached,
-      "https://background.zjooc.cn/gxptLogin?x=1"
-    ));
-    assert!(cached_bind_matches(
-      &cached,
-      "https://www.zjooc.cn/"
-    ));
+  fn native_target_result_requires_successful_page_identity() {
+    assert_eq!(native_target_result(1, br#"{"targetInfo":{"type":"page","targetId":"native"}}"#).unwrap(), "native");
+    assert!(native_target_result(0, br#"{"message":"Target closed"}"#).is_err());
+    assert!(native_target_result(1, br#"{"targetInfo":{"type":"iframe","targetId":"frame"}}"#).is_err());
+    assert!(native_target_result(1, br#"{"targetInfo":{"type":"page","targetId":""}}"#).is_err());
   }
 }

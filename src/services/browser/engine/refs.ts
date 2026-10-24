@@ -1,4 +1,3 @@
-import { asObject, evalBrowserView } from '../eval'
 import type { BrowserLocator } from './types'
 
 export type PageRef = {
@@ -7,14 +6,16 @@ export type PageRef = {
   name: string
   value?: string
   checked?: boolean
+  disabled?: boolean
   framePath?: string
   locator: BrowserLocator
 }
 
-const cache = new Map<string, Record<string, BrowserLocator>>()
+type CachedLocator = BrowserLocator & { checked?: boolean; disabled?: boolean }
+const cache = new Map<string, Record<string, CachedLocator>>()
 
 export const rememberPageRefs = (browserId: string, refs: PageRef[]) => {
-  const map: Record<string, BrowserLocator> = {}
+  const map: Record<string, CachedLocator> = {}
   for (const ref of refs) {
     const key = String(ref.id || '').trim()
     if (!key || !ref.locator?.by || !ref.locator.value) continue
@@ -26,8 +27,12 @@ export const rememberPageRefs = (browserId: string, refs: PageRef[]) => {
       nth: ref.locator.nth,
       frame: ref.locator.frame,
       framePath: ref.locator.framePath,
+      frameId: ref.locator.frameId,
+      loaderId: ref.locator.loaderId,
       role: ref.role || ref.locator.role,
       backend: Number(ref.locator.backend) > 0 ? Number(ref.locator.backend) : undefined,
+      checked: ref.checked,
+      disabled: ref.disabled,
     }
   }
   cache.set(browserId, map)
@@ -40,6 +45,8 @@ export const listCachedPageRefs = (browserId: string): PageRef[] => {
     id,
     role: String(locator.role || ''),
     name: String(locator.name || (locator.by === 'text' || locator.by === 'label' ? locator.value : '') || ''),
+    checked: locator.checked,
+    disabled: locator.disabled,
     locator: { ...locator },
   }))
 }
@@ -67,26 +74,7 @@ export const cssSelectorFromArgs = (ref: string, selector: string) => {
 export const resolveRefLocator = async (browserId: string, ref: string) => {
   const key = String(ref || '').trim()
   if (!key) return null
-  const cached = locatorFromCache(browserId, key)
-  if (cached) return cached
-  const row = asObject(await evalBrowserView(browserId, `(function(){
-    var list = window.__ZE_SNAP_REFS__ || [];
-    for (var i = 0; i < list.length; i++) {
-      if (list[i] && list[i].id === ${JSON.stringify(key)}) return list[i].locator || null;
-    }
-    return null;
-  })()`).catch(() => null))
-  if (!row.by || !row.value) return null
-  return {
-    by: String(row.by) as BrowserLocator['by'],
-    value: String(row.value),
-    name: row.name ? String(row.name) : undefined,
-    exact: row.exact ? true : undefined,
-    nth: Number(row.nth) > 0 ? Number(row.nth) : undefined,
-    frame: row.frame ? String(row.frame) : undefined,
-    framePath: row.framePath ? String(row.framePath) : undefined,
-    role: row.role ? String(row.role) : undefined,
-  }
+  return locatorFromCache(browserId, key)
 }
 
 export const publicRefs = (refs: PageRef[]) => refs.map((ref) => ({
@@ -94,5 +82,6 @@ export const publicRefs = (refs: PageRef[]) => refs.map((ref) => ({
   role: ref.role,
   name: ref.name,
   ...(ref.value ? { value: ref.value } : {}),
-  ...(ref.role === 'checkbox' || ref.role === 'radio' ? { checked: Boolean(ref.checked) } : {}),
+  ...((ref.role === 'checkbox' || ref.role === 'radio') && typeof ref.checked === 'boolean' ? { checked: ref.checked } : {}),
+  ...(ref.disabled ? { disabled: true } : {}),
 }))

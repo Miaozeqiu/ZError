@@ -5,12 +5,23 @@ import lucide from '@iconify-json/lucide/icons.json'
 
 const NEEDED = [
   'globe',
+  'monitor',
+  'maximize-2',
+  'minimize-2',
+  'x',
+  'plus',
+  'search',
   'eye',
+  'eye-off',
+  'volume-2',
+  'volume-x',
   'link',
   'refresh-cw',
   'chevron-left',
   'chevron-right',
+  'chevron-down',
   'mouse-pointer-click',
+  'square-mouse-pointer',
   'keyboard',
   'arrow-up-down',
   'code-2',
@@ -24,6 +35,9 @@ const NEEDED = [
   'book-open',
   'shield',
   'circle-dot',
+  'circle-check',
+  'circle-minus',
+  'circle',
 ] as const
 
 const icons: IconifyJSON['icons'] = {}
@@ -51,6 +65,8 @@ export const featureIconName = (kind: AgentFeatureIcon) => {
 }
 
 export const activityIconName = (name: string) => {
+  if (name === 'browser_set_checked') return id('list-checks')
+  if (name === 'web_search') return id('search')
   if (name === 'browser_get_page' || name === 'browser_get_state') return id('eye')
   if (name === 'browser_navigate') return id('link')
   if (name === 'browser_reload') return id('refresh-cw')
@@ -59,7 +75,7 @@ export const activityIconName = (name: string) => {
   if (name === 'browser_click' || name === 'browser_click_text' || name === 'browser_course_plan') {
     return id('mouse-pointer-click')
   }
-  if (name === 'browser_type') return id('keyboard')
+  if (name === 'browser_type' || name === 'browser_press') return id('keyboard')
   if (name === 'browser_scroll') return id('arrow-up-down')
   if (name === 'browser_eval') return id('code-2')
   if (name === 'browser_screenshot') return id('camera')

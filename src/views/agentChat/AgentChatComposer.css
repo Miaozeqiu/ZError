@@ -227,14 +227,15 @@
   flex: none;
   width: 100%;
   min-width: 0;
-  height: 20px;
-  min-height: 20px;
-  max-height: 100px;
+  height: 22px;
+  min-height: 22px;
+  max-height: 110px;
   border: none;
   margin: 0;
   padding: 0;
-  font-size: 13px;
-  line-height: 20px;
+  font-size: 14px;
+  font-weight: 450;
+  line-height: 22px;
   outline: none;
   background: transparent;
   color: var(--text-primary, #2d3748);
@@ -265,8 +266,8 @@
 
 .composer-add {
   flex-shrink: 0;
-  width: 28px;
-  height: 28px;
+  width: 30px;
+  height: 30px;
   padding: 0;
   border: none;
   border-radius: 8px;
@@ -288,14 +289,15 @@
   min-width: 0;
   margin-right: auto;
   max-width: 160px;
-  height: 28px;
+  height: 30px;
   padding: 0 8px;
   border: none;
   border-radius: 14px;
   background: transparent;
   color: var(--text-secondary, #718096);
-  font-size: 12px;
-  line-height: 28px;
+  font-size: 13px;
+  font-weight: 450;
+  line-height: 30px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -310,8 +312,8 @@
 .context-meter {
   position: relative;
   flex-shrink: 0;
-  width: 28px;
-  height: 28px;
+  width: 30px;
+  height: 30px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -326,8 +328,8 @@
 }
 
 .context-meter-ring {
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   transform: rotate(-90deg);
 }
 
@@ -449,8 +451,8 @@
 
 .composer-send {
   flex-shrink: 0;
-  width: 28px;
-  height: 28px;
+  width: 30px;
+  height: 30px;
   padding: 0;
   border: none;
   border-radius: 50%;

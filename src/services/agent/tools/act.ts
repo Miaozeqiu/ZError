@@ -1,3 +1,5 @@
+import type { BrowserLocator } from '../../browser/engine/types'
+import { handleCheckTool } from './check'
 
 import { observedJson } from '../../browser/engine'
 import { explainEvalError, videoSnapshotNote } from '../../browser/eval'
@@ -21,6 +23,22 @@ export const handleActTools = async (ctx: Record<string, any>): Promise<string |
     syncPeekedUrl, patchAppBrowser, scrollBrowserView, getBrowserState: _gs,
     evalBrowserFrames, isCourseChromeTab, withBudget, typedResult,
   } = ctx
+  if (name === 'browser_press') {
+    const key = String(args.key || '')
+    if (!['Enter', 'Tab', 'Escape', 'Backspace', 'Delete', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(key)) {
+      return JSON.stringify({ ok: false, error: '不支持的按键' })
+    }
+    const from = await currentUrl(browserId)
+    const result = await callProtocol(browserId, 'press', { key })
+    return JSON.stringify(await observeAfterClick(browserId, asObject(result), from))
+  }
+  if (name === 'browser_set_checked') {
+    const from = await currentUrl(browserId)
+    return JSON.stringify(await handleCheckTool(browserId, args, async () => {
+      await wait(0)
+      if (await currentUrl(browserId) !== from) throw new Error('页面已跳转，停止本批操作，请重新读取页面')
+    }))
+  }
   if (name === 'browser_click') {
     const from = await currentUrl(browserId)
     const ref = String(args.ref || '').trim()
@@ -29,35 +47,11 @@ export const handleActTools = async (ctx: Record<string, any>): Promise<string |
     const nth = Number(args.nth) > 0 ? Number(args.nth) : undefined
     const frame = String(args.frame || '').trim() || undefined
     const missHint = () => formatMissRefsHint(browserId, 'click')
-    const runClick = async (locator: { by: 'css' | 'text' | 'role' | 'label'; value: string; name?: string; exact?: boolean; nth?: number; frame?: string; backend?: number }) => {
-      const pinned = Number(locator.backend)
-      if (Number.isFinite(pinned) && pinned > 0) {
-        const hit = asObject(await callProtocol(browserId, 'click_node', {
-          backend: pinned,
-          button: 'left',
-          clickCount: 1,
-        }).catch(() => ({ ok: false })))
-        const acted = hit.ok
-          ? { ok: true, text: String(locator.name || locator.value || '') }
-          : { ok: false, error: String(hit.error || '点击失败'), text: String(locator.name || '') }
-        return JSON.stringify(await observeAfterClick(browserId, acted, from, locator.frame))
-      }
-      if (locator.by === 'css' && /^#[\w.-]+$/.test(locator.value)) {
-        const quick = asObject(await clickBrowserElement(browserId, locator.value))
-        if (quick.ok) {
-          return JSON.stringify(await observeAfterClick(browserId, { ok: true, text: String(quick.text || locator.value) }, from, locator.frame))
-        }
-      }
-      const acted = await clickByLocator(browserId, { ...locator, nth: locator.nth ?? nth, frame: locator.frame ?? frame })
-      if (acted.ok) return JSON.stringify(await observeAfterClick(browserId, acted, from, locator.frame ?? frame))
-      if (locator.by === 'text' || locator.by === 'role') {
-        const framed = await clickBrowserText(browserId, String(locator.name || locator.value || ''))
-        if (framed && typeof framed === 'object' && (framed as { ok?: boolean }).ok) {
-          return JSON.stringify(await observeAfterClick(browserId, { ok: true, text: String((framed as { text?: string }).text || locator.value) }, from, locator.frame ?? frame))
-        }
-      }
-      const seen = await observeAfterClick(browserId, acted, from, locator.frame ?? frame)
-      return JSON.stringify({ ...seen, hint: [seen.hint, missHint()].filter(Boolean).join(' ') })
+    const runClick = async (locator: BrowserLocator) => {
+      const target = { ...locator, nth: locator.nth ?? nth, frame: locator.frame ?? frame }
+      const acted = await clickByLocator(browserId, target)
+      const seen = await observeAfterClick(browserId, acted, from, target.frameId || acted.frameId || target.frame || target.framePath)
+      return JSON.stringify(acted.ok ? seen : { ...seen, hint: [seen.hint, missHint()].filter(Boolean).join(' ') })
     }
     if (ref && !looksLikeCssSelector(ref)) {
       const locator = await resolveRefLocator(browserId, ref)
@@ -137,45 +131,15 @@ export const handleActTools = async (ctx: Record<string, any>): Promise<string |
       return JSON.stringify({ ok: false, error: SPACE_HINT })
     }
     const css = cssSelectorFromArgs(ref, selector)
-    const readFilled = async (locator: { by: string; value: string }) => {
-      if (locator.by !== 'css') return null
-      return asObject(await evalBrowserView(browserId, `(function(){
-        var el = document.querySelector(${JSON.stringify(locator.value)});
-        if (!el) return { filled: false, length: 0, password: false, found: false };
-        var got = el.isContentEditable ? String(el.textContent || '') : String(el.value || '');
-        var pwd = false;
-        try { pwd = String(el.type || '').toLowerCase() === 'password'; } catch (e) {}
-        return { filled: got.length > 0, length: got.length, password: pwd, value: pwd ? '' : got.slice(0, 500), found: true, ok: true };
-      })()`).catch(() => ({ filled: false, length: 0 })))
-    }
     const nth = Number(args.nth) > 0 ? Number(args.nth) : undefined
     const frame = String(args.frame || '').trim() || undefined
     const missHint = () => formatMissRefsHint(browserId, 'fill')
-    const runFill = async (locator: { by: 'css' | 'text' | 'role' | 'label'; value: string; name?: string; exact?: boolean; nth?: number; frame?: string }) => {
-      rememberLoginTyped(nowUrl, `${locator.value} ${locator.name || ''}`, text)
-      if (locator.by === 'css' && /^#[\w.-]+$/.test(locator.value)) {
-        const quick = asObject(await typeBrowserElement(browserId, locator.value, text))
-        await wait(80)
-        const check = await readFilled(locator)
-        if (check?.filled || check?.length) {
-          return observedJson(browserId, JSON.parse(typedResult(quick, text, {
-            filled: Boolean(check.filled),
-            length: Number(check.length) || 0,
-            password: Boolean(check.password),
-            value: String(check.value || ''),
-          })), locator.frame)
-        }
-      }
-      const written = await fillByLocator(browserId, { ...locator, nth: locator.nth ?? nth, frame: locator.frame ?? frame }, text)
-      await wait(80)
-      const again = locator.by === 'css' ? await readFilled(locator) : null
-      const filled = again ? Boolean(again.filled) : written.filled === true
-      return observedJson(browserId, JSON.parse(typedResult(written, text, {
-        filled,
-        length: Number(again?.length ?? written.length ?? 0) || 0,
-        password: Boolean(again?.password) || (!written.text && (written.length || 0) > 0),
-        value: again ? String(again.value || '') : '',
-      }, missHint())), locator.frame ?? frame)
+    const runFill = async (locator: BrowserLocator) => {
+      const target = { ...locator, nth: locator.nth ?? nth, frame: locator.frame ?? frame }
+      const written = await fillByLocator(browserId, target, text)
+      if (written.ok) rememberLoginTyped(nowUrl, `${locator.value} ${locator.name || ''}`, text)
+      return observedJson(browserId, JSON.parse(typedResult(written, text, undefined, missHint())),
+        target.frameId || written.frameId || target.frame || target.framePath)
     }
     if (ref && !looksLikeCssSelector(ref)) {
       const locator = await resolveRefLocator(browserId, ref)

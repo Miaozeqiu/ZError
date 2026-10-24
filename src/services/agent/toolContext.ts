@@ -8,6 +8,8 @@ export type ChatToolContext = {
   assistantId: string
   abort: AbortSignal
   browserId: () => string
+  ensureBrowser?: () => Promise<string>
+  browserEpoch?: number
   attachment: () => AgentChatAttachment | null
   folders: () => AgentChatAttachment[]
   studySubjectId: () => number | undefined

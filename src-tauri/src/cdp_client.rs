@@ -20,6 +20,7 @@ pub struct CdpConn {
 }
 
 struct Pending {
+  permit: Option<crate::browser_control::Permit>,
   method: String,
   params: Value,
   session_id: Option<String>,
@@ -165,7 +166,11 @@ impl CdpConn {
             }
           }
           job = rx.recv() => {
-            let Some(job) = job else { break };
+            let Some(mut job) = job else { break };
+            if let Err(error) = crate::browser_control::guard_cdp(&job.permit, &job.method, &mut job.params) {
+              let _ = job.reply.send(Err(error));
+              continue;
+            }
             let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
             let mut msg = json!({
               "id": id,
@@ -204,10 +209,12 @@ impl CdpConn {
   pub async fn call_ms(
     &self,
     method: &str,
-    params: Value,
+    mut params: Value,
     session_id: Option<&str>,
     ms: u64,
   ) -> Result<Value, String> {
+    let permit = crate::browser_control::current_permit();
+    crate::browser_control::guard_cdp(&permit, method, &mut params)?;
     if !self.is_alive() {
       return Err("CDP 通道已关闭".into());
     }
@@ -216,6 +223,7 @@ impl CdpConn {
     self
       .tx
       .send(Pending {
+        permit,
         method: method.to_string(),
         params,
         session_id: session_id.map(str::to_string),

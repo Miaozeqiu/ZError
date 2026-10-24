@@ -10,6 +10,8 @@ export type BrowserLocator = {
   /** iframe 的 id / name / mid（全等），或 src、location 子串。 */
   frame?: string
   /** 快照时的 iframe 序号链，如 0/2/1。先按它找，对不上再退回 frame。 */
+  frameId?: string
+  loaderId?: string
   framePath?: string
   /** 快照上的角色。填写时只接受输入框，防止把章节按钮当账号框。 */
   role?: string
@@ -30,6 +32,8 @@ export const normalizeLocator = (locator: BrowserLocator): BrowserLocator => {
     nth: nth > 0 ? nth : undefined,
     frame: frame || undefined,
     framePath: framePath || undefined,
+    frameId: locator.frameId || undefined,
+    loaderId: locator.loaderId || undefined,
     role: String(locator.role || '').trim() || undefined,
     backend: Number(locator.backend) > 0 ? Number(locator.backend) : undefined,
   }
@@ -45,6 +49,9 @@ export const locatorScriptArg = (locator: BrowserLocator) => {
     nth: next.nth || 0,
     frame: next.frame || '',
     framePath: next.framePath || '',
+    ...(next.frameId ? { frameId: next.frameId } : {}),
+    ...(next.loaderId ? { loaderId: next.loaderId } : {}),
+    ...(next.backend ? { backend: next.backend } : {}),
   }
 }
 
@@ -73,6 +80,7 @@ export type ActResult = {
   candidates?: ActCandidate[]
   retry?: boolean
   box?: string
+  password?: boolean
   filled?: boolean
   length?: number
   url?: string
@@ -82,7 +90,10 @@ export type ActResult = {
   hint?: string
   title?: string
   snapshot?: string
+  frameId?: string
+  loaderId?: string
   snapshotStale?: boolean
+  snapshotError?: string
   snapshotTruncated?: boolean
 }
 

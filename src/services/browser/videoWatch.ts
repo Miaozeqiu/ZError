@@ -1,6 +1,8 @@
 /** 通用原生 `<video>` 监控。blob / 非学习通 CDN 没有 overlay 推送，只能 eval 轮询。 */
 import { ref } from 'vue'
-import { asObject, evalBrowserViewMainIdle, withSameFrames } from './eval'
+import { asObject } from './eval'
+import { callProtocol } from './protocol'
+import type { BrowserLocator } from './engine/types'
 
 export type NativeVideoTick = {
   hasVideo: boolean
@@ -9,6 +11,10 @@ export type NativeVideoTick = {
   paused: boolean
   ended: boolean
   src: string
+  frameId?: string
+  loaderId?: string
+  nth?: number
+  value?: string
 }
 
 export type NativeWatchStatus = 'watching' | 'paused' | 'stalled' | 'done' | 'lost'
@@ -27,6 +33,7 @@ export type NativeWatchState = {
   sampledCurrent: number
   startedAt: number
   updatedAt: number
+  locator?: BrowserLocator
 }
 
 export type NativeWatchKind = 'progress' | 'stalled' | 'lost' | 'done'
@@ -59,6 +66,7 @@ const INTERPOLATE_MS = 12_000
 const nativeWatches = ref<Record<string, NativeWatchState>>({})
 const timers = new Map<string, number[]>()
 const inFlight = new Set<string>()
+const generations = new Map<string, number>()
 const lastProgressAt = new Map<string, number>()
 const lastSeenAt = new Map<string, number>()
 const pausedAt = new Map<string, number>()
@@ -116,6 +124,10 @@ export const parseNativeTick = (raw: unknown): NativeVideoTick | null => {
     paused: row.paused !== false,
     ended: Boolean(row.ended),
     src,
+    frameId: row.frameId ? String(row.frameId) : undefined,
+    loaderId: row.loaderId ? String(row.loaderId) : undefined,
+    nth: Number(row.nth) || undefined,
+    value: row.value ? String(row.value) : undefined,
   }
 }
 
@@ -137,6 +149,7 @@ const patchWatch = (browserId: string, patch: Partial<NativeWatchState>) => {
 }
 
 const clearTimers = (browserId: string) => {
+  generations.set(browserId, (generations.get(browserId) || 0) + 1)
   for (const timer of timers.get(browserId) || []) clearIntervalOf(timer)
   timers.delete(browserId)
   inFlight.delete(browserId)
@@ -297,56 +310,25 @@ const tickLive = (browserId: string) => {
   if (next && done) fireDone(next)
 }
 
-const NATIVE_TICK_JS = `(function(){
-  var frames = __sameFrames(window, 0);
-  var best = null;
-  for (var i = 0; i < frames.length; i++) {
-    try {
-      var win = frames[i];
-      var videos = win.document.querySelectorAll('video');
-      for (var j = 0; j < videos.length; j++) {
-        var v = videos[j];
-        var src = String(v.currentSrc || v.src || '');
-        var current = Number(v.currentTime) || 0;
-        var duration = Number(v.duration);
-        if (!(duration > 0) || !isFinite(duration)) {
-          try { duration = Number(win.duration) || 0; } catch (eD) { duration = 0; }
-        }
-        if (!(duration > 0) || !isFinite(duration)) duration = 0;
-        var paused = Boolean(v.paused);
-        var ended = Boolean(v.ended);
-        var visible = false;
-        try { visible = __visibleEl(v); } catch (eV) {}
-        if (!src && !(current > 0) && !(duration > 0)) continue;
-        var score = (paused ? 0 : 4) + (visible ? 2 : 0) + (src ? 1 : 0) + (current > 0 ? 1 : 0);
-        if (!best || score > best.score) {
-          best = { score: score, hasVideo: true, current: current, duration: duration, paused: paused, ended: ended, src: src };
-        }
-      }
-    } catch (e) {}
-  }
-  return best
-    ? { hasVideo: true, current: best.current, duration: best.duration, paused: best.paused, ended: best.ended, src: best.src }
-    : { hasVideo: false };
-})()`
-
-export const readNativeVideoTick = async (browserId: string): Promise<NativeVideoTick | null> => {
+export const readNativeVideoTick = async (browserId: string, locator?: BrowserLocator): Promise<NativeVideoTick | null> => {
   const id = String(browserId || '').trim()
   if (!id) return null
-  const raw = await evalBrowserViewMainIdle(id, withSameFrames(NATIVE_TICK_JS)).catch(() => null)
+  const raw = await callProtocol(id, 'media_tick', { locator }).catch(() => null)
   return parseNativeTick(raw)
 }
 
 const syncTick = async (browserId: string) => {
   if (!nativeWatches.value[browserId] || inFlight.has(browserId)) return
   inFlight.add(browserId)
+  const generation = generations.get(browserId)
   try {
-    const tick = await readNativeVideoTick(browserId)
+    const tick = await readNativeVideoTick(browserId, nativeWatches.value[browserId]?.locator)
+    if (generations.get(browserId) !== generation) return
     applyTick(browserId, tick)
   } catch {
     // 探测失败继续本地走表
   } finally {
-    inFlight.delete(browserId)
+    if (generations.get(browserId) === generation) inFlight.delete(browserId)
   }
 }
 
@@ -354,7 +336,7 @@ export const startNativeWatch = (
   browserId: string,
   sessionId: string,
   seed?: Partial<NativeVideoTick> & { title?: string },
-  opts?: { resume?: boolean },
+  opts?: { resume?: boolean; locator?: BrowserLocator },
 ) => {
   const id = String(browserId || '').trim()
   const sid = String(sessionId || '').trim()
@@ -387,6 +369,10 @@ export const startNativeWatch = (
     sampledCurrent: current,
     startedAt: now,
     updatedAt: now,
+    locator: opts?.locator || (seed?.frameId ? {
+      by: 'css', value: seed.value || 'video', nth: seed.nth || 1,
+      frameId: seed.frameId, loaderId: seed.loaderId,
+    } : resume ? prev?.locator : undefined),
   }
   nativeWatches.value = { ...nativeWatches.value, [id]: state }
   timers.set(id, [

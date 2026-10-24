@@ -1,5 +1,8 @@
 /** 标签 / eval / 点选。学习通动作不在这里，走 platform adapter。 */
 import { invoke } from '@tauri-apps/api/core'
+import { browserAutomationArgs } from './control'
+import { ref } from 'vue'
+import { evalBrowserViewMain } from './eval'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { clickByLocator, fillByLocator } from './engine/act'
 import { clickLabelMatches } from './engine/clickFind'
@@ -69,6 +72,11 @@ export type BrowserBounds = {
   y: number
   width: number
   height: number
+  layout?: {
+    viewportWidth: number; viewportHeight: number
+    paddingRatio: number; paddingMin: number; paddingMax: number
+    compactBreakpoint: number; compactPadding: number
+  }
 }
 
 const STORAGE_KEY = 'zerror-app-browsers'
@@ -234,10 +242,10 @@ export const hostBounds = (el: HTMLElement | null): BrowserBounds | null => {
   }
 }
 
-export const openBrowserView = (id: string, url: string, bounds: BrowserBounds) => {
+export const openBrowserView = (id: string, url: string, bounds: BrowserBounds, hidden = false) => {
   const blocked = guardNavigate(url)
   if (blocked) return Promise.reject(new Error(blocked))
-  return invoke('browser_open', { id, url: normalizeBrowserUrl(url), ...bounds })
+  return invoke('browser_open', { id, url: normalizeBrowserUrl(url), ...bounds, hidden })
 }
 
 let boundsFlight: Promise<void> | null = null
@@ -264,11 +272,22 @@ export const setBrowserBounds = (id: string, bounds: BrowserBounds, notify = fal
 export const showBrowserView = (id: string) => invoke('browser_show', { id })
 export const hideBrowserView = (id: string) => invoke('browser_hide', { id })
 export const hideAllBrowserViews = () => invoke('browser_hide_all')
-export const closeBrowserView = (id: string) => invoke('browser_close', { id })
-export const navigateBrowserView = (id: string, url: string) => {
+export const closeBrowserView = async (id: string) => {
+  await invoke('browser_close', { id })
+  const next = { ...browserAudioMuted.value }
+  delete next[id]
+  browserAudioMuted.value = next
+}
+/** 当前应用进程内每个标签页的原生静音状态；页面导航和刷新不会重置。 */
+export const browserAudioMuted = ref<Record<string, boolean>>({})
+export const setBrowserAudioMuted = async (id: string, muted: boolean) => {
+  await invoke('browser_set_audio_muted', { id, muted })
+  browserAudioMuted.value = { ...browserAudioMuted.value, [id]: muted }
+}
+export const navigateBrowserView = (id: string, url: string, userInitiated = false) => {
   const blocked = guardNavigate(url)
   if (blocked) return Promise.reject(new Error(blocked))
-  return invoke('browser_navigate', { id, url: normalizeBrowserUrl(url) })
+  return invoke('browser_navigate', { id, url: normalizeBrowserUrl(url), ...(userInitiated ? { userInitiated } : browserAutomationArgs(id)) })
 }
 const loadPhase = new Map<string, { phase: string; at: number; url: string }>()
 let loadWatch: Promise<UnlistenFn> | null = null
@@ -306,14 +325,14 @@ export const waitForBrowserIdle = async (id: string, maxMs = 8_000) => {
   }
 }
 
-export const reloadBrowserView = async (id: string) => {
+export const reloadBrowserView = async (id: string, userInitiated = false) => {
   await watchBrowserLoad()
   loadPhase.set(id, { phase: 'started', at: Date.now(), url: '' })
-  await invoke('browser_reload', { id })
+  await invoke('browser_reload', { id, ...(userInitiated ? { userInitiated } : browserAutomationArgs(id)) })
   await waitForBrowserIdle(id)
 }
-export const goBackBrowserView = (id: string) => invoke('browser_go_back', { id })
-export const goForwardBrowserView = (id: string) => invoke('browser_go_forward', { id })
+export const goBackBrowserView = (id: string, userInitiated = false) => invoke('browser_go_back', { id, ...(userInitiated ? { userInitiated } : browserAutomationArgs(id)) })
+export const goForwardBrowserView = (id: string, userInitiated = false) => invoke('browser_go_forward', { id, ...(userInitiated ? { userInitiated } : browserAutomationArgs(id)) })
 export const setBrowserZoom = (id: string, zoom: number) => (
   invoke('browser_set_zoom', { id, zoom: clampBrowserZoom(zoom) })
 )
@@ -333,7 +352,7 @@ export const screenshotBrowserView = async (id: string) => {
 }
 
 export const readBrowserFrameSrcs = async (id: string) => {
-  const raw = await evalBrowserView(id, `(function(){
+  const raw = await evalBrowserViewMain(id, `(function(){
     var out = [];
     try {
       var list = document.querySelectorAll('iframe[src]');
@@ -350,6 +369,7 @@ export const readBrowserFrameSrcs = async (id: string) => {
 }
 
 export type ReadPageOptions = {
+  controlEpoch?: number
   /** 只附带网址里包含这段的那个子 frame（动作后）。 */
   frame?: string
   /** 只拍顶层；有 frame 时再加那一个子 frame。 */
@@ -369,7 +389,7 @@ export const readBrowserPage = async (id: string, opts: ReadPageOptions = {}) =>
       ...(opts.frame ? { frame: opts.frame } : {}),
       ...(opts.acted ? { acted: true } : {}),
       maxFrames: opts.acted ? 2 : (opts.maxFrames ?? 8),
-    }))
+    }, opts.controlEpoch == null ? undefined : { expectedEpoch: opts.controlEpoch }))
     const refs = (Array.isArray(cdp.refs) ? cdp.refs : []) as PageRef[]
     const commit = opts.gen == null || !pageSnapAbandoned(id, opts.gen)
     if (commit) rememberPageRefs(id, refs)
@@ -612,8 +632,8 @@ export const listenBrowserLoad = (handler: (state: BrowserLoadState) => void): P
   })
 )
 
-export const listenBrowserOpened = (handler: (state: BrowserPageState) => void): Promise<UnlistenFn> => (
-  listen<BrowserPageState>('app-browser-opened', (event) => {
+export const listenBrowserOpened = (handler: (state: BrowserPageState & { openerId?: string }) => void): Promise<UnlistenFn> => (
+  listen<BrowserPageState & { openerId?: string }>('app-browser-opened', (event) => {
     if (event.payload) handler(event.payload)
   })
 )

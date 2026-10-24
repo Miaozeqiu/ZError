@@ -1,0 +1,110 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>WKWebView 聊天滚动验证</title>
+<style>
+html,body{margin:0;height:100%;font:14px system-ui;background:#fff;color:#222}
+#app{display:flex;flex-direction:column;height:calc(100% - 100px);--chat-gutter:24px;--chat-max-width:720px}
+#tools{height:32px;display:flex;gap:12px;align-items:center;padding:0 12px;background:#eef1f4}
+#status{height:68px;padding:8px 12px;box-sizing:border-box;font:12px monospace;overflow:hidden;background:#eef1f4}
+</style>
+<div id="tools"><strong id="engine">正在识别内核</strong><button id="bottom">回到底部</button><button id="stream">暂停输出</button><button id="switch">切换测试对话</button></div>
+<div id="status">加载组件…</div><div id="app"></div>
+<script type="module">
+// Only memory refs are changed. No conversation persistence or model calls.
+import {createApp,h,ref,nextTick} from 'vue';
+import Thread from '/src/views/agentChat/AgentChatThread.vue';
+import {sessions,activeId} from '/src/services/agent/chatStore.ts';
+import '/src/styles/themes.css';
+// Match AgentChat.vue: omitting the renderer CSS hides its offscreen sizing behavior.
+import 'markstream-vue/index.css';
+const makeSession=(id,count)=>({id,title:'内存滚动测试',createdAt:Date.now(),updatedAt:Date.now(),messages:Array.from({length:count},(_,i)=>({id:String(i),role:i%2?'assistant':'user',content:`第 ${i+1} 条消息：验证从底部向上滚动。\n\n**读取已有内容时，新输出不应将页面拉回底部。**`,steps:[],status:'done'}))});
+const makeLongSession=(id)=>{
+ const session=makeSession(id,4),message=session.messages.at(-1);
+ message.content='';message.steps=[];
+ for(let i=0;i<120;i++) {
+   if(i%2===0)message.content+=`读取第 ${i+1} 个页面的内容，检查操作结果。\n\n`;
+   message.steps.push({id:`tool-${i}`,name:'browser_snapshot',label:'读取了页面内容',status:'done',startedAt:i,atContentLength:message.content.length});
+ }
+ message.content+='任务已完成。\n\n'+Array.from({length:3},(_,i)=>`段落 ${i+1}：这里是已经输出完成的对话内容，用来检查滚动时位置和总高度是否发生变化。`).join('\n\n');
+ return session;
+};
+sessions.value=[makeLongSession('scroll-test-a'),makeSession('scroll-test-b',60)];activeId.value='scroll-test-a';
+const pinned=ref(true),thread=ref(null), transitions=[];
+const native=typeof window.__TAURI_INTERNALS__ !== 'undefined';
+let diagnostics={},streaming=true;
+document.querySelector('#engine').textContent=native?'Tauri · WKWebView 原生窗口':'浏览器预览（不能验证 macOS 原生适配）';
+if(native){const {invoke}=await import('@tauri-apps/api/core');setInterval(async()=>{diagnostics=await invoke('scroll_smoke_diagnostics').catch(error=>({error:String(error)}));},200);}
+createApp({setup(){return()=>h(Thread,{ref:thread,pinned:pinned.value,'onUpdate:pinned':v=>{pinned.value=v;transitions.push({at:performance.now(),following:v,top:document.querySelector('.chat-thread')?.scrollTop})},showFeatureCards:false,fileManagerLabel:'访达'})}}).mount('#app');
+await nextTick();
+const pane=document.querySelector('.chat-thread');
+let events=0,prevented=0;const samples=[],deltas=[];
+pane.addEventListener('wheel',e=>{events++;deltas.push([e.deltaX,e.deltaY,e.deltaMode]);setTimeout(()=>{prevented+=Number(e.defaultPrevented)},0)},{passive:true});
+setInterval(()=>{samples.push(pane.scrollTop);document.querySelector('#status').textContent=JSON.stringify({...diagnostics,top:pane.scrollTop,max:pane.scrollHeight-pane.clientHeight,pinned:pinned.value,wheelEvents:events,prevented,recent:samples.slice(-5),deltas:deltas.slice(-4)});},150);
+setInterval(()=>{if(streaming)sessions.value.find(s=>s.id===activeId.value).messages.at(-1).content+=' 新增内容。';},150);
+document.querySelector('#bottom').onclick=()=>thread.value.jumpThreadToBottom();
+document.querySelector('#stream').onclick=e=>{streaming=!streaming;e.currentTarget.textContent=streaming?'暂停输出':'恢复输出'};
+document.querySelector('#switch').onclick=()=>{activeId.value=activeId.value==='scroll-test-a'?'scroll-test-b':'scroll-test-a'};
+if(native && new URLSearchParams(location.search).has('autorun')) {
+  const {invoke}=await import('@tauri-apps/api/core');
+  const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+  const atBottom=()=>pinned.value && pane.scrollHeight-pane.clientHeight-pane.scrollTop<2;
+  const settleFollow=async()=>{const deadline=performance.now()+800;while(!atBottom() && performance.now()<deadline)await wait(16)};
+  const checks=[]; const check=(name,ok,details)=>{checks.push({name,ok,details});if(!ok)throw new Error(name)};
+  let nativeInfo;
+  try {
+    await wait(1800);
+    streaming=false;
+    check('initial follow',pinned.value && pane.scrollHeight-pane.clientHeight-pane.scrollTop<2);
+    const staticTrack=[];
+    const staticSample=setInterval(()=>staticTrack.push({top:pane.scrollTop,height:pane.scrollHeight,pinned:pinned.value}),8);
+    for(let i=0;i<32;i++){await invoke('scroll_smoke_input',{y:8,precise:false});await wait(35)}
+    await wait(600);clearInterval(staticSample);
+    check('completed long conversation scrolls up monotonically',staticTrack.every((p,i)=>!i||p.top<=staticTrack[i-1].top+1),{staticTrack});
+    check('completed history height stays constant',new Set(staticTrack.map(p=>p.height)).size===1,{heights:[...new Set(staticTrack.map(p=>p.height))]});
+    thread.value.jumpThreadToBottom();await wait(600);await settleFollow();
+    // Exercise the actual custom scrollbar handlers, crossing Markdown blocks.
+    const thumb=document.querySelector('.custom-scrollbar-thumb');
+    const thumbY=thumb.getBoundingClientRect().top+thumb.clientHeight/2;
+    const dragStart=pane.scrollTop, dragHeight=pane.scrollHeight, dragTrack=[];
+    thumb.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true,button:0,buttons:1,clientY:thumbY}));
+    for(let i=1;i<=16;i++) {
+      document.dispatchEvent(new MouseEvent('mousemove',{bubbles:true,buttons:1,clientY:thumbY-i*2}));
+      await wait(25);dragTrack.push({top:pane.scrollTop,height:pane.scrollHeight});
+    }
+    document.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,button:0,buttons:0,clientY:thumbY-32}));
+    const dragEnd=pane.scrollTop;await wait(400);
+    check('scrollbar drag escapes bottom without rebound',dragEnd<dragStart-20 && !pinned.value && Math.abs(pane.scrollTop-dragEnd)<2 && dragTrack.every((p,i)=>!i||p.top<=dragTrack[i-1].top+1),{dragStart,dragEnd,now:pane.scrollTop,dragTrack});
+    check('scrollbar drag preserves completed content height',dragTrack.every(p=>p.height===dragHeight),{dragHeight,heights:[...new Set(dragTrack.map(p=>p.height))]});
+    thread.value.jumpThreadToBottom();await wait(600);await settleFollow();
+    const before=pane.scrollTop, initialMax=pane.scrollHeight-pane.clientHeight, track=[];
+    const sample=setInterval(()=>track.push(pane.scrollTop),16);
+    nativeInfo=await invoke('scroll_smoke_input',{y:3,precise:false});
+    await wait(650);clearInterval(sample);
+    const after=pane.scrollTop;
+    check('small native coarse wheel escapes bottom',after<before-5 && after>before-60,{before,after,track});
+    check('coarse wheel delivered over multiple frames',events>2,{events,deltas:deltas.slice()});
+    check('upward input releases follow',!pinned.value);
+    // Background WKWebViews throttle interval callbacks. Force a known-size
+    // streamed update as well, so this assertion does not depend on timer rate.
+    sessions.value.find(s=>s.id===activeId.value).messages.at(-1).content+='\n\n新增输出段落，验证阅读位置保持。'.repeat(6);
+    await nextTick();await wait(1300);
+    check('streaming grows content without pulling reading position down',Math.abs(pane.scrollTop-after)<2 && pane.scrollHeight-pane.clientHeight>initialMax,{after,now:pane.scrollTop,initialMax,max:pane.scrollHeight-pane.clientHeight});
+    const preciseBefore=pane.scrollTop;
+    await invoke('scroll_smoke_input',{y:40,precise:true});await wait(400);
+    check('precise input remains native',pane.scrollTop<preciseBefore-20,{before:preciseBefore,after:pane.scrollTop});
+    check('DOM wheel never prevented',prevented===0,{prevented});
+    await invoke('scroll_smoke_input',{y:-30,precise:false});await wait(600);await settleFollow();
+    check('native downward return resumes following',pinned.value && pane.scrollHeight-pane.clientHeight-pane.scrollTop<2);
+    await invoke('scroll_smoke_input',{y:3,precise:false});await wait(400);
+    check('small upward wheel releases following again',!pinned.value);
+    const jumpTrack=[];const jumpSample=setInterval(()=>jumpTrack.push({at:performance.now(),top:pane.scrollTop,max:pane.scrollHeight-pane.clientHeight,pinned:pinned.value}),16);
+    thread.value.jumpThreadToBottom();await wait(500);await settleFollow();clearInterval(jumpSample);
+    check('explicit jump resumes following',pinned.value && pane.scrollHeight-pane.clientHeight-pane.scrollTop<2,{jumpTrack,transitions:transitions.slice(-20)});
+    thread.value.jumpThreadToBottom();
+    await invoke('scroll_smoke_input',{y:90,precise:false});await wait(600);
+    check('native wheel interrupts follow again',!pinned.value);
+    diagnostics=await invoke('scroll_smoke_diagnostics');
+    await invoke('scroll_smoke_report',{report:{passed:true,engine:navigator.userAgent,nativeInfo,diagnostics,checks}});
+  }catch(error){await invoke('scroll_smoke_report',{report:{passed:false,error:String(error),engine:navigator.userAgent,nativeInfo,checks,diagnostics}})}
+}
+</script>

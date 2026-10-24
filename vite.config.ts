@@ -104,6 +104,12 @@ export default defineConfig(async () => ({
   server: {
     port: 1420,
     strictPort: true,
+    proxy: {
+      '/__agent-bridge': {
+        target: 'http://127.0.0.1:1429',
+        rewrite: path => path.replace(/^\/__agent-bridge/, ''),
+      },
+    },
     host: host || false,
     hmr: host
       ? {

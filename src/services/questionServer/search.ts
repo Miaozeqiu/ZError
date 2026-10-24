@@ -34,7 +34,7 @@ export const runSearchForRequest = async (
   const log = requestLogs.value.find(item => item.id === requestId)
   const trace = reactive<SearchTrace>({
     id: `${requestId}-search-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-    query, modelId: '', modelName, mode: 'remote', toolName: 'web_search_exa',
+    query, modelId: '', modelName, mode: 'remote', toolName: config.provider === 'deepseek' ? 'deepseek_search' : 'web_search_exa',
     status: 'searching', startedAt: Date.now(), results: [],
   })
   if (log) (log.searchTraces ??= []).push(trace)

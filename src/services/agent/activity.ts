@@ -4,15 +4,17 @@ import { resolveQuizTitle } from '../../utils/question/quizPractice'
 export const describeActivity = (name: string, args: any, status: ImportTaskStep['status'], extra?: any) => {
   const browserLabels: Record<string, [string, string, string]> = {
     browser_get_state: ['正在查看网页', '查看网页失败', '查看了当前网页'],
+    browser_set_checked: ['正在设置选项', '选项状态未确认，请重新读取页面', '勾选状态已验证'],
     browser_get_page: ['正在读取网页', '读取网页失败', '读取了当前网页'],
-    browser_find: ['正在搜索快照', '搜索快照失败', '在快照里搜到了内容'],
+    browser_find: ['正在搜索快照', '搜索快照失败', Array.isArray(extra?.hits) && extra.hits.length === 0 ? '快照中未找到匹配内容' : '已搜索页面快照'],
+    browser_press: ['正在发送按键', '按键失败', `已按 ${args?.key || '键'}`],
     browser_navigate: ['正在打开网页', '打开网页失败', extra?.url || args?.url ? `打开了 ${extra?.url || args?.url}` : '打开了网页'],
     browser_reload: ['正在刷新', '刷新失败', '刷新了网页'],
     browser_go_back: ['正在后退', '后退失败', '后退了一页'],
     browser_go_forward: ['正在前进', '前进失败', '前进了一页'],
     browser_click: [
       '正在点击',
-      extra?.error ? `点击失败 · ${extra.error}` : '点击失败',
+      '点击失败',
       extra?.navigated
         ? `点击了，已跳到新页`
         : extra?.navigated === false
@@ -21,7 +23,7 @@ export const describeActivity = (name: string, args: any, status: ImportTaskStep
     ],
     browser_click_text: [
       '正在点击',
-      extra?.error ? `点击失败 · ${extra.error}` : '点击失败',
+      '点击失败',
       extra?.navigated
         ? `点击了「${args?.text || extra?.text || '文案'}」，已跳到新页`
         : extra?.navigated === false
@@ -30,7 +32,7 @@ export const describeActivity = (name: string, args: any, status: ImportTaskStep
     ],
     browser_type: [
       '正在填写',
-      extra?.error ? `填写失败 · ${extra.error}` : '填写失败',
+      '填写失败',
       extra?.filled === false
         ? '填写了，但输入框还是空的'
         : extra?.filled
@@ -58,17 +60,13 @@ export const describeActivity = (name: string, args: any, status: ImportTaskStep
     browser_task: [
       args?.kind === 'explore'
         ? '正在派出探路子 Agent'
-        : args?.kind === 'parser'
-          ? '正在派出改解析器子 Agent'
-          : '正在派出执行子 Agent',
+        : '正在派出执行子 Agent',
       extra?.error ? `子任务失败 · ${extra.error}` : '子任务失败',
       extra?.summary
         ? String(extra.summary).slice(0, 80)
         : args?.kind === 'explore'
           ? '探路子 Agent 已返回'
-          : args?.kind === 'parser'
-            ? '改解析器子 Agent 已返回'
-            : '执行子 Agent 已返回',
+          : '执行子 Agent 已返回',
     ],
     browser_todo: [
       args?.action === 'check' ? '正在勾选任务' : args?.action === 'add' ? '正在追加任务' : '正在整理任务清单',

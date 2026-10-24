@@ -49,12 +49,8 @@ export const handlePageTools = async (ctx: Record<string, any>): Promise<string 
       if (hits.length) await waitMs(60)
       const shot = await screenshotBrowserView(browserId)
       const extras = await materializeCaptchaImages(hits, shot.image).catch(() => ({ images: [] as string[], maxlength: 0 }))
-      const page = await readBrowserPage(browserId).catch(() => null)
-      const frameSrc = (page?.iframes || []).map((item) => item.src).filter(Boolean).slice(0, 4)
+      // 截图不刷新快照/ref；否则模型手中仍是截图前的编号，却在后台全部失效。
       const captchaHint = captchaScreenshotHint(extras.images.length, extras.maxlength)
-      const frameHint = frameSrc.length
-        ? `截图是当前可视区域（含已画出的 iframe）。页内还有框：${frameSrc.join('、')}。`
-        : undefined
       return JSON.stringify({
         ok: true,
         url: shot.url || state?.url || '',
@@ -62,9 +58,7 @@ export const handlePageTools = async (ctx: Record<string, any>): Promise<string 
         image: shot.image,
         images: extras.images.length ? extras.images : undefined,
         captcha: extras.images.length ? { count: extras.images.length, maxlength: extras.maxlength || undefined } : undefined,
-        iframes: page?.iframes,
-        preferredFrame: page?.preferredFrame?.url || undefined,
-        hint: [captchaHint, frameHint].filter(Boolean).join(' ') || undefined,
+        hint: [captchaHint, '截图保留上一份快照的 ref；布局或页面变化后重新 get_page。'].filter(Boolean).join(' '),
       })
     } catch (error) {
       return JSON.stringify({
@@ -77,12 +71,22 @@ export const handlePageTools = async (ctx: Record<string, any>): Promise<string 
     const watchUrl = await liveHref(browserId)
     const { isChaoxingPlayerUrl } = await import('../../platform/chaoxing/nav')
     if (isChaoxingPlayerUrl(watchUrl)) {
+      const requestedRef = String(args.ref || '').trim()
+      if (requestedRef) {
+        const mediaRef = mediaRefOf(browserId, requestedRef, listCachedPageRefs)
+        const locator = mediaRef ? await resolveRefLocator(browserId, mediaRef) : null
+        if (!locator) return JSON.stringify({ ok: false, error: '视频 ref 已失效，请重新读取页面快照' })
+        const tick = await callProtocol(browserId, 'media_tick', { locator })
+        if (!tick.hasVideo || !tick.mid) return JSON.stringify({ ok: false, error: '指定视频任务点尚未就绪，请重新读取页面' })
+        const { pinChaoxingPlayMid } = await import('../../chaoxing/study/video')
+        pinChaoxingPlayMid(browserId, String(tick.mid))
+      }
       const { readChaoxingVideoTick, videoIsPlaying } = await import('../../chaoxing/study')
       const { startChaoxingWatch, stopChaoxingWatch, videoWatchFor } = await import('../../chaoxing/browser/watch')
       const { packAgentPanel, watchSessionFastPath } = await import('../../platform/panelAccess')
       const existing = videoWatchFor(browserId)
       const panelNow = packAgentPanel(browserId)
-      const fast = watchSessionFastPath(existing, panelNow?.event)
+      const fast = requestedRef ? '' : watchSessionFastPath(existing, panelNow?.event)
       if (fast === 'panel_clear') {
         return JSON.stringify({
           watching: false,
@@ -143,8 +147,14 @@ export const handlePageTools = async (ctx: Record<string, any>): Promise<string 
     } = await import('../../browser/videoWatch')
     const emptyHint = ' 这只是当前看得见的那一条。同一节的其它条在快照的 iframe 分段里。'
     const { watchSessionFastPath } = await import('../../platform/panelAccess')
+    const requestedRef = String(args.ref || '').trim()
+    const mediaRef = mediaRefOf(browserId, requestedRef, listCachedPageRefs)
+    if (requestedRef && !mediaRef) return JSON.stringify({ ok: false, error: '视频 ref 已失效，请重新读取页面快照' })
+    const locator = mediaRef ? await resolveRefLocator(browserId, mediaRef) : undefined
     const existing = nativeWatchFor(browserId)
-    const fast = watchSessionFastPath(existing, null)
+    const sameTarget = !locator || (existing?.locator?.frameId === locator.frameId
+      && existing?.locator?.loaderId === locator.loaderId && existing?.locator?.nth === locator.nth)
+    const fast = sameTarget ? watchSessionFastPath(existing, null) : ''
     if (fast === 'ended') {
       return JSON.stringify({
         watching: false,
@@ -162,8 +172,7 @@ export const handlePageTools = async (ctx: Record<string, any>): Promise<string 
         hint: `${watchFollowHint(browserId, true)}${emptyHint}`,
       })
     }
-    const tick = await readNativeVideoTick(browserId)
-    const mediaRef = mediaRefOf(browserId, String(args.ref || ''), listCachedPageRefs)
+    const tick = await readNativeVideoTick(browserId, locator)
     if (!tick?.hasVideo) {
       return JSON.stringify({
         watching: false,
@@ -187,7 +196,7 @@ export const handlePageTools = async (ctx: Record<string, any>): Promise<string 
     const started = startNativeWatch(browserId, sessionId, {
       ...tick,
       title: String(args.title || existing?.title || '').trim(),
-    })
+    }, { locator })
     return JSON.stringify({
       watching: true,
       title: started?.title || '',

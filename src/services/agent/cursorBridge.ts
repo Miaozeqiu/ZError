@@ -4,15 +4,14 @@ import { runBridgeAction, type BridgeCmd } from './bridgeApi'
 
 const VITE = 'http://localhost:1420'
 const BRIDGES = ['http://127.0.0.1:1429', `${VITE}/__agent-bridge`]
+let activeBridge = BRIDGES[0]
 
 const postJson = (path: string, payload: Record<string, unknown>) => {
-  for (const base of BRIDGES) {
-    fetch(`${base}${path}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    }).catch(() => {})
-  }
+  fetch(`${activeBridge}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }).catch(() => {})
 }
 
 const postDebugFile = (file: string, ext: 'json' | 'md' | 'txt', text: string) => {
@@ -41,11 +40,11 @@ const pullCmd = async (): Promise<BridgeCmd | null> => {
   for (const base of BRIDGES) {
     try {
       const res = await fetchWithin(`${base}/cmd`)
-      if (res.status === 204) continue
+      if (res.status === 204) { activeBridge = base; break }
       const type = res.headers.get('content-type') || ''
       if (!type.includes('json')) continue
       const cmd = await res.json()
-      if (cmd?.id) return cmd as BridgeCmd
+      if (cmd?.id) { activeBridge = base; return cmd as BridgeCmd }
     } catch {
       // 这条桥没起来就试下一条
     }

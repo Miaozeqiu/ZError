@@ -1,5 +1,6 @@
 /** 会话列表、持久化、作曲栏。发送循环在 chatLoop.ts，不要把模型调用写回这里。 */
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
+import { browserControlState } from '../browser/control'
 import type { ImportStepPreview, ImportTaskStep } from '../app/importTasks'
 import { dropAllWatchQueues } from '../platform'
 import { cancelApprovalsForSession } from './agentApproval'
@@ -100,6 +101,7 @@ const loadPersisted = () => {
       attachments: Array.isArray(session.attachments) ? session.attachments : undefined,
       studySubjectId: Number(session.studySubjectId) > 0 ? Number(session.studySubjectId) : undefined,
       browserId: String(session.browserId || '').trim() || undefined,
+      browserIds: Array.isArray(session.browserIds) ? [...new Set(session.browserIds.map(id => String(id || '').trim()).filter(Boolean))] : undefined,
       todos: Array.isArray(session.todos) ? session.todos : undefined,
       contextSummary: session.contextSummary?.text && session.contextSummary.coveredThrough
         ? session.contextSummary
@@ -116,7 +118,7 @@ const loadPersisted = () => {
         error: message.status === 'streaming' ? '应用关闭时对话中断' : message.error,
       })),
     }))
-    activeId.value = sessions.value.find((session) => !session.browserId)?.id || null
+    activeId.value = sessions.value[0]?.id || null
   } catch {
     sessions.value = []
   }
@@ -124,7 +126,7 @@ const loadPersisted = () => {
 
 loadPersisted()
 
-export const chatSessions = computed(() => sessions.value.filter((session) => !session.browserId && !session.parentId))
+export const chatSessions = computed(() => sessions.value.filter((session) => !session.parentId))
 export const browserChatSessions = computed(() => sessions.value.filter((session) => session.browserId && !session.parentId))
 export const activeChatId = computed(() => activeId.value)
 export const activeChat = computed(
@@ -407,6 +409,7 @@ export const finalizeStopped = (sessionId: string, messageId: string) => {
       return {
         ...message,
         status: 'stopped' as const,
+        waiting: false,
         error: undefined,
         steps: message.steps.map((step) =>
           step.status === 'running'
@@ -432,13 +435,27 @@ export const stopChat = (id?: string) => {
   wakeAgentWait(sessionId, { reason: 'timeout', hint: '已终止' })
   cancelApprovalsForSession(sessionId)
   dropAllWatchQueues(sessionId)
-  if (session?.browserId) stopWatchFor(session.browserId)
+  for (const id of new Set([...(session?.browserIds || []), session?.browserId || ''].filter(Boolean))) stopWatchFor(id)
 }
+
+// 接管是终止当前回合；不能把模型/工具挂起到交还时再自动续跑。
+const offBrowserTakeover = watch(
+  () => Object.values(browserControlState),
+  (next, previous) => {
+    for (const state of next) {
+      if (state.owner === 'user' && previous?.find(item => item.sessionId === state.sessionId)?.owner !== 'user') {
+        stopChat(state.sessionId)
+      }
+    }
+  },
+  { flush: 'sync', immediate: true },
+)
+if (import.meta.hot) import.meta.hot.dispose(offBrowserTakeover)
 
 export const stopBrowserAgent = (browserId?: string) => {
   const id = String(browserId || '').trim()
   if (!id) return
-  const session = sessions.value.find((item) => item.browserId === id && !item.parentId)
+  const session = sessions.value.find((item) => !item.parentId && (item.browserId === id || item.browserIds?.includes(id)))
   if (session) {
     stopChat(session.id)
     return
@@ -449,20 +466,9 @@ export const stopBrowserAgent = (browserId?: string) => {
 export const ensureBrowserChat = (input: { browserId: string; title?: string }) => {
   const browserId = String(input.browserId || '').trim()
   if (!browserId) return null
-  const all = sessions.value.filter((item) => item.browserId && !item.parentId)
-  const keep = all.slice().sort((left, right) => {
-    const byMessages = (right.messages?.length || 0) - (left.messages?.length || 0)
-    if (byMessages) return byMessages
-    return (right.updatedAt || 0) - (left.updatedAt || 0)
-  })[0]
+  const keep = sessions.value.find((item) => !item.parentId
+    && (item.browserId === browserId || item.browserIds?.includes(browserId)))
   if (keep) {
-    const extras = all.filter((item) => item.id !== keep.id)
-    if (extras.length) {
-      for (const extra of extras) {
-        if (sessionIsStreaming(extra)) stopChat(extra.id)
-      }
-      sessions.value = sessions.value.filter((item) => !extras.some((extra) => extra.id === item.id))
-    }
     if (keep.browserId !== browserId || (input.title && keep.title !== input.title)) {
       patchSession(keep.id, (current) => ({
         ...current,
@@ -482,12 +488,17 @@ export const ensureBrowserChat = (input: { browserId: string; title?: string }) 
 }
 
 export const removeChat = (id: string) => {
+  const current = sessions.value.find(session => session.id === id)
+  const browserIds = [...new Set([...(current?.browserIds || []), current?.browserId || ''].filter(Boolean))]
   if (sessionIsStreaming(sessions.value.find((session) => session.id === id))) {
     stopChat(id)
   }
   sessions.value = sessions.value.filter((session) => session.id !== id)
-  if (activeId.value === id) activeId.value = sessions.value.find((session) => !session.browserId)?.id || null
+  if (activeId.value === id) activeId.value = sessions.value.find((session) => !session.parentId)?.id || null
   persist()
+  if (browserIds.length) {
+    void import('./agentBrowser').then(({ releaseChatBrowsers }) => releaseChatBrowsers(browserIds))
+  }
 }
 
 export const clearBrowserChat = (browserId: string) => {

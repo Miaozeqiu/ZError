@@ -11,6 +11,23 @@ export const BROWSER_PRIMITIVE_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'browser_set_checked',
+      description: '将复选框或单选框设为指定状态，已符合状态的不重复点击。使用选项 ref，或题目范围内唯一选项的 selector；勿用全页 nth 猜选项。批量顺序处理，失败立即停止。仅验证 checked 状态，不验证答案内容、不保存或提交。',
+      parameters: {
+        type: 'object', properties: {
+          items: { type: 'array', minItems: 1, maxItems: 40, items: {
+            type: 'object', properties: {
+              ref: { type: 'string' }, selector: { type: 'string' },
+              nth: { type: 'integer', minimum: 1 }, frame: { type: 'string' }, checked: { type: 'boolean' },
+            }, required: ['checked'],
+          } },
+        }, required: ['items'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'browser_get_state',
       description: '查看当前网址、标题、图谱节点和本站经验。看元素、点元素都用快照里的 ref。',
       parameters: { type: 'object', properties: {} },
@@ -37,7 +54,7 @@ export const BROWSER_PRIMITIVE_TOOLS = [
           title: { type: 'string', description: '节点标题' },
           path: { type: 'string', description: '路径说明，给用户看' },
           summary: { type: 'string', description: '节点短说明' },
-          structure: { type: 'string', description: '页内结构：入口、iframe、这页能不能挂解析器' },
+          structure: { type: 'string', description: '页内结构：入口、iframe 与主要控件' },
           frame: {
             type: 'object',
             description: '页内框外壳，如 #frame_content',
@@ -66,11 +83,6 @@ export const BROWSER_PRIMITIVE_TOOLS = [
             type: 'array',
             items: { type: 'string' },
             description: 'URL 正则数组，命中任一即认为当前在此节点',
-          },
-          parserIds: {
-            type: 'array',
-            items: { type: 'string' },
-            description: '本站解析包角色：学习通 homework / study；其它站 parsers/<role> 的角色名。login / captcha 可以只当角色、没有包。',
           },
           row: { type: 'integer', description: '布局行，0 起' },
           col: { type: 'integer', description: '布局列：-1 左 / 0 中 / 1 右' },
@@ -148,7 +160,7 @@ export const BROWSER_PRIMITIVE_TOOLS = [
     type: 'function',
     function: {
       name: 'browser_click',
-      description: '点击页面元素。快照编号用 ref=e3；CSS 用 selector=#loginBtn。不要把 CSS 放进 ref。同文案多个用 nth（从 1）；在某个 iframe 里用 frame。',
+      description: '点击最新快照中的控件 ref，或已观察到的 CSS selector。ref 已包含节点身份，不要自行加 nth。CSS nth 从 1 开始，计入隐藏节点；按 frame 限定 iframe。成功表示点击已执行，是否跳转或提交须核对后续页面。',
       parameters: {
         type: 'object',
         properties: {
@@ -180,7 +192,7 @@ export const BROWSER_PRIMITIVE_TOOLS = [
     type: 'function',
     function: {
       name: 'browser_type',
-      description: '向输入框填写文字，不会按回车，走 CDP。必须用快照里的 textbox ref，例如 ref=e14。不要先 eval 查 input id，也不要用脚本改 value。',
+      description: '填写输入框，不自动提交或按回车。优先使用最新 textbox ref；搜索框填好后如需回车，用 browser_press Enter 并核对结果。不要用脚本改 value。',
       parameters: {
         type: 'object',
         properties: {
@@ -192,6 +204,16 @@ export const BROWSER_PRIMITIVE_TOOLS = [
         },
         required: ['text'],
       },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_press',
+      description: '向当前焦点发送按键。输入框填好后可按 Enter 搜索或提交；Escape 可关闭弹窗。使用前确认焦点和页面上下文，按键后核对实际变化。',
+      parameters: { type: 'object', properties: {
+        key: { type: 'string', enum: ['Enter', 'Tab', 'Escape', 'Backspace', 'Delete', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'] },
+      }, required: ['key'] },
     },
   },
   {
@@ -210,7 +232,7 @@ export const BROWSER_PRIMITIVE_TOOLS = [
     function: {
       name: 'browser_eval',
       description:
-        '快照里没有的结构才用。先看 video 行和 [done]/[current] 标记。播放页不能用脚本 click 或 play。填写用 browser_type。',
+        '只读检查快照缺失的结构、题干与选项关联或实际控件状态；按需一次返回结构化结果，避免反复探测同一结构。仅读取已渲染页面，不用它改值、勾选、点击、播放或调用隐藏接口。frame 定位 iframe，all 默认 false。',
       parameters: {
         type: 'object',
         properties: {
@@ -226,7 +248,7 @@ export const BROWSER_PRIMITIVE_TOOLS = [
     type: 'function',
     function: {
       name: 'browser_screenshot',
-      description: '拍摄当前页可视区域，并自动附上页内验证码原图（若有）。认验证码看较小的那张，不要只看整页。',
+      description: '拍摄当前页可视区域，保留已有 ref，不自动更新快照。用于布局、遮挡或验证码识图；题干与选项优先用快照/只读结构提取。验证码同时附原图（若有）。',
       parameters: { type: 'object', properties: {} },
     },
   },
@@ -303,7 +325,7 @@ export const BROWSER_PRIMITIVE_TOOLS = [
     type: 'function',
     function: {
       name: 'browser_todo',
-      description: '维护当前任务清单。多步任务必须先 set 写出具体步骤，做完一项就 check。清单是行动许可，没勾完不能 finish(done)。',
+      description: '记录多步任务进度，set 写具体步骤，实际完成后 check。清单不是用户授权，也不能证明操作成功；有未完成步骤时不要 finish(done)。',
       parameters: {
         type: 'object',
         properties: {
@@ -334,7 +356,7 @@ export const BROWSER_PRIMITIVE_TOOLS = [
     type: 'function',
     function: {
       name: 'browser_task',
-      description: '派出 explore 或 execute 子 Agent。改站点经验用 write_agent_skill_file，不要派去写解析器。',
+      description: '派出 explore 或 execute 子 Agent。站点经验使用 write_agent_skill_file 记录。',
       parameters: {
         type: 'object',
         properties: {
@@ -358,7 +380,7 @@ export const BROWSER_PRIMITIVE_TOOLS = [
     type: 'function',
     function: {
       name: 'browser_finish',
-      description: '宣告当前用户任务结束。summary 必须你自己写、概括实际结果。done=做完；blocked=必须用户动手；watching=已交播放监控。',
+      description: '宣告当前用户任务结束。done 前检查本轮站点经验并填写 learning；新方法先读原 Skill、有增量才写入，实际保存成功才能填 updated。summary 概括实际结果。blocked=必须用户动手；watching=已交播放监控。',
       parameters: {
         type: 'object',
         properties: {
@@ -368,6 +390,13 @@ export const BROWSER_PRIMITIVE_TOOLS = [
             description: 'done 完成；blocked 等人；watching 已交监控',
           },
           summary: { type: 'string', description: '你自己写的一两句真实结果，禁止套话' },
+          learning: {
+            type: 'object', description: '多步网页任务收尾检查；只复用旧步骤可 no_new，covered 必须读过本站 Skill，updated 必须先读后成功写入，deferred 需权限禁止/写入失败证据。',
+            properties: {
+              decision: { type: 'string', enum: ['updated', 'covered', 'no_new', 'deferred'] },
+              reason: { type: 'string', description: '具体的新经验、已有覆盖位置或不保存理由；不要把勾选成功当答案正确。' },
+            }, required: ['decision', 'reason'],
+          },
         },
         required: ['status', 'summary'],
       },

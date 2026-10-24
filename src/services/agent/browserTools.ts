@@ -19,7 +19,7 @@ import {
   typeBrowserElement,
 } from '../browser/appBrowser'
 import { captchaScreenshotHint, collectPageCaptchaHits, materializeCaptchaImages } from '../browser/captchaImages'
-import { asObject, evalBrowserFrames, isEvalActBusy, waitMs } from '../browser/eval'
+import { asObject, evalBrowserFrames, evalBrowserViewMain, isEvalActBusy, waitMs } from '../browser/eval'
 import { notePageProbe, resetPageProbe } from './pageProbe'
 
 const wait = waitMs
@@ -102,7 +102,7 @@ const typedResult = (
       hint: missHint || (body.hint ? String(body.hint) : undefined),
     })
   }
-  const password = Boolean(check?.password)
+  const password = Boolean(check?.password || body.password)
   const length = Number(check?.length ?? body.length ?? 0) || 0
   const got = check?.value != null ? String(check.value) : ''
   const lengthMismatch = text.length > 0 && length > 0 && length !== text.length
@@ -156,7 +156,7 @@ const syncPeekedUrl = (browserId: string, url: string) => {
 }
 
 const liveHref = async (browserId: string) => {
-  const href = await evalBrowserView(browserId, `(function(){ try { return String(location.href || ''); } catch (e) { return ''; } })()`).catch(() => '')
+  const href = await evalBrowserViewMain(browserId, `(function(){ try { return String(location.href || ''); } catch (e) { return ''; } })()`).catch(() => '')
   const live = String(href || '').trim()
   if (live) {
     syncPeekedUrl(browserId, live)
@@ -171,7 +171,7 @@ export const executeBrowserTool = async (input: {
   browserId: string
   sessionId: string
   wait: (ms: number) => Promise<void>
-  role?: 'parent' | 'explore' | 'execute' | 'parser'
+  role?: 'parent' | 'explore' | 'execute'
   jobId?: string
 }): Promise<string> => {
   const { name, args, browserId, sessionId, wait, role } = input
@@ -191,8 +191,8 @@ export const executeBrowserTool = async (input: {
     const nowUrl = await currentUrl(browserId)
     return isHomeworkDoUrl(nowUrl) ? nowUrl : ''
   }
-  // 作答页：看页始终允许；填写优先走题卡。strict 才禁止直接点/填。
-  if (['browser_click', 'browser_type'].includes(name) && policy.permissionMode === 'strict') {
+  // 作答页：看页始终允许；操作通过快照 ref；strict 禁止直接修改作业。
+  if (['browser_click', 'browser_click_text', 'browser_type', 'browser_press', 'browser_set_checked'].includes(name) && policy.permissionMode === 'strict') {
     if (await homeworkDoUrl()) {
       return JSON.stringify({
         error: '当前为严格模式，作业页不要直接点或填写。',

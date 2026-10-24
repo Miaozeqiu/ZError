@@ -80,7 +80,7 @@ export interface AgentContextSummary {
   updatedAt: number
 }
 
-export type AgentSubagentKind = 'explore' | 'execute' | 'parser'
+export type AgentSubagentKind = 'explore' | 'execute'
 
 export type AgentSubagentJobStatus = 'running' | 'done' | 'failed' | 'stopped'
 
@@ -106,6 +106,8 @@ export interface AgentChatSession {
   attachments?: AgentChatAttachment[]
   studySubjectId?: number
   browserId?: string
+  /** 当前对话拥有的标签页；browserId 为当前操作的标签。 */
+  browserIds?: string[]
   parentId?: string
   role?: 'parent' | AgentSubagentKind
   todos?: AgentTodoItem[]

@@ -42,18 +42,6 @@ const EXPLORE_NAMES = new Set([
   'browser_finish',
 ])
 
-const PARSER_NAMES = new Set([
-  'browser_get_state',
-  'browser_get_page',
-  'browser_site_graph',
-  'browser_finish',
-  LIST_AGENT_SKILLS_TOOL.function.name,
-  READ_AGENT_SKILL_TOOL.function.name,
-  READ_AGENT_SKILL_FILE_TOOL.function.name,
-  WRITE_AGENT_SKILL_FILE_TOOL.function.name,
-  RESET_AGENT_SKILL_FILE_TOOL.function.name,
-])
-
 const ALL_BROWSER_TOOLS = [...BROWSER_PRIMITIVE_TOOLS]
 
 const namesOf = (allow: Set<string>) => ALL_BROWSER_TOOLS.filter((tool) => allow.has(tool.function.name))
@@ -86,7 +74,6 @@ export const assembleRoleTools = (input: {
     return filterToolsByNames(names)
   }
   if (role === 'explore') return namesOf(EXPLORE_NAMES)
-  if (role === 'parser') return namesOf(PARSER_NAMES)
   const caps = input.capabilities || hostCapabilitiesFor(url)
   const names = new Set(executeToolNamesFor(caps))
   const pack = resolveSitePackForUrl(url)

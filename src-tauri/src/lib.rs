@@ -4,6 +4,8 @@
 // 模块声明
 pub mod app_activity;
 pub mod app_browser;
+pub mod browser_control;
+pub mod browser_geometry;
 #[cfg(target_os = "macos")]
 pub mod cdp_client;
 #[cfg(target_os = "macos")]
@@ -12,6 +14,8 @@ pub mod cef;
 pub mod cef_runtime;
 #[cfg(target_os = "macos")]
 pub mod macos_video_overlay;
+#[cfg(target_os = "macos")]
+mod macos_wheel;
 pub mod commands;
 pub mod database;
 pub mod logger;
@@ -347,6 +351,7 @@ pub fn run() {
             crate::app_browser::browser_close,
             crate::app_browser::browser_navigate,
             crate::app_browser::browser_reload,
+            crate::app_browser::browser_set_audio_muted,
             crate::app_browser::browser_go_back,
             crate::app_browser::browser_go_forward,
             crate::app_browser::browser_get_state,
@@ -357,6 +362,8 @@ pub fn run() {
             crate::app_browser::browser_set_app_above_page,
             crate::app_browser::browser_engine,
             crate::app_browser::browser_protocol,
+            crate::browser_control::browser_control_register,
+            crate::browser_control::browser_control_set,
             crate::app_browser::browser_screenshot,
             crate::app_browser::browser_cookies,
             crate::app_browser::browser_set_cookies,
@@ -485,6 +492,13 @@ pub fn run() {
                 }
                 built
             };
+
+            #[cfg(target_os = "macos")]
+            if let Ok(ref window) = _main {
+                if let Err(error) = crate::macos_wheel::install(window) {
+                    eprintln!("Failed to install app-local wheel smoothing: {error}");
+                }
+            }
 
             let show = tauri::menu::MenuItemBuilder::with_id("show", "显示窗口").build(app)?;
             let quit = tauri::menu::MenuItemBuilder::with_id("quit", "退出").build(app)?;

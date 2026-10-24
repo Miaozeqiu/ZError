@@ -19,6 +19,12 @@ const abandoned = new Set<string>()
 
 const genKey = (id: string, gen: number) => `${id}:${gen}`
 
+/** 快照编号变化不是页面内容变化。保留勾选、禁用、文字等实际状态的差异。 */
+export const snapshotContentChanged = (before: string, after: string) => {
+  const content = (text: string) => text.replace(/\s*\[ref=e\d+\]/g, '')
+  return Boolean(before && after && content(before) !== content(after))
+}
+
 export const beginPageSnap = (id: string) => {
   const gen = ++genSeq
   activeGen.set(id, gen)
@@ -42,6 +48,12 @@ export const rememberPageSnap = (
 }
 
 export const cachedPageSnap = (id: string) => snaps.get(id) || null
+export const invalidatePageSnap = (id: string) => {
+  const gen = activeGen.get(id)
+  if (gen != null) abandonPageSnap(id, gen)
+  activeGen.delete(id)
+  snaps.delete(id)
+}
 
 export const pageSnapAge = (id: string) => {
   const snap = snaps.get(id)

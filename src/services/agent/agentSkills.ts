@@ -155,15 +155,8 @@ const BUILTIN_SKILLS: Record<string, BuiltinSkillDef> = {
   },
   'site-learn': {
     name: '认识新站点',
-    description: '当前网址没有现成刷课步骤时：探路、写下目录样例卡和图谱。先读这个 Skill，再读 sites/<主机>/SKILL.md。',
+    description: '当前网址没有现成刷课步骤时：探路、记录页面结构和站点步骤。先读这个 Skill，再读 sites/<主机>/SKILL.md。',
     triggerHint: '当前站点没有对应步骤、图谱对不上、或没有专用工具时，先 read_agent_skill(site-learn)。',
-    defaultEnabled: true,
-    scope: 'browser',
-  },
-  parser: {
-    name: '解析器',
-    description: '新站先看快照摸路，走通后把步骤写进 sites/<主机>/SKILL.md。细则在 files 的 references。',
-    triggerHint: '用户要改解析器，或刷课/作业同一失败点连续两次时，先 read_agent_skill(parser)。',
     defaultEnabled: true,
     scope: 'browser',
   },
@@ -567,7 +560,7 @@ const buildItems = async (config: SkillConfigFile): Promise<AgentSkillItem[]> =>
 
   const dirs = await listInstalledSkillDirs()
   for (const id of dirs) {
-    if (BUILTIN_SKILLS[id]) continue
+    if (BUILTIN_SKILLS[id] || id === 'parser') continue
     const meta = await readSkillMeta(id)
     const row = config.skills[id]
     if (!meta) continue
@@ -660,7 +653,7 @@ type AgentKindScope = 'browser' | 'learning'
 
 export const getEnabledSkillItems = (scope?: AgentKindScope, allowedIds?: string[]): AgentSkillItem[] => {
   const items = agentSkillsState.items.length ? agentSkillsState.items : fallbackBuiltinItems()
-  const enabled = items.filter((item) => item.enabled && scopeMatches(item.scope || 'both', scope))
+  const enabled = items.filter((item) => item.id !== 'parser' && item.enabled && scopeMatches(item.scope || 'both', scope))
   if (!allowedIds?.length) return enabled
   const allow = new Set(allowedIds)
   return enabled.filter((item) => allow.has(item.id))
@@ -768,10 +761,7 @@ export const skillSurfaceFiles = (files: string[]) => files.filter((path) => {
 
 const nextSkillHint = (id: string, files: string[]) => {
   if (id === 'site-learn') {
-    return '这是总说明。本站步骤：read_agent_skill_file 读 files 里 sites/<当前网址主机>/SKILL.md。目录卡写法见 references/workflow.md。'
-  }
-  if (id === 'parser') {
-    return '新站写法：read_agent_skill_file(parser, references/format.md)。学习通对照表：references/chaoxing.md。'
+    return '这是总说明。本站步骤：read_agent_skill_file 读 files 里 sites/<当前网址主机>/SKILL.md。步骤写法见 references/workflow.md。'
   }
   if (id === 'site-graph') {
     return '操作表：read_agent_skill_file(site-graph, references/edit.md)。用 browser_site_graph 一条条改。'
@@ -804,14 +794,8 @@ export const nextSkillFileHint = (id: string, path: string, files: string[]) => 
   if (id === 'site-learn' && path === 'references/workflow.md') {
     return '本站步骤：sites/<当前网址主机>/SKILL.md。写哪一页、点哪个字、在哪个框、坑在哪。'
   }
-  if (id === 'parser' && path === 'references/format.md') {
-    return '站点步骤写 SKILL.md。学习通细则在 references。'
-  }
-  if (id === 'parser' && path === 'references/chaoxing.md') {
-    return '学习通改完用原来的刷课或作业工具再试。'
-  }
   if (id === 'chaoxing' && /^references\//.test(path)) {
-    return '按当前页【建议】做。结构变了再 read_agent_skill(parser)。'
+    return '按当前页【建议】做。结构变化时通过快照重新观察，走通后更新本站 SKILL.md。'
   }
   return undefined
 }

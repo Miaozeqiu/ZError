@@ -160,6 +160,37 @@ export const filesForMessage = (session: AgentChatSession | null | undefined, me
 export const imagesForMessage = (session: AgentChatSession | null | undefined, message: AgentChatMessage) =>
   attachmentsForMessage(session, message).filter(isImageAttachment)
 
+export type SearchStepResult = {
+  title: string
+  url: string
+  snippet: string
+  published?: string
+  author?: string
+  siteIcon?: string
+}
+
+export const searchQueryFor = (step: ImportTaskStep) => {
+  if (step.name !== 'web_search' || !step.result) return ''
+  try {
+    const parsed = JSON.parse(step.result) as { query?: string }
+    return typeof parsed.query === 'string' ? parsed.query : ''
+  } catch {
+    return ''
+  }
+}
+
+export const searchResultsFor = (step: ImportTaskStep): SearchStepResult[] => {
+  if (step.name !== 'web_search' || !step.result) return []
+  try {
+    const parsed = JSON.parse(step.result) as { results?: SearchStepResult[] }
+    return Array.isArray(parsed.results)
+      ? parsed.results.filter((item) => item && typeof item.url === 'string' && typeof item.title === 'string').slice(0, 5)
+      : []
+  } catch {
+    return []
+  }
+}
+
 export const iconPaths = (name: string) => {
   if (name === 'get_file_info') {
     return ['M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z', 'M14 2v6h6', 'M8 13h8', 'M8 17h5']

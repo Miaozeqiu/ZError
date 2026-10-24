@@ -167,3 +167,58 @@ test('an already aborted request cannot return a cached search', async () => {
   controller.abort()
   await assert.rejects(performWebSearch('cached cancellation', config, { signal: controller.signal }), { name: 'AbortError' })
 })
+
+test('DeepSeek sends a direct authenticated search and preserves UI and model excerpts', async () => {
+  const requests = []
+  fetchImpl = async (url, init) => {
+    requests.push({ url, ...init })
+    return json({ results: [{ title: 'Result', url: 'https://example.test', snippet: 'Short', summary: 'Long model excerpt', site_icon: 'https://example.test/icon.png', date: '2026-10-19T00:00:00Z' }] })
+  }
+  const outcome = await performWebSearch('DeepSeek query', { ...config, provider: 'deepseek', deepseekApiKey: ' ds-key ' }, { force: true })
+  assert.equal(requests.length, 1)
+  assert.equal(requests[0].url, 'https://api.deepseek.com/v1/tools/search')
+  assert.equal(requests[0].headers.Authorization, 'Bearer ds-key')
+  assert.deepEqual(JSON.parse(requests[0].body), { query: 'DeepSeek query', count: 5, need_content: false })
+  assert.equal(outcome.toolName, 'deepseek_search')
+  assert.equal(outcome.results[0].snippet, 'Short')
+  assert.equal(outcome.results[0].siteIcon, 'https://example.test/icon.png')
+  assert.match(formatSearchContextForModel(outcome), /Long model excerpt/)
+})
+
+test('DeepSeek validates key and Unicode query length before requesting', async () => {
+  fetchImpl = () => { throw new Error('unexpected request') }
+  await assert.rejects(performWebSearch('query', { ...config, provider: 'deepseek' }), /API Key/)
+  await assert.rejects(performWebSearch('😀'.repeat(129), { ...config, provider: 'deepseek', deepseekApiKey: 'key' }), /128/)
+})
+
+test('DeepSeek propagates authentication errors and accepts an empty result list', async () => {
+  const settings = { ...config, provider: 'deepseek' as const, deepseekApiKey: 'key' }
+  fetchImpl = async () => new Response(JSON.stringify({ error: { message: 'Invalid API key' } }), { status: 401 })
+  await assert.rejects(performWebSearch('invalid key', settings, { force: true }), /401.*Invalid API key/)
+  fetchImpl = async () => json({ results: [] })
+  const outcome = await performWebSearch('no matches', settings, { force: true })
+  assert.deepEqual(outcome.results, [])
+})
+
+test('DeepSeek also times out when native HTTP ignores cancellation', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout'] })
+  const started = deferred()
+  fetchImpl = async () => { started.resolve(); return new Promise(() => {}) }
+  const rejected = assert.rejects(performWebSearch('stalled DeepSeek', {
+    ...config, provider: 'deepseek', deepseekApiKey: 'key',
+  }, { force: true }), { name: 'TimeoutError' })
+  await started.promise
+  vi.advanceTimersByTime(30001)
+  await rejected
+})
+
+test('search caches are isolated by provider and API key', async () => {
+  await performWebSearch('provider cache isolation', config)
+  let calls = 0
+  fetchImpl = async () => { calls += 1; return json({ results: [] }) }
+  const settings = { ...config, provider: 'deepseek' as const, deepseekApiKey: 'key-one' }
+  await performWebSearch('provider cache isolation', settings)
+  await performWebSearch('provider cache isolation', settings)
+  await performWebSearch('provider cache isolation', { ...settings, deepseekApiKey: 'key-two' })
+  assert.equal(calls, 2)
+})

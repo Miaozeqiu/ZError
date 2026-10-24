@@ -188,14 +188,10 @@ fn make_player(url: &str, _cookie: &str, mtm: MainThreadMarker) -> Result<Retain
   Ok(unsafe { AVPlayer::playerWithURL(&nsurl, mtm) })
 }
 
-fn apply_frame(view: &NSView, x: f64, y: f64, w: f64, h: f64) {
-  unsafe {
-    if let Some(parent) = view.superview() {
-      let frame = css_to_ns(&parent, x, y, w, h);
-      view.setFrame(frame);
-      parent.addSubview_positioned_relativeTo(view, objc2_app_kit::NSWindowOrderingMode::Above, None);
-    }
-  }
+fn place_in_hole(view: &NSView, hole: &NSView, x: f64, y: f64, w: f64, h: f64) {
+  let frame = css_to_ns(hole, x, y, w, h);
+  view.setFrame(frame);
+  hole.addSubview_positioned_relativeTo(view, objc2_app_kit::NSWindowOrderingMode::Above, None);
 }
 
 fn css_to_ns(parent: &NSView, x: f64, y: f64, width: f64, height: f64) -> NSRect {
@@ -338,36 +334,44 @@ fn show_on_main(
   let id = id.to_string();
   let url = url.to_string();
   let cookie = cookie.to_string();
-  let app2 = app.clone();
   on_main(app, move || -> Result<OverlayState, String> {
-    let Some((host_x, host_y, _, _)) = cef_browser::tab_css_frame(&id) else {
+    // 页面坐标先乘放大倍数，再扣掉滚动后的舞台原点，得到洞口内坐标。洞口 clipsToBounds 裁掉滚出可视区的部分。
+    let Some(origin) = cef_browser::tab_page_origin(&id) else {
       if let Ok(mut reg) = registry().lock() {
         destroy_unlocked(&mut reg, &id);
       }
       return Ok(empty_state());
     };
-    let ox = host_x + x;
-    let oy = host_y + y;
+    let Some(hole_ptr) = cef_browser::tab_hole_view(&id) else {
+      if let Ok(mut reg) = registry().lock() {
+        destroy_unlocked(&mut reg, &id);
+      }
+      return Ok(empty_state());
+    };
+    let ox = origin.x + x * origin.scale - origin.clip_x;
+    let oy = origin.y + y * origin.scale - origin.clip_y;
+    let ow = (w * origin.scale).max(1.0);
+    let oh = (h * origin.scale).max(1.0);
     if let Ok(mut reg) = registry().lock() {
       if let Some(over) = reg.tabs.get_mut(&id) {
         if over.url == url {
           let view = unsafe { &*(over.view.0 as *const NSView) };
-          apply_frame(view, ox, oy, w, h);
+          let hole = unsafe { &*(hole_ptr as *const NSView) };
+          place_in_hole(view, hole, ox, oy, ow, oh);
           return Ok(live_state(over));
         }
         destroy_unlocked(&mut reg, &id);
       }
     }
-    let window = cef_browser::parent_window_nsview(&app2)?;
     let mtm = MainThreadMarker::new().ok_or_else(|| "必须在主线程创建播放器".to_string())?;
     let player = make_player(&url, &cookie, mtm)?;
     unsafe {
-      let parent = &*(window as *const NSView);
-      let frame = css_to_ns(parent, ox, oy, w, h);
+      let hole = &*(hole_ptr as *const NSView);
+      let frame = css_to_ns(hole, ox, oy, ow, oh);
       let view = AVPlayerView::initWithFrame(mtm.alloc::<AVPlayerView>(), frame);
       view.setPlayer(Some(&player));
       view.setControlsStyle(AVPlayerViewControlsStyle::Inline);
-      parent.addSubview_positioned_relativeTo(&view, objc2_app_kit::NSWindowOrderingMode::Above, None);
+      hole.addSubview_positioned_relativeTo(&view, objc2_app_kit::NSWindowOrderingMode::Above, None);
       player.play();
       let view_ptr = ViewPtr(Retained::into_raw(Retained::into_super(view)) as *mut c_void);
       let player_ptr = ViewPtr(Retained::into_raw(player) as *mut c_void);

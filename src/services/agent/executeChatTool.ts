@@ -14,6 +14,8 @@ import { requestAgentApproval } from './agentApproval'
 import { noteFailAttempt, shouldBlockRepeatFail } from './failGate'
 import { collectFinishEvidence, judgeFinish } from './finishGate'
 import { intentFromTodoItems, setBrowserTaskIntent } from './browserTask'
+import { withBrowserAutomation } from '../browser/control'
+import { reviewSiteLearning, siteSkillReadIndex } from './siteLearningReview'
 
 const ensureApproved = async (
   ctx: ChatToolContext,
@@ -102,7 +104,16 @@ export const executeChatTool = async (input: {
     return executeChatTool({ call: { ...call, name: aliased }, ctx })
   }
   const args = parseToolArgs(call.arguments)
-  const browserId = ctx.browserId()
+  let browserId = ctx.browserId()
+  if (call.name.startsWith('browser_') && ctx.ensureBrowser) {
+    try {
+      browserId = await ctx.ensureBrowser()
+      if (ctx.abort.aborted) throw new DOMException('已停止', 'AbortError')
+    } catch (error) {
+      if (ctx.abort.aborted) throw error
+      return JSON.stringify({ ok: false, error: `浏览器打开失败：${error instanceof Error ? error.message : String(error)}` })
+    }
+  }
 
   if (call.name === 'list_agent_skills') {
     const { listAgentSkillsForAgent } = await import('./agentSkills')
@@ -138,6 +149,7 @@ export const executeChatTool = async (input: {
     const content = await readAgentSkillFileContent(id, path)
     if (!content) {
       return JSON.stringify({
+        id, path,
         error: `Skill "${id}" 的文件 "${path}" 还不存在`,
         hint: id === 'site-learn'
           ? '站点步骤写在 sites/<主机>/SKILL.md。先看快照，走通后再写。'
@@ -159,19 +171,31 @@ export const executeChatTool = async (input: {
     const { siteGraphWriteBlocked } = await import('../browser/siteGraphSave')
     const blocked = siteGraphWriteBlocked(path)
     if (blocked) return JSON.stringify({ ok: false, error: blocked })
+    if (id === 'site-learn' && /^sites\/[^/]+\/SKILL\.md$/.test(path)) {
+      const { liveSession } = await import('./chatStore')
+      const steps = liveSession(ctx.sessionId)?.messages.find(message => message.id === ctx.assistantId)?.steps || []
+      if (siteSkillReadIndex(steps, path) < 0) {
+        return JSON.stringify({ error: '先 read_agent_skill_file 读取本站原文，再合并增量；不要覆盖未读取的站点文件。', id, path })
+      }
+      const { readAgentSkillFileContent } = await import('./agentSkills')
+      const original = await readAgentSkillFileContent(id, path)
+      if (original?.content.trim() === String(args.content || '').trim()) {
+        return JSON.stringify({ ok: true, id, path, unchanged: true, hint: '内容与已有文件一致，无需写入或申请授权；收尾使用 covered。' })
+      }
+    }
     const approved = await ensureApproved(
       ctx,
       'write_skill',
       '写入 Skill 文件',
       `${id} / ${path || 'SKILL.md'}`,
     )
-    if (!approved.ok) return approved.result
+    if (!approved.ok) return JSON.stringify({ ...parseToolArgs(approved.result), id, path })
     const { writeAgentSkillFileContent } = await import('./agentSkills')
-    return JSON.stringify(await writeAgentSkillFileContent(
+    return JSON.stringify({ ...await writeAgentSkillFileContent(
       id,
       path,
       String(args.content ?? ''),
-    ))
+    ), id, path })
   }
 
   if (call.name === 'reset_agent_skill_file') {
@@ -246,22 +270,30 @@ export const executeChatTool = async (input: {
         })
         const judged = judgeFinish(String(args.status || ''), String(args.summary || ''), evidence)
         if (!judged.ok) return JSON.stringify({ ok: false, finished: false, error: 'error' in judged ? judged.error : '还不能收工' })
-        return JSON.stringify({ ok: true, finished: true, status: judged.status, summary: judged.summary })
-      }
-      if (
-        ctx.role === 'parser'
-        && ctx.jobId
-        && (call.name === 'browser_get_page' || call.name === 'browser_screenshot' || call.name === 'browser_eval')
-      ) {
-        const { acquireBrowser } = await import('./subagent/owner')
-        const got = acquireBrowser(browserId, ctx.jobId)
-        if (!got.ok) return JSON.stringify({ ok: false, error: got.error })
+        let learning
+        if (judged.status === 'done' && (!ctx.role || ctx.role === 'parent')) {
+          const { liveSession } = await import('./chatStore')
+          const steps = liveSession(ctx.sessionId)?.messages.find(message => message.id === ctx.assistantId)?.steps || []
+          learning = reviewSiteLearning({
+            url: evidence.url || '',
+            steps,
+            learning: args.learning,
+            writePolicy: getAgentPolicy().writeSkills,
+          })
+          if (!learning.ok) {
+            const attempts = steps.filter(step => step.name === 'browser_finish' && step.result
+              && parseToolArgs(step.result).learningRequired === true).length
+            if (attempts < 2) return JSON.stringify({ finished: false, learningRequired: true, ...learning })
+            learning = { ...learning, ok: true, decision: 'deferred', reason: '经验检查两次修正后仍不完整，本次未确认保存；网页任务本身已完成。' }
+          }
+        }
+        return JSON.stringify({ ok: true, finished: true, status: judged.status, summary: judged.summary, learning })
       }
       const blocked = shouldBlockRepeatFail(gateSession, call.name, args)
       if (blocked.block) {
         return JSON.stringify({ ok: false, error: blocked.hint, failGate: true })
       }
-      const raw = await executeBrowserTool({
+      const execute = () => executeBrowserTool({
         name: call.name,
         args,
         browserId,
@@ -270,6 +302,10 @@ export const executeChatTool = async (input: {
         role: ctx.role,
         jobId: ctx.jobId,
       })
+      const raw = ctx.browserEpoch == null ? await execute() : await withBrowserAutomation(browserId, ctx.browserEpoch, execute)
+      if (raw.includes('BROWSER_USER_CONTROL')) {
+        return JSON.stringify({ ok: false, userTakeover: true, requiresRefresh: true, hint: '用户已接管浏览器，本次自动操作已中断。交还后先重新读取页面。' })
+      }
       let ok = true
       try {
         const parsed = JSON.parse(raw) as { ok?: boolean; error?: unknown }
@@ -290,6 +326,9 @@ export const executeChatTool = async (input: {
       return raw
     } catch (error) {
       if (ctx.abort.aborted || isModelStopped(error)) throw error
+      if (String(error).includes('BROWSER_USER_CONTROL')) {
+        return JSON.stringify({ ok: false, userTakeover: true, requiresRefresh: true, hint: '用户已接管浏览器；交还后先重新读取页面，不要重试旧操作。' })
+      }
       return JSON.stringify({ error: error instanceof Error ? error.message : String(error) })
     }
   }

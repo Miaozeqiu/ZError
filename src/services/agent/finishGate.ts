@@ -1,5 +1,4 @@
 /** finish 必须带证据。模型口头 done 不算完成。 */
-import { lastHomeworkCard, lastSiteCard } from '../browser/abstractions'
 import { peekAppBrowserUrl } from '../browser/appBrowser'
 import { pendingTodos } from './browserTodo'
 import { classifyBrowserPage, type BrowserPageKind } from './browserLoop'
@@ -27,13 +26,8 @@ export type FinishEvidence = {
   mid?: string
   watching?: boolean
   watchStatus?: string
-  questionCount?: number
-  filledCount?: number
-  homeworkNext?: string
-  homeworkSaved?: boolean
   leftJobs?: string[]
   chapterJobsDone?: boolean
-  hasCard?: boolean
   pageSummary?: boolean
   multiStep?: boolean
   planDone?: number
@@ -64,8 +58,6 @@ export const collectFinishEvidence = async (
     : null
   const watch = videoWatchFor(id)
   const panel = packAgentPanel(id)
-  const hw = lastHomeworkCard.value
-  const site = lastSiteCard.value
   const plan = coursePlanFor(id)
   const progress = plan ? courseProgress(plan.items) : null
   const leftJobs = Array.isArray(panel?.leftJobs) ? panel.leftJobs.map(String) : []
@@ -82,13 +74,8 @@ export const collectFinishEvidence = async (
     mid: String((tick as { mid?: string } | null)?.mid || ''),
     watching: Boolean(watch && (watch.status === 'watching' || watch.status === 'paused' || watch.status === 'stalled')),
     watchStatus: String(watch?.status || ''),
-    questionCount: Number(hw?.questionCount || hw?.questions?.length || site?.questionCount || 0),
-    filledCount: Number(hw?.filledCount || site?.filledCount || 0),
-    homeworkNext: String(hw?.next || site?.next || ''),
-    homeworkSaved: /已暂时保存|已暂存答案|已提交/.test(String(hw?.hint || site?.hint || '')),
     leftJobs,
     chapterJobsDone: panel?.event === 'chapter_jobs_done' || (Boolean(panel?.thisSection) && leftJobs.length === 0),
-    hasCard: Boolean(hw && (hw.questionCount || hw.questions?.length)),
     pageSummary: Boolean(url),
     multiStep: isMultiStepIntent(intent, { leftJobs, unfinished }),
     planDone: progress?.done,
@@ -145,24 +132,9 @@ export const judgeFinish = (
     return { ok: false, error: '探路还没有页摘要。先 get_state / get_page。' }
   }
 
-  if (role === 'parser') {
-    return { ok: true, status: 'done', summary: text }
-  }
-
   const intent = evidence.intent || 'unknown'
   const kind = evidence.kind || 'unknown'
   const loginUrl = /passport2|\/login/i.test(String(evidence.url || ''))
-
-  if (intent === 'homework' || kind === 'homework-do') {
-    const count = Number(evidence.questionCount) || 0
-    const filled = Number(evidence.filledCount) || 0
-    const next = String(evidence.homeworkNext || '')
-    if (count && filled >= count) return { ok: true, status: 'done', summary: text }
-    if (next === 'save' || next === 'done' || evidence.homeworkSaved) {
-      return { ok: true, status: 'done', summary: text }
-    }
-    return { ok: false, error: '题卡还没填完或未暂存。看 filled/total，不要说已经做完。' }
-  }
 
   if (kind === 'login' || loginUrl) {
     return { ok: false, error: '还在登录页。离开 passport 后再 finish(done)。' }

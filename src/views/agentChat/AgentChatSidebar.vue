@@ -132,8 +132,8 @@ onMounted(() => bind())
 }
 
 .header-title {
-  font-size: 13px;
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 550;
   color: var(--text-primary, #2d3748);
 }
 
@@ -147,7 +147,8 @@ onMounted(() => bind())
   border: none;
   background: transparent;
   color: var(--text-secondary, #718096);
-  font-size: 12px;
+  font-size: 14px;
+  font-weight: 450;
   cursor: pointer;
   padding: 4px 6px;
   border-radius: 6px;
@@ -236,8 +237,9 @@ onMounted(() => bind())
   background: var(--model-item-hover-bg, #efefef);
 }
 
-.chat-item.is-selected {
-  background: var(--model-item-active-bg, var(--bg-tertiary, #e8e8ed));
+.chat-item.is-selected,
+.chat-item.is-running {
+  background: var(--bg-tertiary, #e8e8ed);
 }
 
 .chat-item-main {
@@ -246,7 +248,8 @@ onMounted(() => bind())
 }
 
 .chat-item-name {
-  font-size: 12px;
+  font-size: 14px;
+  font-weight: 450;
   line-height: 1.3;
   color: var(--text-primary, #2d3748);
   overflow: hidden;
@@ -320,7 +323,8 @@ onMounted(() => bind())
 
 .list-empty {
   color: var(--text-secondary, #718096);
-  font-size: 13px;
+  font-size: 14px;
+  font-weight: 450;
   padding: 16px 10px;
 }
 </style>
