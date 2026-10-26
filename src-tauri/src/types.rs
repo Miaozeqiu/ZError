@@ -20,6 +20,58 @@ pub struct QueryRequest {
     pub options: Option<String>,
     #[serde(rename = "type")]
     pub query_type: Option<String>,
+    /// 图片题优化（OCS >= 5.1.0）：base64 图片数组，与 [图片N] 占位符严格同序。
+    /// 兼容 JSON 数组和 `${images}` 字符串占位符两种传参形式。
+    #[serde(default, deserialize_with = "deserialize_images_field")]
+    pub images: Option<Vec<String>>,
+    /// 图片题优化：题干图片 URL 替换为 [图片N] 占位符后的文本（不含 base64）
+    #[serde(default)]
+    pub suggestion_title: Option<String>,
+    /// 图片题优化：选项中图片 URL 替换为 [图片N] 占位符后的文本（选项无图片时可能为空串）
+    #[serde(default)]
+    pub suggestion_options: Option<String>,
+}
+
+/// 反序列化 images 字段：兼容 JSON 数组与 `${images}` 字符串占位符两种形式
+fn deserialize_images_field<'de, D>(deserializer: D) -> Result<Option<Vec<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value: Option<serde_json::Value> = Option::deserialize(deserializer)?;
+    match value {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::Array(items)) => Ok(Some(
+            items
+                .into_iter()
+                .filter_map(|item| item.as_str().map(|s| s.to_string()))
+                .filter(|s| !s.trim().is_empty())
+                .collect(),
+        )),
+        Some(serde_json::Value::String(text)) => {
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+                return Ok(None);
+            }
+            // 单个 data URL 直接返回；逗号拼接串按 ",data:" 边界切分
+            if trimmed.starts_with("data:") && !trimmed[5..].contains(",data:") {
+                return Ok(Some(vec![trimmed.to_string()]));
+            }
+            let parts: Vec<String> = trimmed
+                .split(",data:")
+                .enumerate()
+                .map(|(i, part)| {
+                    if i == 0 {
+                        part.trim().to_string()
+                    } else {
+                        format!("data:{}", part.trim())
+                    }
+                })
+                .filter(|s| s.starts_with("data:"))
+                .collect();
+            Ok(Some(parts))
+        }
+        Some(_) => Ok(None),
+    }
 }
 
 /// 模型调用响应请求结构体

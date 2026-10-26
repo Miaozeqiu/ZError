@@ -28,6 +28,10 @@ pub struct RequestLog {
 pub struct ModelCallRequest {
     pub request_id: String, // 关联的请求ID
     pub query: String,      // 需要查询的内容
+    /// 图片题优化（OCS >= 5.1.0）：base64 图片数组，与 query 中 [图片N] 占位符严格同序。
+    /// 非图片题为 None，避免在 SSE 通道里传输大字段。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub images: Option<Vec<String>>,
     pub timestamp: DateTime<Utc>,
 }
 
@@ -275,10 +279,16 @@ impl RequestLogger {
     }
 
     // 新增：发送模型调用请求事件
-    pub fn send_model_call_request(&self, request_id: String, query: String) {
+    pub fn send_model_call_request(
+        &self,
+        request_id: String,
+        query: String,
+        images: Option<Vec<String>>,
+    ) {
         let event = ModelCallRequest {
             request_id,
             query,
+            images,
             timestamp: Utc::now(),
         };
 

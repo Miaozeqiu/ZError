@@ -391,6 +391,8 @@ export const injectUrlQuestionIfNeeded = (log: RequestLog) => {
   if (!log.requestBody) return
   try {
     const rb = JSON.parse(log.requestBody)
+    // 图片题优化：由 __IMAGE_QUESTION__ 事件处理（占位符 + base64 直传），不要提前下载 URL
+    if (rb.has_images) return
     const title: string = rb.title || ''
     const options: string = rb.options || ''
     if (/https?:\/\//.test(title) || /https?:\/\//.test(options)) {
