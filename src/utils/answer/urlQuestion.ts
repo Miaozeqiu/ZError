@@ -170,6 +170,68 @@ export const extractAnswerRaw = (response: string): string => {
   return (matches[matches.length - 1][1] || '').trim()
 }
 
+const BLANK_PATTERNS = [/_{2,}/g, /（\s*）/g, /\(\s*\)/g]
+
+/** 统计题干中的空数；空画在图片里时统计不到，返回 0 */
+export const countCompletionBlanks = (title: string): number => {
+  const text = (title || '').replace(/\r\n/g, '\n')
+  return BLANK_PATTERNS.reduce((total, re) => total + (text.match(re)?.length || 0), 0)
+}
+
+/** Split answer commas without breaking numeric thousands groups, even in mixed answers. */
+const splitCompletionCommas = (text: string): string[] => {
+  const numericRanges = [...text.matchAll(/[+-]?\d(?:[\d,]*\d)?(?:\.\d+)?/g)]
+    .filter(match => /^[+-]?\d{1,3}(?:,\d{3})+(?:\.\d+)?$/.test(match[0]))
+    .map(match => [match.index!, match.index! + match[0].length])
+  const parts: string[] = []
+  let start = 0
+  for (const match of text.matchAll(/[,，]/g)) {
+    const index = match.index!
+    if (numericRanges.some(([from, to]) => from <= index && index < to)) continue
+    parts.push(text.slice(start, index).trim())
+    start = index + 1
+  }
+  parts.push(text.slice(start).trim())
+  return parts
+}
+
+/**
+ * 多空填空答案统一用 ### 分隔。
+ * 仅在题干空数与拆分结果一致时才拆分，避免把单空答案里的逗号（如「北京，上海」）误断成多空。
+ */
+export const normalizeCompletionAnswer = (raw: string, title: string): string => {
+  const answer = (raw || '').trim()
+  if (!answer) return ''
+  if (answer.includes('###')) {
+    return answer
+      .split('###')
+      .map(s => s.trim())
+      .join('###')
+  }
+
+  const blankCount = countCompletionBlanks(title)
+  if (blankCount < 2) return answer
+
+  const splitAndJoin = (text: string, re: RegExp): string | null => {
+    const parts = text.split(re).map(s => s.trim())
+    return parts.length === blankCount ? parts.join('###') : null
+  }
+
+  // 分号优先：语义上更接近「多空分隔」
+  const bySemicolon = splitAndJoin(answer, /[;；]/)
+  if (bySemicolon) return bySemicolon
+
+  // 分号切出的段数不够时，再把各段按逗号细分
+  const semicolonParts = answer.split(/[;；]/).map(s => s.trim())
+  if (semicolonParts.length > 1 && semicolonParts.length < blankCount) {
+    const expanded = semicolonParts.flatMap(splitCompletionCommas)
+    if (expanded.length === blankCount) return expanded.join('###')
+  }
+
+  const commaParts = splitCompletionCommas(answer)
+  return commaParts.length === blankCount ? commaParts.join('###') : answer
+}
+
 /**
  * 按模式解析 ANSWER。
  * - open / judgement：返回原文
@@ -178,7 +240,8 @@ export const extractAnswerRaw = (response: string): string => {
 export const resolveUrlAnswer = (
   response: string,
   optionMap: Map<string, string>,
-  mode: UrlQuestionMode
+  mode: UrlQuestionMode,
+  questionTitle = ''
 ): string => {
   const raw = extractAnswerRaw(response)
   if (!raw) return ''
@@ -194,7 +257,7 @@ export const resolveUrlAnswer = (
   }
 
   if (mode === 'open') {
-    return raw
+    return normalizeCompletionAnswer(raw, questionTitle)
   }
 
   if (mode === 'judgement' || optionMap.size === 0) {
@@ -277,7 +340,7 @@ export const buildUrlQuestionPromptParts = (
   } else if (isChoiceUrlQuestionMode(mode) && !hasOptions) {
     answerRule = `- 选择题但未能解析出选项列表：直接写出完整答案内容，如 ANSWER: ……`
   } else {
-    answerRule = `- 填空/简答/解答题：直接写完整答案内容，如 ANSWER: 42\n- 不要编造 A/B/C 选项编号；不要把补充材料当成选项列表`
+    answerRule = `- 填空/简答/解答题：直接写完整答案内容，如 ANSWER: 42\n- 若题目有多个空，各空答案之间必须用 ### 分隔，如 ANSWER: 北京###上海；不要用逗号、分号等符号分隔\n- 不要编造 A/B/C 选项编号；不要把补充材料当成选项列表`
   }
 
   return { optionsText, answerRule, typeHint }

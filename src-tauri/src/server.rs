@@ -1660,6 +1660,8 @@ fn normalize_answer_against_options(answer: &str, options: Option<&str>) -> Stri
     for part in parts {
         let mut p = strip_leading_option_label(part.trim(), &map);
         if p.is_empty() {
+            // Empty completion slots are positional; dropping them shifts later answers.
+            normalized.push(String::new());
             continue;
         }
 
@@ -1917,7 +1919,14 @@ fn is_model_error(text: &str) -> Option<String> {
 
 #[cfg(test)]
 mod same_question_tests {
-    use super::{classify_model_failure, parse_same_question_result};
+    use super::{classify_model_failure, normalize_answer_against_options, parse_same_question_result};
+
+    #[test]
+    fn preserves_empty_completion_answer_slots() {
+        assert_eq!(normalize_answer_against_options("甲######丙", None), "甲######丙");
+        assert_eq!(normalize_answer_against_options("###乙###", None), "###乙###");
+        assert_eq!(normalize_answer_against_options("######", None), "######");
+    }
 
     #[test]
     fn parses_same_true_with_matched_id() {

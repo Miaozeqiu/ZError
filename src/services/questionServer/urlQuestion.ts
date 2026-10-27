@@ -577,7 +577,7 @@ export const analyzeUrlQuestion = async (requestId: string) => {
       }
     )
 
-    const answer = resolveUrlAnswer(fullResponse, optionMap, mode)
+    const answer = resolveUrlAnswer(fullResponse, optionMap, mode, title)
     const l = requestLogs.value.find(x => x.id === requestId)
     if (l?.urlQuestion) {
       l.urlQuestion.analysisResult = fullResponse
