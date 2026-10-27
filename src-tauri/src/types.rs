@@ -40,13 +40,15 @@ where
     let value: Option<serde_json::Value> = Option::deserialize(deserializer)?;
     match value {
         None | Some(serde_json::Value::Null) => Ok(None),
-        Some(serde_json::Value::Array(items)) => Ok(Some(
-            items
-                .into_iter()
-                .filter_map(|item| item.as_str().map(|s| s.to_string()))
-                .filter(|s| !s.trim().is_empty())
-                .collect(),
-        )),
+        Some(serde_json::Value::Array(items)) => {
+            let mut images = Vec::with_capacity(items.len());
+            for item in items {
+                let image = item.as_str().filter(|text| !text.trim().is_empty())
+                    .ok_or_else(|| serde::de::Error::custom("images must contain nonempty strings without omitted slots"))?;
+                images.push(image.to_string());
+            }
+            Ok(Some(images))
+        }
         Some(serde_json::Value::String(text)) => {
             let trimmed = text.trim();
             if trimmed.is_empty() {

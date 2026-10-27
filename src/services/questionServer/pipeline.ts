@@ -32,7 +32,7 @@ export const dispatchModelCallRequest = (requestId: string, query: string, image
   const phase = modelCallPhase(query)
   const key = `${requestId}:${phase}`
   const imageList = Array.isArray(images)
-    ? images.filter((url): url is string => typeof url === 'string' && url.length > 0)
+    ? images.map(url => typeof url === 'string' ? url : '')
     : []
   console.log('模型调用请求数据:', { requestId, phase, imageCount: imageList.length, query: query.slice(0, 120) })
 

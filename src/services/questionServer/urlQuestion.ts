@@ -472,7 +472,7 @@ export const analyzeUrlQuestion = async (requestId: string) => {
     )
     if (isRequestCancelled(requestId)) return
     const multimodalContent = hasBase64Images
-      ? buildMultimodalContentFromPlaceholders(fullText, base64Images)
+      ? buildMultimodalContentFromPlaceholders(title + optionsText, base64Images, instruction)
       : await buildMultimodalContent(fullText)
     const contentWithSearch = searchResult?.context
       ? [{ type: 'text', text: searchResult.context }, ...multimodalContent]

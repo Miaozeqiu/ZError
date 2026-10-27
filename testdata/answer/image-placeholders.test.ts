@@ -16,9 +16,9 @@ describe('buildMultimodalContentFromPlaceholders', () => {
   it('按 [图片N] 顺序拆成文本与图片片段', () => {
     const parts = buildMultimodalContentFromPlaceholders('题干[图片1]，选项[图片2]', [IMG1, IMG2])
     expect(parts).toEqual([
-      { type: 'text', text: '题干' },
+      { type: 'text', text: '题干[图片1]' },
       { type: 'image_url', image_url: { url: IMG1, detail: 'high' } },
-      { type: 'text', text: '，选项' },
+      { type: 'text', text: '，选项[图片2]' },
       { type: 'image_url', image_url: { url: IMG2, detail: 'high' } },
     ])
   })
@@ -34,9 +34,10 @@ describe('buildMultimodalContentFromPlaceholders', () => {
   })
 
   it('支持多位编号', () => {
-    const images = Array.from({ length: 10 }, (_, i) => `data:image/png;base64,N${i + 1}`)
+    const images = Array.from({ length: 10 }, (_, i) => `data:image/png;base64,AAA${i + 1}`)
     const parts = buildMultimodalContentFromPlaceholders('[图片10]', images)
     expect(parts).toEqual([
+      { type: 'text', text: '[图片10]' },
       { type: 'image_url', image_url: { url: images[9], detail: 'high' } },
     ])
   })
@@ -79,5 +80,32 @@ describe('图片选项的答案映射', () => {
 
   it('开放题直接输出 [图片N] 时原样透传', () => {
     expect(resolveUrlAnswer('ANSWER: [图片1]', new Map(), 'open')).toBe('[图片1]')
+  })
+})
+
+
+describe('image protocol safety and prompt boundaries', () => {
+  it('preserves literal answer examples without uploading extra images', () => {
+    const instruction = buildImageAnswerRule('open')
+    const parts = buildMultimodalContentFromPlaceholders('题干[图片1]', [IMG1, IMG2], instruction)
+    const text = parts.filter(p => p.type === 'text').map(p => p.type === 'text' ? p.text : '').join('')
+    expect(text).toContain('ANSWER: [图片1]###[图片2]')
+    expect(text).toContain('题干[图片1]')
+    expect(parts.filter(p => p.type === 'image_url')).toHaveLength(1)
+  })
+  it('escapes text and rejects injected image attributes', () => {
+    const html = buildHtmlFromPlaceholders('<img src=x onerror="bad()">[图片1]', '', ['x" onerror="bad()'])
+    expect(html).not.toContain('<img')
+    expect(html).toContain('&lt;img')
+    expect(html).toContain('[图片1]')
+  })
+  it('keeps image numbering when an entry is missing or malformed', () => {
+    const parts = buildMultimodalContentFromPlaceholders('[图片1][图片2]', ['', IMG2])
+    expect(parts).toEqual([
+      { type: 'text', text: '[图片1][图片2]' },
+      { type: 'image_url', image_url: { url: IMG2, detail: 'high' } },
+    ])
+    expect(buildMultimodalContentFromPlaceholders('[图片1]', ['https://example.com/image.png']))
+      .toEqual([{ type: 'text', text: '[图片1]' }])
   })
 })

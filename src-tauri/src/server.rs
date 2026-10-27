@@ -101,53 +101,66 @@ fn request_has_images(request: &QueryRequest) -> bool {
         .unwrap_or(false)
 }
 
-/// 按出现顺序提取文本中的图片 URL（去重，保持顺序）。
-/// 编号规则与 OCS createImageSuggestion 的 allUrls 对齐：先题干后选项、按 URL 去重。
-fn extract_image_urls(text: &str) -> Vec<String> {
-    let url_regex = Regex::new(
-        r#"(?i)https?://[^\s<>"'\u{4e00}-\u{9fff}\u{ff00}-\u{ffef}]+?\.(?:png|jpe?g|gif|bmp|webp|svg)(?:\?[^\s<>"'\u{4e00}-\u{9fff}\u{ff00}-\u{ffef}]*)?"#,
-    )
-    .unwrap();
-    let mut seen = std::collections::HashSet::new();
-    url_regex
-        .find_iter(text)
-        .map(|m| m.as_str().to_string())
-        .filter(|url| seen.insert(url.clone()))
-        .collect()
+/// Align the original text with OCS's placeholder text. OCS alone assigns image
+/// numbers: failed conversions are skipped and DOM URLs need no file extension.
+/// Never re-enumerate URLs; an unprovable mapping is left for OCS to resolve.
+fn image_placeholder_map(original: &str, suggestion: &str) -> Option<HashMap<usize, String>> {
+    let placeholders = Regex::new(r"\[图片(\d+)\]").ok()?;
+    let whitespace = Regex::new(r"\s+").ok()?;
+    let literal = |text: &str| whitespace.split(text).map(regex::escape).collect::<Vec<_>>().join(r"\s*");
+    let mut pattern = String::from("(?s)^");
+    let mut indices = Vec::new();
+    let mut offset = 0;
+    for capture in placeholders.captures_iter(suggestion) {
+        let marker = capture.get(0)?;
+        let index = capture.get(1)?.as_str().parse::<usize>().ok()?;
+        if index == 0 { return None; }
+        pattern.push_str(&literal(&suggestion[offset..marker.start()]));
+        pattern.push_str("(.+?)");
+        indices.push(index);
+        offset = marker.end();
+    }
+    if indices.is_empty() { return Some(HashMap::new()); }
+    pattern.push_str(&literal(&suggestion[offset..]));
+    pattern.push('$');
+    let regex = Regex::new(&pattern).ok()?;
+    let captures = regex.captures(original)?;
+    let mut mapping = HashMap::new();
+    for (group, index) in indices.into_iter().enumerate() {
+        let url = captures.get(group + 1)?.as_str().trim();
+        if url.chars().any(char::is_whitespace)
+            || !(url.starts_with("https://") || url.starts_with("http://") || url.starts_with("data:image/")) {
+            return None;
+        }
+        if let Some(previous) = mapping.insert(index, url.to_string()) {
+            if previous != url { return None; }
+        }
+    }
+    Some(mapping)
 }
 
-/// 将答案中的 [图片N] 占位符还原为原始图片 URL。
-/// OCS 客户端也会做同样的还原，这里在服务端提前还原，保证返回给 OCS 与入库的答案都是可展示的 URL。
+/// Restore only mappings demonstrated by OCS's own suggestion fields. Unknown
+/// placeholders remain unchanged so OCS can use its authoritative imageUrls list.
 fn restore_image_placeholders(answer: &str, request: &QueryRequest) -> String {
-    if !answer.contains("[图片") {
-        return answer.to_string();
-    }
-    let mut urls: Vec<String> = Vec::new();
-    let mut seen = std::collections::HashSet::new();
-    for text in [Some(request.title.as_str()), request.options.as_deref()] {
-        if let Some(text) = text {
-            for url in extract_image_urls(text) {
-                if seen.insert(url.clone()) {
-                    urls.push(url);
+    if !answer.contains("[图片") { return answer.to_string(); }
+    let mut mapping = HashMap::new();
+    for (original, suggestion) in [
+        (Some(request.title.as_str()), request.suggestion_title.as_deref()),
+        (request.options.as_deref(), request.suggestion_options.as_deref()),
+    ] {
+        if let (Some(original), Some(suggestion)) = (original, suggestion) {
+            let Some(found) = image_placeholder_map(original, suggestion) else { return answer.to_string(); };
+            for (index, url) in found {
+                if let Some(previous) = mapping.insert(index, url.clone()) {
+                    if previous != url { return answer.to_string(); }
                 }
             }
         }
     }
-    if urls.is_empty() {
-        return answer.to_string();
-    }
-    let placeholder_re = Regex::new(r"\[图片(\d+)\]").unwrap();
-    placeholder_re
-        .replace_all(answer, |caps: &regex::Captures| {
-            let index = caps
-                .get(1)
-                .and_then(|m| m.as_str().parse::<usize>().ok())
-                .unwrap_or(0);
-            urls.get(index.saturating_sub(1))
-                .cloned()
-                .unwrap_or_else(|| caps[0].to_string())
-        })
-        .to_string()
+    Regex::new(r"\[图片(\d+)\]").unwrap().replace_all(answer, |capture: &regex::Captures| {
+        capture[1].parse::<usize>().ok().and_then(|index| mapping.get(&index)).cloned()
+            .unwrap_or_else(|| capture[0].to_string())
+    }).to_string()
 }
 
 /// 解析用于模型提问的有效负载：
@@ -1936,7 +1949,7 @@ mod same_question_tests {
 #[cfg(test)]
 mod image_question_tests {
     use super::{
-        build_query_request_log_body, extract_image_urls, request_has_images,
+        build_query_request_log_body, image_placeholder_map, request_has_images,
         resolve_question_payload, restore_image_placeholders,
     };
     use crate::types::QueryRequest;
@@ -1959,20 +1972,37 @@ mod image_question_tests {
     }
 
     #[test]
-    fn extracts_image_urls_in_document_order_without_duplicates() {
-        let text = "题干<img src=\"https://a.com/x.png\">和 https://a.com/x.png，以及 https://b.com/y.jpg?w=1";
-        assert_eq!(
-            extract_image_urls(text),
-            vec![
-                "https://a.com/x.png".to_string(),
-                "https://b.com/y.jpg?w=1".to_string(),
-            ]
-        );
+    fn maps_ocs_numbers_without_url_extension_assumptions() {
+        let original = "题 https://a.com/render?id=1 与 https://b.com/y.png";
+        let suggestion = "题  [图片1]  与  [图片2] ";
+        let mapping = image_placeholder_map(original, suggestion).unwrap();
+        assert_eq!(mapping.get(&1).unwrap(), "https://a.com/render?id=1");
+        assert_eq!(mapping.get(&2).unwrap(), "https://b.com/y.png");
     }
 
     #[test]
-    fn ignores_non_image_links() {
-        assert!(extract_image_urls("参考 https://example.com/page 与 https://example.com/a.pdf").is_empty());
+    fn maps_only_successfully_converted_images() {
+        let request = make_request("https://a.com/failed.png https://b.com/success.png", None,
+            Some(vec!["data:image/png;base64,AAA"]),
+            Some("https://a.com/failed.png  [图片1] "), None);
+        assert_eq!(restore_image_placeholders("[图片1]", &request), "https://b.com/success.png");
+    }
+
+    #[test]
+    fn leaves_ambiguous_missing_and_invalid_mappings_for_ocs() {
+        let request = make_request("https://a.com/x.png", None, None, None, None);
+        assert_eq!(restore_image_placeholders("[图片1]", &request), "[图片1]");
+        assert!(image_placeholder_map("https://a.com/a.png https://a.com/b.png", "[图片1] [图片1]").is_none());
+        assert!(image_placeholder_map("https://a.com/a.png", "[图片0]").is_none());
+        assert!(image_placeholder_map("different text", "[图片1]").is_none());
+    }
+
+    #[test]
+    fn restores_shared_title_and_option_numbers() {
+        let request = make_request("题https://a.com/x.png", Some("A. https://a.com/x.png\nB. https://b.com/render?id=2"),
+            Some(vec!["data:image/png;base64,AAA", "data:image/png;base64,BBB"]),
+            Some("题 [图片1] "), Some("A.  [图片1] \nB.  [图片2] "));
+        assert_eq!(restore_image_placeholders("[图片2]###[图片1]", &request), "https://b.com/render?id=2###https://a.com/x.png");
     }
 
     #[test]
@@ -1981,7 +2011,7 @@ mod image_question_tests {
             "题<img src=\"https://a.com/x.png\">，又<img src=\"https://b.com/y.png\">",
             None,
             None,
-            None,
+            Some("题<img src=\" [图片1] \">，又<img src=\" [图片2] \">"),
             None,
         );
         assert_eq!(
@@ -2034,6 +2064,14 @@ mod image_question_tests {
         assert!(body.contains("\"has_images\":true"));
         assert!(body.contains("2 张 base64 图片"));
         assert!(!body.contains("base64,AAA"));
+    }
+
+    #[test]
+    fn invalid_image_array_slots_are_rejected_instead_of_renumbered() {
+        for json in [r#"{"title":"t","images":["", "data:image/png;base64,BBB"]}"#,
+                     r#"{"title":"t","images":[null, "data:image/png;base64,BBB"]}"#] {
+            assert!(serde_json::from_str::<QueryRequest>(json).is_err());
+        }
     }
 
     #[test]
