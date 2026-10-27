@@ -1,6 +1,7 @@
 import { ref } from 'vue'
 import { resolveExecutableModelJsCode, resolveRuntimeModelId } from '../model/protocol'
 import {
+  buildImageAnswerRule,
   buildUrlOptionMapForMode,
   buildUrlQuestionPromptParts,
   classifyUrlQuestionMode,
@@ -36,6 +37,10 @@ import {
   executeVisionModelWithAutoUpscale,
   prepareVisionRequestContent,
 } from './visionImage'
+import {
+  buildHtmlFromPlaceholders,
+  buildMultimodalContentFromPlaceholders,
+} from '../../utils/answer/imagePlaceholders'
 
 const {
   platforms,
@@ -43,7 +48,7 @@ const {
 } = modelApi
 
 export const currentUrlWindowId = ref('')
-export const handleUrlQuestionRequest = async (requestId: string, rawTitle: string) => {
+export const handleUrlQuestionRequest = async (requestId: string, rawTitle: string, images: string[] = []) => {
   if (processedRequestIds.has(requestId)) return
   processedRequestIds.add(requestId)
 
@@ -92,16 +97,23 @@ export const handleUrlQuestionRequest = async (requestId: string, rawTitle: stri
     streamingResponse: '',
     streamingReasoning: '',
     reasoningContent: '',
-    renderedHtml: undefined as string | undefined
+    renderedHtml: undefined as string | undefined,
+    // 图片题优化：存在 base64 数组时，题干为 [图片N] 占位符文本，展示/分析都不再下载 URL
+    images: images.length ? images.slice() : undefined,
   }
+
+  const renderHtml = (questionTitle: string, options: string): Promise<string> =>
+    images.length
+      ? Promise.resolve(buildHtmlFromPlaceholders(questionTitle, options, images))
+      : buildRenderedHtml(questionTitle, options)
 
 
   const applyAndAnalyze = () => {
     const logIndex = requestLogs.value.findIndex(l => l.id === requestId)
     if (logIndex !== -1) {
       requestLogs.value[logIndex].urlQuestion = { ...urlQuestionData }
-      // 异步生成 base64 渲染 HTML
-      buildRenderedHtml(title, originalOptions).then(html => {
+      // 生成展示 HTML：图片题直接内联 base64，普通 URL 题先下载转 base64
+      renderHtml(title, originalOptions).then(html => {
         const l = requestLogs.value.find(l => l.id === requestId)
         if (l?.urlQuestion) l.urlQuestion.renderedHtml = html
       })
@@ -118,7 +130,7 @@ export const handleUrlQuestionRequest = async (requestId: string, rawTitle: stri
         if (idx !== -1) {
           clearInterval(timer)
           requestLogs.value[idx].urlQuestion = { ...urlQuestionData }
-          buildRenderedHtml(title, originalOptions).then(html => {
+          renderHtml(title, originalOptions).then(html => {
             const l = requestLogs.value.find(l => l.id === requestId)
             if (l?.urlQuestion) l.urlQuestion.renderedHtml = html
           })
@@ -166,6 +178,13 @@ export const checkAndShowUrlDialog = async (log: RequestLog) => {
     if (processedRequestIds.has(log.id)) {
       console.log('⚠️ 请求已处理过，跳过:', log.id)
       return
+    }
+
+    // 图片题优化：走 __IMAGE_QUESTION__（占位符 + base64），不会产生下面的 URL 检测响应
+    if (log.requestBody) {
+      try {
+        if (JSON.parse(log.requestBody).has_images) return
+      } catch { /* 解析失败忽略 */ }
     }
 
     // 解析响应体
@@ -437,7 +456,13 @@ export const analyzeUrlQuestion = async (requestId: string) => {
       questionType || ''
     )
 
-    const instruction = `\n\n请仔细分析上述题目，给出详细的解题过程和答案。${typeHint}\n在回答末尾，严格按照以下格式单独一行给出答案：\nANSWER: <答案>\n\n其中规则：\n${answerRule}`
+    // 图片题优化：后端已把图片作为 base64 直传，按 [图片N] 占位符拼接即可，无需下载 URL
+    const base64Images = log.urlQuestion.images ?? []
+    const hasBase64Images = base64Images.length > 0
+    // 按 OCS 的约定要求模型：答案是图片时输出 [图片N]，由服务端/OCS 还原
+    const imageRule = hasBase64Images ? `\n${buildImageAnswerRule(mode)}` : ''
+
+    const instruction = `\n\n请仔细分析上述题目，给出详细的解题过程和答案。${typeHint}\n在回答末尾，严格按照以下格式单独一行给出答案：\nANSWER: <答案>\n\n其中规则：\n${answerRule}${imageRule}`
 
     // 将 title + options + instruction 拼成完整文本，按 URL 拆分为交错多模态内容
     // 图片会先在本地拉取并转为 base64，再发送给视觉模型
@@ -446,7 +471,9 @@ export const analyzeUrlQuestion = async (requestId: string) => {
       requestId, [title, options].filter(Boolean).join('\n'), visionModel.displayName || '视觉模型',
     )
     if (isRequestCancelled(requestId)) return
-    const multimodalContent = await buildMultimodalContent(fullText)
+    const multimodalContent = hasBase64Images
+      ? buildMultimodalContentFromPlaceholders(title + optionsText, base64Images, instruction)
+      : await buildMultimodalContent(fullText)
     const contentWithSearch = searchResult?.context
       ? [{ type: 'text', text: searchResult.context }, ...multimodalContent]
       : multimodalContent

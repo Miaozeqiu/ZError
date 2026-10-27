@@ -92,6 +92,124 @@ fn contains_url(text: &str) -> bool {
     url_regex.is_match(text)
 }
 
+/// 请求是否携带 base64 图片（OCS >= 5.1.0 图片题优化协议）
+fn request_has_images(request: &QueryRequest) -> bool {
+    request
+        .images
+        .as_ref()
+        .map(|list| !list.is_empty())
+        .unwrap_or(false)
+}
+
+/// Align the original text with OCS's placeholder text. OCS alone assigns image
+/// numbers: failed conversions are skipped and DOM URLs need no file extension.
+/// Never re-enumerate URLs; an unprovable mapping is left for OCS to resolve.
+fn image_placeholder_map(original: &str, suggestion: &str) -> Option<HashMap<usize, String>> {
+    let placeholders = Regex::new(r"\[图片(\d+)\]").ok()?;
+    let whitespace = Regex::new(r"\s+").ok()?;
+    let literal = |text: &str| whitespace.split(text).map(regex::escape).collect::<Vec<_>>().join(r"\s*");
+    let mut pattern = String::from("(?s)^");
+    let mut indices = Vec::new();
+    let mut offset = 0;
+    for capture in placeholders.captures_iter(suggestion) {
+        let marker = capture.get(0)?;
+        let index = capture.get(1)?.as_str().parse::<usize>().ok()?;
+        if index == 0 { return None; }
+        pattern.push_str(&literal(&suggestion[offset..marker.start()]));
+        pattern.push_str("(.+?)");
+        indices.push(index);
+        offset = marker.end();
+    }
+    if indices.is_empty() { return Some(HashMap::new()); }
+    pattern.push_str(&literal(&suggestion[offset..]));
+    pattern.push('$');
+    let regex = Regex::new(&pattern).ok()?;
+    let captures = regex.captures(original)?;
+    let mut mapping = HashMap::new();
+    for (group, index) in indices.into_iter().enumerate() {
+        let url = captures.get(group + 1)?.as_str().trim();
+        if url.chars().any(char::is_whitespace)
+            || !(url.starts_with("https://") || url.starts_with("http://") || url.starts_with("data:image/")) {
+            return None;
+        }
+        if let Some(previous) = mapping.insert(index, url.to_string()) {
+            if previous != url { return None; }
+        }
+    }
+    Some(mapping)
+}
+
+/// Restore only mappings demonstrated by OCS's own suggestion fields. Unknown
+/// placeholders remain unchanged so OCS can use its authoritative imageUrls list.
+fn restore_image_placeholders(answer: &str, request: &QueryRequest) -> String {
+    if !answer.contains("[图片") { return answer.to_string(); }
+    let mut mapping = HashMap::new();
+    for (original, suggestion) in [
+        (Some(request.title.as_str()), request.suggestion_title.as_deref()),
+        (request.options.as_deref(), request.suggestion_options.as_deref()),
+    ] {
+        if let (Some(original), Some(suggestion)) = (original, suggestion) {
+            let Some(found) = image_placeholder_map(original, suggestion) else { return answer.to_string(); };
+            for (index, url) in found {
+                if let Some(previous) = mapping.insert(index, url.clone()) {
+                    if previous != url { return answer.to_string(); }
+                }
+            }
+        }
+    }
+    Regex::new(r"\[图片(\d+)\]").unwrap().replace_all(answer, |capture: &regex::Captures| {
+        capture[1].parse::<usize>().ok().and_then(|index| mapping.get(&index)).cloned()
+            .unwrap_or_else(|| capture[0].to_string())
+    }).to_string()
+}
+
+/// 解析用于模型提问的有效负载：
+/// - 新协议（images 非空）：题干/选项用占位符化文本（suggestion_title/suggestion_options），
+///   图片由前端直接使用 base64 数组，无需下载 URL；
+/// - 旧协议（URL 题或纯文本题）：用原始 title/options，图片为空。
+fn resolve_question_payload(request: &QueryRequest) -> (String, Option<String>, Vec<String>) {
+    if request_has_images(request) {
+        let title = request
+            .suggestion_title
+            .clone()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| request.title.clone());
+        let options = request
+            .suggestion_options
+            .clone()
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| request.options.clone());
+        (title, options, request.images.clone().unwrap_or_default())
+    } else {
+        (request.title.clone(), request.options.clone(), Vec::new())
+    }
+}
+
+/// 构造用于日志/SSE 广播的请求体 JSON。
+/// images 是 base64 数组，体积可达数 MB，直接进日志会造成严重膨胀，
+/// 因此替换为摘要字符串，并附加 has_images 标记供前端识别图片题。
+fn build_query_request_log_body(request: &QueryRequest) -> String {
+    let image_count = request
+        .images
+        .as_ref()
+        .map(|list| list.len())
+        .unwrap_or(0);
+    serde_json::json!({
+        "title": request.title,
+        "options": request.options,
+        "type": request.query_type,
+        "has_images": image_count > 0,
+        "images": if image_count > 0 {
+            serde_json::json!(format!("<{} 张 base64 图片，日志已省略>", image_count))
+        } else {
+            serde_json::Value::Null
+        },
+        "suggestion_title": request.suggestion_title,
+        "suggestion_options": request.suggestion_options,
+    })
+    .to_string()
+}
+
 fn resolve_request_origin(headers: &HeaderMap) -> String {
     let host = headers
         .get("host")
@@ -361,12 +479,21 @@ fn build_normal_model_query(request: &QueryRequest, has_url: bool) -> String {
     }
 }
 
-fn emit_model_call_request(app: Option<&AppHandle>, request_id: &str, query: &str) {
+fn emit_model_call_request(
+    app: Option<&AppHandle>,
+    request_id: &str,
+    query: &str,
+    images: &[String],
+) {
     if let Some(app) = app {
-        let payload = serde_json::json!({
+        let mut payload = serde_json::json!({
             "request_id": request_id,
             "query": query,
         });
+        // 图片题优化：base64 数组，与 query 中 [图片N] 占位符严格同序；非图片题不传
+        if !images.is_empty() {
+            payload["images"] = serde_json::json!(images);
+        }
         if let Err(e) = app.emit("model-call-request", payload) {
             println!("⚠️ emit model-call-request failed: {}", e);
         } else {
@@ -383,15 +510,45 @@ async fn wait_and_store_ai_answer(
     request_origin: &str,
     has_url: bool,
 ) -> (u16, QueryResponse) {
-    let formatted_query = build_normal_model_query(request, has_url);
-    logger.send_model_call_request(request_id.to_string(), formatted_query.clone());
-    emit_model_call_request(app, request_id, &formatted_query);
+    // 图片题优化（OCS >= 5.1.0）：images 非空时使用占位符化题干 + base64 数组，
+    // 前端按 [图片N] 直接拼接多模态消息，无需下载 URL（规避防盗链）。
+    let (prompt_title, prompt_options, images) = resolve_question_payload(request);
+    let has_images = !images.is_empty();
+
+    let formatted_query = if has_images {
+        let mut q = format!("__IMAGE_QUESTION__:{}", prompt_title);
+        if let Some(options) = &prompt_options {
+            if !options.is_empty() {
+                q.push_str(&format!("\n__OPTIONS__:{}", options));
+            }
+        }
+        q
+    } else {
+        // 旧协议：URL 题走 __URL_QUESTION__（前端下载 URL），纯文本题走普通 prompt
+        let effective = QueryRequest {
+            title: prompt_title,
+            options: prompt_options,
+            query_type: request.query_type.clone(),
+            images: None,
+            suggestion_title: None,
+            suggestion_options: None,
+        };
+        build_normal_model_query(&effective, has_url)
+    };
+
+    logger.send_model_call_request(
+        request_id.to_string(),
+        formatted_query.clone(),
+        if has_images { Some(images.clone()) } else { None },
+    );
+    emit_model_call_request(app, request_id, &formatted_query, &images);
 
     // 覆盖前端超时 × 重试；absolute 防止 keepalive 无限续命
-    let (inactivity_secs, absolute_secs) = model_wait_budget_secs(has_url);
+    // 图片题（多模态推理）与 URL 题（需下载图片）同样适用加长预算
+    let (inactivity_secs, absolute_secs) = model_wait_budget_secs(has_url || has_images);
     println!(
-        "⏳ model wait budget: inactivity={}s absolute={}s (has_url={})",
-        inactivity_secs, absolute_secs, has_url
+        "⏳ model wait budget: inactivity={}s absolute={}s (has_url={}, has_images={})",
+        inactivity_secs, absolute_secs, has_url, has_images
     );
     match logger
         .wait_for_model_response(request_id.to_string(), inactivity_secs, absolute_secs)
@@ -409,6 +566,14 @@ async fn wait_and_store_ai_answer(
                 println!("⚠️ 检测到题目不完整,将答案留空");
             }
             extracted_answer = extracted_answer.trim().to_string();
+            // 图片题：把答案中的 [图片N] 占位符还原为原始 URL（入库与返回均使用还原后的文本）
+            if has_images {
+                let before_restore = extracted_answer.clone();
+                extracted_answer = restore_image_placeholders(&extracted_answer, request);
+                if extracted_answer != before_restore {
+                    println!("🔧 答案图片占位符已还原为 URL");
+                }
+            }
             // 去掉 A./B. 前缀，纯字母映射为选项正文，避免返回/入库带序号的答案
             let before_norm = extracted_answer.clone();
             extracted_answer = normalize_answer_against_options(
@@ -541,8 +706,8 @@ async fn resolve_query_with_same_question_check(
         );
         let check_prompt =
             build_same_question_check_prompt(&request.title, request.options.as_deref(), &candidates);
-        logger.send_model_call_request(request_id.to_string(), check_prompt.clone());
-        emit_model_call_request(app, request_id, &check_prompt);
+        logger.send_model_call_request(request_id.to_string(), check_prompt.clone(), None);
+        emit_model_call_request(app, request_id, &check_prompt, &[]);
 
         match logger
             .wait_for_model_response(request_id.to_string(), 30, 45)
@@ -755,7 +920,8 @@ pub async fn start_server(
             let app = app_for_query.clone();
             async move {
                 let start_time = std::time::Instant::now();
-                let request_body = serde_json::to_string(&request).unwrap_or_default();
+                // 日志请求体：images 只保留摘要，避免 base64 大字段进入日志与 SSE 广播
+                let request_body = build_query_request_log_body(&request);
                 
                 // 生成唯一请求ID
                 let request_id = uuid::Uuid::new_v4().to_string();
@@ -867,6 +1033,10 @@ pub async fn start_server(
                     title: title.clone(),
                     options,
                     query_type,
+                    // GET 请求不承载图片题优化字段（base64 只能走 POST 请求体）
+                    images: None,
+                    suggestion_title: None,
+                    suggestion_options: None,
                 };
                 
                 let request_body = serde_json::to_string(&request).unwrap_or_default();
@@ -1773,5 +1943,156 @@ mod same_question_tests {
         let (status, msg) = classify_model_failure("错误: 未选择模型").expect("classified");
         assert_eq!(status, 400);
         assert_eq!(msg, "错误: 未选择模型");
+    }
+}
+
+#[cfg(test)]
+mod image_question_tests {
+    use super::{
+        build_query_request_log_body, image_placeholder_map, request_has_images,
+        resolve_question_payload, restore_image_placeholders,
+    };
+    use crate::types::QueryRequest;
+
+    fn make_request(
+        title: &str,
+        options: Option<&str>,
+        images: Option<Vec<&str>>,
+        suggestion_title: Option<&str>,
+        suggestion_options: Option<&str>,
+    ) -> QueryRequest {
+        QueryRequest {
+            title: title.to_string(),
+            options: options.map(str::to_string),
+            query_type: Some("completion".to_string()),
+            images: images.map(|list| list.into_iter().map(str::to_string).collect()),
+            suggestion_title: suggestion_title.map(str::to_string),
+            suggestion_options: suggestion_options.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn maps_ocs_numbers_without_url_extension_assumptions() {
+        let original = "题 https://a.com/render?id=1 与 https://b.com/y.png";
+        let suggestion = "题  [图片1]  与  [图片2] ";
+        let mapping = image_placeholder_map(original, suggestion).unwrap();
+        assert_eq!(mapping.get(&1).unwrap(), "https://a.com/render?id=1");
+        assert_eq!(mapping.get(&2).unwrap(), "https://b.com/y.png");
+    }
+
+    #[test]
+    fn maps_only_successfully_converted_images() {
+        let request = make_request("https://a.com/failed.png https://b.com/success.png", None,
+            Some(vec!["data:image/png;base64,AAA"]),
+            Some("https://a.com/failed.png  [图片1] "), None);
+        assert_eq!(restore_image_placeholders("[图片1]", &request), "https://b.com/success.png");
+    }
+
+    #[test]
+    fn leaves_ambiguous_missing_and_invalid_mappings_for_ocs() {
+        let request = make_request("https://a.com/x.png", None, None, None, None);
+        assert_eq!(restore_image_placeholders("[图片1]", &request), "[图片1]");
+        assert!(image_placeholder_map("https://a.com/a.png https://a.com/b.png", "[图片1] [图片1]").is_none());
+        assert!(image_placeholder_map("https://a.com/a.png", "[图片0]").is_none());
+        assert!(image_placeholder_map("different text", "[图片1]").is_none());
+    }
+
+    #[test]
+    fn restores_shared_title_and_option_numbers() {
+        let request = make_request("题https://a.com/x.png", Some("A. https://a.com/x.png\nB. https://b.com/render?id=2"),
+            Some(vec!["data:image/png;base64,AAA", "data:image/png;base64,BBB"]),
+            Some("题 [图片1] "), Some("A.  [图片1] \nB.  [图片2] "));
+        assert_eq!(restore_image_placeholders("[图片2]###[图片1]", &request), "https://b.com/render?id=2###https://a.com/x.png");
+    }
+
+    #[test]
+    fn restores_placeholders_to_original_urls() {
+        let request = make_request(
+            "题<img src=\"https://a.com/x.png\">，又<img src=\"https://b.com/y.png\">",
+            None,
+            None,
+            Some("题<img src=\" [图片1] \">，又<img src=\" [图片2] \">"),
+            None,
+        );
+        assert_eq!(
+            restore_image_placeholders("答案为[图片2]，补充[图片1]", &request),
+            "答案为https://b.com/y.png，补充https://a.com/x.png"
+        );
+    }
+
+    #[test]
+    fn keeps_out_of_range_placeholder() {
+        let request = make_request("题<img src=\"https://a.com/x.png\">", None, None, None, None);
+        assert_eq!(restore_image_placeholders("[图片3]", &request), "[图片3]");
+    }
+
+    #[test]
+    fn image_payload_prefers_suggestion_text() {
+        let request = make_request(
+            "原始题干 https://a.com/x.png",
+            Some("原始选项 https://b.com/y.png"),
+            Some(vec!["data:image/png;base64,AAA"]),
+            Some("占位题干 [图片1]"),
+            Some("A. 占位选项"),
+        );
+        let (title, options, images) = resolve_question_payload(&request);
+        assert_eq!(title, "占位题干 [图片1]");
+        assert_eq!(options.as_deref(), Some("A. 占位选项"));
+        assert_eq!(images.len(), 1);
+    }
+
+    #[test]
+    fn text_payload_falls_back_to_original_title() {
+        let request = make_request("普通题干", Some("A. 选项"), None, None, None);
+        let (title, options, images) = resolve_question_payload(&request);
+        assert_eq!(title, "普通题干");
+        assert_eq!(options.as_deref(), Some("A. 选项"));
+        assert!(images.is_empty());
+        assert!(!request_has_images(&request));
+    }
+
+    #[test]
+    fn log_body_summarizes_base64_images() {
+        let request = make_request(
+            "题干",
+            None,
+            Some(vec!["data:image/png;base64,AAA", "data:image/png;base64,BBB"]),
+            Some("[图片1]"),
+            None,
+        );
+        let body = build_query_request_log_body(&request);
+        assert!(body.contains("\"has_images\":true"));
+        assert!(body.contains("2 张 base64 图片"));
+        assert!(!body.contains("base64,AAA"));
+    }
+
+    #[test]
+    fn invalid_image_array_slots_are_rejected_instead_of_renumbered() {
+        for json in [r#"{"title":"t","images":["", "data:image/png;base64,BBB"]}"#,
+                     r#"{"title":"t","images":[null, "data:image/png;base64,BBB"]}"#] {
+            assert!(serde_json::from_str::<QueryRequest>(json).is_err());
+        }
+    }
+
+    #[test]
+    fn deserializes_images_as_array_or_placeholder_string() {
+        let from_array: QueryRequest = serde_json::from_str(
+            r#"{"title":"t","images":["data:image/png;base64,AAA"],"suggestion_title":"[图片1]"}"#,
+        )
+        .expect("array form");
+        assert_eq!(from_array.images.as_ref().map(Vec::len), Some(1));
+        assert_eq!(from_array.suggestion_title.as_deref(), Some("[图片1]"));
+
+        let from_string: QueryRequest = serde_json::from_str(
+            r#"{"title":"t","images":"data:image/png;base64,AAA,data:image/png;base64,BBB"}"#,
+        )
+        .expect("string form");
+        assert_eq!(
+            from_string.images,
+            Some(vec![
+                "data:image/png;base64,AAA".to_string(),
+                "data:image/png;base64,BBB".to_string(),
+            ])
+        );
     }
 }
