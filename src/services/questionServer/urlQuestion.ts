@@ -1,6 +1,7 @@
 import { ref } from 'vue'
 import { resolveExecutableModelJsCode, resolveRuntimeModelId } from '../model/protocol'
 import {
+  buildImageAnswerRule,
   buildUrlOptionMapForMode,
   buildUrlQuestionPromptParts,
   classifyUrlQuestionMode,
@@ -455,7 +456,13 @@ export const analyzeUrlQuestion = async (requestId: string) => {
       questionType || ''
     )
 
-    const instruction = `\n\n请仔细分析上述题目，给出详细的解题过程和答案。${typeHint}\n在回答末尾，严格按照以下格式单独一行给出答案：\nANSWER: <答案>\n\n其中规则：\n${answerRule}`
+    // 图片题优化：后端已把图片作为 base64 直传，按 [图片N] 占位符拼接即可，无需下载 URL
+    const base64Images = log.urlQuestion.images ?? []
+    const hasBase64Images = base64Images.length > 0
+    // 按 OCS 的约定要求模型：答案是图片时输出 [图片N]，由服务端/OCS 还原
+    const imageRule = hasBase64Images ? `\n${buildImageAnswerRule(mode)}` : ''
+
+    const instruction = `\n\n请仔细分析上述题目，给出详细的解题过程和答案。${typeHint}\n在回答末尾，严格按照以下格式单独一行给出答案：\nANSWER: <答案>\n\n其中规则：\n${answerRule}${imageRule}`
 
     // 将 title + options + instruction 拼成完整文本，按 URL 拆分为交错多模态内容
     // 图片会先在本地拉取并转为 base64，再发送给视觉模型
@@ -464,9 +471,7 @@ export const analyzeUrlQuestion = async (requestId: string) => {
       requestId, [title, options].filter(Boolean).join('\n'), visionModel.displayName || '视觉模型',
     )
     if (isRequestCancelled(requestId)) return
-    // 图片题优化：后端已把图片作为 base64 直传，按 [图片N] 占位符拼接即可，无需下载 URL
-    const base64Images = log.urlQuestion.images
-    const multimodalContent = base64Images && base64Images.length > 0
+    const multimodalContent = hasBase64Images
       ? buildMultimodalContentFromPlaceholders(fullText, base64Images)
       : await buildMultimodalContent(fullText)
     const contentWithSearch = searchResult?.context

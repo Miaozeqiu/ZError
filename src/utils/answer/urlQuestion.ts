@@ -282,3 +282,18 @@ export const buildUrlQuestionPromptParts = (
 
   return { optionsText, answerRule, typeHint }
 }
+
+/**
+ * 图片题优化（OCS >= 5.1.0）：模型按 OCS 的 [图片N] 约定输出。
+ * - 选择题：仍输出选项编号，由 ZError 映射到选项正文（可能是 [图片N]）
+ * - 填空/简答/解答：答案本身是图片时只输出 [图片N]，服务端/OCS 再还原为 URL
+ */
+export const buildImageAnswerRule = (mode: UrlQuestionMode): string => {
+  if (isChoiceUrlQuestionMode(mode)) {
+    return `- 正确选项的正文如果是 [图片N]，仍然只输出选项编号（如 ANSWER: 2），不要直接输出 [图片N]；系统会还原成对应的选项正文或图片`
+  }
+  if (mode === 'judgement') {
+    return `- 判断题只写 正确 或 错误`
+  }
+  return `- 如果答案本身是图片（例如需要给出图中的内容），只输出对应的 [图片N] 占位符，不要输出图片 URL、Markdown 图片或文字描述；系统会自动还原为图片\n- 多个图片答案按题目要求分隔，例如 ANSWER: [图片1]###[图片2]`
+}
