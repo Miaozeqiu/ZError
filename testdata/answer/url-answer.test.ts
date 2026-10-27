@@ -82,3 +82,20 @@ describe('buildUrlQuestionPromptParts', () => {
     expect(answerRule).toContain('###')
   })
 })
+
+
+describe('completion answer position and numeric regressions', () => {
+  it('keeps missing leading, middle and trailing answers in their original slots', () => {
+    expect(normalizeCompletionAnswer('甲######丙', '____ ____ ____')).toBe('甲######丙')
+    expect(normalizeCompletionAnswer('###乙###', '____ ____ ____')).toBe('###乙###')
+    expect(normalizeCompletionAnswer('######', '____ ____ ____')).toBe('######')
+    expect(normalizeCompletionAnswer('；乙', '____ ____')).toBe('###乙')
+  })
+  it('does not count thousands commas as extra answers in mixed separators', () => {
+    expect(normalizeCompletionAnswer('1,000；甲', '____ ____ ____')).toBe('1,000；甲')
+    expect(normalizeCompletionAnswer('1,000；甲，乙', '____ ____ ____')).toBe('1,000###甲###乙')
+    expect(normalizeCompletionAnswer('-1,000', '____ ____')).toBe('-1,000')
+    expect(normalizeCompletionAnswer('1,000，2,000', '____ ____')).toBe('1,000###2,000')
+    expect(normalizeCompletionAnswer('-1,000.25；+2,000.50', '____ ____')).toBe('-1,000.25###+2,000.50')
+  })
+})

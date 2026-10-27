@@ -178,6 +178,23 @@ export const countCompletionBlanks = (title: string): number => {
   return BLANK_PATTERNS.reduce((total, re) => total + (text.match(re)?.length || 0), 0)
 }
 
+/** Split answer commas without breaking numeric thousands groups, even in mixed answers. */
+const splitCompletionCommas = (text: string): string[] => {
+  const numericRanges = [...text.matchAll(/[+-]?\d(?:[\d,]*\d)?(?:\.\d+)?/g)]
+    .filter(match => /^[+-]?\d{1,3}(?:,\d{3})+(?:\.\d+)?$/.test(match[0]))
+    .map(match => [match.index!, match.index! + match[0].length])
+  const parts: string[] = []
+  let start = 0
+  for (const match of text.matchAll(/[,，]/g)) {
+    const index = match.index!
+    if (numericRanges.some(([from, to]) => from <= index && index < to)) continue
+    parts.push(text.slice(start, index).trim())
+    start = index + 1
+  }
+  parts.push(text.slice(start).trim())
+  return parts
+}
+
 /**
  * 多空填空答案统一用 ### 分隔。
  * 仅在题干空数与拆分结果一致时才拆分，避免把单空答案里的逗号（如「北京，上海」）误断成多空。
@@ -189,7 +206,6 @@ export const normalizeCompletionAnswer = (raw: string, title: string): string =>
     return answer
       .split('###')
       .map(s => s.trim())
-      .filter(Boolean)
       .join('###')
   }
 
@@ -197,7 +213,7 @@ export const normalizeCompletionAnswer = (raw: string, title: string): string =>
   if (blankCount < 2) return answer
 
   const splitAndJoin = (text: string, re: RegExp): string | null => {
-    const parts = text.split(re).map(s => s.trim()).filter(Boolean)
+    const parts = text.split(re).map(s => s.trim())
     return parts.length === blankCount ? parts.join('###') : null
   }
 
@@ -206,18 +222,14 @@ export const normalizeCompletionAnswer = (raw: string, title: string): string =>
   if (bySemicolon) return bySemicolon
 
   // 分号切出的段数不够时，再把各段按逗号细分
-  const semicolonParts = answer.split(/[;；]/).map(s => s.trim()).filter(Boolean)
+  const semicolonParts = answer.split(/[;；]/).map(s => s.trim())
   if (semicolonParts.length > 1 && semicolonParts.length < blankCount) {
-    const expanded = semicolonParts.flatMap(p =>
-      p.split(/[,，]/).map(s => s.trim()).filter(Boolean)
-    )
+    const expanded = semicolonParts.flatMap(splitCompletionCommas)
     if (expanded.length === blankCount) return expanded.join('###')
   }
 
-  // 纯数字千分位（1,000）不能被逗号拆开
-  if (/^\d{1,3}(?:,\d{3})+(?:\.\d+)?$/.test(answer)) return answer
-
-  return splitAndJoin(answer, /[,，]/) || answer
+  const commaParts = splitCompletionCommas(answer)
+  return commaParts.length === blankCount ? commaParts.join('###') : answer
 }
 
 /**
