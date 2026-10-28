@@ -16,7 +16,7 @@ const collectScript = () => {
 
 describe('COLLECT_DOM 快照字段', () => {
   it('ckplayer 页面给出 video 行和完成/当前标记', () => {
-    const html = readFileSync(resolve(process.cwd(), 'public/e2e/ckplayer-catalog.html'), 'utf8')
+    const html = readFileSync(resolve(process.cwd(), 'testdata/browser/fixtures/ckplayer-catalog.html'), 'utf8')
     const dom = new JSDOM(html, {
       url: 'https://www.zjooc.cn/plan',
       pretendToBeVisual: true,

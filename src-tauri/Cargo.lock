@@ -7713,8 +7713,10 @@ dependencies = [
  "raw-window-handle",
  "regex",
  "reqwest",
+ "ring",
  "runas",
  "rusqlite",
+ "security-framework",
  "serde",
  "serde_json",
  "strsim 0.10.0",
@@ -7735,6 +7737,7 @@ dependencies = [
  "uuid",
  "warp",
  "windows 0.56.0",
+ "zeroize",
  "zip 0.6.6",
 ]
 

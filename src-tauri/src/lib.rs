@@ -19,7 +19,14 @@ mod macos_wheel;
 pub mod commands;
 pub mod database;
 pub mod logger;
+mod model_response;
 pub mod server;
+pub mod secret_vault;
+pub mod secret_http;
+pub mod secret_browser;
+mod secret_access;
+#[cfg(target_os = "macos")]
+mod secret_keychain;
 pub mod types;
 pub mod window_size;
 
@@ -282,6 +289,19 @@ pub fn run() {
             read_file_range,
             convert_doc_to_docx,
             segment_text,
+            secret_vault::secure_document_read,
+            secret_vault::secure_site_account_names,
+            secret_vault::secure_storage_authorize,
+            secret_vault::secure_document_write,
+            secret_vault::secure_register,
+            secret_vault::secure_register_api,
+            secret_vault::secure_bind_pending,
+            secret_vault::secure_archive_legacy,
+            secret_vault::secure_cleanup_legacy,
+            secret_vault::secure_redact,
+            secret_http::secure_http_request,
+            secret_http::secure_http_cancel,
+            secret_access::secure_secret_action,
             read_config,
             write_config,
             read_model_config,

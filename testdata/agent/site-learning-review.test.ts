@@ -15,6 +15,33 @@ const check = (steps = actions, learning?: unknown, writePolicy = 'ask') => revi
 const decision = (decision: string) => ({ decision, reason: '独立题目容器分组已核对，避免题干与选项跨题混合' })
 
 describe('站点经验收尾', () => {
+  it('登录服务与门户使用同一份经验，结束在登录域名时也不重复建站', () => {
+    const path = 'sites/menhu.haou.edu.cn/SKILL.md'
+    const steps = [...actions,
+      step('read', 'read_agent_skill_file', { skill_id: 'site-learn', path }, { id: 'site-learn', path, content: '# Verified steps' }),
+      step('write', 'write_agent_skill_file', { skill_id: 'chaoxing', path }, { id: 'site-learn', path, ok: true }),
+    ]
+    expect(reviewSiteLearning({ url: 'https://authserver.open.ha.cn/authserver/login', steps, learning: decision('updated') })).toMatchObject({ ok: true, path })
+  })
+  it('不存在是有效的创建前读取，但不能声明已有覆盖', () => {
+    const missing = step('missing', 'read_agent_skill_file', { skill_id: 'site-learn', path }, { ok: true, exists: false, id: 'site-learn', path, content: '' })
+    expect(check([...actions, missing], decision('covered')).ok).toBe(false)
+    expect(check([...actions, missing, write], decision('updated')).ok).toBe(true)
+    expect(check([...actions, missing, write, read], decision('updated')).ok).toBe(true)
+  })
+  it('真实读取错误可以如实暂不保存，读取总说明不能冒充读取本站原文', () => {
+    const failed = step('locked', 'read_agent_skill_file', { skill_id: 'site-learn', path }, { ok: false, error: 'permission denied' }, 'failed')
+    expect(check([...actions, failed], decision('deferred')).ok).toBe(true)
+    expect(check([...actions, read, failed, write], decision('updated')).ok).toBe(false)
+    const overview = step('overview', 'read_agent_skill', { skill_id: 'site-learn' }, { content: '# 总说明' })
+    expect(check([...actions, overview, write], decision('updated')).ok).toBe(false)
+  })
+  it('技能工具旧别名不计作网页操作', () => {
+    expect(check([
+      step('read', 'browser_read_agent_skill_file', { skill_id: 'site-learn', path }),
+      step('write', 'browser_write_agent_skill_file', { skill_id: 'site-learn', path }),
+    ]).required).toBe(false)
+  })
   it('重现本轮：两次 eval 都返回成功，但读取方法发生改变，也必须检查经验', () => {
     expect(check()).toMatchObject({ required: true, candidate: true, ok: false, path })
     expect(check(actions, decision('no_new')).ok).toBe(false)

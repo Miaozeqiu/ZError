@@ -1,5 +1,4 @@
 /** Agent 工具表入口。定义按域拆在 toolDefs/。 */
-import type { DomainToolPolicy } from './agentProfiles'
 import type { HostCapabilities } from './hostCapabilities'
 import { assembleRoleTools, type BrowserToolRole } from './subagent/tools'
 import { withoutSubagentTools } from './subagent/enabled'
@@ -20,7 +19,6 @@ export const availableAgentTools = <T extends Array<{ function: { name: string }
 
 export const assembleBrowserTools = (input?: {
   url?: string
-  domain?: DomainToolPolicy
   role?: BrowserToolRole | 'full'
   capabilities?: HostCapabilities
 }) => {
@@ -28,7 +26,6 @@ export const assembleBrowserTools = (input?: {
   const assembled = role && role !== 'full'
     ? assembleRoleTools({
       url: input?.url,
-      domain: input?.domain,
       role,
       capabilities: input?.capabilities,
     })
@@ -41,6 +38,6 @@ export const assembleBrowserTools = (input?: {
 
 /** 普通对话也能操作浏览器，共享工具（搜索、Skill）只声明一次。 */
 export const assembleAgentTools = (url = '') => {
-  const tools = [...CHAT_TOOLS, ...assembleBrowserTools({ url, role: 'parent', domain: 'current-site' })]
+  const tools = [...CHAT_TOOLS, ...assembleBrowserTools({ url, role: 'parent' })]
   return [...new Map(tools.map(tool => [tool.function.name, tool])).values()]
 }

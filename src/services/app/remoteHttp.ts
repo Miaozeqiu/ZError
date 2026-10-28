@@ -28,11 +28,8 @@ export function readStoredAuthToken() {
 
 export function rememberAuthToken(token: string) {
   memoryAuthToken = token || ''
-  try {
-    if (memoryAuthToken) localStorage.setItem(AUTH_TOKEN_KEY, memoryAuthToken)
-    else localStorage.removeItem(AUTH_TOKEN_KEY)
-  } catch {
-    // ignore
+  if (!memoryAuthToken) {
+    try { localStorage.removeItem(AUTH_TOKEN_KEY) } catch { /* unavailable */ }
   }
 }
 

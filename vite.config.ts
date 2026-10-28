@@ -1,10 +1,30 @@
 import { defineConfig, type Plugin } from "vite";
 import vue from "@vitejs/plugin-vue";
 import { resolve } from 'path';
-import { appendFileSync, mkdirSync, writeFileSync } from 'fs';
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
+
+// IDE regression pages stay available during development and never ship in the app.
+const devRegressionPagesPlugin = (): Plugin => ({
+  name: 'dev-regression-pages',
+  apply: 'serve',
+  configureServer(server) {
+    const pages = new Set(['/push-fixture.html', '/ckplayer-catalog.html'])
+    server.middlewares.use('/e2e', (req, res, next) => {
+      const page = (req.url || '').split('?')[0]
+      if (!pages.has(page) || !['GET', 'HEAD'].includes(req.method || '')) return next()
+      try {
+        const html = readFileSync(resolve(__dirname, 'testdata/browser/fixtures', page.slice(1)), 'utf8')
+        res.setHeader('Content-Type', 'text/html; charset=utf-8')
+        res.end(req.method === 'HEAD' ? undefined : html)
+      } catch (error) {
+        next(error)
+      }
+    })
+  },
+})
 
 const agentDebugLogPlugin = (): Plugin => ({
   name: 'agent-debug-log',
@@ -62,7 +82,7 @@ const agentDebugLogPlugin = (): Plugin => ({
 
 // https://vitejs.dev/config/
 export default defineConfig(async () => ({
-  plugins: [vue(), agentDebugLogPlugin()],
+  plugins: [vue(), agentDebugLogPlugin(), devRegressionPagesPlugin()],
   
   resolve: {
     alias: {

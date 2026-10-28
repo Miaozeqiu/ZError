@@ -1,6 +1,12 @@
+import { isBuiltinRuntimeSkillFile } from '../skillRuntimeFiles'
+
 const SKILL_MAIN = 'SKILL.md'
 
-const rawModules = import.meta.glob<string>('./bundled/**/*.{md,json,js,html}', {
+const rawModules = import.meta.glob<string>([
+  './bundled/**/*.{md,json}',
+  '!./bundled/**/fixtures/**',
+  '!./bundled/**/parsers/**',
+], {
   query: '?raw',
   import: 'default',
   eager: true,
@@ -19,7 +25,7 @@ const bundledStore: BundledSkillStore = {}
 
 for (const [key, content] of Object.entries(rawModules)) {
   const parsed = parseBundledKey(key)
-  if (!parsed || typeof content !== 'string') continue
+  if (!parsed || !isBuiltinRuntimeSkillFile(parsed.path) || typeof content !== 'string') continue
   if (!bundledStore[parsed.id]) bundledStore[parsed.id] = {}
   bundledStore[parsed.id][parsed.path] = content
 }

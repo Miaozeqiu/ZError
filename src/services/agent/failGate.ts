@@ -11,8 +11,11 @@ const clip = (value: unknown) => String(value ?? '').replace(/\s+/g, ' ').trim()
 
 export const failFingerprint = (tool: string, args: Record<string, unknown> = {}) => {
   const name = String(tool || '').trim()
-  if (name === 'browser_click_text') return `${name}|${clip(args.text)}`
-  if (name === 'browser_click') return `${name}|${clip(args.selector || args.ref)}`
+  if (name === 'browser_click_text' || name === 'browser_click') {
+    const target = args.ref || args.selector || args.text
+    const action = args.ref || args.selector ? 'browser_click' : 'browser_click_text'
+    return `${action}|${clip(target)}|frame=${clip(args.frameId || args.frame)}|doc=${clip(args.loaderId)}|nth=${clip(args.nth)}`
+  }
   const keys = Object.keys(args).filter((key) => args[key] != null && args[key] !== '').sort()
   return `${name}|${keys.slice(0, 6).map((key) => `${key}=${clip(args[key])}`).join('&')}`
 }

@@ -41,6 +41,20 @@
   pointer-events: none;
 }
 
+.composer-status {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  max-width: var(--chat-max-width);
+  margin-bottom: 8px;
+  pointer-events: auto;
+}
+
+.composer-status:empty {
+  display: none;
+}
+
 .composer-box {
   position: relative;
   width: 100%;

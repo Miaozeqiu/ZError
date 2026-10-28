@@ -1,0 +1,97 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Website graph zoom regression</title>
+<style>
+  :root { font: 16px/24px Inter, Avenir, Helvetica, Arial, sans-serif; -webkit-text-size-adjust: 100%; }
+  html, body, #app { margin: 0; width: 100%; height: 100%; }
+  body { background: white; }
+</style>
+<div id="app"></div>
+<script type="module">
+  import { createApp, h, nextTick } from 'vue'
+  import Graph from '/src/components/browser/BrowserSiteGraphPanel.vue'
+  import chaoxing from '/src/services/agent/skills/bundled/chaoxing/site-graph.json'
+  import zjooc from '/src/services/agent/skills/bundled/site-learn/sites/zjooc.cn/site-graph.json'
+  const data = new URLSearchParams(location.search).get('site') === 'zjooc' ? zjooc : chaoxing
+
+  createApp({ render: () => h(Graph, { preview: true, data }) }).mount('#app')
+  const settle = async () => {
+    await nextTick()
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+  }
+  const geometry = () => {
+    const map = document.querySelector('.graph-map'), camera = document.querySelector('.graph-camera')
+    const node = map.querySelector('.graph-node'), box = node.getBoundingClientRect()
+    const rect = document.querySelector('.graph-scroll').getBoundingClientRect()
+    const zoom = Number(map.style.zoom)
+    const scale = zoom * (map.style.transform === 'none' ? 1 : Number(map.style.transform.slice(6, -1)))
+    const x = parseFloat(camera.style.left), y = parseFloat(camera.style.top)
+    const text = {}
+    for (const selector of ['.chrome-title', '.graph-edge', '.stage span', '.rail-item', '.frame-bar b', '.frame-bar span', '.tab', '.doc-name', '.doc-path', '.layers em', '.chrome-tab']) {
+      const element = map.querySelector(selector)
+      if (!element || !element.textContent.trim()) continue
+      const range = document.createRange(); range.selectNodeContents(element)
+      const bounds = range.getBoundingClientRect()
+      text[selector] = { width: bounds.width, height: bounds.height, font: getComputedStyle(element).fontSize }
+    }
+    return { scale, zoom, x, y, width: box.width, height: box.height, layoutHeight: node.offsetHeight,
+      positionError: Math.hypot(box.left - rect.left - x - parseFloat(node.style.left) * scale,
+        box.top - rect.top - y - parseFloat(node.style.top) * scale),
+      text, transform: getComputedStyle(map).transform, willChange: getComputedStyle(map).willChange,
+      nodes: map.querySelectorAll('.graph-node').length, wires: map.querySelectorAll('.graph-wire').length }
+  }
+  const wheel = async deltaY => {
+    const view = document.querySelector('.graph-scroll'), rect = view.getBoundingClientRect()
+    view.dispatchEvent(new WheelEvent('wheel', { deltaY, clientX: Math.round(rect.left + rect.width * .37),
+      clientY: Math.round(rect.top + rect.height * .42), bubbles: true, cancelable: true }))
+    await settle()
+  }
+  const reach = async target => {
+    for (let i = 0; i < 150 && geometry().scale > target + .0001; i++) await wheel(100)
+    for (let i = 0; i < 150 && geometry().scale < target - .0001; i++) await wheel(-100)
+  }
+  window.graphZoomRegression = {
+    async run() {
+      await new Promise(resolve => setTimeout(resolve, 180))
+      await settle()
+      const samples = []
+      const errors = []
+      for (const target of [.22, .44, .75, 1, 1.5, 2, 4, 6, .22]) {
+        await reach(target)
+        const before = geometry()
+        const rect = document.querySelector('.graph-scroll').getBoundingClientRect()
+        const sx = Math.round(rect.left + rect.width * .37) - rect.left
+        const sy = Math.round(rect.top + rect.height * .42) - rect.top
+        const worldX = (sx - before.x) / before.scale, worldY = (sy - before.y) / before.scale
+        await wheel(target === 6 ? -100 : 100)
+        const after = geometry()
+        const anchorError = Math.hypot(worldX * after.scale + after.x - sx, worldY * after.scale + after.y - sy)
+        if (anchorError > .02) errors.push(`anchor ${before.scale}: ${anchorError}`)
+        samples.push(before)
+      }
+      const reference = samples[0]
+      for (const sample of samples) {
+        if (sample.positionError > .05) errors.push(`position ${sample.scale}: ${sample.positionError}`)
+        if (Math.abs(sample.width / reference.width - sample.scale / reference.scale) > .01) errors.push(`card ${sample.scale}`)
+        if (sample.layoutHeight !== reference.layoutHeight) errors.push(`layout ${sample.scale}`)
+        for (const [selector, text] of Object.entries(sample.text)) {
+          const expected = reference.text[selector].width * sample.scale / reference.scale
+          // Font optical sizing may vary above the layout floor; below it, all geometry must be identical.
+          const error = Math.abs(text.width / expected - 1)
+          if (error > (sample.scale < 2 ? .005 : .06)) errors.push(`text ${selector} at ${sample.scale}: ${error}`)
+        }
+      }
+      const beforeZero = geometry(); await wheel(0)
+      if (JSON.stringify(beforeZero) !== JSON.stringify(geometry())) errors.push('zero delta changed camera')
+      return { engine: navigator.userAgent, passed: errors.length === 0, errors, samples }
+    },
+    async focus(scale) {
+      await reach(scale)
+      const map = document.querySelector('.graph-map'), camera = document.querySelector('.graph-camera')
+      const node = map.querySelector('.graph-node'), actual = geometry().scale
+      camera.style.left = `${24 - parseFloat(node.style.left) * actual}px`
+      camera.style.top = `${24 - parseFloat(node.style.top) * actual}px`
+      await settle()
+    }
+  }
+</script>

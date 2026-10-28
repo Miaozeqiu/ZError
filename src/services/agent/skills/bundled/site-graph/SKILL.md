@@ -1,6 +1,9 @@
 ---
-name: 网站图谱
+name: site-graph
 description: 改正网站节点、边、网址规则。用 browser_site_graph 一条条改，会自动保存。执行时先读这个 Skill，操作表在 files 的 references/edit.md。
+compatibility: Requires ZError browser_site_graph and browser inspection tools.
+metadata:
+  display-name: 网站图谱
 ---
 
 # 网站图谱

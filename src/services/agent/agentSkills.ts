@@ -1,4 +1,11 @@
+import { redactNative } from '../security/secureStore'
+import { redactObject } from '../security/secretRedaction'
 import { reactive } from 'vue'
+import { createSkillMarkdown, normalizeLegacySkillMarkdown, parseSkillFrontmatter, prepareSkillMarkdown, validateSkillMarkdown } from './skillFormat'
+import { normalizeWebsiteHost, websitePrimaryHost } from './websiteIdentity'
+import { isBuiltinRuntimeSkillFile, WEBSITE_RUNTIME_FILE_HINT } from './skillRuntimeFiles'
+import { resolveWebsiteSkillTarget } from './websiteSkillTarget'
+export { parseSkillFrontmatter } from './skillFormat'
 import {
   listBundledSkillFiles,
   readBundledSkillFile,
@@ -73,6 +80,7 @@ type BuiltinSkillDef = {
   defaultEnabled: boolean
   scope: SkillScope
   matchKeywords?: string[]
+  editable?: boolean
 }
 
 export type SkillCatalogEntry = {
@@ -105,6 +113,7 @@ const LEGACY_CHAOXING_SKILL_IDS = ['chaoxing-login', 'chaoxing-study', 'chaoxing
 
 const BUILTIN_SKILLS: Record<string, BuiltinSkillDef> = {
   chaoxing: {
+    editable: true,
     name: '学习通',
     description: CHAOXING_SKILL_DESCRIPTION,
     triggerHint: '用户要登录、刷课、播视频、做学习通作业或章节测验时，先 read_agent_skill(chaoxing)。',
@@ -147,6 +156,7 @@ const BUILTIN_SKILLS: Record<string, BuiltinSkillDef> = {
     scope: 'learning',
   },
   'site-graph': {
+    editable: true,
     name: '网站图谱',
     description: '改正网站节点、边、网址规则。用图谱工具一条条改，会自动保存。',
     triggerHint: '用户要改网站图谱，或任务中网址对不上节点、缺边、新站点没图时，先 read_agent_skill(site-graph)。',
@@ -154,8 +164,9 @@ const BUILTIN_SKILLS: Record<string, BuiltinSkillDef> = {
     scope: 'browser',
   },
   'site-learn': {
+    editable: true,
     name: '认识新站点',
-    description: '当前网址没有现成刷课步骤时：探路、记录页面结构和站点步骤。先读这个 Skill，再读 sites/<主机>/SKILL.md。',
+    description: '当前网址没有现成刷课步骤时：探路、记录页面结构和站点步骤。先读这个 Skill，再读 sites/<主网站域名>/SKILL.md。',
     triggerHint: '当前站点没有对应步骤、图谱对不上、或没有专用工具时，先 read_agent_skill(site-learn)。',
     defaultEnabled: true,
     scope: 'browser',
@@ -253,71 +264,10 @@ const isEnabled = (id: string, row?: SkillConfigRow) => {
   return BUILTIN_SKILLS[id]?.defaultEnabled ?? true
 }
 
-export const parseSkillFrontmatter = (raw: string) => {
-  const text = String(raw || '').replace(/^\uFEFF/, '')
-  const match = text.match(/^[\s\uFEFF]*---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)([\s\S]*)$/)
-  if (!match) {
-    return {
-      name: '',
-      description: '',
-      scope: '' as const,
-      body: text.trim(),
-      hasFrontmatter: false,
-    }
-  }
-  const front = match[1]
-  const body = match[2].trim()
-  const readField = (key: string) => {
-    const m = front.match(new RegExp(`^${key}:\\s*(.+)$`, 'm'))
-    if (!m) return ''
-    let value = m[1].trim()
-    if (value.startsWith('>-') || value.startsWith('>') || value.startsWith('|')) return ''
-    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-      value = value.slice(1, -1)
-    }
-    return value.trim()
-  }
-  const readMultiline = (key: string) => {
-    const block = front.match(new RegExp(`^${key}:\\s*>-?\\s*\\r?\\n([\\s\\S]*?)(?:\\r?\\n\\w|$)`, 'm'))
-    if (!block) return readField(key)
-    return block[1]
-      .split(/\r?\n/)
-      .map((line) => line.replace(/^\s+/, ''))
-      .join(' ')
-      .trim()
-  }
-  const scopeRaw = readField('scope')
-  const scope: SkillScope | '' = scopeRaw === 'browser' || scopeRaw === 'learning' || scopeRaw === 'both'
-    ? scopeRaw
-    : ''
-  return {
-    name: readField('name'),
-    description: readMultiline('description') || readField('description'),
-    scope,
-    body,
-    hasFrontmatter: true,
-  }
-}
-
-const slugify = (value: string) => (
-  String(value || '')
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9\u4e00-\u9fff]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    || `skill-${Date.now()}`
-)
-
-const formatDescriptionYaml = (description: string) => {
-  const text = String(description || '').trim()
-  if (!text || !/[:#\n]/.test(text)) return text
-  return `>- \n  ${text.replace(/\n/g, '\n  ')}`
-}
-
 const buildBuiltinMarkdown = (id: string, def: BuiltinSkillDef) => {
   const bundled = readBundledSkillFile(id, SKILL_MAIN_FILE)
   if (bundled) return bundled
-  return `---\nname: ${def.name}\ndescription: ${formatDescriptionYaml(def.description)}\n---\n\n${def.triggerHint}\n`
+  return createSkillMarkdown(id, def.description, def.name, `\n${def.triggerHint}\n`)
 }
 
 const readBuiltinSkillFileRaw = (id: string, relativePath: string): string | null => {
@@ -330,6 +280,26 @@ const skillItemOf = (id: string): AgentSkillItem | null => (
   agentSkillsState.items.find((item) => item.id === id)
   || fallbackBuiltinItems().find((item) => item.id === id)
   || null
+)
+
+/** Runtime mutations remain available for website learning; other builtins are read-only. */
+export const isSkillEditable = (id: string): boolean => {
+  const item = skillItemOf(id)
+  return Boolean(item && (!item.builtin || BUILTIN_SKILLS[id]?.editable))
+}
+
+/** Internal authoring/navigation instructions are not user-facing website configurations. */
+export const isSkillVisibleInSettings = (id: string): boolean => {
+  const item = skillItemOf(id)
+  return Boolean(item && (!item.builtin || id === 'chaoxing'))
+}
+
+const assertSkillEditable = (id: string) => {
+  if (!isSkillEditable(id)) throw new Error('此内置 Skill 为只读，不能修改或恢复')
+}
+
+export const skillFileWriteError = (id: string, relativePath: string): string | null => (
+  BUILTIN_SKILLS[id] && !isBuiltinRuntimeSkillFile(relativePath) ? WEBSITE_RUNTIME_FILE_HINT : null
 )
 
 const isTextSkillFile = (relativePath: string) => {
@@ -388,7 +358,7 @@ const readSkillOverride = async (id: string): Promise<string | null> => {
 const hasSkillOverride = async (id: string) => {
   if (await readSkillOverride(id)) return true
   const extras = await walkSkillDir(skillOverrideDir(id))
-  if (extras.some((path) => path !== SKILL_MAIN_FILE)) return true
+  if (extras.some((path) => path !== SKILL_MAIN_FILE && isBuiltinRuntimeSkillFile(path))) return true
   if (id === 'chaoxing') {
     for (const legacyId of LEGACY_CHAOXING_SKILL_IDS) {
       if (await readSkillOverride(legacyId)) return true
@@ -484,14 +454,16 @@ export const listSkillFiles = async (id: string): Promise<string[]> => {
     }
   }
   if (!files.size) files.add(SKILL_MAIN_FILE)
-  return [...files].filter((path) => !isParserScriptPath(path)).sort((a, b) => {
+  return [...files].filter((path) => !isParserScriptPath(path) && (!item.builtin || isBuiltinRuntimeSkillFile(path))
+    && !(id === 'chaoxing' && path.startsWith('sites/'))
+    && !(id === 'site-learn' && /^sites\/[^/]+\//.test(path) && path.split('/')[1] !== websitePrimaryHost(path.split('/')[1]))).sort((a, b) => {
     if (a === SKILL_MAIN_FILE) return -1
     if (b === SKILL_MAIN_FILE) return 1
     return a.localeCompare(b, 'en')
   })
 }
 
-const readSkillMarkdownRaw = async (id: string): Promise<string | null> => {
+const readStoredSkillMarkdown = async (id: string): Promise<string | null> => {
   const override = await readSkillOverride(id)
   if (override) return override
   const bundled = readBundledSkillFile(id, SKILL_MAIN_FILE)
@@ -503,6 +475,18 @@ const readSkillMarkdownRaw = async (id: string): Promise<string | null> => {
     return await readTextFile(`${getInstalledSkillDir(id)}/${SKILL_MAIN_FILE}`, { baseDir: BaseDirectory.Home })
   } catch {
     return null
+  }
+}
+
+// Present old documents in standard form; persist only after an explicit save.
+const readSkillMarkdownRaw = async (id: string): Promise<string | null> => {
+  const raw = await readStoredSkillMarkdown(id)
+  if (!raw) return raw
+  const fallback = BUILTIN_SKILLS[id] || await readSkillMeta(id)
+  try {
+    return normalizeLegacySkillMarkdown(raw, id, fallback || { name: id, description: '' })
+  } catch {
+    return raw // Keep malformed legacy files editable, with errors reported on save.
   }
 }
 
@@ -542,7 +526,7 @@ const buildItems = async (config: SkillConfigFile): Promise<AgentSkillItem[]> =>
     const markdown = (customized ? await readSkillOverride(id) : null) || readBundledSkillFile(id, SKILL_MAIN_FILE)
     if (markdown) {
       const parsed = parseSkillFrontmatter(markdown)
-      if (parsed.name) name = parsed.name
+      if (parsed.displayName) name = parsed.displayName
       if (parsed.description) description = parsed.description
     }
     items.push({
@@ -568,8 +552,8 @@ const buildItems = async (config: SkillConfigFile): Promise<AgentSkillItem[]> =>
     const parsed = markdown ? parseSkillFrontmatter(markdown) : null
     items.push({
       id,
-      name: meta.name || id,
-      description: meta.description || '',
+      name: parsed?.displayName || meta.name || id,
+      description: parsed?.description || meta.description || '',
       enabled: isEnabled(id, row),
       builtin: false,
       scope: parsed?.scope || 'both',
@@ -761,7 +745,7 @@ export const skillSurfaceFiles = (files: string[]) => files.filter((path) => {
 
 const nextSkillHint = (id: string, files: string[]) => {
   if (id === 'site-learn') {
-    return '这是总说明。本站步骤：read_agent_skill_file 读 files 里 sites/<当前网址主机>/SKILL.md。步骤写法见 references/workflow.md。'
+    return '这是总说明。本站步骤：read_agent_skill_file 读 files 里 sites/<主网站域名>/SKILL.md。步骤写法见 references/workflow.md。'
   }
   if (id === 'site-graph') {
     return '操作表：read_agent_skill_file(site-graph, references/edit.md)。用 browser_site_graph 一条条改。'
@@ -784,15 +768,14 @@ export const nextSkillFileHint = (id: string, path: string, files: string[]) => 
   const site = path.match(/^sites\/([^/]+)\/SKILL\.md$/)
   if (id === 'site-learn' && site) {
     const host = site[1]
-    const fixture = files.find((file) => file.startsWith(`sites/${host}/fixtures/`))
     return [
       `本站步骤写在 sites/${host}/SKILL.md。`,
-      fixture ? `样例页：${fixture}。` : '',
+      '在当前网页验证步骤，再记录已验证的操作经验。',
       '播放页同一节常有多条视频，当前条只是其中一条。走通后把点了哪个字写回 SKILL.md。',
     ].filter(Boolean).join('')
   }
   if (id === 'site-learn' && path === 'references/workflow.md') {
-    return '本站步骤：sites/<当前网址主机>/SKILL.md。写哪一页、点哪个字、在哪个框、坑在哪。'
+    return '本站步骤：sites/<主网站域名>/SKILL.md。写哪一页、点哪个字、在哪个框、坑在哪。'
   }
   if (id === 'chaoxing' && /^references\//.test(path)) {
     return '按当前页【建议】做。结构变化时通过快照重新观察，走通后更新本站 SKILL.md。'
@@ -802,20 +785,17 @@ export const nextSkillFileHint = (id: string, path: string, files: string[]) => 
 
 const PARSER_PATH = /(?:^|\/)parsers\/|(?:see|schema|locators)(?:\.[\w-]+)?\.json$/
 
-/** 新站文件在 sites/<主机>/SKILL.md。解析器路径一律改去写经验。 */
+/** 新站文件在 sites/<主网站域名>/SKILL.md。解析器路径一律改去写经验。 */
 export const placeSiteLearnPath = (relativePath: string, host: string) => {
-  const path = String(relativePath || '').trim().replace(/\\/g, '/').replace(/^\.\//, '')
+  const path = resolveWebsiteSkillTarget('site-learn', relativePath).path
   if (PARSER_PATH.test(path)) {
-    const where = host ? `sites/${host}/SKILL.md` : 'sites/<主机>/SKILL.md'
+    const where = host ? `sites/${host}/SKILL.md` : 'sites/<主网站域名>/SKILL.md'
     return {
       path,
       error: `不要写解析器。把步骤写进 ${where}：哪一页、点哪个字、在哪个框、坑在哪。`,
     }
   }
-  if (/^fixtures\//.test(path)) {
-    if (!host) return { path, error: '路径要带站点，例如 sites/zjooc.cn/SKILL.md。' }
-    return { path: `sites/${host}/${path}` }
-  }
+  if (!isBuiltinRuntimeSkillFile(path)) return { path, error: WEBSITE_RUNTIME_FILE_HINT }
   return { path }
 }
 
@@ -826,10 +806,14 @@ export const readAgentSkillContent = async (id: string) => {
   if (!block) return null
   const files = await listSkillFiles(id)
   const surface = skillSurfaceFiles(files)
+  const parsed = parseSkillFrontmatter((await readSkillMarkdownRaw(id)) || '')
   return {
     id: item.id,
     name: item.name,
     description: item.description,
+    compatibility: parsed.compatibility || undefined,
+    // Informational only; this does not grant tool permissions.
+    allowedTools: parsed.allowedTools || undefined,
     content: `${block.triggerHint}${block.prompt}`.trim(),
     files: surface,
     hint: nextSkillHint(id, files),
@@ -837,10 +821,28 @@ export const readAgentSkillContent = async (id: string) => {
 }
 
 export const readAgentSkillFileContent = async (id: string, relativePath: string) => {
+  const target = resolveWebsiteSkillTarget(id, relativePath)
+  id = target.skillId
+  relativePath = target.path
   const item = skillItemOf(id)
   if (!item) return null
   const path = normalizeSkillRelativePath(relativePath)
   if (!path) return null
+  // Website creation needs a definitive absence check. Directory enumeration and
+  // optional overrides deliberately tolerate errors elsewhere; neither can be
+  // used as proof that an existing site's original text is safe to replace.
+  if (id === 'site-learn' && /^sites\/[^/]+\/SKILL\.md$/.test(path)) {
+    const { readTextFile, BaseDirectory } = await import('@tauri-apps/plugin-fs')
+    let content: string | null
+    try {
+      content = await readTextFile(`${skillOverrideDir(id)}/${path}`, { baseDir: BaseDirectory.Home })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (!/ENOENT|No such file or directory|not found|os error 2\b/i.test(message)) throw error
+      content = readBuiltinSkillFileRaw(id, path)
+    }
+    return content == null ? null : { id, path, content, hint: nextSkillFileHint(id, path, [path]) }
+  }
   const files = await listSkillFiles(id)
   if (!files.includes(path)) return null
   let content: string | null = null
@@ -868,6 +870,7 @@ export const listAgentSkillsForAgent = async () => {
       builtin: item.builtin,
       scope: item.scope,
       customized: Boolean(item.customized),
+      editable: isSkillEditable(item.id),
       files: skillSurfaceFiles(await listSkillFiles(item.id)),
     })
   }
@@ -877,13 +880,19 @@ export const listAgentSkillsForAgent = async () => {
 export const writeAgentSkillFileContent = async (id: string, relativePath: string, content: string) => {
   const item = skillItemOf(id)
   if (!item) return { error: `Skill "${id}" 不存在` }
+  if (!isSkillEditable(id)) return { error: '此内置 Skill 为只读，不能修改' }
+  const target = resolveWebsiteSkillTarget(id, relativePath)
+  id = target.skillId
+  relativePath = target.path
+  const writeError = skillFileWriteError(id, relativePath)
+  if (writeError) return { error: writeError }
   const path = normalizeSkillRelativePath(relativePath)
   if (!path) return { error: '无效的文件路径' }
   const { siteGraphWriteBlocked } = await import('../browser/siteGraphSave')
   const graphBlocked = siteGraphWriteBlocked(path)
   if (graphBlocked) return { ok: false, error: graphBlocked }
   if (isParserScriptPath(path) || PARSER_PATH.test(path)) {
-    return { error: '不要写解析器。把步骤写进 sites/<主机>/SKILL.md。' }
+    return { error: '不要写解析器。把步骤写进 sites/<主网站域名>/SKILL.md。' }
   }
   const text = String(content ?? '')
   if (new TextEncoder().encode(text).length > MAX_SKILL_FILE_BYTES) {
@@ -913,6 +922,7 @@ export const resetAgentSkillFile = async (id: string, relativePath?: string) => 
   const item = skillItemOf(id)
   if (!item) return { error: `Skill "${id}" 不存在` }
   if (!item.builtin) return { error: '只有内置 Skill 能恢复默认' }
+  if (!isSkillEditable(id)) return { error: '此内置 Skill 为只读，不能恢复' }
   const path = normalizeSkillRelativePath(relativePath || SKILL_MAIN_FILE) || SKILL_MAIN_FILE
   try {
     await resetSkillFileContent(id, path)
@@ -931,20 +941,25 @@ export const resetAgentSkillFile = async (id: string, relativePath?: string) => 
   }
 }
 
-export const getSkillDocument = async (id: string): Promise<SkillDocument | null> => {
+export const getSkillDocument = async (id: string, siteHost?: string): Promise<SkillDocument | null> => {
   const item = skillItemOf(id)
-  if (!item) return null
-  const markdown = await readSkillMarkdownRaw(id)
+  const scoped = id === 'site-learn' && Boolean(siteHost && normalizeWebsiteHost(siteHost) === siteHost)
+  if (!item || (siteHost && !scoped) || (!scoped && !isSkillVisibleInSettings(id))) return null
+  const prefix = scoped ? `sites/${siteHost}/` : ''
+  const mainPath = scoped ? `${prefix}SKILL.md` : SKILL_MAIN_FILE
+  const markdown = scoped ? (await getSkillFileContent(id, mainPath))?.content : await readSkillMarkdownRaw(id)
   if (!markdown) return null
   const parsed = parseSkillFrontmatter(markdown)
-  const customized = item.builtin ? await hasSkillOverride(id) : true
-  const files = await listSkillFiles(id)
+  const customized = item.builtin ? (scoped
+    ? (await walkSkillDir(skillOverrideDir(id))).some(path => path.startsWith(prefix) && isBuiltinRuntimeSkillFile(path))
+    : await hasSkillOverride(id)) : true
+  const files = (await listSkillFiles(id)).filter(path => !scoped || path.startsWith(prefix))
   return {
     id: item.id,
-    name: parsed.name || item.name,
+    name: parsed.displayName || item.name,
     description: parsed.description || item.description,
     markdown,
-    builtin: item.builtin,
+    builtin: item.builtin && (!scoped || Boolean(readBundledSkillFile(id, mainPath))),
     customized,
     source: item.source,
     sourcePath: item.sourcePath,
@@ -955,7 +970,8 @@ export const getSkillDocument = async (id: string): Promise<SkillDocument | null
 export const getSkillFileContent = async (id: string, relativePath: string): Promise<SkillFileContent | null> => {
   const item = skillItemOf(id)
   if (!item) return null
-  const path = normalizeSkillRelativePath(relativePath) || SKILL_MAIN_FILE
+  const path = normalizeSkillRelativePath(relativePath || SKILL_MAIN_FILE)
+  if (!path) return null
   const files = await listSkillFiles(id)
   if (!files.includes(path)) return null
   let content = ''
@@ -970,16 +986,23 @@ export const getSkillFileContent = async (id: string, relativePath: string): Pro
     id: item.id,
     path,
     content,
-    readonly: false,
+    readonly: !isSkillEditable(id),
   }
 }
 
 export const saveSkillFileContent = async (id: string, relativePath: string, content: string) => {
   const item = skillItemOf(id)
   if (!item) throw new Error('Skill 不存在')
-  const path = normalizeSkillRelativePath(relativePath) || SKILL_MAIN_FILE
-  if (isParserScriptPath(path)) throw new Error('不要写解析脚本。把步骤写进 sites/<主机>/SKILL.md。')
-  const text = String(content ?? '')
+  assertSkillEditable(id)
+  const target = resolveWebsiteSkillTarget(id, relativePath)
+  id = target.skillId
+  relativePath = target.path
+  const path = normalizeSkillRelativePath(relativePath || SKILL_MAIN_FILE)
+  if (!path) throw new Error('无效的文件路径')
+  const writeError = skillFileWriteError(id, relativePath || SKILL_MAIN_FILE)
+  if (writeError) throw new Error(writeError)
+  if (isParserScriptPath(path)) throw new Error('不要写解析脚本。把步骤写进 sites/<主网站域名>/SKILL.md。')
+  const text = String(await redactNative(redactObject(String(content ?? ''))))
   if (!text.trim() && path === SKILL_MAIN_FILE) throw new Error('Skill 内容不能为空')
 
   promptCache.delete(id)
@@ -1031,8 +1054,10 @@ export const saveSkillFileContent = async (id: string, relativePath: string, con
 export const saveSkillDocument = async (id: string, markdown: string) => {
   const item = skillItemOf(id)
   if (!item) throw new Error('Skill 不存在')
-  const content = String(markdown || '').trim()
-  if (!content) throw new Error('Skill 内容不能为空')
+  assertSkillEditable(id)
+  const raw = String(markdown || '')
+  if (!raw.trim()) throw new Error('Skill 内容不能为空')
+  const content = prepareSkillMarkdown(raw, id, item)
 
   const parsed = parseSkillFrontmatter(content)
   promptCache.delete(id)
@@ -1045,7 +1070,7 @@ export const saveSkillDocument = async (id: string, markdown: string) => {
     const now = Date.now()
     const nextMeta: SkillMetaFile = {
       ...meta,
-      name: parsed.name || meta.name,
+      name: parsed.displayName || meta.name,
       description: parsed.description || meta.description,
       updatedAt: now,
     }
@@ -1067,6 +1092,7 @@ export const saveSkillDocument = async (id: string, markdown: string) => {
 export const resetSkillDocument = async (id: string) => {
   const item = skillItemOf(id)
   if (!item?.builtin) return
+  assertSkillEditable(id)
   await removeSkillOverride(id)
   promptCache.delete(id)
   await syncState()
@@ -1079,7 +1105,11 @@ export const resetSkillDocument = async (id: string) => {
 export const resetSkillFileContent = async (id: string, relativePath: string) => {
   const item = skillItemOf(id)
   if (!item?.builtin) return
-  const path = normalizeSkillRelativePath(relativePath) || SKILL_MAIN_FILE
+  assertSkillEditable(id)
+  const path = normalizeSkillRelativePath(relativePath || SKILL_MAIN_FILE)
+  if (!path) throw new Error('无效的文件路径')
+  const writeError = skillFileWriteError(id, relativePath || SKILL_MAIN_FILE)
+  if (writeError) throw new Error(writeError)
   promptCache.delete(id)
   if (path === SKILL_MAIN_FILE) {
     await resetSkillDocument(id)
@@ -1165,7 +1195,7 @@ const parseGitHubInput = (input: string) => {
 }
 
 const resolveSkillRoots = async (owner: string, repo: string, basePath: string) => {
-  const candidates = [basePath, '.agents/skills', 'skills'].filter((value, index, arr) => value && arr.indexOf(value) === index)
+  const candidates = [basePath, '.agents/skills', '.claude/skills', 'skills'].filter((value, index, arr) => value && arr.indexOf(value) === index)
   for (const candidate of candidates) {
     try {
       const url = `https://api.github.com/repos/${owner}/${repo}/contents/${candidate}`
@@ -1250,7 +1280,7 @@ const installOneSkillFromRepo = async (
     if (!relativePath || relativePath === SKILL_META_FILE || !isTextSkillFile(relativePath)) continue
     const url = entry.download_url || `https://raw.githubusercontent.com/${owner}/${repo}/HEAD/${entry.path}`
     const content = await httpFetch(url)
-    if (content.length > MAX_SKILL_FILE_BYTES) continue
+    if (new TextEncoder().encode(content).length > MAX_SKILL_FILE_BYTES) throw new Error(`${relativePath} 超过文件大小限制`)
     downloaded.push({ relativePath, content })
     if (relativePath === SKILL_MAIN_FILE) markdown = content
   }
@@ -1258,11 +1288,18 @@ const installOneSkillFromRepo = async (
   if (!markdown) throw new Error(`${skillDirName} 缺少 SKILL.md`)
 
   const parsed = parseSkillFrontmatter(markdown)
-  const id = slugify(parsed.name || skillDirName)
+  const errors = validateSkillMarkdown(markdown, skillDirName)
+  if (errors.length) throw new Error(`${skillDirName}: ${errors.join('；')}`)
+  const id = skillDirName
+  if (BUILTIN_SKILLS[id]) throw new Error(`不能覆盖内置 Skill：${id}`)
+  const existing = await readSkillMeta(id)
+  if (existing && (existing.source !== `${owner}/${repo}` || existing.sourcePath !== remotePrefix)) {
+    throw new Error(`Skill ID ${id} 已被其他来源使用`)
+  }
   const now = Date.now()
   const meta: SkillMetaFile = {
     id,
-    name: parsed.name || skillDirName,
+    name: parsed.displayName || skillDirName,
     description: parsed.description || '',
     source: `${owner}/${repo}`,
     sourcePath: remotePrefix,
@@ -1299,16 +1336,18 @@ export const installSkillFromGitHub = async (input: string) => {
       installed.push(id)
     } else {
       const { root, entries } = await resolveSkillRoots(parsed.owner, parsed.repo, parsed.basePath)
-      if (!entries.length) throw new Error('仓库里没找到 .agents/skills 或 skills 目录')
+      if (!entries.length) throw new Error('仓库里没找到 .agents/skills、.claude/skills 或 skills 目录')
+      const failures: string[] = []
       for (const entry of entries) {
         try {
           const id = await installOneSkillFromRepo(parsed.owner, parsed.repo, root, entry.name)
           installed.push(id)
-        } catch {
-          // skip broken skill folder
+        } catch (error) {
+          failures.push(error instanceof Error ? error.message : `${entry.name} 安装失败`)
         }
       }
-      if (!installed.length) throw new Error('未能安装任何 Skill，请检查仓库结构')
+      if (!installed.length) throw new Error(failures.join('\n') || '未能安装任何 Skill，请检查仓库结构')
+      agentSkillsState.installError = failures.join('\n')
     }
     await syncState()
     return installed

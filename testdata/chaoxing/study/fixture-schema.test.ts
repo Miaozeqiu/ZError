@@ -5,7 +5,7 @@ import { beforeAll, describe, expect, it } from 'vitest'
 import { chaptersFromHtml, jobsFromHtml } from '../../../src/services/chaoxing/host/catalog'
 import { locatorsForChapter, locatorsForStudyStep } from '../../../src/services/chaoxing/host/selectors'
 
-const fixtures = new URL('../../../src/services/agent/skills/bundled/chaoxing/fixtures/', import.meta.url)
+const fixtures = new URL('./fixtures/', import.meta.url)
 const mainHtml = readFileSync(new URL('studentstudy.html', fixtures), 'utf8')
 const cardsHtml = readFileSync(new URL('studentstudy-cards.html', fixtures), 'utf8')
 

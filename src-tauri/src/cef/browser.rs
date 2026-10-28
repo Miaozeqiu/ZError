@@ -20,7 +20,7 @@ use objc2::MainThreadMarker;
 use objc2_app_kit::{
   NSAutoresizingMaskOptions, NSBorderType, NSClipView, NSColor, NSScrollElasticity, NSScrollView, NSView,
 };
-use objc2_foundation::{NSArray, NSPoint, NSRect, NSRunLoopCommonModes, NSSize};
+use objc2_foundation::{ns_string, NSArray, NSNumber, NSPoint, NSRect, NSRunLoopCommonModes, NSSize};
 use std::cell::Cell;
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use serde_json::{json, Value};
@@ -44,22 +44,18 @@ fn fit_scale(hole_w: f64, hole_h: f64) -> f64 {
   (hole_w / PAGE_W).min(hole_h / PAGE_H)
 }
 
+fn renderer_stage_size() -> (f64, f64) {
+  (PAGE_W, PAGE_H)
+}
 fn stage_points(hole_w: f64, hole_h: f64) -> (f64, f64) {
   let s = fit_scale(hole_w, hole_h);
-  let w = (PAGE_W * s).floor().min(hole_w.floor()).max(1.0);
-  let h = (PAGE_H * s).floor().min(hole_h.floor()).max(1.0);
-  (w, h)
+  (
+    (PAGE_W * s).floor().min(hole_w.floor()).max(1.0),
+    (PAGE_H * s).floor().min(hole_h.floor()).max(1.0),
+  )
 }
-
-/// 舞台是整数像素，两条边不能同时刚好是 16:9。取较小的一边做缩放，另一边的 CSS 尺寸只多出不到 1 像素。
-fn page_fit(stage_w: f64, stage_h: f64) -> f64 {
-  let sx = stage_w / PAGE_W;
-  let sy = stage_h / PAGE_H;
-  if sx.is_finite() && sy.is_finite() && sx > 0.0 && sy > 0.0 {
-    sx.min(sy)
-  } else {
-    1.0
-  }
+fn page_fit(w: f64, h: f64) -> f64 {
+  (w / PAGE_W).min(h / PAGE_H)
 }
 
 #[derive(Clone, Copy)]
@@ -70,7 +66,7 @@ unsafe impl Sync for ViewPtr {}
 struct Tab {
   id: String,
   wrapper: ViewPtr,
-  /// 固定页面舞台。CEF 的父 view，尺寸是 1920s x 1080s，不是洞口。
+  /// CEF 的父舞台。小窗保留完整渲染尺寸，展开时沿用页面适配尺寸。
   stage: ViewPtr,
   browser_id: i32,
   /// 原生 Browser 对应的 DevTools target，独立于网址、跳转和 WebSocket 会话。
@@ -140,13 +136,15 @@ struct ZeCefHoleIvars {
   pending: Cell<bool>,
   scroll: Cell<ViewPtr>,
   stage: Cell<ViewPtr>,
-  /// 用户缩放。真正套到 CEF 的是 user_zoom * fit。
+  /// 用户页面缩放。小窗以图层缩放显示，不将 fit 乘到页面 zoom。
   user_zoom: Cell<f64>,
-  /// 舞台宽 / 1920。洞口更小则小于 1，更大则大于 1。
+  /// 页面到洞口的显示缩放。小窗单独缩放原生图层。
   fit: Cell<f64>,
   stage_w: Cell<f64>,
   stage_h: Cell<f64>,
   layout: Cell<Option<AnchoredBrowserGeometry>>,
+  preview: Cell<bool>,
+  presentation_dirty: Cell<bool>,
 }
 
 define_class!(
@@ -157,6 +155,14 @@ define_class!(
   struct ZeCefHoleView;
 
   impl ZeCefHoleView {
+    #[unsafe(method(hitTest:))]
+    fn hit_test(&self, point: NSPoint) -> *mut NSView {
+      // Let the WKWebView button underneath receive miniature clicks. The live
+      // Chromium view keeps drawing, but cannot receive mouse/scroll input.
+      if self.ivars().preview.get() { return std::ptr::null_mut(); }
+      unsafe { msg_send![super(self), hitTest: point] }
+    }
+
     #[unsafe(method(setFrameSize:))]
     fn set_frame_size(&self, size: NSSize) {
       let prev_w = self.ivars().last_w.get();
@@ -195,39 +201,35 @@ define_class!(
     fn ze_flush_was_resized(&self) {
       self.ivars().pending.set(false);
       let ns: &NSView = self;
-      // 隐藏标签不参与前台缩放重绘；显示时统一按最新洞口刷新。
-      // 其固定 CSS 视口和现有 fit 保留，后台 Agent 仍可正常读页和输入。
-      if ns.isHidden() { return; }
-      let size = ns.bounds().size;
-      let (stage_w, stage_h) = stage_points(size.width, size.height);
-      let fit = page_fit(stage_w, stage_h);
       let iv = self.ivars();
-      let size_changed = (stage_w - iv.stage_w.get()).abs() >= 0.5 || (stage_h - iv.stage_h.get()).abs() >= 0.5;
-      let fit_changed = (fit - iv.fit.get()).abs() >= 0.001;
-      if size_changed {
-        iv.stage_w.set(stage_w);
-        iv.stage_h.set(stage_h);
-        resize_stage(iv.stage.get(), stage_w, stage_h);
-      }
-      if fit_changed {
-        iv.fit.set(fit);
-      }
-      if size_changed || fit_changed {
-        eprintln!(
-          "[cef] stage {:.0}x{:.0} fit={:.3} hole={:.0}x{:.0}",
-          stage_w, stage_h, fit, size.width, size.height
-        );
-      }
-      let bid = iv.browser_id.get();
-      if bid <= 0 {
+      let mode_changed = iv.presentation_dirty.replace(false);
+      if ns.isHidden() && !mode_changed {
         return;
       }
-      // 舞台像素没变就不要 was_resized。洞口变了会改舞台大小和缩放，CSS 视口仍是 1920x1080。
-      if size_changed {
-        notify_browser_resized(bid);
-      }
-      if fit_changed {
-        apply_browser_zoom(bid, iv.user_zoom.get() * fit);
+      let size = ns.bounds().size;
+      let preview = iv.preview.get();
+      let (w, h) = if preview {
+        renderer_stage_size()
+      } else {
+        stage_points(size.width, size.height)
+      };
+      let fit = if preview {
+        fit_scale(size.width, size.height)
+      } else {
+        page_fit(w, h)
+      };
+      let resized = (w - iv.stage_w.get()).abs() >= 0.5 || (h - iv.stage_h.get()).abs() >= 0.5;
+      iv.stage_w.set(w);
+      iv.stage_h.set(h);
+      iv.fit.set(fit);
+      resize_stage(iv.stage.get(), w, h);
+      present_stage_layer(iv.stage.get(), preview, size.width, size.height, fit);
+      let bid = iv.browser_id.get();
+      if bid > 0 {
+        if resized {
+          notify_browser_resized(bid);
+        }
+        apply_browser_zoom(bid, iv.user_zoom.get() * if preview { 1.0 } else { fit });
       }
     }
   }
@@ -312,6 +314,8 @@ impl ZeCefHoleView {
       stage_w: Cell::new(0.0),
       stage_h: Cell::new(0.0),
       layout: Cell::new(None),
+      preview: Cell::new(false),
+      presentation_dirty: Cell::new(false),
     });
     unsafe { msg_send![super(this), initWithFrame: frame] }
   }
@@ -387,6 +391,8 @@ fn install_user_input_monitor() {
       let reg = registry().lock().ok()?;
       for tab in reg.tabs.values() {
         if tab.hidden || tab.wrapper.0.is_null() { continue; }
+        // A click on the live miniature expands it; it is not a user takeover.
+        if unsafe { (*(tab.wrapper.0 as *const ZeCefHoleView)).ivars().preview.get() } { continue; }
         let view = unsafe { &*wrapper_view(tab.wrapper) };
         if view.window()?.windowNumber() != window.windowNumber() { continue; }
         let inside = if event.r#type() == NSEventType::KeyDown {
@@ -461,9 +467,8 @@ fn create_wrapper(parent_ptr: *mut c_void, x: f64, y: f64, w: f64, h: f64, hidde
     let iv = view.ivars();
     iv.scroll.set(scroll_ptr);
     iv.stage.set(stage_ptr);
-    iv.fit.set(page_fit(page_w, page_h));
-    iv.stage_w.set(page_w);
-    iv.stage_h.set(page_h);
+    iv.fit.set(page_fit(page_w,page_h));
+    iv.stage_w.set(page_w); iv.stage_h.set(page_h);
     iv.user_zoom.set(1.0);
 
     // 盖在铺满窗口的 WKWebView 上面，否则只能看到 Vue 里空的 .browser-host（白屏）
@@ -553,12 +558,61 @@ fn resize_stage(stage: ViewPtr, w: f64, h: f64) {
   }
   unsafe {
     let view = &*wrapper_view(stage);
-    let size = view.frame().size;
-    if (size.width - w).abs() >= 0.5 || (size.height - h).abs() >= 0.5 {
+    let old = view.frame().size;
+    if (old.width - w).abs() >= 0.5 || (old.height - h).abs() >= 0.5 {
       view.setFrameSize(NSSize::new(w, h));
     }
     fit_cef_children(view);
     recenter_stage(view);
+  }
+}
+
+// Core Animation changes only presentation. Unlike NSView/NSScrollView bounds
+// magnification, Chromium does not reinterpret it as a renderer viewport resize.
+// The miniature is read-only, so AppKit hit testing is passed to the expand button.
+fn present_stage_layer(stage: ViewPtr, preview: bool, width: f64, height: f64, fit: f64) {
+  if stage.0.is_null() {
+    return;
+  }
+  unsafe {
+    let view = &*wrapper_view(stage);
+    view.setWantsLayer(true);
+    if let Some(layer) = view.layer() {
+      // NSView-backed layers default to a top-left (0,0) anchor, not CALayer's
+      // usual (0.5,0.5). Keep the anchor explicit in both presentation modes.
+      layer.setAnchorPoint(NSPoint::new(0.0, 0.0));
+      let scale = NSNumber::numberWithDouble(if preview { fit } else { 1.0 });
+      let _: () = msg_send![&*layer,setValue:&*scale,forKeyPath:ns_string!("transform.scale")];
+      let f = view.frame();
+      let (x, y) = stage_layer_origin(
+        preview,
+        f.origin.x,
+        f.origin.y,
+        f.size.width,
+        f.size.height,
+        width,
+        height,
+        fit,
+      );
+      layer.setPosition(NSPoint::new(x, y));
+    }
+  }
+}
+
+fn stage_layer_origin(
+  preview: bool,
+  x: f64,
+  y: f64,
+  w: f64,
+  h: f64,
+  hole_w: f64,
+  hole_h: f64,
+  fit: f64,
+) -> (f64, f64) {
+  if preview {
+    (x + (hole_w - w * fit) / 2.0, y + (hole_h - h * fit) / 2.0)
+  } else {
+    (x, y)
   }
 }
 
@@ -657,7 +711,7 @@ wrap_life_span_handler! {
           bind_hole_browser(wrapper, bid);
           stretch_wrapper_children(wrapper, stage);
           notify_browser_resized(bid);
-          apply_browser_zoom(bid, hole_page_scale(wrapper));
+          apply_browser_zoom(bid, hole_renderer_zoom(wrapper));
           return;
         }
       }
@@ -780,7 +834,7 @@ wrap_load_handler! {
                 remember_url(&id, &url);
                 drop(reg);
                 set_hole_user_zoom(wrapper, zoom);
-                apply_browser_zoom(bid, zoom * hole_fit(wrapper));
+                apply_browser_zoom(bid, hole_renderer_zoom(wrapper));
                 if let Ok(h) = app_handle().lock() {
                   if let Some(app) = h.as_ref() {
                     emit_load(app, &id, "finished", url.clone());
@@ -944,14 +998,13 @@ fn set_hole_user_zoom(ptr: ViewPtr, zoom: f64) {
   }
 }
 
-fn hole_fit(ptr: ViewPtr) -> f64 {
+fn hole_renderer_zoom(ptr: ViewPtr) -> f64 {
   if ptr.0.is_null() {
     return 1.0;
   }
   unsafe {
-    let hole = &*(ptr.0 as *const ZeCefHoleView);
-    let fit = hole.ivars().fit.get();
-    if fit.is_finite() && fit > 0.0 { fit } else { 1.0 }
+    let iv = (*(ptr.0 as *const ZeCefHoleView)).ivars();
+    iv.user_zoom.get() * if iv.preview.get() { 1.0 } else { iv.fit.get() }
   }
 }
 
@@ -1638,8 +1691,9 @@ pub fn set_bounds(
   height: f64,
   _notify: bool,
   layout: Option<BrowserViewportLayout>,
+  preview: bool,
 ) -> Result<(), String> {
-  on_main(&app, move || {
+  on_main(&app.clone(), move || {
     let Some(wrapper) = (|| {
       let reg = registry().lock().ok()?;
       let tab = reg.tabs.get(&id)?;
@@ -1648,13 +1702,23 @@ pub fn set_bounds(
       return Ok(());
     };
     unsafe {
-      (*(wrapper.0 as *const ZeCefHoleView)).ivars().layout.set(
+      let hole = &*(wrapper.0 as *const ZeCefHoleView);
+      let previous_preview = hole.ivars().preview.get();
+      let entering_preview = preview && !previous_preview;
+      if previous_preview != preview { hole.ivars().presentation_dirty.set(true); }
+      hole.ivars().preview.set(preview);
+      hole.ivars().layout.set(
         layout.and_then(|rule| AnchoredBrowserGeometry::new(rule, x, y, width, height)),
       );
+      // A hidden caret must not keep accepting keyboard input after collapse.
+      if entering_preview {
+        if let Some(main) = app.get_webview("main") { let _ = main.set_focus(); }
+      }
     }
     // 先放手再 setFrame。hole_size_tick / was_resized 不能再抢同一把锁。
-    // 洞口 setFrameSize 会在下一圈按 1920x1080 刷新舞台，这里不要按洞口 was_resized。
+    // 下一圈统一更新舞台/图层，禁止在 setFrameSize 回调里同步刷新 Chromium。
     apply_wrapper_bounds_ex(wrapper, x, y, width, height, false);
+    unsafe { schedule_was_resized(&*(wrapper.0 as *const ZeCefHoleView),0); }
     // 位置同步不能唤醒已收起的网页，显示由 browser_show 单独控制。
     Ok(())
   })?
@@ -1834,7 +1898,7 @@ pub fn set_zoom(app: AppHandle, id: String, zoom: f64) -> Result<(), String> {
     });
     if let Some((bid, wrapper)) = found {
       set_hole_user_zoom(wrapper, zoom);
-      apply_browser_zoom(bid, zoom * hole_fit(wrapper));
+      apply_browser_zoom(bid, hole_renderer_zoom(wrapper));
     }
     Ok::<(), String>(())
   })?
@@ -3821,10 +3885,13 @@ pub(crate) async fn visible_control_backend(conn: &CdpConn, session: Option<&str
       if(!el) return this;
       var label=el.closest && el.closest('label');
       if(!label && el.labels) label=Array.from(el.labels).find(function(l){var r=l.getBoundingClientRect();return r.width>1&&r.height>1;});
-      if(!label && el.querySelectorAll){
+      var role=el.getAttribute && el.getAttribute('role');
+      if(!label && (role==='checkbox' || role==='radio') && el.querySelectorAll){
         var controls=el.querySelectorAll('input[type=checkbox],input[type=radio]');
         if(controls.length===1) label=controls[0].closest('label');
       }
+      // A link/button/row may contain a checkbox for selection or completion.
+      // Only an explicit checkable role may delegate to a descendant label.
       if(label && (label.control && /^(checkbox|radio)$/.test(label.control.type) || label.querySelector('input[type=checkbox],input[type=radio]'))) return label;
       return el;
     }"#
@@ -3846,12 +3913,14 @@ async fn check_node_state(page: &PageBind, backend: i64, session: Option<&str>) 
       var el=this, input=null;
       if(el.matches && el.matches('input[type=checkbox],input[type=radio]')) input=el;
       else if(el.control && /^(checkbox|radio)$/.test(el.control.type)) input=el.control;
-      else if(el.querySelectorAll){
+      var role=el.getAttribute && el.getAttribute('role');
+      // Only explicit custom controls may delegate state to an inner input.
+      // A chapter link or course card containing one checkbox is still a link/card.
+      if(!input && (role==='checkbox' || role==='radio') && el.querySelectorAll){
         var controls=el.querySelectorAll('input[type=checkbox],input[type=radio]');
         if(controls.length>1) return {supported:false};
         input=controls[0]||null;
       }
-      var role=el.getAttribute && el.getAttribute('role');
       var kind=input?input.type:role;
       if(kind!=='checkbox' && kind!=='radio') return {supported:false};
       var state=input?!!input.checked:el.getAttribute('aria-checked');
@@ -4651,9 +4720,10 @@ pub async fn cdp_snapshot(_app: AppHandle, id: String, query: SnapshotQuery) -> 
   let mut frame_out = Vec::new();
   for index in order {
     let frame = &frames[index];
+    let identity = frame.identity.as_ref().map(|f| format!(" [frameId={} loaderId={}]", f.id, f.loader_id)).unwrap_or_default();
     if frame.cross {
       let label = if frame.label.is_empty() { frame.url.clone() } else { frame.label.clone() };
-      lines.push(format!("- iframe \"{label}\" [frame={}] cross-origin", frame.path));
+      lines.push(format!("- iframe \"{label}\" [frame={}]{} cross-origin", frame.path, identity));
       continue;
     }
     if frame.refs.is_empty() {
@@ -4668,7 +4738,7 @@ pub async fn cdp_snapshot(_app: AppHandle, id: String, query: SnapshotQuery) -> 
     if !frame.top {
       let label = if frame.label.is_empty() { frame.url.clone() } else { frame.label.clone() };
       let path = if frame.path.is_empty() { index.to_string() } else { frame.path.clone() };
-      lines.push(format!("- iframe \"{label}\" [frame={path}]"));
+      lines.push(format!("- iframe \"{label}\" [frame={path}]{identity}"));
     }
     for node in &taken {
       if refs.len() >= 280 {
@@ -4728,6 +4798,8 @@ pub async fn cdp_snapshot(_app: AppHandle, id: String, query: SnapshotQuery) -> 
       }));
     }
     frame_out.push(json!({
+      "frameId": frame.identity.as_ref().map(|f| &f.id),
+      "loaderId": frame.identity.as_ref().map(|f| &f.loader_id),
       "url": frame.url,
       "priority": frame.priority,
       "snapshot": local_lines.join("\n"),
@@ -4890,24 +4962,36 @@ mod tests {
     assert!((fit_scale(960.0, 540.0) - 0.5).abs() < 1e-9);
     assert_eq!(fit_scale(0.0, 1080.0), 1.0);
     assert_eq!(fit_scale(f64::NAN, 1080.0), 1.0);
-    let (w, h) = stage_points(1280.0, 800.0);
-    assert!(w <= 1280.0 && h <= 800.0);
-    assert!((w - 1280.0).abs() < 1.0);
   }
 
   #[test]
-  fn fit_scale_grows_and_shrinks_with_the_smaller_axis() {
-    assert!((fit_scale(3840.0, 2160.0) - 2.0).abs() < 1e-9);
-    assert!((fit_scale(3840.0, 1200.0) - 1200.0 / 1080.0).abs() < 1e-9);
-    assert!((fit_scale(2400.0, 2000.0) - 2400.0 / 1920.0).abs() < 1e-9);
-    assert_eq!(stage_points(3840.0, 2160.0), (3840.0, 2160.0));
-    assert_eq!(stage_points(960.0, 540.0), (960.0, 540.0));
-    let (w, h) = stage_points(777.0, 654.0);
-    assert!(w <= 777.0 && h <= 654.0);
-    let fit = page_fit(w, h);
-    assert!(w / fit + 0.01 >= PAGE_W);
-    assert!(h / fit + 0.01 >= PAGE_H);
-    assert!((w / fit - PAGE_W).abs() < 1.0 || (h / fit - PAGE_H).abs() < 1.0);
+  fn native_surface_fits_from_miniature_to_large_without_reflowing_renderer() {
+    for (w,h) in [(134.0,75.375), (224.0,126.0), (777.0,654.0), (1280.0,800.0), (3840.0,2160.0)] {
+      let (rw,rh) = renderer_stage_size();
+      let scale = fit_scale(w,h);
+      assert_eq!((rw,rh), (1920.0,1080.0));
+      assert!(rw*scale <= w+0.001 && rh*scale <= h+0.001);
+      assert!((rw*scale-w).abs() < 0.001 || (rh*scale-h).abs() < 0.001);
+    }
+    assert!(fit_scale(224.0,126.0) < 0.25);
+  }
+
+  #[test]
+  fn native_layer_origin_does_not_add_half_a_window_when_expanded() {
+    assert_eq!(
+      stage_layer_origin(false, 0.0, 0.0, 960.0, 540.0, 960.0, 540.0, 0.5),
+      (0.0, 0.0)
+    );
+    assert_eq!(
+      stage_layer_origin(false, 7.0, 9.0, 1280.0, 720.0, 1280.0, 800.0, 0.5),
+      (7.0, 9.0)
+    );
+    assert_eq!(
+      stage_layer_origin(true, 0.0, 0.0, 1920.0, 1080.0, 224.0, 126.0, 224.0 / 1920.0),
+      (0.0, 0.0)
+    );
+    let (_, y) = stage_layer_origin(true, 0.0, 0.0, 1920.0, 1080.0, 224.0, 140.0, 224.0 / 1920.0);
+    assert!((y - 7.0).abs() < 0.001);
   }
 
   #[test]

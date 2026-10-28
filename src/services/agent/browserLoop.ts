@@ -8,6 +8,7 @@ import {
   CX_LOGIN,
   CX_PLAYER,
   CX_SPACE,
+  isChaoxingTeacherCourseUrl,
 } from '../platform/chaoxing/fallback'
 import { formatLessonsNudge } from './agentLessons'
 import { coursePlanFor, coursePlanSummary } from '../browser/coursePlan'
@@ -78,6 +79,7 @@ const kindFromNode = (url: string, nodeId: string): BrowserPageKind | null => {
 export const classifyBrowserPage = (url: string, nodeId = ''): BrowserPageKind => {
   const href = String(url || '')
   if (isHomeUrl(href)) return 'home'
+  if (isChaoxingTeacherCourseUrl(href)) return 'unknown'
   const fromGraph = kindFromNode(href, nodeId)
   if (fromGraph) return fromGraph
   const site = siteGraphForUrl(href)
@@ -147,7 +149,7 @@ const homeworkRecipe = (kind: BrowserPageKind) => {
   }
   if (kind === 'homework-list') return '建议：在作业列表。用快照 ref 打开用户点名的那一份。'
   if (kind === 'course') return '建议：课程壳。点侧栏「作业」进入作业列表。步骤见 chaoxing Skill。'
-  if (kind === 'space') return '建议：已在空间。点课名后进入作业。步骤见 chaoxing Skill。'
+  if (kind === 'space') return '建议：已在空间。先确认当前选中「我学的课」，未选中就用快照 ref 点击该页签并核对结果，再在这份课表中打开课名进入作业。不要从「我教的课」或首页推荐课程进课。步骤见 chaoxing Skill。'
   if (kind === 'login') return '建议：登录页。看快照里的输入框 ref 填写。步骤见 chaoxing Skill。'
   if (kind === 'home') return '建议：导航页。先打开课程空间。步骤见 chaoxing Skill。'
   if (kind === 'player') return '建议：这是播放页上的章节测验。用快照 ref 作答或打开下一条。'
@@ -160,7 +162,7 @@ const playRecipe = (kind: BrowserPageKind, panel?: BrowserLoopPanel | null, focu
     return `建议：导航页。先打开课程空间。${course}步骤见 chaoxing Skill。`
   }
   if (kind === 'login') return '建议：登录页。看快照里的输入框 ref 填写。步骤见 chaoxing Skill。'
-  if (kind === 'space') return `建议：已在空间。${course}看快照，用 ref 点课名。`
+  if (kind === 'space') return `建议：已在空间。${course}先确认当前选中「我学的课」，未选中就用快照 ref 点击该页签并核对结果，再在这份课表中用 ref 点课名。不要从「我教的课」或首页推荐课程进课。`
   if (kind === 'course') {
     if (tab === '章节') {
       return '建议：这是章节目录，不是播放页。用快照 ref 或 click_text 打开节名。'
@@ -190,12 +192,12 @@ const playRecipe = (kind: BrowserPageKind, panel?: BrowserLoopPanel | null, focu
   return EXPLORE_RECIPE
 }
 
-const cardRecipe = (site?: { id?: string; name?: string; host?: string }, kind?: BrowserPageKind) => {
+const cardRecipe = (site?: { id?: string; name?: string; host?: string }, kind?: BrowserPageKind, intent?: BrowserTaskIntent) => {
   const who = String(site?.name || site?.id || '当前站').trim()
   const host = String(site?.host || '').replace(/^www\./i, '')
   const where = host ? `${who}（${host}）` : who
   const skill = learnedSkillHint(host)
-  if (kind === 'player') {
+  if (kind === 'player' && intent === 'play') {
     return `建议：当前是${where}播放页。同一节往往有好几条，快照按 iframe 分段。用指定那条的 ref 点，再点播放，然后 browser_watch。走通后写入 SKILL.md。${skill}`
   }
   return `建议：当前是${where}。看本次快照，用 ref 点。没有快照就 get_page。走通后把步骤写进 SKILL.md。${skill}`
@@ -210,7 +212,7 @@ export const parentOrchestrationHint = (input: {
   intent?: BrowserTaskIntent
 }) => {
   if (input.failBlocked || (input.invokeFails != null && input.invokeFails >= 2)) {
-    return '同一参数已经失败。用刚返回的快照 ref 再点一次。'
+    return '相同调用已失败。先核对错误与当前状态，仅使用最新成功快照重新定位；确认原因后换方法，不要直接重复点击。'
   }
   return '看本次快照，用 ref 点。'
 }
@@ -226,12 +228,13 @@ export const recipeForPage = (input: {
   tab?: string
 }) => {
   const intent = input.intent || 'unknown'
-  const chaoxing = !input.siteId || input.siteId === 'chaoxing'
+  const chaoxing = input.siteId === 'chaoxing'
   if (!chaoxing) {
-    return cardRecipe({ id: input.siteId, name: input.siteName, host: input.host }, input.kind)
+    return cardRecipe({ id: input.siteId, name: input.siteName, host: input.host }, input.kind, intent)
   }
   if (intent === 'homework') return homeworkRecipe(input.kind)
-  return playRecipe(input.kind, input.panel, input.focus, input.tab)
+  if (intent === 'play') return playRecipe(input.kind, input.panel, input.focus, input.tab)
+  return EXPLORE_RECIPE
 }
 
 export const compactStudyPanel = (panel?: BrowserLoopPanel | null) => {
@@ -260,17 +263,22 @@ export const readBrowserLoop = (input: {
   const tab = String(activeFrameOf(node, url)?.tab || '')
   const displayName = displaySiteName(url, site)
   const zjooc = Boolean(site?.id === 'zjooc' || /zjooc\.cn/i.test(url))
-  const recipe = recipeForPage({
+  const teacherCourse = isChaoxingTeacherCourseUrl(url)
+  const recipe = teacherCourse
+    ? intent === 'play' || intent === 'homework'
+      ? '建议：当前是「我教的课」的教师课程页，不是学生学习入口。停止点章节、编辑或发布；返回课程列表，确认选中「我学的课」后重新查找目标课程，并核对学生课程落点。列表没有该课时如实报告，不改 URL 猜学生入口，也不把教师视角当成学习完成。'
+      : '建议：当前是「我教的课」的教师课程页。先对照用户目标确认角色；刷课或学生作业需返回「我学的课」，不能从教师目录推断学生任务状态。'
+    : recipeForPage({
     kind,
     intent,
     panel: input.panel,
     focus,
-    siteId: site?.id || (zjooc ? 'zjooc' : undefined),
+    siteId: site?.id || (CX_HOST.test(url) ? 'chaoxing' : zjooc ? 'zjooc' : undefined),
     siteName: displayName || site?.name,
     host: site?.host || (zjooc ? 'zjooc.cn' : undefined),
     tab,
   })
-  const page = (node?.id === 'course' && tab === '章节')
+  const page = teacherCourse ? '教师课程（我教的课）' : (node?.id === 'course' && tab === '章节')
     ? '章节目录'
     : (node?.title || PAGE_KIND_ZH[kind] || '')
   const line = [

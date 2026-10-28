@@ -550,15 +550,7 @@ pub fn get_target_folder_id(conn: &Connection, parent_folder_id: i64) -> Result<
 }
 
 pub fn get_configured_save_folder_id(conn: &Connection) -> i64 {
-    let config_path = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join("config.json");
-
-    let configured_folder_id = std::fs::read_to_string(&config_path)
-        .ok()
-        .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
+    let configured_folder_id = crate::secret_vault::document_read("app_settings",None).ok()
         .and_then(|config| {
             config.get("questionSaveFolderId").and_then(|value| {
                 value
@@ -1342,6 +1334,10 @@ pub fn insert_ai_response(
 ) -> Result<i64, String> {
     if answer.trim().is_empty() {
         return Err("AI处理结果答案为空，不保存题目".to_string());
+    }
+
+    if is_ai {
+        crate::model_response::validate_answer(answer)?;
     }
 
     let conn = get_conn()?;

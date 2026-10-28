@@ -40,7 +40,9 @@ describe('skill 渐进披露', () => {
   })
   it('site-learn 主文件指向本站 SKILL 和 workflow，不塞别站细则', () => {
     const text = readFileSync(resolve(bundled, 'site-learn/SKILL.md'), 'utf8')
-    expect(text).toContain('sites/<当前网址主机>/SKILL.md')
+    expect(text).toContain('sites/<主网站域名>/SKILL.md')
+    expect(text).toContain('关联登录域名属于同一网站')
+    expect(text).toContain('不要写入 `chaoxing`')
     expect(text).toContain('references/workflow.md')
     expect(text).not.toContain('zhihuishu.com/parsers')
     expect(text).not.toContain('## 不要做')

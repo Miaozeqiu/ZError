@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { afterEach, beforeEach, vi, test } from 'vitest'
 
 let fetchImpl
-vi.mock('@tauri-apps/plugin-http', () => ({ fetch: (...args) => fetchImpl(...args) }))
+vi.mock('../../src/services/security/secureFetch', () => ({ secureFetch: (...args) => fetchImpl(...args) }))
 const { performWebSearch, formatSearchContextForModel } = await import('../../src/services/searchService.ts')
 const config = {
   enabled: true, apiKey: '',

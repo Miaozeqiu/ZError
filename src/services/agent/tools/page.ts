@@ -9,8 +9,8 @@ export const rejectHostedWait = (until: string, seconds: number, hosted: boolean
 
 const watchFollowHint = (browserId: string, already: boolean) => {
   const base = already
-    ? '已经在监控。播完会叫醒你，现在 finish(watching)。'
-    : '进度条实时更新。播完会叫醒你，现在 finish(watching)。'
+    ? '已经在监控。现在 finish(watching) 进入当前任务的事件等待；播完或出现异常后继续本任务，不能提前输出最终结果。'
+    : '进度条实时更新。现在 finish(watching) 进入当前任务的事件等待；播完或出现异常后继续本任务，不能提前输出最终结果。'
   const nudge = coursePlanNudge(cachedPageSnap(browserId)?.snapshot || '', Boolean(coursePlanFor(browserId)))
   return nudge ? `${base} ${nudge}。` : base
 }
@@ -251,7 +251,8 @@ export const handlePageTools = async (ctx: Record<string, any>): Promise<string 
     const evidence = await collectFinishEvidence(browserId, sessionId, { role: role || 'parent' })
     const judged = judgeFinish(String(args.status || ''), String(args.summary || ''), evidence)
     if (!judged.ok) return JSON.stringify({ ok: false, finished: false, error: 'error' in judged ? judged.error : '还不能收工' })
-    return JSON.stringify({ ok: true, finished: true, status: judged.status, summary: judged.summary })
+    return JSON.stringify({ ok: true, finished: judged.status !== 'watching', status: judged.status, summary: judged.summary,
+      ...(judged.status === 'watching' ? { awaitingVideo: true, taskComplete: false } : {}) })
   }
 
   return null

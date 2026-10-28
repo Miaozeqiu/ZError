@@ -4,8 +4,47 @@ import { applyBrowserTodo, pendingTodos } from '../../src/services/agent/browser
 import * as appBrowser from '../../src/services/browser/appBrowser'
 import { lastHomeworkCard } from '../../src/services/browser/abstractions'
 import { clearBrowserTaskIntent, setBrowserTaskIntent } from '../../src/services/agent/browserTask'
+import * as study from '../../src/services/chaoxing/study'
 
 describe('finishGate', () => {
+  it('没有播放器或已结束的视频不能误判为正在播放', async () => {
+    const peek = vi.spyOn(appBrowser, 'peekAppBrowserUrl').mockReturnValue('https://mooc1.chaoxing.com/mycourse/studentstudy')
+    const read = vi.spyOn(study, 'readChaoxingVideoTick')
+    try {
+      read.mockResolvedValueOnce({ current: 0, duration: 0, paused: false, ended: false, hasVideo: false, src: '', mid: '', ready: 0 })
+      expect((await collectFinishEvidence('empty-player', 'empty-session')).playing).toBe(false)
+      read.mockResolvedValueOnce({ current: 10, duration: 10, paused: false, ended: true, hasVideo: true, src: 'video', mid: '1', ready: 4 })
+      expect((await collectFinishEvidence('finished-player', 'finished-session')).playing).toBe(false)
+      read.mockResolvedValueOnce({ current: 5, duration: 10, paused: false, ended: false, hasVideo: true, src: 'video', mid: '1', ready: 4 })
+      expect((await collectFinishEvidence('playing-player', 'playing-session')).playing).toBe(true)
+    } finally { peek.mockRestore(); read.mockRestore() }
+  })
+  it('课程目录已有本轮完整完成统计时，不强迫重新播放或创建课程计划', () => {
+    const evidence = { intent: 'play' as const, kind: 'course' as const, todos: [{ id: 'check', text: '核对完成统计', status: 'done' as const }],
+      courseCompletion: { stepId: 'real-read', completed: 29, total: 29 } }
+    expect(judgeFinish('done', '本轮页面读取显示任务点 29/29，课程已完成', evidence).ok).toBe(true)
+    expect(judgeFinish('done', '已完成', { ...evidence, courseCompletion: { ...evidence.courseCompletion, completed: 28 } }).ok).toBe(false)
+    expect(judgeFinish('done', '已完成', { ...evidence, playing: true }).ok).toBe(false)
+  })
+  it('生产收尾证据收集读取本轮工具记录中的已完成统计', async () => {
+    const peek = vi.spyOn(appBrowser, 'peekAppBrowserUrl').mockReturnValue('https://mooc2-ans.chaoxing.com/mycourse/stu?courseid=1')
+    setBrowserTaskIntent('already-complete', 'play')
+    try {
+      const evidence = await collectFinishEvidence('complete-browser', 'already-complete', {
+        todos: [{ id: 'verified', text: '核对课程状态', status: 'done' }],
+        steps: [{ id: 'read-stats', kind: 'tool', name: 'browser_eval', label: '读取任务点统计', status: 'done',
+          result: JSON.stringify({ ok: true, result: { head: '已完成任务点: 29/29' } }) }],
+      })
+      expect(evidence.courseCompletion).toEqual({ stepId: 'read-stats', completed: 29, total: 29 })
+      expect(judgeFinish('done', '课程任务点已全部完成', evidence).ok).toBe(true)
+    } finally { peek.mockRestore(); clearBrowserTaskIntent('already-complete') }
+  })
+  it('普通文章路径或查询参数出现 login/passport2 不能误判成登录页', () => {
+    for (const url of ['https://example.com/login-guide', 'https://example.com/docs?return=passport2.chaoxing.com/login']) {
+      expect(judgeFinish('done', '已打开用户指定页面', { url, kind: 'unknown' }).ok).toBe(true)
+    }
+    expect(judgeFinish('done', '已登录', { url: 'https://example.com/login' }).ok).toBe(false)
+  })
   it('遗留未填题卡缓存不能干扰已完成的通用浏览器任务', async () => {
     const prev = lastHomeworkCard.value
     const peek = vi.spyOn(appBrowser, 'peekAppBrowserUrl').mockReturnValue('https://www.zjooc.cn/ucenter/student/course/build/homework')

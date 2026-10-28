@@ -1,3 +1,4 @@
+import { redactObject, redactText } from '../../security/secretRedaction'
 /** 组 prompt + runTextModel + executeChatTool。父入口和子 Agent 共用。 */
 import type { ImportStepPreview } from '../../app/importTasks'
 import { emitStudyGraphStream } from '../../study/graphStream'
@@ -29,6 +30,8 @@ import { scheduleStudyProgressEval } from '../chatStudy'
 import { createBrowserControlGate } from '../browserControlGate'
 import { createLearningCompletionCheck } from '../siteLearningReview'
 import { peekAppBrowserUrl } from '../../browser/appBrowser'
+import { createWatchContinuation } from '../watchContinuation'
+import { createTaskCompletionCheck, type AgentTaskOutcome } from '../taskCompletion'
 
 export type RunAgentTurnLoopInput = {
   sessionId: string
@@ -57,6 +60,7 @@ export type RunAgentTurnLoopResult = {
   text: string
   aborted: boolean
   failed?: string
+  taskOutcome?: AgentTaskOutcome
 }
 
 export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<RunAgentTurnLoopResult> => {
@@ -90,6 +94,11 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
   const liveMessage = () =>
     sessions.value.find((item) => item.id === sessionId)
       ?.messages.find((message) => message.id === assistantId)
+  // 旧会话清单供模型参考，只有本轮实际更新的清单才约束本轮。
+  const completion = createTaskCompletionCheck(() => ({
+    todos: liveMessage()?.todos || [],
+    steps: liveMessage()?.steps || [],
+  }))
   const learningCheck = createLearningCompletionCheck(() => {
     const session = liveSession(sessionId)
     const steps = liveMessage()?.steps || []
@@ -102,7 +111,7 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
     }
   })
   const visibleText = (text?: string) => Boolean(String(text || '').replace(/\u200B/g, '').trim())
-  const stripMarks = (text: string) => String(text || '').replace(/\u200B/g, '')
+  const stripMarks = (text: string) => redactText(String(text || '').replace(/\u200B/g, ''))
   let awaitingTool = false
   let spokenText = ''
   let roundBase = ''
@@ -190,6 +199,22 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
     })
   }
 
+  let waitingForVideo = false
+  const pauseListeners = new Set<(paused: boolean) => void>()
+  const continueVideo = role === 'parent' ? createWatchContinuation({
+    sessionId, signal: abort.signal,
+    browserId: () => liveSession(sessionId)?.browserId || '',
+    expectedWatch: () => [...(liveMessage()?.steps || [])].reverse().find(step => step.name === 'browser_watch'
+      && step.status === 'done' && parseToolArgs(step.result || '').watching === true)?.id,
+    canFinish: () => Boolean(completion.terminal()),
+    waiting: value => {
+      waitingForVideo = value
+      pauseListeners.forEach(listener => listener(value))
+      flushStreamHold()
+      if (liveMessage()?.status === 'streaming') patchMessage(sessionId, assistantId, { awaitingVideo: value, waiting: !value })
+    },
+  }) : async () => undefined
+
   try {
     const finalText = await runTextModel(modelPrompt, (delta) => {
       if (abort.signal.aborted || liveMessage()?.status !== 'streaming') return
@@ -206,16 +231,23 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
       history,
       maxRounds,
       liveContext: () => controlGate.liveContext(liveContext),
-      beforeComplete: learningCheck.beforeComplete,
+      beforeComplete: async remaining => {
+        const continuation = await continueVideo()
+        return completion.beforeComplete(remaining, continuation) || learningCheck.beforeComplete(remaining)
+      },
+      subscribePause: listener => {
+        pauseListeners.add(listener); listener(waitingForVideo)
+        return () => { pauseListeners.delete(listener) }
+      },
       onTurnTranscript: (items) => {
         flushStreamHold()
         const prev = liveMessage()?.transcript || []
         patchMessage(sessionId, assistantId, {
-          transcript: clipTranscript([...prev, ...items]),
+          transcript: clipTranscript(redactObject([...prev, ...items])),
         })
       },
       executeTool: async (call: ModelToolCall) => {
-        return controlGate.runTool(call, browserEpoch => executeChatTool({
+        const result = await controlGate.runTool(call, browserEpoch => executeChatTool({
           call,
           ctx: {
             sessionId,
@@ -231,16 +263,7 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
               const { ensureAgentBrowser } = await import('../agentBrowser')
               const target = parentSessionId || sessionId
               const id = await ensureAgentBrowser(target)
-              if (call.name === 'browser_navigate') {
-                const url = String(parseToolArgs(call.arguments).url || '')
-                if (url) {
-                  const { recoverSiteAccountsFromTexts } = await import('../siteAccounts')
-                  recoverSiteAccountsFromTexts(
-                    (liveSession(target)?.messages || []).filter(message => message.role === 'user').map(message => message.content),
-                    url,
-                  )
-                }
-              }
+
               return id
             },
             browserId: () => String(
@@ -264,9 +287,10 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
               force: true,
               stepId: evalInput.stepId,
             }),
-            getTodos: () => sessions.value.find((item) => item.id === (parentSessionId || sessionId))?.todos
-              || liveMessage()?.todos
-              || [],
+            getTodos: () => parentSessionId
+              ? sessions.value.find(item => item.id === parentSessionId)?.todos || []
+              : liveMessage()?.todos ?? (call.name === 'browser_todo' && parseToolArgs(call.arguments).action !== 'set'
+                ? liveSession(sessionId)?.todos || [] : []),
             setTodos: (todos) => {
               const target = parentSessionId || sessionId
               const messageId = parentAssistantId || assistantId
@@ -275,6 +299,13 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
             },
           },
         }))
+        const finished = call.name === 'browser_finish' ? parseToolArgs(result) : null
+        if (role === 'parent' && finished?.ok === true && finished.status === 'watching') {
+          const continuation = await continueVideo()
+          return JSON.stringify({ ...finished, finished: false, status: 'active',
+            hint: continuation || '视频任务仍未完成，核对当前监控和页面状态后继续，不要输出最终结果。' })
+        }
+        return result
       },
       onEvent: (event) => {
         if (abort.signal.aborted || liveMessage()?.status !== 'streaming') return
@@ -389,7 +420,8 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
     const assistantContent = visibleText(liveNow)
       ? liveNow
       : joinRound(finalText || '')
-    return { text: learningCheck.deferred ? `${assistantContent}\n\n本轮新的站点经验未确认保存到 Skill。` : assistantContent, aborted: false }
+    return { text: learningCheck.deferred ? `${assistantContent}\n\n本轮新的站点经验未确认保存到 Skill。` : assistantContent,
+      aborted: false, taskOutcome: completion.outcome }
   } catch (error) {
     if (abort.signal.aborted || isModelStopped(error)) {
       return { text: liveContent(), aborted: true }
@@ -398,6 +430,7 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
       text: liveContent(),
       aborted: false,
       failed: error instanceof Error ? error.message : String(error),
+      taskOutcome: completion.active ? 'incomplete' : undefined,
     }
   } finally {
     flushStreamHold()

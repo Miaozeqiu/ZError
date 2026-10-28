@@ -5,6 +5,10 @@ import lucide from '@iconify-json/lucide/icons.json'
 
 const NEEDED = [
   'globe',
+  'settings-2',
+  'square-pen',
+  'key-round',
+  'trash',
   'monitor',
   'maximize-2',
   'minimize-2',
@@ -12,6 +16,7 @@ const NEEDED = [
   'plus',
   'search',
   'eye',
+  'copy',
   'eye-off',
   'volume-2',
   'volume-x',
@@ -65,6 +70,8 @@ export const featureIconName = (kind: AgentFeatureIcon) => {
 }
 
 export const activityIconName = (name: string) => {
+  if (name === 'protect_credentials') return id('shield')
+  if (name === 'set_website_icon') return id('globe')
   if (name === 'browser_set_checked') return id('list-checks')
   if (name === 'web_search') return id('search')
   if (name === 'browser_get_page' || name === 'browser_get_state') return id('eye')

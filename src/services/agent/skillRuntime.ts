@@ -64,8 +64,6 @@ export const readChaoxingImplFile = async (path: string): Promise<string | null>
 
 export const isChaoxingImplPath = (path: string) => path === SITE_GRAPH_PATH
 
-/** 声明式：see.json（看见什么）/ locators.json / schema.json。有 see 时对着 fixture 归纳。 */
-
 const applyGraphSource = (source: string | null, pushLive: boolean) => {
   const data = parseGraph(source)
   if (!data) return

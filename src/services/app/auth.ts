@@ -82,8 +82,9 @@ const writeAuthFile = async (token: string, user: AuthUser | null) => {
     await invoke('write_auth', {
       content: JSON.stringify({ token, user }, null, 2),
     })
+    localStorage.removeItem('zerror-auth-token')
   } catch {
-    // 非 Tauri 或写盘失败时仍保留 localStorage
+    // Keep the session in memory; never write a plaintext fallback.
   }
 }
 
@@ -113,7 +114,7 @@ const hydrateLocalSession = (token: string, user: AuthUser | null) => {
 
 const persistUserLocalOnly = (user: AuthUser | null) => {
   try {
-    if (user) localStorage.setItem(USER_KEY, JSON.stringify(user))
+    if (user) { const { api_token: _secret, ...publicUser } = user; localStorage.setItem(USER_KEY, JSON.stringify(publicUser)) }
     else localStorage.removeItem(USER_KEY)
   } catch {
     // ignore

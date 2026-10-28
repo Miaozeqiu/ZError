@@ -33,4 +33,12 @@ describe('动作回执的实际观测', () => {
     read.mockResolvedValue({ error: 'CDP 绑定失败' })
     expect(await attachActionSnapshot('observation', { ok: true })).toMatchObject({ ok: true, snapshotError: 'CDP 绑定失败', snapshotStale: true })
   })
+  it('文档失效后读取完整新页面，不再限定已经失效的旧 frame', async () => {
+    prepare()
+    read.mockResolvedValue({ url: 'https://example.com', snapshot: '- iframe "新课程"\n  - button "章节" [ref=e1001]' })
+    const result = await attachActionSnapshot('observation', { ok: false, requiresRefresh: true }, 'old-frame')
+    expect(read).toHaveBeenLastCalledWith('observation', expect.objectContaining({ frame: undefined, acted: false, maxFrames: 8 }))
+    expect(result.snapshot).toContain('e1001')
+    expect(result.ok).toBe(false)
+  })
 })

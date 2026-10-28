@@ -4,6 +4,7 @@ import {
   type SiteGraphData,
   type SiteGraphPatchResult,
 } from './siteGraphCore'
+import { websitePrimaryHost, websiteIdentityForHost, websiteAccountId, websiteHostPattern } from '../agent/websiteIdentity'
 
 const GRAPH_FILE_RE = /(^|\/)site-graph\.json$/i
 
@@ -15,8 +16,9 @@ export const siteGraphWriteBlocked = (path: string) => {
 
 export const siteGraphSkillTarget = (site: { id?: string; host?: string }) => {
   const id = String(site.id || '').trim()
-  const host = String(site.host || '').trim().replace(/^www\./i, '').toLowerCase()
-  if (id === 'chaoxing' || host === 'chaoxing.com') {
+  const host = websitePrimaryHost(String(site.host || '').trim())
+  if (id === 'chaoxing' && host && host !== 'chaoxing.com') throw new Error('其他网站的图谱不能保存到学习通')
+  if ((id === 'chaoxing' && !host) || host === 'chaoxing.com') {
     return { skillId: 'chaoxing', path: 'site-graph.json' }
   }
   const folder = host || id
@@ -26,6 +28,12 @@ export const siteGraphSkillTarget = (site: { id?: string; host?: string }) => {
 
 export const serializeSiteGraph = (site: SiteGraphData): SiteGraphData => {
   const data = cloneGraph(site)
+  const identity = websiteIdentityForHost(data.host)
+  if (identity?.loginHosts.length) {
+    data.id = websiteAccountId(identity.host)
+    data.host = identity.host
+    data.hostPattern = websiteHostPattern(identity.host)
+  }
   return {
     id: data.id,
     name: data.name,

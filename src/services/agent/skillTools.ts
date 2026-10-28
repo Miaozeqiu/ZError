@@ -17,7 +17,7 @@ export const READ_AGENT_SKILL_FILE_TOOL = {
   type: 'function' as const,
   function: {
     name: 'read_agent_skill_file',
-    description: '读取 Skill 某个文件的原文（包括 SKILL.md）。path 为相对路径，例如 sites/zjooc.cn/SKILL.md。',
+    description: '读取 Skill 文件原文。本站经验使用 skill_id=site-learn、path=sites/<主网站域名>/SKILL.md；首次创建返回 exists=false，不是失败。读取总说明不等于读取本站文件，更新前本轮必须读取本站文件。',
     parameters: {
       type: 'object',
       properties: {
@@ -42,7 +42,7 @@ export const WRITE_AGENT_SKILL_FILE_TOOL = {
   type: 'function' as const,
   function: {
     name: 'write_agent_skill_file',
-    description: '写入 Skill 文件并保存。path 可以是已有文件或新建文本文件。content 必须是该文件完整正文。站点步骤写 SKILL.md，导航配方写 course.json。图谱用 browser_site_graph 一条条保存。',
+    description: '写入 Skill 文件并保存完整正文。本站经验统一使用 skill_id=site-learn、path=sites/<主网站域名>/SKILL.md；必须先读这个文件，exists=false 时可首次创建，存在时保留原文合并增量。以结果的 id/path 为准，ok=true 且非 unchanged 才算实际更新。图谱用 browser_site_graph 保存。',
     parameters: {
       type: 'object',
       properties: {

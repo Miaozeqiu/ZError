@@ -618,6 +618,7 @@
   background-color: var(--form-input-bg, #F7F7F7);
   transition: border-color 0.2s ease, background-color 0.2s ease;
 }
+.model-secret-input :deep(.form-input) { padding: 9px 70px 9px 11px; font-size: 13px; }
 
 .form-input:hover {
   background-color: var(--form-input-hover-bg, #f0f0f0);

@@ -384,11 +384,11 @@ const runEvalMain = async (id: string, script: string) => {
 }
 
 /** 在指定 frame 的独立 CDP 上下文执行，支持同进程跨域与 OOPIF。 */
-export const evalBrowserViewInFrame = async (id: string, script: string, frame: string) => {
+export const evalBrowserViewInFrame = async (id: string, script: string, frame: string, identity?: { frameId: string; loaderId?: string }) => {
   const want = String(frame || '').trim()
-  if (!want) return evalBrowserViewMain(id, script)
+  if (!want && !identity?.frameId) return evalBrowserViewMain(id, script)
   const { callProtocol } = await import('./protocol')
-  const raw = await callProtocol(id, 'frame_eval', { frame: want, script: wrapEvalExpression(script) })
+  const raw = await callProtocol(id, 'frame_eval', { frame: want, ...(identity ? { locator: identity } : {}), script: wrapEvalExpression(script) })
   if (raw.ok === false) throw new Error(String(raw.error || '目标 frame 读取失败'))
   return raw.result
 }

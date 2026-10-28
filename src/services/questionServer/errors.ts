@@ -70,3 +70,91 @@ export const isAbortLikeError = (error: unknown) => {
 
 export const isTimeoutLikeModelFailureText = (text: string) =>
   /timeout|超时|no new tokens|aborted|abort|cancelled|canceled|取消|服务已停止/i.test(text)
+
+
+export const getModelResponseFailure = (value: unknown, depth = 0): string | null => {
+  if (depth > 4 || value == null) return null
+  if (value instanceof Error) return formatModelCallError(value)
+  if (typeof value === 'string') {
+    const clean = value.trim().replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '').trim()
+    try {
+      const error = getModelResponseFailure(JSON.parse(clean), depth + 1)
+      if (error) return error
+    } catch { /* plain text */ }
+    if (!clean.startsWith('{') && clean.endsWith('}')) {
+      let offset = clean.lastIndexOf('{')
+      for (let attempt = 0; offset >= 0 && attempt < 32; attempt++) {
+        try {
+          const error = getModelResponseFailure(JSON.parse(clean.slice(offset)), depth + 1)
+          if (error) return error
+        } catch { /* try the enclosing JSON object */ }
+        offset = clean.lastIndexOf('{', offset - 1)
+      }
+    }
+    if (/^(?:错误[:：]|error[:：]|API\s*错误|所有AI均查询失败$|HTTP(?:\s+error!?\s*(?:status:)?\s*|\s+)[45]\d\d\b|Failed to fetch\b|fetch failed\b|NetworkError\b|TimeoutError[:：]|模型响应超时|模型调用失败[:：]|网络请求失败[:：]|服务已停止，已取消所有模型请求)/i.test(clean)) return clean
+    const labels = /^\[[^\]\r\n]+\]\r?\n/gm
+    if (labels.test(clean)) {
+      const parts = clean.split(labels).filter(part => part.trim())
+      if (parts.length && parts.every(part => getModelResponseFailure(part, depth + 1))) return clean
+    }
+    return null
+  }
+  if (typeof value !== 'object') return null
+  const object = value as Record<string, unknown>
+  const error = object.error
+  const failed = (error != null && error !== false && error !== '')
+    || object.success === false || object.ok === false || object.type === 'error'
+    || ['status', 'statusCode', 'code'].some(key => {
+      const value = object[key]
+      if (value === 'error' || value === 'failed') return true
+      if (typeof value !== 'number' && typeof value !== 'string') return false
+      const code = Number(value)
+      return Number.isFinite(code) && (code >= 400 || code < 0)
+    })
+  if (failed) {
+    for (const candidate of [error, object]) {
+      if (typeof candidate === 'string' && candidate.trim()) return candidate
+      if (candidate && typeof candidate === 'object') {
+        for (const key of ['message', 'msg', 'detail', 'error_description', 'reason']) {
+          const message = (candidate as Record<string, unknown>)[key]
+          if (typeof message === 'string' && message.trim()) return message
+        }
+      }
+    }
+    return '模型接口返回错误'
+  }
+  for (const key of ['answer', 'anwser', 'content']) {
+    if (typeof object[key] === 'string') {
+      const error = getModelResponseFailure(object[key], depth + 1)
+      if (error) return error
+    }
+  }
+  return null
+}
+
+export const assertSuccessfulModelResponse = (value: unknown): void => {
+  const error = getModelResponseFailure(value)
+  if (error) throw new Error(error)
+}
+
+
+/** Keep HTTP failure state even when custom adapters catch errors or return their body as text.
+ * A later successful request clears it, preserving endpoint fallback (for example Anthropic 404).
+ */
+export const trackModelHttpOutcome = (fetchImpl: typeof fetch) => {
+  let failure: string | null = null
+  const trackedFetch: typeof fetch = async (input, init) => {
+    try {
+      const response = await fetchImpl(input, init)
+      failure = response.ok ? null : `HTTP ${response.status}${response.statusText ? `: ${response.statusText}` : ''}`
+      return response
+    } catch (error) {
+      failure = formatModelCallError(error, '网络请求失败')
+      throw error
+    }
+  }
+  return {
+    fetch: trackedFetch,
+    assertSuccess: () => { if (failure) throw new Error(failure) },
+  }
+}

@@ -17,7 +17,7 @@ describe('failGate', () => {
     const third = shouldBlockRepeatFail('s1', 'browser_study_play', args)
     expect(third.block).toBe(true)
     expect(third.hint).not.toContain('see.json')
-    expect(third.hint).toContain('快照 ref')
+    expect(third.hint).toContain('快照重新定位')
   })
 
   it('成功或指纹变化则清零', () => {
@@ -37,5 +37,11 @@ describe('failGate', () => {
       .toBe(failFingerprint('browser_study_play', { mid: '1', label: '视频2' }))
     expect(failFingerprint('browser_study_play', { mid: '1' }))
       .not.toBe(failFingerprint('browser_study_play', { mid: '2' }))
+  })
+  it('文案点击按文字和 frame 区分，不误拦不同控件，也不能通过工具别名绕过', () => {
+    const one = { text: '提交', frame: 'first' }
+    expect(failFingerprint('browser_click', one)).toBe(failFingerprint('browser_click_text', one))
+    expect(failFingerprint('browser_click', one)).not.toBe(failFingerprint('browser_click', { text: '下一页', frame: 'first' }))
+    expect(failFingerprint('browser_click_text', one)).not.toBe(failFingerprint('browser_click_text', { text: '提交', frame: 'second' }))
   })
 })

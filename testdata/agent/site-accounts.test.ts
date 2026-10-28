@@ -1,96 +1,45 @@
-import { afterEach, describe, expect, it } from 'vitest'
-import {
-  forgetSiteAccount,
-  rememberAccountsFromUserText,
-  rememberLoginTyped,
-  rememberSiteAccount,
-  siteAccountOf,
-  siteAccountsPrompt,
-  platformFromUrl,
-} from '../../src/services/agent/siteAccounts'
-
-const prevZhihuishu = siteAccountOf('zhihuishu')
-const prevZjooc = siteAccountOf('zjooc')
-const prevChaoxing = siteAccountOf('chaoxing')
-
-afterEach(() => {
-  if (prevZhihuishu) rememberSiteAccount('zhihuishu', prevZhihuishu)
-  else forgetSiteAccount('zhihuishu')
-  if (prevZjooc) rememberSiteAccount('zjooc', prevZjooc)
-  else forgetSiteAccount('zjooc')
-  if (prevChaoxing) rememberSiteAccount('chaoxing', prevChaoxing)
-  else forgetSiteAccount('chaoxing')
-})
-
-describe('siteAccountsPrompt', () => {
-  it('在浙学页优先用 zjooc 槽', () => {
-    rememberSiteAccount('zjooc', { account: 'zjooc-id', password: 'zjooc-pw' })
-    const text = siteAccountsPrompt('https://www.zjooc.cn/ucenter/student/course/study/x/plan')
-    expect(text).toContain('在浙学')
-    expect(text).toContain('zjooc-id')
-    expect(text).toMatch(/不是智慧树/)
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { forgetSiteAccount, rememberAccountsFromUserText, recoverSiteAccountsFromTexts, rememberLoginTyped, rememberSiteAccount, siteAccountOf, siteAccountsPrompt, platformFromUrl, siteAccountsReady, siteAccountsState } from '../../src/services/agent/siteAccounts'
+const refs = (site: string) => ({ account: `{{secret:site/${site}/account}}`, password: `{{secret:site/${site}/password}}` })
+beforeEach(async () => { await siteAccountsReady; await new Promise(resolve => setTimeout(resolve, 0)); siteAccountsState.rows = {} })
+afterEach(() => { Object.keys(siteAccountsState.rows).forEach(forgetSiteAccount) })
+describe('site credential references', () => {
+  it('uses only references for the current website', () => {
+    rememberSiteAccount('zjooc', refs('zjooc'))
+    rememberSiteAccount('zhihuishu', refs('zhihuishu'))
+    const prompt = siteAccountsPrompt('https://www.zjooc.cn/course')
+    expect(prompt).toContain('在浙学')
+    expect(prompt).toContain(refs('zjooc').password)
+    expect(prompt).not.toContain(refs('zhihuishu').password)
+    expect(prompt).toContain('secret_ref')
   })
-
-  it('在浙学页不把已记账密标成智慧树', () => {
-    rememberSiteAccount('zhihuishu', { account: 'test-zjooc-id', password: 'test-zjooc-pw' })
-    forgetSiteAccount('zjooc')
-    const text = siteAccountsPrompt('https://www.zjooc.cn/ucenter/student/course/study/x/plan/detail/y')
-    expect(text).toContain('在浙学')
-    expect(text).toContain('test-zjooc-id')
-    expect(text).toMatch(/不是智慧树/)
-    expect(text).not.toMatch(/智慧树 账号/)
+  it('does not inject a just-entered plaintext value while encryption is pending', () => {
+    rememberSiteAccount('chaoxing', { account: 'synthetic-user', password: 'synthetic-private-value' })
+    const prompt = siteAccountsPrompt('https://passport2.chaoxing.com/login')
+    expect(prompt).not.toContain('synthetic-user')
+    expect(prompt).not.toContain('synthetic-private-value')
   })
-
-  it('智慧树页仍用智慧树标签', () => {
-    rememberSiteAccount('zhihuishu', { account: 'test-zjooc-id', password: 'test-zjooc-pw' })
-    const text = siteAccountsPrompt('https://onlineh5.zhihuishu.com/student/course')
-    expect(text).toContain('智慧树 账号')
-    expect(text).toContain('当前页用智慧树那套')
+  it('does not borrow credentials from another website or an unknown custom subdomain', () => {
+    rememberSiteAccount('example.com', refs('example.com'))
+    expect(siteAccountsPrompt('https://unknown.example.com')).toBe('')
+    expect(siteAccountsPrompt('https://zjooc.cn')).toBe('')
+    expect(platformFromUrl('https://www.example.com/login')).toBe('example.com')
   })
-})
-
-describe('rememberAccountsFromUserText', () => {
-  it('只说密码时按当前页更新在浙学', () => {
-    rememberSiteAccount('zjooc', { account: '19703092478', password: 'old' })
-    rememberAccountsFromUserText('密码是bingbaby928@，你更新下密码', 'https://www.zjooc.cn/login')
-    expect(siteAccountOf('zjooc')?.password).toBe('bingbaby928@')
-    expect(siteAccountOf('zjooc')?.account).toBe('19703092478')
+  it('shares references across a configured login domain', () => {
+    rememberSiteAccount('menhu.haou.edu.cn', refs('menhu.haou.edu.cn'))
+    expect(siteAccountsPrompt('https://authserver.open.ha.cn/login')).toContain(refs('menhu.haou.edu.cn').password)
   })
-
-  it('没有网址且没点名站点时，只说密码不乱写', () => {
-    rememberSiteAccount('chaoxing', { account: 'a', password: 'keep' })
-    rememberAccountsFromUserText('密码是should-not-write')
-    expect(siteAccountOf('chaoxing')?.password).toBe('keep')
+  it('does not parse, recover or overwrite credentials by scanning text or observing typing', () => {
+    rememberSiteAccount('zjooc', refs('zjooc'))
+    rememberAccountsFromUserText('在浙学账号 new-user 密码 new-value', 'https://zjooc.cn')
+    recoverSiteAccountsFromTexts(['密码是 another-value'], 'https://zjooc.cn')
+    rememberLoginTyped('https://zjooc.cn', 'input[type=password]', 'typed-value')
+    expect(siteAccountOf('zjooc')).toMatchObject(refs('zjooc'))
   })
-
-  it('文案点名在浙学也能只更新密码', () => {
-    rememberSiteAccount('zjooc', { account: 'u', password: 'old' })
-    rememberAccountsFromUserText('在浙学密码是newpass123')
-    expect(siteAccountOf('zjooc')?.password).toBe('newpass123')
-  })
-
-  it('任务里夹着「密码是」也会记下', () => {
-    rememberSiteAccount('zjooc', { account: '19703092478', password: 'old' })
-    rememberAccountsFromUserText('你完成下在浙学，成衣课程的章节任务密码是bingbaby928@')
-    expect(siteAccountOf('zjooc')?.password).toBe('bingbaby928@')
-    expect(siteAccountOf('zjooc')?.account).toBe('19703092478')
-  })
-})
-
-describe('rememberLoginTyped', () => {
-  it('验证码不会盖掉密码', () => {
-    rememberSiteAccount('zjooc', { account: '19703092478', password: 'old' })
-    const url = 'https://background.zjooc.cn/gxptLogin?redirect_url=https://www.zjooc.cn'
-    rememberLoginTyped(url, 'input[placeholder="请输入用户名/手机号"]', '19703092478')
-    rememberLoginTyped(url, 'input[placeholder="请输入密码"]', 'bingbaby928@')
-    rememberLoginTyped(url, 'input[placeholder="请输入验证码"]', '16290')
-    expect(siteAccountOf('zjooc')?.account).toBe('19703092478')
-    expect(siteAccountOf('zjooc')?.password).toBe('bingbaby928@')
-  })
-})
-
-describe('platformFromUrl', () => {
-  it('认在浙学主机', () => {
-    expect(platformFromUrl('https://www.zjooc.cn/ucenter/student/course/build/list')).toBe('zjooc')
+  it('cannot resurrect a forgotten credential from old user messages', () => {
+    rememberSiteAccount('chaoxing', refs('chaoxing'))
+    forgetSiteAccount('chaoxing')
+    recoverSiteAccountsFromTexts(['学习通账号 old-user 密码 old-value'], 'https://passport2.chaoxing.com')
+    expect(siteAccountOf('chaoxing')).toBeNull()
   })
 })

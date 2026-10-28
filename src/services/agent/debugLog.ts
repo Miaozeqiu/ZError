@@ -13,14 +13,9 @@ const fileName = (sessionId: string, kind?: string) => {
   return kind === 'browser' ? `browser-${day}-${id}` : `${day}-${id}`
 }
 
-const postDebug = (payload: Record<string, unknown>) => {
-  fetch('/__agent-debug-log', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  }).catch(() => {
-    console.warn('[agent-debug]', payload.file, payload)
-  })
+const postDebug = (_payload: Record<string, unknown>) => {
+  // Raw transcripts, model payloads and DOM dumps may contain secrets before the
+  // model has identified them. They must never be written to developer logs.
 }
 
 export const logAgentDebug = (sessionId: string, entry: Record<string, unknown>) => {

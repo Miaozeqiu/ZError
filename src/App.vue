@@ -1,4 +1,9 @@
 <script setup lang="ts">
+import { secureStorageState, cleanupLegacySecrets, redactNative, authorizeSecureStorage } from './services/security/secureStore';
+import { sessions as agentSessions, chatStoreReady, persistSoon } from './services/agent/chatStore';
+import { siteAccountsReady } from './services/agent/siteAccounts';
+import { modelConfigManager } from './services/model/config';
+import { settingsManager } from './services/app/settings';
 import { ref, onMounted, onUnmounted, computed } from "vue";
 import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import AppHeader from "./views/AppHeader.vue";
@@ -28,6 +33,9 @@ const collapseTrigger = ref(0);
 const questionBankFocusFolderId = ref<number | null>(null);
 const questionBankFocusRequestKey = ref(0);
 const loginDialogVisible = ref(false);
+const reloadSecureStore = async () => {
+  if (!secureStorageState.requiresAuthorization || await authorizeSecureStorage()) window.location.reload()
+}
 
 const openLoginDialog = () => {
   loginDialogVisible.value = true
@@ -66,6 +74,15 @@ onMounted(() => {
   document.querySelectorAll('.assistant-text style, .agent-html style, .agent-html-preview style')
     .forEach((el) => el.remove())
   pinAppViewport()
+  void Promise.all([siteAccountsReady, modelConfigManager.ready, settingsManager.ready, chatStoreReady]).then(async () => {
+    const safe = await redactNative(JSON.parse(JSON.stringify(agentSessions.value)))
+    for (const session of agentSessions.value) {
+      const next = safe.find((item: { id: string }) => item.id === session.id)
+      if (next) Object.assign(session, next)
+    }
+    persistSoon(true)
+    await cleanupLegacySecrets()
+  }).catch(() => undefined)
   document.addEventListener('scroll', pinAppViewport, true)
 
   ;(window as any).startTutorial = () => {
@@ -489,6 +506,7 @@ onUnmounted(() => {
       </div>
     </div>
     
+    <div v-if="secureStorageState.error" class="secure-storage-error" role="alert">{{ secureStorageState.error }} <button type="button" :disabled="secureStorageState.authorizing" @click="reloadSecureStore">{{ secureStorageState.requiresAuthorization ? '恢复授权并重新加载' : '重新加载' }}</button></div>
     <LoginDialog
       :visible="loginDialogVisible"
       @close="closeLoginDialog"
@@ -888,4 +906,8 @@ button {
   margin-left: 8px;
 }
 
+</style>
+
+<style scoped>
+.secure-storage-error { position: fixed; z-index: 20000; left: 50%; bottom: 20px; transform: translateX(-50%); max-width: calc(100vw - 40px); padding: 10px 16px; border-radius: 10px; background: var(--bg-secondary, #fff); color: var(--text-primary, #333); font-size: 13px; box-shadow: 0 4px 24px #0002; }
 </style>

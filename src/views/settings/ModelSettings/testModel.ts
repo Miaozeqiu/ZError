@@ -1,5 +1,6 @@
 /** 模型连通性测试。设置页其它逻辑不要堆进这里。 */
 import type { Ref } from 'vue'
+import { secureFetch } from '../../../services/security/secureFetch'
 import type { AIModel, AIPlatform } from '../../../services/model/config'
 import { modelHasVision } from '../../../services/model/config'
 import { resolveExecutableModelJsCode, resolveRuntimeModelId } from '../../../services/model/protocol'
@@ -313,14 +314,15 @@ export const bindModelTest = (state: ModelTestState) => {
       const config = {
         ...model,
         apiKey: selectedPlatform.value.apiKey,
+        customHeaders: selectedPlatform.value.customHeaders,
         baseUrl: selectedPlatform.value.baseUrl,
         model: runtimeModelId,
         modelId: runtimeModelId
       }
     
-      const tauriHttp = await import('@tauri-apps/plugin-http')
+
       const tauriFetch = createCookieEnabledFetch(
-        (input, init) => tauriHttp.fetch(input as any, init as any),
+        secureFetch,
         testAbortController.value?.signal
       )
       const executableCode = resolveExecutableModelJsCode(model, selectedPlatform.value)

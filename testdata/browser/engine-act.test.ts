@@ -96,6 +96,31 @@ describe('actOnBrowser', () => {
     expect(result.error).toContain('文档已更换')
     expect(invoke).toHaveBeenCalledTimes(1)
   })
+  it('节点文档归属错误要求刷新快照，不作为布局抖动重试或暴露长 CSS 路径', async () => {
+    const { clickByLocator } = await import('../../src/services/browser/engine/act')
+    invoke.mockImplementation(async (_cmd, payload) => {
+      if (payload.op === 'find') return { ok: true, x: 20, y: 20, backend: 42, session: 'course-session' }
+      if (payload.op === 'click_node') throw new Error('{"code":-32000,"message":"Node with given id does not belong to the document"}')
+      throw new Error(`unexpected retry ${payload.op}`)
+    })
+    const result = await clickByLocator('b', { by: 'css', value: 'html:nth-of-type(1) > body > div', frameId: 'course', loaderId: 'old-doc' })
+    expect(result).toMatchObject({ ok: false, reason: 'invalid', requiresRefresh: true, retry: false })
+    expect(result.error).toContain('旧 ref 不再可用')
+    expect(result.error).not.toContain('nth-of-type')
+    expect(invoke.mock.calls.map(call => call[1].op)).toEqual(['find', 'click_node'])
+  })
+  it('从定位到实际点击始终携带 frame 和 loader 身份，供原生投递前复核', async () => {
+    const { clickByLocator } = await import('../../src/services/browser/engine/act')
+    invoke.mockImplementation(async (_cmd, payload) => {
+      if (payload.op === 'find') return { ok: true, x: 20, y: 20, backend: 42, session: 'course-session', frameId: 'course-frame', loaderId: 'course-doc' }
+      if (payload.op === 'click_node') {
+        expect(payload.args).toMatchObject({ backend: 42, session: 'course-session', frameId: 'course-frame', loaderId: 'course-doc' })
+        return { ok: true }
+      }
+      throw new Error(`unexpected op ${payload.op}`)
+    })
+    expect((await clickByLocator('b', { by: 'css', value: '.chapter-title' })).ok).toBe(true)
+  })
 })
 
 describe('uncertain clicks', () => {

@@ -421,7 +421,7 @@ export function useModelConfigDialog(props: Props, emit: Emits) {
 
   const getTauriFetch = () => {
     if (!tauriFetchPromise) {
-      tauriFetchPromise = import('@tauri-apps/plugin-http').then(m => m.fetch)
+      tauriFetchPromise = import('../../../services/security/secureFetch').then(m => m.secureFetch)
     }
     return tauriFetchPromise
   }

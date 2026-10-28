@@ -28,8 +28,8 @@
 
         <div class="frame" :class="{ 'is-stay': stay }">
           <div class="frame-bar">
-            <b>iframe</b>
-            <span>{{ frameName }}</span>
+            <b>{{ compact ? '内容' : 'iframe' }}</b>
+            <span>{{ compact ? '内容区域' : frameName }}</span>
             <i v-if="stay">留框</i>
           </div>
 
@@ -43,11 +43,11 @@
           </div>
 
           <div v-if="stack.length" class="layers">
-            <em v-for="(layer, idx) in stack" :key="layer">{{ layer }}</em>
+            <em v-for="(layer, idx) in stack" :key="layer">{{ compact && /^(?:https?:\/\/|\/|[\w.-]+\/)/i.test(layer) ? '内容区域' : layer }}</em>
           </div>
           <p v-else class="doc">
             <span class="doc-name">{{ docTitle }}</span>
-            <span v-if="docPath" class="doc-path">{{ docPath }}</span>
+            <span v-if="!compact && docPath" class="doc-path">{{ docPath }}</span>
           </p>
         </div>
       </div>
@@ -138,6 +138,7 @@ const docTitle = computed(() => {
 
 .chrome {
   position: relative;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -240,6 +241,22 @@ const docTitle = computed(() => {
   background: color-mix(in srgb, var(--color-primary, #667eea) 16%, transparent);
   color: var(--color-primary, #667eea);
   font-weight: 650;
+}
+
+.sketch:not(.is-wide) .stage.is-full {
+  min-height: 0;
+  padding: 3px 8px;
+  font-size: 10px;
+  line-height: 13px;
+  text-align: center;
+}
+
+.stage.is-full span {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow-wrap: anywhere;
 }
 
 .stage.is-full {

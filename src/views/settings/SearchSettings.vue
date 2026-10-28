@@ -29,12 +29,8 @@
           <div class="dialog-body">
             <template v-if="dialog === 'key'">
               <label class="form-label" for="search-key">API Key</label>
-              <div class="secret-input-row">
-                <input id="search-key" ref="keyInput" v-model.trim="keyDraft" :type="showKey ? 'text' : 'password'" class="form-input" :placeholder="`填写你的 ${dialogProvider.name} API Key`" autocomplete="off" spellcheck="false" @keydown.enter.prevent="saveKey" />
-                <button class="key-visibility" type="button" :aria-label="showKey ? '隐藏 API Key' : '显示 API Key'" :title="showKey ? '隐藏 API Key' : '显示 API Key'" :aria-pressed="showKey" @click="showKey = !showKey">
-                  <Icon :icon="showKey ? 'lucide:eye-off' : 'lucide:eye'" width="16" height="16" />
-                </button>
-              </div>
+              <SecureSecretInput :key="dialogProvider.id" id="search-key" ref="keyInput" v-model="keyDraft" kind="api" label="API Key" :placeholder="`填写你的 ${dialogProvider.name} API Key`" @keydown.enter="saveKeyFromInput" />
+              <button v-if="isSecretReference(search[dialogProvider.key])" type="button" class="clear-saved-key" @click="clearSavedKey">清除已保存的 API Key</button>
               <p class="dialog-description">{{ dialogProvider.id === 'deepseek' ? '使用 DeepSeek 开放平台的 API Key。' : '可选，留空使用免费限流搜索。' }}</p>
             </template>
             <template v-else>
@@ -63,6 +59,8 @@
 </template>
 
 <script setup lang="ts">
+import { isSecretReference } from '../../services/security/secureStore'
+import SecureSecretInput from '../../components/ui/SecureSecretInput.vue'
 import { nextTick, reactive, ref, toRef, onUnmounted } from 'vue'
 import { Icon } from '@iconify/vue/offline'
 import '../../utils/ui/agentIcons'
@@ -102,8 +100,7 @@ const openMenu = (event: MouseEvent, provider: Provider) => {
 const dialog = ref<'key' | 'test' | null>(null)
 const dialogProvider = ref<Provider | null>(null)
 const keyDraft = ref('')
-const showKey = ref(false)
-const keyInput = ref<HTMLInputElement | null>(null)
+const keyInput = ref<InstanceType<typeof SecureSecretInput> | null>(null)
 const dialogPanel = ref<HTMLElement | null>(null)
 const testing = ref(false)
 const testError = ref('')
@@ -127,7 +124,6 @@ const onMenuItem = async (item: MenuItem) => {
   if (item.action !== 'key' && item.action !== 'test') return
   dialogProvider.value = menuProvider.value
   keyDraft.value = search.value[menuProvider.value.key] || ''
-  showKey.value = false
   testError.value = ''
   testMessage.value = ''
   testResults.value = []
@@ -142,10 +138,20 @@ const closeDialog = () => {
   controller = null
   testing.value = false
   dialog.value = null
+  keyDraft.value = ''
 }
 const saveKey = () => {
   if (!dialogProvider.value) return
-  search.value[dialogProvider.value.key] = keyDraft.value.trim()
+  if (keyDraft.value.trim() || !isSecretReference(search.value[dialogProvider.value.key])) search.value[dialogProvider.value.key] = keyDraft.value.trim()
+  closeDialog()
+}
+const saveKeyFromInput = (event: KeyboardEvent) => {
+  if (!(event.target instanceof HTMLInputElement)) return
+  event.preventDefault()
+  saveKey()
+}
+const clearSavedKey = () => {
+  if (dialogProvider.value) search.value[dialogProvider.value.key] = ''
   closeDialog()
 }
 const runTest = async () => {
@@ -176,6 +182,7 @@ onUnmounted(() => controller?.abort())
 </style>
 <style scoped>
 .search-settings { padding: 16px 0 8px; }
+.clear-saved-key { margin-top: 10px; padding: 0; border: 0; background: transparent; color: var(--danger-color, #c43b36); cursor: pointer; font: inherit; font-size: 13px; }
 .search-title { margin: 0 0 8px; font-size: 15px; font-weight: 600; color: var(--text-primary); }
 .provider-list { display: flex; flex-direction: column; gap: 8px; }
 .provider-item { display: flex; align-items: center; gap: 12px; padding: 7px 10px; width: 100%; border: 1px solid var(--model-item-border); border-radius: 10px; background: var(--model-item-bg); color: var(--model-item-text); cursor: pointer; text-align: left; font: inherit; transition: background .2s ease, border-color .2s ease, box-shadow .2s ease; }

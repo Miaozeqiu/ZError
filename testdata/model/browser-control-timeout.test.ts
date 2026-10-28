@@ -13,7 +13,7 @@ vi.mock('../../src/services/model/protocol', () => ({
 }))
 vi.mock('../../src/services/app/settings', () => ({ settingsManager: { get: () => 0 } }))
 vi.mock('../../src/services/agent/debugLog', () => ({ logAgentDebug: vi.fn() }))
-vi.mock('@tauri-apps/plugin-http', () => ({ fetch: mock.fetch }))
+vi.mock('../../src/services/security/secureFetch', () => ({ secureFetch: mock.fetch }))
 vi.mock('../../src/services/browser/appBrowser', () => ({ readBrowserPage: vi.fn() }))
 import { runTextModel } from '../../src/services/model/runner'
 import { applyBrowserControl, browserControlState } from '../../src/services/browser/control'

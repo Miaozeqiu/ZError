@@ -1,258 +1,145 @@
 import { reactive } from 'vue'
-import type { SkillScope } from './agentSkills'
-
-export type AgentKind = 'browser' | 'learning'
-export type DomainToolPolicy = 'current-site' | 'always' | 'never'
 
 export type AgentProfile = {
   id: string
   name: string
-  kind: AgentKind
-  preset?: AgentKind
+  preset?: 'agent'
   systemOverlay: string
-  skillIds: string[]
-  toolPolicy: {
-    domain: DomainToolPolicy
-  }
 }
 
-type ProfileStore = {
-  version: number
-  defaultBrowserId: string
-  defaultLearningId: string
+export type ProfileStore = {
+  version: 2
+  defaultId: string
   profiles: AgentProfile[]
 }
 
 const STORAGE_KEY = 'zerror-agent-profiles'
 const CONFIG_FILE = 'agent-profiles.json'
-
-const presetOf = (kind: AgentKind): AgentProfile => (
-  kind === 'browser'
-    ? {
-      id: 'browser',
-      name: '浏览器',
-      kind: 'browser',
-      preset: 'browser',
-      systemOverlay: '',
-      skillIds: [],
-      toolPolicy: { domain: 'current-site' },
-    }
-    : {
-      id: 'learning',
-      name: '学习',
-      kind: 'learning',
-      preset: 'learning',
-      systemOverlay: '',
-      skillIds: [],
-      toolPolicy: { domain: 'never' },
-    }
-)
-
-const defaultStore = (): ProfileStore => ({
-  version: 1,
-  defaultBrowserId: 'browser',
-  defaultLearningId: 'learning',
-  profiles: [presetOf('browser'), presetOf('learning')],
+const preset = (): AgentProfile => ({
+  id: 'agent', name: 'Agent', preset: 'agent', systemOverlay: '',
 })
-
-export const agentProfileState = reactive({
-  defaultBrowserId: 'browser',
-  defaultLearningId: 'learning',
-  profiles: defaultStore().profiles as AgentProfile[],
-})
-
-const asDomain = (value: unknown): DomainToolPolicy => (
-  value === 'always' || value === 'never' ? value : 'current-site'
+const object = (value: unknown): Record<string, unknown> => (
+  value && typeof value === 'object' ? value as Record<string, unknown> : {}
 )
-
-const asProfile = (raw: unknown, fallbackKind: AgentKind = 'browser'): AgentProfile | null => {
-  if (!raw || typeof raw !== 'object') return null
-  const row = raw as Record<string, unknown>
+const asProfile = (value: unknown): AgentProfile | null => {
+  const row = object(value)
   const id = String(row.id || '').trim()
   if (!id) return null
-  const kind: AgentKind = row.kind === 'learning' ? 'learning' : 'browser'
-  const preset = row.preset === 'browser' || row.preset === 'learning' ? row.preset : undefined
-  const toolPolicy = row.toolPolicy && typeof row.toolPolicy === 'object'
-    ? row.toolPolicy as Record<string, unknown>
-    : {}
   return {
-    id,
-    name: String(row.name || '').trim() || (kind === 'browser' ? '浏览器' : '学习'),
-    kind: preset || fallbackKind === kind ? kind : kind,
-    preset,
+    id, name: String(row.name || '').trim() || 'Agent',
+    ...(id === 'agent' ? { preset: 'agent' as const } : {}),
     systemOverlay: String(row.systemOverlay || ''),
-    skillIds: Array.isArray(row.skillIds) ? row.skillIds.map((item) => String(item || '').trim()).filter(Boolean) : [],
-    toolPolicy: { domain: kind === 'learning' ? 'never' : asDomain(toolPolicy.domain) },
   }
 }
 
-const mergePreset = (stored: AgentProfile | undefined, kind: AgentKind): AgentProfile => {
-  const base = presetOf(kind)
-  if (!stored) return base
-  return {
-    ...base,
-    name: stored.name || base.name,
-    systemOverlay: stored.systemOverlay,
-    skillIds: stored.skillIds,
-    toolPolicy: stored.toolPolicy,
+/** Collapse the two legacy defaults into one active configuration. Keep custom
+ * profiles and edited inactive presets available, without the old agent kinds. */
+export const normalizeProfileStore = (raw: unknown): ProfileStore => {
+  const row = object(raw)
+  const rows = Array.isArray(row.profiles) ? row.profiles.map(object) : []
+  const profiles = [...new Map(rows.map(asProfile).filter((p): p is AgentProfile => !!p).map(p => [p.id, p])).values()]
+  let agent = profiles.find(p => p.id === 'agent')
+  const customs = profiles.filter(p => !['agent', 'browser', 'learning'].includes(p.id))
+  const legacy = row.version !== 2 && !agent
+  if (legacy) {
+    const learning = profiles.find(p => p.id === row.defaultLearningId) || profiles.find(p => p.id === 'learning')
+    const browser = profiles.find(p => p.id === row.defaultBrowserId) || profiles.find(p => p.id === 'browser')
+    const learningRules = learning?.systemOverlay.trim() || ''
+    const browserRules = browser?.systemOverlay.trim() || ''
+    const rules = [learningRules, browserRules && browserRules !== learningRules
+      ? `【网页操作附加规则】仅进行网页操作时适用：\n${browserRules}` : ''].filter(Boolean)
+    agent = { ...preset(), systemOverlay: rules.join('\n\n') }
+    for (const previous of profiles.filter(p => ['browser', 'learning'].includes(p.id))) {
+      const selected = previous.id === learning?.id || previous.id === browser?.id
+      if (!selected && previous.systemOverlay.trim()) {
+        customs.push({ ...previous, id: `legacy-${previous.id}`, name: `${previous.name}（迁移）`, preset: undefined })
+      }
+    }
   }
+  const all = [agent || preset(), ...customs]
+  const requested = legacy ? 'agent' : String(row.defaultId || 'agent')
+  return { version: 2, defaultId: all.some(p => p.id === requested) ? requested : 'agent', profiles: all }
 }
 
+const defaults = normalizeProfileStore(null)
+export const agentProfileState = reactive({ defaultId: defaults.defaultId, profiles: defaults.profiles })
+let revision = 0
+let fileWrites = Promise.resolve()
 const persistFile = (store: ProfileStore) => {
-  void import('@tauri-apps/plugin-fs').then(async ({ writeTextFile, mkdir, BaseDirectory }) => {
+  fileWrites = fileWrites.then(async () => {
+    const { writeTextFile, mkdir, BaseDirectory } = await import('@tauri-apps/plugin-fs')
     await mkdir('.local/share/zerror', { baseDir: BaseDirectory.Home, recursive: true }).catch(() => undefined)
-    await writeTextFile(`.local/share/zerror/${CONFIG_FILE}`, JSON.stringify(store), {
-      baseDir: BaseDirectory.Home,
-    })
+    await writeTextFile(`.local/share/zerror/${CONFIG_FILE}`, JSON.stringify(store), { baseDir: BaseDirectory.Home })
   }).catch(() => undefined)
 }
-
 const writeLocal = (store: ProfileStore) => {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(store))
-  } catch {
-    // quota
-  }
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(store)) } catch { /* Storage unavailable. */ }
 }
-
-const readLocal = (): ProfileStore => {
-  try {
-    return normalizeStore(JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'))
-  } catch {
-    return defaultStore()
-  }
+const readLocal = (): unknown => {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null') } catch { return null }
 }
-
-const normalizeStore = (raw: unknown): ProfileStore => {
-  const row = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {}
-  const incoming = Array.isArray(row.profiles)
-    ? row.profiles.map((item) => asProfile(item)).filter((item): item is AgentProfile => Boolean(item))
-    : []
-  const byId = new Map(incoming.map((item) => [item.id, item]))
-  const browser = mergePreset(byId.get('browser'), 'browser')
-  const learning = mergePreset(byId.get('learning'), 'learning')
-  byId.delete('browser')
-  byId.delete('learning')
-  const customs = [...byId.values()].filter((item) => !item.preset)
-  const store: ProfileStore = {
-    version: 1,
-    defaultBrowserId: String(row.defaultBrowserId || 'browser'),
-    defaultLearningId: String(row.defaultLearningId || 'learning'),
-    profiles: [browser, learning, ...customs],
-  }
-  if (!store.profiles.some((item) => item.id === store.defaultBrowserId && item.kind === 'browser')) {
-    store.defaultBrowserId = 'browser'
-  }
-  if (!store.profiles.some((item) => item.id === store.defaultLearningId && item.kind === 'learning')) {
-    store.defaultLearningId = 'learning'
-  }
-  return store
-}
-
 const applyStore = (store: ProfileStore) => {
-  agentProfileState.defaultBrowserId = store.defaultBrowserId
-  agentProfileState.defaultLearningId = store.defaultLearningId
+  agentProfileState.defaultId = store.defaultId
   agentProfileState.profiles = store.profiles
 }
-
 const currentStore = (): ProfileStore => ({
-  version: 1,
-  defaultBrowserId: agentProfileState.defaultBrowserId,
-  defaultLearningId: agentProfileState.defaultLearningId,
-  profiles: agentProfileState.profiles.map((item) => ({ ...item, skillIds: [...item.skillIds], toolPolicy: { ...item.toolPolicy } })),
+  version: 2, defaultId: agentProfileState.defaultId,
+  profiles: agentProfileState.profiles.map(p => ({ ...p })),
 })
-
 const saveStore = (store: ProfileStore) => {
-  const next = normalizeStore(store)
-  applyStore(next)
-  writeLocal(next)
-  persistFile(next)
+  revision++
+  const next = normalizeProfileStore(store)
+  applyStore(next); writeLocal(next); persistFile(next)
 }
-
-applyStore(readLocal())
+const local = readLocal()
+const hasLocal = Array.isArray(object(local).profiles) && (object(local).profiles as unknown[]).length > 0
+applyStore(normalizeProfileStore(local))
+if (hasLocal) writeLocal(currentStore())
 
 void import('@tauri-apps/plugin-fs').then(async ({ readTextFile, BaseDirectory }) => {
   try {
-    const raw = JSON.parse(await readTextFile(`.local/share/zerror/${CONFIG_FILE}`, {
-      baseDir: BaseDirectory.Home,
-    }))
-    saveStore(normalizeStore({ ...readLocal(), ...raw, profiles: [
-      ...(Array.isArray((raw as { profiles?: unknown }).profiles) ? (raw as { profiles: unknown[] }).profiles : []),
-      ...readLocal().profiles,
-    ] }))
-  } catch {
-    persistFile(currentStore())
-  }
+    const raw = JSON.parse(await readTextFile(`.local/share/zerror/${CONFIG_FILE}`, { baseDir: BaseDirectory.Home }))
+    // Local edits take precedence over an older file or an in-flight startup read.
+    if (!hasLocal && revision === 0) saveStore(normalizeProfileStore(raw))
+    else persistFile(currentStore())
+  } catch { persistFile(currentStore()) }
 }).catch(() => undefined)
 
 export const listAgentProfiles = () => agentProfileState.profiles
-
-export const getAgentProfile = (id: string) => (
-  agentProfileState.profiles.find((item) => item.id === id) || null
-)
-
-export const getActiveBrowserProfile = () => (
-  getAgentProfile(agentProfileState.defaultBrowserId) || getAgentProfile('browser') || presetOf('browser')
-)
-
-export const getActiveLearningProfile = () => (
-  getAgentProfile(agentProfileState.defaultLearningId) || getAgentProfile('learning') || presetOf('learning')
-)
-
-export const getProfileForKind = (kind: AgentKind) => (
-  kind === 'browser' ? getActiveBrowserProfile() : getActiveLearningProfile()
-)
-
-export const skillScopeOfKind = (kind: AgentKind): SkillScope => kind
-
-export const setDefaultProfile = (kind: AgentKind, id: string) => {
-  const profile = getAgentProfile(id)
-  if (!profile || profile.kind !== kind) return
-  const store = currentStore()
-  if (kind === 'browser') store.defaultBrowserId = id
-  else store.defaultLearningId = id
-  saveStore(store)
+export const getAgentProfile = (id: string) => agentProfileState.profiles.find(p => p.id === id) || null
+export const getActiveAgentProfile = () => getAgentProfile(agentProfileState.defaultId) || getAgentProfile('agent') || preset()
+export const setDefaultProfile = (id: string) => {
+  if (!getAgentProfile(id)) return
+  saveStore({ ...currentStore(), defaultId: id })
 }
-
 export const saveAgentProfile = (profile: AgentProfile) => {
-  const store = currentStore()
-  const index = store.profiles.findIndex((item) => item.id === profile.id)
   const next = asProfile(profile)
   if (!next) return
+  const store = currentStore()
+  const index = store.profiles.findIndex(p => p.id === next.id)
   if (index >= 0) store.profiles[index] = next
   else store.profiles.push(next)
   saveStore(store)
 }
-
 export const duplicateAgentProfile = (id: string, name?: string) => {
   const source = getAgentProfile(id)
   if (!source) return null
-  const copy: AgentProfile = {
-    ...source,
-    id: `profile-${Date.now()}`,
-    name: name || `${source.name} 副本`,
-    preset: undefined,
-    skillIds: [...source.skillIds],
-    toolPolicy: { ...source.toolPolicy },
-  }
+  const copy = { ...source, id: `profile-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    name: name || `${source.name} 副本`, preset: undefined }
   saveAgentProfile(copy)
   return copy
 }
-
 export const deleteAgentProfile = (id: string) => {
   const profile = getAgentProfile(id)
   if (!profile || profile.preset) return
   const store = currentStore()
-  store.profiles = store.profiles.filter((item) => item.id !== id)
-  if (store.defaultBrowserId === id) store.defaultBrowserId = 'browser'
-  if (store.defaultLearningId === id) store.defaultLearningId = 'learning'
+  store.profiles = store.profiles.filter(p => p.id !== id)
+  if (store.defaultId === id) store.defaultId = 'agent'
   saveStore(store)
 }
-
 export const resetAgentProfile = (id: string) => {
-  if (id !== 'browser' && id !== 'learning') return
+  if (id !== 'agent') return
   const store = currentStore()
-  const index = store.profiles.findIndex((item) => item.id === id)
-  if (index >= 0) store.profiles[index] = presetOf(id)
+  store.profiles = store.profiles.map(p => p.id === id ? preset() : p)
   saveStore(store)
 }

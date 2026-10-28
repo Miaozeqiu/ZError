@@ -9,6 +9,8 @@ import { packAgentPanel, videoWatchFor } from '../platform/panelAccess'
 import { isChaoxingPlayerUrl } from '../platform/chaoxing/nav'
 import { readChaoxingVideoTick, videoIsPlaying } from '../chaoxing/study'
 import { coursePlanFor, courseProgress } from '../browser/coursePlan'
+import { courseCompletionEvidence, type CourseCompletionEvidence } from './courseCompletionEvidence'
+import type { ImportTaskStep } from '../app/importTasks'
 
 export type FinishStatus = 'done' | 'blocked' | 'watching'
 
@@ -33,6 +35,7 @@ export type FinishEvidence = {
   planDone?: number
   planTotal?: number
   planComplete?: boolean
+  courseCompletion?: CourseCompletionEvidence
 }
 
 export const isMultiStepIntent = (intent?: BrowserTaskIntent, extras?: {
@@ -47,7 +50,7 @@ export const isMultiStepIntent = (intent?: BrowserTaskIntent, extras?: {
 export const collectFinishEvidence = async (
   browserId: string,
   sessionId: string,
-  extras?: { todos?: AgentTodoItem[]; role?: FinishRole },
+  extras?: { todos?: AgentTodoItem[]; role?: FinishRole; steps?: ImportTaskStep[] },
 ): Promise<FinishEvidence> => {
   const id = String(browserId || '').trim()
   const url = id ? peekAppBrowserUrl(id) : ''
@@ -68,12 +71,13 @@ export const collectFinishEvidence = async (
     kind,
     todos: extras?.todos || [],
     role: extras?.role || 'parent',
-    playing: videoIsPlaying(tick as never) || Boolean(tick && tick.paused === false),
+    // 空播放器回执会被规范化成 paused=false，不能因此认定有视频在播。
+    playing: videoIsPlaying(tick as never),
     paused: tick ? (tick as { paused?: boolean }).paused !== false : undefined,
     hasVideo: Boolean(tick && ((tick as { hasVideo?: boolean }).hasVideo || (tick as { duration?: number }).duration)),
     mid: String((tick as { mid?: string } | null)?.mid || ''),
-    watching: Boolean(watch && (watch.status === 'watching' || watch.status === 'paused' || watch.status === 'stalled')),
-    watchStatus: String(watch?.status || ''),
+    watching: Boolean(watch?.sessionId === sessionId && (watch.status === 'watching' || watch.status === 'paused' || watch.status === 'stalled')),
+    watchStatus: watch?.sessionId === sessionId ? String(watch.status) : '',
     leftJobs,
     chapterJobsDone: panel?.event === 'chapter_jobs_done' || (Boolean(panel?.thisSection) && leftJobs.length === 0),
     pageSummary: Boolean(url),
@@ -81,6 +85,7 @@ export const collectFinishEvidence = async (
     planDone: progress?.done,
     planTotal: progress?.total,
     planComplete: progress?.complete,
+    courseCompletion: kind === 'course' ? courseCompletionEvidence(extras?.steps || [], url) : undefined,
   }
 }
 
@@ -106,7 +111,7 @@ export const judgeFinish = (
   if (want === 'done' && role !== 'explore' && pending.length) {
     return {
       ok: false,
-      error: `清单还有未完成：${pending.map((item) => item.text).join('、')}。先 browser_todo check，不要口头收工。`,
+      error: `清单还有未完成：${pending.map((item) => item.text).join('、')}。先实际完成并核对结果，再 browser_todo check；确实无法继续时说明 blocked 原因，不能只勾选清单收尾。`,
     }
   }
   if (
@@ -134,10 +139,14 @@ export const judgeFinish = (
 
   const intent = evidence.intent || 'unknown'
   const kind = evidence.kind || 'unknown'
-  const loginUrl = /passport2|\/login/i.test(String(evidence.url || ''))
+  let loginUrl = false
+  try {
+    const url = new URL(String(evidence.url || ''))
+    loginUrl = url.hostname.toLowerCase() === 'passport2.chaoxing.com' || /(?:^|\/)login(?:\/|$)/i.test(url.pathname)
+  } catch { /* 没有可靠网址时不根据字符串片段猜测登录页。 */ }
 
   if (kind === 'login' || loginUrl) {
-    return { ok: false, error: '还在登录页。离开 passport 后再 finish(done)。' }
+    return { ok: false, error: '当前仍在登录页，尚无进入目标页面的证据。先按用户目标核对登录结果；无法继续则说明具体阻塞。' }
   }
 
   if (intent === 'play' || kind === 'player') {
@@ -151,16 +160,20 @@ export const judgeFinish = (
     if (evidence.playing) {
       return { ok: false, error: '有视频在播。用 finish(watching)，不要当成整门课做完。' }
     }
-    if (evidence.hasVideo && evidence.paused !== false) {
-      return { ok: false, error: '播放器在，但视频是暂停的。先点播放再 browser_watch。' }
+    if (kind === 'course' && !evidence.watching && evidence.courseCompletion
+      && evidence.courseCompletion.completed === evidence.courseCompletion.total) {
+      return { ok: true, status: 'done', summary: text }
     }
     if (evidence.chapterJobsDone && !evidence.leftJobs?.length) {
       return { ok: true, status: 'done', summary: text }
     }
+    if (evidence.hasVideo && evidence.paused !== false) {
+      return { ok: false, error: '播放器在，但视频是暂停的。先点播放再 browser_watch。' }
+    }
     if (evidence.watching) {
       return { ok: false, error: '有监控或课程计划在跑。用 finish(watching)，不要标 done。' }
     }
-    return { ok: false, error: '没有在播，也没有完成的课程计划。先点播放再 browser_watch，或提交 browser_course_plan。' }
+    return { ok: false, error: '尚无任务已完成的页面证据。先核对当前目录或任务点统计；确有未完成任务才继续执行，全部完成则读取明确统计后收尾，无法核对则说明 blocked 原因。' }
   }
 
   return { ok: true, status: want, summary: text }

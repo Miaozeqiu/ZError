@@ -1,6 +1,9 @@
 ---
-name: 题库导入
+name: question-import
 description: 从附带文件或导入任务识别题目并写入本地/校园题库。
+compatibility: Requires ZError attachment, import-task and question-bank tools.
+metadata:
+  display-name: 题库导入
 ---
 
 # 题库导入

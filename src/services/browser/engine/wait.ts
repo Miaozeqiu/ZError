@@ -314,9 +314,10 @@ export const attachActionSnapshot = async <T extends ActResult>(
   let timer = 0
   try {
     const page = await Promise.race([
-      readBrowserPage(id, { frame, acted: true, maxFrames: 2, gen }),
+      readBrowserPage(id, { frame: result.requiresRefresh ? undefined : frame,
+        acted: !result.requiresRefresh, maxFrames: result.requiresRefresh ? 8 : 2, gen }),
       new Promise<null>((resolve) => {
-        timer = window.setTimeout(() => resolve(null), actionSnapBudgetMs())
+        timer = window.setTimeout(() => resolve(null), result.requiresRefresh ? 4000 : actionSnapBudgetMs())
       }),
     ])
     if (!page) {

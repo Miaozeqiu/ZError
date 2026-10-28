@@ -4,7 +4,7 @@
   "host": "zhihuishu.com",
   "hostPattern": "zhihuishu\\.com",
   "notes": [
-    "第二站烟测：课程列表出卡，open 用 list 包的 work handle。看见的值在 parsers/list/see.json。"
+    "在真实课程列表页按快照中的课名进入课程，验证成功后更新本站操作经验。"
   ],
   "nodes": [
     {

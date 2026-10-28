@@ -21,65 +21,77 @@
         @wheel.prevent="onWheel"
       >
         <div
-          class="graph-map"
+          class="graph-camera"
           :style="{
-            width: `${map.width}px`,
-            height: `${map.height}px`,
-            transform: `translate(${cam.x}px, ${cam.y}px) scale(${cam.scale})`,
+            left: `${cam.x}px`,
+            top: `${cam.y}px`,
+            width: `${map.width * cam.scale}px`,
+            height: `${map.height * cam.scale}px`,
           }"
         >
-          <svg class="graph-wires" :viewBox="`0 0 ${map.width} ${map.height}`">
-            <defs>
-              <marker :id="`${markerId}-arrow`" viewBox="0 0 12 12" refX="9" refY="6" markerWidth="8" markerHeight="8" orient="auto">
-                <path class="graph-arrow" d="M2.2 2.2 L9.6 6 L2.2 9.8 Z" />
-              </marker>
-              <marker :id="`${markerId}-arrow-on`" viewBox="0 0 12 12" refX="9" refY="6" markerWidth="8" markerHeight="8" orient="auto">
-                <path class="graph-arrow-on" d="M2.2 2.2 L9.6 6 L2.2 9.8 Z" />
-              </marker>
-            </defs>
-            <path
-              v-for="(wire, idx) in map.wires"
-              :key="`${wire.from}-${wire.to}-${idx}`"
-              :d="wire.d"
-              :class="['graph-wire', `is-${wire.kind}`, { 'is-on': wire.active }]"
-              :marker-end="wire.active ? `url(#${markerId}-arrow-on)` : `url(#${markerId}-arrow)`"
-            />
-          </svg>
-
-          <span
-            v-for="(wire, idx) in map.wires"
-            :key="`lbl-${wire.from}-${wire.to}-${idx}`"
-            class="graph-edge"
-            :class="{ 'is-on': wire.active }"
-            :style="{ left: `${wire.lx}px`, top: `${wire.ly}px` }"
-          >
-            {{ wire.label }}
-          </span>
-
-          <article
-            v-for="node in map.nodes"
-            :key="node.id"
-            class="graph-node"
-            :data-node-id="node.id"
-            :class="{
-              'is-current': node.current,
-              'is-picked': picked?.id === node.id,
+          <div
+            class="graph-map"
+            :style="{
+              width: `${map.width}px`,
+              height: `${map.height}px`,
+              zoom: renderScale,
+              transform: cam.scale < renderScale ? `scale(${cam.scale / renderScale})` : 'none',
             }"
-            :style="{ left: `${node.x}px`, top: `${node.y}px`, width: `${node.w}px`, height: `${node.h}px` }"
           >
-            <SiteGraphPageSketch
-              compact
-              :title="node.title"
-              :badge="node.current ? node.frames?.find((item) => item.on)?.tab : ''"
-              :live="node.current"
-              :sketch="sketchOf(node)"
-              :on-tab="node.frames?.find((item) => item.on)?.tab"
-              :frame-name="node.frame?.name"
-              :pane="node.frames?.find((item) => item.on)?.name || node.frames?.[0]?.name"
-              :doc-title="node.frames?.find((item) => item.on)?.title || node.frames?.find((item) => item.on)?.tab"
-              :stay="(node.frames?.find((item) => item.on)?.open || node.frames?.[0]?.open) === 'stay'"
-            />
-          </article>
+            <svg class="graph-wires" :viewBox="`0 0 ${map.width} ${map.height}`">
+              <defs>
+                <marker :id="`${markerId}-arrow`" viewBox="0 0 12 12" refX="9" refY="6" markerWidth="8" markerHeight="8" orient="auto">
+                  <path class="graph-arrow" d="M2.2 2.2 L9.6 6 L2.2 9.8 Z" />
+                </marker>
+                <marker :id="`${markerId}-arrow-on`" viewBox="0 0 12 12" refX="9" refY="6" markerWidth="8" markerHeight="8" orient="auto">
+                  <path class="graph-arrow-on" d="M2.2 2.2 L9.6 6 L2.2 9.8 Z" />
+                </marker>
+              </defs>
+              <path
+                v-for="(wire, idx) in map.wires"
+                :key="`${wire.from}-${wire.to}-${idx}`"
+                :d="wire.d"
+                :class="['graph-wire', `is-${wire.kind}`, { 'is-on': wire.active }]"
+                :marker-end="wire.active ? `url(#${markerId}-arrow-on)` : `url(#${markerId}-arrow)`"
+              />
+            </svg>
+
+            <span
+              v-for="(wire, idx) in map.wires"
+              :key="`lbl-${wire.from}-${wire.to}-${idx}`"
+              class="graph-edge"
+              :class="{ 'is-on': wire.active }"
+              :style="{ left: `${wire.lx}px`, top: `${wire.ly}px` }"
+            >
+              {{ wire.label }}
+            </span>
+
+            <article
+              v-for="node in map.nodes"
+              :key="node.id"
+              class="graph-node"
+              :data-node-id="node.id"
+              :class="{
+                'is-current': node.current,
+                'is-picked': picked?.id === node.id,
+              }"
+              :style="{ left: `${node.x}px`, top: `${node.y}px`, width: `${node.w}px`, height: `${node.h}px` }"
+            >
+              <SiteGraphPageSketch
+                compact
+                :title="node.title"
+                :badge="node.current ? node.frames?.find((item) => item.on)?.tab : ''"
+                :live="node.current"
+                :sketch="sketchOf(node)"
+                :caption="cardDescription(node)"
+                :on-tab="node.frames?.find((item) => item.on)?.tab"
+                :frame-name="node.frame?.name"
+                :pane="node.frames?.find((item) => item.on)?.name || node.frames?.[0]?.name"
+                :doc-title="node.frames?.find((item) => item.on)?.title || node.frames?.find((item) => item.on)?.tab"
+                :stay="(node.frames?.find((item) => item.on)?.open || node.frames?.[0]?.open) === 'stay'"
+              />
+            </article>
+          </div>
         </div>
       </div>
 
@@ -87,7 +99,14 @@
         <header class="graph-detail-head">
           <button type="button" class="graph-detail-close" @click="selectedId = ''">收起</button>
         </header>
-        <p v-if="picked.path" class="graph-detail-path">{{ picked.path }}</p>
+        <div v-if="picked.path" class="graph-detail-address">
+          <span class="graph-detail-address-label">页面地址</span>
+          <code class="graph-detail-path">{{ picked.path }}</code>
+          <button type="button" class="graph-detail-copy" :disabled="copying" @click="copyAddress">
+            {{ copyState === 'copied' ? '已复制' : '复制地址' }}
+          </button>
+          <span v-if="copyState === 'error'" class="graph-copy-error" role="status">复制失败，请选择地址手动复制</span>
+        </div>
         <SiteGraphPageSketch
           :title="picked.title"
           :badge="picked.frames?.find((item) => item.on)?.tab"
@@ -99,7 +118,7 @@
           :doc-title="picked.frames?.find((item) => item.on)?.title || picked.frames?.find((item) => item.on)?.tab"
           :caption="picked.frames?.find((item) => item.on)?.tab
             ? `框里是「${picked.frames.find((item) => item.on)?.tab}」`
-            : ''"
+            : cardDescription(picked)"
           :stay="(picked.frames?.find((item) => item.on)?.open || picked.frames?.[0]?.open) === 'stay'"
         />
         <p class="graph-structure">{{ picked.structure || picked.summary }}</p>
@@ -129,6 +148,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { abstractionMenuOpen } from '../../services/browser/abstractions'
 import SiteGraphPageSketch from './SiteGraphPageSketch.vue'
 import {
@@ -141,7 +161,7 @@ import {
 } from '../../services/browser/siteGraph'
 
 const MIN_SCALE = 0.22
-const MAX_SCALE = 2.6
+const MAX_SCALE = 6
 const CAM_DUR = 380
 
 const props = defineProps<{
@@ -186,6 +206,34 @@ const selectedId = ref('')
 const picked = computed(() => (
   map.value.nodes.find((node) => node.id === selectedId.value) || null
 ))
+const copying = ref(false)
+const copyState = ref<'idle' | 'copied' | 'error'>('idle')
+const cardDescription = (node: Record<string, unknown>) => {
+  const summary = String(node.summary || '').trim().split(/[。！？\n]/, 1)[0]
+  const route = /^(?:https?:\/\/|\/|[\w.-]+\/)/i.test(summary)
+  const implementation = /\b(?:iframe|el-tree|ckplayer|blob|invoke|browser_\w+|parsers?)\b/i.test(summary)
+  return summary && !route && !implementation ? summary : '查看页面内容'
+}
+const copyAddress = async () => {
+  const address = String(picked.value?.path || '').trim()
+  if (!address || copying.value) return
+  const id = selectedId.value
+  copying.value = true
+  try {
+    try {
+      await writeText(address)
+    } catch {
+      await navigator.clipboard.writeText(address)
+    }
+    if (selectedId.value === id) copyState.value = 'copied'
+  } catch {
+    if (selectedId.value === id) copyState.value = 'error'
+  } finally {
+    copying.value = false
+  }
+}
+watch(selectedId, () => { copyState.value = 'idle' })
+
 const emptyText = computed(() => {
   if (props.preview) return '图谱为空或 JSON 无效'
   return map.value.unknown ? '当前站还没有图谱' : '打开网页后显示路由和解析器'
@@ -201,6 +249,9 @@ const headHint = computed(() => {
 })
 const scrollRef = ref<HTMLElement | null>(null)
 const cam = reactive({ x: 0, y: 0, scale: 1 })
+// Keep the smallest 8px labels above WebKit's 9px font floor during layout.
+// Downsampling the entire map then preserves text, card and wire proportions.
+const renderScale = computed(() => Math.max(2, cam.scale))
 const panning = ref(false)
 const userMoved = ref(false)
 
@@ -364,7 +415,7 @@ const onPointerUp = (event: PointerEvent) => {
 
 const onWheel = (event: WheelEvent) => {
   const view = scrollRef.value
-  if (!view) return
+  if (!view || event.deltaY === 0) return
   const rect = view.getBoundingClientRect()
   const sx = event.clientX - rect.left
   const sy = event.clientY - rect.top
@@ -503,6 +554,7 @@ onBeforeUnmount(() => {
 }
 
 .graph-scroll {
+  position: relative;
   flex: 1;
   min-height: 0;
   overflow: hidden;
@@ -515,10 +567,16 @@ onBeforeUnmount(() => {
   cursor: grabbing;
 }
 
+.graph-camera {
+  position: absolute;
+}
+
 .graph-map {
-  position: relative;
+  position: absolute;
+  left: 0;
+  top: 0;
   transform-origin: 0 0;
-  will-change: transform;
+  /* Only shrink a rendered layer; enlargement uses layout zoom to redraw text. */
 }
 
 .graph-wires {
@@ -635,7 +693,8 @@ onBeforeUnmount(() => {
   justify-content: flex-end;
 }
 
-.graph-detail-close {
+.graph-detail-close,
+.graph-detail-copy {
   flex-shrink: 0;
   height: 24px;
   padding: 0 8px;
@@ -647,12 +706,43 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 
-.graph-detail-close:hover {
+.graph-detail-close:hover,
+.graph-detail-copy:hover {
   background: color-mix(in srgb, var(--text-primary, #1d1d1f) 10%, transparent);
 }
 
 .graph-detail-close:active {
   transform: scale(0.97);
+}
+
+.graph-detail-address {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  min-width: 0;
+}
+
+.graph-detail-address-label {
+  flex-shrink: 0;
+  font-size: 11px;
+  line-height: 24px;
+  color: var(--text-secondary, #86868b);
+}
+
+.graph-detail-path {
+  flex: 1;
+  min-width: 100px;
+  padding: 4px 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.graph-copy-error {
+  flex-basis: 100%;
+  font-size: 11px;
+  color: var(--text-secondary, #86868b);
 }
 
 .graph-detail-path,

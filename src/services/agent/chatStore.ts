@@ -1,5 +1,7 @@
 /** 会话列表、持久化、作曲栏。发送循环在 chatLoop.ts，不要把模型调用写回这里。 */
 import { computed, ref, watch } from 'vue'
+import { readSecureDocument, writeSecureDocument } from '../security/secureStore'
+import { redactObject } from '../security/secretRedaction'
 import { browserControlState } from '../browser/control'
 import type { ImportStepPreview, ImportTaskStep } from '../app/importTasks'
 import { dropAllWatchQueues } from '../platform'
@@ -74,15 +76,7 @@ const persist = (writeTranscript = true) => {
         transcript: message.transcript ? clipTranscript(message.transcript) : undefined,
       })),
     }))
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(toPayload(false)))
-  } catch {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(toPayload(true)))
-    } catch {
-      // ignore quota
-    }
-  }
+  void chatStoreReady.then(() => writeSecureDocument('agent_chats', redactObject(toPayload(false)))).catch(() => undefined)
   if (!writeTranscript) return
   const latestBrowser = sessions.value
     .filter((session) => session.browserId && !session.parentId)
@@ -90,13 +84,13 @@ const persist = (writeTranscript = true) => {
   writeBrowserTranscript(latestBrowser)
 }
 
-const loadPersisted = () => {
+const loadPersisted = async () => {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return
-    const parsed = JSON.parse(raw) as AgentChatSession[]
+    const parsed = await readSecureDocument<AgentChatSession[]>('agent_chats', STORAGE_KEY)
+    if (!parsed) return
     if (!Array.isArray(parsed)) return
-    sessions.value = parsed.filter((session) => !session.parentId).slice(0, 30).map((session) => ({
+    const restored = parsed.filter(session => !sessions.value.some(existing => existing.id === session.id))
+      .filter(session => !session.parentId).slice(0, 30).map((session): AgentChatSession => ({
       ...session,
       attachments: Array.isArray(session.attachments) ? session.attachments : undefined,
       studySubjectId: Number(session.studySubjectId) > 0 ? Number(session.studySubjectId) : undefined,
@@ -118,13 +112,16 @@ const loadPersisted = () => {
         error: message.status === 'streaming' ? '应用关闭时对话中断' : message.error,
       })),
     }))
-    activeId.value = sessions.value[0]?.id || null
+    sessions.value = [...sessions.value, ...restored].slice(0, 30)
+    if (!activeId.value || !sessions.value.some(session => session.id === activeId.value)) {
+      activeId.value = sessions.value[0]?.id || null
+    }
   } catch {
-    sessions.value = []
+    // Keep unread encrypted history intact; the global storage notice explains unlock failures.
   }
 }
 
-loadPersisted()
+export const chatStoreReady = loadPersisted()
 
 export const chatSessions = computed(() => sessions.value.filter((session) => !session.parentId))
 export const browserChatSessions = computed(() => sessions.value.filter((session) => session.browserId && !session.parentId))
@@ -194,9 +191,11 @@ export const persistSoon = (immediate = false) => {
     persistTimer = window.setTimeout(() => run(true), 0)
     return
   }
-  if (sessions.value.some((session) => sessionIsStreaming(session))) return
   if (persistTimer) return
-  persistTimer = window.setTimeout(() => run(false), 1500)
+  // 长时间运行的浏览器任务也需要检查点；否则意外退出会丢掉整轮输出与工具记录。
+  // 流式期间降低写入频率，避免每个 token 都触发加密存储。
+  const streaming = sessions.value.some((session) => sessionIsStreaming(session))
+  persistTimer = window.setTimeout(() => run(false), streaming ? 10_000 : 1500)
 }
 
 export const liveSession = (sessionId: string) =>
@@ -371,7 +370,7 @@ export const createChat = (init?: Partial<Pick<AgentChatSession, 'title' | 'atta
   }
   sessions.value = [session, ...sessions.value].slice(0, 40)
   if (init?.activate !== false) activeId.value = session.id
-  persist()
+  persistSoon()
   return session
 }
 
@@ -400,7 +399,7 @@ export const attachFileToChat = (input: {
   persist()
 }
 
-export const finalizeStopped = (sessionId: string, messageId: string) => {
+export const finalizeStopped = (sessionId: string, messageId: string, reason: AgentChatMessage['stopReason'] = 'user') => {
   patchSession(sessionId, (session) => ({
     ...session,
     updatedAt: Date.now(),
@@ -409,7 +408,9 @@ export const finalizeStopped = (sessionId: string, messageId: string) => {
       return {
         ...message,
         status: 'stopped' as const,
+        stopReason: reason,
         waiting: false,
+        awaitingVideo: false,
         error: undefined,
         steps: message.steps.map((step) =>
           step.status === 'running'
@@ -421,13 +422,13 @@ export const finalizeStopped = (sessionId: string, messageId: string) => {
   }))
 }
 
-export const stopChat = (id?: string) => {
+export const stopChat = (id?: string, reason: AgentChatMessage['stopReason'] = 'user') => {
   const sessionId = id || activeId.value
   if (!sessionId) return
   const abort = chatAborts.get(sessionId)
   const session = sessions.value.find((item) => item.id === sessionId)
   const message = session?.messages.find((item) => item.status === 'streaming')
-  if (session && message) finalizeStopped(session.id, message.id)
+  if (session && message) finalizeStopped(session.id, message.id, reason)
   persistSoon(true)
   void import('./subagent/owner').then(({ abortChildrenOf }) => abortChildrenOf(sessionId)).catch(() => undefined)
   if (abort && !abort.signal.aborted) abort.abort()
@@ -444,7 +445,7 @@ const offBrowserTakeover = watch(
   (next, previous) => {
     for (const state of next) {
       if (state.owner === 'user' && previous?.find(item => item.sessionId === state.sessionId)?.owner !== 'user') {
-        stopChat(state.sessionId)
+        stopChat(state.sessionId, 'browser-takeover')
       }
     }
   },

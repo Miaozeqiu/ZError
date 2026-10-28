@@ -38,9 +38,10 @@ export const rememberBrowserTaskIntent = (sessionId: string, text: string) => {
   const prev = bySession.get(id)
   const intent = intentFromText(text)
   const focus = focusFromText(text)
+  const continuing = /^(?:请|帮我)?(?:继续|接着|恢复|重试|再试)(?:吧|一下|执行|做|操作|任务|播放|看|学习|上次的任务|刚才的任务|原来的任务)?[。！!\s]*$/.test(String(text || '').trim())
   const next: TaskMemory = {
-    intent: intent === 'unknown' ? (prev?.intent || 'unknown') : intent,
-    focus: focus || prev?.focus,
+    intent: intent === 'unknown' && continuing ? (prev?.intent || 'unknown') : intent,
+    focus: focus || (continuing ? prev?.focus : undefined),
   }
   bySession.set(id, next)
   return next.intent

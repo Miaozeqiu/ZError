@@ -3,6 +3,8 @@ import { resolveExecutableModelJsCode, resolveRuntimeModelId } from '../model/pr
 import { buildAnswerChatMessages } from '../../utils/answer/answerFewShot'
 import { modelApi, settingsApi } from './deps'
 import {
+  assertSuccessfulModelResponse,
+  trackModelHttpOutcome,
   createCancelledRequestError,
   formatModelCallError,
   isAbortLikeError,
@@ -202,7 +204,7 @@ export const callModelWithStreaming = async (
 
   const tauriHttp = await import('@tauri-apps/plugin-http')
   const { invoke } = await import('@tauri-apps/api/core')
-  const tauriFetch = async (input: RequestInfo | URL, init: RequestInit = {}) => {
+  const rawTauriFetch = async (input: RequestInfo | URL, init: RequestInit = {}) => {
     try {
       return await tauriHttp.fetch(input as any, {
         ...init,
@@ -214,6 +216,9 @@ export const callModelWithStreaming = async (
       throw new Error(formatModelCallError(error, '网络请求失败'))
     }
   }
+
+  const transport = trackModelHttpOutcome(rawTauriFetch)
+  const tauriFetch = transport.fetch
 
   // 执行JavaScript配置代码
   if (executableCode) {
@@ -252,13 +257,16 @@ export const callModelWithStreaming = async (
       while (true) {
         // 执行模型调用
         const result = await processModel(testInput, config, tauriFetch, abortController.signal)
+        transport.assertSuccess()
 
+        assertSuccessfulModelResponse(result)
         if (result) {
           // 如果返回的是生成器或异步迭代器，进行流式处理
           if (result[Symbol.asyncIterator]) {
             let toolCalls: any[] = []
 
             for await (const chunk of result) {
+              assertSuccessfulModelResponse(chunk)
               if (chunk.tool_calls) {
                 for (const tc of chunk.tool_calls) {
                   const existing = toolCalls.find(t => t.id === tc.id)
@@ -332,6 +340,9 @@ export const callModelWithStreaming = async (
                 updateRequestDetailsWithModelReasoning(requestId, fullReasoning)
               }
             }
+            transport.assertSuccess()
+            if (!fullResponse.trim()) throw new Error('模型返回空内容')
+            assertSuccessfulModelResponse(fullResponse)
             return fullResponse
           } else {
             // 非流式响应，直接返回

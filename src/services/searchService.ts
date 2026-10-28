@@ -60,21 +60,7 @@ const normalizeConfig = (config: SearchSettings): SearchSettings => ({
   deepseekApiKey: typeof config.deepseekApiKey === 'string' ? config.deepseekApiKey.trim() : '',
 })
 
-const getFetchImpl = async (): Promise<typeof fetch> => {
-  if (isTauriEnvironment()) {
-    try {
-      const tauriHttp = await import('@tauri-apps/plugin-http')
-      return ((input: RequestInfo | URL, init?: RequestInit) =>
-        tauriHttp.fetch(input as any, init as any)) as typeof fetch
-    } catch {
-      // fall through to browser fetch
-    }
-  }
-  if (typeof fetch !== 'function') {
-    throw new Error('当前环境不支持网络请求')
-  }
-  return fetch.bind(globalThis) as typeof fetch
-}
+const getFetchImpl = async (): Promise<typeof fetch> => (await import('./security/secureFetch')).secureFetch
 
 const buildHeaders = (config: SearchSettings): Record<string, string> => ({
   'Content-Type': 'application/json',

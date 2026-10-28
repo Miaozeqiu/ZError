@@ -1,6 +1,9 @@
 ---
-name: 练习与讲评
+name: quiz-practice
 description: 出练习题、讲评作答、复习错题，以及查看练习记录。
+compatibility: Requires ZError quiz, question-bank and practice-history tools.
+metadata:
+  display-name: 练习与讲评
 ---
 
 # 练习与讲评

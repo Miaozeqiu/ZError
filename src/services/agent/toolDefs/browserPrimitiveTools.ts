@@ -1,4 +1,5 @@
 /** 通用浏览器原语。页面身份看网站地图，进度监控用 browser_watch。 */
+import { WEBSITE_ICON_TOOL } from './websiteTools'
 import {
   LIST_AGENT_SKILLS_TOOL,
   READ_AGENT_SKILL_FILE_TOOL,
@@ -8,11 +9,12 @@ import {
 } from '../skillTools'
 
 export const BROWSER_PRIMITIVE_TOOLS = [
+  WEBSITE_ICON_TOOL,
   {
     type: 'function',
     function: {
       name: 'browser_set_checked',
-      description: '将复选框或单选框设为指定状态，已符合状态的不重复点击。使用选项 ref，或题目范围内唯一选项的 selector；勿用全页 nth 猜选项。批量顺序处理，失败立即停止。仅验证 checked 状态，不验证答案内容、不保存或提交。',
+      description: '将复选框或单选框设为指定状态，已符合状态的不重复点击。使用控件 ref，或目标容器内唯一的 selector；勿用全页 nth 猜控件。批量顺序处理，失败立即停止。仅验证 checked 状态，不保存或提交表单；用于答题时也不验证答案内容。',
       parameters: {
         type: 'object', properties: {
           items: { type: 'array', minItems: 1, maxItems: 40, items: {
@@ -57,16 +59,16 @@ export const BROWSER_PRIMITIVE_TOOLS = [
           structure: { type: 'string', description: '页内结构：入口、iframe 与主要控件' },
           frame: {
             type: 'object',
-            description: '页内框外壳，如 #frame_content',
+            description: '页面中已确认的 iframe 外壳标识',
             properties: {
-              name: { type: 'string', description: '框名，如 #frame_content' },
+              name: { type: 'string', description: '页面中实际观察到的 iframe 名称或标识' },
               title: { type: 'string', description: '框里是什么' },
               open: { type: 'string', enum: ['top', 'stay'] },
             },
           },
           frames: {
             type: 'array',
-            description: '同一 iframe 里的页签（如空间的「我教的课 / 我学的课」），不要为此再建节点',
+            description: '同一 iframe 中实际观察到的页签，通常作为当前节点的子视图记录',
             items: {
               type: 'object',
               properties: {
@@ -160,12 +162,13 @@ export const BROWSER_PRIMITIVE_TOOLS = [
     type: 'function',
     function: {
       name: 'browser_click',
-      description: '点击最新快照中的控件 ref，或已观察到的 CSS selector。ref 已包含节点身份，不要自行加 nth。CSS nth 从 1 开始，计入隐藏节点；按 frame 限定 iframe。成功表示点击已执行，是否跳转或提交须核对后续页面。',
+      description: '优先点击最新快照中的 ref，也接受已观察到的 selector 或可见文字 text（文字与 browser_click_text 相同）。ref 已包含节点身份，不要自行加 nth。CSS nth 从 1 开始，计入隐藏节点；按 frame 限定 iframe。成功表示点击已执行，是否跳转或提交须核对后续页面。',
       parameters: {
         type: 'object',
         properties: {
           ref: { type: 'string', description: '快照编号，如 e3。不要放 CSS。' },
-          selector: { type: 'string', description: 'CSS，如 #loginBtn。登录按钮用这个。' },
+          selector: { type: 'string', description: '目标控件的 CSS 选择器，使用已在页面中核实的选择器。' },
+          text: { type: 'string', description: '没有 ref/selector 时按可见文字定位，优先使用快照中唯一的精确匹配。' },
           nth: { type: 'integer', description: '第几个匹配，从 1 开始。' },
           frame: { type: 'string', description: 'iframe 的 id / mid / src 子串。' },
         },
@@ -198,11 +201,12 @@ export const BROWSER_PRIMITIVE_TOOLS = [
         properties: {
           ref: { type: 'string', description: '快照里的 textbox 编号，如 e14。填表用这个。' },
           selector: { type: 'string', description: '没有 ref 时才用的 CSS。不要为了找选择器去 eval。' },
-          text: { type: 'string' },
+          text: { type: 'string', description: '普通文字。账号密码使用 secret_ref，不得传真实值。' },
+          secret_ref: { type: 'string', description: 'protect_credentials 返回的完整 {{secret:...}} 变量，与 text 互斥。' },
           nth: { type: 'integer', description: '第几个匹配，从 1 开始。' },
           frame: { type: 'string', description: 'iframe 的 id / mid / src 子串。' },
         },
-        required: ['text'],
+        required: [],
       },
     },
   },
@@ -232,11 +236,13 @@ export const BROWSER_PRIMITIVE_TOOLS = [
     function: {
       name: 'browser_eval',
       description:
-        '只读检查快照缺失的结构、题干与选项关联或实际控件状态；按需一次返回结构化结果，避免反复探测同一结构。仅读取已渲染页面，不用它改值、勾选、点击、播放或调用隐藏接口。frame 定位 iframe，all 默认 false。',
+        '只读检查快照缺失的结构、题干与选项关联或实际控件状态；按需一次返回结构化结果，避免反复探测同一结构。仅读取已渲染页面，不用它改值、勾选、点击、播放或调用隐藏接口。嵌套 iframe 优先传快照中的 frameId 和 loaderId；frame 仅作兼容定位。定位失败先读新快照，不能原样重试。all 默认 false。',
       parameters: {
         type: 'object',
         properties: {
           script: { type: 'string' },
+          frameId: { type: 'string', description: '快照中的精确 frameId，优先使用；不要填 iframe 的 HTML id 或框路径。' },
+          loaderId: { type: 'string', description: '与 frameId 同一份快照中的 loaderId，文档更换后必须重新读取。' },
           frame: { type: 'string', description: 'iframe 的 id / mid / src 子串。' },
           all: { type: 'boolean', description: '扫全部 frame。默认 false。' },
         },
@@ -283,7 +289,7 @@ export const BROWSER_PRIMITIVE_TOOLS = [
           url: { type: 'string', description: 'until=url 时的子串或正则' },
           selector: { type: 'string', description: 'until=selector 时的 CSS' },
           fn: { type: 'string', description: 'until=fn 时的 JS，返回真值即结束。默认顶层。' },
-          response: { type: 'string', description: 'until=response 时匹配的请求 URL 子串，如 /api/login' },
+          response: { type: 'string', description: 'until=response 时匹配的请求 URL 子串，使用当前页面已观察到的请求路径' },
           frame: { type: 'string', description: 'fn / selector 所在 iframe 的 id / mid / src 子串。' },
           idleMs: { type: 'integer', description: 'until=idle 时稳定毫秒，默认 800' },
         },
@@ -347,6 +353,7 @@ export const BROWSER_PRIMITIVE_TOOLS = [
             enum: ['done', 'pending', 'cancelled'],
             description: 'check 目标状态，默认 done',
           },
+          reason: { type: 'string', description: '取消步骤、替换或清空未完成清单时必填，说明用户目标或计划为何调整。任务受阻不能假装取消。' },
         },
         required: ['action'],
       },
@@ -380,14 +387,14 @@ export const BROWSER_PRIMITIVE_TOOLS = [
     type: 'function',
     function: {
       name: 'browser_finish',
-      description: '宣告当前用户任务结束。done 前检查本轮站点经验并填写 learning；新方法先读原 Skill、有增量才写入，实际保存成功才能填 updated。summary 概括实际结果。blocked=必须用户动手；watching=已交播放监控。',
+      description: 'done/blocked 最终收尾；watching 仅进入当前任务的视频事件等待，视频播完或异常后会返回并继续原任务，不能提前输出最终结果。done 前检查本轮站点经验并填写 learning；新方法先读原 Skill、有增量才写入，实际保存成功才能填 updated。summary 概括实际状态。',
       parameters: {
         type: 'object',
         properties: {
           status: {
             type: 'string',
             enum: ['done', 'blocked', 'watching'],
-            description: 'done 完成；blocked 等人；watching 已交监控',
+            description: 'done 任务实际完成；blocked 需要用户处理；watching 保持当前任务等待视频事件',
           },
           summary: { type: 'string', description: '你自己写的一两句真实结果，禁止套话' },
           learning: {

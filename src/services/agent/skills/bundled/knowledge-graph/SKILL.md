@@ -1,6 +1,9 @@
 ---
-name: 知识图谱
+name: knowledge-graph
 description: 查看、绘制、补改、聚焦或打开学习页的科目知识图谱。
+compatibility: Requires ZError knowledge-graph tools.
+metadata:
+  display-name: 知识图谱
 ---
 
 # 知识图谱

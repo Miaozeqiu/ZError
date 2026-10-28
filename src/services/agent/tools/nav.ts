@@ -87,11 +87,11 @@ export const handleNavTools = async (ctx: Record<string, any>): Promise<string |
           iframes: page.iframes,
           frames: page.frames,
           hint: sameLogin
-            ? '快照暂时空，网址还在登录页，不是跳转。等 1 秒再 get_page。密码框有 value=已填写 才算填上了。'
+            ? '快照暂时为空，当前网址属于登录页。等待页面就绪后重新读取快照，再按实际控件和用户目标操作。'
             : frameSrc.length
               ? `顶层快照空，内容多半在 iframe：${frameSrc.join('、')}。看 frames / preferredFrame，或 screenshot / eval（不要 contentDocument）。`
             : misses >= 2
-              ? '连续两次快照是空的，已重连浏览器通道。用 click_text 点你要的文字，不要再连续 get_page。'
+              ? '连续两次快照为空，已尝试重连浏览器通道。先截图或只读检查加载状态，确认实际控件后再操作；仍无法读取则说明具体错误，不要按猜测文字点击。'
                 : '快照暂时空。先看 url：没变就还在本页，不要当成跳转，不要 reset 图谱。',
         })
       }
@@ -174,7 +174,7 @@ export const handleNavTools = async (ctx: Record<string, any>): Promise<string |
       if (/browser-home|localhost:1420/i.test(here) && !/browser-home|localhost:1420/i.test(target)) {
         return observedJson(browserId, {
           ok: false,
-          error: '还在应用首页，没有打开目标页。再 navigate 一次，不要先点登录。',
+          error: '仍在应用首页，目标页尚未打开。先核对导航结果、加载状态和网址，再决定是否重试。',
           url: here,
           want: target,
         })
@@ -187,7 +187,7 @@ export const handleNavTools = async (ctx: Record<string, any>): Promise<string |
       })
     }
     const note = pageHostOf(landed) !== pageHostOf(target)
-      ? `已到同站 ${pageHostOf(landed)}（可能是登录跳转），不是原路径。`
+      ? `已到同站 ${pageHostOf(landed)}，路径发生变化。请根据当前网址和页面内容核对导航结果。`
       : undefined
     return observedJson(browserId, {
       ok: true,

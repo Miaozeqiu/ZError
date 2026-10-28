@@ -20,4 +20,10 @@ describe('site-learn 文件路径', () => {
     expect(placed.path).toBe('sites/zjooc.cn/SKILL.md')
     expect(placed.error).toBeUndefined()
   })
+
+  it('不再创建测试页面或把 fixtures 重定向到站点目录', () => {
+    for (const path of ['fixtures/page.html', 'sites/zjooc.cn/fixtures/page.html', 'sites/zjooc.cn/page.html']) {
+      expect(placeSiteLearnPath(path, 'zjooc.cn').error).toContain('当前网页验证')
+    }
+  })
 })

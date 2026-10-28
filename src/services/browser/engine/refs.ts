@@ -57,7 +57,7 @@ export const locatorFromCache = (browserId: string, ref: string) => (
 
 const SNAPSHOT_REF = /^e\d+$/i
 
-/** 模型常把 #phone / input#pwd 塞进 ref。快照号是 e3，其余当 CSS。 */
+/** 兼容误放进 ref 的 CSS 选择器；快照引用使用 e 加数字的格式。 */
 export const looksLikeCssSelector = (value: string) => {
   const raw = String(value || '').trim()
   if (!raw || SNAPSHOT_REF.test(raw)) return false

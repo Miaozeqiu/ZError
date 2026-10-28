@@ -1,8 +1,15 @@
 import type { ImportTaskStep } from '../app/importTasks'
 import { resolveQuizTitle } from '../../utils/question/quizPractice'
+import { canonicalSkillToolName } from './skillToolNames'
 
 export const describeActivity = (name: string, args: any, status: ImportTaskStep['status'], extra?: any) => {
+  name = canonicalSkillToolName(name)
+  if (name === 'set_website_icon') return {
+    target: extra?.host || args?.website || '当前网站',
+    label: status === 'running' ? '正在保存网站图标' : status === 'failed' ? '保存网站图标失败' : '已保存网站图标',
+  }
   const browserLabels: Record<string, [string, string, string]> = {
+    protect_credentials: ['正在保护凭据', '凭据保存失败', '凭据已安全保存，对话已替换为变量'],
     browser_get_state: ['正在查看网页', '查看网页失败', '查看了当前网页'],
     browser_set_checked: ['正在设置选项', '选项状态未确认，请重新读取页面', '勾选状态已验证'],
     browser_get_page: ['正在读取网页', '读取网页失败', '读取了当前网页'],
@@ -179,7 +186,7 @@ export const describeActivity = (name: string, args: any, status: ImportTaskStep
     browser_chaoxing_captcha: ['正在填写验证码', '验证码提交失败', '已提交验证码'],
     browser_finish: [
       args?.status === 'blocked' ? '正在等待用户' : args?.status === 'watching' ? '正在交给监控' : '正在收尾',
-      '收尾失败',
+      extra?.learningRequired ? '网页任务已完成，网站经验待核对' : '收尾失败',
       args?.summary
         ? String(args.summary).slice(0, 80)
         : args?.status === 'blocked'
@@ -761,26 +768,30 @@ export const describeActivity = (name: string, args: any, status: ImportTaskStep
     }
   }
   if (name === 'read_agent_skill_file') {
-    const path = args?.path || extra?.path || '文件'
+    const path = extra?.path || args?.path || '文件'
     return {
-      target: args?.skill_id || extra?.id || 'Skill',
+      target: extra?.id || args?.skill_id || 'Skill',
       label:
         status === 'running'
           ? `正在读取 ${path}`
           : status === 'failed'
             ? `读取 ${path} 失败`
+            : extra?.exists === false
+              ? `本站尚无经验记录，可创建 ${path}`
             : `读取了 ${path}`,
     }
   }
   if (name === 'write_agent_skill_file') {
-    const path = args?.path || extra?.path || '文件'
+    const path = extra?.path || args?.path || '文件'
     return {
-      target: args?.skill_id || extra?.id || 'Skill',
+      target: extra?.id || args?.skill_id || 'Skill',
       label:
         status === 'running'
           ? `正在写入 ${path}`
           : status === 'failed'
             ? `写入 ${path} 失败`
+            : extra?.unchanged === true
+              ? `已核对 ${path}，内容未变`
             : `写入了 ${path}`,
     }
   }

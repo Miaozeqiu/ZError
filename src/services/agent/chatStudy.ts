@@ -45,6 +45,7 @@ import {
 import { messageHistoryText } from './modelHistory'
 import { resolveSitePackForUrl } from './sitePack'
 import { siteAccountsPrompt } from './siteAccounts'
+import { websiteIdentityForHost, websitePrimaryHost } from './websiteIdentity'
 
 const describeFolders = (items?: AgentChatAttachment[]) => {
   const folders = (items || []).filter(isFolderAttachment)
@@ -90,6 +91,10 @@ export const browserStatePrefix = async (sessionId: string) => {
   const url = peekAppBrowserUrl(browserId) || item?.url || ''
   const name = item?.name || item?.title || hostnameOf(url)
   const accountLine = siteAccountsPrompt(url)
+  const identity = websiteIdentityForHost(url)
+  const identityLine = identity?.loginHosts.length
+    ? `【网站归属】${identity.name}，主网站 ${identity.host}，关联登录域名 ${identity.loginHosts.join('、')}。账号与站点经验统一归到主网站；经验只写 site-learn / sites/${identity.host}/SKILL.md，不另建登录网站。`
+    : ''
   const snap = url ? siteGraphAgentSnap(url) : null
   const pack = resolveSitePackForUrl(url)
   const siteName = displaySiteName(url, {
@@ -114,7 +119,7 @@ export const browserStatePrefix = async (sessionId: string) => {
     role: 'parent',
     refs,
   })
-  const host = hostnameOf(url).replace(/^www\./i, '')
+  const host = websitePrimaryHost(url)
   let skillLine = ''
   if (host) {
     try {
@@ -134,6 +139,7 @@ export const browserStatePrefix = async (sessionId: string) => {
     `同一轮对话跟着整个浏览器「${name}」（browser_id=${browserId}）。弹出新标签会自动切过来。`,
     loop,
     accountLine,
+    identityLine,
     siteLine,
     skillLine,
     hasUsableVisionModel() ? '' : '【模型】当前是文本模型，不能看图。跳过图像/公式题和验证码识图。',

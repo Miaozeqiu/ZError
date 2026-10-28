@@ -1,6 +1,6 @@
 import { computed, ref } from 'vue'
 import { MODEL_REQUEST_CANCELLED_MESSAGE } from './errors'
-import { buildRenderedHtml } from './visionImage'
+import { buildQuestionImagePreview } from './imageQuestion'
 import type { RequestLog } from './types'
 
 export const MAX_REQUEST_LOGS = 100
@@ -391,6 +391,8 @@ export const injectUrlQuestionIfNeeded = (log: RequestLog) => {
   if (!log.requestBody) return
   try {
     const rb = JSON.parse(log.requestBody)
+    // 图片题优化：由 __IMAGE_QUESTION__ 事件处理（占位符 + base64 直传），不要提前下载 URL
+    if (rb.has_images) return
     const title: string = rb.title || ''
     const options: string = rb.options || ''
     if (/https?:\/\//.test(title) || /https?:\/\//.test(options)) {
@@ -407,7 +409,7 @@ export const injectUrlQuestionIfNeeded = (log: RequestLog) => {
         reasoningContent: '',
         renderedHtml: undefined
       }
-      buildRenderedHtml(title, options).then(html => {
+      buildQuestionImagePreview(log.urlQuestion).then(html => {
         if (log.urlQuestion) log.urlQuestion.renderedHtml = html
       })
     }

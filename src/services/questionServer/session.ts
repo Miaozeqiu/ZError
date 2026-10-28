@@ -322,7 +322,7 @@ export const startSSEConnection = () => {
       try {
         const eventData = JSON.parse((event as MessageEvent).data)
         const requestData = eventData.ModelCallRequest || eventData
-        dispatchModelCallRequest(requestData.request_id, requestData.query)
+        dispatchModelCallRequest(requestData.request_id, requestData.query, requestData.images)
       } catch (error) {
         console.error('解析模型调用请求数据失败:', error, '原始数据:', (event as MessageEvent).data)
       }
@@ -516,11 +516,15 @@ export const bindQuestionServerEvents = async () => {
   if (!isTauri.value) return
   try {
     const { listen } = await import('@tauri-apps/api/event')
-    unlistenModelCallRequest = await listen<{ request_id?: string; query?: string }>(
+    unlistenModelCallRequest = await listen<{ request_id?: string; query?: string; images?: string[] }>(
       'model-call-request',
       (event) => {
         const payload = event.payload || {}
-        dispatchModelCallRequest(String(payload.request_id || ''), String(payload.query || ''))
+        dispatchModelCallRequest(
+          String(payload.request_id || ''),
+          String(payload.query || ''),
+          payload.images
+        )
       }
     )
     unlistenRequestLogComplete = await listen<{

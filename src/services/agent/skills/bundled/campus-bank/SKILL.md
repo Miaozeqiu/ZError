@@ -1,6 +1,9 @@
 ---
-name: 校园题库
+name: campus-bank
 description: 查看、搜索、上传与编辑校园题库试卷和题目。
+compatibility: Requires ZError campus question-bank tools and a signed-in campus account.
+metadata:
+  display-name: 校园题库
 ---
 
 # 校园题库

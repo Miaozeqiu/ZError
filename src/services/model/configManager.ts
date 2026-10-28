@@ -1,5 +1,6 @@
 /** 模型配置单例：本地存储、选中态、增删改平台/模型。远程拉取走 configRemote.ts。 */
 import { reactive, watch } from 'vue'
+import { readSecureDocument, writeSecureDocument } from '../security/secureStore'
 import type { AIModel, AIPlatform, ModelSettings } from './configTypes'
 import { inferPlatformApiProtocol, modelHasVision, resolveRemoteHasVision } from './configTypes'
 import {
@@ -36,6 +37,8 @@ const MODEL_SETTINGS_STORAGE_KEY = 'model_settings'
  * 模型配置管理器类
  */
 class ModelConfigManager {
+  readonly ready: Promise<void>
+  private hydrated = false
   private settings: ModelSettings
   private listeners: Set<(settings: ModelSettings) => void> = new Set()
   private remotePlatformsSyncAt = 0
@@ -45,9 +48,7 @@ class ModelConfigManager {
   constructor() {
     this.settings = reactive(this.loadSettings())
     this.normalizeSelectedModels()
-    if (this.shouldPersistLoadedSettings) {
-      this.saveSettings()
-    }
+    this.ready = this.hydrate()
     this.setupAutoSave()
   }
 
@@ -55,27 +56,19 @@ class ModelConfigManager {
    * 从本地存储加载模型配置
    */
   private loadSettings(): ModelSettings {
-    try {
-      const stored = localStorage.getItem(MODEL_SETTINGS_STORAGE_KEY)
-      if (stored) {
-        const parsedSettings = JSON.parse(stored)
-        const loadedSettings: ModelSettings = {
-          ...DEFAULT_MODEL_SETTINGS,
-          ...parsedSettings,
-          platforms: (parsedSettings.platforms || []).filter((p: AIPlatform) => p.name?.trim()),
-        }
-        const sanitizedSettings: ModelSettings = {
-          ...loadedSettings,
-          platforms: sanitizeStoredPlatforms(loadedSettings.platforms || []),
-        }
+    return JSON.parse(JSON.stringify(DEFAULT_MODEL_SETTINGS))
+  }
 
-        this.shouldPersistLoadedSettings = JSON.stringify(loadedSettings) !== JSON.stringify(sanitizedSettings)
-        return sanitizedSettings
+  private async hydrate(): Promise<void> {
+    try {
+      const saved = await readSecureDocument<ModelSettings>('model_settings', MODEL_SETTINGS_STORAGE_KEY)
+      if (saved) {
+        Object.assign(this.settings, { ...DEFAULT_MODEL_SETTINGS, ...saved,
+          platforms: sanitizeStoredPlatforms(saved.platforms || []) })
+        this.normalizeSelectedModels()
       }
-    } catch (error) {
-      console.warn('加载模型配置失败，使用默认配置:', error)
-    }
-    return { ...DEFAULT_MODEL_SETTINGS }
+      this.hydrated = true
+    } catch { /* secureStorageState reports the failure; never overwrite unread data */ }
   }
 
   private dedupeAndFilterModelIds(modelIds: Array<string | null | undefined>, validIds: Set<string>, maxCount: number): string[] {
@@ -466,27 +459,17 @@ class ModelConfigManager {
    * 保存配置到本地存储，并异步写入文件
    */
   private saveSettings(): void {
-    try {
-      localStorage.setItem(MODEL_SETTINGS_STORAGE_KEY, JSON.stringify(this.settings))
-      this.notifyListeners()
-      // 异步写入 model_config.json
-      this.saveToFile()
-    } catch (error) {
-      console.error('保存模型配置失败:', error)
-      throw new Error('模型配置保存失败')
-    }
-  }
-
-  /**
-   * 异步写入 model_config.json
-   */
-  private async saveToFile(): Promise<void> {
-    try {
-      const { invoke } = await import('@tauri-apps/api/core')
-      await invoke('write_model_config', { content: JSON.stringify(this.settings) })
-    } catch {
-      // 非 Tauri 环境忽略
-    }
+    if (!this.hydrated) return
+    const snapshot = JSON.parse(JSON.stringify(this.settings)) as ModelSettings
+    this.notifyListeners()
+    void writeSecureDocument('model_settings', snapshot).then(saved => {
+      for (const next of saved.platforms || []) {
+        const current = this.settings.platforms.find(platform => platform.id === next.id)
+        const submitted = snapshot.platforms.find(platform => platform.id === next.id)
+        if (current && submitted && current.apiKey === submitted.apiKey && current.apiKey !== next.apiKey) current.apiKey = next.apiKey
+        if (current && submitted && JSON.stringify(current.customHeaders) === JSON.stringify(submitted.customHeaders) && JSON.stringify(current.customHeaders) !== JSON.stringify(next.customHeaders)) current.customHeaders = next.customHeaders
+      }
+    }).catch(() => undefined)
   }
 
   /**
@@ -905,7 +888,7 @@ class ModelConfigManager {
    * 导出配置
    */
   export(): string {
-    return JSON.stringify(this.settings, null, 2)
+    return JSON.stringify({ ...this.settings, platforms: this.settings.platforms.map(platform => ({ ...platform, apiKey: '', customHeaders: {} })) }, null, 2)
   }
 
   /**

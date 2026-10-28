@@ -327,6 +327,7 @@ const buildCommonHelpers = () => `
         if (Array.isArray(message.tool_calls) && message.tool_calls.length) {
           next.tool_calls = message.tool_calls;
         }
+        if (typeof message.reasoning_content === 'string') next.reasoning_content = message.reasoning_content;
         return next;
       }
 
@@ -442,6 +443,8 @@ const buildCommonHelpers = () => `
       .map((item) => {
         if (!item || typeof item !== 'object') return null;
 
+        if (item.type === 'thinking' || item.type === 'redacted_thinking') return item;
+
         if (item.type === 'text' && typeof item.text === 'string') {
           return { type: 'text', text: item.text };
         }
@@ -514,6 +517,9 @@ const buildCommonHelpers = () => `
 
       if (message.role === 'assistant') {
         const blocks = [];
+        for (const block of message.thinking_blocks || []) {
+          if (block && (block.type === 'thinking' || block.type === 'redacted_thinking')) blocks.push(block);
+        }
         const text = typeof message.content === 'string' ? message.content : joinTextParts(message.content);
         if (text) blocks.push({ type: 'text', text: text });
         if (Array.isArray(message.content)) {
@@ -570,6 +576,7 @@ const buildCommonHelpers = () => `
       ...payload,
       content,
       reasoning_content: reasoning,
+      thinking_blocks: contentBlocks.filter((item) => item && (item.type === 'thinking' || item.type === 'redacted_thinking')),
       ...(toolCalls.length ? { tool_calls: toolCalls } : {})
     };
   };
@@ -787,6 +794,9 @@ ${injectTemplateHelpers(modelId, thinking)}
         }
 
         if (event.type === 'content_block_delta' && event.delta) {
+          const state = blockState.get(event.index);
+          if (state && event.delta.type === 'thinking_delta') state.thinking = (state.thinking || '') + (event.delta.thinking || '');
+          if (state && event.delta.type === 'signature_delta') state.signature = (state.signature || '') + (event.delta.signature || '');
           if (event.delta.type === 'text_delta' && typeof event.delta.text === 'string') {
             yield { ...event, content: event.delta.text };
             continue;
@@ -819,6 +829,8 @@ ${injectTemplateHelpers(modelId, thinking)}
           yield event;
         }
       }
+      const thinkingBlocks = [...blockState.values()].filter((block) => block.type === 'thinking' || block.type === 'redacted_thinking');
+      if (thinkingBlocks.length) yield { thinking_blocks: thinkingBlocks };
     })();
   }
 

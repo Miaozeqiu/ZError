@@ -9,7 +9,6 @@ export type SitePack = {
   siteId: string
   name: string
   hostPattern: string
-  tools: string[]
   roles: Array<'login' | 'study' | 'homework' | 'captcha'>
   panel: Partial<Record<'study' | 'homework', SitePackPanelKind>>
 }
@@ -19,7 +18,6 @@ const CHAOXING_PACK: SitePack = {
   siteId: 'chaoxing',
   name: '学习通',
   hostPattern: 'chaoxing\\.com',
-  tools: [],
   roles: ['login', 'study', 'homework', 'captcha'],
   panel: { study: 'jobs', homework: 'cards' },
 }
@@ -61,7 +59,6 @@ export const resolveSitePackForUrl = (url: string): SitePack | null => {
     siteId: graph.id,
     name: graph.name || graph.id,
     hostPattern: graph.host || '',
-    tools: [],
     roles: [],
     panel: {},
   }

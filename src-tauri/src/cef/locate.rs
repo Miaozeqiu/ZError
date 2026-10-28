@@ -765,6 +765,10 @@ pub async fn cdp_fill_node(id: String, backend: i64, session: Option<String>, te
   let resolved = page.conn.call("DOM.resolveNode", json!({ "backendNodeId": backend }), sid.as_deref()).await?;
   let object = resolved.pointer("/object/objectId").and_then(Value::as_str).ok_or("输入节点已失效，请重新读取页面")?;
   let result = async {
+    if !text.is_empty() {
+      let private=page.conn.call("Runtime.callFunctionOn",json!({"objectId":object,"returnByValue":true,"functionDeclaration":r#"function(){return this.tagName==='INPUT'&&(this.type==='password'||/^(username|current-password|new-password)$/.test(this.autocomplete||''));}"#}),sid.as_deref()).await?;
+      if private.pointer("/result/value").and_then(Value::as_bool)==Some(true) {return Err("账号密码须先 protect_credentials，再通过 browser_type(secret_ref=变量) 填写".into());}
+    }
     let selected = page.conn.call("Runtime.callFunctionOn", json!({
       "objectId": object, "returnByValue": true, "functionDeclaration": r#"function(){
         if (!this.isConnected || this.disabled || this.readOnly) return false;
@@ -870,4 +874,40 @@ mod tests {
     let moving = super::timeout_find(&serde_json::json!({ "ok": false, "reason": "unstable" }));
     assert_eq!(moving.get("reason").and_then(|v| v.as_str()), Some("timeout"));
   }
+}
+
+/// Secret values are resolved and filled inside the backend, against the exact
+/// remote node and its owning origin. No value ever returns through IPC.
+pub async fn cdp_fill_secret(app:AppHandle,id:String,locator:Value,reference:String) -> Result<Value,String> {
+  let found=cdp_find(app,id.clone(),locator).await?;
+  if found["ok"]!=true {return Ok(found);}
+  let backend=found["backend"].as_i64().ok_or("缺少输入节点身份")?;
+  let page=bind_page(&id).await?;
+  let sid=found["session"].as_str().filter(|s|!s.is_empty()).map(str::to_string).or(page.session.clone());
+  let resolved=page.conn.call("DOM.resolveNode",json!({"backendNodeId":backend}),sid.as_deref()).await?;
+  let object=resolved.pointer("/object/objectId").and_then(Value::as_str).ok_or("输入节点已失效")?;
+  let result=async {
+    let info=page.conn.call("Runtime.callFunctionOn",json!({"objectId":object,"returnByValue":true,"functionDeclaration":r#"function(){return {origin:this.ownerDocument.location.origin,type:String(this.type||'').toLowerCase(),tag:this.tagName,connected:this.isConnected,disabled:this.disabled,readonly:this.readOnly};}"#}),sid.as_deref()).await?;
+    let info=info.pointer("/result/value").ok_or("无法验证输入节点")?;
+    if info["connected"]!=true || info["disabled"]==true || info["readonly"]==true || info["tag"]!="INPUT" {return Err("凭据只能填写到可编辑的原生输入框".into());}
+    let target=info["origin"].as_str().ok_or("无法验证输入框所属网站")?;
+    let password=reference.ends_with("/password}}");
+    if password && info["type"]!="password" {return Err("密码变量只能用于密码输入框".into());}
+    if !password && info["type"]=="password" {return Err("账号变量不能用于密码输入框".into());}
+    let secret=crate::secret_vault::resolve(&reference,"site",target)?;
+    crate::secret_browser::mark(&id,&crate::secret_browser::loader(&id).await?);
+    let filled=page.conn.call("Runtime.callFunctionOn",json!({"objectId":object,"returnByValue":true,"arguments":[{"value":secret.as_str()},{"value":target}],"functionDeclaration":r#"function(value,origin){
+      if(!this.isConnected||this.disabled||this.readOnly||this.ownerDocument.location.origin!==origin)return {ok:false,filled:false};
+      var win=this.ownerDocument.defaultView;var descriptor=Object.getOwnPropertyDescriptor(win.HTMLInputElement.prototype,'value');
+      this.scrollIntoView({block:'center',inline:'nearest'});this.focus();
+      if(!descriptor||!descriptor.set)return {ok:false,filled:false};
+      this.setAttribute('data-zerror-private','true');descriptor.set.call(this,value);
+      this.dispatchEvent(new win.Event('input',{bubbles:true}));this.dispatchEvent(new win.Event('change',{bubbles:true}));
+      return {ok:this.isConnected&&this.value===value,filled:this.isConnected&&this.value===value};
+    }"#}),sid.as_deref()).await?;
+    if filled.get("exceptionDetails").is_some() {return Err("网页拒绝了安全填写".into());}
+    Ok(filled.pointer("/result/value").cloned().unwrap_or(json!({"ok":false,"filled":false})))
+  }.await;
+  let _=page.conn.call("Runtime.releaseObject",json!({"objectId":object}),sid.as_deref()).await;
+  result
 }

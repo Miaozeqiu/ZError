@@ -35,9 +35,11 @@ describe('actual DOM hit testing in target CSS space', () => {
     vi.spyOn(associated, 'getBoundingClientRect').mockReturnValue(box as DOMRect)
     expect(visible.call(document.querySelector('input'))).toBe(associated)
   })
-  it('targets the unique checkbox label inside an option wrapper instead of the wrapper center', () => {
-    document.body.innerHTML = '<div class="option"><label><input type="checkbox">选项</label></div>'
+  it('delegates explicit checkbox wrappers, while retaining generic navigation/question targets', () => {
+    document.body.innerHTML = '<div class="option" role="checkbox"><label><input type="checkbox">选项</label></div>'
     expect(visible.call(document.querySelector('.option'))).toBe(document.querySelector('label'))
+    document.body.innerHTML = '<div class="chapter"><label><input type="checkbox">任务点</label></div>'
+    expect(visible.call(document.querySelector('.chapter'))).toBe(document.querySelector('.chapter'))
     document.body.innerHTML = '<div class="question"><label><input type="checkbox">A</label><label><input type="checkbox">B</label></div>'
     expect(visible.call(document.querySelector('.question'))).toBe(document.querySelector('.question'))
   })

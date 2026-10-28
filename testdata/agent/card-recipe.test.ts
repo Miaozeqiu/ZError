@@ -12,7 +12,7 @@ describe('cardRecipe', () => {
   })
 
   it('播放页按 iframe 分段点指定那条', () => {
-    const text = recipeForPage({ kind: 'player', siteId: 'demo' })
+    const text = recipeForPage({ kind: 'player', siteId: 'demo', intent: 'play' })
     expect(text).toContain('iframe')
     expect(text).toContain('browser_watch')
     expect(text).not.toContain('see.player.json')

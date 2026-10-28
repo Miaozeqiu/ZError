@@ -6,7 +6,7 @@ import { evalBrowserViewMain } from './eval'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { clickByLocator, fillByLocator } from './engine/act'
 import { clickLabelMatches } from './engine/clickFind'
-import { pageSnapAbandoned, rememberPageSnap } from './engine/pageSnap'
+import { beginPageSnap, rememberPageSnap } from './engine/pageSnap'
 import { publicRefs, rememberPageRefs, type PageRef } from './engine/refs'
 import { formatAriaSnapshot } from './engine/snapshot'
 import { askFrames, asObject, evalBrowserView, isCefEngine, waitMs } from './eval'
@@ -68,6 +68,8 @@ export type BrowserLoadState = {
 }
 
 export type BrowserBounds = {
+  /** A live, non-interactive miniature of the same browser page. */
+  preview?: boolean
   x: number
   y: number
   width: number
@@ -383,6 +385,8 @@ export type ReadPageOptions = {
 /** Playwright 风格可读快照：role / name / ref，不灌 innerText、不塞站点解析器。 */
 
 export const readBrowserPage = async (id: string, opts: ReadPageOptions = {}) => {
+  // 普通读取也参与版本控制：后台读取晚于用户接管或新快照返回时，不能恢复旧引用。
+  const gen = opts.gen ?? beginPageSnap(id)
   try {
     const { callProtocol } = await import('./protocol')
     const cdp = asObject(await callProtocol(id, 'snapshot', {
@@ -391,8 +395,6 @@ export const readBrowserPage = async (id: string, opts: ReadPageOptions = {}) =>
       maxFrames: opts.acted ? 2 : (opts.maxFrames ?? 8),
     }, opts.controlEpoch == null ? undefined : { expectedEpoch: opts.controlEpoch }))
     const refs = (Array.isArray(cdp.refs) ? cdp.refs : []) as PageRef[]
-    const commit = opts.gen == null || !pageSnapAbandoned(id, opts.gen)
-    if (commit) rememberPageRefs(id, refs)
     const frames = (Array.isArray(cdp.frames) ? cdp.frames : []).map((item) => {
       const row = asObject(item)
       return {
@@ -425,14 +427,15 @@ export const readBrowserPage = async (id: string, opts: ReadPageOptions = {}) =>
         : null,
       framesCapped: Boolean(cdp.framesCapped),
     }
-    if (commit) {
-      rememberPageSnap(id, {
-        url: page.url,
-        title: page.title,
-        snapshot: page.snapshot,
-        refs,
-      }, opts.gen)
+    if (!rememberPageSnap(id, {
+      url: page.url,
+      title: page.title,
+      snapshot: page.snapshot,
+      refs,
+    }, gen)) {
+      return { ...page, snapshot: '', refs: publicRefs([]), error: '页面快照已过期，请重新读取。' }
     }
+    rememberPageRefs(id, refs)
     return page
   } catch (error) {
     const state = await getBrowserState(id).catch(() => null)

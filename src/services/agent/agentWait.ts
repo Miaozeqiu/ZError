@@ -44,6 +44,24 @@ type Waiter = {
 
 const waiters = new Map<string, Waiter>()
 
+/** 等宿主监控事件，不轮询页面、不占模型请求，也不另开一轮对话。 */
+export const waitForAgentWatchEvent = (input: {
+  sessionId: string; browserId: string; signal: AbortSignal; onStart?: () => void
+}): Promise<AgentWaitResult> => new Promise((resolve, reject) => {
+  const { sessionId, browserId, signal } = input
+  if (signal.aborted) { reject(new DOMException('已停止', 'AbortError')); return }
+  if (waiters.has(sessionId)) { reject(new Error('当前任务已有事件等待器')); return }
+  const clean = () => {
+    if (waiters.get(sessionId) === waiter) waiters.delete(sessionId)
+    signal.removeEventListener('abort', stop)
+  }
+  const stop = () => { clean(); reject(new DOMException('已停止', 'AbortError')) }
+  const waiter: Waiter = { browserId, started: Date.now(), until: 'panel', resolve: result => { clean(); resolve(result) } }
+  waiters.set(sessionId, waiter)
+  signal.addEventListener('abort', stop, { once: true })
+  try { input.onStart?.() } catch (error) { clean(); reject(error) }
+})
+
 export const hasAgentWait = (sessionId: string) => waiters.has(sessionId)
 
 export const panelNeedsTakeover = (panel: ReturnType<typeof packAgentPanel>) => (

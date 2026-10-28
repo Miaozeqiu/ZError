@@ -1,4 +1,5 @@
 import { reactive, watch } from 'vue'
+import { readSecureDocument, writeSecureDocument } from '../security/secureStore'
 import { environmentDetector } from './environmentDetector'
 
 // 设置接口定义
@@ -137,6 +138,8 @@ const SETTINGS_STORAGE_KEY = 'app_settings'
  * 提供设置的读取、保存、重置等功能
  */
 class SettingsManager {
+  readonly ready: Promise<void>
+  private hydrated = false
   private settings: AppSettings
   private listeners: Set<(settings: AppSettings) => void> = new Set()
 
@@ -144,76 +147,40 @@ class SettingsManager {
     this.settings = reactive(this.loadSettings())
     this.setupAutoSave()
     // 异步从文件加载设置并合并
-    this.loadFromFile()
+    this.ready = this.loadFromFile()
   }
 
   /**
    * 从本地存储加载设置（同步，作为初始值）
    */
   private loadSettings(): AppSettings {
-    try {
-      const stored = localStorage.getItem(SETTINGS_STORAGE_KEY)
-      if (stored) {
-        const parsedSettings = { ...(JSON.parse(stored) || {}) }
-        delete parsedSettings.enableNonThinkingModelAnalysis
-        return {
-          ...DEFAULT_SETTINGS,
-          ...parsedSettings,
-          network: { ...DEFAULT_SETTINGS.network, ...(parsedSettings.network || {}) },
-          search: normalizeSearchSettings(parsedSettings.search)
-        }
-      }
-
-
-    } catch (error) {
-      console.warn('加载设置失败，使用默认设置:', error)
-    }
-    return { ...DEFAULT_SETTINGS, search: normalizeSearchSettings(null) }
+    return JSON.parse(JSON.stringify(DEFAULT_SETTINGS))
   }
 
   /**
    * 从 exe 同级目录的 config.json 异步加载设置
    */
   private async loadFromFile(): Promise<void> {
-    if (!environmentDetector.isTauriEnvironment(true)) return
     try {
-      const { invoke } = await import('@tauri-apps/api/core')
-      const content = await invoke<string>('read_config')
-      if (content) {
-        const parsed = { ...(JSON.parse(content) || {}) }
-        delete parsed.enableNonThinkingModelAnalysis
-        Object.assign(this.settings, {
-          ...DEFAULT_SETTINGS,
-          ...parsed,
-          network: { ...DEFAULT_SETTINGS.network, ...(parsed.network || {}) },
-          search: normalizeSearchSettings(parsed.search)
-        })
-        console.log('已从配置文件加载设置')
-      }
-
-    } catch (error) {
-      console.warn('从配置文件加载设置失败:', error)
-    }
+      const parsed = await readSecureDocument<Partial<AppSettings>>('app_settings', SETTINGS_STORAGE_KEY)
+      if (parsed) Object.assign(this.settings, {
+        ...DEFAULT_SETTINGS, ...parsed,
+        network: { ...DEFAULT_SETTINGS.network, ...(parsed.network || {}) },
+        search: normalizeSearchSettings(parsed.search),
+      })
+      this.hydrated = true
+    } catch { /* leave encrypted data intact on unlock failures */ }
   }
 
-  /**
-   * 保存设置到本地存储及 exe 同级目录的 config.json
-   */
   private saveSettings(): void {
-    try {
-      localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(this.settings))
-      this.notifyListeners()
-    } catch (error) {
-      console.error('保存设置失败:', error)
-      throw new Error('设置保存失败')
-    }
-    // 异步写入配置文件
-    if (environmentDetector.isTauriEnvironment(true)) {
-      import('@tauri-apps/api/core').then(({ invoke }) => {
-        invoke('write_config', { content: JSON.stringify(this.settings, null, 2) })
-          .catch(e => console.warn('写入配置文件失败:', e))
-      })
-    }
+    if (!this.hydrated) return
+    const snapshot = JSON.parse(JSON.stringify(this.settings)) as AppSettings
+    this.notifyListeners()
+    void writeSecureDocument('app_settings', snapshot).then(saved => {
+      for (const key of ['apiKey', 'deepseekApiKey'] as const) {
+        if (this.settings.search[key] === snapshot.search[key] && this.settings.search[key] !== saved.search[key]) this.settings.search[key] = saved.search[key]
+      }
+    }).catch(() => undefined)
   }
 
   /**
@@ -334,7 +301,7 @@ class SettingsManager {
    * 导出设置为JSON
    */
   export(): string {
-    return JSON.stringify(this.settings, null, 2)
+    return JSON.stringify({ ...this.settings, adminToken: '', multiUser: { ...this.settings.multiUser, users: this.settings.multiUser.users.map(user => ({ ...user, token: '' })) }, search: { ...this.settings.search, apiKey: '', deepseekApiKey: '' } }, null, 2)
   }
 
   /**

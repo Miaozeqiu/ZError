@@ -95,6 +95,7 @@ export type ActResult = {
   snapshotStale?: boolean
   snapshotError?: string
   snapshotTruncated?: boolean
+  requiresRefresh?: boolean
 }
 
 export type ActOp = 'click' | 'fill' | 'ready' | 'dblclick' | 'rightclick'

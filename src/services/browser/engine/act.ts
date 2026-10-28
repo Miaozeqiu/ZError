@@ -27,6 +27,11 @@ const REASON_TEXT: Record<ActReason, string> = {
 
 const asResult = (raw: unknown): ActResult => {
   const row = asObject(raw)
+  const stale = /Node with given id does not belong to the document|No node with given id|Could not find node with given|Cannot find context with specified id|目标 frame .*已(更换|移除)|快照节点已移除/i.test(String(row.error || ''))
+  if (!row.ok && stale) return {
+    ok: false, reason: 'invalid', retry: false, requiresRefresh: true,
+    error: '快照节点与当前文档不匹配（文档已更换或节点已失效），旧 ref 不再可用。请根据新快照重新定位后继续。',
+  }
   const reason = String(row.reason || '') as ActReason
   const candidates = Array.isArray(row.candidates)
     ? row.candidates.map((item) => {
@@ -49,6 +54,7 @@ const asResult = (raw: unknown): ActResult => {
     password: row.password === true,
     filled: row.filled == null ? undefined : Boolean(row.filled),
     length: row.length == null ? undefined : Number(row.length) || 0,
+    requiresRefresh: row.requiresRefresh === true,
   }
 }
 
@@ -65,6 +71,7 @@ const finish = (result: ActResult, locator: BrowserLocator): ActResult => {
     }
   }
   const reason = result.reason || 'not_found'
+  if (result.requiresRefresh) return { ...result, ok: false, reason: 'invalid', retry: false }
   const hint = result.cover ? `，挡住的是「${result.cover}」` : ''
   const names = (result.candidates || []).map((item) => item.text).filter(Boolean)
   const also = names.length ? `。候选：${names.join('、')}` : ''
@@ -82,6 +89,7 @@ const finish = (result: ActResult, locator: BrowserLocator): ActResult => {
     cover: result.cover,
     candidates: result.candidates,
     text: result.text,
+    retry: result.retry,
   }
 }
 
@@ -138,7 +146,9 @@ const fireBox = async (id: string, op: ActOp, found: Record<string, unknown>, te
       : { button: 'left', clickCount: 1 }
   const backend = Number(found.backend)
   if (Number.isFinite(backend) && backend > 0) {
-    const hit = asObject(await callProtocol(id, 'click_node', { backend, session, ...click }).catch(error => ({ ok: false, error: String(error) })))
+    const hit = asObject(await callProtocol(id, 'click_node', { backend, session,
+      ...(found.frameId ? { frameId: found.frameId, loaderId: found.loaderId } : {}),
+      ...click }).catch(error => ({ ok: false, error: String(error) })))
     if (hit.ok) return hit
     // 定位时的 x/y 可能是别的候选滚过之后留下的，不能拿来再点一次。
     return asResult({
@@ -257,7 +267,7 @@ export const actOnBrowser = async (
     return finish(hit.result.reason ? hit.result : probe.result, locator)
   } catch (err) {
     if (!FIND_WAIT_MISSING.test(String(err))) {
-      return finish({ ok: false, reason: 'not_found', retry: true, error: String(err) }, locator)
+      return finish(asResult({ ok: false, reason: 'not_found', retry: true, error: String(err) }), locator)
     }
     return actByPolling(id, input.op, tried, locator, input.text, Math.min(ACT_MISS_TIMEOUT_MS, timeout))
   }

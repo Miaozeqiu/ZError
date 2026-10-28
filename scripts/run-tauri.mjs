@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
+import { selectMacosSigningIdentity, macosCargoRunner } from "./sign-macos-dev.mjs";
 
 const cargoBin = path.join(os.homedir(), ".cargo", "bin");
 const cargoExe = path.join(cargoBin, process.platform === "win32" ? "cargo.exe" : "cargo");
@@ -49,6 +50,27 @@ if (!isBuild) {
 
 if (process.platform === "darwin") {
   process.env.CEF_PATH = process.env.CEF_PATH || path.join(os.homedir(), ".local/share/cef");
+  if (!isBuild) {
+    const identities = spawnSync('/usr/bin/security', ['find-identity', '-v', '-p', 'codesigning'], { encoding: 'utf8' });
+    const identity = selectMacosSigningIdentity(identities.stdout || '', process.env);
+    if (!identity || identity === '-') {
+      console.error('[run-tauri] 未找到唯一的稳定签名身份。请配置 ZERROR_MACOS_SIGNING_IDENTITY 后启动开发版。');
+      process.exit(1);
+    }
+    process.env.ZERROR_MACOS_SIGNING_IDENTITY = identity;
+    process.env.ZERROR_NODE_BINARY = process.execPath;
+    const runner = macosCargoRunner(path.join(here, 'run-macos-dev.sh'));
+    process.on('exit', runner.cleanup);
+    for (const architecture of ['AARCH64', 'X86_64']) {
+      const variable = `CARGO_TARGET_${architecture}_APPLE_DARWIN_RUNNER`;
+      if (process.env[variable]) {
+        console.error(`[run-tauri] ${variable} 已设置；请在现有 runner 中接入稳定签名后启动。`);
+        process.exit(1);
+      }
+      process.env[variable] = runner.command;
+    }
+    console.log('[run-tauri] 开发程序使用稳定代码签名，避免重新编译后反复请求钥匙串授权');
+  }
   const setup = path.join(here, "setup-cef-macos.sh");
   const setupResult = spawnSync("bash", [setup], { stdio: "inherit", env: process.env, cwd: root });
   if (setupResult.status !== 0) {

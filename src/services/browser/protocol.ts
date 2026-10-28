@@ -288,11 +288,16 @@ export const cookies = async (id: string, url?: string) => {
 export const evaluate = async (
   id: string,
   script: string,
-  opts?: { frame?: string; all?: boolean },
+  opts?: { frame?: string; frameId?: string; loaderId?: string; all?: boolean },
 ) => {
   const { evalBrowserFrames, evalBrowserViewInFrame, evalBrowserViewMain } = await import('./eval')
   const frame = String(opts?.frame || '').trim()
+  const frameId = String(opts?.frameId || '').trim()
+  const loaderId = String(opts?.loaderId || '').trim()
+  if (opts?.all && (frame || frameId || loaderId)) throw new Error('all 不能与指定 frame 同时使用')
+  if (loaderId && !frameId) throw new Error('loaderId 必须与 frameId 一起使用')
   if (opts?.all) return evalBrowserFrames(id, script)
+  if (frameId) return evalBrowserViewInFrame(id, script, frame, { frameId, loaderId })
   if (frame) return evalBrowserViewInFrame(id, script, frame)
   return evalBrowserViewMain(id, script)
 }

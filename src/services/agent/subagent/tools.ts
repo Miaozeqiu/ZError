@@ -1,5 +1,4 @@
 /** 按父 / 子角色装配工具表。execute 再按 HostCapabilities 过滤。 */
-import type { DomainToolPolicy } from '../agentProfiles'
 import type { AgentToolRole } from '../toolContext'
 import { BROWSER_PRIMITIVE_TOOLS } from '../toolDefs/browserPrimitiveTools'
 import {
@@ -10,12 +9,12 @@ import {
   WRITE_AGENT_SKILL_FILE_TOOL,
 } from '../skillTools'
 import { executeToolNamesFor, hostCapabilitiesFor, type HostCapabilities } from '../hostCapabilities'
-import { resolveSitePackForUrl } from '../sitePack'
 import { SUBAGENTS_ENABLED } from './enabled'
 
 export type BrowserToolRole = AgentToolRole
 
 const LOOK_NAMES = [
+  'set_website_icon',
   'browser_get_page',
   'browser_find',
   'browser_screenshot',
@@ -53,7 +52,6 @@ export const filterToolsByNames = (names: Iterable<string>) => {
 
 export const assembleRoleTools = (input: {
   url?: string
-  domain?: DomainToolPolicy
   role?: BrowserToolRole
   capabilities?: HostCapabilities
 }) => {
@@ -64,27 +62,11 @@ export const assembleRoleTools = (input: {
     const names = new Set(executeToolNamesFor(caps))
     for (const name of LOOK_NAMES) names.add(name)
     if (SUBAGENTS_ENABLED) names.add('browser_task')
-    if (input.domain === 'never') {
-      return filterToolsByNames(names)
-    }
-    const pack = resolveSitePackForUrl(url)
-    if (pack?.tools.length && input.domain !== 'always') {
-      for (const name of pack.tools) names.add(name)
-    }
     return filterToolsByNames(names)
   }
   if (role === 'explore') return namesOf(EXPLORE_NAMES)
   const caps = input.capabilities || hostCapabilitiesFor(url)
   const names = new Set(executeToolNamesFor(caps))
-  const pack = resolveSitePackForUrl(url)
-  if (input.domain === 'never') {
-    return filterToolsByNames(names)
-  }
-  if (pack?.tools.length && input.domain !== 'always') {
-    for (const name of pack.tools) {
-      if (names.has(name) || executeToolNamesFor(caps).includes(name)) names.add(name)
-    }
-  }
   return filterToolsByNames(names)
 }
 

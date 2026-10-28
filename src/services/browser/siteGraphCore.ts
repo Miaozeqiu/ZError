@@ -1,4 +1,5 @@
 import { ref } from 'vue'
+import { websiteAccountId, websiteIdentityForHost, websiteHostPattern } from '../agent/websiteIdentity'
 import {
   bindChaoxingSiteGraph,
   getChaoxingSiteGraphSeed,
@@ -352,13 +353,16 @@ export const applySiteGraphPatch = (
       urlHost = ''
     }
     const hostRaw = String(args.host || args.siteId || urlHost).trim().replace(/^www\./i, '').toLowerCase()
-    const siteId = String(args.siteId || hostRaw).trim().slice(0, 40)
+    const identity = websiteIdentityForHost(hostRaw)
+    const grouped = Boolean(identity?.loginHosts.length)
+    const siteId = grouped ? websiteAccountId(identity!.host) : String(args.siteId || hostRaw).trim().slice(0, 40)
     if (!siteId) return { ok: false, error: 'upsert_site 需要 siteId 或 host' }
     const existing = findLiveSite(siteId)
-    const host = String(args.host || existing?.host || hostRaw).trim().replace(/^www\./i, '').toLowerCase() || siteId
+    const host = grouped ? identity!.host : String(args.host || existing?.host || hostRaw).trim().replace(/^www\./i, '').toLowerCase() || siteId
+    if (siteId === 'chaoxing' && host !== 'chaoxing.com') return { ok: false, error: '其他网站的图谱不能归到学习通' }
     const escaped = host.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    const hostPattern = String(args.hostPattern || existing?.hostPattern || escaped).trim() || escaped
-    const name = String(args.name || existing?.name || host).trim().slice(0, 40) || host
+    const hostPattern = grouped ? websiteHostPattern(host) : String(args.hostPattern || existing?.hostPattern || escaped).trim() || escaped
+    const name = grouped && hostRaw !== host ? existing?.name || identity!.name : String(args.name || existing?.name || identity?.name || host).trim().slice(0, 40) || host
     const next: SiteGraphData = {
       id: siteId,
       name,

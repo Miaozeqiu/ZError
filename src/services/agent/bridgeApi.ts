@@ -23,6 +23,7 @@ import { siteGraphAgentSnap } from '../browser/siteGraph'
 import { ensurePanelStudy, nextPanelStudy, openPanelChapter, playPanelStudy, readPanelStudy } from '../chaoxing/browser/panelStudy'
 import { fillChaoxingCaptcha, readChaoxingVideoTick } from '../chaoxing/study'
 import { runPanelHomework } from '../chaoxing/homework/panelHomework'
+import { redactObject, redactText } from '../security/secretRedaction'
 
 export type BridgeCmd = {
   id?: string
@@ -78,6 +79,24 @@ const num = (args: Record<string, unknown> | undefined, key: string) => {
 const clip = (text: string, max = 400) => {
   const value = String(text || '').replace(/\s+/g, ' ').trim()
   return value.length > max ? `${value.slice(0, max)}…` : value
+}
+
+// A bounded, redacted target label is enough to audit a click without dumping page HTML.
+const clickSnapshotTarget = (steps: Array<{ result?: string }>, ref: unknown) => {
+  const id = String(ref || '').trim()
+  if (!/^e[0-9]+$/.test(id)) return undefined
+  const pattern = new RegExp(`(?:ref=|\\[)${id}(?![0-9])`)
+  for (let i = steps.length - 1; i >= 0; i--) {
+    let result: any
+    try { result = JSON.parse(steps[i].result || '{}') } catch { continue }
+    const snapshots = [result.snapshot, result.page?.snapshot, result.after?.snapshot, result.observation?.snapshot]
+    for (const snapshot of snapshots) {
+      if (typeof snapshot !== 'string') continue
+      const line = snapshot.split('\n').find(line => pattern.test(line))
+      if (line) return redactText(clip(line, 400))
+    }
+  }
+  return undefined
 }
 
 const resolveBrowserId = async (want?: string) => {
@@ -238,12 +257,24 @@ export const runBridgeAction = async (cmd: BridgeCmd) => {
 
   if (action === 'chat') {
     const { controlForSession } = await import('../browser/control')
-    const { browserChatSessions } = await import('./chat')
+    const { sessions, chatStoreReady } = await import('./chatStore')
+    await chatStoreReady
     const { modelConfigManager } = await import('../model/config')
-    const session = browserChatSessions.value.find(item => item.browserId === browserId || item.browserIds?.includes(browserId))
-      || browserChatSessions.value[0]
+    const candidates = [...sessions.value].filter(item => !item.parentId && item.messages.length)
+      .sort((left, right) => right.updatedAt - left.updatedAt)
+    const requested = arg(args, 'sessionId')
+    const session = (requested ? sessions.value.find(item => item.id === requested)
+      : arg(args, 'browserId', 'id') ? candidates.find(item => item.browserId === browserId || item.browserIds?.includes(browserId))
+        : candidates[0])
       || null
     const last = session?.messages[session.messages.length - 1]
+    const diagnostic = args.diagnostics === true
+    const { videoWatchFor } = await import('../platform/panelAccess')
+    const { coursePlanFor } = await import('../browser/coursePlan')
+    const { hasAgentWait } = await import('./agentWait')
+    const watchId = session?.browserId || browserId
+    const watch = videoWatchFor(watchId)
+    const plan = coursePlanFor(watchId)
     return {
       ok: Boolean(session),
       id,
@@ -257,6 +288,49 @@ export const runBridgeAction = async (cmd: BridgeCmd) => {
         || '',
       lastRole: last?.role || '',
       lastText: clip(last?.content || last?.error || '', 240),
+      ...(diagnostic ? {
+        lastStatus: last?.status, taskOutcome: last?.taskOutcome, stopReason: last?.stopReason, waitingForEvent: hasAgentWait(session?.id || ''),
+        lastError: args.details === true ? redactText(clip(last?.error || '', 1600)) : undefined,
+        watch: watch ? { sessionId: watch.sessionId, status: watch.status, current: watch.current, duration: watch.duration, updatedAt: watch.updatedAt } : null,
+        coursePlan: plan ? { total: plan.items.length, pending: plan.items.filter(item => item.status === 'pending').length, paused: Boolean(plan.pausedReason) } : null,
+        recentTurns: session?.messages.slice(-6).map(message => ({
+          role: message.role, status: message.status, stopReason: message.stopReason,
+          ...(args.details === true ? { text: redactText(clip(message.content || '', 3000)) } : {}),
+          tools: message.steps.map((step, index) => {
+            let params: Record<string, unknown> = {}, result: Record<string, unknown> = {}
+            try { params = JSON.parse(step.arguments || '{}') } catch { /* no arguments */ }
+            try { result = JSON.parse(step.result || '{}') } catch { /* no JSON result */ }
+            return { name: step.name, status: step.status,
+              frame: params.frame, frameId: params.frameId, loaderId: params.loaderId,
+              requestedStatus: params.status, watching: result.watching, finished: result.finished,
+              resultStatus: result.status, ok: result.ok,
+              ...(args.details === true && step.name === 'browser_press' ? { key: params.key } : {}),
+              ...(args.details === true && /^(browser_eval|browser_get_page)$/.test(step.name) ? {
+                observationKeys: result.result && typeof result.result === 'object' ? Object.keys(result.result).slice(0, 30) : [],
+                viewportMetrics: Object.fromEntries(['w', 'h', 'dpr', 'scrollY'].flatMap(key => typeof result.result?.[key] === 'number' ? [[key, result.result[key]]] : [])),
+                completionStats: (JSON.stringify(result.result || result.snapshot || '').match(/已完成任务点\s*[：:]?\s*\d+\s*\/\s*\d+/g) || []).slice(0, 5),
+              } : {}),
+              ...(args.details === true && /^(browser_finish|browser_todo)$/.test(step.name) ? {
+                error: redactText(clip(step.detail || String(result.error || ''), 1600)),
+                todoAction: params.action,
+                todoIndex: params.index,
+                reason: redactText(clip(String(params.reason || ''), 500)),
+                todoCounts: Array.isArray(result.todos) ? { pending: result.todos.filter((item: any) => item.status === 'pending').length,
+                  done: result.todos.filter((item: any) => item.status === 'done').length, cancelled: result.todos.filter((item: any) => item.status === 'cancelled').length } : undefined,
+              } : {}),
+              ...(args.details === true && /^browser_(click|click_text)$/.test(step.name) ? {
+                targetLine: clickSnapshotTarget(message.steps.slice(0, index), params.ref),
+                locator: redactObject({ ref: params.ref, selector: params.selector, text: params.text, nth: params.nth,
+                  frame: params.frame, frameId: params.frameId, loaderId: params.loaderId }),
+                error: redactText(clip(step.detail || String(result.error || ''), 1200)),
+                reason: result.reason,
+                requiresRefresh: result.requiresRefresh,
+                snapshotStale: result.snapshotStale,
+              } : {}),
+            }
+          }),
+        })),
+      } : {}),
     }
   }
 

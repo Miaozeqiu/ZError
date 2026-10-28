@@ -72,7 +72,7 @@ describe('浏览器小窗原生视图生命周期', () => {
   })
   afterEach(() => { app?.unmount(); app = undefined; root?.remove(); vi.unstubAllGlobals() })
 
-  it('默认收起且不创建原生浏览器，放大后显示，收起只隐藏不关闭', async () => {
+  it('展开后显示浏览器，收起后恢复实时预览且不关闭', async () => {
     await mount()
     expect(root.querySelector('.browser-preview')).not.toBeNull()
     expect(native.ensure).not.toHaveBeenCalled()
@@ -85,7 +85,7 @@ describe('浏览器小窗原生视图生命周期', () => {
     native.hide.mockClear()
     clickToggle()
     await vi.waitFor(() => expect(state.expanded.value).toBe(false))
-    await vi.waitFor(() => expect(native.hide).toHaveBeenCalled())
+    await vi.waitFor(() => expect(native.bounds).toHaveBeenLastCalledWith('tab-one', expect.objectContaining({ preview: true })))
     expect(native.close).not.toHaveBeenCalled()
   })
 
@@ -102,7 +102,7 @@ describe('浏览器小窗原生视图生命周期', () => {
     expect(native.bounds).toHaveBeenCalledWith('tab-one', expect.objectContaining(native.rect))
   })
 
-  it('展开动画未结束就收起，不创建或晚到显示原生层', async () => {
+  it('展开动画未结束就收起，只显示收起状态的实时预览', async () => {
     await mount()
     clickToggle()
     await nextTick()
@@ -110,8 +110,8 @@ describe('浏览器小窗原生视图生命周期', () => {
     await nextTick()
     await new Promise(resolve => setTimeout(resolve, 350))
     expect(state.expanded.value).toBe(false)
-    expect(native.ensure).not.toHaveBeenCalled()
-    expect(native.show).not.toHaveBeenCalled()
+    await vi.waitFor(() => expect(native.bounds).toHaveBeenLastCalledWith('tab-one', expect.objectContaining({ preview: true })))
+    expect(native.bounds.mock.calls.every(([, bounds]) => bounds.preview === true)).toBe(true)
   })
 
   it('离开 Agent 页和弹窗遮挡时隐藏原生层，返回时恢复', async () => {
@@ -167,7 +167,7 @@ describe('浏览器小窗原生视图生命周期', () => {
     expect(native.show).toHaveBeenCalledOnce()
   })
 
-  it('创建过程收起小窗，晚到的打开结果不能重新显示原生层', async () => {
+  it('创建过程收起小窗，晚到结果只能用于收起状态的预览', async () => {
     let resolve!: (id: string) => void
     native.ensure.mockImplementationOnce(() => new Promise<string>(done => { resolve = done }))
     await mount()
@@ -177,8 +177,8 @@ describe('浏览器小窗原生视图生命周期', () => {
     clickToggle()
     await nextTick()
     resolve('tab-one')
-    await vi.waitFor(() => expect(native.hide).toHaveBeenCalled())
-    expect(native.show).not.toHaveBeenCalled()
+    await vi.waitFor(() => expect(native.bounds).toHaveBeenLastCalledWith('tab-one', expect.objectContaining({ preview: true })))
+    expect(native.bounds.mock.calls.every(([, bounds]) => bounds.preview === true)).toBe(true)
     expect(state.expanded.value).toBe(false)
   })
 

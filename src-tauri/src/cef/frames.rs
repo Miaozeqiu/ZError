@@ -81,6 +81,37 @@ pub fn select<'a>(rows: &'a [FrameContext], locator: &Value) -> Result<Option<&'
   Ok(Some(row))
 }
 
+/// 定位与投递输入是两次调用，投递前再次核对文档，不能只相信 backend 编号。
+pub async fn verify_action_node(id: &str, args: &Value) -> Result<(), String> {
+  if string(args, "frameId").is_empty() { return Ok(()); }
+  let page = crate::cef::bind_page(id).await?;
+  let rows = contexts(&page).await?;
+  let frame = select(&rows, args)?.ok_or("缺少目标 frame 身份")?;
+  let requested_session = string(args, "session");
+  if !requested_session.is_empty() && frame.session.as_deref() != Some(requested_session.as_str()) {
+    return Err("目标 frame 会话已更换，请重新读取页面快照".into());
+  }
+  let backend = args.get("backend").or_else(|| args.get("backendNodeId")).and_then(Value::as_i64).unwrap_or(0);
+  if backend <= 0 { return Err("目标节点身份已失效，请重新读取页面快照".into()); }
+  let world = page.conn.call("Page.createIsolatedWorld", json!({
+    "frameId": frame.id, "worldName": "zerror-frame-read",
+  }), frame.session.as_deref()).await?;
+  let context = world.get("executionContextId").and_then(Value::as_i64).ok_or("目标 frame 尚未就绪")?;
+  let resolved = page.conn.call("DOM.resolveNode", json!({
+    "backendNodeId": backend, "executionContextId": context,
+  }), frame.session.as_deref()).await?;
+  let object = resolved.pointer("/object/objectId").and_then(Value::as_str).ok_or("目标节点已失效")?;
+  let checked = page.conn.call("Runtime.callFunctionOn", json!({
+    "objectId": object, "returnByValue": true,
+    "functionDeclaration": "function(){return !!this.isConnected && this.ownerDocument===document;}",
+  }), frame.session.as_deref()).await;
+  let _ = page.conn.call("Runtime.releaseObject", json!({"objectId":object}), frame.session.as_deref()).await;
+  if checked?.pointer("/result/value").and_then(Value::as_bool) != Some(true) {
+    return Err("目标节点与当前 frame 文档不匹配，请重新读取页面快照".into());
+  }
+  Ok(())
+}
+
 pub(crate) async fn evaluate(page: &PageBind, frame: &FrameContext, expression: &str) -> Result<Value, String> {
   let world = page.conn.call("Page.createIsolatedWorld", json!({
     "frameId": frame.id, "worldName": "zerror-frame-read",
@@ -93,9 +124,16 @@ pub(crate) async fn evaluate(page: &PageBind, frame: &FrameContext, expression: 
   Ok(raw.get("result").and_then(|v| v.get("value")).cloned().unwrap_or(Value::Null))
 }
 
-pub async fn evaluate_hint(id: String, hint: String, script: String) -> Result<Value, String> {
+pub async fn evaluate_hint(id: String, hint: String, locator: Value, script: String) -> Result<Value, String> {
   let page = crate::cef::bind_page(&id).await?;
   let rows = contexts(&page).await?;
+  if let Some(frame) = select(&rows, &locator)? {
+    return Ok(json!({ "ok": true, "result": evaluate(&page, frame, &script).await? }));
+  }
+  let exact: Vec<_> = rows.iter().filter(|f| f.id == hint).collect();
+  if exact.len() == 1 {
+    return Ok(json!({ "ok": true, "result": evaluate(&page, exact[0], &script).await? }));
+  }
   let mut hits: Vec<_> = rows.iter().filter(|f| {
     f.id == hint || f.path == hint || (!f.name.is_empty() && f.name == hint) || f.url.contains(&hint)
   }).collect();

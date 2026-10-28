@@ -77,6 +77,7 @@ describe('解析面板暂停要写给 Agent', () => {
     const nudge = formatStudyPanelNudge('t1')
     expect(nudge).toContain('暂停')
     const recipe = recipeForPage({
+      siteId: 'chaoxing',
       kind: 'player',
       intent: 'play',
       panel: { event: 'video_paused', thisSection: { next: { label: '视频3', kind: 'video' } } },

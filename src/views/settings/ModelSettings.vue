@@ -162,46 +162,7 @@
               </a>
             </div>
             <div class="input-group">
-              <div class="input-with-suffix">
-                <input 
-                  :type="showApiKey ? 'text' : 'password'"
-                  v-model="selectedPlatform.apiKey"
-                  @input="updatePlatformApiKey"
-                  class="form-input api-key-input"
-                  placeholder="请输入API Key"
-                >
-                <button 
-                  class="input-suffix-btn"
-                  @click="toggleApiKeyVisibility"
-                >
-                  <svg 
-                    v-if="!showApiKey"
-                    t="1761195836172" 
-                    class="icon" 
-                    viewBox="0 0 1024 1024" 
-                    version="1.1" 
-                    xmlns="http://www.w3.org/2000/svg" 
-                    p-id="1305" 
-                    width="16" 
-                    height="16"
-                  >
-                    <path d="M512 217.7792c258.0992 0 410.752 223.0784 453.504 295.5008C922.88 585.344 770.9696 806.2464 512 806.2464c-291.5072 0-420.9152-220.8-454.8352-291.4304C99.1488 444.9024 255.2832 217.7792 512 217.7792M512 166.5792c-338.3296 0-512 345.3696-512 345.3696s131.072 345.4976 512 345.4976c344.9856 0 512-344.1408 512-344.1408S855.6544 166.5792 512 166.5792L512 166.5792zM512.0256 396.1856c67.0208 0 115.6864 48.6912 115.6864 115.8144 0 67.1744-48.64 115.8656-115.6864 115.8656-67.0464 0-115.7376-48.6912-115.7376-115.8656C396.288 444.8768 444.9792 396.1856 512.0256 396.1856M512.0256 344.9856c-96.896 0-166.9376 73.0624-166.9376 167.0144 0 94.0032 70.016 167.0656 166.9376 167.0656 96.8704 0 166.8864-73.0624 166.8864-167.0656C678.912 418.0224 608.896 344.9856 512.0256 344.9856L512.0256 344.9856z" fill="currentColor" p-id="1306"></path>
-                  </svg>
-                  <svg 
-                    v-else
-                    t="1761195878569" 
-                    class="icon" 
-                    viewBox="0 0 1024 1024" 
-                    version="1.1" 
-                    xmlns="http://www.w3.org/2000/svg" 
-                    p-id="1455" 
-                    width="16" 
-                    height="16"
-                  >
-                    <path d="M962.41027 511.792269 905.058051 443.432345c30.108738-36.255739 55.207369-77.30362 74.140581-122.626875 6.777357-16.22759-0.870834-34.859949-17.098423-41.637306-16.290011-6.797823-34.859949 0.8913-41.637306 17.098423C853.249081 457.180464 696.791703 557.13906 512.148379 557.13906c-186.156794 0-342.67557-100.186793-408.499741-261.452687-6.632047-16.290011-25.181519-24.124444-41.491996-17.450441-16.290011 6.632047-24.103978 25.222451-17.450441 41.49302 19.34765 47.403636 46.134737 90.343611 78.658478 128.121006l-53.6632 63.942311c-11.295254 13.45136-9.534144 33.533744 3.937682 44.850487 5.948479 4.994758 13.223163 7.440459 20.435425 7.440459 9.077749 0 18.114566-3.875261 24.415063-11.378142l49.720402-59.244312c34.487465 30.608112 73.528644 56.220443 115.855658 76.374458l-30.384008 83.471087c-6.031367 16.518209 2.486634 34.777061 19.026332 40.787962 3.585665 1.305739 7.254218 1.927909 10.880815 1.927909 12.994965 0 25.201985-8.020674 29.907147-20.953218l29.694299-81.572854c43.456744 14.417361 89.441055 23.432689 137.125077 26.191522l0 96.624664c0 17.575284 14.258749 31.834033 31.834033 31.834033 17.575284 0 31.834033-14.258749 31.834033-31.834033l0-96.589872c50.570769-2.822278 98.975199-12.387122 144.327106-27.960819l30.326702 83.307358c4.705162 12.932544 16.912182 20.953218 29.907147 20.953218 3.626597 0 7.29515-0.62217 10.880815-1.927909 16.538675-6.009877 25.056676-24.269753 19.026332-40.787962l-31.321356-86.041632c41.663912-20.509103 79.855746-46.515407 113.648386-77.547167l52.844555 62.987566c6.300496 7.502881 15.315824 11.378142 24.415063 11.378142 7.212262 0 14.46648-2.445702 20.435425-7.440459C971.944414 545.326013 973.705524 525.263072 962.41027 511.792269z" fill="currentColor" p-id="1456"></path>
-                  </svg>
-                </button>
-              </div>
+              <SecureSecretInput :key="selectedPlatform.id" v-model="selectedPlatform.apiKey" class="model-secret-input" kind="api" label="API Key" input-class="api-key-input" placeholder="请输入 API Key" @update:model-value="updatePlatformApiKey" />
             </div>
           </div>
           <div class="form-group">
@@ -416,6 +377,7 @@
 </template>
 
 <script setup lang="ts">
+import SecureSecretInput from '../../components/ui/SecureSecretInput.vue'
 import PlatformConfigDialog from './ModelSettings/PlatformConfigDialog.vue'
 import PlatformContextMenu from './ModelSettings/PlatformContextMenu.vue'
 import ModelContextMenu from './ModelSettings/ModelContextMenu.vue'
@@ -431,6 +393,7 @@ import { useModelSettings } from './useModelSettings'
 const {
   detailScrollWrap, detailContent, customScrollbar, customScrollbarThumb, platformListScrollWrap, platformListScroll, platformScrollbar, platformScrollbarThumb, isDraggingScrollbar, dragStartY, dragStartScrollTop, scrollHideTimer, scrollbarVisible, isDraggingPlatformScrollbar, platformDragStartY, platformDragStartScrollTop, platformScrollHideTimer, platformScrollbarVisible, showScrollbar, updateScrollbarThumb, onDetailScroll, onScrollbarMousedown, showPlatformScrollbar, updatePlatformScrollbarThumb, onPlatformListScroll, onPlatformScrollbarMousedown, showAddPlatformDialog, showEditPlatformDialog, editingPlatform, showModelConfigDialog, editingModel, selectedPlatform, selectedModel, currentVisionModel, showApiKey, currentMultiModels, getPlatformSelectedCount, selectedCategory, isPlatformSelectedForCategory, isCurrentCategoryModelSelected, filteredModels, isVisionUnavailable, isSelectedPlatformDisabled, currentModel, testingModelId, testResults, testErrors, testAbortController, showTestDialog, testDialogModelName, currentTestResult, currentTestError, streamingResponse, streamingReasoning, isAbortedTestError, cancelCurrentTest, showMarkdownDemo, extractNumericTokenValue, readTokenRateFromPayload, readOutputTokenCountFromPayload, estimateTextTokens, resolveTokenRate, hasVisibleOutputContent, showDeleteModelDialog, deleteModelName, deleteModelId, showDeletePlatformDialog, deletePlatformName, deletePlatformId, iconLoadErrors, platformIconUrls, platformIconBackgrounds, remoteModelIconMappings, PROD_REMOTE_MODEL_ICON_BASE_URL, DEV_REMOTE_MODEL_ICON_BASE_URL, getRemoteModelIconBaseUrl, resolveModelIconUrl, loadRemoteModelIconMappings, loadPlatformIcons, showPlatformContextMenu, contextMenuX, contextMenuY, contextMenuPlatform, showModelContextMenu, modelContextMenuX, modelContextMenuY, contextMenuModel, modelToTest, editPlatform, deletePlatform, confirmDeletePlatform, cancelDeletePlatform, closePlatformDialog, savePlatform, selectPlatform, revealModelInList, selectModel, getPlatformIconUrl, getPlatformInitials, isEmoji, isSvgIcon, shouldUsePlatformIconBackground, detectTransparentChannel, handlePlatformIconLoad, handleIconError, getModelIcon, showPlatformMenu, hidePlatformMenu, showModelContextMenuHandler, hideModelMenu, handleEditPlatform, handleDeletePlatform, handleEditModel, handleTestModel, handleStartTest, handleDeleteModel, toggleApiKeyVisibility, updatePlatformApiKey, updatePlatformEnabled, updatePlatformBaseUrl, platformProtocolOptions, currentPlatformProtocolPath, showPlatformProtocolDropdown, platformProtocolTriggerRef, platformProtocolDropdownRef, platformProtocolDropdownStyle, updatePlatformProtocolDropdownPosition, closePlatformProtocolDropdown, togglePlatformProtocolDropdown, selectPlatformProtocol, handlePlatformProtocolOutsideClick, updatePlatformApiProtocol, showAddModelDropdown, addModelDropdownRef, openAddModelDropdown, closeAddModelDropdown, openTemplate, openQuickAdd, handleAddModelOutsideClick, addNewModel, editModel, closeModelDialog, onModelConfigAfterLeave, saveModel, deleteModel, confirmDeleteModel, cancelDeleteModel, openModelConfigDocs, openPlatformUrl, copyTextToClipboard, inviteField, platformHasInvite, handleInviteButtonClick, createCookieEnabledFetch, addModel, testModel,   handleCloseTestDialog, handleCancelTest, modelConfig, modelHasVision
 } = useModelSettings()
+
 
 </script>
 

@@ -20,15 +20,7 @@ use warp::Filter;
 const QUERY_TEST_PAGE_HTML: &str = include_str!("query_test_page.html");
 
 fn read_app_config() -> serde_json::Value {
-    let config_path = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join("config.json");
-    std::fs::read_to_string(&config_path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default()
+    crate::secret_vault::document_read("app_settings",None).unwrap_or_default()
 }
 
 /// 是否将 AI 回答写入本地题库（读取 config.json 的 autoAddToQuestionBank）
@@ -90,6 +82,124 @@ fn check_admin_token(auth: &Option<String>) -> bool {
 fn contains_url(text: &str) -> bool {
     let url_regex = Regex::new(r"https?://[^\s]+").unwrap();
     url_regex.is_match(text)
+}
+
+/// 请求是否携带 base64 图片（OCS >= 5.1.0 图片题优化协议）
+fn request_has_images(request: &QueryRequest) -> bool {
+    request
+        .images
+        .as_ref()
+        .map(|list| !list.is_empty())
+        .unwrap_or(false)
+}
+
+/// Align the original text with OCS's placeholder text. OCS alone assigns image
+/// numbers: failed conversions are skipped and DOM URLs need no file extension.
+/// Never re-enumerate URLs; an unprovable mapping is left for OCS to resolve.
+fn image_placeholder_map(original: &str, suggestion: &str) -> Option<HashMap<usize, String>> {
+    let placeholders = Regex::new(r"\[图片(\d+)\]").ok()?;
+    let whitespace = Regex::new(r"\s+").ok()?;
+    let literal = |text: &str| whitespace.split(text).map(regex::escape).collect::<Vec<_>>().join(r"\s*");
+    let mut pattern = String::from("(?s)^");
+    let mut indices = Vec::new();
+    let mut offset = 0;
+    for capture in placeholders.captures_iter(suggestion) {
+        let marker = capture.get(0)?;
+        let index = capture.get(1)?.as_str().parse::<usize>().ok()?;
+        if index == 0 { return None; }
+        pattern.push_str(&literal(&suggestion[offset..marker.start()]));
+        pattern.push_str("(.+?)");
+        indices.push(index);
+        offset = marker.end();
+    }
+    if indices.is_empty() { return Some(HashMap::new()); }
+    pattern.push_str(&literal(&suggestion[offset..]));
+    pattern.push('$');
+    let regex = Regex::new(&pattern).ok()?;
+    let captures = regex.captures(original)?;
+    let mut mapping = HashMap::new();
+    for (group, index) in indices.into_iter().enumerate() {
+        let url = captures.get(group + 1)?.as_str().trim();
+        if url.chars().any(char::is_whitespace)
+            || !(url.starts_with("https://") || url.starts_with("http://") || url.starts_with("data:image/")) {
+            return None;
+        }
+        if let Some(previous) = mapping.insert(index, url.to_string()) {
+            if previous != url { return None; }
+        }
+    }
+    Some(mapping)
+}
+
+/// Restore only mappings demonstrated by OCS's own suggestion fields. Unknown
+/// placeholders remain unchanged so OCS can use its authoritative imageUrls list.
+fn restore_image_placeholders(answer: &str, request: &QueryRequest) -> String {
+    if !answer.contains("[图片") { return answer.to_string(); }
+    let mut mapping = HashMap::new();
+    for (original, suggestion) in [
+        (Some(request.title.as_str()), request.suggestion_title.as_deref()),
+        (request.options.as_deref(), request.suggestion_options.as_deref()),
+    ] {
+        if let (Some(original), Some(suggestion)) = (original, suggestion) {
+            let Some(found) = image_placeholder_map(original, suggestion) else { return answer.to_string(); };
+            for (index, url) in found {
+                if let Some(previous) = mapping.insert(index, url.clone()) {
+                    if previous != url { return answer.to_string(); }
+                }
+            }
+        }
+    }
+    Regex::new(r"\[图片(\d+)\]").unwrap().replace_all(answer, |capture: &regex::Captures| {
+        capture[1].parse::<usize>().ok().and_then(|index| mapping.get(&index)).cloned()
+            .unwrap_or_else(|| capture[0].to_string())
+    }).to_string()
+}
+
+/// 解析用于模型提问的有效负载：
+/// - 新协议（images 非空）：题干/选项用占位符化文本（suggestion_title/suggestion_options），
+///   图片由前端直接使用 base64 数组，无需下载 URL；
+/// - 旧协议（URL 题或纯文本题）：用原始 title/options，图片为空。
+fn resolve_question_payload(request: &QueryRequest) -> (String, Option<String>, Vec<String>) {
+    if request_has_images(request) {
+        let title = request
+            .suggestion_title
+            .clone()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| request.title.clone());
+        let options = request
+            .suggestion_options
+            .clone()
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| request.options.clone());
+        (title, options, request.images.clone().unwrap_or_default())
+    } else {
+        (request.title.clone(), request.options.clone(), Vec::new())
+    }
+}
+
+/// 构造用于日志/SSE 广播的请求体 JSON。
+/// images 是 base64 数组，体积可达数 MB，直接进日志会造成严重膨胀，
+/// 因此替换为摘要字符串，并附加 has_images 标记供前端识别图片题。
+fn build_query_request_log_body(request: &QueryRequest) -> String {
+    let image_count = request
+        .images
+        .as_ref()
+        .map(|list| list.len())
+        .unwrap_or(0);
+    serde_json::json!({
+        "title": request.title,
+        "options": request.options,
+        "type": request.query_type,
+        "has_images": image_count > 0,
+        "images": if image_count > 0 {
+            serde_json::json!(format!("<{} 张 base64 图片，日志已省略>", image_count))
+        } else {
+            serde_json::Value::Null
+        },
+        "suggestion_title": request.suggestion_title,
+        "suggestion_options": request.suggestion_options,
+    })
+    .to_string()
 }
 
 fn resolve_request_origin(headers: &HeaderMap) -> String {
@@ -361,12 +471,21 @@ fn build_normal_model_query(request: &QueryRequest, has_url: bool) -> String {
     }
 }
 
-fn emit_model_call_request(app: Option<&AppHandle>, request_id: &str, query: &str) {
+fn emit_model_call_request(
+    app: Option<&AppHandle>,
+    request_id: &str,
+    query: &str,
+    images: &[String],
+) {
     if let Some(app) = app {
-        let payload = serde_json::json!({
+        let mut payload = serde_json::json!({
             "request_id": request_id,
             "query": query,
         });
+        // 图片题优化：base64 数组，与 query 中 [图片N] 占位符严格同序；非图片题不传
+        if !images.is_empty() {
+            payload["images"] = serde_json::json!(images);
+        }
         if let Err(e) = app.emit("model-call-request", payload) {
             println!("⚠️ emit model-call-request failed: {}", e);
         } else {
@@ -383,15 +502,45 @@ async fn wait_and_store_ai_answer(
     request_origin: &str,
     has_url: bool,
 ) -> (u16, QueryResponse) {
-    let formatted_query = build_normal_model_query(request, has_url);
-    logger.send_model_call_request(request_id.to_string(), formatted_query.clone());
-    emit_model_call_request(app, request_id, &formatted_query);
+    // 图片题优化（OCS >= 5.1.0）：images 非空时使用占位符化题干 + base64 数组，
+    // 前端按 [图片N] 直接拼接多模态消息，无需下载 URL（规避防盗链）。
+    let (prompt_title, prompt_options, images) = resolve_question_payload(request);
+    let has_images = !images.is_empty();
+
+    let formatted_query = if has_images {
+        let mut q = format!("__IMAGE_QUESTION__:{}", prompt_title);
+        if let Some(options) = &prompt_options {
+            if !options.is_empty() {
+                q.push_str(&format!("\n__OPTIONS__:{}", options));
+            }
+        }
+        q
+    } else {
+        // 旧协议：URL 题走 __URL_QUESTION__（前端下载 URL），纯文本题走普通 prompt
+        let effective = QueryRequest {
+            title: prompt_title,
+            options: prompt_options,
+            query_type: request.query_type.clone(),
+            images: None,
+            suggestion_title: None,
+            suggestion_options: None,
+        };
+        build_normal_model_query(&effective, has_url)
+    };
+
+    logger.send_model_call_request(
+        request_id.to_string(),
+        formatted_query.clone(),
+        if has_images { Some(images.clone()) } else { None },
+    );
+    emit_model_call_request(app, request_id, &formatted_query, &images);
 
     // 覆盖前端超时 × 重试；absolute 防止 keepalive 无限续命
-    let (inactivity_secs, absolute_secs) = model_wait_budget_secs(has_url);
+    // 图片题（多模态推理）与 URL 题（需下载图片）同样适用加长预算
+    let (inactivity_secs, absolute_secs) = model_wait_budget_secs(has_url || has_images);
     println!(
-        "⏳ model wait budget: inactivity={}s absolute={}s (has_url={})",
-        inactivity_secs, absolute_secs, has_url
+        "⏳ model wait budget: inactivity={}s absolute={}s (has_url={}, has_images={})",
+        inactivity_secs, absolute_secs, has_url, has_images
     );
     match logger
         .wait_for_model_response(request_id.to_string(), inactivity_secs, absolute_secs)
@@ -409,6 +558,17 @@ async fn wait_and_store_ai_answer(
                 println!("⚠️ 检测到题目不完整,将答案留空");
             }
             extracted_answer = extracted_answer.trim().to_string();
+            // 图片题：把答案中的 [图片N] 占位符还原为原始 URL（入库与返回均使用还原后的文本）
+            if has_images {
+                let before_restore = extracted_answer.clone();
+                extracted_answer = restore_image_placeholders(&extracted_answer, request);
+                if extracted_answer != before_restore {
+                    println!("🔧 答案图片占位符已还原为 URL");
+                }
+            }
+            if let Some((status, message)) = classify_model_failure(&extracted_answer) {
+                return (status, QueryResponse::error(message));
+            }
             // 去掉 A./B. 前缀，纯字母映射为选项正文，避免返回/入库带序号的答案
             let before_norm = extracted_answer.clone();
             extracted_answer = normalize_answer_against_options(
@@ -459,10 +619,8 @@ async fn wait_and_store_ai_answer(
         }
         Err(e) => {
             println!("❌ Model call timeout or error: {}", e);
-            (
-                408,
-                QueryResponse::error(format!("Model call failed: {}", e)),
-            )
+            let (status, message) = classify_explicit_model_failure(&e);
+            (status, QueryResponse::error(message))
         }
     }
 }
@@ -482,7 +640,9 @@ async fn resolve_query_with_same_question_check(
     }
 
     // 1) 精确命中直接返回
-    match query_database_exact(&request.title, request.options.as_deref()).await {
+    match query_database_exact(&request.title, request.options.as_deref()).await.map(|hits| {
+        hits.into_iter().filter(|hit| !hit.is_ai || crate::model_response::validate_answer(&hit.answer).is_ok()).collect::<Vec<_>>()
+    }) {
         Ok(exact_hits) if !exact_hits.is_empty() => {
             println!("✅ 精确匹配命中: {} 条", exact_hits.len());
             let data_list: Vec<QueryData> = exact_hits
@@ -524,7 +684,7 @@ async fn resolve_query_with_same_question_check(
     )
     .await
     {
-        Ok(c) => c,
+        Ok(c) => c.into_iter().filter(|hit| !hit.is_ai || crate::model_response::validate_answer(&hit.answer).is_ok()).collect::<Vec<_>>(),
         Err(e) => {
             eprintln!("Database candidate query error: {}", e);
             return (
@@ -541,8 +701,8 @@ async fn resolve_query_with_same_question_check(
         );
         let check_prompt =
             build_same_question_check_prompt(&request.title, request.options.as_deref(), &candidates);
-        logger.send_model_call_request(request_id.to_string(), check_prompt.clone());
-        emit_model_call_request(app, request_id, &check_prompt);
+        logger.send_model_call_request(request_id.to_string(), check_prompt.clone(), None);
+        emit_model_call_request(app, request_id, &check_prompt, &[]);
 
         match logger
             .wait_for_model_response(request_id.to_string(), 30, 45)
@@ -602,7 +762,11 @@ async fn resolve_query_with_same_question_check(
                     }
 
                     // matched_id 不在候选中，尝试按 id 查库
-                    if let Ok(matched) = get_ai_response_by_id(matched_id) {
+                    if let Ok(matched) = get_ai_response_by_id(matched_id).and_then(|hit| {
+                        if hit.is_ai && crate::model_response::validate_answer(&hit.answer).is_err() {
+                            Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "历史模型失败记录不可作为答案").into())
+                        } else { Ok(hit) }
+                    }) {
                         let answer = normalize_answer_against_options(
                             &matched.answer,
                             request.options.as_deref(),
@@ -641,6 +805,10 @@ async fn resolve_query_with_same_question_check(
                 }
             }
             Err(e) => {
+                if e.contains("未选择模型") {
+                    let (status, message) = classify_explicit_model_failure(&e);
+                    return (status, QueryResponse::error(message));
+                }
                 println!("⚠️ 同题判断超时/失败: {}，回落正常答题", e);
             }
         }
@@ -755,7 +923,8 @@ pub async fn start_server(
             let app = app_for_query.clone();
             async move {
                 let start_time = std::time::Instant::now();
-                let request_body = serde_json::to_string(&request).unwrap_or_default();
+                // 日志请求体：images 只保留摘要，避免 base64 大字段进入日志与 SSE 广播
+                let request_body = build_query_request_log_body(&request);
                 
                 // 生成唯一请求ID
                 let request_id = uuid::Uuid::new_v4().to_string();
@@ -867,6 +1036,10 @@ pub async fn start_server(
                     title: title.clone(),
                     options,
                     query_type,
+                    // GET 请求不承载图片题优化字段（base64 只能走 POST 请求体）
+                    images: None,
+                    suggestion_title: None,
+                    suggestion_options: None,
                 };
                 
                 let request_body = serde_json::to_string(&request).unwrap_or_default();
@@ -1001,9 +1174,7 @@ pub async fn start_server(
                     request.request_id
                 );
 
-                let is_success = request
-                    .is_success
-                    .unwrap_or_else(|| is_model_error(&request.content).is_none());
+                let is_success = crate::model_response::callback_succeeded(&request.content, request.is_success);
 
                 // 发送模型调用响应事件
                 logger.send_model_call_response(
@@ -1013,20 +1184,12 @@ pub async fn start_server(
                     is_success,
                 );
 
-                if is_success {
-                    match store_ai_response_to_database(&request.request_id, &request.content).await
-                    {
-                        Ok(_) => println!("✅ AI响应已成功存储到数据库"),
-                        Err(e) => println!("❌ 存储AI响应到数据库失败: {}", e),
-                    }
-                } else {
-                    println!("⚠️ 检测到模型错误响应,跳过存储到数据库");
-                }
-
+                // Acknowledgement only. The query handler is the sole persistence owner.
                 // 返回成功响应
                 let response = serde_json::json!({
                     "success": true,
-                    "message": "Model response received successfully"
+                    "message": "Model response received successfully",
+                    "is_success": is_success
                 });
 
                 Ok::<_, warp::Rejection>(warp::reply::json(&response))
@@ -1142,16 +1305,7 @@ pub async fn start_server(
                 let resp = serde_json::json!({"success": false, "message": "token不能为空"});
                 return Ok::<_, warp::Rejection>(warp::reply::json(&resp));
             }
-            // 读取配置文件
-            let config_path = {
-                let exe_dir = std::env::current_exe()
-                    .ok()
-                    .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-                    .unwrap_or_else(|| std::path::PathBuf::from("."));
-                exe_dir.join("config.json")
-            };
-            let config_str = std::fs::read_to_string(&config_path).unwrap_or_default();
-            let config: serde_json::Value = serde_json::from_str(&config_str).unwrap_or_default();
+            let config = read_app_config();
             // 验证管理员token
             let admin_token = config
                 .get("adminToken")
@@ -1193,15 +1347,8 @@ pub async fn start_server(
                     warp::http::StatusCode::UNAUTHORIZED,
                 ));
             }
-            let path = std::env::current_exe()
-                .ok()
-                .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-                .unwrap_or_else(|| std::path::PathBuf::from("."))
-                .join("model_config.json");
-            let data: serde_json::Value = std::fs::read_to_string(&path)
-                .ok()
-                .and_then(|s| serde_json::from_str(&s).ok())
-                .unwrap_or(serde_json::json!({}));
+            let mut data=crate::secret_vault::document_read("model_settings",None).unwrap_or_default();
+            if let Some(rows)=data["platforms"].as_array_mut() {for row in rows {if let Some(object)=row.as_object_mut() {object.remove("apiKey");object.remove("customHeaders");}}}
             Ok::<_, warp::Rejection>(warp::reply::with_status(
                 warp::reply::json(&serde_json::json!({"success": true, "data": data})),
                 warp::http::StatusCode::OK,
@@ -1221,12 +1368,15 @@ pub async fn start_server(
                     warp::http::StatusCode::UNAUTHORIZED,
                 ));
             }
-            let path = std::env::current_exe()
-                .ok()
-                .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-                .unwrap_or_else(|| std::path::PathBuf::from("."))
-                .join("model_config.json");
-            match std::fs::write(&path, body.to_string()) {
+            // Omitting a key in a remote configuration update retains the local key.
+            let mut body=body;
+            let existing=crate::secret_vault::document_read("model_settings",None).unwrap_or_default();
+            if let Some(rows)=body["platforms"].as_array_mut() {for row in rows {
+                if let Some(previous)=existing["platforms"].as_array().and_then(|old|old.iter().find(|p|p["id"]==row["id"])) {
+                    for field in ["apiKey","customHeaders"] {if row.get(field).is_none() {row[field]=previous[field].clone();}}
+                }
+            }}
+            match crate::secret_vault::document_write("model_settings",body) {
                 Ok(_) => Ok::<_, warp::Rejection>(warp::reply::with_status(
                     warp::reply::json(&serde_json::json!({"success": true})),
                     warp::http::StatusCode::OK,
@@ -1352,34 +1502,6 @@ pub async fn get_server_status(state: State<'_, ServerState>) -> Result<ServerIn
     Ok(info.clone())
 }
 
-/// 存储AI响应到数据库
-///
-/// # Arguments
-/// * `request_id` - 请求ID
-/// * `content` - AI响应内容
-///
-/// # Returns
-/// * `Result<(), String>` - 成功返回Ok(()),失败返回错误信息
-async fn store_ai_response_to_database(request_id: &str, content: &str) -> Result<(), String> {
-    // 记录AI响应信息,准备存储到数据库
-    println!(
-        "📝 准备存储AI响应到数据库: request_id={}, content_length={}",
-        request_id,
-        content.len()
-    );
-
-    // 如果回答是"题目不完整,无法确定具体问题.",则记录日志
-    if content.contains("题目不完整,无法确定具体问题.") {
-        println!("⚠️ 检测到题目不完整 (in callback)");
-    }
-
-    // TODO: 目前无法在此处存储,因为缺少原始问题的标题 (Title).
-    // 完整的存储逻辑已在 query_post_route 中实现,那里有完整的上下文.
-    // 如果将来需要支持异步回调存储,需要实现通过 request_id 查找原始 title 的机制.
-
-    Ok(())
-}
-
 /// 从选项文本解析 A/B/C → 选项正文
 fn parse_option_letter_map(options: Option<&str>) -> HashMap<char, String> {
     let mut map = HashMap::new();
@@ -1490,6 +1612,8 @@ fn normalize_answer_against_options(answer: &str, options: Option<&str>) -> Stri
     for part in parts {
         let mut p = strip_leading_option_label(part.trim(), &map);
         if p.is_empty() {
+            // Empty completion slots are positional; dropping them shifts later answers.
+            normalized.push(String::new());
             continue;
         }
 
@@ -1655,99 +1779,34 @@ fn is_timeout_like_model_failure(text: &str) -> bool {
 /// 将模型失败文本映射为 RequestLog 状态码：
 /// 未选择模型 → 400，超时类 → 408，其它 → 500
 fn classify_model_failure(text: &str) -> Option<(u16, String)> {
-    let err = is_model_error(text)?;
-    if err.contains("未选择模型") || text.contains("未选择模型") {
-        Some((400, "错误: 未选择模型".to_string()))
-    } else if is_timeout_like_model_failure(&err) || is_timeout_like_model_failure(text) {
-        Some((408, err))
+    let error = is_model_error(text)?;
+    Some(classify_explicit_model_failure(&error))
+}
+
+fn classify_explicit_model_failure(text: &str) -> (u16, String) {
+    if text.contains("未选择模型") {
+        (400, "错误: 未选择模型".into())
+    } else if is_timeout_like_model_failure(text) {
+        (408, text.to_string())
     } else {
-        Some((500, err))
+        (500, if text.trim().is_empty() { "模型调用失败".into() } else { text.to_string() })
     }
 }
 
 fn is_model_error(text: &str) -> Option<String> {
-    let mut cleaned = text.trim().to_string();
-    if cleaned.starts_with("```json") {
-        cleaned = cleaned[7..].to_string();
-    } else if cleaned.starts_with("```") {
-        cleaned = cleaned[3..].to_string();
-    }
-    if cleaned.ends_with("```") {
-        cleaned = cleaned[..cleaned.len() - 3].to_string();
-    }
-    let cleaned = cleaned.trim().to_string();
-
-    if cleaned == "所有AI均查询失败" {
-        return Some(cleaned);
-    }
-
-    // 兼容半角/全角冒号
-    if cleaned.starts_with("错误:")
-        || cleaned.starts_with("错误：")
-        || cleaned.starts_with("Error:")
-        || cleaned.starts_with("API 错误")
-    {
-        return Some(cleaned);
-    }
-
-    if cleaned.contains("\"error\"") {
-        if let Ok(v) = serde_json::from_str::<Value>(&cleaned) {
-            if let Some(err) = v.get("error") {
-                if let Some(msg) = err.get("message").and_then(|m| m.as_str()) {
-                    return Some(msg.to_string());
-                }
-                return Some(err.to_string());
-            }
-        }
-
-        fn extract_last_balanced_json(text: &str) -> Option<String> {
-            let bytes = text.as_bytes();
-            let mut end: Option<usize> = None;
-            let mut depth: i32 = 0;
-            let mut i = bytes.len();
-            while i > 0 {
-                i -= 1;
-                let b = bytes[i];
-                if end.is_none() {
-                    if b == b'}' {
-                        end = Some(i);
-                        depth = 1;
-                        continue;
-                    }
-                } else {
-                    if b == b'}' {
-                        depth += 1;
-                    } else if b == b'{' {
-                        depth -= 1;
-                        if depth == 0 {
-                            let start = i;
-                            let slice = &text[start..=end.unwrap()];
-                            return Some(slice.to_string());
-                        }
-                    }
-                }
-            }
-            None
-        }
-
-        if let Some(json_str) = extract_last_balanced_json(&cleaned) {
-            if let Ok(v) = serde_json::from_str::<Value>(&json_str) {
-                if let Some(err) = v.get("error") {
-                    if let Some(msg) = err.get("message").and_then(|m| m.as_str()) {
-                        return Some(msg.to_string());
-                    }
-                    return Some(err.to_string());
-                }
-            }
-        }
-    }
-
-    None
+    crate::model_response::failure_message(text)
 }
 
 #[cfg(test)]
 mod same_question_tests {
-    use super::{classify_model_failure, parse_same_question_result};
+    use super::{classify_model_failure, normalize_answer_against_options, parse_same_question_result};
+
+    #[test]
+    fn preserves_empty_completion_answer_slots() {
+        assert_eq!(normalize_answer_against_options("甲######丙", None), "甲######丙");
+        assert_eq!(normalize_answer_against_options("###乙###", None), "###乙###");
+        assert_eq!(normalize_answer_against_options("######", None), "######");
+    }
 
     #[test]
     fn parses_same_true_with_matched_id() {
@@ -1773,5 +1832,156 @@ mod same_question_tests {
         let (status, msg) = classify_model_failure("错误: 未选择模型").expect("classified");
         assert_eq!(status, 400);
         assert_eq!(msg, "错误: 未选择模型");
+    }
+}
+
+#[cfg(test)]
+mod image_question_tests {
+    use super::{
+        build_query_request_log_body, image_placeholder_map, request_has_images,
+        resolve_question_payload, restore_image_placeholders,
+    };
+    use crate::types::QueryRequest;
+
+    fn make_request(
+        title: &str,
+        options: Option<&str>,
+        images: Option<Vec<&str>>,
+        suggestion_title: Option<&str>,
+        suggestion_options: Option<&str>,
+    ) -> QueryRequest {
+        QueryRequest {
+            title: title.to_string(),
+            options: options.map(str::to_string),
+            query_type: Some("completion".to_string()),
+            images: images.map(|list| list.into_iter().map(str::to_string).collect()),
+            suggestion_title: suggestion_title.map(str::to_string),
+            suggestion_options: suggestion_options.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn maps_ocs_numbers_without_url_extension_assumptions() {
+        let original = "题 https://a.com/render?id=1 与 https://b.com/y.png";
+        let suggestion = "题  [图片1]  与  [图片2] ";
+        let mapping = image_placeholder_map(original, suggestion).unwrap();
+        assert_eq!(mapping.get(&1).unwrap(), "https://a.com/render?id=1");
+        assert_eq!(mapping.get(&2).unwrap(), "https://b.com/y.png");
+    }
+
+    #[test]
+    fn maps_only_successfully_converted_images() {
+        let request = make_request("https://a.com/failed.png https://b.com/success.png", None,
+            Some(vec!["data:image/png;base64,AAA"]),
+            Some("https://a.com/failed.png  [图片1] "), None);
+        assert_eq!(restore_image_placeholders("[图片1]", &request), "https://b.com/success.png");
+    }
+
+    #[test]
+    fn leaves_ambiguous_missing_and_invalid_mappings_for_ocs() {
+        let request = make_request("https://a.com/x.png", None, None, None, None);
+        assert_eq!(restore_image_placeholders("[图片1]", &request), "[图片1]");
+        assert!(image_placeholder_map("https://a.com/a.png https://a.com/b.png", "[图片1] [图片1]").is_none());
+        assert!(image_placeholder_map("https://a.com/a.png", "[图片0]").is_none());
+        assert!(image_placeholder_map("different text", "[图片1]").is_none());
+    }
+
+    #[test]
+    fn restores_shared_title_and_option_numbers() {
+        let request = make_request("题https://a.com/x.png", Some("A. https://a.com/x.png\nB. https://b.com/render?id=2"),
+            Some(vec!["data:image/png;base64,AAA", "data:image/png;base64,BBB"]),
+            Some("题 [图片1] "), Some("A.  [图片1] \nB.  [图片2] "));
+        assert_eq!(restore_image_placeholders("[图片2]###[图片1]", &request), "https://b.com/render?id=2###https://a.com/x.png");
+    }
+
+    #[test]
+    fn restores_placeholders_to_original_urls() {
+        let request = make_request(
+            "题<img src=\"https://a.com/x.png\">，又<img src=\"https://b.com/y.png\">",
+            None,
+            None,
+            Some("题<img src=\" [图片1] \">，又<img src=\" [图片2] \">"),
+            None,
+        );
+        assert_eq!(
+            restore_image_placeholders("答案为[图片2]，补充[图片1]", &request),
+            "答案为https://b.com/y.png，补充https://a.com/x.png"
+        );
+    }
+
+    #[test]
+    fn keeps_out_of_range_placeholder() {
+        let request = make_request("题<img src=\"https://a.com/x.png\">", None, None, None, None);
+        assert_eq!(restore_image_placeholders("[图片3]", &request), "[图片3]");
+    }
+
+    #[test]
+    fn image_payload_prefers_suggestion_text() {
+        let request = make_request(
+            "原始题干 https://a.com/x.png",
+            Some("原始选项 https://b.com/y.png"),
+            Some(vec!["data:image/png;base64,AAA"]),
+            Some("占位题干 [图片1]"),
+            Some("A. 占位选项"),
+        );
+        let (title, options, images) = resolve_question_payload(&request);
+        assert_eq!(title, "占位题干 [图片1]");
+        assert_eq!(options.as_deref(), Some("A. 占位选项"));
+        assert_eq!(images.len(), 1);
+    }
+
+    #[test]
+    fn text_payload_falls_back_to_original_title() {
+        let request = make_request("普通题干", Some("A. 选项"), None, None, None);
+        let (title, options, images) = resolve_question_payload(&request);
+        assert_eq!(title, "普通题干");
+        assert_eq!(options.as_deref(), Some("A. 选项"));
+        assert!(images.is_empty());
+        assert!(!request_has_images(&request));
+    }
+
+    #[test]
+    fn log_body_summarizes_base64_images() {
+        let request = make_request(
+            "题干",
+            None,
+            Some(vec!["data:image/png;base64,AAA", "data:image/png;base64,BBB"]),
+            Some("[图片1]"),
+            None,
+        );
+        let body = build_query_request_log_body(&request);
+        assert!(body.contains("\"has_images\":true"));
+        assert!(body.contains("2 张 base64 图片"));
+        assert!(!body.contains("base64,AAA"));
+    }
+
+    #[test]
+    fn invalid_image_array_slots_are_rejected_instead_of_renumbered() {
+        for json in [r#"{"title":"t","images":["", "data:image/png;base64,BBB"]}"#,
+                     r#"{"title":"t","images":[null, "data:image/png;base64,BBB"]}"#] {
+            assert!(serde_json::from_str::<QueryRequest>(json).is_err());
+        }
+    }
+
+    #[test]
+    fn deserializes_images_as_array_or_placeholder_string() {
+        let from_array: QueryRequest = serde_json::from_str(
+            r#"{"title":"t","images":["data:image/png;base64,AAA"],"suggestion_title":"[图片1]"}"#,
+        )
+        .expect("array form");
+        assert_eq!(from_array.images.as_ref().map(Vec::len), Some(1));
+        assert_eq!(from_array.suggestion_title.as_deref(), Some("[图片1]"));
+
+        let from_string: QueryRequest = serde_json::from_str(
+            r#"{"title":"t","images":"data:image/png;base64,AAA,data:image/png;base64,BBB"}"#,
+        )
+        .expect("string form");
+        assert_eq!(
+            from_string.images,
+            Some(vec![
+                "data:image/png;base64,AAA".to_string(),
+                "data:image/png;base64,BBB".to_string(),
+            ])
+        );
     }
 }

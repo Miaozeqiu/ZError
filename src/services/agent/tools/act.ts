@@ -3,7 +3,8 @@ import { handleCheckTool } from './check'
 
 import { observedJson } from '../../browser/engine'
 import { explainEvalError, videoSnapshotNote } from '../../browser/eval'
-import { cachedPageSnap } from '../../browser/engine/pageSnap'
+import { cachedPageSnap, invalidatePageSnap } from '../../browser/engine/pageSnap'
+import { rememberPageRefs } from '../../browser/engine/refs'
 
 export const handleActTools = async (ctx: Record<string, any>): Promise<string | null> => {
   const {
@@ -39,7 +40,8 @@ export const handleActTools = async (ctx: Record<string, any>): Promise<string |
       if (await currentUrl(browserId) !== from) throw new Error('页面已跳转，停止本批操作，请重新读取页面')
     }))
   }
-  if (name === 'browser_click') {
+  const textOnlyClick = name === 'browser_click' && !String(args.ref || '').trim() && !String(args.selector || '').trim() && Boolean(String(args.text || '').trim())
+  if (name === 'browser_click' && !textOnlyClick) {
     const from = await currentUrl(browserId)
     const ref = String(args.ref || '').trim()
     const selector = String(args.selector || '').trim()
@@ -50,7 +52,8 @@ export const handleActTools = async (ctx: Record<string, any>): Promise<string |
     const runClick = async (locator: BrowserLocator) => {
       const target = { ...locator, nth: locator.nth ?? nth, frame: locator.frame ?? frame }
       const acted = await clickByLocator(browserId, target)
-      const seen = await observeAfterClick(browserId, acted, from, target.frameId || acted.frameId || target.frame || target.framePath)
+      if (acted.requiresRefresh) { invalidatePageSnap(browserId); rememberPageRefs(browserId, []) }
+      const seen = await observeAfterClick(browserId, acted, from, acted.requiresRefresh ? undefined : target.frameId || acted.frameId || target.frame || target.framePath)
       return JSON.stringify(acted.ok ? seen : { ...seen, hint: [seen.hint, missHint()].filter(Boolean).join(' ') })
     }
     if (ref && !looksLikeCssSelector(ref)) {
@@ -59,20 +62,20 @@ export const handleActTools = async (ctx: Record<string, any>): Promise<string |
       if (css) return runClick({ by: 'css', value: css })
       return observedJson(browserId, {
         ok: false,
-        error: `没有找到快照 ref ${ref}。用本次返回里的 ref。CSS 请用 selector=#loginBtn，不要放进 ref。`,
+        error: `当前快照没有 ref ${ref}。请使用最新成功快照中的 ref；CSS 选择器应放在 selector 参数中。`,
         hint: missHint(),
       })
     }
     if (!css) {
       return JSON.stringify({
         ok: false,
-        error: '缺少 ref 或 selector。快照用 ref=e3，CSS 用 selector=#loginBtn。',
+        error: '缺少点击目标。请传入当前快照中的 ref、已核实的 CSS selector，或页面可见文字 text。',
         hint: missHint(),
       })
     }
     return runClick({ by: 'css', value: css, nth, frame })
   }
-  if (name === 'browser_click_text') {
+  if (name === 'browser_click_text' || textOnlyClick) {
     const text = String(args.text || '').trim()
     const nth = Number(args.nth) > 0 ? Number(args.nth) : undefined
     const frame = String(args.frame || '').trim() || undefined
@@ -86,6 +89,18 @@ export const handleActTools = async (ctx: Record<string, any>): Promise<string |
       if (policy.permissionMode === 'strict') return JSON.stringify({ ok: false, error: COURSE_HW_HINT })
     }
     const from = nowUrl
+    // DOM 补充控件不一定在 AX 树里。唯一的精确快照命中优先使用原来的节点/frame 身份。
+    const compact = (value: string) => String(value || '').replace(/\s+/g, '')
+    const refs = typeof listCachedPageRefs === 'function' ? listCachedPageRefs(browserId) : []
+    const matches = refs.filter((item: any) => !item.disabled && compact(item.name) === compact(text)
+      && (!frame || [item.locator?.frame, item.locator?.frameId, item.locator?.framePath].includes(frame)))
+    if (matches.length === 1 && !nth) {
+      const locator = matches[0].locator
+      const acted = await clickByLocator(browserId, locator)
+      if (acted.requiresRefresh) { invalidatePageSnap(browserId); rememberPageRefs(browserId, []) }
+      return JSON.stringify(await observeAfterClick(browserId, acted, from,
+        acted.requiresRefresh ? undefined : locator.frameId || locator.frame || locator.framePath))
+    }
     let clicked = await withBudget(
       (nth || frame
         ? clickByLocator(browserId, { by: 'text', value: text, nth, frame })
@@ -124,7 +139,10 @@ export const handleActTools = async (ctx: Record<string, any>): Promise<string |
   if (name === 'browser_type') {
     const ref = String(args.ref || '').trim()
     const selector = String(args.selector || '').trim()
+    const secret = String(args.secret_ref || '')
+    if (secret && args.text !== undefined) return JSON.stringify({ ok: false, error: 'text 与 secret_ref 不能同时填写' })
     const text = String(args.text ?? '')
+    if (!secret && /\{\{secret:/.test(text)) return JSON.stringify({ ok: false, error: '敏感变量必须放在 secret_ref，不能当作普通文字填写。' })
     const nowUrl = await currentUrl(browserId)
     const onSpaceShell = isShellNode(graphNodeId(await graphUrlOf(browserId, nowUrl)), nowUrl)
     if (onSpaceShell && policy.permissionMode === 'strict') {
@@ -136,6 +154,7 @@ export const handleActTools = async (ctx: Record<string, any>): Promise<string |
     const missHint = () => formatMissRefsHint(browserId, 'fill')
     const runFill = async (locator: BrowserLocator) => {
       const target = { ...locator, nth: locator.nth ?? nth, frame: locator.frame ?? frame }
+      if (secret) return JSON.stringify(await callProtocol(browserId, 'fill_secret', { locator: target, secret_ref: secret }))
       const written = await fillByLocator(browserId, target, text)
       if (written.ok) rememberLoginTyped(nowUrl, `${locator.value} ${locator.name || ''}`, text)
       return observedJson(browserId, JSON.parse(typedResult(written, text, undefined, missHint())),
@@ -148,7 +167,7 @@ export const handleActTools = async (ctx: Record<string, any>): Promise<string |
         if (role && !/^(textbox|searchbox|combobox|spinbutton)$/.test(role)) {
           return observedJson(browserId, {
             ok: false,
-            error: `${ref} 是${role}「${locator.name || locator.value}」，不是输入框。登录请填账号/密码框的 ref，或 selector=#username。`,
+            error: `${ref} 是${role}「${locator.name || locator.value}」，不是输入框。请使用当前页面输入框的 ref，或已核实的 CSS selector。`,
             hint: missHint(),
           })
         }
@@ -157,14 +176,14 @@ export const handleActTools = async (ctx: Record<string, any>): Promise<string |
       if (css) return runFill({ by: 'css', value: css })
       return observedJson(browserId, {
         ok: false,
-        error: `没有找到快照 ref ${ref}。用本次返回里的 ref。CSS 请用 selector=#phone，不要放进 ref。`,
+        error: `当前快照没有 ref ${ref}。请使用最新成功快照中输入框的 ref；CSS 选择器应放在 selector 参数中。`,
         hint: missHint(),
       })
     }
     if (!css) {
       return JSON.stringify({
         ok: false,
-        error: '缺少 ref 或 selector。快照用 ref=e3，CSS 用 selector=#phone。',
+        error: '缺少填写目标。请传入当前快照中输入框的 ref，或已核实的 CSS selector。',
         hint: missHint(),
       })
     }
@@ -195,7 +214,11 @@ export const handleActTools = async (ctx: Record<string, any>): Promise<string |
       })
     }
     const frame = String(args.frame || '').trim()
+    const frameId = String(args.frameId || '').trim()
+    const loaderId = String(args.loaderId || '').trim()
     const all = args.all === true
+    if (all && (frame || frameId || loaderId)) return JSON.stringify({ ok: false, error: 'all 不能与指定 frame 同时使用' })
+    if (loaderId && !frameId) return JSON.stringify({ ok: false, error: 'loaderId 必须与 frameId 一起使用' })
     try {
       if (all) {
         const report = await evalBrowserFrames(browserId, script)
@@ -217,16 +240,29 @@ export const handleActTools = async (ctx: Record<string, any>): Promise<string |
           hint: [report.hint, note].filter(Boolean).join(' ') || undefined,
         })
       }
-      const result = await evaluate(browserId, script, frame ? { frame } : undefined)
+      const target = frameId ? { frameId, ...(loaderId ? { loaderId } : {}) } : frame ? { frame } : undefined
+      const result = await evaluate(browserId, script, target)
       const note = videoSnapshotNote(browserId, script, cachedPageSnap(browserId)?.snapshot || '')
       return JSON.stringify({
         ok: result == null ? false : (typeof result === 'object' && result !== null && 'ok' in result ? Boolean((result as { ok?: unknown }).ok !== false) : true),
         result,
-        frame: frame || 'top',
+        frame: frameId || frame || 'top',
         hint: note || undefined,
       })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
+      if (/frame.*(?:不存在|不唯一|移除|更换|就绪)|目标 frame/i.test(message)) {
+        const refreshed = JSON.parse(await observedJson(browserId, { ok: false, error: message, requiresRefresh: true,
+          hint: '使用本次快照中的精确 frameId 和 loaderId 重新定位；不要原样重试旧 frame，不要退回顶层或全帧执行。快照缺少目标时先 browser_get_page。' }))
+        const frames = new Map<string, { frameId: string; loaderId?: string; frame?: string }>()
+        if (!refreshed.snapshotStale) for (const ref of listCachedPageRefs?.(browserId) || []) {
+          const locator = ref.locator
+          if (locator?.frameId && !frames.has(locator.frameId) && frames.size < 16) {
+            frames.set(locator.frameId, { frameId: locator.frameId, loaderId: locator.loaderId, frame: locator.frame || locator.framePath })
+          }
+        }
+        return JSON.stringify({ ...refreshed, frames: [...frames.values()] })
+      }
       const note = videoSnapshotNote(browserId, script, cachedPageSnap(browserId)?.snapshot || '')
       return JSON.stringify({
         error: explainEvalError(message, script) || '脚本执行失败',

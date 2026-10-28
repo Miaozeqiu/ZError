@@ -1,6 +1,11 @@
 <template>
   <Teleport to="body" :disabled="!agentBrowserExpanded">
-  <Transition name="browser-pane">
+  <Transition
+    name="browser-pane"
+    @before-enter="paneEntering = true"
+    @after-enter="finishPaneEnter"
+    @enter-cancelled="finishPaneEnter"
+  >
   <aside v-show="active && !obscured" class="agent-browser-pane" :class="{ 'is-expanded': agentBrowserExpanded, 'is-macos': isMacOS }" :style="browserFrameStyle" aria-label="浏览器工作区">
     <div class="browser-pane-inner">
     <header class="browser-pane-head" :data-tauri-drag-region="agentBrowserExpanded ? '' : undefined">
@@ -12,9 +17,8 @@
     </header>
 
     <button v-if="!agentBrowserExpanded" class="browser-preview" type="button" aria-label="放大浏览器" @click="expandBrowser">
-      <span class="browser-preview-screen">
-        <img v-if="preview && previewId === currentAgentBrowser?.id" :src="preview" alt="当前网页预览" />
-        <span v-else class="browser-preview-placeholder">
+      <span ref="previewHostRef" class="browser-preview-screen">
+        <span v-if="!currentAgentBrowser" class="browser-preview-placeholder">
           <Icon :icon="currentAgentBrowser ? 'lucide:globe' : 'lucide:monitor'" width="28" height="28" />
           <span>{{ currentAgentBrowser ? '点击查看网页' : '浏览器待命' }}</span>
         </span>
@@ -46,7 +50,7 @@
         <button class="browser-zoom" type="button" :title="`当前缩放 ${zoomPercent}%，点击切换`" @click="cycleZoom">{{ zoomPercent }}%</button>
       </form>
       <div v-if="loading" class="browser-loading" role="progressbar" aria-label="网页加载中" />
-      <div ref="hostRef" class="browser-host" @pointerdown.capture="takeControlFromUi" @keydown.capture="takeControlFromUi" @wheel.passive="takeControlFromUi"><img v-if="openingMotion && preview && previewId === currentAgentBrowser?.id" class="browser-opening-preview" :src="preview" alt="当前网页预览" /><span v-if="busy" class="browser-opening">正在打开浏览器…</span></div>
+      <div ref="hostRef" class="browser-host" @pointerdown.capture="takeControlFromUi" @keydown.capture="takeControlFromUi" @wheel.passive="takeControlFromUi"><span v-if="busy" class="browser-opening">正在打开浏览器…</span></div>
     </div>
     <div v-if="agentBrowserExpanded" class="browser-control-dock" role="group" aria-label="浏览器操作权">
       <div class="browser-control-pill" :class="{ 'is-controlling': displayedUserControl }">
@@ -61,7 +65,7 @@
       </div>
     </div>
     <p v-if="error" class="browser-error" role="alert">{{ error }} <button type="button" @click="retry">重试</button></p>
-    <BrowserAgentWatchBar :browser-id="currentAgentBrowser?.id" />
+    <BrowserAgentWatchBar v-if="agentBrowserExpanded" :browser-id="currentAgentBrowser?.id" />
     </div>
   </aside>
   </Transition>
@@ -83,7 +87,7 @@ import {
   browserAudioMuted, browserHomeUrl, closeBrowserView, createAppBrowser, goBackBrowserView,
   goForwardBrowserView, hideAllBrowserViews, hostBounds, hostnameOf, isBrowserHome, listenBrowserLoad,
   navigateBrowserView, normalizeBrowserUrl, patchAppBrowser, reloadBrowserView, removeAppBrowser,
-  screenshotBrowserView, setBrowserAudioMuted, setBrowserBounds, setBrowserZoom, showBrowserView,
+  setBrowserAudioMuted, setBrowserBounds, setBrowserZoom, showBrowserView,
 } from '../../services/browser/appBrowser'
 import { isTauriEnvironment } from '../../services/app/environmentDetector'
 import { setBrowserControl, userControlsBrowser } from '../../services/browser/control'
@@ -97,8 +101,7 @@ const browserFrameStyle = {
 }
 const hostRef = ref<HTMLElement | null>(null)
 const toggleRef = ref<HTMLButtonElement | null>(null)
-const preview = ref('')
-const previewId = ref('')
+const previewHostRef = ref<HTMLElement | null>(null)
 const address = ref('')
 const addressFocused = ref(false)
 const error = ref('')
@@ -113,19 +116,19 @@ const controlTarget = ref<{ sessionId: string; owner: 'agent' | 'user' } | null>
 const displayedUserControl = computed(() => controlTarget.value?.sessionId === activeChatId.value
   ? controlTarget.value.owner === 'user' : userInControl.value)
 const openingMotion = ref(false)
-const visible = computed(() => props.active && agentBrowserExpanded.value && !props.obscured && !openingMotion.value)
+const paneEntering = ref(false)
+const visible = computed(() => props.active && !props.obscured && !openingMotion.value && !paneEntering.value
+  && (agentBrowserExpanded.value || Boolean(currentAgentBrowser.value)))
 const muted = computed(() => Boolean(browserAudioMuted.value[currentAgentBrowser.value?.id || '']))
 const zoomPercent = computed(() => Math.round((currentAgentBrowser.value?.zoom || 1) * 100))
 const working = computed(() => Boolean(activeChat.value?.messages.some(message => message.status === 'streaming'
   && message.steps.some(step => step.name.startsWith('browser_') && step.status === 'running'))))
 let resizeObserver: ResizeObserver | undefined
 let unlistenLoad: (() => void) | undefined
-let previewTimer = 0
 let boundsRaf = 0
 let syncFlight: Promise<void> | undefined
 let syncAgain = false
 let disposed = false
-let capturing = false
 let shownKey = ''
 let shownId = ''
 let takeFlight: Promise<void> | undefined
@@ -140,7 +143,7 @@ watch(agentBrowserExpanded, expanded => {
   window.clearTimeout(openingTimer)
   openingMotion.value = expanded && !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
   // The native CEF layer cannot follow CSS transforms. Show it once the host
-  // settles; the preview remains visible during the compositor animation.
+  // settles. Both sizes show the same live native page; no screenshot is used.
   if (openingMotion.value) openingTimer = window.setTimeout(finishOpeningMotion, 300)
 }, { flush: 'sync', immediate: true })
 
@@ -242,19 +245,8 @@ const expandBrowser = async () => {
   requireSession()
   await syncView()
 }
-const capturePreview = async () => {
-  const id = currentAgentBrowser.value?.id
-  if (!id || disposed || !props.active || capturing || !isTauriEnvironment()) return
-  capturing = true
-  try {
-    const shot = await screenshotBrowserView(id)
-    if (!disposed && currentAgentBrowser.value?.id === id) { preview.value = shot.image; previewId.value = id }
-  } catch { /* 预览失败不干扰工具与手动操作，下次动作后重试。 */ }
-  finally { capturing = false }
-}
 const collapseBrowser = () => {
   agentBrowserExpanded.value = false
-  void capturePreview()
   void nextTick(() => toggleRef.value?.focus())
 }
 const toggleBrowser = () => { if (agentBrowserExpanded.value) collapseBrowser(); else void expandBrowser() }
@@ -276,6 +268,7 @@ const syncView = () => {
       }
       if (!isTauriEnvironment()) { error.value = '请在桌面端使用浏览器'; continue }
       const sessionId = requireSession()
+      const expanded = agentBrowserExpanded.value
       const initializing = shownId !== currentAgentBrowser.value?.id
       if (initializing) busy.value = true
       try {
@@ -286,24 +279,25 @@ const syncView = () => {
         }
         const id = shownId || await ensureAgentBrowser(sessionId)
         if (initializing) await nextTick()
-        if (disposed || !visible.value || activeChatId.value !== sessionId || currentAgentBrowser.value?.id !== id) { syncAgain = true; continue }
-        const bounds = hostBounds(hostRef.value)
+        if (disposed || !visible.value || activeChatId.value !== sessionId || currentAgentBrowser.value?.id !== id || agentBrowserExpanded.value !== expanded) { syncAgain = true; continue }
+        const bounds = hostBounds(expanded ? hostRef.value : previewHostRef.value)
         if (!bounds) continue
         // 与展开样式的 clamp(16px, 7vw, 144px) 和 760px 窄窗规则对应。
-        bounds.layout = {
+        bounds.preview = !expanded
+        if (expanded) bounds.layout = {
           viewportWidth: window.innerWidth, viewportHeight: window.innerHeight,
           ...browserInsets,
         }
-        const key = `${id}:${bounds.x},${bounds.y},${bounds.width},${bounds.height}:${window.innerWidth},${window.innerHeight}`
+        const key = `${id}:${expanded}:${bounds.x},${bounds.y},${bounds.width},${bounds.height}:${window.innerWidth},${window.innerHeight}`
         if (key !== shownKey) {
           await setBrowserBounds(id, bounds)
-          if (disposed || !visible.value || activeChatId.value !== sessionId || currentAgentBrowser.value?.id !== id) { syncAgain = true; continue }
+          if (disposed || !visible.value || activeChatId.value !== sessionId || currentAgentBrowser.value?.id !== id || agentBrowserExpanded.value !== expanded) { syncAgain = true; continue }
           // 位置更新不能反复 show/提升原生层级，也不能重新打开标签页。
           if (shownId !== id) await showBrowserView(id)
           shownId = id
           shownKey = key
           // 用户若在等待原生调用时收起或切换了对话，马上隐藏，禁止旧任务晚到后重新显示。
-          if (!visible.value || activeChatId.value !== sessionId || currentAgentBrowser.value?.id !== id) syncAgain = true
+          if (!visible.value || activeChatId.value !== sessionId || currentAgentBrowser.value?.id !== id || agentBrowserExpanded.value !== expanded) syncAgain = true
         }
         error.value = ''
       } catch (value) { showError(value) }
@@ -312,17 +306,29 @@ const syncView = () => {
   })().finally(() => { syncFlight = undefined })
   return syncFlight
 }
+const finishPaneEnter = () => {
+  // ResizeObserver sees size changes, not the sidebar's CSS translation. Never
+  // leave the native layer at coordinates measured halfway through the entrance.
+  paneEntering.value = false
+  shownKey = ''
+  void nextTick(syncView)
+}
 const updateBounds = () => {
   if (boundsRaf) return
   boundsRaf = window.requestAnimationFrame(() => { boundsRaf = 0; void syncView() })
 }
 const onKey = (event: KeyboardEvent) => {
-  if (event.key === 'Escape' && visible.value && !(event.target instanceof HTMLInputElement)) collapseBrowser()
+  if (event.key === 'Escape' && agentBrowserExpanded.value && visible.value && !(event.target instanceof HTMLInputElement)) collapseBrowser()
 }
-watch([visible, () => currentAgentBrowser.value?.id, activeChatId], () => { shownKey = ''; error.value = ''; void nextTick(syncView) })
+watch([visible, agentBrowserExpanded, () => currentAgentBrowser.value?.id, activeChatId], () => { shownKey = ''; error.value = ''; void nextTick(syncView) })
 watch(() => currentAgentBrowser.value?.url, syncAddress, { immediate: true })
-watch(() => currentAgentBrowser.value?.id, () => { preview.value = ''; previewId.value = ''; addressFocused.value = false; syncAddress(); void capturePreview() })
-watch(working, (value) => { if (!value && !agentBrowserExpanded.value) void capturePreview() })
+watch(() => currentAgentBrowser.value?.id, () => { addressFocused.value = false; syncAddress() })
+watch([hostRef, previewHostRef], () => {
+  resizeObserver?.disconnect()
+  if (hostRef.value) resizeObserver?.observe(hostRef.value)
+  if (previewHostRef.value) resizeObserver?.observe(previewHostRef.value)
+  updateBounds()
+}, { flush: 'post' })
 
 onMounted(async () => {
   await startAgentBrowserWorkspace()
@@ -332,17 +338,15 @@ onMounted(async () => {
     const off = await listenBrowserLoad(state => {
       if (state.id !== currentAgentBrowser.value?.id) return
       loading.value = state.phase === 'started'
-      if (!loading.value && !agentBrowserExpanded.value) void capturePreview()
     }).catch(() => undefined)
     if (disposed) { off?.(); return }
     unlistenLoad = off
   }
   resizeObserver = new ResizeObserver(() => { void syncView() })
   if (hostRef.value) resizeObserver.observe(hostRef.value)
+  if (previewHostRef.value) resizeObserver.observe(previewHostRef.value)
   window.addEventListener('resize', updateBounds)
   window.addEventListener('keydown', onKey)
-  previewTimer = window.setInterval(() => { if (working.value && !agentBrowserExpanded.value) void capturePreview() }, 5000)
-  void capturePreview()
   void syncView()
 })
 onUnmounted(() => {
@@ -350,7 +354,6 @@ onUnmounted(() => {
   window.clearTimeout(openingTimer)
   unlistenLoad?.()
   resizeObserver?.disconnect()
-  window.clearInterval(previewTimer)
   window.cancelAnimationFrame(boundsRaf)
   window.removeEventListener('resize', updateBounds)
   window.removeEventListener('keydown', onKey)
@@ -368,7 +371,6 @@ onUnmounted(() => {
 .browser-pane-enter-from:not(.is-expanded) .browser-pane-inner, .browser-pane-leave-to:not(.is-expanded) .browser-pane-inner { opacity: 0; transform: translateX(18px); }
 @keyframes browser-screen-open { from { opacity: 0; transform: translateY(12px) scale(.985); } to { opacity: 1; transform: translateY(0) scale(1); } }
 .is-expanded .browser-screen { animation: browser-screen-open 280ms cubic-bezier(0.32, 0.72, 0, 1); }
-.browser-opening-preview { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
 .agent-browser-pane.is-expanded { position: fixed; inset: 0; z-index: 10000; width: 100vw; height: 100dvh; min-width: 0; padding: 44px var(--browser-wide-inset) 72px; border: 1px solid color-mix(in srgb, var(--border-primary, #e2e8f0) 55%, transparent); border-radius: 12px; background: color-mix(in srgb, var(--bg-secondary, #fff) 60%, transparent); -webkit-backdrop-filter: blur(24px) saturate(140%); backdrop-filter: blur(24px) saturate(140%); color: var(--text-primary, #2d3748); }
 .browser-pane-head { min-height: 42px; display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-shrink: 0; }
 .is-expanded .browser-pane-head { position: absolute; top: 0; left: 0; right: 0; height: 42px; padding: 0 16px; box-sizing: border-box; user-select: none; }
@@ -397,8 +399,7 @@ onUnmounted(() => {
 .browser-icon-button:disabled { opacity: .4; cursor: default; }
 button:focus-visible, input:focus-visible { outline: 2px solid var(--color-primary, #2563eb); outline-offset: 2px; }
 .browser-preview { display: flex; flex-shrink: 0; flex-direction: column; gap: 9px; padding: 0; border: none; background: transparent; color: inherit; text-align: left; cursor: pointer; }
-.browser-preview-screen { position: relative; width: 100%; aspect-ratio: 16 / 10; display: grid; place-items: center; overflow: hidden; border-radius: 12px; border: 1px solid color-mix(in srgb, var(--border-primary, #e2e8f0) 55%, transparent); background: var(--bg-tertiary, #f1f2f4); box-shadow: 0 2px 7px #00000005; transition: box-shadow 160ms ease; }
-.browser-preview-screen img { width: 100%; height: 100%; object-fit: contain; }
+.browser-preview-screen { position: relative; width: 100%; aspect-ratio: 16 / 9; display: grid; place-items: center; overflow: hidden; border-radius: 12px; border: 1px solid color-mix(in srgb, var(--border-primary, #e2e8f0) 55%, transparent); background: var(--bg-tertiary, #f1f2f4); box-shadow: 0 2px 7px #00000005; transition: box-shadow 160ms ease; }
 .browser-preview-placeholder { display: flex; flex-direction: column; align-items: center; gap: 12px; color: var(--text-secondary, #718096); font-size: 12px; }
 .browser-preview-expand { position: absolute; right: 8px; bottom: 8px; display: grid; place-items: center; width: 26px; height: 26px; border-radius: 7px; background: var(--bg-secondary, #fff); color: var(--text-secondary, #718096); opacity: 0; transition: opacity 140ms ease; }
 .browser-preview:focus-visible .browser-preview-expand { opacity: 1; }

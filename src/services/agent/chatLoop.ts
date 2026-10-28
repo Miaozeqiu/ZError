@@ -4,12 +4,13 @@ import { peekAppBrowserUrl } from '../browser/appBrowser'
 import { isModelStopped } from '../model/runner'
 import { finishStudyGraphStream, studyGraphStream } from '../study/graphStream'
 import { finalizeStudySessionSummary } from '../study/timelineSummary'
-import { getProfileForKind } from './agentProfiles'
+import { getActiveAgentProfile } from './agentProfiles'
 import { getEnabledSkillCatalog } from './agentSkills'
 import { formatBrowserLiveContext } from './browserLoop'
 import { rememberBrowserTaskIntent } from './browserTask'
 import { bindAllWatchAgents, flushAllWatchAfterTurn } from '../platform'
 import {
+  chatStoreReady,
   chatAborts,
   createChat,
   finalizeStopped,
@@ -34,14 +35,14 @@ import {
   toMultimodalUserContent,
 } from './chatStudy'
 import { packAgentPanel } from '../platform/panelAccess'
-import { ensureStudyWatch, liveStudyPlayback } from '../chaoxing/browser/playback'
 import type { AgentChatAttachment, AgentChatMessage } from './chatTypes'
 import { contextSummaryPrompt, splitCompactedHistory } from './context'
 import { clipAgentDebug, logAgentDebug } from './debugLog'
 import { isFileAttachment, isFolderAttachment, isImageAttachment } from './folderTokens'
 import { buildModelHistory } from './modelHistory'
 import { buildAgentSystemPrompt } from './prompts'
-import { recoverSiteAccountsFromTexts, rememberAccountsFromUserText } from './siteAccounts'
+import { redactObject, redactText } from '../security/secretRedaction'
+import { redactNative } from '../security/secureStore'
 import { runAgentTurnLoop } from './subagent/runtime'
 import { assembleAgentTools, availableAgentTools } from './tools'
 import { useSettings } from '../app/settings'
@@ -55,23 +56,34 @@ const matchSubjectInText = <T extends { id: number; name: string }>(text: string
   return ranked[0] || null
 }
 
-const attachStudyFromUserText = async (sessionId: string, text: string) => {
+const attachStudyFromUserText = async (sessionId: string, text: string, signal: AbortSignal) => {
   const session = sessions.value.find((item) => item.id === sessionId)
   if (session?.studySubjectId) return
   try {
     const hit = matchSubjectInText(text, await databaseService.listStudySubjects())
-    if (hit) setChatStudySubject(hit.id, sessionId)
+    if (hit && !signal.aborted) setChatStudySubject(hit.id, sessionId)
   } catch {
     // ignore
   }
 }
+
+/** 本地初始化也应能被停止；迟到的结果不能继续启动模型。 */
+const prepareTurn = <T>(signal: AbortSignal, work: () => Promise<T>): Promise<T> => new Promise((resolve, reject) => {
+  const stopped = () => reject(new DOMException('已停止', 'AbortError'))
+  if (signal.aborted) { stopped(); return }
+  signal.addEventListener('abort', stopped, { once: true })
+  Promise.resolve().then(() => {
+    if (signal.aborted) throw new DOMException('已停止', 'AbortError')
+    return work()
+  }).then(resolve, reject).finally(() => signal.removeEventListener('abort', stopped))
+})
 
 export const sendChatMessage = async (
   text: string,
   files?: AgentChatAttachment[],
   options?: { sessionId?: string; kind?: 'watch'; modelText?: string },
 ) => {
-  const content = text.trim()
+  let content = redactText(text.trim())
   if (!content) return
 
   let session = options?.sessionId
@@ -83,18 +95,7 @@ export const sendChatMessage = async (
   if (sessionIsStreaming(sessions.value.find((item) => item.id === sessionId))) return
   const debug = (entry: Record<string, unknown>) =>
     logAgentDebug(sessionId, { kind: 'browser', ...entry })
-  if (options?.kind !== 'watch') await attachStudyFromUserText(sessionId, content)
-  if (options?.kind !== 'watch') rememberBrowserTaskIntent(sessionId, content)
-  if (session.browserId) {
-    const browserUrl = peekAppBrowserUrl(session.browserId) || ''
-    rememberAccountsFromUserText(content, browserUrl)
-    recoverSiteAccountsFromTexts(
-      (session.messages || [])
-        .filter((item) => item.role === 'user')
-        .map((item) => String(item.content || '')),
-      browserUrl,
-    )
-  }
+
 
   const abort = new AbortController()
   chatAborts.set(sessionId, abort)
@@ -148,33 +149,43 @@ export const sendChatMessage = async (
   await new Promise<void>((resolve) => { window.setTimeout(resolve, 0) })
 
   let drawingGraph = false
-  const streamSubjectId = Number(
+  let streamSubjectId = Number(
     String(content).match(/subject_id\s*=\s*(\d+)/)?.[1]
     || sessions.value.find((item) => item.id === sessionId)?.studySubjectId,
   )
 
   try {
-    await claimBrowserForNewMessage({
+    await prepareTurn(abort.signal, () => chatStoreReady)
+    const safeContent = await prepareTurn(abort.signal, () => redactNative(content))
+    const current = liveSession(sessionId)
+    if (!current) return
+    if (current.title === content.slice(0, 24)) current.title = safeContent.slice(0, 24)
+    content = safeContent
+    patchMessage(sessionId, userMessage.id, { content })
+    if (options?.kind !== 'watch') {
+      await prepareTurn(abort.signal, () => attachStudyFromUserText(sessionId, content, abort.signal))
+      rememberBrowserTaskIntent(sessionId, content)
+      streamSubjectId = Number(String(content).match(/subject_id\s*=\s*(\d+)/)?.[1] || liveSession(sessionId)?.studySubjectId)
+    }
+    await prepareTurn(abort.signal, () => claimBrowserForNewMessage({
       sessionId, browserId: liveSession(sessionId)?.browserId, kind: options?.kind, signal: abort.signal,
-    })
+    }))
 
     const compacted = splitCompactedHistory(sessions.value.find((item) => item.id === sessionId))
     const history = buildModelHistory(
       compacted.kept.filter((message) => message.id !== assistantId && message.id !== userMessage.id),
-      (message) => toMultimodalUserContent(message.modelContent || message.content, message.attachments),
+      (message) => toMultimodalUserContent(`【消息ID：${message.id}】\n${message.modelContent || message.content}`, message.attachments),
     )
     const browserId = String(sessions.value.find((item) => item.id === sessionId)?.browserId || '').trim()
     const isBrowserChat = Boolean(browserId)
-    const profile = getProfileForKind('learning')
-    const browserProfile = getProfileForKind('browser')
-    const skillCatalog = [...new Map([
-      ...getEnabledSkillCatalog('learning', profile.skillIds.length ? profile.skillIds : undefined),
-      ...getEnabledSkillCatalog('browser', browserProfile.skillIds.length ? browserProfile.skillIds : undefined),
-    ].map(skill => [skill.id, skill])).values()]
+    const profile = getActiveAgentProfile()
+    const skillCatalog = getEnabledSkillCatalog()
     const baseSystemPrompt = buildAgentSystemPrompt({ catalog: skillCatalog })
     const overlay = String(profile.systemOverlay || '').trim()
-    const browserOverlay = String(browserProfile.systemOverlay || '').trim()
-    const envBlock = [await studyStatePrefix(sessionId), isBrowserChat ? await browserStatePrefix(sessionId) : ''].filter(Boolean).join('\n').trim()
+    const prefixes = await prepareTurn(abort.signal, () => Promise.all([
+      studyStatePrefix(sessionId), isBrowserChat ? browserStatePrefix(sessionId) : Promise.resolve(''),
+    ]))
+    const envBlock = prefixes.filter(Boolean).join('\n').trim()
     const promptFolders = (() => {
       const seen = new Set<number>()
       const folders: AgentChatAttachment[] = []
@@ -185,15 +196,18 @@ export const sendChatMessage = async (
       }
       return folders
     })()
+    const { modelConfigManager } = await import('../model/config')
+    await prepareTurn(abort.signal, () => modelConfigManager.ready)
+    const providerIndex = modelConfigManager.getSettings().platforms.map(platform => ({ id: platform.id, name: platform.name }))
     const turnSystemPrompt = [
+      `【API Key 服务索引】provider_id：search/exa=Exa 搜索，search/deepseek=DeepSeek 搜索；模型平台 ${JSON.stringify(providerIndex)}。这里只包含配置标识，不含密钥。`,
       baseSystemPrompt,
       overlay ? `【附加规则】\n${overlay}` : '',
-      browserOverlay ? `【网页操作附加规则】仅进行网页操作时适用：\n${browserOverlay}` : '',
       contextSummaryPrompt(compacted.summary),
       envBlock,
     ].filter(Boolean).join('\n\n')
     const promptBody = String(options?.modelText || '').trim() || content
-    const modelPrompt = modelUserContent(promptBody, promptFolders)
+    const modelPrompt = `【消息ID：${userMessage.id}】\n${modelUserContent(promptBody, promptFolders)}`
     const images = (attachments || []).filter((item) => isImageAttachment(item) && item.imageUrl)
     const userContent = images.length
       ? [
@@ -241,12 +255,6 @@ export const sendChatMessage = async (
       onDrawingGraph: () => { drawingGraph = true },
     })
 
-    const completedBrowserId = liveBrowserId()
-    if (completedBrowserId && !abort.signal.aborted && !loop.aborted) {
-      const playbackNow = liveStudyPlayback(completedBrowserId)
-      if (playbackNow.playing) ensureStudyWatch(completedBrowserId, sessionId, playbackNow)
-    }
-
     if (abort.signal.aborted || loop.aborted) {
       const current = sessions.value.find((item) => item.id === sessionId)
         ?.messages.find((message) => message.id === assistantId)
@@ -258,6 +266,9 @@ export const sendChatMessage = async (
         content: loop.text,
         status: 'failed',
         error: loop.failed,
+        taskOutcome: loop.taskOutcome,
+        waiting: false,
+        awaitingVideo: false,
       })
       return
     }
@@ -276,11 +287,14 @@ export const sendChatMessage = async (
     patchMessage(sessionId, assistantId, {
       content: loop.text,
       status: 'done',
+      taskOutcome: loop.taskOutcome,
+      waiting: false,
+      awaitingVideo: false,
     })
     const finished = sessions.value
       .find((item) => item.id === sessionId)
       ?.messages.find((message) => message.id === assistantId)
-    if (finished) {
+    if (finished && loop.taskOutcome !== 'blocked') {
       const auto = shouldAutoEvalStudy(sessionId, finished)
       if (auto.yes) {
         scheduleStudyProgressEval({

@@ -1045,10 +1045,11 @@ pub async fn browser_set_bounds(
   height: f64,
   notify: Option<bool>,
   layout: Option<crate::browser_geometry::BrowserViewportLayout>,
+  preview: Option<bool>,
 ) -> Result<(), String> {
   #[cfg(target_os = "macos")]
   if crate::cef_runtime::cef_enabled() {
-    return crate::cef::set_bounds(app, id, x, y, width, height, notify.unwrap_or(false), layout);
+    return crate::cef::set_bounds(app, id, x, y, width, height, notify.unwrap_or(false), layout, preview.unwrap_or(false));
   }
   {
   let webview = find_browser(&app, &id)?;
@@ -1610,6 +1611,7 @@ pub async fn browser_screenshot(
   app: AppHandle,
   id: String,
 ) -> Result<serde_json::Value, String> {
+  crate::secret_browser::guard(&id).await?;
   #[cfg(target_os = "macos")]
   if crate::cef_runtime::cef_enabled() {
     return crate::cef::cdp_screenshot(app, id).await;
@@ -1732,6 +1734,7 @@ pub async fn browser_eval_frames(
   app: AppHandle,
   id: String,
   script: String, expected_epoch: Option<u64>) -> Result<serde_json::Value, String> {
+  crate::secret_browser::guard(&id).await?;
   let control_id = id.clone();
   crate::browser_control::run_at(&control_id, false, expected_epoch, async move {
   #[cfg(target_os = "macos")]
@@ -1973,6 +1976,7 @@ async fn eval_wait_title(
 
 #[tauri::command]
 pub async fn browser_eval_main(app: AppHandle, id: String, script: String, expected_epoch: Option<u64>) -> Result<String, String> {
+  crate::secret_browser::guard(&id).await?;
   let control_id = id.clone();
   crate::browser_control::run_at(&control_id, false, expected_epoch, async move {
   #[cfg(target_os = "macos")]
@@ -1986,6 +1990,7 @@ pub async fn browser_eval_main(app: AppHandle, id: String, script: String, expec
 
 #[tauri::command]
 pub async fn browser_eval(app: AppHandle, id: String, script: String, expected_epoch: Option<u64>) -> Result<String, String> {
+  crate::secret_browser::guard(&id).await?;
   let control_id = id.clone();
   crate::browser_control::run_at(&control_id, false, expected_epoch, async move {
   #[cfg(target_os = "macos")]
@@ -2078,7 +2083,7 @@ pub async fn browser_protocol(
   let control_id = id.clone();
   crate::browser_control::run_at(&control_id, false, expected_epoch, async move {
   let args = args.unwrap_or(serde_json::Value::Null);
-  let first = dispatch_browser_protocol(app.clone(), id.clone(), op.clone(), args.clone()).await;
+  let first = dispatch_browser_protocol(app.clone(), id.clone(), op.clone(), args.clone()).await.map(crate::secret_vault::redact_best_effort);
   #[cfg(target_os = "macos")]
   if let Err(err) = &first {
     if crate::cef_runtime::cef_enabled() && crate::cdp_client::is_session_dead(err) {
@@ -2087,7 +2092,7 @@ pub async fn browser_protocol(
         Err(again) if crate::cdp_client::is_session_dead(&again) => {
           Err(crate::cdp_client::HOST_CHANNEL_DOWN.into())
         }
-        other => other,
+        other => other.map(crate::secret_vault::redact_best_effort),
       };
     }
   }
@@ -2103,11 +2108,20 @@ async fn dispatch_browser_protocol(
   args: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
   match op.as_str() {
+    "fill_secret" => {
+      #[cfg(target_os="macos")]
+      if crate::cef_runtime::cef_enabled() {
+        return crate::cef::cdp_fill_secret(app,id,args.get("locator").cloned().unwrap_or_default(),protocol_arg_str(&args,"secret_ref").unwrap_or_default()).await;
+      }
+      Err("当前浏览器引擎不支持安全凭据填写".into())
+    }
     "frame_eval" => {
+      crate::secret_browser::guard(&id).await?;
       #[cfg(target_os = "macos")]
       if crate::cef_runtime::cef_enabled() {
         return crate::cef::frames::evaluate_hint(id,
-          protocol_arg_str(&args, "frame").unwrap_or_default(), protocol_arg_str(&args, "script").unwrap_or_default()).await;
+          protocol_arg_str(&args, "frame").unwrap_or_default(), args.get("locator").cloned().unwrap_or_default(),
+          protocol_arg_str(&args, "script").unwrap_or_default()).await;
       }
       Err("当前平台浏览区不是 Chromium".into())
     }
@@ -2190,7 +2204,15 @@ async fn dispatch_browser_protocol(
       )
       .await?,
     ),
-    "click_node" => protocol_json(
+    "click_node" => {
+      #[cfg(target_os = "macos")]
+      if crate::cef_runtime::cef_enabled() {
+        if let Err(error) = crate::cef::frames::verify_action_node(&id, &args).await {
+          return Ok(serde_json::json!({ "ok": false, "reason": "invalid", "retry": false,
+            "requiresRefresh": true, "error": error }));
+        }
+      }
+      protocol_json(
       browser_cdp_click_node(
         app,
         id,
@@ -2207,7 +2229,8 @@ async fn dispatch_browser_protocol(
           .and_then(|v| v.as_i64()),
       )
       .await?,
-    ),
+      )
+    },
     "hover" => protocol_json(
       browser_cdp_hover(app, id, protocol_arg_str(&args, "text"), protocol_arg_str(&args, "selector")).await?,
     ),

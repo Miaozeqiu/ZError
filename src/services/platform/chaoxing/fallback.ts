@@ -11,3 +11,14 @@ export const CX_IFRAME_PAGE = /studentcourse|\/knowledge\/cards|ananas\/modules|
 export const CX_NOT_HOMEWORK_DO = /studentstudy|studentcourse|knowledge\/cards|ananas|insertcourse|passport2/i
 export const CX_COURSES_TAB = /visit\/courses|courselist/i
 export const CX_TAUGHT_TAB = /visit\/interaction/i
+
+/** 教师课程壳不能因 pageHeader 等通用参数被认成学生课程。 */
+export const isChaoxingTeacherCourseUrl = (value: string): boolean => {
+  try {
+    const url = new URL(value)
+    return (url.hostname === 'chaoxing.com' || url.hostname.endsWith('.chaoxing.com'))
+      && /\/mycourse\/tch(?:\/|$)/i.test(url.pathname)
+  } catch {
+    return false
+  }
+}

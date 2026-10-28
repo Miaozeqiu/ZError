@@ -1,6 +1,7 @@
 import { ref } from 'vue'
 import { resolveExecutableModelJsCode, resolveRuntimeModelId } from '../model/protocol'
 import {
+  buildImageAnswerRule,
   buildUrlOptionMapForMode,
   buildUrlQuestionPromptParts,
   classifyUrlQuestionMode,
@@ -9,6 +10,8 @@ import {
 import { modelApi } from './deps'
 import { runSearchForRequest } from './search'
 import {
+  assertSuccessfulModelResponse,
+  trackModelHttpOutcome,
   createCancelledRequestError,
   formatModelCallError,
   isAbortLikeError,
@@ -31,11 +34,14 @@ import {
 } from './runtime'
 import type { RequestLog } from './types'
 import {
-  buildMultimodalContent,
-  buildRenderedHtml,
   executeVisionModelWithAutoUpscale,
   prepareVisionRequestContent,
 } from './visionImage'
+import {
+  buildMultimodalContentFromPlaceholders,
+} from '../../utils/answer/imagePlaceholders'
+import { restorePreparedImageAnswer } from '../../utils/answer/imageQuestion'
+import { buildQuestionImagePreview, prepareQuestionImages, clearPreparedQuestionImages } from './imageQuestion'
 
 const {
   platforms,
@@ -43,7 +49,7 @@ const {
 } = modelApi
 
 export const currentUrlWindowId = ref('')
-export const handleUrlQuestionRequest = async (requestId: string, rawTitle: string) => {
+export const handleUrlQuestionRequest = async (requestId: string, rawTitle: string, images: string[] = []) => {
   if (processedRequestIds.has(requestId)) return
   processedRequestIds.add(requestId)
 
@@ -92,23 +98,33 @@ export const handleUrlQuestionRequest = async (requestId: string, rawTitle: stri
     streamingResponse: '',
     streamingReasoning: '',
     reasoningContent: '',
-    renderedHtml: undefined as string | undefined
+    renderedHtml: undefined as string | undefined,
+    // 图片题优化：存在 base64 数组时，题干为 [图片N] 占位符文本，展示/分析都不再下载 URL
+    images: images.length ? images.slice() : undefined,
   }
 
+  const startAnalysis = (log: RequestLog) => {
+    let body: Record<string, unknown> = {}
+    try { body = JSON.parse(log.requestBody || '{}') } catch { /* optional log metadata */ }
+    const data = {
+      ...urlQuestionData,
+      questionType: String(body.type || body.questionType || questionType || ''),
+    }
+    // Preserve the object created for the preview so both consumers share preparation.
+    if (log.urlQuestion) Object.assign(log.urlQuestion, data)
+    else log.urlQuestion = data
+    const question = log.urlQuestion
+    void buildQuestionImagePreview(question).then(html => {
+      if (log.urlQuestion === question) question.renderedHtml = html
+    })
+    log.isModelCalling = true
+    void analyzeUrlQuestion(requestId)
+  }
 
   const applyAndAnalyze = () => {
     const logIndex = requestLogs.value.findIndex(l => l.id === requestId)
     if (logIndex !== -1) {
-      requestLogs.value[logIndex].urlQuestion = { ...urlQuestionData }
-      // 异步生成 base64 渲染 HTML
-      buildRenderedHtml(title, originalOptions).then(html => {
-        const l = requestLogs.value.find(l => l.id === requestId)
-        if (l?.urlQuestion) l.urlQuestion.renderedHtml = html
-      })
-      requestLogs.value[logIndex].isModelCalling = true
-
-      // 直接触发视觉分析
-      analyzeUrlQuestion(requestId)
+      startAnalysis(requestLogs.value[logIndex])
     } else {
       // log 还未到达，100ms 后重试，最多重试 30 次（3 秒）
       let retries = 0
@@ -117,13 +133,7 @@ export const handleUrlQuestionRequest = async (requestId: string, rawTitle: stri
         const idx = requestLogs.value.findIndex(l => l.id === requestId)
         if (idx !== -1) {
           clearInterval(timer)
-          requestLogs.value[idx].urlQuestion = { ...urlQuestionData }
-          buildRenderedHtml(title, originalOptions).then(html => {
-            const l = requestLogs.value.find(l => l.id === requestId)
-            if (l?.urlQuestion) l.urlQuestion.renderedHtml = html
-          })
-          requestLogs.value[idx].isModelCalling = true
-          analyzeUrlQuestion(requestId)
+          startAnalysis(requestLogs.value[idx])
         } else if (retries >= 30) {
           clearInterval(timer)
           console.warn('handleUrlQuestionRequest: log 未在 3 秒内出现，放弃:', requestId)
@@ -166,6 +176,13 @@ export const checkAndShowUrlDialog = async (log: RequestLog) => {
     if (processedRequestIds.has(log.id)) {
       console.log('⚠️ 请求已处理过，跳过:', log.id)
       return
+    }
+
+    // 图片题优化：走 __IMAGE_QUESTION__（占位符 + base64），不会产生下面的 URL 检测响应
+    if (log.requestBody) {
+      try {
+        if (JSON.parse(log.requestBody).has_images) return
+      } catch { /* 解析失败忽略 */ }
     }
 
     // 解析响应体
@@ -422,12 +439,26 @@ export const analyzeUrlQuestion = async (requestId: string) => {
   log.urlQuestion.streamingReasoning = ''
   log.urlQuestion.reasoningContent = ''
 
+  const startHeartbeat = () => {
+    if (heartbeatIntervals.has(requestId)) return
+    const progress = () => {
+      const current = requestLogs.value.find(item => item.id === requestId)
+      void sendModelProgressToBackend(requestId, current?.urlQuestion?.streamingResponse || '正在准备图片或等待模型响应')
+    }
+    progress()
+    heartbeatIntervals.set(requestId, window.setInterval(progress, 1000))
+  }
+  startHeartbeat()
 
   try {
     const platform = platforms.value.find(p => p.models.some(m => m.id === visionModel.id))
     if (!platform) throw new Error('找不到视觉模型对应的平台')
 
-    const { title, options, questionType } = log.urlQuestion
+    const preparedQuestion = await prepareQuestionImages(log.urlQuestion)
+    if (isRequestCancelled(requestId)) return
+    log.urlQuestion.renderedHtml = await buildQuestionImagePreview(log.urlQuestion)
+    const { title, options } = preparedQuestion
+    const { questionType } = log.urlQuestion
     const mode = classifyUrlQuestionMode(questionType, options)
     const optionMap = buildUrlOptionMapForMode(mode, options)
     const { optionsText, answerRule, typeHint } = buildUrlQuestionPromptParts(
@@ -437,16 +468,17 @@ export const analyzeUrlQuestion = async (requestId: string) => {
       questionType || ''
     )
 
-    const instruction = `\n\n请仔细分析上述题目，给出详细的解题过程和答案。${typeHint}\n在回答末尾，严格按照以下格式单独一行给出答案：\nANSWER: <答案>\n\n其中规则：\n${answerRule}`
+    // Both OCS images and locally downloaded images now use the same numbered protocol.
+    const base64Images = preparedQuestion.images
+    const imageRule = base64Images.length ? `\n${buildImageAnswerRule(mode)}` : ''
 
-    // 将 title + options + instruction 拼成完整文本，按 URL 拆分为交错多模态内容
-    // 图片会先在本地拉取并转为 base64，再发送给视觉模型
-    const fullText = title + optionsText + instruction
+    const instruction = `\n\n请仔细分析上述题目，给出详细的解题过程和答案。${typeHint}\n在回答末尾，严格按照以下格式单独一行给出答案：\nANSWER: <答案>\n\n其中规则：\n${answerRule}${imageRule}`
+
     const searchResult = await runSearchForRequest(
-      requestId, [title, options].filter(Boolean).join('\n'), visionModel.displayName || '视觉模型',
+      requestId, [log.urlQuestion.title, log.urlQuestion.options].filter(Boolean).join('\n'), visionModel.displayName || '视觉模型',
     )
     if (isRequestCancelled(requestId)) return
-    const multimodalContent = await buildMultimodalContent(fullText)
+    const multimodalContent = buildMultimodalContentFromPlaceholders(title + optionsText, base64Images, instruction)
     const contentWithSearch = searchResult?.context
       ? [{ type: 'text', text: searchResult.context }, ...multimodalContent]
       : multimodalContent
@@ -463,13 +495,15 @@ export const analyzeUrlQuestion = async (requestId: string) => {
     const config = { ...visionModel, apiKey: platform.apiKey, baseUrl: platform.baseUrl, model: runtimeModelId, modelId: runtimeModelId }
 
     const tauriHttp = await import('@tauri-apps/plugin-http')
-    const tauriFetch: typeof fetch = ((input: RequestInfo | URL, init: RequestInit = {}) =>
+    const rawTauriFetch: typeof fetch = ((input: RequestInfo | URL, init: RequestInit = {}) =>
       tauriHttp.fetch(input as any, {
         ...init,
         credentials: init.credentials ?? 'include',
         signal: init.signal ?? abortController.signal
       } as any)) as typeof fetch
 
+    const transport = trackModelHttpOutcome(rawTauriFetch)
+    const tauriFetch = transport.fetch
     if (!executableCode) throw new Error('视觉模型未配置可执行代码')
 
     // 视觉模型：按设置自动重试
@@ -478,6 +512,7 @@ export const analyzeUrlQuestion = async (requestId: string) => {
       `视觉:${visionModel.displayName}`,
       true,
       async (attempt, maxAttempts) => {
+        startHeartbeat()
         const cur = requestLogs.value.find(x => x.id === requestId)
         if (cur?.urlQuestion) {
           cur.urlQuestion.analyzing = true
@@ -499,21 +534,15 @@ export const analyzeUrlQuestion = async (requestId: string) => {
         }
 
         const result = await executeVisionModelWithAutoUpscale(processModel, analysisInput, config, tauriFetch, abortController.signal)
+        transport.assertSuccess()
+        assertSuccessfulModelResponse(result)
         if (!result) throw new Error('模型未返回有效结果')
-
-        if (!heartbeatIntervals.has(requestId)) {
-          const timerId = window.setInterval(() => {
-            const l = requestLogs.value.find(x => x.id === requestId)
-            const currentContent = l?.urlQuestion?.streamingResponse || ''
-            sendModelProgressToBackend(requestId, currentContent)
-          }, 1000)
-          heartbeatIntervals.set(requestId, timerId)
-        }
 
         let responseText = ''
         let reasoningText = ''
         if (result[Symbol.asyncIterator]) {
           for await (const chunk of result) {
+            assertSuccessfulModelResponse(chunk)
             if (isRequestCancelled(requestId)) throw createCancelledRequestError()
             if (chunk.content) {
               responseText += chunk.content
@@ -538,6 +567,8 @@ export const analyzeUrlQuestion = async (requestId: string) => {
 
         clearRequestHeartbeat(requestId)
         if (!responseText.trim()) throw new Error('视觉模型返回空内容')
+        transport.assertSuccess()
+        assertSuccessfulModelResponse(responseText)
         return { fullResponse: responseText, fullReasoning: reasoningText }
       },
       (attempt, maxAttempts) => {
@@ -550,7 +581,7 @@ export const analyzeUrlQuestion = async (requestId: string) => {
       }
     )
 
-    const answer = resolveUrlAnswer(fullResponse, optionMap, mode)
+    const answer = restorePreparedImageAnswer(resolveUrlAnswer(fullResponse, optionMap, mode, title), preparedQuestion)
     const l = requestLogs.value.find(x => x.id === requestId)
     if (l?.urlQuestion) {
       l.urlQuestion.analysisResult = fullResponse
@@ -565,10 +596,11 @@ export const analyzeUrlQuestion = async (requestId: string) => {
     if (answer) {
       await sendModelResponseToBackend(requestId, JSON.stringify({ answer }), true, fullReasoning)
     } else {
-      await sendModelResponseToBackend(requestId, fullResponse, true, fullReasoning)
+      await sendModelResponseToBackend(requestId, restorePreparedImageAnswer(fullResponse, preparedQuestion), true, fullReasoning)
     }
 
   } catch (err: unknown) {
+    if (log.urlQuestion) clearPreparedQuestionImages(log.urlQuestion)
     if (isAbortLikeError(err) || isRequestCancelled(requestId)) {
       return
     }

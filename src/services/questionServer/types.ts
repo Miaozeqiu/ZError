@@ -46,6 +46,8 @@ export interface RequestLog {
     streamingReasoning: string
     reasoningContent: string
     renderedHtml?: string
+    /** OCS >= 5.1.0 图片题优化：base64 数组，与题干 [图片N] 占位符同序；存在时无需下载 URL */
+    images?: string[]
   }
 }
 

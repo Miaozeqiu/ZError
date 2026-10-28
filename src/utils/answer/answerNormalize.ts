@@ -89,7 +89,7 @@ export const normalizeAnswerAgainstOptions = (
       }
     }
     return p
-  }).filter(Boolean)
+  })
 
   // 单段若已在上面展开成多段 ###，避免再包一层
   if (normalized.length === 1 && normalized[0].includes('###') && parts.length === 1) {

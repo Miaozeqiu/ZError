@@ -1,4 +1,6 @@
 /** 本轮站点经验收尾检查。只核对工具证据，不自动生成或执行网页脚本。 */
+import { websitePrimaryHost } from './websiteIdentity'
+import { canonicalSkillToolName } from './skillToolNames'
 type Step = { id: string; name: string; status: string; arguments?: string; result?: string }
 export type LearningDecision = 'updated' | 'covered' | 'no_new' | 'deferred'
 const object = (value: unknown): Record<string, any> => {
@@ -13,18 +15,29 @@ const matchesSiteFile = (step: Step, path: string) => {
   const result = object(step.result)
   return (result.id || args.skill_id) === 'site-learn' && (result.path || args.path) === path
 }
-export const siteSkillReadIndex = (steps: Step[], path: string) => steps.findIndex(step =>
-  step.name === 'read_agent_skill_file' && matchesSiteFile(step, path)
-  && ((step.status === 'done' && !object(step.result).error && object(step.result).ok !== false)
-    || /不存在|not found/i.test(String(object(step.result).error || ''))))
+export const siteSkillReadIndex = (steps: Step[], path: string) => {
+  for (let index = steps.length - 1; index >= 0; index--) {
+    const step = steps[index]
+    if (canonicalSkillToolName(step.name) !== 'read_agent_skill_file' || !matchesSiteFile(step, path)) continue
+    const result = object(step.result)
+    // A later failed read invalidates an earlier snapshot. Keep compatibility
+    // with old, explicit "not found" results, but never with a real I/O failure.
+    return (step.status === 'done' && !result.error && result.ok !== false)
+      || (result.ok !== false && /还不存在|文件不存在|not found/i.test(String(result.error || '')))
+      ? index : -1
+  }
+  return -1
+}
 
 export const reviewSiteLearning = (input: {
   url: string; steps: Step[]; learning?: unknown; writePolicy?: string
 }) => {
-  let host = ''
-  try { host = new URL(input.url).hostname.replace(/^www\./i, '') } catch { /* 导航页不学习 */ }
+  const host = websitePrimaryHost(input.url)
   const path = `sites/${host}/SKILL.md`
-  const actions = input.steps.filter(step => step.name.startsWith('browser_') && !observation.test(step.name))
+  const actions = input.steps.filter(step => {
+    const name = canonicalSkillToolName(step.name)
+    return name.startsWith('browser_') && !observation.test(name)
+  })
   const successful = actions.filter(step => step.status === 'done' && !object(step.result).error && object(step.result).ok !== false)
   const recovered = actions.some((step, index) => step.status === 'failed'
     && actions.slice(index + 1).some(next => next.name === step.name && next.status === 'done'))
@@ -36,7 +49,7 @@ export const reviewSiteLearning = (input: {
   const review = object(input.learning)
   const reason = String(review.reason || '').trim()
   const reject = (error: string) => ({ ...base, ok: false, error,
-    hint: `先 read_agent_skill_file(skill_id=site-learn, path=${path})。检查本轮已验证的新方法是否已有覆盖；有增量时保留原文并用 write_agent_skill_file 更新完整正文。随后 browser_finish 带 learning={decision:updated|covered|no_new|deferred,reason:具体理由}。不要写账号、密码、验证码、临时 ref、具体题目答案或未验证猜测；拒绝/失败只报告暂未保存，不能反复申请。`,
+    hint: `网页任务本身已完成，无需重做。先 read_agent_skill_file(skill_id=site-learn, path=${path})；exists=false 表示首次创建，可直接写入本轮验证的经验，不是读取失败。读取总说明不算读取本站原文。有增量时保留原文并用 write_agent_skill_file 更新完整正文。随后 browser_finish 带 learning={decision:updated|covered|no_new|deferred,reason:具体理由}。不要写账号、密码、验证码、临时 ref、具体题目答案或未验证猜测；拒绝/失败只报告暂未保存，不能反复申请。`,
   })
   if (!reason || !['updated', 'covered', 'no_new', 'deferred'].includes(review.decision)) {
     return reject('网页任务已完成，但还缺本轮站点经验检查。无需重做网页任务。')
@@ -45,14 +58,18 @@ export const reviewSiteLearning = (input: {
   const readAt = siteSkillReadIndex(input.steps, path)
   const hasRead = readAt >= 0
   const hasExistingRead = hasRead && input.steps[readAt].status === 'done' && !object(input.steps[readAt].result).error
-  const written = input.steps.some((step, index) => index > readAt && step.name === 'write_agent_skill_file'
-    && matches(step) && step.status === 'done' && object(step.result).ok === true && object(step.result).unchanged !== true)
-  const attempted = input.steps.some(step => step.name === 'write_agent_skill_file' && matches(step)
+    && object(input.steps[readAt].result).exists !== false
+  const written = input.steps.some((step, index) => canonicalSkillToolName(step.name) === 'write_agent_skill_file'
+    && matches(step) && step.status === 'done' && object(step.result).ok === true && object(step.result).unchanged !== true
+    && siteSkillReadIndex(input.steps.slice(0, index), path) >= 0)
+  const attempted = input.steps.some(step => canonicalSkillToolName(step.name) === 'write_agent_skill_file' && matches(step)
     && step.status !== 'running' && (step.status === 'failed' || object(step.result).denied || object(step.result).error))
-  if (review.decision === 'updated' && !(hasRead && written)) return reject('不能声明已保存：缺少本轮读取原文并成功写入本站 Skill 的证据。')
+  const readFailed = input.steps.some(step => canonicalSkillToolName(step.name) === 'read_agent_skill_file' && matches(step)
+    && (object(step.result).ok === false || (object(step.result).error && !/还不存在|文件不存在|not found/i.test(String(object(step.result).error)))))
+  if (review.decision === 'updated' && !written) return reject('不能声明已保存：缺少本轮读取原文并成功写入本站 Skill 的证据。')
   if (review.decision === 'covered' && !hasExistingRead) return reject('不能声明已有覆盖：请先成功读取本站 Skill 核对。')
   if (review.decision === 'no_new' && candidate) return reject('本轮存在换方法或修复后成功的候选经验，请核对已有覆盖，或保存经过验证的增量。')
-  if (review.decision === 'deferred' && input.writePolicy !== 'deny' && !attempted) return reject('暂未保存需有写入被拒绝或失败的实际记录；没有新经验请使用 no_new。')
+  if (review.decision === 'deferred' && input.writePolicy !== 'deny' && !attempted && !readFailed) return reject('暂未保存需有读取失败、写入被拒绝或失败的实际记录；没有新经验请使用 no_new。')
   return { ...base, ok: true, decision: review.decision as LearningDecision, reason }
 }
 

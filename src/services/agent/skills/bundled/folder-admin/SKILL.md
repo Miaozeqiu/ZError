@@ -1,6 +1,9 @@
 ---
-name: 题库文件夹
+name: folder-admin
 description: 查看、新建、重命名、移动或删除题库文件夹，以及移动题目、改指标、挂知识点。
+compatibility: Requires ZError question-bank folder tools.
+metadata:
+  display-name: 题库文件夹
 ---
 
 # 题库文件夹

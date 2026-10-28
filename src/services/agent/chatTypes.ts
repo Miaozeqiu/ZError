@@ -37,6 +37,7 @@ export interface AgentTodoItem {
   id: string
   text: string
   status: 'pending' | 'done' | 'cancelled'
+  reason?: string
 }
 
 export type AgentTranscriptItem = {
@@ -68,6 +69,10 @@ export interface AgentChatMessage {
   studyEval?: AgentStudyEvalNote
   status: 'streaming' | 'done' | 'failed' | 'stopped'
   waiting?: boolean
+  awaitingVideo?: boolean
+  /** 消息生成结束与任务实际完成分别记录；旧消息没有此字段。 */
+  taskOutcome?: 'completed' | 'blocked' | 'incomplete'
+  stopReason?: 'user' | 'browser-takeover'
   error?: string
 }
 

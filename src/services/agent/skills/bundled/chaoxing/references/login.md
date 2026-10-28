@@ -5,7 +5,7 @@
 ## 登录
 
 1. 从导航页先开 https://i.chaoxing.com 。已登录会进空间，不要先走登录页。只有落到 `passport2` 才填表。已在 `login?fid=&newversion=true` 就不要再 navigate。必须打开登录页时用 https://passport2.chaoxing.com/login?fid=&newversion=true&refer=https%3A%2F%2Fi.chaoxing.com ，不要打开光秃的 https://passport2.chaoxing.com 或 `/login?fid=&refer=`（旧登录页一点登录会整页跳到新版、表单清空）。
-2. `browser_type selector=#phone` 填账号，`browser_type selector=#pwd` 填密码，`browser_click selector=#loginBtn`。有【已记账号】直接填。CSS 必须放 `selector`，不要放进 `ref`。type 必须回 `filled:true` 才算填上；`filled:false` 要换办法，不要假装成功。密码快照只显示 `value=已填写`。
+2. 用【凭据变量】中的引用，通过 `browser_type selector=#phone secret_ref=账号变量`、`browser_type selector=#pwd secret_ref=密码变量` 填写，再 `browser_click selector=#loginBtn`。用户刚发来账号密码时，先调用 `protect_credentials`（site 为 `chaoxing`），成功后仅使用返回的变量；不要把原文放进 text、脚本、经验或图谱。CSS 必须放 `selector`，不要放进 `ref`。type 必须回 `filled:true` 才算填上；`filled:false` 要重新读取页面。敏感表单禁止 eval 或截图读回；通过快照与点击核对登录结果。
 3. 点登录后看回执的 `navigated` 和 `url`。`navigated:false` 就是没跳转，还在登录页。空快照不是跳转。有滑块就 `browser_finish(blocked)`。不要在登录页点「我学的课」。
 4. 滑块：`browser_finish(blocked)`，等用户完成后点 `selector=#loginBtn`。
 5. `page` 是「空间」或网址是 `i.chaoxing.com/base` / `/space` 后再进课。`page` 暂时空着也不要 `site_graph reset`，等 1 秒再 get_state。

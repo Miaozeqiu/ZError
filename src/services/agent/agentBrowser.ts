@@ -5,7 +5,7 @@ import {
   listenBrowserOpened, listenBrowserState, openBrowserView, patchAppBrowser,
   closeBrowserView, removeAppBrowser, setSelectedBrowserId, type AppBrowser,
 } from '../browser/appBrowser'
-import { activeChat, createChat, liveSession, patchSession, sessions } from './chatStore'
+import { activeChat, chatStoreReady, createChat, liveSession, patchSession, sessions } from './chatStore'
 import { listenBrowserControl, registerBrowserControl } from '../browser/control'
 
 export const agentBrowserTabs = ref<AppBrowser[]>(listAppBrowsers())
@@ -78,6 +78,19 @@ export const ensureAgentBrowser = async (sessionId: string): Promise<string> => 
 export const startAgentBrowserWorkspace = () => {
   if (listeners) return listeners
   listeners = (async () => {
+    await chatStoreReady
+    // 同一标签只归属一个根对话；兼容旧版启动竞态产生的空白重复会话。
+    const claimed = new Set<string>()
+    const owners = [...sessions.value].filter(session => !session.parentId).sort((left, right) =>
+      Number(Boolean(right.messages.length)) - Number(Boolean(left.messages.length)) || right.updatedAt - left.updatedAt)
+    for (const owner of owners) {
+      const ids = browserIdsForChat(owner)
+      const keep = ids.filter(id => !claimed.has(id))
+      keep.forEach(id => claimed.add(id))
+      if (keep.length !== ids.length) patchSession(owner.id, current => ({ ...current,
+        browserIds: keep, browserId: keep.includes(current.browserId || '') ? current.browserId : keep.at(-1),
+      }))
+    }
     // 旧浏览器页的未归属标签保留到一个对话中，升级时不删除历史记录。
     const owned = new Set(sessions.value.flatMap(browserIdsForChat))
     const legacy = listAppBrowsers().filter(tab => !owned.has(tab.id))

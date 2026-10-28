@@ -1,5 +1,5 @@
 <template>
-  <form class="composer" @submit.prevent="emit('submit')">
+  <form ref="composerRoot" class="composer" @submit.prevent="emit('submit')">
     <button
       v-if="!threadPinned"
       class="thread-jump"
@@ -11,6 +11,7 @@
       </svg>
       回到底部
     </button>
+    <div class="composer-status"><slot name="status" /></div>
     <div class="composer-box">
       <div v-if="composerImages.length" class="composer-images">
         <div
@@ -230,6 +231,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
+  'height-change': [height: number]
   submit: []
   stop: []
   'jump-thread': []
@@ -258,6 +260,8 @@ const fileToDataUrl = (file: File) => new Promise<string>((resolve, reject) => {
   reader.readAsDataURL(file)
 })
 
+const composerRoot = ref<HTMLElement | null>(null)
+let composerObserver: ResizeObserver | null = null
 const composerRef = ref<HTMLElement | null>(null)
 const composing = ref(false)
 let compositionEndedAt = 0
@@ -777,11 +781,23 @@ const closeContextTip = () => {
 }
 
 onMounted(() => {
+  // Measure the whole overlay, including monitoring/approval status and attachments.
+  // The thread reserves this space without directly changing its scroll position.
+  const measure = () => {
+    const height = composerRoot.value?.getBoundingClientRect().height || 0
+    if (height > 0) emit('height-change', Math.ceil(height))
+  }
+  measure()
+  if (typeof ResizeObserver !== 'undefined' && composerRoot.value) {
+    composerObserver = new ResizeObserver(measure)
+    composerObserver.observe(composerRoot.value)
+  }
   window.addEventListener('resize', closeContextTip)
   window.addEventListener('scroll', closeContextTip, true)
 })
 
 onUnmounted(() => {
+  composerObserver?.disconnect()
   window.removeEventListener('resize', closeContextTip)
   window.removeEventListener('scroll', closeContextTip, true)
 })

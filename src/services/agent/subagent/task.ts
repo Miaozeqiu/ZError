@@ -1,6 +1,6 @@
 /** browser_task：父派出隔离子 Agent，同步等待结构化回执。 */
 import { listAppBrowsers, peekAppBrowserUrl } from '../../browser/appBrowser'
-import { getProfileForKind } from '../agentProfiles'
+import { getActiveAgentProfile } from '../agentProfiles'
 import { getEnabledSkillCatalog } from '../agentSkills'
 import { applyBrowserTodo } from '../browserTodo'
 import { formatBrowserLiveContext } from '../browserLoop'
@@ -142,17 +142,17 @@ export const runBrowserTask = async (input: {
   ctx.abort.addEventListener('abort', onParentAbort, { once: true })
 
   const url = peekAppBrowserUrl(browserId) || listAppBrowsers().find((item) => item.id === browserId)?.url || ''
-  const profile = getProfileForKind('browser')
-  const catalog = getEnabledSkillCatalog('browser', profile.skillIds.length ? profile.skillIds : undefined)
+  const profile = getActiveAgentProfile()
+  const catalog = getEnabledSkillCatalog()
   const caps = hostCapabilitiesFor(url)
   const tools = assembleBrowserTools({
     url,
-    domain: profile.toolPolicy.domain,
     role: kind,
     capabilities: caps,
   })
   const systemPrompt = [
     buildBrowserSystemPrompt({ catalog }),
+    profile.systemOverlay.trim() ? `【附加规则】\n${profile.systemOverlay.trim()}` : '',
     promptOf(kind),
     `【子任务】${kind}：${goal}`,
   ].filter(Boolean).join('\n\n')
@@ -172,7 +172,6 @@ export const runBrowserTask = async (input: {
       tools,
       liveTools: () => assembleBrowserTools({
         url: peekAppBrowserUrl(browserId) || url,
-        domain: profile.toolPolicy.domain,
         role: kind,
         capabilities: hostCapabilitiesFor(peekAppBrowserUrl(browserId) || url),
       }),

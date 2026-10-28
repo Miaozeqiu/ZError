@@ -3,7 +3,7 @@
     <AgentChatSidebar />
 
     <div class="chat-workspace">
-      <section class="chat-main">
+      <section class="chat-main" :style="{ '--chat-composer-height': `${composerHeight}px` }">
         <AgentChatThread
           ref="threadCompRef"
           v-model:pinned="threadPinned"
@@ -20,40 +20,43 @@
           @ask="onAskSelection"
           @hide-composer-menu="composerCompRef?.hideMenu()"
         />
-          <div v-if="approvalPending" class="chat-approval">
-            <AgentApprovalBar :session-id="activeChat?.id" />
-          </div>
-          <AgentChatComposer
-            ref="composerCompRef"
-            v-model:draft="draft"
-            :thread-pinned="threadPinned"
-            :composer-files="composerFiles"
-            :composer-images="composerImages"
-            :sending="sending"
-            :can-submit="canSubmit"
-            :agent-has-vision="agentHasVision"
-            :agent-model-label="agentModelLabel"
-            :composer-placeholder="composerPlaceholder"
-            :context-usage-percent="contextUsage.percent"
-            :context-compacting="contextCompacting"
-            :context-usage-label="contextUsageLabel"
-            :context-ring-dash="contextRingDash"
-            :context-usage-rows="contextUsageRows"
-            :context-tip-note="contextTipNote"
-            :file-manager-label="fileManagerLabel"
-            @submit="submit"
-            @stop="stopChat"
-            @jump-thread="jumpThreadToBottom"
-            @add-file="addFile"
-            @add-image="addImage"
-            @add-folder="openFolderPicker"
-            @open-model="showModelSelector = true"
-            @remove-attachment="removeComposerAttachment"
-            @preview-image="openImagePreview"
-            @reveal-file="revealInFileManager"
-            @paste-image="addImageFromDataUrl"
-            @hide-selection-menu="hideSelectionMenu"
-          />
+        <AgentChatComposer
+          ref="composerCompRef"
+          v-model:draft="draft"
+          :thread-pinned="threadPinned"
+          :composer-files="composerFiles"
+          :composer-images="composerImages"
+          :sending="sending"
+          :can-submit="canSubmit"
+          :agent-has-vision="agentHasVision"
+          :agent-model-label="agentModelLabel"
+          :composer-placeholder="composerPlaceholder"
+          :context-usage-percent="contextUsage.percent"
+          :context-compacting="contextCompacting"
+          :context-usage-label="contextUsageLabel"
+          :context-ring-dash="contextRingDash"
+          :context-usage-rows="contextUsageRows"
+          :context-tip-note="contextTipNote"
+          :file-manager-label="fileManagerLabel"
+          @submit="submit"
+          @stop="stopChat"
+          @jump-thread="jumpThreadToBottom"
+          @add-file="addFile"
+          @add-image="addImage"
+          @add-folder="openFolderPicker"
+          @open-model="showModelSelector = true"
+          @remove-attachment="removeComposerAttachment"
+          @preview-image="openImagePreview"
+          @reveal-file="revealInFileManager"
+          @paste-image="addImageFromDataUrl"
+          @hide-selection-menu="hideSelectionMenu"
+          @height-change="composerHeight = $event"
+        >
+          <template #status>
+            <BrowserAgentWatchBar v-if="!agentBrowserExpanded" :browser-id="activeChat?.browserId" />
+            <AgentApprovalBar v-if="approvalPending" :session-id="activeChat?.id" />
+          </template>
+        </AgentChatComposer>
       </section>
 
       <AgentChatWritePane
@@ -66,7 +69,6 @@
         @close-graph="closeGraphPane"
         @quiz-attempt="onQuizAttempt"
         @graph-select="onGraphSelect"
-        @width-change="scheduleSelectionPaint"
       />
       <AgentBrowserPane
         :active="active && ((!paneQuiz && !openedWriteStep && !paneGraphView) || agentBrowserExpanded)"
@@ -123,6 +125,7 @@
 </template>
 
 <script setup lang="ts">
+import BrowserAgentWatchBar from '../components/browser/BrowserAgentWatchBar.vue'
 import { computed, defineComponent, h, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import {
   activeChat,
@@ -442,6 +445,7 @@ const onAgentModelSelected = (model: AIModel) => {
 }
 
 const draft = ref('')
+const composerHeight = ref(108)
 const composerCompRef = ref<{
   fillComposer: (text: string) => Promise<void>
   insertFolderMention: (folder: { folderId: number; folderName: string; folderPath: string }) => void
@@ -615,13 +619,11 @@ const submit = async () => {
 const threadCompRef = ref<{
   jumpThreadToBottom: () => void
   hideSelectionMenu: () => void
-  scheduleSelectionPaint: () => void
 } | null>(null)
 const threadPinned = ref(true)
 
 const jumpThreadToBottom = () => threadCompRef.value?.jumpThreadToBottom()
 const hideSelectionMenu = () => threadCompRef.value?.hideSelectionMenu()
-const scheduleSelectionPaint = () => threadCompRef.value?.scheduleSelectionPaint()
 
 const onQuoteSelection = async (text: string) => {
   composerCompRef.value?.syncDraftFromComposer()
@@ -683,18 +685,6 @@ onUnmounted(() => {
   border-radius: 4px;
   margin-bottom: 5px;
   margin-right: 5px;
-}
-
-.chat-approval {
-  padding: 0 var(--chat-gutter) 8px;
-  max-width: var(--chat-max-width);
-  width: 100%;
-  margin: 0 auto;
-  box-sizing: border-box;
-}
-
-.chat-approval:empty {
-  display: none;
 }
 
 .chat-main {

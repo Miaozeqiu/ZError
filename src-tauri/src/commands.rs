@@ -1029,38 +1029,34 @@ fn get_config_path() -> std::path::PathBuf {
 
 /// 读取配置文件
 #[tauri::command]
-pub fn read_config() -> Result<String, String> {
-    let path = get_config_path();
-    if path.exists() {
-        std::fs::read_to_string(&path).map_err(|e| e.to_string())
-    } else {
-        Ok(String::new())
-    }
+pub async fn read_config(window: tauri::WebviewWindow) -> Result<String,String> {
+    crate::secret_vault::trusted_window(&window)?;
+    let value=crate::secret_vault::secure_document_read(window,"app_settings".into(),None).await?;
+    Ok(if value.is_null() {String::new()} else {value.to_string()})
 }
 
 /// 写入配置文件
 #[tauri::command]
-pub fn write_config(content: String) -> Result<(), String> {
-    let path = get_config_path();
-    std::fs::write(&path, content).map_err(|e| e.to_string())
+pub async fn write_config(window: tauri::WebviewWindow, content:String) -> Result<(),String> {
+    crate::secret_vault::trusted_window(&window)?;
+    let data=if content.trim().is_empty() {serde_json::json!({})} else {serde_json::from_str(&content).map_err(|_|"配置格式错误")?};
+    crate::secret_vault::secure_document_write(window,"app_settings".into(),data).await.map(|_|())
 }
 
 /// 读取模型配置文件
 #[tauri::command]
-pub fn read_model_config() -> Result<String, String> {
-    let path = get_exe_dir().join("model_config.json");
-    if path.exists() {
-        std::fs::read_to_string(&path).map_err(|e| e.to_string())
-    } else {
-        Ok(String::new())
-    }
+pub async fn read_model_config(window: tauri::WebviewWindow) -> Result<String,String> {
+    crate::secret_vault::trusted_window(&window)?;
+    let value=crate::secret_vault::secure_document_read(window,"model_settings".into(),None).await?;
+    Ok(if value.is_null() {String::new()} else {value.to_string()})
 }
 
 /// 写入模型配置文件
 #[tauri::command]
-pub fn write_model_config(content: String) -> Result<(), String> {
-    let path = get_exe_dir().join("model_config.json");
-    std::fs::write(&path, content).map_err(|e| e.to_string())
+pub async fn write_model_config(window: tauri::WebviewWindow, content:String) -> Result<(),String> {
+    crate::secret_vault::trusted_window(&window)?;
+    let data=if content.trim().is_empty() {serde_json::json!({})} else {serde_json::from_str(&content).map_err(|_|"配置格式错误")?};
+    crate::secret_vault::secure_document_write(window,"model_settings".into(),data).await.map(|_|())
 }
 
 fn get_app_data_dir() -> std::path::PathBuf {
@@ -1076,51 +1072,20 @@ fn get_app_data_dir() -> std::path::PathBuf {
     }
 }
 
-fn get_auth_path() -> std::path::PathBuf {
-    let stable = get_app_data_dir().join("auth.json");
-    if !stable.exists() {
-        let legacy = get_exe_dir().join("auth.json");
-        if legacy.exists() {
-            if let Some(parent) = stable.parent() {
-                let _ = std::fs::create_dir_all(parent);
-            }
-            if std::fs::copy(&legacy, &stable).is_ok() {
-                let _ = std::fs::remove_file(&legacy);
-            }
-        }
-    }
-    stable
-}
-
 /// 读取登录会话（用户数据目录 auth.json）
 #[tauri::command]
-pub fn read_auth() -> Result<String, String> {
-    let path = get_auth_path();
-    if path.exists() {
-        std::fs::read_to_string(&path).map_err(|e| e.to_string())
-    } else {
-        Ok(String::new())
-    }
+pub async fn read_auth(window: tauri::WebviewWindow) -> Result<String,String> {
+    crate::secret_vault::trusted_window(&window)?;
+    let value=crate::secret_vault::secure_document_read(window,"auth".into(),None).await?;
+    Ok(if value.is_null() {String::new()} else {value.to_string()})
 }
 
 /// 写入登录会话
 #[tauri::command]
-pub fn write_auth(content: String) -> Result<(), String> {
-    let path = get_auth_path();
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    if content.trim().is_empty() {
-        if path.exists() {
-            std::fs::remove_file(&path).map_err(|e| e.to_string())?;
-        }
-        let legacy = get_exe_dir().join("auth.json");
-        if legacy.exists() {
-            let _ = std::fs::remove_file(&legacy);
-        }
-        return Ok(());
-    }
-    std::fs::write(&path, content).map_err(|e| e.to_string())
+pub async fn write_auth(window: tauri::WebviewWindow, content:String) -> Result<(),String> {
+    crate::secret_vault::trusted_window(&window)?;
+    let data=if content.trim().is_empty() {serde_json::json!({})} else {serde_json::from_str(&content).map_err(|_|"配置格式错误")?};
+    crate::secret_vault::secure_document_write(window,"auth".into(),data).await.map(|_|())
 }
 
 #[tauri::command]

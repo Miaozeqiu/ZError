@@ -11,7 +11,7 @@
             @touchstart.passive="onThreadTouchStart"
             @touchmove.passive="onThreadTouchMove"
             @pointerdown="onThreadPointerDown"
-            @contextmenu.prevent="onThreadContextMenu"
+            @contextmenu="onThreadContextMenu"
           >
             <AgentChatFeatureCards
               v-if="showFeatureCards"
@@ -249,23 +249,13 @@
                 <div v-if="isThinking(message)" class="assistant-thinking">
                   正在思考
                 </div>
-                <div v-if="message.status === 'stopped'" class="chat-stopped">已停止生成</div>
+                <div v-if="message.status === 'streaming' && message.awaitingVideo" class="assistant-thinking" role="status">正在监控视频，等待完成后继续任务</div>
+                <div v-if="message.status === 'done' && message.taskOutcome === 'blocked'" class="chat-stopped" role="status">任务受阻，未完成步骤已保留</div>
+                <div v-if="message.status === 'stopped'" class="chat-stopped">{{ message.stopReason === 'browser-takeover' ? '已接管浏览器，自动操作已停止' : '已停止生成' }}</div>
                 <div v-if="message.error" class="chat-error">{{ message.error }}</div>
               </div>
             </div>
             <div class="chat-thread-spacer" aria-hidden="true"></div>
-          </div>
-          <div class="chat-selection" aria-hidden="true">
-            <i
-              v-for="(box, index) in selectionBoxes"
-              :key="index"
-              class="chat-selection-box"
-              :style="{
-                transform: `translate(${box.left}px, ${box.top}px)`,
-                width: `${box.width}px`,
-                height: `${box.height}px`,
-              }"
-            />
           </div>
           <div
             class="custom-scrollbar"
@@ -298,6 +288,7 @@ import { themeState } from '../../composables/useTheme'
 import { useCustomScrollbar } from '../../composables/useCustomScrollbar'
 
 import { createThreadScroll } from '../../utils/ui/threadScroll'
+import { readThreadSelection, clearThreadSelection } from '../../utils/ui/threadSelection'
 import { hljs } from '../../utils/ui/highlightSetup'
 import { activityIconName } from '../../utils/ui/agentIcons'
 import { fileTypeLabel, fileTypeOf } from '../../utils/ui/fileKind'
@@ -378,6 +369,7 @@ const onSearchResultsWheel = (event: WheelEvent) => {
 }
 
 const toggleSearchResults = (stepId: string) => {
+  if (selectedChatText()) return
   const next = new Set(expandedSearchSteps.value)
   if (next.has(stepId)) next.delete(stepId)
   else next.add(stepId)
@@ -407,20 +399,14 @@ const threadThumbRef = threadScroll.thumbRef
 const scrollController = createThreadScroll(() => threadRef.value, (following) => {
   threadPinned.value = following
 })
-const selectionBoxes = ref<{ left: number; top: number; width: number; height: number }[]>([])
-let customSelectionRange: Range | null = null
-let selectionAnchor: Range | null = null
-let selectionDragging = false
-let selectionMoved = false
-let selectionStartX = 0
-let selectionStartY = 0
-let lastFocusRange: Range | null = null
-let selectionScopeEl: Element | null = null
+// Snapshot the native selection when opening the menu: clicking a menu item
+// may collapse it before the action runs. Never substitute this for native copy.
+let selectionMenuText = ''
 const selectionMenuVisible = ref(false)
 const selectionMenuX = ref(0)
 const selectionMenuY = ref(0)
 
-const selectedChatText = () => (customSelectionRange?.toString() || '').replace(/\u200B/g, '').trim()
+const selectedChatText = () => readThreadSelection(threadRef.value)
 
 const selectionMenuItems = computed<MenuItem[]>(() => [
   { id: 'copy', label: '复制', action: 'copy' },
@@ -440,22 +426,20 @@ const writeClipboardText = async (text: string) => {
   }
 }
 
-const copySelectedChatText = async () => {
-  const text = selectedChatText()
-  if (!text) return
-  await writeClipboardText(text)
-}
-
 const onSelectionMenuClick = async (item: MenuItem) => {
+  const text = selectionMenuText
+  selectionMenuText = ''
   hideSelectionMenu()
-  const text = selectedChatText()
-  if (item.action === 'copy') await copySelectedChatText()
+  if (item.action === 'copy' && text) await writeClipboardText(text)
   if (item.action === 'quote' && text) emit('quote', text)
   if (item.action === 'ask' && text) emit('ask', text)
 }
 
 const onThreadContextMenu = (event: MouseEvent) => {
-  if (!selectedChatText()) return
+  const text = selectedChatText()
+  if (!text) return
+  event.preventDefault()
+  selectionMenuText = text
   selectionMenuX.value = event.clientX
   selectionMenuY.value = event.clientY
   selectionMenuVisible.value = true
@@ -474,366 +458,15 @@ const onSelectionMenuKeydown = (event: KeyboardEvent) => {
   emit('hide-composer-menu')
 }
 
-const SELECTION_CHROME = 'button, input, textarea, select, .write-head, .chat-item-delete, .agent-d2-zoom, .chat-selection'
-const SELECTION_BLOCKS = [
-  'pre',
-  'table',
-  'img',
-  '.mermaid-block-container',
-  '.d2-block-container',
-  '.infographic-block-container',
-  '.agent-html',
-  '.agent-html-preview',
-  '.katex-display',
-].join(',')
-const SELECTION_VISUAL_BLOCKS = [
-  'img',
-  '.mermaid-block-container',
-  '.d2-block-container',
-  '.infographic-block-container',
-  '.agent-html',
-  '.agent-html-preview',
-  '.katex-display',
-].join(',')
-const SELECTION_INLINES = 'code, .katex, img, a, strong, em, .strong-node, .emphasis-node'
-
-const selectionHostOf = (node: Node | null) => {
-  const el = node instanceof Element ? node : node?.parentElement
-  return el?.closest('.assistant-text, .user-bubble, .activity-text') || null
-}
-
-const isChromeNode = (node: Node | null) => {
-  const el = node instanceof Element ? node : node?.parentElement
-  return Boolean(el?.closest(SELECTION_CHROME))
-}
-
-const specialBlockOf = (node: Node | null) => {
-  const el = node instanceof Element ? node : node?.parentElement
-  return el?.closest(SELECTION_BLOCKS) || null
-}
-
-const isSelectableText = (node: Node) => {
-  if (node.nodeType !== Node.TEXT_NODE || !/\S/.test(node.textContent || '')) return false
-  if (isChromeNode(node)) return false
-  if (node.parentElement?.closest('svg, canvas')) return false
-  return true
-}
-
-const isThreadSelectableTarget = (target: EventTarget | null) => {
-  const el = target instanceof Element ? target : null
-  if (!el) return false
-  if (el.closest(`${SELECTION_CHROME}, .composer-box, .user-image, .user-file`)) return false
-  return Boolean(el.closest('.assistant-text, .user-bubble, .activity-text'))
-}
-
-const offsetInTextNode = (node: Text, x: number, y: number) => {
-  let low = 0
-  let high = node.length
-  while (low < high) {
-    const mid = (low + high) >> 1
-    const probe = document.createRange()
-    probe.setStart(node, mid)
-    probe.setEnd(node, Math.min(mid + 1, node.length))
-    const rect = probe.getClientRects()[0]
-    if (!rect) {
-      high = mid
-      continue
-    }
-    if (rect.bottom < y - 1) low = mid + 1
-    else if (rect.top > y + 1) high = mid
-    else if (rect.right < x) low = mid + 1
-    else high = mid
-  }
-  return low
-}
-
-const nativeCaretAt = (x: number, y: number) => {
-  const doc = document as Document & {
-    caretRangeFromPoint?: (x: number, y: number) => Range | null
-    caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null
-  }
-  if (typeof doc.caretRangeFromPoint === 'function') {
-    try {
-      return doc.caretRangeFromPoint(x, y)
-    } catch {
-      return null
-    }
-  }
-  const pos = doc.caretPositionFromPoint?.(x, y)
-  if (!pos) return null
-  const range = document.createRange()
-  try {
-    range.setStart(pos.offsetNode, pos.offset)
-    range.collapse(true)
-    return range
-  } catch {
-    return null
-  }
-}
-
-const snapToBlockEdge = (block: Element, y: number) => {
-  const box = block.getBoundingClientRect()
-  const range = document.createRange()
-  if (y < box.top + box.height / 2) range.setStartBefore(block)
-  else range.setStartAfter(block)
-  range.collapse(true)
-  return range
-}
-
-const caretRangeAt = (x: number, y: number) => {
-  const scope = selectionScopeEl
-  if (!scope) return null
-  const hit = document.elementFromPoint(x, y)
-  const hitBlock = hit && scope.contains(hit) ? hit.closest(SELECTION_BLOCKS) : null
-  const native = nativeCaretAt(x, y)
-  if (native && scope.contains(native.startContainer)) {
-    const block = specialBlockOf(native.startContainer) || hitBlock
-    const inChrome = isChromeNode(native.startContainer) || Boolean(native.startContainer.parentElement?.closest('svg, canvas'))
-    const inVisual = Boolean(block && block.matches(SELECTION_VISUAL_BLOCKS) && !isSelectableText(native.startContainer))
-    if (block && scope.contains(block) && (inChrome || inVisual)) {
-      return snapToBlockEdge(block, y)
-    }
-    return native
-  }
-  if (hitBlock && scope.contains(hitBlock) && hitBlock.matches(SELECTION_VISUAL_BLOCKS)) {
-    return snapToBlockEdge(hitBlock, y)
-  }
-
-  const lines: { node: Text; top: number; bottom: number; left: number; right: number }[] = []
-  const walker = document.createTreeWalker(scope, NodeFilter.SHOW_TEXT)
-  let current: Node | null
-  while ((current = walker.nextNode())) {
-    if (!isSelectableText(current)) continue
-    const probe = document.createRange()
-    probe.selectNodeContents(current)
-    for (const rect of probe.getClientRects()) {
-      if (rect.width < 1 || rect.height < 6 || rect.height > 40) continue
-      lines.push({
-        node: current as Text,
-        top: rect.top,
-        bottom: rect.bottom,
-        left: rect.left,
-        right: rect.right,
-      })
-    }
-  }
-  if (!lines.length) return null
-  lines.sort((a, b) => a.top - b.top || a.left - b.left)
-
-  let chosen = lines[0]
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index]
-    const next = lines[index + 1]
-    if (y <= line.bottom) {
-      chosen = line
-      break
-    }
-    if (!next) {
-      chosen = line
-      break
-    }
-    if (y < (line.bottom + next.top) / 2) {
-      chosen = line
-      break
-    }
-    chosen = next
-  }
-
-  const inLine = y >= chosen.top && y <= chosen.bottom
-  const caretX = inLine ? x : y > chosen.bottom ? Number.POSITIVE_INFINITY : 0
-  const caretY = Math.min(chosen.bottom - 1, Math.max(chosen.top + 1, y))
-  const range = document.createRange()
-  range.setStart(chosen.node, offsetInTextNode(chosen.node, caretX, caretY))
-  range.collapse(true)
-  return range
-}
-
-const lineLikeRects = (rects: DOMRect[]) => {
-  const usable = rects.filter((rect) => rect.width >= 1 && rect.height >= 6)
-  if (!usable.length) return []
-  const heights = [...usable.map((rect) => rect.height)].sort((a, b) => a - b)
-  const mid = heights[Math.floor(heights.length / 2)] || 18
-  return usable.filter((rect) => rect.height <= Math.max(40, mid * 2.2))
-}
-
-const collectTextRects = (range: Range) => {
-  const ancestor = range.commonAncestorContainer
-  const root = ancestor.nodeType === Node.TEXT_NODE ? ancestor.parentNode : ancestor
-  if (!root) return []
-  const rects: DOMRect[] = []
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
-  let node: Node | null
-  while ((node = walker.nextNode())) {
-    if (!isSelectableText(node) || !range.intersectsNode(node)) continue
-    const length = node.textContent?.length || 0
-    const start = node === range.startContainer ? range.startOffset : 0
-    const end = node === range.endContainer ? range.endOffset : length
-    if (end <= start) continue
-    const piece = document.createRange()
-    try {
-      piece.setStart(node, Math.max(0, start))
-      piece.setEnd(node, Math.min(length, end))
-      rects.push(...Array.from(piece.getClientRects()))
-    } catch {
-      // skip detached nodes
-    }
-  }
-  const host = root instanceof Element ? root : root.parentElement
-  host?.querySelectorAll(SELECTION_INLINES).forEach((el) => {
-    if (isChromeNode(el) || el.closest(SELECTION_BLOCKS) || !range.intersectsNode(el)) return
-    const box = el.getBoundingClientRect()
-    if (box.width >= 2 && box.height >= 6 && box.height <= 40) rects.push(box)
-  })
-  return lineLikeRects(rects)
-}
-
-const mergeSelectionRects = (
-  rects: { left: number; top: number; width: number; height: number }[]
-) => {
-  const sorted = [...rects].sort((a, b) => a.top - b.top || a.left - b.left)
-  const merged: typeof rects = []
-  for (const rect of sorted) {
-    const last = merged.at(-1)
-    if (
-      last &&
-      Math.abs(rect.top - last.top) <= 3 &&
-      rect.left <= last.left + last.width + 16
-    ) {
-      const right = Math.max(last.left + last.width, rect.left + rect.width)
-      last.left = Math.min(last.left, rect.left)
-      last.width = right - last.left
-      last.height = Math.max(last.height, rect.height)
-      continue
-    }
-    merged.push({ ...rect })
-  }
-  return merged
-}
-
-const rangeIsLive = (range: Range) =>
-  document.contains(range.startContainer) && document.contains(range.endContainer)
-
-const paintCustomSelection = (range: Range | null) => {
-  const root = threadRef.value
-  if (!root || !range || range.collapsed || !rangeIsLive(range)) {
-    customSelectionRange = null
-    if (selectionBoxes.value.length) selectionBoxes.value = []
-    return
-  }
-  customSelectionRange = range
-  const rootRect = root.getBoundingClientRect()
-  selectionBoxes.value = mergeSelectionRects(
-    collectTextRects(range)
-      .filter((rect) => rect.width >= 2 && rect.height >= 6)
-      .map((rect) => ({
-        left: rect.left - rootRect.left - 1,
-        top: rect.top - rootRect.top,
-        width: rect.width + 2,
-        height: rect.height,
-      }))
-  )
-}
-
-let selectionPaintFrame = 0
-let selectionResizeObs: ResizeObserver | null = null
-
-const scheduleSelectionPaint = () => {
-  if (!customSelectionRange || selectionPaintFrame) return
-  selectionPaintFrame = requestAnimationFrame(() => {
-    selectionPaintFrame = 0
-    if (customSelectionRange) paintCustomSelection(customSelectionRange)
-  })
-}
-
-const bindSelectionLayout = () => {
-  selectionResizeObs?.disconnect()
-  const thread = threadRef.value
-  if (!thread) return
-  selectionResizeObs = new ResizeObserver(() => scheduleSelectionPaint())
-  selectionResizeObs.observe(thread)
-  const main = thread.closest('.chat-main')
-  if (main) selectionResizeObs.observe(main)
-}
-
-const clearCustomSelection = () => {
-  selectionAnchor = null
-  lastFocusRange = null
-  selectionScopeEl = null
-  selectionDragging = false
-  selectionMoved = false
-  hideSelectionMenu()
-  paintCustomSelection(null)
-  window.getSelection()?.removeAllRanges()
-}
-
-const updateCustomSelection = (x: number, y: number) => {
-  if (!selectionAnchor) return
-  const focus = caretRangeAt(x, y) || lastFocusRange
-  if (!focus) return
-  lastFocusRange = focus
-  try {
-    const range = document.createRange()
-    const startFirst = selectionAnchor.compareBoundaryPoints(Range.START_TO_START, focus) <= 0
-    if (startFirst) {
-      range.setStart(selectionAnchor.startContainer, selectionAnchor.startOffset)
-      range.setEnd(focus.startContainer, focus.startOffset)
-    } else {
-      range.setStart(focus.startContainer, focus.startOffset)
-      range.setEnd(selectionAnchor.startContainer, selectionAnchor.startOffset)
-    }
-    window.getSelection()?.removeAllRanges()
-    paintCustomSelection(range)
-  } catch {
-    // keep the last painted range while dragging through empty space
-  }
-}
-
 const onThreadPointerDown = (event: PointerEvent) => {
   if (event.button !== 0) return
+  // Suspend pending bottom-follow writes before WebKit starts native selection.
+  // Do not cancel the event, clear the selection or constrain it to one block.
   scrollController.hold()
-  if (!isThreadSelectableTarget(event.target)) {
-    if (!(event.target instanceof Element) || !event.target.closest('.chat-selection')) {
-      clearCustomSelection()
-    }
-    return
-  }
-  window.getSelection()?.removeAllRanges()
-  selectionScopeEl = event.target instanceof Node ? selectionHostOf(event.target) : null
-  selectionAnchor = caretRangeAt(event.clientX, event.clientY)
-  selectionStartX = event.clientX
-  selectionStartY = event.clientY
-  selectionDragging = Boolean(selectionAnchor)
-  selectionMoved = false
-  hideSelectionMenu()
-  paintCustomSelection(null)
 }
 
-const onThreadPointerMove = (event: PointerEvent) => {
-  if (!selectionDragging || !selectionAnchor) return
-  if (Math.hypot(event.clientX - selectionStartX, event.clientY - selectionStartY) > 3) {
-    selectionMoved = true
-  }
-  updateCustomSelection(event.clientX, event.clientY)
-}
-
-const onThreadPointerUp = () => {
-  if (selectionDragging && !selectionMoved) paintCustomSelection(null)
-  selectionDragging = false
-  selectionAnchor = selectionMoved ? selectionAnchor : null
-}
-
-const onCopyCustomSelection = (event: ClipboardEvent) => {
-  const active = document.activeElement
-  if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) return
-  if (window.getSelection()?.toString()) return
-  const text = customSelectionRange?.toString()
-  if (!text) return
-  event.preventDefault()
-  event.clipboardData?.setData('text/plain', text)
-}
-
-const onThreadSelectStart = (event: Event) => {
-  if (isThreadSelectableTarget(event.target)) event.preventDefault()
+const onThreadSelectionChange = () => {
+  if (selectedChatText()) scrollController.hold()
 }
 
 let contentObserver: ResizeObserver | null = null
@@ -842,7 +475,6 @@ let childObserver: MutationObserver | null = null
 const updateThreadPinned = () => {
   scrollController.observe()
   hideSelectionMenu()
-  scheduleSelectionPaint()
 }
 const jumpThreadToBottom = () => scrollController.jump()
 const scheduleThreadFollow = () => scrollController.changed()
@@ -944,7 +576,6 @@ const highlightThreadCode = () => {
       // keep plain text
     }
   })
-  scheduleSelectionPaint()
 }
 
 const scheduleHighlight = () => {
@@ -955,7 +586,9 @@ watch(activeChatId, async () => {
   scrollController.reset()
   openedWriteStepId.value = null
   threadPinned.value = true
-  clearCustomSelection()
+  hideSelectionMenu()
+  selectionMenuText = ''
+  clearThreadSelection(threadRef.value)
   await nextTick()
   threadScroll.bind()
   scheduleHighlight()
@@ -1002,46 +635,33 @@ const observeThreadGrowth = () => {
 
 onMounted(() => {
   document.addEventListener('keydown', onThreadNavigationKey, true)
+  document.addEventListener('selectionchange', onThreadSelectionChange)
   threadScroll.bind()
   observeThreadGrowth()
-  bindSelectionLayout()
   scheduleHighlight()
   void nextTick(() => {
     scheduleThreadFollow()
   })
-  document.addEventListener('pointermove', onThreadPointerMove)
-  document.addEventListener('pointerup', onThreadPointerUp)
   document.addEventListener('pointerdown', onSelectionMenuPointerDown, true)
-  document.addEventListener('copy', onCopyCustomSelection)
-  document.addEventListener('selectstart', onThreadSelectStart)
   document.addEventListener('keydown', onSelectionMenuKeydown)
-  window.addEventListener('resize', scheduleSelectionPaint)
 })
 
 onUnmounted(() => {
   document.removeEventListener('keydown', onThreadNavigationKey, true)
+  document.removeEventListener('selectionchange', onThreadSelectionChange)
   contentObserver?.disconnect()
   childObserver?.disconnect()
   contentObserver = null
   childObserver = null
   scrollController.dispose()
-  if (selectionPaintFrame) cancelAnimationFrame(selectionPaintFrame)
-  selectionResizeObs?.disconnect()
-  selectionResizeObs = null
-  document.removeEventListener('pointermove', onThreadPointerMove)
-  document.removeEventListener('pointerup', onThreadPointerUp)
   document.removeEventListener('pointerdown', onSelectionMenuPointerDown, true)
-  document.removeEventListener('copy', onCopyCustomSelection)
-  document.removeEventListener('selectstart', onThreadSelectStart)
   document.removeEventListener('keydown', onSelectionMenuKeydown)
-  window.removeEventListener('resize', scheduleSelectionPaint)
 })
 
 defineExpose({
   threadPinned,
   jumpThreadToBottom,
   hideSelectionMenu,
-  scheduleSelectionPaint,
 })
 </script>
 
@@ -1149,28 +769,16 @@ defineExpose({
   overscroll-behavior: none;
 }
 
-.assistant-text,
-.assistant-text :deep(*),
-.user-bubble,
-.activity-text {
+/* Let WebKit own hit testing, multiline ranges, drag autoscroll and copying. */
+.chat-thread {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.activity-icon,
+.search-results-chevron {
   -webkit-user-select: none;
   user-select: none;
-}
-
-.chat-selection {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  overflow: hidden;
-  z-index: 1;
-}
-
-.chat-selection-box {
-  position: absolute;
-  left: 0;
-  top: 0;
-  border-radius: 5px;
-  background: color-mix(in srgb, #79b4ff 36%, transparent);
 }
 
 .chat-thread > * {
@@ -1181,7 +789,7 @@ defineExpose({
 
 .chat-thread-spacer {
   flex: none;
-  height: 108px;
+  height: var(--chat-composer-height, 108px);
   max-width: none;
   pointer-events: none;
 }
@@ -1601,6 +1209,15 @@ defineExpose({
 
 .assistant-text :deep(p) {
   margin: 0 0 10px;
+}
+
+/* WebKit paints selection gaps to the edge of block boxes. Keep prose boxes
+   content-sized so short paragraphs/list items don't highlight the empty row.
+   The native selection, full-width renderer and rich content remain intact. */
+.assistant-text :deep(:is(p, li, h1, h2, h3, h4, h5, h6)) {
+  width: fit-content;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .assistant-text :deep(p:last-child),
@@ -2160,16 +1777,5 @@ defineExpose({
 @keyframes chat-think-pulse {
   0%, 100% { opacity: 0.72; }
   50% { opacity: 1; }
-}
-</style>
-
-<style>
-/* WKWebView ignores transparent ::selection and keeps the system highlight. */
-.chat-thread *::selection,
-.chat-thread *::-moz-selection {
-  background: none !important;
-  background-color: #0000 !important;
-  color: inherit !important;
-  -webkit-text-fill-color: inherit !important;
 }
 </style>

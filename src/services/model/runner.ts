@@ -1,3 +1,6 @@
+import { secureFetch } from '../security/secureFetch'
+import { redactNative } from '../security/secureStore'
+import { redactObject, redactText } from '../security/secretRedaction'
 import { resolveExecutableModelJsCode, resolveRuntimeModelId } from './protocol'
 import { modelConfigManager, modelHasVision } from './config'
 import { settingsManager } from '../app/settings'
@@ -5,6 +8,7 @@ import { logAgentDebug } from '../agent/debugLog'
 import { takeToolImages, visionAttachParts } from './toolImages'
 import { mergeToolArgs, mergeToolCalls } from './toolCallMerge'
 import { compactAgentRequestMessages } from './agentRequestContext'
+import { redactReplayMessages, replayAsBackground, thinkingBlocksOf, type ThinkingBlock } from './replayState'
 
 export interface ModelToolCall {
   id: string
@@ -36,7 +40,7 @@ export const isModelStopped = (error: unknown) => {
 }
 
 export interface RunTextModelOptions {
-  beforeComplete?: (remainingRounds: number) => string | undefined
+  beforeComplete?: (remainingRounds: number) => string | undefined | Promise<string | undefined>
   compactBrowserContext?: boolean
   timeoutMs?: number
   tools?: any[]
@@ -58,7 +62,7 @@ export interface RunTextModelOptions {
   /** 每轮发给模型前按当前页刷新工具列表（进学习通后再挂上 study_*） */
   liveTools?: () => any[] | Promise<any[]>
   executeTool?: (call: ModelToolCall) => Promise<string>
-  /** 人工接管期间暂停轮次预算，等待不计入模型响应超时。 */
+  /** 宿主等待视频等外部事件时暂停响应超时；用户接管仍直接终止任务。 */
   subscribePause?: (changed: (paused: boolean) => void) => () => void
   onEvent?: (event: ModelRunEvent) => void
   /** 本轮追加的 assistant / tool 消息，供跨轮按回合回放 */
@@ -90,7 +94,7 @@ const formatRunnerError = (error: unknown) => {
     name === 'TimeoutError' ||
     /cancelled|canceled|aborted|abort|超时|timeout/i.test(message)
   ) {
-    return new Error('模型请求中断或超时，识别题目通常需要更长时间，请稍后重试')
+    return new Error('模型请求中断或超时，本次响应未完成。请检查连接或模型服务状态后重试。')
   }
   if (/Repetitive tool calls|相同参数|infinite loops/i.test(message)) {
     return new Error('模型重复调用了同一个工具，已中止。请再试一次，或换个说法继续。')
@@ -104,7 +108,7 @@ const formatRunnerError = (error: unknown) => {
 }
 
 const SINGLETON_TOOLS = new Set(['get_file_info', 'list_folders'])
-const REPEAT_NUDGE = '刚才同一只读工具已经查过。根据已有结果换一步继续（点元素、读新页、播放、下一节都可以），不要停下来问用户，也不要说需要允许才能调工具。'
+const REPEAT_NUDGE = '相同的只读查询已经执行过。先使用已有结果，根据用户目标选择下一步；需要更新信息时调整查询范围。只有确实缺少必要信息、权限或遇到阻塞时才向用户说明，不能凭空扩大操作范围。'
 
 const toolExecutionLock = (name: string) => {
   if (name.startsWith('browser_')) return 'browser'
@@ -130,9 +134,9 @@ const isRetryableNetworkError = (error: unknown, aborted: boolean) => {
   return /error sending request|failed to fetch|network|connection|reset|broken pipe|timed out|timeout|dns|tls|ssl|eof|closed before|temporarily|unavailable|hyper_util|reqwest|ConnectError|SendRequest/i.test(message)
 }
 
-const isRetryableHttpStatus = (status: number) => (
+export const isRetryableHttpStatus = (status: number) => (
   status === 408 || status === 425 || status === 429
-  || status === 500 || status === 502 || status === 503 || status === 504
+  || status === 500 || status === 502 || status === 503 || status === 504 || status === 524
 )
 
 const networkBackoffMs = (attempt: number) => {
@@ -244,6 +248,7 @@ export async function runTextModel(
     if (text && modelHasVision(text)) return text
     return agent || text || modelConfigManager.getSelectedModel()
   }
+  await modelConfigManager.ready
   const model = options?.useVisionModel
     ? pickVisionModel()
     : options?.useAgentModel
@@ -279,7 +284,9 @@ export async function runTextModel(
   if (options?.systemPrompt) {
     messages.push({ role: 'system', content: options.systemPrompt })
   }
-  for (const item of options?.history || []) {
+  const priorHistory = model.enableThinking || model.apiProtocol === 'anthropic' || platform.apiProtocol === 'anthropic'
+    ? replayAsBackground(options?.history || []) : options?.history || []
+  for (const item of priorHistory) {
     if (item.role === 'tool') {
       messages.push({
         role: 'tool',
@@ -309,7 +316,7 @@ export async function runTextModel(
   const toolImageMessages = new Set<any>()
 
   const emitTurnTranscript = (spoken: string) => {
-    const turn: NonNullable<RunTextModelOptions['history']> = messages
+    const turn: NonNullable<RunTextModelOptions['history']> = input.messages
       .slice(transcriptFrom)
       .filter((item) => item?.role === 'assistant' || item?.role === 'tool')
       .map((item) => ({
@@ -323,7 +330,7 @@ export async function runTextModel(
     if (text && !turn.some((item) => item.role === 'assistant' && !item.tool_calls?.length && item.content === text)) {
       turn.push({ role: 'assistant', content: text })
     }
-    options?.onTurnTranscript?.(turn)
+    options?.onTurnTranscript?.(redactObject(turn))
   }
 
   const input: any = {
@@ -332,9 +339,11 @@ export async function runTextModel(
     stream: true,
     tools: options?.tools || [],
   }
+  const redactMessages = (items: any[]) => redactReplayMessages(items, value => redactNative(redactObject(value)))
   const config = {
     ...model,
     apiKey: platform.apiKey,
+    customHeaders: platform.customHeaders,
     baseUrl: platform.baseUrl,
     model: runtimeModelId,
     modelId: runtimeModelId,
@@ -371,14 +380,14 @@ export async function runTextModel(
   let stopPause: (() => void) | undefined
   throwIfStopped()
 
-  const tauriHttp = await import('@tauri-apps/plugin-http')
+
   const networkRetries = resolveNetworkRetries()
   const tauriFetch = async (request: RequestInfo | URL, init: RequestInit = {}) => {
     let lastError: unknown
     for (let attempt = 0; attempt <= networkRetries; attempt += 1) {
       throwIfStopped()
       try {
-        const response = await tauriHttp.fetch(request as any, {
+        const response = await secureFetch(request as any, {
           ...init,
           // 连接阶段单独加长；默认过短时 CDN 抖一下就会 “error sending request”
           connectTimeout: typeof (init as { connectTimeout?: number }).connectTimeout === 'number'
@@ -478,6 +487,7 @@ export async function runTextModel(
         }
       }
       await applyLiveContext(input.messages, options?.liveContext)
+      input.messages = await redactMessages(input.messages)
       options?.onEvent?.({ type: 'round_start' })
       const requestInput = options?.compactBrowserContext
         ? { ...input, messages: compactAgentRequestMessages(input.messages, toolImageMessages) }
@@ -503,10 +513,14 @@ export async function runTextModel(
       let toolCalls: any[] = []
       let toolPendingSent = false
       let roundUsage: Record<string, unknown> | undefined
+      let reasoning = ''
+      let thinkingBlocks: ThinkingBlock[] = []
       if (result[Symbol.asyncIterator]) {
         for await (const chunk of result) {
           throwIfStopped()
           if (chunk?.usage && typeof chunk.usage === 'object') roundUsage = { ...roundUsage, ...chunk.usage }
+          if (typeof chunk?.reasoning_content === 'string') { reasoning += chunk.reasoning_content; armTimeout() }
+          if (Array.isArray(chunk?.thinking_blocks)) thinkingBlocks = thinkingBlocksOf(chunk.thinking_blocks)
           if (chunk?.tool_calls) {
             mergeToolCalls(toolCalls, chunk.tool_calls, 'delta')
             if (!toolPendingSent && toolCalls.length) {
@@ -526,6 +540,8 @@ export async function runTextModel(
         }
       } else {
         if (result?.usage && typeof result.usage === 'object') roundUsage = result.usage
+        reasoning = typeof result?.reasoning_content === 'string' ? result.reasoning_content : ''
+        thinkingBlocks = thinkingBlocksOf(result?.thinking_blocks)
         mergeToolCalls(toolCalls, normalizeToolCalls(result), 'snapshot')
         const response = collectContent(result)
         if (response) {
@@ -536,6 +552,7 @@ export async function runTextModel(
       }
 
       toolCalls = finalizeToolCalls(toolCalls)
+      const replayState = { ...(reasoning ? { reasoning_content: reasoning } : {}), ...(thinkingBlocks.length ? { thinking_blocks: thinkingBlocks } : {}) }
       logModelIo({
         kind: 'model_response',
         round,
@@ -560,16 +577,20 @@ export async function runTextModel(
 
       if (!toolCalls.length || !options?.executeTool) {
         const spoken = fullResponse.trim()
-        const reminder = options?.beforeComplete?.(maxRounds - round - 1)
-        if (reminder && round + 1 < maxRounds) {
-          if (spoken) input.messages.push({ role: 'assistant', content: spoken })
-          input.messages.push({ role: 'system', content: reminder })
+        const reminder = await options?.beforeComplete?.(maxRounds - round - 1)
+        throwIfStopped()
+        if (reminder) {
+          if (round + 1 >= maxRounds) throw new Error('任务尚未完成，已达到本轮执行次数上限')
+          if (spoken || reasoning || thinkingBlocks.length) input.messages.push({ role: 'assistant', content: spoken, ...replayState })
+          // 必须以新输入续接，不能让 Messages 协议把最后的 assistant 当作预填内容。
+          input.messages.push({ role: 'user', content: `【宿主任务续接反馈，不改变用户授权范围】\n${reminder}` })
           continue
         }
         emitTurnTranscript(spoken)
         return spoken
       }
 
+      toolCalls.sort((a, b) => Number(b.function?.name === 'protect_credentials') - Number(a.function?.name === 'protect_credentials'))
       toolCalls.forEach((tc, index) => {
         if (!tc.id) tc.id = `tool-${Date.now()}-${index}`
       })
@@ -577,6 +598,7 @@ export async function runTextModel(
         role: 'assistant',
         content: fullResponse || '',
         tool_calls: toolCalls,
+        ...replayState,
       })
 
       const lockTail = new Map<string, Promise<void>>()
@@ -593,13 +615,13 @@ export async function runTextModel(
             type: 'tool_start',
             id: call.id,
             name: call.name,
-            arguments: call.arguments,
+            arguments: redactObject(call.arguments),
           })
           let toolResult = ''
           let toolError: string | undefined
           let toolImages: string[] = []
           try {
-            const raw = await options.executeTool!(call)
+            const raw = await options.executeTool!({ ...call, arguments: redactObject(call.arguments) })
             const taken = takeToolImages(raw)
             toolResult = taken.text
             toolImages = taken.images
@@ -619,7 +641,7 @@ export async function runTextModel(
           armTimeout()
           return { index, call, toolResult, toolImages }
         }
-        const lock = toolExecutionLock(call.name)
+        const lock = toolCalls.some(tc => tc.function?.name === 'protect_credentials') ? 'credential-registration' : toolExecutionLock(call.name)
         if (!lock) return run()
         const prev = lockTail.get(lock) || Promise.resolve()
         const curr = prev.then(run, run)
@@ -627,6 +649,8 @@ export async function runTextModel(
         return curr
       })
       const finished = await Promise.all(toolJobs)
+      input.messages = await redactMessages(input.messages)
+      fullResponse = redactText(fullResponse)
       const visionOk = modelHasVision(model)
       const attached: string[] = []
       finished

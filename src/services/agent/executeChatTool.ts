@@ -1,3 +1,5 @@
+import { protectCredentials } from './credentialTools'
+import { redactObject } from '../security/secretRedaction'
 /** 对话工具分发。刷课走 browserTools，校园/题库/练习走 toolHandlers。 */
 import { isModelStopped, type ModelToolCall } from '../model/runner'
 import { executeBrowserTool } from './browserTools'
@@ -16,6 +18,9 @@ import { collectFinishEvidence, judgeFinish } from './finishGate'
 import { intentFromTodoItems, setBrowserTaskIntent } from './browserTask'
 import { withBrowserAutomation } from '../browser/control'
 import { reviewSiteLearning, siteSkillReadIndex } from './siteLearningReview'
+import { websitePrimaryHost } from './websiteIdentity'
+import { resolveWebsiteSkillTarget } from './websiteSkillTarget'
+import { canonicalSkillToolName } from './skillToolNames'
 
 const ensureApproved = async (
   ctx: ChatToolContext,
@@ -78,19 +83,7 @@ const siteLearnHost = async (ctx: ChatToolContext) => {
   if (!id) return ''
   const { peekAppBrowserUrl } = await import('../browser/appBrowser')
   const url = peekAppBrowserUrl(id)
-  try {
-    return new URL(url).hostname.replace(/^www\./i, '')
-  } catch {
-    return ''
-  }
-}
-
-const SKILL_TOOL_ALIASES: Record<string, string> = {
-  browser_read_agent_skill: 'read_agent_skill',
-  browser_read_agent_skill_file: 'read_agent_skill_file',
-  browser_write_agent_skill_file: 'write_agent_skill_file',
-  browser_list_agent_skills: 'list_agent_skills',
-  browser_reset_agent_skill_file: 'reset_agent_skill_file',
+  return websitePrimaryHost(url)
 }
 
 export const executeChatTool = async (input: {
@@ -99,8 +92,8 @@ export const executeChatTool = async (input: {
 }): Promise<string> => {
   const { call, ctx } = input
   if (ctx.abort.aborted) throw new DOMException('已停止', 'AbortError')
-  const aliased = SKILL_TOOL_ALIASES[call.name]
-  if (aliased) {
+  const aliased = canonicalSkillToolName(call.name)
+  if (aliased !== call.name) {
     return executeChatTool({ call: { ...call, name: aliased }, ctx })
   }
   const args = parseToolArgs(call.arguments)
@@ -115,9 +108,16 @@ export const executeChatTool = async (input: {
     }
   }
 
+  if (call.name === 'protect_credentials') return protectCredentials({ call, args, ctx })
+
   if (call.name === 'list_agent_skills') {
     const { listAgentSkillsForAgent } = await import('./agentSkills')
     return JSON.stringify(await listAgentSkillsForAgent())
+  }
+
+  if (call.name === 'set_website_icon') {
+    const { websiteIconTool } = await import('./websiteIconTool')
+    return websiteIconTool({ call, args, ctx })
   }
 
   if (call.name === 'read_agent_skill') {
@@ -126,7 +126,7 @@ export const executeChatTool = async (input: {
     const content = await readAgentSkillContent(id)
     if (!content) {
       const hostHint = /[./]/.test(id) || /^(zjooc|zhihuishu|chaoxing)$/i.test(id)
-        ? '站点步骤在 site-learn。下一步：read_agent_skill(site-learn)，再读 files 里 sites/<当前网址主机>/SKILL.md。'
+        ? '站点步骤在 site-learn。下一步：read_agent_skill_file(skill_id=site-learn, path=sites/<主网站域名>/SKILL.md)。'
         : undefined
       return JSON.stringify({
         error: `Skill "${id}" 不存在或未启用`,
@@ -138,16 +138,28 @@ export const executeChatTool = async (input: {
 
   if (call.name === 'read_agent_skill_file') {
     const { placeSiteLearnPath, readAgentSkillFileContent } = await import('./agentSkills')
-    const id = String(args.skill_id || '').trim()
-    let path = String(args.path || '').trim()
+    const target = resolveWebsiteSkillTarget(String(args.skill_id || '').trim(), String(args.path || '').trim())
+    const id = target.skillId
+    let path = target.path
     if (id === 'site-learn') {
       const host = await siteLearnHost(ctx)
       const placed = placeSiteLearnPath(path, host)
       if (placed.error) return JSON.stringify({ error: placed.error, path: placed.path })
       path = placed.path
     }
-    const content = await readAgentSkillFileContent(id, path)
+    let content
+    try {
+      content = await readAgentSkillFileContent(id, path)
+    } catch (error) {
+      return JSON.stringify({ ok: false, id, path, error: `读取文件失败：${error instanceof Error ? error.message : String(error)}` })
+    }
     if (!content) {
+      if (id === 'site-learn' && /^sites\/[^/]+\/SKILL\.md$/.test(path)) {
+        return JSON.stringify({
+          ok: true, id, path, exists: false, content: '',
+          hint: '本站尚未创建经验文件，已确认原文不存在。将本轮验证过的经验写入这个路径，成功后使用 updated；不能声明 covered。',
+        })
+      }
       return JSON.stringify({
         id, path,
         error: `Skill "${id}" 的文件 "${path}" 还不存在`,
@@ -156,18 +168,25 @@ export const executeChatTool = async (input: {
           : undefined,
       })
     }
-    return JSON.stringify(content)
+    return JSON.stringify({ ...content, exists: true })
   }
 
   if (call.name === 'write_agent_skill_file') {
-    const id = String(args.skill_id || '').trim()
-    let path = String(args.path || '').trim()
+    const requestedId = String(args.skill_id || '').trim()
+    const { isSkillEditable } = await import('./agentSkills')
+    if (!isSkillEditable(requestedId)) return JSON.stringify({ error: '此 Skill 为只读或不存在，不能修改', id: requestedId })
+    const target = resolveWebsiteSkillTarget(requestedId, String(args.path || '').trim())
+    const id = target.skillId
+    let path = target.path
     if (id === 'site-learn') {
       const { placeSiteLearnPath } = await import('./agentSkills')
       const placed = placeSiteLearnPath(path, await siteLearnHost(ctx))
       if (placed.error) return JSON.stringify({ ok: false, error: placed.error, path: placed.path })
       path = placed.path
     }
+    const { skillFileWriteError } = await import('./agentSkills')
+    const writeError = skillFileWriteError(id, path)
+    if (writeError) return JSON.stringify({ error: writeError, id, path })
     const { siteGraphWriteBlocked } = await import('../browser/siteGraphSave')
     const blocked = siteGraphWriteBlocked(path)
     if (blocked) return JSON.stringify({ ok: false, error: blocked })
@@ -194,7 +213,7 @@ export const executeChatTool = async (input: {
     return JSON.stringify({ ...await writeAgentSkillFileContent(
       id,
       path,
-      String(args.content ?? ''),
+      String(redactObject(args.content ?? '')),
     ), id, path })
   }
 
@@ -264,9 +283,12 @@ export const executeChatTool = async (input: {
         call.name === 'browser_todo',
       )
       if (call.name === 'browser_finish') {
+        const { liveSession } = await import('./chatStore')
+        const currentSteps = liveSession(ctx.sessionId)?.messages.find(message => message.id === ctx.assistantId)?.steps || []
         const evidence = await collectFinishEvidence(browserId, gateSession, {
           todos: ctx.getTodos?.() || [],
           role: ctx.role || 'parent',
+          steps: currentSteps,
         })
         const judged = judgeFinish(String(args.status || ''), String(args.summary || ''), evidence)
         if (!judged.ok) return JSON.stringify({ ok: false, finished: false, error: 'error' in judged ? judged.error : '还不能收工' })
@@ -284,10 +306,15 @@ export const executeChatTool = async (input: {
             const attempts = steps.filter(step => step.name === 'browser_finish' && step.result
               && parseToolArgs(step.result).learningRequired === true).length
             if (attempts < 2) return JSON.stringify({ finished: false, learningRequired: true, ...learning })
-            learning = { ...learning, ok: true, decision: 'deferred', reason: '经验检查两次修正后仍不完整，本次未确认保存；网页任务本身已完成。' }
+            learning = { ...learning, ok: true, error: undefined, hint: undefined, decision: 'deferred', reason: '经验检查两次修正后仍不完整，本次未确认保存；网页任务本身已完成。' }
           }
         }
-        return JSON.stringify({ ok: true, finished: true, status: judged.status, summary: judged.summary, learning })
+        if (judged.status !== 'watching') {
+          const { stopWatchFor } = await import('./chatWatch')
+          stopWatchFor(browserId)
+        }
+        return JSON.stringify({ ok: true, finished: judged.status !== 'watching', status: judged.status, summary: judged.summary, learning,
+          ...(judged.status === 'watching' ? { awaitingVideo: true, taskComplete: false } : {}) })
       }
       const blocked = shouldBlockRepeatFail(gateSession, call.name, args)
       if (blocked.block) {

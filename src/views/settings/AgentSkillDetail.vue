@@ -1,14 +1,14 @@
 <template>
   <div class="skill-detail-page">
     <div class="skill-detail-header">
-      <button type="button" class="back-btn" title="返回 Skill 列表" @click="requestBack">
+      <button type="button" class="back-btn" title="返回网站列表" @click="requestBack">
         <svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" width="12" height="12">
           <path d="M768 96c19.2-19.2 19.2-51.2 0-70.4-19.2-19.2-51.2-19.2-70.4 0l-448 448c-19.2 19.2-19.2 51.2 0 70.4l448 448c19.2 19.2 51.2 19.2 70.4 0 19.2-19.2 19.2-51.2 0-70.4L358.4 512l409.6-416z" fill="currentColor"/>
         </svg>
         <span>返回</span>
       </button>
       <div v-if="skillDoc" class="skill-detail-title">
-        <span class="skill-path">skills/{{ skillDoc.name }}</span>
+        <span class="skill-path">{{ siteHost || skillDoc.name }}</span>
       </div>
       <div class="header-actions">
         <button
@@ -184,6 +184,8 @@ setCustomComponents(SKILL_PREVIEW_CUSTOM_ID, {
 const props = defineProps<{
   skillId: string
   initialMode?: 'view' | 'edit'
+  siteHost?: string
+  initialPath?: string
 }>()
 
 const emit = defineEmits<{
@@ -243,6 +245,13 @@ const previewMetaRows = computed(() => {
   const rows: Array<{ key: string; value: string }> = []
   if (previewParts.value.name) rows.push({ key: 'name', value: previewParts.value.name })
   if (previewParts.value.description) rows.push({ key: 'description', value: previewParts.value.description })
+  if (previewParts.value.compatibility) rows.push({ key: 'compatibility', value: previewParts.value.compatibility })
+  if (previewParts.value.license) rows.push({ key: 'license', value: previewParts.value.license })
+  if (previewParts.value.allowedTools) rows.push({ key: 'allowed-tools', value: previewParts.value.allowedTools })
+  for (const [key, value] of Object.entries(previewParts.value.metadata)) {
+    rows.push({ key: `metadata.${key}`, value: String(value) })
+  }
+  if (previewParts.value.errors.length) rows.push({ key: 'YAML 错误', value: previewParts.value.errors.join('；') })
   return rows
 })
 const previewRenderKey = computed(() => (
@@ -264,6 +273,7 @@ const showHint = (text: string) => {
 }
 
 const loadFile = async (path: string) => {
+  if (!files.value.includes(path)) throw new Error('不能读取其他网站的文件')
   const file = await getSkillFileContent(props.skillId, path)
   if (!file) throw new Error(`无法读取 ${path}`)
   currentPath.value = file.path
@@ -277,14 +287,14 @@ const loadFile = async (path: string) => {
 const loadSkill = async () => {
   loadError.value = ''
   saveError.value = ''
-  const doc = await getSkillDocument(props.skillId)
+  const doc = await getSkillDocument(props.skillId, props.siteHost)
   if (!doc) {
     loadError.value = '无法读取 Skill'
     return
   }
   skillDoc.value = doc
   files.value = doc.files?.length ? doc.files : ['SKILL.md']
-  await loadFile('SKILL.md')
+  await loadFile(props.initialPath || (props.siteHost ? `sites/${props.siteHost}/SKILL.md` : 'SKILL.md'))
 }
 
 type LeaveIntent = { kind: 'back' } | { kind: 'file'; path: string }
@@ -374,7 +384,7 @@ const submitSave = async (options?: { quiet?: boolean }) => {
   saveError.value = ''
   try {
     await saveSkillFileContent(skillDoc.value.id, currentPath.value, markdown.value)
-    const doc = await getSkillDocument(skillDoc.value.id)
+    const doc = await getSkillDocument(skillDoc.value.id, props.siteHost)
     if (doc) {
       skillDoc.value = doc
       files.value = doc.files?.length ? doc.files : ['SKILL.md']
@@ -401,7 +411,7 @@ const resetSkill = async () => {
   try {
     if (currentPath.value === 'SKILL.md') await resetSkillDocument(skillDoc.value.id)
     else await resetSkillFileContent(skillDoc.value.id, currentPath.value)
-    const doc = await getSkillDocument(skillDoc.value.id)
+    const doc = await getSkillDocument(skillDoc.value.id, props.siteHost)
     if (doc) {
       skillDoc.value = doc
       files.value = doc.files?.length ? doc.files : ['SKILL.md']
@@ -433,7 +443,7 @@ const onPageKeydown = (event: KeyboardEvent) => {
   }
 }
 
-watch(() => props.skillId, () => {
+watch(() => [props.skillId, props.siteHost, props.initialPath], () => {
   panelMode.value = props.initialMode === 'edit' ? 'source' : 'preview'
   void loadSkill()
 })
