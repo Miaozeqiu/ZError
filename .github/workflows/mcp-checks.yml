@@ -54,6 +54,8 @@ jobs:
           testdata/agent/finish-gate.test.ts
           testdata/agent/skill-storage.test.ts
           testdata/agent/agent-browser-workspace.test.ts
+          testdata/agent/tab-feedback.test.ts
+          testdata/browser/tab-storage.test.ts
       - run: npx vite build
 
   backend-windows:

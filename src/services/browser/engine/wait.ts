@@ -14,7 +14,7 @@ import {
 import { resolveRefLocator } from './refs'
 import type { ActResult, BrowserLocator } from './types'
 import { noteCourseNavigation } from '../coursePlan'
-import { popupTabLimitSince } from '../tabLimits'
+import { withPopupTabLimit } from '../tabLimits'
 
 const lastFocus = new Map<string, string>()
 
@@ -421,17 +421,8 @@ export const observeAfterClick = async (
     }
   }
   const seen = await attachActionSnapshot(id, base, frame)
-  const blocked = result.ok && tabLimitSequence != null ? popupTabLimitSince(id, tabLimitSequence) : null
-  if (blocked) {
-    return {
-      ...seen,
-      ok: false,
-      reason: 'tab_limit',
-      clickDispatched: true,
-      error: blocked.message,
-      hint: '点击已送达，但新标签没有打开。先关闭不用的标签；涉及提交时先核对页面，避免重复提交。',
-    }
-  }
+  const checked = withPopupTabLimit(id, seen, tabLimitSequence)
+  if (checked.reason === 'tab_limit') return checked
   if (result.ok) {
     const landed = String(seen.url || '').split('#')[0]
     const from = String(fromUrl || '').split('#')[0]

@@ -37,6 +37,7 @@ export {
 
 export type AppBrowser = {
   id: string
+  openerId?: string
   name: string
   url: string
   title: string
@@ -126,6 +127,7 @@ const readList = (): AppBrowser[] => {
     return parsed
       .map((item) => ({
         id: String(item?.id || ''),
+        ...(item?.openerId ? { openerId: String(item.openerId) } : {}),
         name: String(item?.name || '').trim(),
         url: String(item?.url || '').trim() || browserHomeUrl(),
         title: String(item?.title || '').trim(),
@@ -179,6 +181,7 @@ export const createAppBrowser = (input?: Partial<AppBrowser> & { id?: string }) 
   const url = normalizeBrowserUrl(input?.url || browserHomeUrl())
   const next: AppBrowser = {
     id: String(input?.id || '').trim() || createId(),
+    ...(input?.openerId ? { openerId: input.openerId } : {}),
     name: String(input?.name || '').trim() || hostnameOf(url),
     url,
     title: String(input?.title || '').trim(),
@@ -275,8 +278,8 @@ export const setBrowserBounds = (id: string, bounds: BrowserBounds, notify = fal
 export const showBrowserView = (id: string) => invoke('browser_show', { id })
 export const hideBrowserView = (id: string) => invoke('browser_hide', { id })
 export const hideAllBrowserViews = () => invoke('browser_hide_all')
-export const closeBrowserView = async (id: string) => {
-  await invoke('browser_close', { id })
+export const closeBrowserView = async (id: string, expectedEpoch?: number) => {
+  await invoke('browser_close', { id, ...(expectedEpoch != null ? { expectedEpoch } : {}) })
   const next = { ...browserAudioMuted.value }
   delete next[id]
   browserAudioMuted.value = next

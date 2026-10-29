@@ -15,6 +15,7 @@ export type BrowserToolRole = AgentToolRole
 
 const LOOK_NAMES = [
   'set_website_icon',
+  'browser_tabs',
   'browser_get_page',
   'browser_find',
   'browser_screenshot',

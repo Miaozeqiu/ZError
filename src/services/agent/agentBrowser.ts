@@ -6,8 +6,10 @@ import {
   closeBrowserView, removeAppBrowser, setSelectedBrowserId, type AppBrowser,
 } from '../browser/appBrowser'
 import { activeChat, chatStoreReady, createChat, liveSession, patchSession, sessions } from './chatStore'
-import { listenBrowserControl, registerBrowserControl } from '../browser/control'
-import { MAX_BROWSER_TABS, recordBrowserTabLimit } from '../browser/tabLimits'
+import { controlForSession, listenBrowserControl, registerBrowserControl } from '../browser/control'
+import { clearBrowserTabLimitNotice, MAX_BROWSER_TABS, recordBrowserTabLimit } from '../browser/tabLimits'
+import { invalidatePageSnap } from '../browser/engine/pageSnap'
+import { rememberPageRefs } from '../browser/engine/refs'
 
 export const agentBrowserTabs = ref<AppBrowser[]>(listAppBrowsers())
 export const agentBrowserExpanded = ref(false)
@@ -34,6 +36,51 @@ export const bindChatBrowser = (sessionId: string, browserId: string) => {
   }))
   setSelectedBrowserId(activeChat.value?.browserId || '')
   refreshAgentBrowsers()
+}
+
+export const tabsForChat = (sessionId: string) => {
+  const ids = new Set(browserIdsForChat(liveSession(sessionId)))
+  return listAppBrowsers().filter(tab => ids.has(tab.id))
+}
+
+const closing = new Map<string, Promise<string>>()
+/** 逐个清理已用完的标签；始终留一个入口，不能关闭别的对话或正在监控的任务。 */
+export const closeAgentBrowserTab = (sessionId: string, id: string, expectedEpoch: number): Promise<string> => {
+  const pending = (closing.get(sessionId) || Promise.resolve('')).catch(() => '').then(async () => {
+    const { agentWatchBusy } = await import('../platform/panelAccess')
+    const { courseRunFor } = await import('../browser/courseRunner')
+    await opening.get(id)?.catch(() => undefined)
+    const session = liveSession(sessionId)
+    const tabs = tabsForChat(sessionId)
+    const tab = tabs.find(item => item.id === id)
+    if (!session || !tab || sessions.value.some(other => other.id !== sessionId && browserIdsForChat(other).includes(id))) {
+      throw new Error('标签页不存在或不属于当前对话，请重新 browser_tabs list')
+    }
+    const control = controlForSession(sessionId)
+    if (control?.owner === 'user' || (control && control.epoch !== expectedEpoch)) throw new Error('BROWSER_USER_CONTROL')
+    if (tabs.length <= 1) throw new Error('保留最后一个标签页用于核对和汇报结果')
+    if (agentWatchBusy(id) || courseRunFor(sessionId)?.browserId === id) throw new Error('该标签仍有播放监控或课程任务，不能作为无用页面关闭')
+    await closeBrowserView(id, expectedEpoch)
+    const { stopWatchFor } = await import('./chatWatch')
+    stopWatchFor(id)
+    opening.delete(id)
+    removeAppBrowser(id)
+    invalidatePageSnap(id)
+    rememberPageRefs(id, [])
+    clearBrowserTabLimitNotice(sessionId)
+    patchSession(sessionId, current => {
+      const ids = browserIdsForChat(current).filter(item => item !== id)
+      const remaining = listAppBrowsers().filter(item => ids.includes(item.id))
+      const next = remaining.find(item => item.id === tab.openerId) || remaining.at(-1)
+      return { ...current, browserIds: ids, browserId: current.browserId === id ? next?.id : current.browserId }
+    })
+    setSelectedBrowserId(activeChat.value?.browserId || '')
+    refreshAgentBrowsers()
+    return liveSession(sessionId)?.browserId || ''
+  })
+  closing.set(sessionId, pending)
+  void pending.finally(() => { if (closing.get(sessionId) === pending) closing.delete(sessionId) }).catch(() => undefined)
+  return pending
 }
 
 export const releaseChatBrowsers = async (ids: string[]) => {
@@ -115,7 +162,7 @@ export const startAgentBrowserWorkspace = () => {
         recordBrowserTabLimit('popup', state.openerId, owner.id)
         return
       }
-      const tab = createAppBrowser({ id: state.id, url: state.url, title: state.title })
+      const tab = createAppBrowser({ id: state.id, url: state.url, title: state.title, openerId: state.openerId })
       bindChatBrowser(owner.id, tab.id)
       void ensureAgentBrowser(owner.id).catch(error => console.error('[agent browser popup]', error))
     }))

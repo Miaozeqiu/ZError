@@ -55,6 +55,7 @@ import { handleActTools } from './tools/act'
 import { handleNavTools } from './tools/nav'
 import { handlePageTools } from './tools/page'
 import { handleCourseTools } from './tools/course'
+import { handleTabTools } from './tools/tabs'
 import { missingHostNeeds } from './hostCapabilities'
 import { missingNeedsNote, nextStep } from './nextStep'
 
@@ -225,6 +226,8 @@ export const executeBrowserTool = async (input: {
 
 /** 四个处理器都没认领，才是未知工具。测试用这份，不打真实页面。 */
 export const dispatchBrowserTool = async (ctx: Record<string, any>): Promise<string> => {
+  const tabs = await handleTabTools(ctx)
+  if (tabs != null) return tabs
   const coursed = await handleCourseTools(ctx)
   if (coursed != null) return coursed
   const navved = await handleNavTools(ctx)

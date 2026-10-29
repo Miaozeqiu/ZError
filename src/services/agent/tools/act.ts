@@ -4,7 +4,7 @@ import { handleCheckTool } from './check'
 import { observedJson } from '../../browser/engine'
 import { explainEvalError, videoSnapshotNote } from '../../browser/eval'
 import { cachedPageSnap, invalidatePageSnap } from '../../browser/engine/pageSnap'
-import { browserTabLimitSequence } from '../../browser/tabLimits'
+import { browserTabLimitSequence, withPopupTabLimit } from '../../browser/tabLimits'
 import { rememberPageRefs } from '../../browser/engine/refs'
 
 export const handleActTools = async (ctx: Record<string, any>): Promise<string | null> => {
@@ -116,7 +116,9 @@ export const handleActTools = async (ctx: Record<string, any>): Promise<string |
       { ok: false, error: `点击「${text}」超时` },
     ) as { ok?: boolean; error?: string; text?: string }
     if (clicked?.ok) {
-      if (isCourseChromeTab(text)) return JSON.stringify(clicked)
+      if (isCourseChromeTab(text) && siteGraphForUrl?.(nowUrl)?.id === 'chaoxing') {
+        return JSON.stringify(withPopupTabLimit(browserId, { ...clicked, ok: true }, tabLimitBefore))
+      }
       const seen = await observeAfterClick(browserId, { ok: true, text: clicked.text || text }, from, frame, tabLimitBefore)
       if (/^(我学的课|已学的课|我教的课)$/.test(text)) {
         const extra = clicked as { tab?: string; frame?: string; already?: boolean }

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const native = vi.hoisted(() => ({ invoke: vi.fn(), listen: vi.fn(), opened: undefined as undefined | ((event: { payload: any }) => void) }))
 vi.mock('@tauri-apps/api/core', () => ({ invoke: native.invoke }))
 vi.mock('@tauri-apps/api/event', () => ({ listen: native.listen }))
@@ -29,18 +29,24 @@ vi.mock('../../src/services/platform', () => ({ dropAllWatchQueues: vi.fn() }))
 vi.mock('../../src/services/agent/chatWatch', () => ({ stopWatchFor: vi.fn() }))
 vi.mock('../../src/services/agent/agentWait', () => ({ wakeAgentWait: vi.fn() }))
 vi.mock('../../src/services/agent/debugLog', () => ({ writeBrowserTranscript: vi.fn() }))
+vi.mock('../../src/services/platform/panelAccess', () => ({ agentWatchBusy: vi.fn(() => false) }))
+vi.mock('../../src/services/browser/courseRunner', () => ({ courseRunFor: vi.fn(() => null) }))
 import { activeChat, activeId, chatAborts, chatSessions, createChat, ensureBrowserChat, sessions } from '../../src/services/agent/chatStore'
 import { applyBrowserControl, browserControlState, setBrowserControl } from '../../src/services/browser/control'
-import { createAppBrowser, listAppBrowsers } from '../../src/services/browser/appBrowser'
+import { closeBrowserView, createAppBrowser, listAppBrowsers } from '../../src/services/browser/appBrowser'
 import { browserTabLimitNotice, MAX_BROWSER_TABS } from '../../src/services/browser/tabLimits'
 import {
   agentBrowserExpanded, bindChatBrowser, browserIdsForChat, currentAgentBrowsers,
-  ensureAgentBrowser, startAgentBrowserWorkspace,
+  closeAgentBrowserTab, ensureAgentBrowser, startAgentBrowserWorkspace,
 } from '../../src/services/agent/agentBrowser'
+import { handleTabTools } from '../../src/services/agent/tools/tabs'
+import * as panelAccess from '../../src/services/platform/panelAccess'
+import * as runner from '../../src/services/browser/courseRunner'
 import { assembleAgentTools, availableAgentTools } from '../../src/services/agent/tools'
 import { buildAgentSystemPrompt } from '../../src/services/agent/prompts'
 
 describe('统一 Agent 浏览器工作区', () => {
+  afterEach(() => vi.restoreAllMocks())
   beforeEach(() => {
     localStorage.clear()
     for (const key of Object.keys(browserControlState)) delete browserControlState[key]
@@ -48,10 +54,65 @@ describe('统一 Agent 浏览器工作区', () => {
     sessions.value = []
     activeId.value = null
     native.invoke.mockReset().mockResolvedValue(undefined)
+    vi.mocked(closeBrowserView).mockReset().mockResolvedValue(undefined)
     native.listen.mockImplementation(async (name, handler) => {
       if (name === 'app-browser-opened') native.opened = handler
       return () => undefined
     })
+  })
+
+  it('清理已完成弹窗回到来源页，列表和关闭仅限所属对话，后台清理不切换前台', async () => {
+    const owner = createChat()
+    const openerId = await ensureAgentBrowser(owner.id)
+    const popup = createAppBrowser({ url: 'https://example.com/result', openerId })
+    bindChatBrowser(owner.id, popup.id)
+    const front = createChat()
+    const frontId = await ensureAgentBrowser(front.id)
+    const call = (args: any) => handleTabTools({ name: 'browser_tabs', sessionId: owner.id, browserId: popup.id, args })
+    const listed = JSON.parse((await call({ action: 'list' }))!)
+    expect(listed.tabs.map((tab: any) => tab.id)).toEqual([openerId, popup.id])
+    expect(JSON.parse((await call({ action: 'close', id: frontId }))!).ok).toBe(false)
+    expect(closeBrowserView).not.toHaveBeenCalled()
+    const closed = JSON.parse((await call({ action: 'close', id: popup.id }))!)
+    expect(closed).toMatchObject({ ok: true, closed: popup.id, current: openerId })
+    expect(closeBrowserView).toHaveBeenCalledExactlyOnceWith(popup.id, 0)
+    expect(activeChat.value?.id).toBe(front.id)
+    expect(listAppBrowsers().map(tab => tab.id)).toEqual([openerId, frontId])
+  })
+
+  it('拒绝清理监控/课程任务和用户接管的标签；关闭失败保留列表', async () => {
+    const chat = createChat()
+    await ensureAgentBrowser(chat.id)
+    const popup = createAppBrowser({ url: 'https://example.com/popup' })
+    bindChatBrowser(chat.id, popup.id)
+    const busy = vi.spyOn(panelAccess, 'agentWatchBusy').mockReturnValue(true)
+    await expect(closeAgentBrowserTab(chat.id, popup.id, 0)).rejects.toThrow('播放监控')
+    busy.mockReturnValue(false)
+    const running = vi.spyOn(runner, 'courseRunFor').mockReturnValue({ browserId: popup.id } as any)
+    await expect(closeAgentBrowserTab(chat.id, popup.id, 0)).rejects.toThrow('课程任务')
+    running.mockReturnValue(null)
+    applyBrowserControl({ sessionId: chat.id, owner: 'user', epoch: 1 })
+    await expect(closeAgentBrowserTab(chat.id, popup.id, 0)).rejects.toThrow('BROWSER_USER_CONTROL')
+    applyBrowserControl({ sessionId: chat.id, owner: 'agent', epoch: 2 })
+    await expect(closeAgentBrowserTab(chat.id, popup.id, 0)).rejects.toThrow('BROWSER_USER_CONTROL')
+    expect(closeBrowserView).not.toHaveBeenCalled()
+    vi.mocked(closeBrowserView).mockRejectedValueOnce(new Error('关闭失败'))
+    await expect(closeAgentBrowserTab(chat.id, popup.id, 2)).rejects.toThrow('关闭失败')
+    expect(listAppBrowsers().some(tab => tab.id === popup.id)).toBe(true)
+  })
+
+  it('并发清理仍保留最后一个入口，并允许释放名额后再开弹窗', async () => {
+    const chat = createChat()
+    const first = await ensureAgentBrowser(chat.id)
+    const second = createAppBrowser({ url: 'https://example.com/popup', openerId: first })
+    bindChatBrowser(chat.id, second.id)
+    const results = await Promise.allSettled([closeAgentBrowserTab(chat.id, second.id, 0), closeAgentBrowserTab(chat.id, first, 0)])
+    expect(results.map(result => result.status)).toEqual(['fulfilled', 'rejected'])
+    expect(listAppBrowsers().map(tab => tab.id)).toEqual([first])
+    await startAgentBrowserWorkspace()
+    native.opened?.({ payload: { id: 'popup-after-cleanup', url: 'https://example.com/next', openerId: first } })
+    await Promise.resolve()
+    expect(browserIdsForChat(sessions.value.find(item => item.id === chat.id))).toEqual([first, 'popup-after-cleanup'])
   })
 
   it.each(['native', 'button'])('%s 接管立即停止当前回合，交还不续跑且不影响其它对话', async source => {
@@ -87,7 +148,7 @@ describe('统一 Agent 浏览器工作区', () => {
   it('普通对话拥有网页操作和题库工具，搜索和 Skill 无重复声明', () => {
     const tools = assembleAgentTools()
     const names = tools.map(tool => tool.function.name)
-    expect(names).toEqual(expect.arrayContaining(['browser_navigate', 'browser_get_page', 'browser_click', 'browser_set_checked', 'browser_finish', 'present_quiz', 'web_search', 'read_agent_skill']))
+    expect(names).toEqual(expect.arrayContaining(['browser_navigate', 'browser_get_page', 'browser_click', 'browser_set_checked', 'browser_tabs', 'browser_finish', 'present_quiz', 'web_search', 'read_agent_skill']))
     expect(new Set(names).size).toBe(names.length)
     expect(availableAgentTools(tools, { enabled: false }).some(tool => tool.function.name === 'web_search')).toBe(false)
     expect(buildAgentSystemPrompt()).toContain('需要网页时直接调用 browser_navigate')

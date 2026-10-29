@@ -12,7 +12,8 @@ const FOCUS_RE = /《([^》]{2,20})》|([^\s，。、]{2,16}(?:数学|英语|物
 export const intentFromText = (text: string): BrowserTaskIntent => {
   const raw = String(text || '')
   // 不把“不要操作视频/作业”当成当前任务；例如论坛任务常带这样的范围限制。
-  const active = raw.replace(/(?:不要|不用|无需|不再|暂不|不必|别|禁止|跳过|不做)(?:(?!只|但是|但|而是|不过)[^，,。；;！!？?\n])*/g, '')
+  // 单字“别”只在独立祈使短句中否定动作，不能截断“别的”“分别”“识别”。
+  const active = raw.replace(/(?:不要|不用|无需|不再|暂不|不必|(?<![\u4e00-\u9fffA-Za-z])(?:请你|请您|请|你|您)?别(?=(?:再|去)?(?:操作|播放|看|刷|做|写|回复|回答|提问|发))|禁止|跳过|不做)(?:(?!只|但是|但|而是|不过)[^，,。；;！!？?\n])*/g, '')
   const skipQuiz = /(?:测验|测试)(?:不用|不要|跳过|不做)|(?:不用|不要|跳过|不做)(?:再|去|做|进行)?(?:测验|测试)/.test(raw)
   const play = /播放|刷课|刷完|看课|章节|视频|未完成|播完|看完这|播放任务|章节任务/.test(active)
   const homework = /作业|答题|作答|写作业/.test(active) || (/测验/.test(active) && !skipQuiz && !play)

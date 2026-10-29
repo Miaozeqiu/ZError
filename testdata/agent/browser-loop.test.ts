@@ -28,6 +28,14 @@ const login = 'https://passport2.chaoxing.com/login?fid=&newversion=true'
 const home = 'http://localhost:1420/browser-home.html'
 
 describe('browser task intent', () => {
+  it.each(['帮我看完别的课程剩余的视频', '分别播放这两门课的视频', '识别视频标题后播放'])('词内的别不否定任务：%s', text => {
+    expect(intentFromText(text)).toBe('play')
+  })
+  it('独立的别仍可限制操作范围', () => {
+    expect(intentFromText('别操作视频，只回复问题')).toBe('discussion')
+    expect(intentFromText('请你别做作业，只刷视频')).toBe('play')
+    expect(intentFromText('帮我写别的课程作业')).toBe('homework')
+  })
 
   it('课程问答替换旧播放任务，同时忽略否定的任务范围', () => {
     rememberBrowserTaskIntent('qa', '刷完这节视频')

@@ -4,6 +4,24 @@ type Step = { id: string; name?: string; status: string; result?: string }
 const observations = new Set(['browser_get_page', 'browser_eval'])
 const passive = /^(browser_get_state|browser_get_page|browser_find|browser_screenshot|browser_decode_chaoxing_font|browser_eval|browser_wait|browser_todo|browser_finish|browser_site_graph)$/
 
+/** 只读任务收尾也需要本轮当前页面的成功观察，不能只凭已打开的网址。 */
+export const hasCurrentPageObservation = (steps: Step[], currentUrl: string): boolean => {
+  for (let at = steps.length - 1; at >= 0; at--) {
+    const step = steps[at]!
+    if (!step.name?.startsWith('browser_')) continue
+    if (!passive.test(step.name)) return false
+    if (!['browser_get_page', 'browser_get_state'].includes(step.name)) continue
+    if (step.status !== 'done') return false
+    try {
+      const result = JSON.parse(step.result || '{}')
+      return Boolean(currentUrl && result.url === currentUrl && result.ok !== false && !result.error
+        && !result.empty && !result.snapshotStale
+        && (step.name === 'browser_get_state' || result.snapshot))
+    } catch { return false }
+  }
+  return false
+}
+
 export const courseCompletionEvidence = (steps: Step[], currentUrl: string): CourseCompletionEvidence | undefined => {
   let boundary = -1
   steps.forEach((step, at) => { if (step.name?.startsWith('browser_') && !passive.test(step.name || '')) boundary = at })

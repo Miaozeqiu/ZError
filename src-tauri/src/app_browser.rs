@@ -1104,7 +1104,10 @@ pub async fn browser_hide_all(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn browser_close(app: AppHandle, id: String) -> Result<(), String> {
+pub async fn browser_close(app: AppHandle, id: String, expected_epoch: Option<u64>) -> Result<(), String> {
+  let control_id = id.clone();
+  // UI/工作区释放仍可直接关闭；Agent 关闭必须持有本轮操作权。
+  crate::browser_control::run_at(&control_id, expected_epoch.is_none(), expected_epoch, async move {
   #[cfg(target_os = "macos")]
   if crate::cef_runtime::cef_enabled() {
     return crate::cef::close(app, id);
@@ -1116,6 +1119,7 @@ pub async fn browser_close(app: AppHandle, id: String) -> Result<(), String> {
   forget_view(&id);
   Ok(())
   }
+  }).await
 }
 
 #[tauri::command]
