@@ -31,6 +31,20 @@ describe('pickNextStudyChapter', () => {
 })
 
 describe('解析面板暂停要写给 Agent', () => {
+  it('还有测验时提示先处理，不默认跳过', () => {
+    browserChapterStates.value = { t1: {
+      browserId: 't1', url: '', page: 'player', kind: 'player', current: '1.1', currentTitle: '1.1',
+      unfinished: ['1.1'], unfinishedCount: 1, chapters: [], progress: null, video: null,
+      jobs: [
+        { mid: '1', jobid: '', label: '视频1', kind: 'video', jobDone: true, unfinished: false, active: false },
+        { mid: '', jobid: '', label: '测验', kind: 'quiz', jobDone: false, unfinished: true, active: true },
+      ], status: 'ready', updatedAt: Date.now(),
+    } }
+    const panel = packAgentPanel('t1')
+    expect(panel?.event).toBe('quiz_left')
+    expect(panel?.hint).toContain('完成剩余任务')
+    expect(panel?.hint).not.toContain('默认跳过')
+  })
   it('当前视频暂停时 event 是 video_paused', () => {
     expect(decidePanelEvent([
       { kind: 'video', jobDone: true, paused: false },

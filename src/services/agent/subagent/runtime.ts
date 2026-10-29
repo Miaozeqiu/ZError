@@ -370,7 +370,7 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
             extra = null
           }
           const parsedError = extra && typeof extra === 'object' ? extra.error : null
-          const status = event.error || parsedError ? 'failed' : 'done'
+          const status: 'failed' | 'done' = event.error || parsedError ? 'failed' : 'done'
           debug({
             type: 'tool_end',
             name: event.name,

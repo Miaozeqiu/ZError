@@ -9,7 +9,7 @@ const object = (raw?: string): Record<string, unknown> => {
   try { return JSON.parse(raw || '{}') || {} } catch { return {} }
 }
 // 只读问答和网站资料维护可以直接答复；实际网页操作需要网页收尾回执。
-const observation = /^(browser_get_state|browser_get_page|browser_find|browser_screenshot|browser_eval|browser_wait|browser_site_graph)$/
+const observation = /^(browser_get_state|browser_get_page|browser_find|browser_screenshot|browser_decode_chaoxing_font|browser_eval|browser_wait|browser_site_graph)$/
 const needsReceipt = (step: CompletionStep) => step.name.startsWith('browser_') && !observation.test(step.name)
 
 export const currentTaskFinish = ({ steps, todos }: TaskSnapshot): 'done' | 'blocked' | undefined => {

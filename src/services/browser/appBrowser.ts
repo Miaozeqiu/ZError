@@ -78,6 +78,7 @@ export type BrowserBounds = {
     viewportWidth: number; viewportHeight: number
     paddingRatio: number; paddingMin: number; paddingMax: number
     compactBreakpoint: number; compactPadding: number
+    preview?: { wideWidth: number; mediumWidth: number; compactWidth: number; widePadding: number; mediumPadding: number; compactPadding: number; mediumBreakpoint: number; compactBreakpoint: number }
   }
 }
 

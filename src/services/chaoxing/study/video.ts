@@ -100,7 +100,7 @@ export const clickChaoxingStep = async (
   if (!payload.label && !payload.mid && !payload.jobid && !payload.videoIndex && !payload.index) {
     return { ok: false, error: '缺少任务点' }
   }
-  const clicked = await clickHomeworkBox(id, locatorsForStudyStep(payload)).catch(() => ({ ok: false }))
+  const clicked = await clickHomeworkBox(id, locatorsForStudyStep(payload)).catch(() => ({ ok: false, text: '', error: undefined }))
   pinChaoxingPlayMid(id, payload.mid)
   if (clicked.ok) await waitMs(800)
   const { noteStudyParser } = await import('./debug')
@@ -503,7 +503,7 @@ export const tapChaoxingPlay = async (id: string, opts?: { mid?: string }) => {
   rawTick = asVideoTick(await readChaoxingVideoTick(id).catch(() => null))
   const alreadyPlaying = videoIsPlaying(rawTick) && midOk(rawTick)
   for (let i = 0; !alreadyPlaying && Date.now() < deadline && i < 14; i += 1) {
-    const clicked = await clickHomeworkBox(id, locatorsForStudyControl('play', wantMid)).catch(() => ({ ok: false }))
+    const clicked = await clickHomeworkBox(id, locatorsForStudyControl('play', wantMid)).catch(() => ({ ok: false, text: '', error: undefined }))
     clickedOk = Boolean(clicked.ok) || clickedOk
     // 点到了就等 play 事件推上来再读；立刻读会拿到旧 tick 又点一次，落到 <video> 上就成了暂停。
     if (clicked.ok) await waitMs(650)
@@ -539,6 +539,30 @@ export const tapChaoxingPlay = async (id: string, opts?: { mid?: string }) => {
   }
 }
 
+type VideoPlayResult = {
+  ok?: boolean
+  page?: string
+  captcha?: boolean
+  quiz?: boolean
+  hasVideo: boolean
+  playing: boolean
+  paused?: boolean
+  ended?: boolean
+  current?: number
+  duration?: number
+  clickedPlay?: boolean
+  title?: string
+  next?: string
+  jobDone?: boolean | null
+  moreVideos?: boolean
+  videoCount?: number
+  videoIndex?: number
+  step?: string
+  hint?: string
+  error?: string
+  [key: string]: unknown
+}
+
 /** 对齐 ocs：已点到任务点后只播当前 attachment，不要再点「第一个未完成视频」 */
 export const playChaoxingVideo = async (
   id: string,
@@ -550,7 +574,7 @@ export const playChaoxingVideo = async (
     label?: string
     skipIfDone?: boolean
   },
-) => {
+): Promise<VideoPlayResult> => {
   if (await readChaoxingCaptcha(id)) {
     return { captcha: true, hasVideo: false, playing: false, hint: CAPTCHA_HINT }
   }
@@ -590,13 +614,10 @@ export const playChaoxingVideo = async (
   const label = String(opts?.label || '').trim()
   if (videoIndex > 1 || mid || jobid) {
     const stepped = await clickChaoxingStep(id, { videoIndex, mid, jobid, label })
-    if (stepped.quiz) {
-      return { quiz: true, step: String(stepped.step || ''), hasVideo: false, playing: false, hint: '当前是章节测验。系统会按 ocs 流程自动搜题/随机/暂存' }
-    }
     if (!stepped.ok) {
       return { hasVideo: false, playing: false, error: String(stepped.error || '切换任务点失败'), stepped }
     }
-    if (!stepped.already) await waitMs(1200)
+    await waitMs(1200)
     return tapChaoxingPlay(id)
   } else if (!opts?.skipTabClick) {
     const tab = useLegacyEval()
@@ -615,7 +636,7 @@ export const playChaoxingVideo = async (
         hint: '已按 skipIfDone 跳过已完成视频。要重播就不要带 skipIfDone。',
       }
     }
-    const clicked = await clickHomeworkBox(id, locatorsForStudyControl('video-tab')).catch(() => ({ ok: false }))
+    const clicked = await clickHomeworkBox(id, locatorsForStudyControl('video-tab')).catch(() => ({ ok: false, text: '', error: undefined }))
     if (clicked.ok) await waitMs(800)
   }
   const again = await tapChaoxingPlay(id)
@@ -639,7 +660,7 @@ export const pauseChaoxingVideo = async (id: string) => {
   if (await readChaoxingCaptcha(id)) {
     return { captcha: true, hasVideo: false, playing: false, paused: true, hint: CAPTCHA_HINT }
   }
-  const clicked = await clickHomeworkBox(id, locatorsForStudyControl('pause', pinnedPlayMid.get(id) || '')).catch(() => ({ ok: false }))
+  const clicked = await clickHomeworkBox(id, locatorsForStudyControl('pause', pinnedPlayMid.get(id) || '')).catch(() => ({ ok: false, text: '', error: undefined }))
   await waitMs(200)
   const tick = asVideoTick(await readChaoxingVideoTick(id).catch(() => null))
   const hasVideo = tickLooksLikeVideo(tick) || Boolean(clicked.ok)

@@ -42,6 +42,27 @@ export const handlePageTools = async (ctx: Record<string, any>): Promise<string 
     syncPeekedUrl, patchAppBrowser, scrollBrowserView, getBrowserState: _gs,
     cardHasClickableBody, compactStudyPanel,
   } = ctx
+  if (name === 'browser_decode_chaoxing_font') {
+    try {
+      const { CHAOXING_FONT_PROBE, decodeChaoxingProbe } = await import('../fontDecrypt/chaoxing')
+      const report = await ctx.evalBrowserFrames(browserId, CHAOXING_FONT_PROBE)
+      if (report.error || report.frames.some((frame: any) => frame.error)) throw new Error('无法读取全部页面框')
+      const frames = report.frames.filter((frame: any) => frame.result)
+      if (!frames.length) throw new Error('没有找到可解码的学习通混淆字体')
+      const decoded = []
+      for (const frame of frames) decoded.push({ url: frame.url, entries: await decodeChaoxingProbe(frame.result) })
+      return JSON.stringify({ ok: true, frames: decoded, hint: '文本按页面中的加密区域顺序排列；请结合当前快照确认题目、选项和对应控件。' })
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : '字体解码失败'
+      try {
+        const shot = await screenshotBrowserView(browserId)
+        return JSON.stringify({ ok: false, reason, image: shot.image,
+          hint: '字体解码不可靠，请依据截图读取当前可见的题干与选项；看不清时滚动后重新截图。不能看图时请说明需要视觉模型，不要猜测。' })
+      } catch {
+        return JSON.stringify({ ok: false, reason, hint: '字体解码失败且截图不可用；不要猜测题目，请检查页面和视觉模型。' })
+      }
+    }
+  }
   if (name === 'browser_screenshot') {
     try {
       const state = await getBrowserState(browserId).catch(() => null)

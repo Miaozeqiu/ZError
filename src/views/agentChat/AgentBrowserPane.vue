@@ -95,9 +95,13 @@ import { setBrowserControl, userControlsBrowser } from '../../services/browser/c
 const props = withDefaults(defineProps<{ active?: boolean; obscured?: boolean }>(), { active: true, obscured: false })
 const isMacOS = /mac/i.test(navigator.platform || navigator.userAgent)
 const browserInsets = { paddingRatio: 0.07, paddingMin: 16, paddingMax: 144, compactBreakpoint: 760, compactPadding: 12 }
+// Mirrors the collapsed pane's CSS widths and horizontal padding at each breakpoint.
+const previewInsets = { wideWidth: 252, mediumWidth: 210, compactWidth: 150, widePadding: 14, mediumPadding: 10, compactPadding: 8, mediumBreakpoint: 1150, compactBreakpoint: 760 }
 const browserFrameStyle = {
   '--browser-wide-inset': `clamp(${browserInsets.paddingMin}px, ${browserInsets.paddingRatio * 100}vw, ${browserInsets.paddingMax}px)`,
   '--browser-compact-inset': `${browserInsets.compactPadding}px`,
+  '--preview-wide-width': `${previewInsets.wideWidth}px`, '--preview-medium-width': `${previewInsets.mediumWidth}px`, '--preview-compact-width': `${previewInsets.compactWidth}px`,
+  '--preview-wide-padding': `${previewInsets.widePadding}px`, '--preview-medium-padding': `${previewInsets.mediumPadding}px`, '--preview-compact-padding': `${previewInsets.compactPadding}px`,
 }
 const hostRef = ref<HTMLElement | null>(null)
 const toggleRef = ref<HTMLButtonElement | null>(null)
@@ -284,9 +288,10 @@ const syncView = () => {
         if (!bounds) continue
         // 与展开样式的 clamp(16px, 7vw, 144px) 和 760px 窄窗规则对应。
         bounds.preview = !expanded
-        if (expanded) bounds.layout = {
+        bounds.layout = {
           viewportWidth: window.innerWidth, viewportHeight: window.innerHeight,
           ...browserInsets,
+          ...(!expanded ? { preview: previewInsets } : {}),
         }
         const key = `${id}:${expanded}:${bounds.x},${bounds.y},${bounds.width},${bounds.height}:${window.innerWidth},${window.innerHeight}`
         if (key !== shownKey) {
@@ -362,8 +367,8 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.agent-browser-pane { --browser-pane-width: 252px; flex: 0 0 auto; width: var(--browser-pane-width); min-width: 0; display: flex; flex-direction: column; align-self: stretch; overflow: hidden; background: var(--bg-secondary, #fff); color: var(--text-primary, #2d3748); box-sizing: border-box; }
-.browser-pane-inner { display: flex; flex-direction: column; flex: 1; min-height: 0; width: var(--browser-pane-width); padding: 0 14px; border-left: 1px solid color-mix(in srgb, var(--border-primary, #e2e8f0) 55%, transparent); box-sizing: border-box; }
+.agent-browser-pane { --browser-pane-width: var(--preview-wide-width); flex: 0 0 auto; width: var(--browser-pane-width); min-width: 0; display: flex; flex-direction: column; align-self: stretch; overflow: hidden; background: var(--bg-secondary, #fff); color: var(--text-primary, #2d3748); box-sizing: border-box; }
+.browser-pane-inner { display: flex; flex-direction: column; flex: 1; min-height: 0; width: var(--browser-pane-width); padding: 0 var(--preview-wide-padding); border-left: 1px solid color-mix(in srgb, var(--border-primary, #e2e8f0) 55%, transparent); box-sizing: border-box; }
 .is-expanded .browser-pane-inner { width: 100%; padding: 0; border: 0; }
 .browser-pane-enter-active:not(.is-expanded), .browser-pane-leave-active:not(.is-expanded) { transition: width 280ms cubic-bezier(0.32, 0.72, 0, 1); }
 .browser-pane-enter-active:not(.is-expanded) .browser-pane-inner, .browser-pane-leave-active:not(.is-expanded) .browser-pane-inner { transition: opacity 200ms ease, transform 280ms cubic-bezier(0.32, 0.72, 0, 1); }
@@ -428,7 +433,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--color-prima
 .browser-error { padding: 8px; margin: 0; color: var(--color-warning, #c2410c); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
 .browser-error button { padding: 0 4px; border: none; background: none; color: inherit; text-decoration: underline; cursor: pointer; }
 @media (hover: hover) and (pointer: fine) { .browser-icon-button:hover:not(:disabled), .browser-tab-close:hover { background: var(--bg-tertiary, #eef0f3); } .browser-preview:hover .browser-preview-screen { box-shadow: 0 5px 18px #00000014; } .browser-preview:hover .browser-preview-expand { opacity: 1; } }
-@media (max-width: 1150px) { .agent-browser-pane { --browser-pane-width: 210px; } .agent-browser-pane:not(.is-expanded) .browser-pane-inner { padding: 0 10px; } }
-@media (max-width: 760px) { .agent-browser-pane { --browser-pane-width: 150px; } .agent-browser-pane:not(.is-expanded) .browser-pane-inner { padding: 0 8px; } .agent-browser-pane.is-expanded { padding: 44px var(--browser-compact-inset) 72px; } .browser-preview-hint { display: none; } }
+@media (max-width: 1150px) { .agent-browser-pane { --browser-pane-width: var(--preview-medium-width); } .agent-browser-pane:not(.is-expanded) .browser-pane-inner { padding: 0 var(--preview-medium-padding); } }
+@media (max-width: 760px) { .agent-browser-pane { --browser-pane-width: var(--preview-compact-width); } .agent-browser-pane:not(.is-expanded) .browser-pane-inner { padding: 0 var(--preview-compact-padding); } .agent-browser-pane.is-expanded { padding: 44px var(--browser-compact-inset) 72px; } .browser-preview-hint { display: none; } }
 @media (prefers-reduced-motion: reduce) { .browser-icon-button, .browser-preview-screen, .browser-preview-expand, .browser-pane-enter-active:not(.is-expanded), .browser-pane-leave-active:not(.is-expanded), .browser-pane-enter-active .browser-pane-inner, .browser-pane-leave-active .browser-pane-inner { transition: none; } .is-expanded .browser-screen { animation: none; } }
 </style>

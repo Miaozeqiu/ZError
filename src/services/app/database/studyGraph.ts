@@ -28,6 +28,8 @@ import type {
   SplitSubjectPart,
   StudyActivity,
   StudyGraphNodeInput,
+  StudyGraphNodeRow,
+  StudyGraphEdgeRow,
   StudyGraphNodePatch,
   StudyGraphPayload,
   StudyProgressUpdate,

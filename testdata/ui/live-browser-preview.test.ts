@@ -58,21 +58,33 @@ afterEach(() => { app?.unmount(); app = undefined; root?.remove(); vi.unstubAllG
 describe('live native browser miniature', () => {
   it('shows the real browser in preview bounds without screenshots or transferring control', async () => {
     await mount()
-    expect(test.bounds).toHaveBeenLastCalledWith('tab-1', { x: 900, y: 100, width: 224, height: 140, preview: true })
+    expect(test.bounds).toHaveBeenLastCalledWith('tab-1', expect.objectContaining({
+      x: 900, y: 100, width: 224, height: 140, preview: true,
+      layout: expect.objectContaining({
+        viewportWidth: window.innerWidth, viewportHeight: window.innerHeight,
+        preview: expect.objectContaining({ wideWidth: 252, mediumWidth: 210, compactWidth: 150 }),
+      }),
+    }))
     expect(test.show).toHaveBeenCalledWith('tab-1')
     expect(document.querySelector('.browser-preview img')).toBeNull()
     expect(test.screenshot).not.toHaveBeenCalled()
     expect(test.control).not.toHaveBeenCalled()
   })
 
-  it('expands and collapses the same live tab, clearing fullscreen anchors for the miniature', async () => {
+  it('expands and collapses the same live tab, restoring miniature anchors', async () => {
     await mount()
     root.querySelector<HTMLButtonElement>('.browser-preview')!.click(); await settle()
     expect(test.expanded.value).toBe(true)
     expect(test.bounds).toHaveBeenLastCalledWith('tab-1', expect.objectContaining({ width: 1200, preview: false, layout: expect.any(Object) }))
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); await settle()
     expect(test.expanded.value).toBe(false)
-    expect(test.bounds).toHaveBeenLastCalledWith('tab-1', { x: 900, y: 100, width: 224, height: 140, preview: true })
+    expect(test.bounds).toHaveBeenLastCalledWith('tab-1', expect.objectContaining({
+      x: 900, y: 100, width: 224, height: 140, preview: true,
+      layout: expect.objectContaining({
+        viewportWidth: window.innerWidth, viewportHeight: window.innerHeight,
+        preview: expect.objectContaining({ wideWidth: 252, mediumWidth: 210, compactWidth: 150 }),
+      }),
+    }))
     expect(test.show).toHaveBeenCalledTimes(1)
     expect(test.control).not.toHaveBeenCalled()
     expect(test.screenshot).not.toHaveBeenCalled()

@@ -242,7 +242,7 @@ const headHint = computed(() => {
   const site = map.value.site
   if (!site) return ''
   if (props.preview) return `${site.host} · ${map.value.nodes.length} 个页面`
-  const here = map.value.current
+  const here = map.value.nodes.find((node) => node.current)
   const tab = here?.frames?.find((item) => item.on)?.tab
   const where = here ? `当前在「${here.title}${tab ? ` · ${tab}` : ''}」` : site.host
   return picked.value ? where : `${where} · 点卡片看结构`

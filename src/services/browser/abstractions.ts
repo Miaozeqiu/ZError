@@ -27,32 +27,7 @@ export type BrowserAbstraction = {
   match: (url: string) => boolean
 }
 
-export type HomeworkCardSnap = {
-  page?: string
-  title?: string
-  url?: string
-  next?: string
-  hint?: string
-  questionCount?: number
-  filledCount?: number
-  pendingCount?: number
-  questions?: Array<{
-    index: number
-    type?: string
-    typeName?: string
-    stem: string
-    images?: string[]
-    filled?: boolean
-    needsVision?: boolean
-    imageCount?: number
-    options?: Array<{ letter: string; text: string; selected?: boolean; image?: string; images?: string[] }>
-    readBy?: string
-  }>
-  pending?: Array<{ title: string; status: string }>
-  works?: Array<{ title: string; status: string }>
-  canSave?: boolean
-  canSubmit?: boolean
-}
+export type HomeworkCardSnap = import('../chaoxing/homework/types').HomeworkCard
 
 export const isPlayerUrl = (url: string) => isChaoxingPlayerUrl(url)
 export const isCourseUrl = (url: string) => isChaoxingCourseUrl(url)

@@ -648,11 +648,11 @@ fn apply_wrapper_bounds_ex(ptr: ViewPtr, x: f64, y: f64, w: f64, h: f64, raise: 
     apply_stretch_mask(view);
     if let Some(parent) = view.superview() {
       // 拖窗口：autoresizing 已经在跟手改真实尺寸。JS 坐标慢一拍，套上去会来回拽。
-      if !raise && wrapper_in_live_resize(ptr) {
+      let layout = (*(ptr.0 as *const ZeCefHoleView)).ivars().layout.get();
+      if !raise && layout.is_none() && wrapper_in_live_resize(ptr) {
         return;
       }
       // JS 的测量可能比原生窗口旧一帧；有锚点规则时按当前窗口尺寸重新计算。
-      let layout = (*(ptr.0 as *const ZeCefHoleView)).ivars().layout.get();
       let (x, y, w, h) = layout.map(|layout| {
         let size = parent.bounds().size;
         layout.bounds(size.width, size.height)

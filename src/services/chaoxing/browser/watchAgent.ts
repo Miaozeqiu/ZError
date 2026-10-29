@@ -6,6 +6,7 @@ import {
   formatVideoClock,
   setChaoxingWatchHandler,
   startChaoxingWatch,
+  videoWatchFor,
   type VideoWatchCheck,
 } from './watch'
 import type { AgentChatAttachment } from '../../agent/chatTypes'
@@ -31,6 +32,16 @@ const watchCheckRank: Record<VideoWatchCheck['kind'], number> = {
   quiz: 4,
   done: 5,
   captcha: 6,
+}
+
+/** 停滞事件排队期间若同一视频已恢复推进，不能再用旧状态唤醒 Agent。 */
+const stalePlaybackIncident = (check: VideoWatchCheck) => {
+  if (check.kind !== 'stalled' && check.kind !== 'lost') return false
+  const live = videoWatchFor(check.browserId)
+  if (!live || live.sessionId !== check.sessionId) return false
+  if (live.startedAt > check.status.startedAt) return true
+  return live.status === 'watching' && !live.paused && live.updatedAt > check.status.updatedAt
+    && live.sampledCurrent > check.status.current + 0.35
 }
 
 const watchVideoLine = (state: VideoWatchCheck['status']) => {
@@ -116,7 +127,7 @@ const maybeTakeoverFromPanel = (check: VideoWatchCheck) => {
     notifyPanelTakeover(
       check.sessionId,
       `解析面板 · ${panel.thisSection.title || '本节'} 视频已完成，还剩测验`,
-      '解析面板有事件：本节视频已完成，还剩测验。刷课默认跳过测验。立刻 看快照，不要 homework / fill / eval。',
+      '本节视频已完成，还剩测验。读取页面并完成剩余任务；用户明确要求跳过时遵守用户的范围。',
       check.browserId,
     )
     return true
@@ -304,7 +315,7 @@ const handleVideoDone = (check: VideoWatchCheck) => {
     `解析面板 · ${panel?.thisSection.title || '本节'} 一段视频已完成`,
     nextJob
       ? `解析面板有事件：这段视频已完成。下一步是${nextJob.label}。看 jobs 后 看快照 指定 videoIndex / label，不要自动点开视频。`
-      : '解析面板有事件：这段视频已完成。看 jobs：还有未完成视频就 play 指定任务点；只剩测验就 看快照 去下一节。不要自动点开视频。',
+      : '这段视频已完成。读取页面核对剩余视频和测验；先处理本节剩余任务，再进入下一节。',
     check.browserId,
   )
 }
@@ -319,6 +330,7 @@ export const shouldDeferWatchNotify = (
 }
 
 const enqueueWatchCheck = (check: VideoWatchCheck) => {
+  if (stalePlaybackIncident(check)) return
   const gate = sessionGateImpl?.(check.sessionId) || 'missing'
   const defer = shouldDeferWatchNotify(gate, hasAgentWait(check.sessionId))
   if (defer === 'drop') return
@@ -372,6 +384,7 @@ export const flushWatchIntoWait = (sessionId: string) => {
   const queued = queuedWatchChecks.get(sessionId)
   if (!queued) return
   queuedWatchChecks.delete(sessionId)
+  if (stalePlaybackIncident(queued)) return
   if (queued.kind === 'stalled' || queued.kind === 'lost') {
     wakeAgentWait(sessionId, {
       reason: 'watch',

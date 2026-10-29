@@ -277,7 +277,7 @@ export const openChaoxingHomeworkList = async (id: string) => {
   const frames = (Array.isArray(state.frames) ? state.frames : []).map((item) => String(item || ''))
   const alreadyList = /pageHeader=8/.test(href) || frames.some((src) => /\/work\/list|mooc2\/work/i.test(src))
   if (!alreadyList && /\/mycourse\/stu|stucoursemiddle/i.test(href)) {
-    let tab = await clickHomeworkBox(id, locatorsForHomeworkControl('homework-tab')).catch(() => ({ ok: false }))
+    let tab: { ok?: boolean } = await clickHomeworkBox(id, locatorsForHomeworkControl('homework-tab')).catch(() => ({ ok: false }))
     if (!tab.ok) {
       await waitMs(800)
       tab = await clickBrowserText(id, '作业').catch(() => ({ ok: false })) as { ok?: boolean }

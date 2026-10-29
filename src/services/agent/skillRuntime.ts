@@ -2,15 +2,7 @@ import { homeworkCaptureScript } from '../chaoxing/host/homeworkHost'
 import '../chaoxing/host'
 import { listBundledSkillFiles, readBundledSkillFile } from './skills/builtinSkillAssets'
 
-type SiteGraphData = {
-  id: string
-  name: string
-  host: string
-  hostPattern: string
-  notes?: string[]
-  nodes: unknown[]
-  edges: unknown[]
-}
+import type { SiteGraphData } from '../browser/siteGraphCore'
 
 export const CHAOXING_SKILL_ID = 'chaoxing'
 export const SITE_GRAPH_PATH = 'site-graph.json'

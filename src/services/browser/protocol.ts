@@ -135,11 +135,11 @@ export const act = async (id: string, action: Act): Promise<ActResult> => {
   try {
     const { actOnBrowser, clickByLocator, fillByLocator } = await import('./engine')
     const { controlOnBrowser } = await import('./engine/control')
-    if (action.op === 'click' && 'x' in action && !('at' in action)) {
+    if (action.op === 'click' && 'x' in action) {
       const cdp = await callProtocol(id, 'click_at', { x: Number(action.x) || 0, y: Number(action.y) || 0 })
       return { ok: Boolean(cdp.ok), text: String(cdp.text || ''), error: cdp.error ? String(cdp.error) : undefined }
     }
-    if (action.op === 'click' && 'at' in action) {
+    if (action.op === 'click' && !('x' in action)) {
       const acted = await clickByLocator(id, locatorOf(action.at))
       return { ok: Boolean(acted.ok), text: acted.text, error: acted.error }
     }

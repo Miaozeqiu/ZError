@@ -5,6 +5,14 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: bridge }))
 beforeEach(() => { vi.resetModules(); bridge.mockReset(); localStorage.clear(); Object.defineProperty(window, '__TAURI_INTERNALS__', { value: {}, configurable: true }) })
 afterEach(() => { Reflect.deleteProperty(window, '__TAURI_INTERNALS__') })
 describe('encrypted document bridge', () => {
+  it('reports an outdated native app instead of incorrectly asking to unlock the keychain', async () => {
+    const store = await import('../../src/services/security/secureStore')
+    bridge.mockRejectedValue(new Error('Command secure_document_read not found'))
+    await expect(store.readSecureDocument('agent_chats')).rejects.toThrow()
+    expect(store.secureStorageState.error).toContain('版本不一致')
+    expect(store.secureStorageState.error).not.toContain('钥匙串')
+    await expect(store.writeSecureDocument('agent_chats', [])).rejects.toThrow('阻止覆盖')
+  })
   it('never authorizes during startup or retries; recovery happens only from an explicit action', async () => {
     const store = await import('../../src/services/security/secureStore')
     bridge.mockRejectedValue(new Error('SECURE_STORAGE_AUTHORIZATION_REQUIRED'))

@@ -92,7 +92,7 @@ export const packAgentPanel = (browserId: string) => {
   const nextJob = pickPanelActionJob(jobs)
   const unfinishedSections = (raw.unfinished || []).filter((title) => isCatalogSectionTitle(title))
     const hint = event === 'quiz_left'
-    ? `本节视频都已完成，还剩${left.map((job) => job.label).join('、')}。刷课默认跳过测验，立刻 看快照。`
+    ? `本节视频都已完成，还剩${left.map((job) => job.label).join('、')}。读取页面并完成剩余任务；用户明确要求跳过时遵守用户的范围。`
     : event === 'chapter_jobs_done'
       ? '本节任务点都已完成'
       : event === 'video_paused'
@@ -316,7 +316,7 @@ const packPlayed = (result: Record<string, unknown> | null | undefined) => {
   const played = (result?.played && typeof result.played === 'object')
     ? result.played as Record<string, unknown>
     : result || {}
-  const packed = {
+  const packed: Record<string, unknown> = {
     ok: result?.ok !== false,
     via: 'panel',
     quiz: Boolean(result?.quiz || played.quiz),
@@ -427,12 +427,12 @@ export const playPanelStudy = async (
   }
   if (job?.kind === 'video') return playJob(job)
   if (jobs.some((item) => item.kind === 'video')) return nextPanelStudy(id)
-  if (job && job.kind !== 'video') return playJob(job)
+  if (job) return playJob(job)
   const played = await playChapterFromCard(id, chapter) as Record<string, unknown>
   return { ...packPlayed(played), panel: agentPanel(id) }
 }
 
-export const nextPanelStudy = async (browserId: string) => {
+export const nextPanelStudy = async (browserId: string, opts?: { skipQuiz?: boolean }) => {
   const id = String(browserId || '').trim()
   await ensurePanelStudy(id)
   const state = chapterStateFor(id)
@@ -454,7 +454,10 @@ export const nextPanelStudy = async (browserId: string) => {
     }
   }
 
-  const skippedQuiz = jobs.some((job) => job.kind === 'quiz' && !job.jobDone)
+  if (!opts?.skipQuiz && jobs.some((job) => job.kind === 'quiz' && !job.jobDone)) {
+    return { ok: false, sameChapter: true, hasVideo: false, via: 'panel',
+      hint: '本节还有未完成的测验，请先读取页面并处理；用户明确要求跳过时可直接选择下一节。', panel: agentPanel(id) }
+  }
   const href = await liveStudyHref(id)
   const nextChapter = pickNextStudyChapter(state?.chapters || [], {
     chapterId: hrefChapterId(href) || chapter?.chapterId,
@@ -466,8 +469,7 @@ export const nextPanelStudy = async (browserId: string) => {
       chapterDone: true,
       hasVideo: false,
       via: 'panel',
-      skippedQuiz,
-      hint: skippedQuiz ? '测验已跳过，后面没有未完成视频节了。' : '解析面板里没有下一个未完成任务点',
+      hint: '解析面板里没有下一个未完成任务点',
       panel: agentPanel(id),
     }
   }
@@ -482,7 +484,6 @@ export const nextPanelStudy = async (browserId: string) => {
     ok: Boolean(opened?.ok),
     sameChapter: false,
     opened: nextChapter.title,
-    skippedQuiz,
     hasVideo: afterJobs.some((job) => job.kind === 'video'),
     via: 'panel',
     hint: afterJobs.length

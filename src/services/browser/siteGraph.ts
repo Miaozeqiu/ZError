@@ -325,7 +325,7 @@ export const noteCourseTab = (tab: string, via = 'note', url = '') => {
 /** 课程壳当前侧栏页签。探到的侧栏/iframe 优先，不要信滞后的 pageHeader=0。 */
 export const courseTabOf = (
   url: string,
-  node?: { id?: string; frame?: { tab?: string }; frames?: Array<{ tab?: string; patterns?: string[] }> } | null,
+  node?: { id?: string; frame?: import('./siteGraphCore').SiteGraphFrame; frames?: import('./siteGraphCore').SiteGraphFrame[] } | null,
 ) => {
   const href = String(url || '')
   if (node && node.id && node.id !== 'course') return ''
@@ -374,7 +374,12 @@ const siteGraphViewFromSite = (
     cx: number
     cy: number
     current: boolean
-    frames: ReturnType<typeof nodeFrames>
+    title: string
+    path: string
+    summary: string
+    structure?: string
+    frame?: import('./siteGraphCore').SiteGraphFrame
+    frames: Array<import('./siteGraphCore').SiteGraphFrame & { on: boolean }>
     parsers: SiteGraphParser[]
     jumps: { label: string; to: string; toTitle: string }[]
     loops: string[]

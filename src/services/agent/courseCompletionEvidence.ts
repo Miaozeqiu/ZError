@@ -2,7 +2,7 @@
 export type CourseCompletionEvidence = { stepId: string; completed: number; total: number }
 type Step = { id: string; name?: string; status: string; result?: string }
 const observations = new Set(['browser_get_page', 'browser_eval'])
-const passive = /^(browser_get_state|browser_get_page|browser_find|browser_screenshot|browser_eval|browser_wait|browser_todo|browser_finish|browser_site_graph)$/
+const passive = /^(browser_get_state|browser_get_page|browser_find|browser_screenshot|browser_decode_chaoxing_font|browser_eval|browser_wait|browser_todo|browser_finish|browser_site_graph)$/
 
 export const courseCompletionEvidence = (steps: Step[], currentUrl: string): CourseCompletionEvidence | undefined => {
   let boundary = -1

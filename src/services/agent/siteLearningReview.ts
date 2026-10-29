@@ -9,7 +9,7 @@ const object = (value: unknown): Record<string, any> => {
     return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
   } catch { return {} }
 }
-const observation = /^(browser_get_state|browser_get_page|browser_find|browser_screenshot|browser_wait|browser_todo|browser_finish|browser_watch)$/
+const observation = /^(browser_get_state|browser_get_page|browser_find|browser_screenshot|browser_decode_chaoxing_font|browser_wait|browser_todo|browser_finish|browser_watch)$/
 const matchesSiteFile = (step: Step, path: string) => {
   const args = object(step.arguments)
   const result = object(step.result)

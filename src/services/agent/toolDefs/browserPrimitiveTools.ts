@@ -13,6 +13,14 @@ export const BROWSER_PRIMITIVE_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'browser_decode_chaoxing_font',
+      description: '学习通题干或选项出现字体混淆时，按 OCS 的字形匹配读取各 iframe 中的原文；匹配不可靠时返回当前截图供视觉核验。结合页面快照核对题目、选项及控件，不要凭乱码猜测。',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'browser_set_checked',
       description: '将复选框或单选框设为指定状态，已符合状态的不重复点击。使用控件 ref，或目标容器内唯一的 selector；勿用全页 nth 猜控件。批量顺序处理，失败立即停止。仅验证 checked 状态，不保存或提交表单；用于答题时也不验证答案内容。',
       parameters: {

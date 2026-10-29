@@ -430,7 +430,7 @@ export const openChaoxingChapter = async (id: string, title: string, hint?: Open
   const want = keepChapterTitle(title) || bareChapterTitle(title) || String(hint?.index || '').trim()
   const chapterId = String(hint?.chapterId || '').replace(/\D/g, '')
   if (!want && !chapterId) return { ok: false, error: '缺少节名' }
-  const clicked = await clickHomeworkBox(id, locatorsForChapter(want, chapterId)).catch(() => ({ ok: false }))
+  const clicked = await clickHomeworkBox(id, locatorsForChapter(want, chapterId)).catch(() => ({ ok: false, text: '', error: undefined }))
   if (clicked.ok) {
     // 换节了，上一节钉住的 mid 作废
     clearChaoxingPlayMid(id)
@@ -453,7 +453,7 @@ const clickChapterOrNext = async (id: string, name?: string) => {
 }
 
 export const openNextChaoxingStep = async (id: string) => {
-  const clicked = asObject(await clickHomeworkBox(id, locatorsForStudyControl('next')).catch(() => ({ ok: false })))
+  const clicked = asObject(await clickHomeworkBox(id, locatorsForStudyControl('next')).catch(() => ({ ok: false, text: '', error: undefined })))
   const moved = {
     ok: Boolean(clicked.ok),
     opened: Boolean(clicked.ok),
@@ -481,7 +481,7 @@ export const openNextChaoxingStep = async (id: string) => {
     chapterDone: false,
     opened: String(played.title || moved.step || ''),
     step: String(moved.step || ''),
-    videoCount: Number(moved.videoCount) || 0,
+    videoCount: 0,
     ...played,
   }
 }

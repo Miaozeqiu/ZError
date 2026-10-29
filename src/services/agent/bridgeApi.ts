@@ -478,7 +478,7 @@ export const runBridgeAction = async (cmd: BridgeCmd) => {
   }
 
   if (action === 'next') {
-    const moved = await nextPanelStudy(browserId)
+    const moved = await nextPanelStudy(browserId, { skipQuiz: args.skipQuiz === true })
     return { id, action, browserId, ...moved, chapter: await parserSnap(browserId, false) }
   }
 

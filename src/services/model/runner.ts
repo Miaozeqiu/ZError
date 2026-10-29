@@ -66,13 +66,7 @@ export interface RunTextModelOptions {
   subscribePause?: (changed: (paused: boolean) => void) => () => void
   onEvent?: (event: ModelRunEvent) => void
   /** 本轮追加的 assistant / tool 消息，供跨轮按回合回放 */
-  onTurnTranscript?: (messages: Array<{
-    role: string
-    content?: unknown
-    name?: string
-    tool_call_id?: string
-    tool_calls?: unknown[]
-  }>) => void
+  onTurnTranscript?: (messages: import('../agent/chatTypes').AgentTranscriptItem[]) => void
 }
 
 const collectContent = (result: any): string => {
@@ -330,7 +324,7 @@ export async function runTextModel(
     if (text && !turn.some((item) => item.role === 'assistant' && !item.tool_calls?.length && item.content === text)) {
       turn.push({ role: 'assistant', content: text })
     }
-    options?.onTurnTranscript?.(redactObject(turn))
+    options?.onTurnTranscript?.(redactObject(turn) as import('../agent/chatTypes').AgentTranscriptItem[])
   }
 
   const input: any = {
@@ -662,7 +656,7 @@ export async function runTextModel(
             tool_call_id: item.call.id,
             name: item.call.name,
             content: noVision
-              ? `${item.toolResult}\n当前 Agent 模型不能看图，请用 get_page 读结构。`
+              ? `${item.toolResult}\n${item.call.name === 'browser_decode_chaoxing_font' ? '当前 Agent 模型不能看图，请切换支持视觉的 Agent 模型后重试，不能猜测混淆文字。' : '当前 Agent 模型不能看图，请用 get_page 读结构。'}`
               : item.toolResult,
           })
           if (visionOk) {

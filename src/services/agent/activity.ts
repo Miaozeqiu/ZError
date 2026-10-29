@@ -49,6 +49,7 @@ export const describeActivity = (name: string, args: any, status: ImportTaskStep
     browser_scroll: ['正在滚动', '滚动失败', '滚动了页面'],
     browser_eval: ['正在执行脚本', '执行脚本失败', '在网页上执行了脚本'],
     browser_screenshot: ['正在截图', '截图失败', '拍了当前页'],
+    browser_decode_chaoxing_font: ['正在读取混淆文字', '读取混淆文字失败', '读取了混淆文字'],
     browser_wait: [
       args?.until === 'url'
         ? '正在等网址'

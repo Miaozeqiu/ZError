@@ -13,11 +13,14 @@ const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value))
 const refreshError = () => {
   secureStorageState.requiresAuthorization = [...failures.values()].some(error => String(error).includes('SECURE_STORAGE_AUTHORIZATION_REQUIRED'))
   const needsSigning = [...failures.values()].some(error => String(error).includes('SECURE_STORAGE_SIGNING_REQUIRED'))
-  secureStorageState.error = needsSigning
+  const missingCommand = [...failures.values()].some(error => /command\s+secure_[\w]+.*not found/i.test(String(error)))
+  secureStorageState.error = missingCommand
+    ? '软件界面与程序版本不一致，请通过开发启动命令重新启动软件。现有数据已保留。'
+    : needsSigning
     ? '开发程序签名需要更新，请通过开发启动命令重新启动软件。现有数据已保留。'
     : secureStorageState.requiresAuthorization
     ? '旧版安全存储的授权需要更新。点击恢复授权后重新加载；现有数据已保留。'
-    : failures.size ? '安全存储暂不可用，修改尚未保存。请解锁系统凭据存储后重新加载。' : ''
+    : failures.size ? '安全存储暂不可用，修改尚未保存。请重试，现有数据已保留。' : ''
 }
 const report = (error: unknown, name: string, preserveCause = false) => {
   if (!preserveCause || !failures.has(name)) failures.set(name, error)
