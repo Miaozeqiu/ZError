@@ -8,6 +8,9 @@ on:
       - 'src/**'
       - 'src-tauri/**'
       - 'testdata/mcp/**'
+      - 'testdata/agent/**'
+      - 'testdata/browser/**'
+      - 'testdata/sites/**'
   push:
     branches: [master, dev-improvements]
     paths:
@@ -16,6 +19,9 @@ on:
       - 'src/**'
       - 'src-tauri/**'
       - 'testdata/mcp/**'
+      - 'testdata/agent/**'
+      - 'testdata/browser/**'
+      - 'testdata/sites/**'
 
 permissions:
   contents: read
@@ -35,6 +41,19 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run test:mcp
+      - name: Browser and Zhihuishu regression tests
+        run: >-
+          npx vitest run
+          testdata/sites/zhihuishu.test.ts
+          testdata/sites/zhihuishu-study.test.ts
+          testdata/browser/native-watch.test.ts
+          testdata/browser/native-watch-tools.test.ts
+          testdata/browser/native-watch-generation.test.ts
+          testdata/browser/tab-limit.test.ts
+          testdata/agent/browser-loop.test.ts
+          testdata/agent/finish-gate.test.ts
+          testdata/agent/skill-storage.test.ts
+          testdata/agent/agent-browser-workspace.test.ts
       - run: npx vite build
 
   backend-windows:

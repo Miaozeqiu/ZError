@@ -1,4 +1,4 @@
-export type BrowserTaskIntent = 'play' | 'homework' | 'unknown'
+export type BrowserTaskIntent = 'play' | 'homework' | 'discussion' | 'unknown'
 
 type TaskMemory = {
   intent: BrowserTaskIntent
@@ -11,9 +11,13 @@ const FOCUS_RE = /《([^》]{2,20})》|([^\s，。、]{2,16}(?:数学|英语|物
 
 export const intentFromText = (text: string): BrowserTaskIntent => {
   const raw = String(text || '')
-  const skipQuiz = /测验|测试/.test(raw) && /不用|不要|跳过|不做/.test(raw)
-  const play = /播放|刷课|刷完|看课|章节|视频|未完成|播完|看完这|播放任务|章节任务/.test(raw)
-  const homework = /作业|答题|作答|写作业/.test(raw) || (/测验/.test(raw) && !skipQuiz && !play)
+  // 不把“不要操作视频/作业”当成当前任务；例如论坛任务常带这样的范围限制。
+  const active = raw.replace(/(?:不要|不用|无需|不再|暂不|不必|别|禁止|跳过|不做)(?:(?!只|但是|但|而是|不过)[^，,。；;！!？?\n])*/g, '')
+  const skipQuiz = /(?:测验|测试)(?:不用|不要|跳过|不做)|(?:不用|不要|跳过|不做)(?:再|去|做|进行)?(?:测验|测试)/.test(raw)
+  const play = /播放|刷课|刷完|看课|章节|视频|未完成|播完|看完这|播放任务|章节任务/.test(active)
+  const homework = /作业|答题|作答|写作业/.test(active) || (/测验/.test(active) && !skipQuiz && !play)
+  const discussion = /问答|论坛|讨论区|提问|发问|发帖|回帖|发(?:个|一个|一些|几个|几条)?(?:问题|帖子)|回复(?:同学|别人|他人|问题|帖子)?|我的回答/.test(active)
+  if (discussion && !play && !homework) return 'discussion'
   if (play && !homework) return 'play'
   if (homework && !play) return 'homework'
   return 'unknown'

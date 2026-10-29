@@ -7,6 +7,15 @@ import { clearBrowserTaskIntent, setBrowserTaskIntent } from '../../src/services
 import * as study from '../../src/services/chaoxing/study'
 
 describe('finishGate', () => {
+
+  it('问答收尾忽略旧播放计划，但不能在错误页面或未完成待办时通过', () => {
+    const context = { intent: 'discussion' as const, planTotal: 2, planDone: 0, hasVideo: true, paused: true }
+    expect(judgeFinish('done', '已发布并核对回答', { ...context, kind: 'unknown', url: 'https://qah5.zhihuishu.com/qa.html#/web/home/123' }).ok).toBe(true)
+    expect(judgeFinish('done', '已发布', { ...context, kind: 'player' }).ok).toBe(false)
+    expect(judgeFinish('done', '已发布', { ...context, kind: 'login' }).ok).toBe(false)
+    expect(judgeFinish('done', '已发布', { ...context, todos: [{ id: 't1', text: '核对回答', status: 'pending' }] }).ok).toBe(false)
+  })
+
   it('没有播放器或已结束的视频不能误判为正在播放', async () => {
     const peek = vi.spyOn(appBrowser, 'peekAppBrowserUrl').mockReturnValue('https://mooc1.chaoxing.com/mycourse/studentstudy')
     const read = vi.spyOn(study, 'readChaoxingVideoTick')

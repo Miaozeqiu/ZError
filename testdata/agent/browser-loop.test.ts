@@ -28,6 +28,19 @@ const login = 'https://passport2.chaoxing.com/login?fid=&newversion=true'
 const home = 'http://localhost:1420/browser-home.html'
 
 describe('browser task intent', () => {
+
+  it('课程问答替换旧播放任务，同时忽略否定的任务范围', () => {
+    rememberBrowserTaskIntent('qa', '刷完这节视频')
+    expect(rememberBrowserTaskIntent('qa', '直接发问题，回答同学，不要操作视频或作业')).toBe('discussion')
+    expect(rememberBrowserTaskIntent('qa', '继续')).toBe('discussion')
+    expect(rememberBrowserTaskIntent('qa', '改去做作业')).toBe('homework')
+    expect(intentFromText('不要操作视频，直接回复问题')).toBe('discussion')
+    expect(intentFromText('发布课程问答，不要再新增提问、回答其他题、读写文件、操作视频。')).toBe('discussion')
+    expect(intentFromText('不要做作业只刷视频')).toBe('play')
+    expect(intentFromText('不要看视频但回复问题')).toBe('discussion')
+    expect(intentFromText('不要看视频，只做测验')).toBe('homework')
+  })
+
   afterEach(() => clearBrowserTaskIntent())
 
   it('章节任务且测试不用做 → play', () => {

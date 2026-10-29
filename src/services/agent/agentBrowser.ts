@@ -7,6 +7,7 @@ import {
 } from '../browser/appBrowser'
 import { activeChat, chatStoreReady, createChat, liveSession, patchSession, sessions } from './chatStore'
 import { listenBrowserControl, registerBrowserControl } from '../browser/control'
+import { MAX_BROWSER_TABS, recordBrowserTabLimit } from '../browser/tabLimits'
 
 export const agentBrowserTabs = ref<AppBrowser[]>(listAppBrowsers())
 export const agentBrowserExpanded = ref(false)
@@ -109,6 +110,11 @@ export const startAgentBrowserWorkspace = () => {
         ? sessions.value.find(session => !session.parentId && browserIdsForChat(session).includes(state.openerId!))
         : activeChat.value
       if (!owner) return
+      const owned = new Set(browserIdsForChat(owner))
+      if (!owned.has(state.id) && listAppBrowsers().filter(tab => owned.has(tab.id)).length >= MAX_BROWSER_TABS) {
+        recordBrowserTabLimit('popup', state.openerId, owner.id)
+        return
+      }
       const tab = createAppBrowser({ id: state.id, url: state.url, title: state.title })
       bindChatBrowser(owner.id, tab.id)
       void ensureAgentBrowser(owner.id).catch(error => console.error('[agent browser popup]', error))

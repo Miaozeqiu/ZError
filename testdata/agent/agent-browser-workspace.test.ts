@@ -31,7 +31,8 @@ vi.mock('../../src/services/agent/agentWait', () => ({ wakeAgentWait: vi.fn() })
 vi.mock('../../src/services/agent/debugLog', () => ({ writeBrowserTranscript: vi.fn() }))
 import { activeChat, activeId, chatAborts, chatSessions, createChat, ensureBrowserChat, sessions } from '../../src/services/agent/chatStore'
 import { applyBrowserControl, browserControlState, setBrowserControl } from '../../src/services/browser/control'
-import { listAppBrowsers } from '../../src/services/browser/appBrowser'
+import { createAppBrowser, listAppBrowsers } from '../../src/services/browser/appBrowser'
+import { browserTabLimitNotice, MAX_BROWSER_TABS } from '../../src/services/browser/tabLimits'
 import {
   agentBrowserExpanded, bindChatBrowser, browserIdsForChat, currentAgentBrowsers,
   ensureAgentBrowser, startAgentBrowserWorkspace,
@@ -145,5 +146,28 @@ describe('统一 Agent 浏览器工作区', () => {
     expect(activeChat.value?.id).toBe(front.id)
     expect(sessions.value.find(chat => chat.id === owner.id)?.browserId).toBe('popup-background')
     expect(browserIdsForChat(sessions.value.find(chat => chat.id === owner.id))).toEqual([openerId, 'popup-background'])
+  })
+
+  it('标签上限按来源对话计算，拒绝满额弹窗后不影响另一个对话', async () => {
+    const owner = createChat()
+    const openerId = await ensureAgentBrowser(owner.id)
+    for (let index = 1; index < MAX_BROWSER_TABS; index++) {
+      const tab = createAppBrowser({ url: `https://example.com/${index}` })
+      bindChatBrowser(owner.id, tab.id)
+    }
+    const front = createChat()
+    const frontId = await ensureAgentBrowser(front.id)
+    await startAgentBrowserWorkspace()
+
+    native.opened?.({ payload: { id: 'popup-over-limit', url: 'https://example.com/blocked', openerId } })
+    expect(listAppBrowsers().some(tab => tab.id === 'popup-over-limit')).toBe(false)
+    expect(browserIdsForChat(sessions.value.find(chat => chat.id === owner.id))).toHaveLength(MAX_BROWSER_TABS)
+    expect(browserTabLimitNotice.value).toMatchObject({ code: 'tab_limit', source: 'popup', openerId, sessionId: owner.id })
+    expect(activeChat.value?.id).toBe(front.id)
+
+    native.opened?.({ payload: { id: 'popup-other-session', url: 'https://example.com/allowed', openerId: frontId } })
+    await Promise.resolve()
+    expect(browserIdsForChat(sessions.value.find(chat => chat.id === front.id))).toEqual([frontId, 'popup-other-session'])
+    expect(listAppBrowsers()).toHaveLength(MAX_BROWSER_TABS + 2)
   })
 })

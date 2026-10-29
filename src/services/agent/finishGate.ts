@@ -42,6 +42,7 @@ export const isMultiStepIntent = (intent?: BrowserTaskIntent, extras?: {
   leftJobs?: string[]
   unfinished?: number
 }) => {
+  if (intent === 'discussion') return false
   if (intent === 'homework') return true
   if (intent === 'play') return true
   return Boolean((extras?.leftJobs?.length || 0) > 1 || (extras?.unfinished || 0) > 1)

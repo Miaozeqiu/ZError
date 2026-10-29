@@ -1,5 +1,13 @@
 
 import { cachedPageSnap, findInSnapshot, observedJson, pageSnapAge, PAGE_SNAP_FRESH_MS } from '../../browser/engine'
+import { isWisdomMoocStudyUrl } from '../../platform/zhihuishu/study'
+import { browserTabLimitNotice, MAX_BROWSER_TABS } from '../../browser/tabLimits'
+
+const readSiteStudy = async (browserId: string, url: string) => {
+  if (!isWisdomMoocStudyUrl(url)) return undefined
+  const { readWisdomStudyCard } = await import('../../platform/zhihuishu/parser')
+  return await readWisdomStudyCard(browserId, url).catch(() => null) || undefined
+}
 
 export const handleNavTools = async (ctx: Record<string, any>): Promise<string | null> => {
   const {
@@ -36,6 +44,11 @@ export const handleNavTools = async (ctx: Record<string, any>): Promise<string |
       page: snap?.page || '',
       siteGraph: snap || undefined,
       coursePlan: summary || undefined,
+      tabs: { maxPerChat: MAX_BROWSER_TABS },
+      tabIssue: browserTabLimitNotice.value?.source === 'popup' && browserTabLimitNotice.value.openerId === browserId
+        ? { code: browserTabLimitNotice.value.code, message: browserTabLimitNotice.value.message }
+        : undefined,
+      study: await readSiteStudy(browserId, url),
       hint: [
         isShellNode(nodeId, graphUrl) ? SPACE_HINT : undefined,
         !snap
@@ -103,6 +116,7 @@ export const handleNavTools = async (ctx: Record<string, any>): Promise<string |
         : undefined
       return JSON.stringify({
         ...page,
+        study: await readSiteStudy(browserId, url),
         page: siteGraphNodeForUrl(graphUrl)?.title || '',
         frame: graphUrl !== url ? graphUrl : preferred?.url || undefined,
         hint: [

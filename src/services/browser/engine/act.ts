@@ -23,6 +23,7 @@ const REASON_TEXT: Record<ActReason, string> = {
   ambiguous: '匹配到多个元素',
   timeout: '等待超时',
   invalid: '缺少定位条件',
+  tab_limit: '标签页已达上限',
 }
 
 const asResult = (raw: unknown): ActResult => {

@@ -25,7 +25,9 @@ export const isChaoxingHost = (url: string) => {
   return CX_HOST.test(url)
 }
 
-export const chaoxingNodeId = (url: string) => siteGraphNodeForUrl(url)?.id || ''
+export const chaoxingNodeId = (url: string) => (
+  isChaoxingHost(url) ? siteGraphNodeForUrl(url)?.id || '' : ''
+)
 
 export const chaoxingCourseTab = (url: string) => {
   const node = siteGraphNodeForUrl(url)
@@ -65,6 +67,7 @@ export const isChaoxingHomeworkListUrl = (url: string) => {
 }
 
 export const isChaoxingHomeworkUrl = (url: string) => {
+  if (!isChaoxingHost(url)) return false
   if (isChaoxingHomeworkDoUrl(url) || isChaoxingHomeworkListUrl(url)) return true
   const node = siteGraphNodeForUrl(url)
   if (node) return node.parserIds.includes('homework') && node.id !== 'study'
@@ -80,6 +83,7 @@ export const isChaoxingCourseChapterTab = (url: string) => {
 }
 
 export const isChaoxingStudyUrl = (url: string) => {
+  if (!isChaoxingHost(url)) return false
   if (isChaoxingPlayerUrl(url) || isChaoxingCourseChapterTab(url)) return true
   const node = siteGraphNodeForUrl(url)
   if (node) return node.id !== 'course' && node.parserIds.includes('study')
