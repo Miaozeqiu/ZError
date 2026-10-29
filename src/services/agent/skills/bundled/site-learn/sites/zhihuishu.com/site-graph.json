@@ -2,26 +2,138 @@
   "id": "zhihuishu",
   "name": "智慧树",
   "host": "zhihuishu.com",
-  "hostPattern": "zhihuishu\\.com",
+  "hostPattern": "(?:zhihuishu|polymas)\\.com",
   "notes": [
-    "在真实课程列表页按快照中的课名进入课程，验证成功后更新本站操作经验。"
+    "智慧树与教学空间 polymas 共用一张图；节点正则按真实域名与完整路径匹配。",
+    "节点 id 表示页面身份，parserIds 表示通用解析能力；非学习通页面不调用学习通专用实现。",
+    "作答与提交必须以当前用户授权为准，站点手册只描述操作流程，不代表已获实际作答授权。"
   ],
   "nodes": [
     {
+      "id": "login",
+      "title": "登录",
+      "path": "passport.zhihuishu.com/login · login.zhihuishu.com",
+      "summary": "智慧树账号登录；网易易盾滑块交给用户手动完成。",
+      "structure": "整页登录表单；出现 .yidun_popup 时停止自动操作并请求用户手动滑动。",
+      "row": 0,
+      "col": -1,
+      "patterns": [
+        "^https?://passport\\.zhihuishu\\.com/login(?:[/?#]|$)",
+        "^https?://login\\.zhihuishu\\.com(?:[/?#]|$)"
+      ],
+      "parserIds": ["login"]
+    },
+    {
       "id": "course-list",
       "title": "课程列表",
-      "path": "/student/course",
-      "summary": "我的课程。点课名进详情。",
-      "structure": "列表在 .course-list；每项 .course-item，标题 .course-name。",
-      "row": 0,
+      "path": "onlineweb/onlinestuh5 · online/student/course · onlineh5",
+      "summary": "我的课程；按课程名进入课程首页或学习计划。",
+      "structure": "课程列表页。先用快照核对课程名，再点对应课程卡或标题。",
+      "row": 1,
       "col": 0,
       "patterns": [
-        "zhihuishu\\.com",
-        "onlineh5\\.zhihuishu\\.com",
-        "online\\.zhihuishu\\.com"
+        "^https?://onlineweb\\.zhihuishu\\.com/onlinestuh5(?:[/?#]|$)",
+        "^https?://online\\.zhihuishu\\.com/student/course(?:[/?#]|$)",
+        "^https?://onlineh5\\.zhihuishu\\.com(?:[/?#]|$)"
       ],
       "parserIds": ["list"]
+    },
+    {
+      "id": "course-study-plan",
+      "title": "课程学习计划",
+      "path": "singleCourse · study/analysis · courseIndex/masteryHistory/point · course-home",
+      "summary": "章节、任务与掌握度入口；选择未完成小节进入播放或作答。",
+      "structure": "课程首页或学习分析页。掌握度“去提升”可能进入独立作答页，不要当成播放页。",
+      "row": 2,
+      "col": 0,
+      "patterns": [
+        "^https?://smartcoursestudent\\.zhihuishu\\.com/singleCourse(?:[/?#]|$)",
+        "^https?://ai-smart-course-student-pro\\.zhihuishu\\.com/singleCourse(?:[/?#]|$)",
+        "^https?://wisdom-mooc\\.zhihuishu\\.com/study/analysis(?:[/?#]|$)",
+        "^https?://fusioncourseh5\\.zhihuishu\\.com/(?:courseIndex|masteryHistory|point)(?:[/?#]|$)",
+        "^https?://(?:[a-z0-9-]+\\.)*polymas\\.com/(?:[^?#]*/)*(?:ai-course-center|course-home)(?:[/?#]|$)"
+      ],
+      "parserIds": ["course"]
+    },
+    {
+      "id": "course-study-player",
+      "title": "课程播放",
+      "path": "study/index · stuStudy · learnPage · sourceLearning · resource-detail",
+      "summary": "章节播放与课中弹题页；视频开始播放后交给 browser_watch。",
+      "structure": "原生 video 路径。课中弹题和验证码是叠层，关闭并确认恢复播放后再继续监控。",
+      "row": 3,
+      "col": 0,
+      "patterns": [
+        "^https?://wisdom-mooc\\.zhihuishu\\.com/study/index(?:[/?#]|$)",
+        "^https?://studyvideoh5\\.zhihuishu\\.com/stuStudy(?:[/?#]|$)",
+        "^https?://studyplush5\\.zhihuishu\\.com(?:[/?#]|$)",
+        "^https?://studywisdomh5\\.zhihuishu\\.com/study/index(?:[/?#]|$)",
+        "^https?://fusioncourseh5\\.zhihuishu\\.com/stuStudy(?:[/?#]|$)",
+        "^https?://smartcoursestudent\\.zhihuishu\\.com/learnPage(?:[/?#]|$)",
+        "^https?://ai-smart-course-student-pro\\.zhihuishu\\.com/learnPage(?:[/?#]|$)",
+        "^https?://hike\\.zhihuishu\\.com/aidedteaching/sourceLearning(?:[/?#]|$)",
+        "^https?://(?:[a-z0-9-]+\\.)*polymas\\.com/(?:[^?#]*/)*(?:studentStudyResource|resource-detail)(?:[/?#]|$)"
+      ],
+      "parserIds": ["study", "captcha"]
+    },
+    {
+      "id": "course-qa",
+      "title": "课程问答",
+      "path": "qah5.zhihuishu.com/qa.html",
+      "summary": "课程问答主页、问题详情和本人参与列表；发布数量与有效数量分开核对。",
+      "structure": "先核对课程与原帖；按当前快照操作并在我的提问或我的回答中复核，不假定所有页面布局相同。",
+      "row": 2,
+      "col": 2,
+      "patterns": [
+        "^https?://qah5\\.zhihuishu\\.com/qa\\.html(?:[?#]|$)"
+      ],
+      "parserIds": []
+    },
+    {
+      "id": "course-homework-list",
+      "title": "作业考试列表",
+      "path": "stuExamWeb.html#/webExamList?",
+      "summary": "共享课作业与考试列表；问号是 hash 路由的一部分。",
+      "structure": "只匹配 /webExamList? 列表，不匹配 /webExamList/dohomework 或 /doexamination 作答页。",
+      "row": 2,
+      "col": 1,
+      "patterns": [
+        "^https?://(?:[a-z0-9-]+\\.)*zhihuishu\\.com/stuExamWeb\\.html(?:\\?[^#]*)?#/webExamList\\?(?:[^#]*)$"
+      ],
+      "parserIds": ["homework"]
+    },
+    {
+      "id": "course-homework-do",
+      "title": "作业考试作答",
+      "path": "dohomework/doexamination · ReviewExam · exam · atHomeworkExam · answer-*",
+      "summary": "作业、考试或 AI 掌握度独立作答页。",
+      "structure": "通用站点题卡；答案不确定时停止并询问，提交前核对用户授权。",
+      "row": 3,
+      "col": 1,
+      "patterns": [
+        "^https?://(?:[a-z0-9-]+\\.)*zhihuishu\\.com/stuExamWeb\\.html(?:\\?[^#]*)?#/webExamList/(?:dohomework|doexamination)(?:[/?#]|$)",
+        "^https?://smartcourseexam\\.zhihuishu\\.com/ReviewExam(?:[/?#]|$)",
+        "^https?://studentexamcomh5\\.zhihuishu\\.com/studentReviewTestOrExam(?:[/?#]|$)",
+        "^https?://(?:fusioncourseh5|studywisdomh5|wisdom-mooc|examloop)\\.zhihuishu\\.com/exam(?:[/?#]|$)",
+        "^https?://(?:[a-z0-9-]+\\.)*zhihuishu\\.com/atHomeworkExam/stu/(?:homeworkQ/exerciseList|examQ/examexercise)(?:[/?#]|$)",
+        "^https?://(?:[a-z0-9-]+\\.)*(?:zhihuishu|polymas)\\.com/(?:[^?#]*/)*stuHomeworkDo(?:[/?#]|$)",
+        "^https?://(?:[a-z0-9-]+\\.)*(?:zhihuishu|polymas)\\.com/(?:[^?#]*/)*answer-homework(?:[/?#]|$)",
+        "^https?://(?:[a-z0-9-]+\\.)*(?:zhihuishu|polymas)\\.com/(?:[^?#]*/)*answer-exam(?:[/?#]|$)"
+      ],
+      "parserIds": ["homework"]
     }
   ],
-  "edges": []
+  "edges": [
+    { "from": "login", "to": "course-list", "label": "登录成功", "kind": "forward" },
+    { "from": "course-list", "to": "course-study-plan", "label": "进课", "kind": "forward" },
+    { "from": "course-list", "to": "course-qa", "label": "课程问答", "kind": "forward" },
+    { "from": "course-study-plan", "to": "course-study-player", "label": "打开未完成小节", "kind": "forward" },
+    { "from": "course-study-player", "to": "course-study-player", "label": "切集", "kind": "loop" },
+    { "from": "course-study-player", "to": "course-study-player", "label": "课中弹题", "kind": "loop" },
+    { "from": "course-study-plan", "to": "course-homework-do", "label": "掌握度去提升", "kind": "forward" },
+    { "from": "course-study-plan", "to": "course-homework-list", "label": "进作业列表", "kind": "forward" },
+    { "from": "course-homework-list", "to": "course-homework-do", "label": "进作答页", "kind": "forward" },
+    { "from": "course-study-player", "to": "course-study-plan", "label": "回学习计划", "kind": "back" },
+    { "from": "course-homework-do", "to": "course-homework-list", "label": "回作业列表", "kind": "back" }
+  ]
 }

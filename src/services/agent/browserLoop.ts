@@ -65,10 +65,10 @@ const kindFromNode = (url: string, nodeId: string): BrowserPageKind | null => {
   const id = String(nodeId || node?.id || '')
   if (id === 'login') return 'login'
   if (id === 'study' || /player/i.test(id) || /\/plan\/detail/i.test(href)) return 'player'
-  if (id === 'homework-do') return 'homework-do'
-  if (id === 'homework-list') return 'homework-list'
-  if (id === 'space') return 'space'
-  if (id === 'course' || id === 'activity') {
+  if (id === 'homework-do' || /homework-do/i.test(id)) return 'homework-do'
+  if (id === 'homework-list' || /homework-list/i.test(id)) return 'homework-list'
+  if (id === 'space' || id === 'course-list') return 'space'
+  if (id === 'course' || id === 'activity' || id === 'course-study-plan') {
     const frame = node ? activeFrameOf(node, href) : null
     if (frame?.id === 'homework' || frame?.tab === '作业') return 'homework-list'
     return 'course'
@@ -114,6 +114,7 @@ const PAGE_KIND_ZH: Record<BrowserPageKind, string> = {
 const INTENT_ZH: Record<BrowserTaskIntent, string> = {
   play: '刷课',
   homework: '写作业',
+  discussion: '课程问答',
   unknown: '',
 }
 
@@ -229,6 +230,9 @@ export const recipeForPage = (input: {
 }) => {
   const intent = input.intent || 'unknown'
   const chaoxing = input.siteId === 'chaoxing'
+  if (intent === 'discussion') {
+    return '建议：按用户授权处理当前问答。先核对课程和帖子，发布后重新读页面或“我的回答”确认；遇到安全验证交用户处理。'
+  }
   if (!chaoxing) {
     return cardRecipe({ id: input.siteId, name: input.siteName, host: input.host }, input.kind, intent)
   }

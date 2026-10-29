@@ -162,6 +162,7 @@ export const handlePageTools = async (ctx: Record<string, any>): Promise<string 
     }
     const {
       nativeWatchFor,
+      nativeWatchMatchesTick,
       readNativeVideoTick,
       startNativeWatch,
       stopNativeWatch,
@@ -174,26 +175,10 @@ export const handlePageTools = async (ctx: Record<string, any>): Promise<string 
     const locator = mediaRef ? await resolveRefLocator(browserId, mediaRef) : undefined
     const existing = nativeWatchFor(browserId)
     const sameTarget = !locator || (existing?.locator?.frameId === locator.frameId
-      && existing?.locator?.loaderId === locator.loaderId && existing?.locator?.nth === locator.nth)
-    const fast = sameTarget ? watchSessionFastPath(existing, null) : ''
-    if (fast === 'ended') {
-      return JSON.stringify({
-        watching: false,
-        ended: true,
-        already: true,
-        title: existing?.title || '',
-        hint: '这段视频已经结束。',
-      })
-    }
-    if (fast === 'already') {
-      return JSON.stringify({
-        watching: true,
-        already: true,
-        title: existing?.title || '',
-        hint: `${watchFollowHint(browserId, true)}${emptyHint}`,
-      })
-    }
+      && existing?.locator?.loaderId === locator.loaderId && existing?.locator?.nth === locator.nth
+      && existing?.locator?.by === locator.by && existing?.locator?.value === locator.value)
     const tick = await readNativeVideoTick(browserId, locator)
+    const sameMedia = sameTarget && nativeWatchMatchesTick(existing, tick)
     if (!tick?.hasVideo) {
       return JSON.stringify({
         watching: false,
@@ -204,8 +189,12 @@ export const handlePageTools = async (ctx: Record<string, any>): Promise<string 
           : '先打开播放页并点播放，再 browser_watch。不要抄学习通 study_watch。',
       })
     }
-    if (tick.paused && !tick.ended) {
-      stopNativeWatch(browserId, { keep: true })
+    if (tick.ended) {
+      stopNativeWatch(browserId)
+      return JSON.stringify({ watching: false, ended: true, video: tick, hint: '当前媒体已播放结束；仍需刷新目录核对平台保存的完成标记。' })
+    }
+    if (tick.paused) {
+      stopNativeWatch(browserId)
       return JSON.stringify({
         watching: false,
         playing: false,
@@ -214,9 +203,12 @@ export const handlePageTools = async (ctx: Record<string, any>): Promise<string 
         hint: '视频没有在播。下一步：先点播放，确认在播后再 browser_watch。',
       })
     }
+    if (sameMedia && existing?.sessionId === sessionId && watchSessionFastPath(existing, null) === 'already') {
+      return JSON.stringify({ watching: true, already: true, title: existing.title, video: tick, hint: `${watchFollowHint(browserId, true)}${emptyHint}` })
+    }
     const started = startNativeWatch(browserId, sessionId, {
       ...tick,
-      title: String(args.title || existing?.title || '').trim(),
+      title: String(args.title || (sameMedia ? existing?.title : '') || '').trim(),
     }, { locator })
     return JSON.stringify({
       watching: true,

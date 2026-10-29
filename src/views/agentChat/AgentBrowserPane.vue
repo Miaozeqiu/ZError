@@ -39,7 +39,7 @@
           <button type="button" role="tab" :aria-selected="tab.id === currentAgentBrowser?.id" :title="tab.title || tab.url" @click="selectTab(tab.id)">{{ tab.title || hostnameOf(tab.url) }}</button>
           <button class="browser-tab-close" type="button" :aria-label="`关闭 ${tab.title || '标签页'}`" @click="closeTab(tab.id)"><Icon icon="lucide:x" width="12" height="12" /></button>
         </div>
-        <button class="browser-icon-button" type="button" title="新建标签页" aria-label="新建标签页" :disabled="currentAgentBrowsers.length >= 16" @click="newTab"><Icon icon="lucide:plus" width="15" height="15" /></button>
+        <button class="browser-icon-button" type="button" title="新建标签页" aria-label="新建标签页" @click="newTab"><Icon icon="lucide:plus" width="15" height="15" /></button>
       </div>
       <form v-show="showBrowserChrome" class="browser-toolbar" @submit.prevent="navigate" @pointerdown.capture="takeControlFromUi">
         <button class="browser-icon-button" type="button" title="后退" aria-label="后退" :disabled="!currentAgentBrowser || busy" @click="runNavigation('back')"><Icon icon="lucide:chevron-left" width="15" height="15" /></button>
@@ -50,6 +50,10 @@
         <button class="browser-zoom" type="button" :title="`当前缩放 ${zoomPercent}%，点击切换`" @click="cycleZoom">{{ zoomPercent }}%</button>
       </form>
       <div v-if="loading" class="browser-loading" role="progressbar" aria-label="网页加载中" />
+      <div v-if="tabLimitNotice" class="browser-tab-notice" role="status">
+        <span>{{ tabLimitNotice.message }}</span>
+        <button type="button" @click="clearBrowserTabLimitNotice(activeChatId || '')">知道了</button>
+      </div>
       <div ref="hostRef" class="browser-host" @pointerdown.capture="takeControlFromUi" @keydown.capture="takeControlFromUi" @wheel.passive="takeControlFromUi"><span v-if="busy" class="browser-opening">正在打开浏览器…</span></div>
     </div>
     <div v-if="agentBrowserExpanded" class="browser-control-dock" role="group" aria-label="浏览器操作权">
@@ -91,6 +95,7 @@ import {
 } from '../../services/browser/appBrowser'
 import { isTauriEnvironment } from '../../services/app/environmentDetector'
 import { setBrowserControl, userControlsBrowser } from '../../services/browser/control'
+import { browserTabLimitNotice, clearBrowserTabLimitNotice, MAX_BROWSER_TABS, recordBrowserTabLimit } from '../../services/browser/tabLimits'
 
 const props = withDefaults(defineProps<{ active?: boolean; obscured?: boolean }>(), { active: true, obscured: false })
 const isMacOS = /mac/i.test(navigator.platform || navigator.userAgent)
@@ -109,6 +114,7 @@ const previewHostRef = ref<HTMLElement | null>(null)
 const address = ref('')
 const addressFocused = ref(false)
 const error = ref('')
+const tabLimitNotice = computed(() => browserTabLimitNotice.value?.sessionId === activeChatId.value ? browserTabLimitNotice.value : null)
 const busy = ref(false)
 const audioBusy = ref(false)
 const loading = ref(false)
@@ -182,7 +188,10 @@ const selectTab = async (id: string) => {
   try { await takeControl(); bindChatBrowser(requireSession(), id) } catch (value) { showError(value) }
 }
 const newTab = async () => {
-  if (currentAgentBrowsers.value.length >= 16) return
+  if (currentAgentBrowsers.value.length >= MAX_BROWSER_TABS) {
+    recordBrowserTabLimit('manual', '', requireSession())
+    return
+  }
   try {
     await takeControl()
     const tab = createAppBrowser({ url: browserHomeUrl(), title: '导航' })
@@ -196,6 +205,7 @@ const closeTab = async (id: string) => {
     await takeControl()
     await closeBrowserView(id)
     removeAppBrowser(id)
+    clearBrowserTabLimitNotice(session.id)
     patchSession(session.id, current => {
       const ids = browserIdsForChat(current).filter(item => item !== id)
       return { ...current, browserIds: ids, browserId: current.browserId === id ? ids.at(-1) : current.browserId }
@@ -367,6 +377,8 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+.browser-tab-notice { flex: 0 0 auto; display: flex; justify-content: space-between; gap: 12px; padding: 8px 12px; color: #754b00; background: #fff3d6; font-size: 13px; }
+.browser-tab-notice button { flex: 0 0 auto; border: 0; background: transparent; color: inherit; cursor: pointer; }
 .agent-browser-pane { --browser-pane-width: var(--preview-wide-width); flex: 0 0 auto; width: var(--browser-pane-width); min-width: 0; display: flex; flex-direction: column; align-self: stretch; overflow: hidden; background: var(--bg-secondary, #fff); color: var(--text-primary, #2d3748); box-sizing: border-box; }
 .browser-pane-inner { display: flex; flex-direction: column; flex: 1; min-height: 0; width: var(--browser-pane-width); padding: 0 var(--preview-wide-padding); border-left: 1px solid color-mix(in srgb, var(--border-primary, #e2e8f0) 55%, transparent); box-sizing: border-box; }
 .is-expanded .browser-pane-inner { width: 100%; padding: 0; border: 0; }

@@ -25,6 +25,18 @@ beforeEach(() => {
 })
 
 describe('Skill storage and installation', () => {
+  it('loads Zhihuishu Q&A instructions from builtin resources without local overrides', async () => {
+    const mod = await load()
+    const main = await mod.readAgentSkillFileContent('site-learn', 'sites/qah5.zhihuishu.com/SKILL.md')
+    expect(main?.path).toBe('sites/zhihuishu.com/SKILL.md')
+    expect(main?.content).toContain('references/qa.md')
+    const qa = await mod.readAgentSkillFileContent('site-learn', 'sites/qah5.zhihuishu.com/references/qa.md')
+    expect(qa?.content).toContain('.ask-btn')
+    expect(qa?.content).toContain('.questionDialog .up-btn')
+    expect(qa?.content).toContain('.question-content')
+    expect([...io.files.keys()].filter(path => path.startsWith(base + 'site-learn/sites/'))).toEqual([])
+    expect(io.writes.mock.calls.some(([path]) => String(path).startsWith(base + 'site-learn/sites/'))).toBe(false)
+  })
   it('distinguishes an absent website document from filesystem read errors without relying on a directory listing', async () => {
     const mod = await load()
     const target = 'sites/portal.example.com/SKILL.md'

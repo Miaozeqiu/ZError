@@ -65,6 +65,7 @@ export type ActReason =
   | 'ambiguous'
   | 'timeout'
   | 'invalid'
+  | 'tab_limit'
 
 export type ActCandidate = {
   text: string
@@ -87,6 +88,7 @@ export type ActResult = {
   navigated?: boolean
   domChanged?: boolean
   focusChanged?: boolean
+  clickDispatched?: boolean
   hint?: string
   title?: string
   snapshot?: string

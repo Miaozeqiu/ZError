@@ -9,7 +9,7 @@ import { packAgentPanel, videoWatchFor } from '../platform/panelAccess'
 import { isChaoxingPlayerUrl } from '../platform/chaoxing/nav'
 import { readChaoxingVideoTick, videoIsPlaying } from '../chaoxing/study'
 import { coursePlanFor, courseProgress } from '../browser/coursePlan'
-import { courseCompletionEvidence, type CourseCompletionEvidence } from './courseCompletionEvidence'
+import { courseCompletionEvidence, hasCurrentPageObservation, type CourseCompletionEvidence } from './courseCompletionEvidence'
 import type { ImportTaskStep } from '../app/importTasks'
 
 export type FinishStatus = 'done' | 'blocked' | 'watching'
@@ -31,6 +31,7 @@ export type FinishEvidence = {
   leftJobs?: string[]
   chapterJobsDone?: boolean
   pageSummary?: boolean
+  pageObserved?: boolean
   multiStep?: boolean
   planDone?: number
   planTotal?: number
@@ -42,6 +43,7 @@ export const isMultiStepIntent = (intent?: BrowserTaskIntent, extras?: {
   leftJobs?: string[]
   unfinished?: number
 }) => {
+  if (intent === 'discussion') return false
   if (intent === 'homework') return true
   if (intent === 'play') return true
   return Boolean((extras?.leftJobs?.length || 0) > 1 || (extras?.unfinished || 0) > 1)
@@ -81,6 +83,7 @@ export const collectFinishEvidence = async (
     leftJobs,
     chapterJobsDone: panel?.event === 'chapter_jobs_done' || (Boolean(panel?.thisSection) && leftJobs.length === 0),
     pageSummary: Boolean(url),
+    pageObserved: hasCurrentPageObservation(extras?.steps || [], url),
     multiStep: isMultiStepIntent(intent, { leftJobs, unfinished }),
     planDone: progress?.done,
     planTotal: progress?.total,
@@ -149,7 +152,9 @@ export const judgeFinish = (
     return { ok: false, error: '当前仍在登录页，尚无进入目标页面的证据。先按用户目标核对登录结果；无法继续则说明具体阻塞。' }
   }
 
-  if (intent === 'play' || kind === 'player') {
+  const observedOnly = intent === 'unknown' && evidence.pageObserved && !evidence.watching
+    && !(evidence.planTotal || 0)
+  if (intent === 'play' || (kind === 'player' && !observedOnly)) {
     if (evidence.planComplete) return { ok: true, status: 'done', summary: text }
     if ((evidence.planTotal || 0) > 0) {
       return {

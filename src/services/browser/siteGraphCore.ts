@@ -128,9 +128,10 @@ const urlParts = (url: string) => {
     return {
       host: parsed.hostname,
       route: `${parsed.origin}${parsed.pathname}`,
+      fullRoute: `${parsed.origin}${parsed.pathname}${parsed.search}${parsed.hash}`,
     }
   } catch {
-    return { host: '', route: url }
+    return { host: '', route: url, fullRoute: url }
   }
 }
 
@@ -139,10 +140,31 @@ const hostishPattern = (pattern: string) => (
   /[a-z0-9-]+\.[a-z0-9.-]+/i.test(String(pattern || '').replace(/\\/g, ''))
 )
 
+/** 站点 hostPattern 只匹配完整域名后缀，不能命中 evil-example.com 或查询串。 */
+const testSitePattern = (pattern: string, url: string) => {
+  const parts = urlParts(url)
+  if (!parts.host) return false
+  try {
+    const source = String(pattern || '').trim()
+    if (!source) return false
+    // 新版网站设置生成完整 URL 正则；只在去掉查询串和 hash 的地址前缀上匹配。
+    if (source.replace(/\\\//g, '/').includes('://')) {
+      return new RegExp(source, 'i').exec(parts.route)?.index === 0
+    }
+    const fullHost = new RegExp(`^(?:${source})$`, 'i')
+    const labels = parts.host.split('.')
+    return labels.some((_, index) => fullHost.test(labels.slice(index).join('.')))
+  } catch {
+    return false
+  }
+}
+
 export const testNodePattern = (pattern: string, url: string) => {
   const parts = urlParts(url)
   if (hostishPattern(pattern)) {
-    return testPattern(pattern, parts.host) || testPattern(pattern, parts.route)
+    return testPattern(pattern, parts.host)
+      || testPattern(pattern, parts.route)
+      || (/^\s*\^/.test(pattern) && testPattern(pattern, parts.fullRoute))
   }
   return testPattern(pattern, url)
 }
@@ -155,7 +177,7 @@ export const hydrateSite = (data: SiteGraphData): SiteGraph => ({
   name: data.name,
   host: data.host,
   notes: data.notes ? [...data.notes] : undefined,
-  match: (url) => testPattern(data.hostPattern, url),
+  match: (url) => testSitePattern(data.hostPattern, url),
   nodes: data.nodes.map((node) => ({
     ...node,
     patterns: [...(node.patterns || [])],
@@ -269,7 +291,7 @@ const findLiveSite = (siteId?: string, url?: string) => {
   const id = String(siteId || '').trim()
   if (id) return liveSiteGraphs.value.find((site) => site.id === id) || null
   const href = String(url || '')
-  if (href) return liveSiteGraphs.value.find((site) => testPattern(site.hostPattern, href)) || null
+  if (href) return liveSiteGraphs.value.find((site) => testSitePattern(site.hostPattern, href)) || null
   return liveSiteGraphs.value[0] || null
 }
 
@@ -514,7 +536,7 @@ export const applySiteGraphPatch = (
 }
 
 export const siteGraphForUrl = (url: string) => {
-  const data = liveSiteGraphs.value.find((site) => testPattern(site.hostPattern, url)) || null
+  const data = liveSiteGraphs.value.find((site) => testSitePattern(site.hostPattern, url)) || null
   return data ? hydrateSite(data) : null
 }
 
@@ -528,7 +550,7 @@ export const siteGraphNodeForUrl = (url: string, site = siteGraphForUrl(url)) =>
     if (!hits.length) continue
     const hostHit = hits.some((pattern) => (
       hostishPattern(pattern)
-      && (testPattern(pattern, parts.host) || testPattern(pattern, parts.route))
+      && testNodePattern(pattern, url)
     ))
     const score = Math.max(...hits.map((pattern) => pattern.length)) + hits.length + (hostHit ? 1000 : 0)
     if (score > bestScore) {
@@ -564,7 +586,9 @@ export const parserPageKindOf = (
   if (!node || !contentParserIdsOf(node).length) return null
   const role = pageRoleOfNode(node)
   if (node.id === 'study' && role === 'study') return 'study'
-  if (role === 'homework') return 'homework'
+  if ((node.id === 'homework' || node.id === 'homework-do' || node.id === 'homework-list') && role === 'homework') {
+    return 'homework'
+  }
   return 'site'
 }
 

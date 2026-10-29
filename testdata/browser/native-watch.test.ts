@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { judgeFinish } from '../../src/services/agent/finishGate'
 import {
   applyNativeTickState,
+  interpolateNativeWatch,
+  nativeWatchMatchesTick,
   nativeWatchBusy,
   nativeWatchFor,
   parseNativeTick,
@@ -15,6 +17,7 @@ const base = (over: Partial<NativeWatchState> = {}): NativeWatchState => ({
   browserId: 'b1',
   sessionId: 's1',
   title: '概述：成衣的概念',
+  src: 'blob:x',
   current: 10,
   duration: 100,
   percent: 10,
@@ -61,13 +64,37 @@ describe('applyNativeTickState', () => {
   it('播到结尾标 done', () => {
     const applied = applyNativeTickState(
       base(),
-      { hasVideo: true, current: 99.8, duration: 100, paused: false, ended: false, src: 'blob:x' },
+      { hasVideo: true, current: 100, duration: 100, paused: true, ended: true, src: 'blob:x' },
       2_000,
       { lastProgressAt: 1_000, lastSeenAt: 1_000, pausedAt: 0 },
     )
     expect(applied.state.status).toBe('done')
     expect(applied.state.ended).toBe(true)
     expect(applied.kind).toBe('done')
+  })
+
+  it.each([false, true])('接近结尾但未 ended 时不提前完成（paused=%s）', (paused) => {
+    const applied = applyNativeTickState(base(), {
+      hasVideo: true, current: 99.8, duration: 100, paused, ended: false, src: 'blob:x',
+    }, 2_000, { lastProgressAt: 1_000, lastSeenAt: 1_000, pausedAt: 0 })
+    expect(applied.state.ended).toBe(false)
+    expect(applied.state.status).toBe(paused ? 'paused' : 'watching')
+  })
+
+  it('同址换视频使旧监控失效，不能挂着上一节的标题继续计时', () => {
+    const applied = applyNativeTickState(base(), {
+      hasVideo: true, current: 0.2, duration: 200, paused: false, ended: false, src: 'blob:next',
+    }, 2_000, { lastProgressAt: 1_000, lastSeenAt: 1_000, pausedAt: 0 })
+    expect(applied.kind).toBe('lost')
+    expect(applied.state.ended).toBe(false)
+  })
+
+  it('实际重播不再被低于 1 秒的防回退条件吞掉', () => {
+    const applied = applyNativeTickState(base(), {
+      hasVideo: true, current: 0.2, duration: 100, paused: false, ended: false, src: 'blob:x',
+    }, 20_000, { lastProgressAt: 1_000, lastSeenAt: 1_000, pausedAt: 0 })
+    expect(applied.state.current).toBe(0.2)
+    expect(applied.state.status).toBe('watching')
   })
 
   it('进度停住超过 12s 标 stalled', () => {
@@ -90,6 +117,34 @@ describe('applyNativeTickState', () => {
     )
     expect(applied.state.status).toBe('lost')
     expect(applied.kind).toBe('lost')
+  })
+})
+
+describe('原生视频回执必须对应当前媒体', () => {
+  const tick = { hasVideo: true, current: 10, duration: 100, paused: false, ended: false, src: 'blob:x' }
+  it('同一段可以沿用监控，换源或重播不能沿用', () => {
+    expect(nativeWatchMatchesTick(base(), tick)).toBe(true)
+    expect(nativeWatchMatchesTick(base(), { ...tick, src: 'blob:next' })).toBe(false)
+    expect(nativeWatchMatchesTick(base({ ended: true, status: 'done' }), tick)).toBe(false)
+    expect(nativeWatchMatchesTick(base(), { ...tick, current: 0 })).toBe(false)
+    expect(nativeWatchMatchesTick(base({ src: '' }), tick)).toBe(false)
+    expect(nativeWatchMatchesTick(base(), null)).toBe(false)
+  })
+
+  it('相同媒体地址在不同 iframe 或旧文档中不能复用监控', () => {
+    const watch = base({ locator: { by: 'css', value: 'video', frameId: 'f1', loaderId: 'l1', nth: 1 } })
+    expect(nativeWatchMatchesTick(watch, { ...tick, frameId: 'f1', loaderId: 'l1', nth: 1 })).toBe(true)
+    expect(nativeWatchMatchesTick(watch, { ...tick, frameId: 'f2', loaderId: 'l1', nth: 1 })).toBe(false)
+    expect(nativeWatchMatchesTick(watch, { ...tick, frameId: 'f1', loaderId: 'l2', nth: 1 })).toBe(false)
+    expect(nativeWatchMatchesTick(watch, tick)).toBe(false)
+  })
+
+  it('本地插值即使走到时长也不能生成 done', () => {
+    const state = interpolateNativeWatch(base({ current: 99, sampledCurrent: 99 }), 5_000)
+    expect(state.current).toBe(100)
+    expect(state.status).toBe('watching')
+    expect(state.ended).toBe(false)
+    expect(state.percent).toBeLessThan(100)
   })
 })
 

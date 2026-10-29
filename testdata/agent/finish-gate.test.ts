@@ -5,8 +5,44 @@ import * as appBrowser from '../../src/services/browser/appBrowser'
 import { lastHomeworkCard } from '../../src/services/browser/abstractions'
 import { clearBrowserTaskIntent, setBrowserTaskIntent } from '../../src/services/agent/browserTask'
 import * as study from '../../src/services/chaoxing/study'
+import { seedBundledLearnedSites } from '../../src/services/agent/skillRuntime'
 
 describe('finishGate', () => {
+  it('智慧树播放页的只读任务凭本轮页面观察收尾，不要求播放；真实播放目标仍需完成证据', async () => {
+    seedBundledLearnedSites()
+    const url = 'https://wisdom-mooc.zhihuishu.com/study/index?courseId=readonly'
+    const peek = vi.spyOn(appBrowser, 'peekAppBrowserUrl').mockReturnValue(url)
+    const todos = [{ id: 'read', text: '读取并汇报目录', status: 'done' as const }]
+    const step = { id: 'read', kind: 'tool' as const, name: 'browser_get_page', label: '读取', status: 'done' as const,
+      result: JSON.stringify({ url, snapshot: '- heading "课程目录"' }) }
+    try {
+      clearBrowserTaskIntent('readonly')
+      const evidence = await collectFinishEvidence('readonly', 'readonly', { todos, steps: [step] })
+      expect(evidence).toMatchObject({ kind: 'player', intent: 'unknown', pageObserved: true })
+      expect(judgeFinish('done', '已读取并汇报目录', evidence).ok).toBe(true)
+      expect(judgeFinish('done', '已完成', { ...evidence, intent: 'play' }).ok).toBe(false)
+      expect(judgeFinish('done', '已完成', { ...evidence, watching: true }).ok).toBe(false)
+      expect(judgeFinish('done', '已完成', { ...evidence, planTotal: 2, planDone: 1 }).ok).toBe(false)
+      expect(judgeFinish('done', '已完成', { ...evidence, todos: [{ ...todos[0], status: 'pending' }] }).ok).toBe(false)
+      for (const result of [{ url, error: '读取失败' }, { url, snapshot: '旧内容', snapshotStale: true },
+        { url: url + '#other', snapshot: '其他页' }, { url, empty: true }, {}]) {
+        const missing = await collectFinishEvidence('readonly', 'readonly', { todos, steps: [{ ...step, result: JSON.stringify(result) }] })
+        expect(missing.pageObserved).toBe(false)
+        expect(judgeFinish('done', '已读取并汇报目录', missing).ok).toBe(false)
+      }
+      const changed = await collectFinishEvidence('readonly', 'readonly', { todos, steps: [step, { ...step, name: 'browser_click' }] })
+      expect(changed.pageObserved).toBe(false)
+    } finally { peek.mockRestore(); clearBrowserTaskIntent('readonly') }
+  })
+
+  it('问答收尾忽略旧播放计划，但不能在错误页面或未完成待办时通过', () => {
+    const context = { intent: 'discussion' as const, planTotal: 2, planDone: 0, hasVideo: true, paused: true }
+    expect(judgeFinish('done', '已发布并核对回答', { ...context, kind: 'unknown', url: 'https://qah5.zhihuishu.com/qa.html#/web/home/123' }).ok).toBe(true)
+    expect(judgeFinish('done', '已发布', { ...context, kind: 'player' }).ok).toBe(false)
+    expect(judgeFinish('done', '已发布', { ...context, kind: 'login' }).ok).toBe(false)
+    expect(judgeFinish('done', '已发布', { ...context, todos: [{ id: 't1', text: '核对回答', status: 'pending' }] }).ok).toBe(false)
+  })
+
   it('没有播放器或已结束的视频不能误判为正在播放', async () => {
     const peek = vi.spyOn(appBrowser, 'peekAppBrowserUrl').mockReturnValue('https://mooc1.chaoxing.com/mycourse/studentstudy')
     const read = vi.spyOn(study, 'readChaoxingVideoTick')

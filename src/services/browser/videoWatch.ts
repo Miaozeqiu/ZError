@@ -23,6 +23,7 @@ export type NativeWatchState = {
   browserId: string
   sessionId: string
   title: string
+  src: string
   current: number
   duration: number
   percent: number
@@ -48,7 +49,6 @@ export type NativeWatchCheck = {
 
 export const NATIVE_STALL_MS = 12_000
 export const NATIVE_LOST_MS = 16_000
-export const NATIVE_NEAR_END = 0.4
 
 const intervalOf = (fn: () => void, ms: number) => {
   const host = typeof window !== 'undefined' ? window : globalThis
@@ -131,6 +131,16 @@ export const parseNativeTick = (raw: unknown): NativeVideoTick | null => {
   }
 }
 
+/** 同址切小节/重播时，不能沿用上一段的 watching 或 done 回执。 */
+export const nativeWatchMatchesTick = (watch: NativeWatchState | null, tick: NativeVideoTick | null) => Boolean(
+  watch && tick?.hasVideo && watch.src && tick.src === watch.src
+  && (!watch.locator?.frameId || watch.locator.frameId === tick.frameId)
+  && (!watch.locator?.loaderId || watch.locator.loaderId === tick.loaderId)
+  && (!watch.locator?.nth || watch.locator.nth === tick.nth)
+  && !(watch.ended && !tick.ended)
+  && tick.current >= watch.sampledCurrent - 1
+)
+
 const emit = (kind: NativeWatchKind, state: NativeWatchState) => {
   checkHandler?.({
     browserId: state.browserId,
@@ -205,14 +215,14 @@ export const applyNativeTickState = (
     return { state: prev, kind: null, clocks }
   }
 
+  if (prev.src && tick.src && prev.src !== tick.src) {
+    return { state: { ...prev, status: 'lost', ended: false, updatedAt: now }, kind: 'lost', clocks }
+  }
   const duration = tick.duration > 0 ? tick.duration : prev.duration
   const current = Math.max(0, Number(tick.current) || 0)
-  if (prev.current > 3 && current < 1 && duration > 1 && !tick.ended && current < prev.current - 3) {
-    return { state: prev, kind: null, clocks }
-  }
-  const nearEnd = duration > 1 && current >= duration - NATIVE_NEAR_END
-  const done = Boolean(tick.ended || nearEnd)
-  let nextProgress = clocks.lastProgressAt
+  // 接近结尾、弹题暂停和本地插值都不是媒体 ended 事件。
+  const done = Boolean(tick.ended)
+  let nextProgress = current < prev.sampledCurrent - 1 ? now : clocks.lastProgressAt
   let nextPaused = clocks.pausedAt
   if (!tick.paused && (current >= prev.sampledCurrent + 0.35 || done)) {
     nextProgress = now
@@ -239,6 +249,7 @@ export const applyNativeTickState = (
   return {
     state: {
       ...prev,
+      src: tick.src || prev.src,
       current,
       duration,
       percent: livePercent(current, duration, done),
@@ -291,23 +302,23 @@ const applyTick = (browserId: string, tick: NativeVideoTick | null) => {
   }
 }
 
+export const interpolateNativeWatch = (watch: NativeWatchState, now: number): NativeWatchState => {
+  if (watch.paused || watch.ended || watch.status !== 'watching') return watch
+  if (!(watch.sampledAt > 0) || !(watch.duration > 1)) return watch
+  if (now - watch.sampledAt > INTERPOLATE_MS) return watch
+  const elapsed = (now - watch.sampledAt) / 1000
+  if (elapsed < 0.05) return watch
+  const current = Math.min(watch.duration, watch.sampledCurrent + elapsed)
+  return {
+    ...watch,
+    current,
+    percent: Math.min(99.9, livePercent(current, watch.duration, false)),
+  }
+}
+
 const tickLive = (browserId: string) => {
   const watch = nativeWatches.value[browserId]
-  if (!watch) return
-  if (watch.paused || watch.ended || watch.status !== 'watching') return
-  if (!(watch.sampledAt > 0) || !(watch.duration > 1)) return
-  if (Date.now() - watch.sampledAt > INTERPOLATE_MS) return
-  const elapsed = (Date.now() - watch.sampledAt) / 1000
-  if (elapsed < 0.05) return
-  const current = Math.min(watch.duration, watch.sampledCurrent + elapsed)
-  const done = Boolean(watch.ended || (watch.duration > 0 && current >= watch.duration - 0.15))
-  const next = patchWatch(browserId, {
-    current,
-    percent: livePercent(current, watch.duration, done),
-    status: done ? 'done' : 'watching',
-    ended: done || watch.ended,
-  })
-  if (next && done) fireDone(next)
+  if (watch) patchWatch(browserId, interpolateNativeWatch(watch, Date.now()))
 }
 
 export const readNativeVideoTick = async (browserId: string, locator?: BrowserLocator): Promise<NativeVideoTick | null> => {
@@ -358,7 +369,8 @@ export const startNativeWatch = (
   const state: NativeWatchState = {
     browserId: id,
     sessionId: sid,
-    title: String(seed?.title || prev?.title || '').trim(),
+    title: String(seed?.title || (resume ? prev?.title : '') || '').trim(),
+    src: String(seed?.src || ''),
     current,
     duration,
     percent: livePercent(current, duration, done),

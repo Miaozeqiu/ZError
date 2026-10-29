@@ -4,6 +4,7 @@ import { handleCheckTool } from './check'
 import { observedJson } from '../../browser/engine'
 import { explainEvalError, videoSnapshotNote } from '../../browser/eval'
 import { cachedPageSnap, invalidatePageSnap } from '../../browser/engine/pageSnap'
+import { browserTabLimitSequence, withPopupTabLimit } from '../../browser/tabLimits'
 import { rememberPageRefs } from '../../browser/engine/refs'
 
 export const handleActTools = async (ctx: Record<string, any>): Promise<string | null> => {
@@ -30,8 +31,9 @@ export const handleActTools = async (ctx: Record<string, any>): Promise<string |
       return JSON.stringify({ ok: false, error: '不支持的按键' })
     }
     const from = await currentUrl(browserId)
+    const tabLimitBefore = browserTabLimitSequence()
     const result = await callProtocol(browserId, 'press', { key })
-    return JSON.stringify(await observeAfterClick(browserId, asObject(result), from))
+    return JSON.stringify(await observeAfterClick(browserId, asObject(result), from, undefined, tabLimitBefore))
   }
   if (name === 'browser_set_checked') {
     const from = await currentUrl(browserId)
@@ -50,10 +52,11 @@ export const handleActTools = async (ctx: Record<string, any>): Promise<string |
     const frame = String(args.frame || '').trim() || undefined
     const missHint = () => formatMissRefsHint(browserId, 'click')
     const runClick = async (locator: BrowserLocator) => {
+      const tabLimitBefore = browserTabLimitSequence()
       const target = { ...locator, nth: locator.nth ?? nth, frame: locator.frame ?? frame }
       const acted = await clickByLocator(browserId, target)
       if (acted.requiresRefresh) { invalidatePageSnap(browserId); rememberPageRefs(browserId, []) }
-      const seen = await observeAfterClick(browserId, acted, from, acted.requiresRefresh ? undefined : target.frameId || acted.frameId || target.frame || target.framePath)
+      const seen = await observeAfterClick(browserId, acted, from, acted.requiresRefresh ? undefined : target.frameId || acted.frameId || target.frame || target.framePath, tabLimitBefore)
       return JSON.stringify(acted.ok ? seen : { ...seen, hint: [seen.hint, missHint()].filter(Boolean).join(' ') })
     }
     if (ref && !looksLikeCssSelector(ref)) {
@@ -89,6 +92,7 @@ export const handleActTools = async (ctx: Record<string, any>): Promise<string |
       if (policy.permissionMode === 'strict') return JSON.stringify({ ok: false, error: COURSE_HW_HINT })
     }
     const from = nowUrl
+    const tabLimitBefore = browserTabLimitSequence()
     // DOM 补充控件不一定在 AX 树里。唯一的精确快照命中优先使用原来的节点/frame 身份。
     const compact = (value: string) => String(value || '').replace(/\s+/g, '')
     const refs = typeof listCachedPageRefs === 'function' ? listCachedPageRefs(browserId) : []
@@ -99,7 +103,7 @@ export const handleActTools = async (ctx: Record<string, any>): Promise<string |
       const acted = await clickByLocator(browserId, locator)
       if (acted.requiresRefresh) { invalidatePageSnap(browserId); rememberPageRefs(browserId, []) }
       return JSON.stringify(await observeAfterClick(browserId, acted, from,
-        acted.requiresRefresh ? undefined : locator.frameId || locator.frame || locator.framePath))
+        acted.requiresRefresh ? undefined : locator.frameId || locator.frame || locator.framePath, tabLimitBefore))
     }
     let clicked = await withBudget(
       (nth || frame
@@ -112,8 +116,10 @@ export const handleActTools = async (ctx: Record<string, any>): Promise<string |
       { ok: false, error: `点击「${text}」超时` },
     ) as { ok?: boolean; error?: string; text?: string }
     if (clicked?.ok) {
-      if (isCourseChromeTab(text)) return JSON.stringify(clicked)
-      const seen = await observeAfterClick(browserId, { ok: true, text: clicked.text || text }, from, frame)
+      if (isCourseChromeTab(text) && siteGraphForUrl?.(nowUrl)?.id === 'chaoxing') {
+        return JSON.stringify(withPopupTabLimit(browserId, { ...clicked, ok: true }, tabLimitBefore))
+      }
+      const seen = await observeAfterClick(browserId, { ok: true, text: clicked.text || text }, from, frame, tabLimitBefore)
       if (/^(我学的课|已学的课|我教的课)$/.test(text)) {
         const extra = clicked as { tab?: string; frame?: string; already?: boolean }
         return JSON.stringify({

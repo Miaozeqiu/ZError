@@ -13,6 +13,17 @@ export const BROWSER_PRIMITIVE_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'browser_tabs',
+      description: '列出当前对话标签，或关闭已完成、已核对且不再需要的临时页。先 list 核对 id，再 close；关闭当前页会优先返回来源页。保留播放监控、未保存表单、待核对结果和最后一个入口页，不能关闭其他对话的页面。',
+      parameters: { type: 'object', properties: {
+        action: { type: 'string', enum: ['list', 'close'] },
+        id: { type: 'string', description: 'close 时必填，使用本对话 list 返回的标签 id' },
+      }, required: ['action'] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'browser_decode_chaoxing_font',
       description: '学习通题干或选项出现字体混淆时，按 OCS 的字形匹配读取各 iframe 中的原文；匹配不可靠时返回当前截图供视觉核验。结合页面快照核对题目、选项及控件，不要凭乱码猜测。',
       parameters: { type: 'object', properties: {} },

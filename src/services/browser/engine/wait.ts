@@ -14,6 +14,7 @@ import {
 import { resolveRefLocator } from './refs'
 import type { ActResult, BrowserLocator } from './types'
 import { noteCourseNavigation } from '../coursePlan'
+import { withPopupTabLimit } from '../tabLimits'
 
 const lastFocus = new Map<string, string>()
 
@@ -381,6 +382,7 @@ export const observeAfterClick = async (
   result: ActResult,
   fromUrl: string,
   frame?: string,
+  tabLimitSequence?: number,
 ): Promise<ActResult> => {
   const beforeSnap = cachedPageSnap(id)?.snapshot || ''
   let base: ActResult
@@ -419,6 +421,8 @@ export const observeAfterClick = async (
     }
   }
   const seen = await attachActionSnapshot(id, base, frame)
+  const checked = withPopupTabLimit(id, seen, tabLimitSequence)
+  if (checked.reason === 'tab_limit') return checked
   if (result.ok) {
     const landed = String(seen.url || '').split('#')[0]
     const from = String(fromUrl || '').split('#')[0]
