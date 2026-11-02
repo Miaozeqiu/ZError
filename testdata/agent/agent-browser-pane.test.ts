@@ -147,6 +147,36 @@ describe('浏览器小窗原生视图生命周期', () => {
     expect(document.querySelector('.browser-error')?.textContent).toContain('切换失败')
   })
 
+  it('仅观看时网页输入不自动接管，导航控件只有显式接管成功后才启用', async () => {
+    state.expanded.value = true
+    await mount()
+    await vi.waitFor(() => expect(native.show).toHaveBeenCalled())
+    const host = document.querySelector('.browser-host')!
+    for (const name of ['pointerover', 'mousemove', 'pointerdown', 'pointerup', 'wheel', 'keydown', 'dragstart', 'dragover', 'drop']) {
+      host.dispatchEvent(new Event(name, { bubbles: true, cancelable: true }))
+    }
+    await nextTick()
+    expect(native.control).not.toHaveBeenCalled()
+    const address = document.querySelector('.browser-address') as HTMLInputElement
+    expect(address.disabled).toBe(true)
+    expect((document.querySelector('[aria-label="刷新"]') as HTMLButtonElement).disabled).toBe(true)
+    expect(document.querySelector('.browser-tabs')?.getAttribute('aria-disabled')).toBe('true')
+    expect(document.querySelector('.browser-claim-button')?.hasAttribute('disabled')).toBe(false)
+    let acknowledge!: () => void
+    native.control.mockImplementationOnce(() => new Promise<void>(resolve => { acknowledge = () => { state.userControl.value = true; resolve() } }))
+    ;(document.querySelector('.browser-claim-button') as HTMLButtonElement).click()
+    await nextTick()
+    expect(native.control).toHaveBeenCalledWith('tab-one', 'chat-one', 'user')
+    expect(address.disabled).toBe(true)
+    acknowledge()
+    await vi.waitFor(() => expect(address.disabled).toBe(false))
+    expect(document.querySelector('.browser-tabs')?.getAttribute('aria-disabled')).toBe('false')
+    native.control.mockImplementationOnce(async () => { state.userControl.value = false })
+    ;(document.querySelector('.browser-stop-control') as HTMLButtonElement).click()
+    await vi.waitFor(() => expect(address.disabled).toBe(true))
+    expect(native.control).toHaveBeenLastCalledWith('tab-one', 'chat-one', 'agent')
+  })
+
   it('连续缩放只更新尺寸，不重复打开、显示或进入加载态，最终使用最新尺寸', async () => {
     state.expanded.value = true
     await mount()

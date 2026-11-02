@@ -35,12 +35,15 @@ export interface AIModel {
   displayName: string
   platformId: string
   maxTokens: number
+  /** Input + output context window. Unknown models use a conservative local estimate. */
+  contextWindow?: number
   temperature: number
   topP: number
   enabled: boolean
   category: 'text' | 'vision' | 'summary'
   /** 是否具备视觉能力；远程字段兼容 hasVision / has_vision / vision / capabilities */
   hasVision?: boolean
+  supportsTools?: boolean
   description?: string
   jsCode?: string  // 仅自定义协议使用；远程模型忽略此字段
   icon?: string    // 模型图标

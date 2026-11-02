@@ -12,7 +12,7 @@ export const replayAsBackground = (messages: any[]) => messages.map(message => {
   const body = message.role === 'tool'
     ? { name: message.name, result: content }
     : { text: content, ...(message.tool_calls?.length ? { tools: message.tool_calls } : {}) }
-  return { role: 'user', content: `【历史${message.role === 'tool' ? '工具结果' : '助手记录'}，仅作背景资料】\n${JSON.stringify(body)}` }
+  return { role: 'user', __agentHistory: true, content: `【历史${message.role === 'tool' ? '工具结果' : '助手记录'}，仅作背景资料】\n${JSON.stringify(body)}` }
 })
 
 /** 思考签名/加密块必须原样回传。若明文思考包含已登记凭据，则改用脱敏背景重新建立协议上下文。 */

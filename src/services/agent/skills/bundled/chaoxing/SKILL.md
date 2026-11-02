@@ -18,4 +18,4 @@ metadata:
 |------|------|
 | 登录、打开课表 | [references/login.md](references/login.md) |
 | 刷课、播视频、章节任务点 | [references/study.md](references/study.md) |
-| 课程作业 | [references/homework.md](references/homework.md) |
+| 课程作业、章节测验 | [references/homework.md](references/homework.md) |

@@ -3,10 +3,32 @@ import { collectFinishEvidence, judgeFinish } from '../../src/services/agent/fin
 import { applyBrowserTodo, pendingTodos } from '../../src/services/agent/browserTodo'
 import * as appBrowser from '../../src/services/browser/appBrowser'
 import { lastHomeworkCard } from '../../src/services/browser/abstractions'
-import { clearBrowserTaskIntent, setBrowserTaskIntent } from '../../src/services/agent/browserTask'
+import { clearBrowserTaskIntent, rememberBrowserTaskIntent, setBrowserTaskIntent } from '../../src/services/agent/browserTask'
 import * as study from '../../src/services/chaoxing/study'
 
 describe('finishGate', () => {
+  it('当前用户的只读复核有新页面证据时，不要求完成当前页面的整门课程', async () => {
+    const url = 'https://mooc1.chaoxing.com/mycourse/studentstudy?chapterId=2'
+    const peek = vi.spyOn(appBrowser, 'peekAppBrowserUrl').mockReturnValue(url)
+    const read = vi.spyOn(study, 'readChaoxingVideoTick').mockResolvedValue(null)
+    setBrowserTaskIntent('review-production', 'play') // Previous course intent cannot redefine the new user request.
+    const steps = [{ id: 'review', kind: 'tool' as const, name: 'browser_get_page', label: '只读核对', status: 'done' as const,
+      result: JSON.stringify({ ok: true, url, observation_id: 'review', observed_browser_id: 'review-tab', observed_at: Date.now() }) }]
+    try {
+      const evidence = await collectFinishEvidence('review-tab', 'review-production', { goalText: '只读复核当前已提交结果，不答题，不提交', steps })
+      expect(evidence.reviewObservationId).toBe('review')
+      expect(evidence.reviewRequested).toBe(true)
+      expect(judgeFinish('done', '仅核对题号，保留已有成绩', evidence).ok).toBe(true)
+      expect(judgeFinish('done', '复核完成', { ...evidence, watching: true }).ok).toBe(false)
+      expect(judgeFinish('done', '复核完成', { ...evidence, playing: true }).ok).toBe(false)
+      expect(judgeFinish('done', '复核完成', { ...evidence, planTotal: 2, planDone: 1 }).ok).toBe(false)
+      expect(judgeFinish('done', '复核完成', { ...evidence, todos: [{ id: 'pending', text: '未完成', status: 'pending' }] }).ok).toBe(false)
+      expect(judgeFinish('done', '复核完成', { ...evidence, reviewObservationId: undefined })).toMatchObject({ ok: false, error: expect.stringContaining('本次是只读复核') })
+      const whole = await collectFinishEvidence('review-tab', 'review-production', { goalText: '完成整门课程', steps })
+      expect(whole.reviewObservationId).toBeUndefined()
+      expect(judgeFinish('done', '复核完成', whole).ok).toBe(false)
+    } finally { peek.mockRestore(); read.mockRestore(); clearBrowserTaskIntent('review-production') }
+  })
   it('没有播放器或已结束的视频不能误判为正在播放', async () => {
     const peek = vi.spyOn(appBrowser, 'peekAppBrowserUrl').mockReturnValue('https://mooc1.chaoxing.com/mycourse/studentstudy')
     const read = vi.spyOn(study, 'readChaoxingVideoTick')
@@ -44,6 +66,41 @@ describe('finishGate', () => {
       expect(judgeFinish('done', '已打开用户指定页面', { url, kind: 'unknown' }).ok).toBe(true)
     }
     expect(judgeFinish('done', '已登录', { url: 'https://example.com/login' }).ok).toBe(false)
+  })
+  it('限定章节的最新完成证据可以收尾，但不越过播放、等待、清单或课程计划门禁', () => {
+    const evidence = { intent: 'play' as const, kind: 'player' as const, todos: [{ id: 'check', text: '核对2.1和2.2', status: 'done' as const }],
+      scopedCompletion: { stepId: 'fresh-page', targets: ['2.1', '2.2'], evidence: '目录标记与提交回执均已核对' } }
+    expect(judgeFinish('done', '仅用户指定两节已完成，其他章节未执行', evidence).ok).toBe(true)
+    expect(judgeFinish('done', '已完成', { ...evidence, playing: true }).ok).toBe(false)
+    expect(judgeFinish('done', '已完成', { ...evidence, watching: true }).ok).toBe(false)
+    expect(judgeFinish('done', '已完成', { ...evidence, todos: [{ id: 'pending', text: '尚未完成', status: 'pending' }] }).ok).toBe(false)
+    expect(judgeFinish('done', '已完成', { ...evidence, planTotal: 3, planDone: 2 }).ok).toBe(false)
+  })
+  it('生产路径只接纳用户限定的章节和本轮宿主签发的观察，整课目标不能缩成两节', async () => {
+    const url = 'https://mooc1.chaoxing.com/mycourse/studentstudy?chapterId=2'
+    const peek = vi.spyOn(appBrowser, 'peekAppBrowserUrl').mockReturnValue(url)
+    const read = vi.spyOn(study, 'readChaoxingVideoTick').mockResolvedValue(null)
+    const extras = {
+      todos: [{ id: 'all', text: '核对全部指定章节', status: 'done' as const }],
+      steps: [{ id: 'fresh', kind: 'tool' as const, name: 'browser_screenshot', label: '目录截图', status: 'done' as const,
+        result: JSON.stringify({ ok: true, image: '[attached]', url, observation_id: 'fresh', observed_browser_id: 'scope-tab', observed_at: Date.now() }) }],
+      completion: { observation_id: 'fresh', targets: ['2.1', '2.2'], evidence: '目录中两节均为完成标记且有提交回执。' },
+    }
+    try {
+      rememberBrowserTaskIntent('scope-production', '只完成2.1和2.2章节视频')
+      const evidence = await collectFinishEvidence('scope-tab', 'scope-production', extras)
+      expect(evidence.scopedCompletion?.targets).toEqual(['2.1', '2.2'])
+      expect(judgeFinish('done', '指定章节完成', evidence).ok).toBe(true)
+      rememberBrowserTaskIntent('scope-production', '完成整门课程，包括2.1和2.2')
+      const whole = await collectFinishEvidence('scope-tab', 'scope-production', extras)
+      expect(whole.scopedCompletion).toBeUndefined()
+      expect(judgeFinish('done', '两节完成', whole).ok).toBe(false)
+      clearBrowserTaskIntent('scope-production')
+      const restored = await collectFinishEvidence('scope-tab', 'scope-production', { ...extras, goalText: '只完成2.1和2.2章节' })
+      expect(restored.scopedCompletion?.targets).toEqual(['2.1', '2.2'])
+      rememberBrowserTaskIntent('scope-production', '只完成2.1和2.2')
+      expect((await collectFinishEvidence('scope-tab', 'scope-production', { ...extras, goalText: '完成整门课程' })).scopedCompletion).toBeUndefined()
+    } finally { peek.mockRestore(); read.mockRestore(); clearBrowserTaskIntent('scope-production') }
   })
   it('遗留未填题卡缓存不能干扰已完成的通用浏览器任务', async () => {
     const prev = lastHomeworkCard.value

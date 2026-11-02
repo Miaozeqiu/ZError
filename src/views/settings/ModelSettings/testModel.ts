@@ -1,3 +1,5 @@
+import { mergeToolCalls } from '../../../services/model/toolCallMerge'
+import { createBuiltinProvider } from '../../../services/model/providers'
 /** 模型连通性测试。设置页其它逻辑不要堆进这里。 */
 import type { Ref } from 'vue'
 import { secureFetch } from '../../../services/security/secureFetch'
@@ -330,17 +332,17 @@ export const bindModelTest = (state: ModelTestState) => {
       // 执行JavaScript配置代码
       if (executableCode) {
         try {
-          // 创建一个安全的执行环境
-          let processModel
+          // 内置协议使用编译后的适配器；自定义 JS 具有当前应用权限。
+          let processModel: any = createBuiltinProvider(model, selectedPlatform.value)
         
-          if (executableCode.startsWith('async function') || executableCode.startsWith('function')) {
-            // 如果是完整的函数声明，使用eval在安全环境中执行
-            const safeEval = new Function('input', 'config', 'fetch', 'abortSignal', `
+          if (!processModel && (executableCode.startsWith('async function') || executableCode.startsWith('function'))) {
+            // 自定义函数不是隔离沙箱。
+            const loadCustomProvider = new Function('input', 'config', 'fetch', 'abortSignal', `
               ${executableCode}
               return processModel;
             `)
-            processModel = safeEval(testInput, config, tauriFetch, testAbortController.value?.signal)
-          } else {
+            processModel = loadCustomProvider(testInput, config, tauriFetch, testAbortController.value?.signal)
+          } else if (!processModel) {
             // 如果是函数体，包装为async函数
             const wrapperFunction = new Function('input', 'config', 'fetch', 'abortSignal', `
               return (async function processModel(input, config) {
@@ -359,9 +361,16 @@ export const bindModelTest = (state: ModelTestState) => {
           streamingResponse.value = '' // 重置流式响应
           streamingReasoning.value = '' // 重置流式思考过程
         
+          let testRounds = 0
+          let testedTool = false
           while (true) {
-            const result = await processModel(testInput, config, tauriFetch, testAbortController.value?.signal)
+            if (++testRounds > 4) throw new Error('测试工具调用未收敛，已停止，避免持续消耗。')
+            let result = await processModel(testInput, config, tauriFetch, testAbortController.value?.signal)
           
+            if (result && !result[Symbol.asyncIterator] && Array.isArray(result.tool_calls) && result.tool_calls.length) {
+              const value = result
+              result = (async function* () { yield value })()
+            }
             if (result) {
               // 如果返回的是生成器或异步迭代器，收集结果
               if (result[Symbol.asyncIterator]) {
@@ -369,14 +378,7 @@ export const bindModelTest = (state: ModelTestState) => {
 
                 for await (const chunk of result) {
                   if (chunk.tool_calls) {
-                    for (const tc of chunk.tool_calls) {
-                      const existing = toolCalls.find(t => t.id === tc.id)
-                      if (existing) {
-                        existing.function.arguments += (tc.function?.arguments || '')
-                      } else {
-                        toolCalls.push(tc)
-                      }
-                    }
+                    mergeToolCalls(toolCalls, chunk.tool_calls, 'delta')
                   }
                   if (chunk.content) {
                     if (firstTokenAt === null) firstTokenAt = performance.now()
@@ -422,6 +424,7 @@ export const bindModelTest = (state: ModelTestState) => {
                         toolResult = `Error: Unknown function ${tc.function.name}`
                       }
 
+                      if (tc.function.name === 'test_function' || (tc.function.name === 'encrypt_string' && JSON.parse(toolResult).success === true)) testedTool = true
                       fullResponse += `[测试：向模型返回模拟结果: ${toolResult}]\n\n`
                       streamingResponse.value = fullResponse
 
@@ -436,6 +439,7 @@ export const bindModelTest = (state: ModelTestState) => {
                   continue; // tool calls processed, loop again
                 }
 
+                if (testFunctionCalling && !testedTool) throw new Error('模型未实际成功调用测试工具，不能把普通文本回复当作工具能力通过。')
                 if (!hasVisibleOutputContent(fullResponse)) {
                   currentTestResult.value = null
                   currentTestError.value = '测试失败：模型未返回任何输出内容'
@@ -446,6 +450,7 @@ export const bindModelTest = (state: ModelTestState) => {
 
                   currentTestResult.value = {
                     success: true,
+                    toolCallingVerified: testFunctionCalling ? testedTool : undefined,
                     response: fullResponse,
                     reasoning_content: fullReasoning,
                     firstTokenLatency: firstTokenLatency ?? undefined,
@@ -470,6 +475,7 @@ export const bindModelTest = (state: ModelTestState) => {
                   usagePayload = result
                 }
 
+                if (testFunctionCalling && !testedTool) throw new Error('模型未实际成功调用测试工具，不能把普通文本回复当作工具能力通过。')
                 if (!hasVisibleOutputContent(finalResponse)) {
                   currentTestResult.value = null
                   currentTestError.value = '测试失败：模型未返回任何输出内容'
@@ -480,6 +486,7 @@ export const bindModelTest = (state: ModelTestState) => {
 
                   currentTestResult.value = {
                     success: true,
+                    toolCallingVerified: testFunctionCalling ? testedTool : undefined,
                     response: finalResponse,
                     reasoning_content: finalReasoning,
                     firstTokenLatency,

@@ -1,3 +1,4 @@
+vi.mock('../../src/services/model/providers', () => ({ createBuiltinProvider: () => null }))
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 const state = vi.hoisted(() => ({ inputs: [] as any[] }))
 vi.mock('../../src/services/model/config', () => ({ fetchRemoteModelsCatalog: vi.fn().mockResolvedValue({}) }))

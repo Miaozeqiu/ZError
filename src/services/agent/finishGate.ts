@@ -2,7 +2,8 @@
 import { peekAppBrowserUrl } from '../browser/appBrowser'
 import { pendingTodos } from './browserTodo'
 import { classifyBrowserPage, type BrowserPageKind } from './browserLoop'
-import { browserTaskIntent, type BrowserTaskIntent } from './browserTask'
+import { browserTaskIntent, browserTaskTargets, specifiedChapterTargets, type BrowserTaskIntent } from './browserTask'
+import { scopedCompletionEvidence, type ScopedCompletionProof, type ScopedCompletionEvidence } from './scopedCompletionEvidence'
 import type { AgentSubagentKind } from './chatTypes'
 import type { AgentTodoItem } from './chatTypes'
 import { packAgentPanel, videoWatchFor } from '../platform/panelAccess'
@@ -11,6 +12,7 @@ import { readChaoxingVideoTick, videoIsPlaying } from '../chaoxing/study'
 import { coursePlanFor, courseProgress } from '../browser/coursePlan'
 import { courseCompletionEvidence, type CourseCompletionEvidence } from './courseCompletionEvidence'
 import type { ImportTaskStep } from '../app/importTasks'
+import { isReadOnlyReviewGoal, reviewObservationId } from './observationReview'
 
 export type FinishStatus = 'done' | 'blocked' | 'watching'
 
@@ -36,6 +38,9 @@ export type FinishEvidence = {
   planTotal?: number
   planComplete?: boolean
   courseCompletion?: CourseCompletionEvidence
+  scopedCompletion?: ScopedCompletionEvidence
+  reviewObservationId?: string
+  reviewRequested?: boolean
 }
 
 export const isMultiStepIntent = (intent?: BrowserTaskIntent, extras?: {
@@ -50,7 +55,7 @@ export const isMultiStepIntent = (intent?: BrowserTaskIntent, extras?: {
 export const collectFinishEvidence = async (
   browserId: string,
   sessionId: string,
-  extras?: { todos?: AgentTodoItem[]; role?: FinishRole; steps?: ImportTaskStep[] },
+  extras?: { todos?: AgentTodoItem[]; role?: FinishRole; steps?: ImportTaskStep[]; completion?: ScopedCompletionProof; goalText?: string },
 ): Promise<FinishEvidence> => {
   const id = String(browserId || '').trim()
   const url = id ? peekAppBrowserUrl(id) : ''
@@ -86,6 +91,10 @@ export const collectFinishEvidence = async (
     planTotal: progress?.total,
     planComplete: progress?.complete,
     courseCompletion: kind === 'course' ? courseCompletionEvidence(extras?.steps || [], url) : undefined,
+    scopedCompletion: scopedCompletionEvidence(extras?.steps || [], id, url || '', extras?.goalText != null
+      ? specifiedChapterTargets(extras.goalText) : browserTaskTargets(sessionId), extras?.completion),
+    reviewObservationId: reviewObservationId(extras?.goalText, extras?.steps || [], id, url || ''),
+    reviewRequested: Boolean(extras?.goalText && isReadOnlyReviewGoal(extras.goalText)),
   }
 }
 
@@ -113,6 +122,13 @@ export const judgeFinish = (
       ok: false,
       error: `清单还有未完成：${pending.map((item) => item.text).join('、')}。先实际完成并核对结果，再 browser_todo check；确实无法继续时说明 blocked 原因，不能只勾选清单收尾。`,
     }
+  }
+  if (want === 'done' && evidence.reviewObservationId && !evidence.playing && !evidence.watching
+    && (!(evidence.planTotal || 0) || evidence.planComplete)) {
+    return { ok: true, status: want, summary: text }
+  }
+  if (want === 'done' && evidence.reviewRequested) {
+    return { ok: false, error: '本次是只读复核，不要求完成整门课程。先在当前标签 browser_get_page / browser_screenshot 获取最新页面证据；滚动后重新读取。若本轮已执行填写、勾选、导航或写入，或仍有播放、监控、课程计划未完成，请说明具体阻塞，不要反复查询整课完成统计。' }
   }
   if (
     want === 'done'
@@ -160,6 +176,7 @@ export const judgeFinish = (
     if (evidence.playing) {
       return { ok: false, error: '有视频在播。用 finish(watching)，不要当成整门课做完。' }
     }
+    if (evidence.scopedCompletion && !evidence.watching) return { ok: true, status: 'done', summary: text }
     if (kind === 'course' && !evidence.watching && evidence.courseCompletion
       && evidence.courseCompletion.completed === evidence.courseCompletion.total) {
       return { ok: true, status: 'done', summary: text }
@@ -173,7 +190,7 @@ export const judgeFinish = (
     if (evidence.watching) {
       return { ok: false, error: '有监控或课程计划在跑。用 finish(watching)，不要标 done。' }
     }
-    return { ok: false, error: '尚无任务已完成的页面证据。先核对当前目录或任务点统计；确有未完成任务才继续执行，全部完成则读取明确统计后收尾，无法核对则说明 blocked 原因。' }
+    return { ok: false, error: '尚无任务已完成的页面证据。若用户只指定了编号章节，先 get_page / screenshot 核对全部目标的完成标记，再填写 completion（最新 observation_id、全部 targets 和具体 evidence）；整门课仍需完整统计。不要重复成功操作或把隐藏提示当作未完成证据。' }
   }
 
   return { ok: true, status: want, summary: text }

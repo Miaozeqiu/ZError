@@ -6,6 +6,8 @@ export const BUILTIN_WEBSITES = [
   { id: 'zjooc', name: '在浙学', host: 'zjooc.cn' },
 ] as const
 
+const BUILTIN_SERVICE_DOMAINS: Record<string, string[]> = { 'zhihuishu.com': ['polymas.com'] }
+
 export type WebsiteIdentity = { host: string; name: string; loginHosts: string[]; credentialsApproved?: boolean; iconUrl?: string; iconDataUrl?: string }
 // Verified service relationship. It does not create a website card until the site is used.
 const VERIFIED_WEBSITES: WebsiteIdentity[] = [
@@ -82,9 +84,11 @@ export const websiteIdentityForHost = (input: string): WebsiteIdentity | null =>
   const known = BUILTIN_WEBSITES.find(site => site.id === input)
   const host = known?.host || normalizeWebsiteHost(input)
   if (!host) return null
+  const builtinService = BUILTIN_WEBSITES.find(site => (BUILTIN_SERVICE_DOMAINS[site.host] || []).some(alias => host === alias || host.endsWith(`.${alias}`)))
+  if (builtinService) return websiteIdentityState.profiles.find(site => site.host === builtinService.host) || null
   const exact = websiteIdentityState.profiles.find(site => site.host === host || site.loginHosts.includes(host))
   if (exact) return exact
-  const family = BUILTIN_WEBSITES.find(site => host.endsWith(`.${site.host}`))
+  const family = BUILTIN_WEBSITES.find(site => host.endsWith(`.${site.host}`) || (BUILTIN_SERVICE_DOMAINS[site.host] || []).some(alias => host === alias || host.endsWith(`.${alias}`)))
   if (family) return websiteIdentityState.profiles.find(site => site.host === family.host) || null
   return { host, name: host, loginHosts: [] }
 }
@@ -97,7 +101,7 @@ export const websiteLabel = (id: string) => websiteIdentityForHost(id)?.name || 
 export const websiteHostPattern = (input: string) => {
   const site = websiteIdentityForHost(input)
   if (!site) return ''
-  const hosts = [site.host, ...site.loginHosts].map(host => host.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+  const hosts = [site.host, ...site.loginHosts, ...(BUILTIN_SERVICE_DOMAINS[site.host] || [])].map(host => host.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
   return `^https?://(?:www\\.)?(?:${hosts.join('|')})(?::\\d+)?(?:[/?#]|$)`
 }
 

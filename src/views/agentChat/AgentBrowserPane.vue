@@ -34,23 +34,23 @@
     <AgentTaskHistory v-if="!agentBrowserExpanded" />
 
     <div v-show="agentBrowserExpanded" id="agent-browser-screen" class="browser-screen" @animationend="finishOpeningMotion">
-      <div v-show="showBrowserChrome" class="browser-tabs" role="tablist" aria-label="浏览器标签页" @pointerdown.capture="takeControlFromUi">
+      <div v-show="showBrowserChrome" class="browser-tabs" role="tablist" aria-label="浏览器标签页" :inert="!canInteract" :aria-disabled="!canInteract">
         <div v-for="tab in currentAgentBrowsers" :key="tab.id" class="browser-tab" :class="{ 'is-selected': tab.id === currentAgentBrowser?.id }">
-          <button type="button" role="tab" :aria-selected="tab.id === currentAgentBrowser?.id" :title="tab.title || tab.url" @click="selectTab(tab.id)">{{ tab.title || hostnameOf(tab.url) }}</button>
-          <button class="browser-tab-close" type="button" :aria-label="`关闭 ${tab.title || '标签页'}`" @click="closeTab(tab.id)"><Icon icon="lucide:x" width="12" height="12" /></button>
+          <button type="button" role="tab" :disabled="!canInteract" :aria-selected="tab.id === currentAgentBrowser?.id" :title="tab.title || tab.url" @click="selectTab(tab.id)">{{ tab.title || hostnameOf(tab.url) }}</button>
+          <button class="browser-tab-close" type="button" :disabled="!canInteract" :aria-label="`关闭 ${tab.title || '标签页'}`" @click="closeTab(tab.id)"><Icon icon="lucide:x" width="12" height="12" /></button>
         </div>
-        <button class="browser-icon-button" type="button" title="新建标签页" aria-label="新建标签页" :disabled="currentAgentBrowsers.length >= 16" @click="newTab"><Icon icon="lucide:plus" width="15" height="15" /></button>
+        <button class="browser-icon-button" type="button" title="新建标签页" aria-label="新建标签页" :disabled="!canInteract || currentAgentBrowsers.length >= 16" @click="newTab"><Icon icon="lucide:plus" width="15" height="15" /></button>
       </div>
-      <form v-show="showBrowserChrome" class="browser-toolbar" @submit.prevent="navigate" @pointerdown.capture="takeControlFromUi">
-        <button class="browser-icon-button" type="button" title="后退" aria-label="后退" :disabled="!currentAgentBrowser || busy" @click="runNavigation('back')"><Icon icon="lucide:chevron-left" width="15" height="15" /></button>
-        <button class="browser-icon-button" type="button" title="前进" aria-label="前进" :disabled="!currentAgentBrowser || busy" @click="runNavigation('forward')"><Icon icon="lucide:chevron-right" width="15" height="15" /></button>
-        <button class="browser-icon-button" type="button" title="刷新" aria-label="刷新" :disabled="!currentAgentBrowser || busy" @click="runNavigation('reload')"><Icon icon="lucide:refresh-cw" width="14" height="14" /></button>
-        <input v-model="address" class="browser-address" aria-label="网址" placeholder="输入网址，按回车打开" spellcheck="false" autocomplete="off" @focus="focusAddress" @blur="blurAddress" @keydown.esc="blurAddress" />
-        <button class="browser-icon-button" type="button" :title="muted ? '开启声音' : '关闭声音'" :aria-label="muted ? '开启声音' : '关闭声音'" :aria-pressed="muted" :disabled="!currentAgentBrowser || audioBusy" @click="toggleAudio"><Icon :icon="muted ? 'lucide:volume-x' : 'lucide:volume-2'" width="15" height="15" /></button>
-        <button class="browser-zoom" type="button" :title="`当前缩放 ${zoomPercent}%，点击切换`" @click="cycleZoom">{{ zoomPercent }}%</button>
+      <form v-show="showBrowserChrome" class="browser-toolbar" :inert="!canInteract" :aria-disabled="!canInteract" @submit.prevent="navigate">
+        <button class="browser-icon-button" type="button" title="后退" aria-label="后退" :disabled="!canInteract || !currentAgentBrowser || busy" @click="runNavigation('back')"><Icon icon="lucide:chevron-left" width="15" height="15" /></button>
+        <button class="browser-icon-button" type="button" title="前进" aria-label="前进" :disabled="!canInteract || !currentAgentBrowser || busy" @click="runNavigation('forward')"><Icon icon="lucide:chevron-right" width="15" height="15" /></button>
+        <button class="browser-icon-button" type="button" title="刷新" aria-label="刷新" :disabled="!canInteract || !currentAgentBrowser || busy" @click="runNavigation('reload')"><Icon icon="lucide:refresh-cw" width="14" height="14" /></button>
+        <input v-model="address" class="browser-address" aria-label="网址" :disabled="!canInteract" placeholder="输入网址，按回车打开" spellcheck="false" autocomplete="off" @focus="focusAddress" @blur="blurAddress" @keydown.esc="blurAddress" />
+        <button class="browser-icon-button" type="button" :title="muted ? '开启声音' : '关闭声音'" :aria-label="muted ? '开启声音' : '关闭声音'" :aria-pressed="muted" :disabled="!canInteract || !currentAgentBrowser || audioBusy" @click="toggleAudio"><Icon :icon="muted ? 'lucide:volume-x' : 'lucide:volume-2'" width="15" height="15" /></button>
+        <button class="browser-zoom" type="button" :disabled="!canInteract" :title="`当前缩放 ${zoomPercent}%，点击切换`" @click="cycleZoom">{{ zoomPercent }}%</button>
       </form>
       <div v-if="loading" class="browser-loading" role="progressbar" aria-label="网页加载中" />
-      <div ref="hostRef" class="browser-host" @pointerdown.capture="takeControlFromUi" @keydown.capture="takeControlFromUi" @wheel.passive="takeControlFromUi"><span v-if="busy" class="browser-opening">正在打开浏览器…</span></div>
+      <div ref="hostRef" class="browser-host" :aria-readonly="!canInteract"><span v-if="busy" class="browser-opening">正在打开浏览器…</span></div>
     </div>
     <div v-if="agentBrowserExpanded" class="browser-control-dock" role="group" aria-label="浏览器操作权">
       <div class="browser-control-pill" :class="{ 'is-controlling': displayedUserControl }">
@@ -115,6 +115,7 @@ const loading = ref(false)
 const showBrowserChrome = ref(false)
 const controlBusy = ref(false)
 const userInControl = computed(() => userControlsBrowser(activeChatId.value || ''))
+const canInteract = computed(() => agentBrowserExpanded.value && userInControl.value && !controlBusy.value)
 // 按钮立即显示目标状态；实际操作权仍由原生切换和页面同步完成后确认。
 const controlTarget = ref<{ sessionId: string; owner: 'agent' | 'user' } | null>(null)
 const displayedUserControl = computed(() => controlTarget.value?.sessionId === activeChatId.value
@@ -164,9 +165,11 @@ const takeControl = async () => {
   })().finally(() => { takeFlight = undefined })
   return takeFlight
 }
-const takeControlFromUi = () => { void takeControl().catch(showError) }
+const requireUserControl = () => {
+  if (!canInteract.value) throw new Error('浏览器当前仅供观看，请先取得控制权')
+}
 const changeControl = async () => {
-  if (controlBusy.value) return
+  if (controlBusy.value || !agentBrowserExpanded.value) return
   const returning = userInControl.value && !!currentAgentBrowser.value
   controlTarget.value = { sessionId: requireSession(), owner: returning ? 'agent' : 'user' }
   controlBusy.value = true
@@ -179,12 +182,12 @@ const changeControl = async () => {
   finally { controlTarget.value = null; controlBusy.value = false }
 }
 const selectTab = async (id: string) => {
-  try { await takeControl(); bindChatBrowser(requireSession(), id) } catch (value) { showError(value) }
+  try { requireUserControl(); bindChatBrowser(requireSession(), id) } catch (value) { showError(value) }
 }
 const newTab = async () => {
   if (currentAgentBrowsers.value.length >= 16) return
   try {
-    await takeControl()
+    requireUserControl()
     const tab = createAppBrowser({ url: browserHomeUrl(), title: '导航' })
     bindChatBrowser(requireSession(), tab.id)
   } catch (value) { showError(value) }
@@ -193,7 +196,7 @@ const closeTab = async (id: string) => {
   const session = activeChat.value
   if (!session) return
   try {
-    await takeControl()
+    requireUserControl()
     await closeBrowserView(id)
     removeAppBrowser(id)
     patchSession(session.id, current => {
@@ -208,11 +211,11 @@ const syncAddress = () => {
   if (!addressFocused.value) address.value = isBrowserHome(currentAgentBrowser.value?.url || '') ? '' : currentAgentBrowser.value?.url || ''
 }
 const blurAddress = () => { addressFocused.value = false; syncAddress() }
-const focusAddress = () => { addressFocused.value = true; takeControlFromUi() }
+const focusAddress = () => { if (canInteract.value) addressFocused.value = true }
 const navigate = async () => {
   const url = normalizeBrowserUrl(address.value || browserHomeUrl())
   try {
-    await takeControl()
+    requireUserControl()
     const id = await ensureAgentBrowser(requireSession())
     await navigateBrowserView(id, url, true)
     patchAppBrowser(id, { url, title: hostnameOf(url) })
@@ -225,7 +228,7 @@ const runNavigation = async (kind: 'reload' | 'back' | 'forward') => {
   const id = currentAgentBrowser.value?.id
   if (!id) return
   try {
-    await takeControl()
+    requireUserControl()
     await ({ reload: reloadBrowserView, back: goBackBrowserView, forward: goForwardBrowserView })[kind](id, true)
     error.value = ''
   } catch (value) { showError(value) }
@@ -234,14 +237,14 @@ const toggleAudio = async () => {
   const id = currentAgentBrowser.value?.id
   if (!id || audioBusy.value) return
   audioBusy.value = true
-  try { await takeControl(); await setBrowserAudioMuted(id, !muted.value); error.value = '' } catch (value) { showError(value) }
+  try { requireUserControl(); await setBrowserAudioMuted(id, !muted.value); error.value = '' } catch (value) { showError(value) }
   finally { audioBusy.value = false }
 }
 const cycleZoom = async () => {
   const tab = currentAgentBrowser.value
   if (!tab) return
   const zoom = tab.zoom >= 1.5 ? 0.75 : tab.zoom < 1 ? 1 : tab.zoom < 1.25 ? 1.25 : 1.5
-  try { await takeControl(); await setBrowserZoom(tab.id, zoom); patchAppBrowser(tab.id, { zoom }); refreshAgentBrowsers() } catch (value) { showError(value) }
+  try { requireUserControl(); await setBrowserZoom(tab.id, zoom); patchAppBrowser(tab.id, { zoom }); refreshAgentBrowsers() } catch (value) { showError(value) }
 }
 const expandBrowser = async () => {
   agentBrowserExpanded.value = true

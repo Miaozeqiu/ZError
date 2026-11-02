@@ -320,6 +320,7 @@ class ModelConfigManager {
           apiProtocol: platformProtocol,
           enabled: rm.enabled ?? true,
           maxTokens: rm.maxTokens ?? 4096,
+          contextWindow: Number(rm.contextWindow ?? (rm as any).context_window ?? (rm as any).context_length ?? (rm as any).contextLength) || existingModel?.contextWindow,
           temperature: rm.temperature ?? 0.7,
           topP: rm.topP ?? 0.9,
           category: 'text',

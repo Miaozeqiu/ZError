@@ -475,7 +475,7 @@ const contextUsage = computed(() => estimateAgentContext(
 
 const contextUsageLabel = computed(() => {
   const usage = contextUsage.value
-  return `${formatContextTokens(usage.used)} / 256k · ${usage.percent < 1 && usage.used > 0 ? usage.percent.toFixed(1) : Math.round(usage.percent)}%`
+  return `${formatContextTokens(usage.used)} / ${formatContextTokens(usage.limit)} · ${usage.percent < 1 && usage.used > 0 ? usage.percent.toFixed(1) : Math.round(usage.percent)}%`
 })
 
 const contextRingDash = computed(() => {
@@ -494,6 +494,7 @@ const contextUsageRows = computed(() => {
     { label: '当前输入', value: usage.draft },
     { label: '图片', value: usage.images },
     { label: '剩余', value: usage.remain },
+    { label: '输出预留', value: usage.outputReserve || 0 },
   ]
   return rows
     .filter((row) => row.label === '剩余' || row.value > 0)
@@ -503,7 +504,8 @@ const contextUsageRows = computed(() => {
 const contextTipNote = computed(() => {
   if (contextCompacting.value) return '正在后台压缩前文…'
   const count = contextUsage.value.compactedCount
-  return count ? `早期 ${count} 条已归档成摘要` : ''
+  return [contextUsage.value.estimatedWindow ? '模型未提供窗口大小，按 64k 估算' : '按当前模型窗口估算',
+    '可用量已扣除输出预留与安全余量', count ? `早期 ${count} 条已归档，原文仍可检索` : ''].filter(Boolean).join('；')
 })
 
 const isDiskPath = (path?: string) => {

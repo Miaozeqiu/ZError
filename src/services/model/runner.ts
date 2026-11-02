@@ -1,13 +1,18 @@
+import { validateToolCall } from '../agent/core/tools'
+import { createBuiltinProvider } from './providers'
 import { secureFetch } from '../security/secureFetch'
 import { redactNative } from '../security/secureStore'
 import { redactObject, redactText } from '../security/secretRedaction'
 import { resolveExecutableModelJsCode, resolveRuntimeModelId } from './protocol'
-import { modelConfigManager, modelHasVision } from './config'
+import { modelConfigManager, modelHasVision, type AIModel } from './config'
 import { settingsManager } from '../app/settings'
 import { logAgentDebug } from '../agent/debugLog'
 import { takeToolImages, visionAttachParts } from './toolImages'
 import { mergeToolArgs, mergeToolCalls } from './toolCallMerge'
-import { compactAgentRequestMessages } from './agentRequestContext'
+import { estimateRequestTextTokens, compactAgentRequestMessages } from './agentRequestContext'
+import { resolveContextBudget, estimateContextTokens, ContextCapacityError } from './contextBudget'
+import { compactExecutionContext, isContextOverflow, isPinnedContextMessage } from './contextCompaction'
+import { SUMMARY_SYSTEM, summarizeRecord } from './contextSummary'
 import { redactReplayMessages, replayAsBackground, thinkingBlocksOf, type ThinkingBlock } from './replayState'
 
 export interface ModelToolCall {
@@ -18,6 +23,9 @@ export interface ModelToolCall {
 
 export type ModelRunEvent =
   | { type: 'round_start' }
+  | { type: 'request'; inputTokens: number }
+  | { type: 'usage'; outputTokens: number }
+  | { type: 'context_compacted'; beforeTokens: number; afterTokens: number }
   | { type: 'text'; text: string }
   | { type: 'tool_pending'; name?: string }
   | { type: 'tool_start'; id: string; name: string; arguments: string }
@@ -40,6 +48,12 @@ export const isModelStopped = (error: unknown) => {
 }
 
 export interface RunTextModelOptions {
+  /** Internal archive requests never recursively compact themselves. */
+  contextSummaryOnly?: boolean
+  outputTokenLimit?: number
+  /** A summary belongs to the same model as the ongoing run. */
+  contextModel?: AIModel
+  validateTools?: boolean
   beforeComplete?: (remainingRounds: number) => string | undefined | Promise<string | undefined>
   compactBrowserContext?: boolean
   timeoutMs?: number
@@ -112,9 +126,10 @@ const toolExecutionLock = (name: string) => {
 const LIVE_CONTEXT_MARK = '\u200B【实时网页状态】'
 /** 传输层失败时最多再试几次（不含首次）。cheaptokens 等网关常偶发 reset。 */
 const MAX_NETWORK_RETRIES = 10
+const MAX_STREAM_NETWORK_RETRIES = 2
 
 const waitMs = (ms: number) => new Promise<void>((resolve) => {
-  window.setTimeout(resolve, ms)
+  setTimeout(resolve, ms)
 })
 
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error))
@@ -243,11 +258,15 @@ export async function runTextModel(
     return agent || text || modelConfigManager.getSelectedModel()
   }
   await modelConfigManager.ready
-  const model = options?.useVisionModel
+  const selectedModel = options?.contextModel || (options?.useVisionModel
     ? pickVisionModel()
     : options?.useAgentModel
       ? (modelConfigManager.getSelectedAgentModel() || modelConfigManager.getSelectedTextModel())
-      : (modelConfigManager.getSelectedTextModel() || modelConfigManager.getSelectedModel())
+      : (modelConfigManager.getSelectedTextModel() || modelConfigManager.getSelectedModel()))
+  // Archive requests have a small output budget and perform no reasoning task.
+  // Clone rather than mutating the selected model or the main Agent's settings.
+  const model = selectedModel && options?.contextSummaryOnly
+    ? { ...selectedModel, enableThinking: false } : selectedModel
   if (!model) {
     throw new Error(
       options?.useVisionModel
@@ -268,6 +287,9 @@ export async function runTextModel(
     throw new Error('当前平台还没有填写 API Key')
   }
 
+  const inputHasImage = Array.isArray(options?.userContent) && options.userContent.some((part: any) => part?.type === 'image_url')
+  if (inputHasImage && !modelHasVision(model)) throw new Error('当前模型未配置视觉能力，图片未发送。请在模型设置选择支持视觉的模型后重试。')
+  if (options?.tools?.length && model.supportsTools === false) throw new Error('当前模型不支持工具调用，请选择支持工具的 Agent 模型。')
   const runtimeModelId = resolveRuntimeModelId(model)
   const executableCode = resolveExecutableModelJsCode(model, platform)
   if (!executableCode) {
@@ -278,8 +300,13 @@ export async function runTextModel(
   if (options?.systemPrompt) {
     messages.push({ role: 'system', content: options.systemPrompt })
   }
+  // Project old tool payloads while they still have tool roles. Background
+  // replay must not turn them into unbounded, apparently user-authored text.
+  const projectedHistory = options?.compactBrowserContext
+    ? compactAgentRequestMessages(options?.history || [], new Set(), resolveContextBudget(model).target)
+    : options?.history || []
   const priorHistory = model.enableThinking || model.apiProtocol === 'anthropic' || platform.apiProtocol === 'anthropic'
-    ? replayAsBackground(options?.history || []) : options?.history || []
+    ? replayAsBackground(projectedHistory) : projectedHistory
   for (const item of priorHistory) {
     if (item.role === 'tool') {
       messages.push({
@@ -302,11 +329,13 @@ export async function runTextModel(
       continue
     }
     if (item.role === 'user' && item.content) {
-      messages.push({ role: 'user', content: item.content })
+      messages.push({ role: 'user', content: item.content,
+        ...((item as any).__agentHistory ? { __agentHistory: true } : {}),
+      })
     }
   }
   messages.push({ role: 'user', content: options?.userContent ?? prompt })
-  const transcriptFrom = messages.length
+  let transcriptFrom = messages.length
   const toolImageMessages = new Set<any>()
 
   const emitTurnTranscript = (spoken: string) => {
@@ -324,7 +353,8 @@ export async function runTextModel(
     if (text && !turn.some((item) => item.role === 'assistant' && !item.tool_calls?.length && item.content === text)) {
       turn.push({ role: 'assistant', content: text })
     }
-    options?.onTurnTranscript?.(redactObject(turn) as import('../agent/chatTypes').AgentTranscriptItem[])
+    if (turn.length) options?.onTurnTranscript?.(redactObject(turn) as import('../agent/chatTypes').AgentTranscriptItem[])
+    transcriptFrom = input.messages.length
   }
 
   const input: any = {
@@ -342,6 +372,9 @@ export async function runTextModel(
     model: runtimeModelId,
     modelId: runtimeModelId,
   }
+  if (options?.outputTokenLimit) config.maxTokens = Math.min(Number(config.maxTokens) || options.outputTokenLimit, options.outputTokenLimit)
+  const contextBudget = resolveContextBudget(config)
+  config.maxTokens = contextBudget.outputReserve
 
   const configuredMs = Number(settingsManager.get('modelResponseTimeout') ?? 40) * 1000
   // 调用方显式给了超时就照用（视觉转写等短任务不能被 180s 下限拖死）
@@ -376,11 +409,13 @@ export async function runTextModel(
 
 
   const networkRetries = resolveNetworkRetries()
+  let requestReturnedResponse = false
   const tauriFetch = async (request: RequestInfo | URL, init: RequestInit = {}) => {
     let lastError: unknown
     for (let attempt = 0; attempt <= networkRetries; attempt += 1) {
       throwIfStopped()
       try {
+        if (attempt > 0) options?.onEvent?.({ type: 'request', inputTokens: requestTokens })
         const response = await secureFetch(request as any, {
           ...init,
           // 连接阶段单独加长；默认过短时 CDN 抖一下就会 “error sending request”
@@ -405,6 +440,7 @@ export async function runTextModel(
           await waitMs(networkBackoffMs(attempt))
           continue
         }
+        requestReturnedResponse = true
         return response
       } catch (error) {
         lastError = error
@@ -424,14 +460,15 @@ export async function runTextModel(
     throw lastError instanceof Error ? lastError : new Error(String(lastError || '模型网络请求失败'))
   }
 
-  let processModel: any
-  if (executableCode.startsWith('async function') || executableCode.startsWith('function')) {
-    const safeEval = new Function('input', 'config', 'fetch', 'abortSignal', `
+  let requestTokens = 0
+  let processModel: any = createBuiltinProvider(model, platform)
+  if (!processModel && (executableCode.startsWith('async function') || executableCode.startsWith('function'))) {
+    const loadCustomProvider = new Function('input', 'config', 'fetch', 'abortSignal', `
       ${executableCode}
       return processModel;
     `)
-    processModel = safeEval(input, config, tauriFetch, abortController.signal)
-  } else {
+    processModel = loadCustomProvider(input, config, tauriFetch, abortController.signal)
+  } else if (!processModel) {
     const wrapperFunction = new Function('input', 'config', 'fetch', 'abortSignal', `
       return (async function processModel(input, config) {
         ${executableCode}
@@ -468,6 +505,73 @@ export async function runTextModel(
 
   try {
     stopPause = options?.subscribePause?.(paused => { suspended = paused; armTimeout() })
+    let compactions = 0
+    let overflowRecovered = false
+    let softCompactionUnavailable = false
+    let nextSoftCompactionAt = 0
+    const maintainContext = async (force = false) => {
+      const project = (messages = input.messages) => {
+        const projected = options?.compactBrowserContext
+          ? compactAgentRequestMessages(messages, toolImageMessages, contextBudget.target) : messages
+        return { ...input, messages: projected.map(({ __agentToolImage, __agentHistory, ...message }: any) => message) }
+      }
+      let request = project()
+      const beforeTokens = estimateContextTokens(request)
+      // Tools and pinned instructions cannot be summarised away. Leave useful
+      // history headroom above that floor instead of repeatedly summarising a
+      // few observations when the browser tool catalog itself is already large.
+      const instructionTokens = estimateContextTokens({ ...input, messages: input.messages.filter(isPinnedContextMessage) })
+      const compactAt = Math.min(contextBudget.inputLimit, Math.max(contextBudget.compactAt, instructionTokens + Math.floor(contextBudget.target / 2)))
+      if ((force || (!softCompactionUnavailable && beforeTokens > Math.max(compactAt, nextSoftCompactionAt))) && !options?.contextSummaryOnly && (options?.executeTool || options?.compactBrowserContext)) {
+        if (++compactions > 12) throw new Error('上下文反复压缩仍无法继续，已保留执行记录并停止。请缩小任务范围。')
+        emitTurnTranscript('')
+        let compacted: any[]
+        try {
+          compacted = await compactExecutionContext({ messages: input.messages, keepTokens: Math.floor(contextBudget.target * (force ? 0.3 : 0.5)),
+          summarize: (text, previous) => summarizeRecord({ text, previous, signal: abortController.signal,
+            chunkTokens: Math.max(512, Math.min(8000, Math.floor(contextBudget.inputLimit * 0.45))),
+            summarize: prompt => runTextModel(prompt, undefined, { systemPrompt: SUMMARY_SYSTEM, tools: [], maxRounds: 1,
+              contextSummaryOnly: true, contextModel: model, outputTokenLimit: Math.min(4096, contextBudget.outputReserve), timeoutMs,
+              useAgentModel: options?.useAgentModel, useVisionModel: options?.useVisionModel, signal: abortController.signal,
+              onEvent: event => { if (event.type === 'request' || event.type === 'usage') options?.onEvent?.(event) },
+            }),
+          }),
+          })
+        } catch (error) {
+          throwIfStopped()
+          // A token-saving summary must not terminate a task whose complete
+          // request still fits. Keep the original records and defer further
+          // soft attempts; hard overflow still requires successful compaction.
+          if (!force && beforeTokens <= contextBudget.inputLimit && error instanceof Error && error.name === 'ModelOutputLimitError') {
+            softCompactionUnavailable = true
+            compactions--
+            logModelIo({ kind: 'context_compaction_deferred', beforeTokens })
+            return request
+          }
+          throw error
+        }
+        throwIfStopped()
+        if (compacted === input.messages) {
+          compactions--
+          if (force || beforeTokens > contextBudget.inputLimit) throw new ContextCapacityError()
+          return request
+        }
+        const clean = await redactMessages(compacted)
+        const next = project(clean)
+        const afterTokens = estimateContextTokens(next)
+        if (afterTokens >= beforeTokens || afterTokens > contextBudget.inputLimit) throw new ContextCapacityError()
+        input.messages = clean
+        transcriptFrom = input.messages.length
+        request = next
+        // The retained latest batch may itself be large. Require meaningful
+        // growth above the actual post-compaction size, not just above the
+        // original soft threshold; the hard check below remains unconditional.
+        nextSoftCompactionAt = Math.min(contextBudget.inputLimit, afterTokens + Math.max(512, Math.floor(contextBudget.target / 2)))
+        options?.onEvent?.({ type: 'context_compacted', beforeTokens, afterTokens })
+      }
+      if (estimateContextTokens(request) > contextBudget.inputLimit) throw new ContextCapacityError()
+      return request
+    }
     for (let round = 0; round < maxRounds; round += 1) {
       throwIfStopped()
       armTimeout()
@@ -483,14 +587,40 @@ export async function runTextModel(
       await applyLiveContext(input.messages, options?.liveContext)
       input.messages = await redactMessages(input.messages)
       options?.onEvent?.({ type: 'round_start' })
-      const requestInput = options?.compactBrowserContext
-        ? { ...input, messages: compactAgentRequestMessages(input.messages, toolImageMessages) }
-        : input
+      const requestInput = await maintainContext()
       logModelIo({ kind: 'model_request', round, messages: ioSafeMessages(requestInput.messages) })
+      requestTokens = estimateContextTokens(requestInput)
+      options?.onEvent?.({ type: 'request', inputTokens: requestTokens })
       let result: any
+      let responseRetries = 0
+      const retryResponse = async () => {
+        await waitMs(networkBackoffMs(responseRetries++))
+        throwIfStopped()
+        options?.onEvent?.({ type: 'request', inputTokens: requestTokens })
+      }
+      const requestModel = async () => {
+        for (;;) {
+          requestReturnedResponse = false
+          try {
+            return await processModel(requestInput, config, tauriFetch, abortController.signal)
+          } catch (error) {
+            // Some gateways return JSON or buffer the body before exposing a
+            // stream. Retry body-read failures too, but never multiply the
+            // fetch connection retries after no response was received.
+            if (!requestReturnedResponse || responseRetries >= MAX_STREAM_NETWORK_RETRIES
+              || !isRetryableNetworkError(error, abortController.signal.aborted)) throw error
+            await retryResponse()
+          }
+        }
+      }
       try {
-        result = await processModel(requestInput, config, tauriFetch, abortController.signal)
+        result = await requestModel()
       } catch (error) {
+        if (!overflowRecovered && !options?.contextSummaryOnly && (options?.executeTool || options?.compactBrowserContext) && isContextOverflow(error)) {
+          overflowRecovered = true
+          await maintainContext(true)
+          continue
+        }
         if (isRepetitiveToolError(error) && gatewayRepeatHits < 2) {
           gatewayRepeatHits += 1
           input.tools = toolsSnapshot
@@ -509,42 +639,64 @@ export async function runTextModel(
       let roundUsage: Record<string, unknown> | undefined
       let reasoning = ''
       let thinkingBlocks: ThinkingBlock[] = []
-      if (result[Symbol.asyncIterator]) {
-        for await (const chunk of result) {
-          throwIfStopped()
-          if (chunk?.usage && typeof chunk.usage === 'object') roundUsage = { ...roundUsage, ...chunk.usage }
-          if (typeof chunk?.reasoning_content === 'string') { reasoning += chunk.reasoning_content; armTimeout() }
-          if (Array.isArray(chunk?.thinking_blocks)) thinkingBlocks = thinkingBlocksOf(chunk.thinking_blocks)
-          if (chunk?.tool_calls) {
-            mergeToolCalls(toolCalls, chunk.tool_calls, 'delta')
-            if (!toolPendingSent && toolCalls.length) {
-              toolPendingSent = true
-              options?.onEvent?.({
-                type: 'tool_pending',
-                name: toolCalls.find((item) => item.function?.name)?.function?.name || '',
-              })
+      const reportRoundUsage = () => options?.onEvent?.({ type: 'usage', outputTokens: Number(roundUsage?.output_tokens ?? roundUsage?.completion_tokens)
+        || estimateRequestTextTokens(fullResponse + reasoning + (toolCalls.length ? JSON.stringify(toolCalls) : '')) })
+      for (;;) {
+        const streamed = Boolean(result?.[Symbol.asyncIterator])
+        try {
+          if (!result) throw new Error('模型没有返回结果')
+          if (result[Symbol.asyncIterator]) {
+            for await (const chunk of result) {
+              throwIfStopped()
+              if (chunk?.usage && typeof chunk.usage === 'object') roundUsage = { ...roundUsage, ...chunk.usage }
+              if (typeof chunk?.reasoning_content === 'string') { reasoning += chunk.reasoning_content; armTimeout() }
+              if (Array.isArray(chunk?.thinking_blocks)) thinkingBlocks = thinkingBlocksOf(chunk.thinking_blocks)
+              if (chunk?.tool_calls) {
+                mergeToolCalls(toolCalls, chunk.tool_calls, 'delta')
+                if (!toolPendingSent && toolCalls.length) {
+                  toolPendingSent = true
+                  options?.onEvent?.({
+                    type: 'tool_pending',
+                    name: toolCalls.find((item) => item.function?.name)?.function?.name || '',
+                  })
+                }
+              }
+              if (chunk?.content) {
+                fullResponse += chunk.content
+                onDelta?.(fullResponse)
+                options?.onEvent?.({ type: 'text', text: fullResponse })
+                armTimeout()
+              }
+            }
+          } else {
+            if (result?.usage && typeof result.usage === 'object') roundUsage = result.usage
+            reasoning = typeof result?.reasoning_content === 'string' ? result.reasoning_content : ''
+            thinkingBlocks = thinkingBlocksOf(result?.thinking_blocks)
+            mergeToolCalls(toolCalls, normalizeToolCalls(result), 'snapshot')
+            const response = collectContent(result)
+            if (response) {
+              fullResponse = response
+              onDelta?.(fullResponse)
+              options?.onEvent?.({ type: 'text', text: fullResponse })
             }
           }
-          if (chunk?.content) {
-            fullResponse += chunk.content
-            onDelta?.(fullResponse)
-            options?.onEvent?.({ type: 'text', text: fullResponse })
-            armTimeout()
-          }
-        }
-      } else {
-        if (result?.usage && typeof result.usage === 'object') roundUsage = result.usage
-        reasoning = typeof result?.reasoning_content === 'string' ? result.reasoning_content : ''
-        thinkingBlocks = thinkingBlocksOf(result?.thinking_blocks)
-        mergeToolCalls(toolCalls, normalizeToolCalls(result), 'snapshot')
-        const response = collectContent(result)
-        if (response) {
-          fullResponse = response
-          onDelta?.(fullResponse)
-          options?.onEvent?.({ type: 'text', text: fullResponse })
+          break
+        } catch (error) {
+          // Completed previous tool batches remain in requestInput. No tool
+          // from this response has been dispatched until consumption finishes.
+          // Retry only transport failures before visible text, never truncated
+          // JSON, provider filtering, cancellation or an already shown answer.
+          reportRoundUsage()
+          if (!streamed || fullResponse.trim() || responseRetries >= MAX_STREAM_NETWORK_RETRIES
+            || !isRetryableNetworkError(error, abortController.signal.aborted)) throw error
+          toolCalls = []; toolPendingSent = false; roundUsage = undefined
+          fullResponse = ''; reasoning = ''; thinkingBlocks = []
+          logModelIo({ kind: 'stream_retry', hop: responseRetries + 1 })
+          await retryResponse()
+          result = await requestModel()
         }
       }
-
+      reportRoundUsage()
       toolCalls = finalizeToolCalls(toolCalls)
       const replayState = { ...(reasoning ? { reasoning_content: reasoning } : {}), ...(thinkingBlocks.length ? { thinking_blocks: thinkingBlocks } : {}) }
       logModelIo({
@@ -615,6 +767,8 @@ export async function runTextModel(
           let toolError: string | undefined
           let toolImages: string[] = []
           try {
+            const invalid = options.validateTools ? validateToolCall(input.tools || [], call) : undefined
+            if (invalid) throw new Error(invalid)
             const raw = await options.executeTool!({ ...call, arguments: redactObject(call.arguments) })
             const taken = takeToolImages(raw)
             toolResult = taken.text
@@ -669,11 +823,13 @@ export async function runTextModel(
         const imageMessage = {
           role: 'user',
           content: visionAttachParts(attached),
+          __agentToolImage: true,
         }
         input.messages.push(imageMessage)
         toolImageMessages.add(imageMessage)
       }
 
+      emitTurnTranscript('')
       fullResponse = ''
       onDelta?.('')
       options?.onEvent?.({ type: 'text', text: '' })

@@ -49,15 +49,16 @@ describe('takeToolImages', () => {
 })
 
 describe('vision attach', () => {
-  it('小图用 high，整页用 low', () => {
+  it('小图和含小字的整页截图都使用 high，不按文件大小降质', () => {
     expect(visionDetailOf(png('x', 490))).toBe('high')
-    expect(visionDetailOf(jpeg(125_000))).toBe('low')
+    expect(visionDetailOf(jpeg(125_000))).toBe('high')
+    expect(visionAttachParts([jpeg(125_000)])[0]).toMatchObject({ type: 'image_url', image_url: { detail: 'high' } })
   })
 
   it('有小图时让模型先认验证码', () => {
     const parts = visionAttachParts([png('x', 490), jpeg(125_000)])
     expect(parts[0]).toMatchObject({ type: 'image_url', image_url: { detail: 'high' } })
-    expect(parts[1]).toMatchObject({ type: 'image_url', image_url: { detail: 'low' } })
+    expect(parts[1]).toMatchObject({ type: 'image_url', image_url: { detail: 'high' } })
     expect(visionAttachCaption([png('x', 490), jpeg(125_000)])).toMatch(/验证码原图/)
   })
 

@@ -1,5 +1,6 @@
 import type { ImportTaskStep } from '../app/importTasks'
 import type { AgentChatMessage, AgentTranscriptItem } from './chatTypes'
+import { projectToolResult } from '../model/toolResultProjection'
 
 /** 落盘与近几轮回放的上限 */
 export const TOOL_ARGS_KEEP = 8000
@@ -36,7 +37,7 @@ export const clipTranscript = (
 ): ModelHistoryItem[] => (
   items.map((item) => {
     if (item.role === 'tool') {
-      return { ...item, content: clipToolText(item.content, limits.result) }
+      return { ...item, content: projectToolResult(item.content, limits.result, item.tool_call_id) }
     }
     if (item.role === 'assistant' && item.tool_calls?.length) {
       return {
@@ -46,7 +47,9 @@ export const clipTranscript = (
           ...call,
           function: {
             ...call.function,
-            arguments: clipToolText(call.function?.arguments, limits.args),
+            // Argument strings are protocol JSON, not display text. Never cut
+            // valid JSON; legacy broken records cannot be replayed as calls.
+            arguments: (() => { try { JSON.parse(call.function?.arguments || '{}'); return call.function?.arguments || '{}' } catch { return JSON.stringify({ history_ref: call.id, arguments_unavailable: true, hint: '旧参数记录不完整，不可重放；需要时读取历史原文。' }) } })(),
           },
         })),
       }

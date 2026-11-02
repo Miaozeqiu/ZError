@@ -1,5 +1,6 @@
 /** 通用浏览器原语。页面身份看网站地图，进度监控用 browser_watch。 */
 import { WEBSITE_ICON_TOOL } from './websiteTools'
+import { HISTORY_TOOLS } from './historyTools'
 import {
   LIST_AGENT_SKILLS_TOOL,
   READ_AGENT_SKILL_FILE_TOOL,
@@ -9,7 +10,13 @@ import {
 } from '../skillTools'
 
 export const BROWSER_PRIMITIVE_TOOLS = [
+  ...HISTORY_TOOLS,
   WEBSITE_ICON_TOOL,
+  { type: 'function', function: { name: 'browser_select_tab', description: '切换到当前对话拥有的已有标签，不新建或导航。browser_run_status 返回 tabs ID；切换后重新读取页面，不复用旧 ref。', parameters: { type: 'object', properties: { browser_id: { type: 'string' } }, required: ['browser_id'] } } },
+  { type: 'function', function: { name: 'browser_run_status', description: '查看当前运行状态、预算、故障码和不含敏感正文的诊断轨迹。', parameters: { type: 'object', properties: {} } } },
+  { type: 'function', function: { name: 'browser_verify_operation', description: '网页操作返回结果不确定时，先在原标签读取新页面或截图，核对实际回执后登记结果。不能用旧快照，也不能以点击成功代替提交成功。', parameters: {
+    type: 'object', properties: { operation_id: { type: 'string' }, observation_id: { type: 'string' }, outcome: { type: 'string', enum: ['completed', 'not_completed'] }, evidence: { type: 'string', description: '新页面中证明已完成或未完成的具体状态；不写账号密码。' } }, required: ['operation_id', 'observation_id', 'outcome', 'evidence'],
+  } } },
   {
     type: 'function',
     function: {
@@ -244,7 +251,7 @@ export const BROWSER_PRIMITIVE_TOOLS = [
     function: {
       name: 'browser_eval',
       description:
-        '只读检查快照缺失的结构、题干与选项关联或实际控件状态；按需一次返回结构化结果，避免反复探测同一结构。仅读取已渲染页面，不用它改值、勾选、点击、播放或调用隐藏接口。嵌套 iframe 优先传快照中的 frameId 和 loaderId；frame 仅作兼容定位。定位失败先读新快照，不能原样重试。all 默认 false。',
+        '只读检查快照缺失的结构、题干与选项关联或实际控件状态；按需一次返回结构化结果，避免反复探测同一结构。有序内容按 DOM 顺序返回数组，每项绑定页面显示序号、原文和元素 ID/ref；数字键对象会重排，不得按 ID 大小推断题号。仅读取已渲染页面，不用它改值、勾选、点击、播放或调用隐藏接口。嵌套 iframe 优先传快照中的 frameId 和 loaderId；frame 仅作兼容定位。定位失败先读新快照，不能原样重试。all 默认 false。',
       parameters: {
         type: 'object',
         properties: {
@@ -405,6 +412,14 @@ export const BROWSER_PRIMITIVE_TOOLS = [
             description: 'done 任务实际完成；blocked 需要用户处理；watching 保持当前任务等待视频事件',
           },
           summary: { type: 'string', description: '你自己写的一两句真实结果，禁止套话' },
+          completion: {
+            type: 'object', description: '仅用户明确指定编号章节时：用最新 get_page/screenshot 核对所有目标完成标记，引用其 observation_id。整门课不能用此缩小范围。',
+            properties: {
+              observation_id: { type: 'string', description: '最近一次真实页面或截图返回的 observation_id；eval、清单和 summary 不算。' },
+              targets: { type: 'array', items: { type: 'string' }, description: '用户指定的全部章节编号，如 ["2.1","2.2"]，不能遗漏或新增。' },
+              evidence: { type: 'string', description: '具体页面可见标记、提交回执等证据，不能只写已完成；保留实际分数，不把完成等同满分。' },
+            }, required: ['observation_id', 'targets', 'evidence'],
+          },
           learning: {
             type: 'object', description: '多步网页任务收尾检查；只复用旧步骤可 no_new，covered 必须读过本站 Skill，updated 必须先读后成功写入，deferred 需权限禁止/写入失败证据。',
             properties: {

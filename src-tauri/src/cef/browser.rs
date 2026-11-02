@@ -129,6 +129,7 @@ unsafe fn frame_in_parent(parent: &NSView, x: f64, y: f64, width: f64, height: f
 /// CEF 洞口：只决定把 1920x1080 缩放到多大。网页布局尺寸不跟洞口走。
 /// 不要把网页布局交给 JS 防抖；拖窗口/分栏时 JS 只对齐位置，不负责通知 Chromium。
 struct ZeCefHoleIvars {
+  control_id: String,
   last_w: Cell<f64>,
   last_h: Cell<f64>,
   browser_id: Cell<i32>,
@@ -160,7 +161,13 @@ define_class!(
       // Let the WKWebView button underneath receive miniature clicks. The live
       // Chromium view keeps drawing, but cannot receive mouse/scroll input.
       if self.ivars().preview.get() { return std::ptr::null_mut(); }
-      unsafe { msg_send![super(self), hitTest: point] }
+      let hit: *mut NSView = unsafe { msg_send![super(self), hitTest: point] };
+      if !hit.is_null() && !crate::browser_control::user_input_allowed(&self.ivars().control_id) {
+        // Keep physical focus/drop targeting on the inert wrapper, never on
+        // the CEF subtree. CDP input doesn't use AppKit hit testing.
+        return self as *const Self as *mut NSView;
+      }
+      hit
     }
 
     #[unsafe(method(setFrameSize:))]
@@ -300,8 +307,9 @@ impl ZeCefStage {
 }
 
 impl ZeCefHoleView {
-  fn create(mtm: MainThreadMarker, frame: NSRect) -> Retained<Self> {
+  fn create(mtm: MainThreadMarker, frame: NSRect, control_id: String) -> Retained<Self> {
     let this = Self::alloc(mtm).set_ivars(ZeCefHoleIvars {
+      control_id,
       last_w: Cell::new(frame.size.width),
       last_h: Cell::new(frame.size.height),
       browser_id: Cell::new(0),
@@ -377,41 +385,56 @@ struct WrapperViews {
 }
 
 // AppKit 本地事件在发送给 CEF 子视图之前到达；CDP 的 Input.* 不经过这里。
-fn install_user_input_monitor() {
-  use objc2_app_kit::{NSEvent, NSEventMask, NSEventType};
+pub(crate) fn native_event_targets_view(event: &objc2_app_kit::NSEvent, view: &NSView) -> bool {
+  use objc2_app_kit::NSEventType;
+  let Some(mtm) = MainThreadMarker::new() else { return false };
+  let Some(window) = event.window(mtm) else { return false };
+  if view.window().map(|window| window.windowNumber()) != Some(window.windowNumber()) { return false; }
+  let descendant = |owner: &objc2::runtime::AnyObject| {
+    let is_view: bool = unsafe { msg_send![owner, isKindOfClass: objc2::class!(NSView)] };
+    is_view && unsafe { (&*(owner as *const _ as *const NSView)).isDescendantOf(view) }
+  };
+  if matches!(event.r#type(), NSEventType::KeyDown | NSEventType::KeyUp | NSEventType::FlagsChanged) {
+    return window.firstResponder().map(|responder| descendant(&responder)).unwrap_or(false);
+  }
+  let point = view.convertPoint_fromView(event.locationInWindow(), None);
+  let bounds = view.bounds();
+  if point.x >= bounds.origin.x && point.y >= bounds.origin.y
+    && point.x < bounds.origin.x + bounds.size.width && point.y < bounds.origin.y + bounds.size.height { return true; }
+  if matches!(event.r#type(), NSEventType::MouseEntered | NSEventType::MouseExited | NSEventType::CursorUpdate) {
+    return event.trackingArea().and_then(|area| area.owner()).map(|owner| descendant(&owner)).unwrap_or(false);
+  }
+  false
+}
+
+pub(crate) fn install_user_input_monitor() {
+  use objc2_app_kit::{NSEvent, NSEventMask};
   use std::ptr::NonNull;
   static INSTALLED: AtomicBool = AtomicBool::new(false);
   if INSTALLED.swap(true, Ordering::SeqCst) { return; }
   let mask = NSEventMask::LeftMouseDown | NSEventMask::RightMouseDown | NSEventMask::OtherMouseDown
-    | NSEventMask::LeftMouseDragged | NSEventMask::RightMouseDragged | NSEventMask::ScrollWheel | NSEventMask::KeyDown;
+    | NSEventMask::LeftMouseUp | NSEventMask::RightMouseUp | NSEventMask::OtherMouseUp
+    | NSEventMask::LeftMouseDragged | NSEventMask::RightMouseDragged | NSEventMask::OtherMouseDragged
+    | NSEventMask::MouseMoved | NSEventMask::MouseEntered | NSEventMask::MouseExited | NSEventMask::CursorUpdate
+    | NSEventMask::ScrollWheel | NSEventMask::KeyDown | NSEventMask::KeyUp | NSEventMask::FlagsChanged
+    | NSEventMask::Gesture | NSEventMask::Magnify | NSEventMask::Swipe | NSEventMask::Rotate
+    | NSEventMask::BeginGesture | NSEventMask::EndGesture | NSEventMask::SmartMagnify
+    | NSEventMask::Pressure | NSEventMask::TabletPoint | NSEventMask::TabletProximity | NSEventMask::DirectTouch;
   let block = block2::RcBlock::new(move |raw: NonNull<NSEvent>| -> *mut NSEvent {
     let event = unsafe { raw.as_ref() };
     let id = (|| {
-      let window = event.window(MainThreadMarker::new()?)?;
       let reg = registry().lock().ok()?;
       for tab in reg.tabs.values() {
         if tab.hidden || tab.wrapper.0.is_null() { continue; }
         // A click on the live miniature expands it; it is not a user takeover.
         if unsafe { (*(tab.wrapper.0 as *const ZeCefHoleView)).ivars().preview.get() } { continue; }
         let view = unsafe { &*wrapper_view(tab.wrapper) };
-        if view.window()?.windowNumber() != window.windowNumber() { continue; }
-        let inside = if event.r#type() == NSEventType::KeyDown {
-          let responder = window.firstResponder()?;
-          let is_view: bool = unsafe { msg_send![&*responder, isKindOfClass: objc2::class!(NSView)] };
-          is_view && unsafe { (&*(Retained::as_ptr(&responder) as *const NSView)).isDescendantOf(view) }
-        } else {
-          let point = view.convertPoint_fromView(event.locationInWindow(), None);
-          let bounds = view.bounds();
-          point.x >= bounds.origin.x && point.y >= bounds.origin.y
-            && point.x < bounds.origin.x + bounds.size.width && point.y < bounds.origin.y + bounds.size.height
-        };
-        if inside { return Some(tab.id.clone()); }
+        if native_event_targets_view(event, view) { return Some(tab.id.clone()); }
       }
       None
-    })();
+    })().or_else(|| crate::app_browser::fallback_user_input_target(event));
     if let Some(id) = id {
-      let app = app_handle().lock().ok().and_then(|handle| handle.clone());
-      if let Some(app) = app { let _ = crate::browser_control::set_owner(&app, &id, "user"); }
+      if !crate::browser_control::user_input_allowed(&id) { return std::ptr::null_mut(); }
     }
     raw.as_ptr()
   });
@@ -419,13 +442,13 @@ fn install_user_input_monitor() {
   if let Some(token) = token { let _ = Retained::into_raw(token); } else { INSTALLED.store(false, Ordering::SeqCst); }
 }
 
-fn create_wrapper(parent_ptr: *mut c_void, x: f64, y: f64, w: f64, h: f64, hidden: bool) -> Result<WrapperViews, String> {
+fn create_wrapper(parent_ptr: *mut c_void, id: &str, x: f64, y: f64, w: f64, h: f64, hidden: bool) -> Result<WrapperViews, String> {
   install_user_input_monitor();
   unsafe {
     let parent = &*(parent_ptr as *const NSView);
     let frame = frame_in_parent(parent, x, y, w, h);
     let mtm = MainThreadMarker::new().ok_or_else(|| "必须在主线程创建浏览区".to_string())?;
-    let view = ZeCefHoleView::create(mtm, frame);
+    let view = ZeCefHoleView::create(mtm, frame, id.to_string());
     view.setHidden(hidden);
     view.setClipsToBounds(true);
     crate::app_browser::round_browser_view(&view);
@@ -868,10 +891,24 @@ fn emit_tab_load(browser: Option<&mut Browser>, phase: &str) {
   }
 }
 
+wrap_drag_handler! {
+  struct ZeDragHandler { id: String }
+  impl DragHandler {
+    fn on_drag_enter(&self, _browser: Option<&mut Browser>, _data: Option<&mut DragData>, _mask: DragOperationsMask) -> i32 {
+      // External file/link drops have a separate native route from mouse events.
+      let visible_full = registry().lock().ok().and_then(|reg| reg.tabs.get(&self.id).map(|tab| {
+        !tab.hidden && !tab.wrapper.0.is_null() && !unsafe { (*(tab.wrapper.0 as *const ZeCefHoleView)).ivars().preview.get() }
+      })).unwrap_or(false);
+      i32::from(!visible_full || !crate::browser_control::user_input_allowed(&self.id))
+    }
+  }
+}
+
 wrap_client! {
   pub struct ZeClient {
     life: LifeSpanHandler,
     load: LoadHandler,
+    drag: DragHandler,
   }
 
   impl Client {
@@ -881,11 +918,34 @@ wrap_client! {
     fn load_handler(&self) -> Option<LoadHandler> {
       Some(self.load.clone())
     }
+    fn drag_handler(&self) -> Option<DragHandler> { Some(self.drag.clone()) }
   }
 }
 
 fn make_client(tab_id: &str) -> Client {
-  ZeClient::new(ZeLifeSpan::new(tab_id.to_string()), ZeLoad::new())
+  ZeClient::new(ZeLifeSpan::new(tab_id.to_string()), ZeLoad::new(), ZeDragHandler::new(tab_id.to_string()))
+}
+
+pub fn clear_user_focus(app: &AppHandle, session: &str) -> Result<(), String> {
+  let session = session.to_string();
+  on_main(app, move || {
+    let reg = registry().lock().map_err(|_| "浏览器状态不可用")?;
+    for tab in reg.tabs.values() {
+      if tab.wrapper.0.is_null() || !crate::browser_control::session_owns_tab(&session, &tab.id) { continue; }
+      let hole = unsafe { &*(tab.wrapper.0 as *const ZeCefHoleView) };
+      // Ownership is shared by the session; locked descendants cannot retain
+      // a text responder/IME after control is handed back to the Agent.
+      if crate::browser_control::user_input_allowed(&tab.id) { continue; }
+      let Some(window) = hole.window() else { continue };
+      if let Some(responder) = window.firstResponder() {
+        let is_view: bool = unsafe { msg_send![&*responder, isKindOfClass: objc2::class!(NSView)] };
+        if is_view && unsafe { (&*(Retained::as_ptr(&responder) as *const NSView)).isDescendantOf(hole) } {
+          let _ = window.makeFirstResponder(None);
+        }
+      }
+    }
+    Ok(())
+  })?
 }
 
 pub fn parent_window_nsview(app: &AppHandle) -> Result<*mut c_void, String> {
@@ -1599,7 +1659,7 @@ pub async fn open(
     if !hidden {
       hide_other(&id2);
     }
-    let views = create_wrapper(parent, x, y, width, height, hidden)?;
+    let views = create_wrapper(parent, &id, x, y, width, height, hidden)?;
     let parent_handle = views.stage.0 as cef::sys::cef_window_handle_t;
     let (page_w, page_h) = stage_points(width, height);
     let bounds = Rect {

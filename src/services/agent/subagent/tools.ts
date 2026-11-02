@@ -14,6 +14,7 @@ import { SUBAGENTS_ENABLED } from './enabled'
 export type BrowserToolRole = AgentToolRole
 
 const LOOK_NAMES = [
+  'search_conversation_history', 'read_conversation_history',
   'set_website_icon',
   'browser_get_page',
   'browser_find',

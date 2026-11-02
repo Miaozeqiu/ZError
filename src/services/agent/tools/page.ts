@@ -42,6 +42,7 @@ export const handlePageTools = async (ctx: Record<string, any>): Promise<string 
     syncPeekedUrl, patchAppBrowser, scrollBrowserView, getBrowserState: _gs,
     cardHasClickableBody, compactStudyPanel,
   } = ctx
+  if (name === 'browser_select_tab' || name === 'browser_run_status' || name === 'browser_verify_operation') return JSON.stringify({ ok: false, reason: 'run_context_required', error: '此工具需要当前 Agent 的运行上下文，请通过对话执行；不能脱离运行检查点核对操作。' })
   if (name === 'browser_decode_chaoxing_font') {
     try {
       const { CHAOXING_FONT_PROBE, decodeChaoxingProbe } = await import('../fontDecrypt/chaoxing')

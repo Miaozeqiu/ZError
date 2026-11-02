@@ -408,9 +408,15 @@ fn account_changed(v: &Vault, site: &str, value: &str) -> bool {
         .get(&id)
         .is_some_and(|old| old.value != value && token(&id) != value)
 }
-fn redact_text(v: &Vault, text: &str) -> String {
-    static TOKENS: OnceLock<regex::Regex> = OnceLock::new();
-    let re = TOKENS.get_or_init(|| regex::Regex::new(r"\{\{secret:[^{}]+\}\}").unwrap());
+// Build the matcher once for this immutable vault snapshot, not once per
+// string in a potentially large chat transcript. Never cache past mutations.
+struct Redactor<'a> {
+    vault: &'a Vault,
+    entries: Vec<(String, String)>,
+    matcher: Option<regex::Regex>,
+}
+impl<'a> Redactor<'a> {
+  fn new(v: &'a Vault) -> Self {
     let mut entries: Vec<(String, String)> = v
         .secrets
         .iter()
@@ -419,18 +425,23 @@ fn redact_text(v: &Vault, text: &str) -> String {
         .filter(|(s, _)| !s.is_empty())
         .collect();
     entries.sort_by_key(|(s, _)| std::cmp::Reverse(s.len()));
-    let matcher = regex::Regex::new(
+    let matcher = if entries.is_empty() { None } else { Some(regex::Regex::new(
         &entries
             .iter()
             .map(|(value, _)| regex::escape(value))
             .collect::<Vec<_>>()
             .join("|"),
-    );
+    ).expect("escaped credential literals")) };
+    Self { vault: v, entries, matcher }
+  }
+  fn text(&self, text: &str) -> String {
+    static TOKENS: OnceLock<regex::Regex> = OnceLock::new();
+    let re = TOKENS.get_or_init(|| regex::Regex::new(r"\{\{secret:[^{}]+\}\}").unwrap());
     let replace = |part: &str| {
-        if entries.is_empty() {
+        if self.entries.is_empty() {
             return part.to_owned();
         }
-        matcher
+        self.matcher
             .as_ref()
             .unwrap()
             .replace_all(part, |caps: &regex::Captures| {
@@ -448,7 +459,7 @@ fn redact_text(v: &Vault, text: &str) -> String {
                 {
                     return value.to_string();
                 }
-                entries
+                self.entries
                     .iter()
                     .find(|(source, _)| source == value)
                     .unwrap()
@@ -462,7 +473,7 @@ fn redact_text(v: &Vault, text: &str) -> String {
     for m in re.find_iter(text) {
         out.push_str(&replace(&text[start..m.start()]));
         out.push_str(
-            v.aliases
+            self.vault.aliases
                 .get(m.as_str())
                 .map(String::as_str)
                 .unwrap_or(m.as_str()),
@@ -471,28 +482,35 @@ fn redact_text(v: &Vault, text: &str) -> String {
     }
     out.push_str(&replace(&text[start..]));
     out
-}
-fn redact_value(v: &Vault, data: &mut Value) {
+  }
+  fn value(&self, data: &mut Value) {
     match data {
         Value::String(s) => {
             if let Ok(mut nested) = serde_json::from_str::<Value>(s) {
                 if nested.is_object() || nested.is_array() {
-                    redact_value(v, &mut nested);
+                    self.value(&mut nested);
                     *s = nested.to_string();
                     return;
                 }
             }
-            *s = redact_text(v, s);
+            *s = self.text(s);
         }
-        Value::Array(rows) => rows.iter_mut().for_each(|row| redact_value(v, row)),
+        Value::Array(rows) => rows.iter_mut().for_each(|row| self.value(row)),
         Value::Object(rows) => rows
             .iter_mut()
             .filter(|(key, _)| {
                 !["id", "name", "role", "tool_call_id", "source_message_id"].contains(&key.as_str())
             })
-            .for_each(|(_, row)| redact_value(v, row)),
+            .for_each(|(_, row)| self.value(row)),
         _ => {}
     }
+  }
+}
+fn redact_text(v: &Vault, text: &str) -> String {
+    Redactor::new(v).text(text)
+}
+fn redact_value(v: &Vault, data: &mut Value) {
+    Redactor::new(v).value(data)
 }
 fn site_origins(site: &str) -> Vec<String> {
     if site.starts_with("pending-") {
@@ -906,7 +924,9 @@ pub fn document_write(name: &str, mut value: Value) -> Result<Value, String> {
     }
     let data = with_vault(true, |v| {
         protect_document(v, name, &mut value)?;
-        scrub_stored_chats(v);
+        // The replacement transcript has already been fully redacted. Scanning
+        // the old copy here only doubles checkpoint work before overwriting it.
+        if name != "agent_chats" { scrub_stored_chats(v); }
         v.documents.insert(name.into(), value.clone());
         Ok(value)
     })?;
@@ -1119,6 +1139,27 @@ mod tests {
             reference
         );
         assert_eq!(redact_text(&v, &reference), reference);
+    }
+    #[test]
+    fn transcript_redaction_keeps_nested_json_boundaries_and_rotated_secrets_safe() {
+        let mut vault = Vault::default();
+        let id = "site/example.test/password";
+        let reference = put_secret(&mut vault, id, "demo-secret-long", "site", vec![]).unwrap();
+        let short = put_secret(&mut vault, "site/example.test/account", "abc", "site", vec![]).unwrap();
+        let row = json!({"id":"stable-message-id", "content":"demo-secret-long abc abcdef", "arguments":json!({"text":"demo-secret-long", "reference":reference}).to_string()});
+        let mut transcript = Value::Array(vec![row; 2048]);
+        redact_value(&vault, &mut transcript);
+        for row in transcript.as_array().unwrap() {
+            assert_eq!(row["id"], "stable-message-id");
+            assert_eq!(row["content"], format!("{} {} abcdef", reference, short));
+            let args: Value = serde_json::from_str(row["arguments"].as_str().unwrap()).unwrap();
+            assert_eq!(args["text"], reference);
+            assert_eq!(args["reference"], reference);
+        }
+        put_secret(&mut vault, id, "rotated-secret", "site", vec![]).unwrap();
+        let mut next = json!(["rotated-secret", "demo-secret-long"]);
+        redact_value(&vault, &mut next);
+        assert_eq!(next, json!([reference, reference]));
     }
 }
 

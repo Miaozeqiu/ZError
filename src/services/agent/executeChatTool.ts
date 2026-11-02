@@ -97,6 +97,18 @@ export const executeChatTool = async (input: {
     return executeChatTool({ call: { ...call, name: aliased }, ctx })
   }
   const args = parseToolArgs(call.arguments)
+  if (call.name === 'search_conversation_history' || call.name === 'read_conversation_history') {
+    const { liveSession } = await import('./chatStore')
+    const { conversationHistory } = await import('./conversationHistory')
+    const { redactNative } = await import('../security/secureStore')
+    const session = liveSession(ctx.sessionId)
+    // Redact the whole source before slicing, otherwise a page boundary could
+    // split a credential into fragments that no longer match the redactor.
+    const safeSession = session ? await redactNative(redactObject(session)) : undefined
+    return JSON.stringify(safeSession
+      ? conversationHistory(safeSession, call.name === 'search_conversation_history' ? 'search' : 'read', args)
+      : { ok: false, error: '当前对话不存在' })
+  }
   let browserId = ctx.browserId()
   if (call.name.startsWith('browser_') && ctx.ensureBrowser) {
     try {
@@ -284,11 +296,16 @@ export const executeChatTool = async (input: {
       )
       if (call.name === 'browser_finish') {
         const { liveSession } = await import('./chatStore')
-        const currentSteps = liveSession(ctx.sessionId)?.messages.find(message => message.id === ctx.assistantId)?.steps || []
+        const session = liveSession(ctx.sessionId)
+        const current = session?.messages.find(message => message.id === ctx.assistantId)
+        const currentSteps = current?.steps || []
+        const goal = session?.messages.find(message => message.role === 'user' && message.id === current?.run?.goalMessageId)
         const evidence = await collectFinishEvidence(browserId, gateSession, {
           todos: ctx.getTodos?.() || [],
           role: ctx.role || 'parent',
           steps: currentSteps,
+          completion: args.completion,
+          goalText: goal?.content,
         })
         const judged = judgeFinish(String(args.status || ''), String(args.summary || ''), evidence)
         if (!judged.ok) return JSON.stringify({ ok: false, finished: false, error: 'error' in judged ? judged.error : '还不能收工' })

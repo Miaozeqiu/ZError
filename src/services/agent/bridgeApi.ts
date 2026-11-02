@@ -33,6 +33,7 @@ export type BridgeCmd = {
 
 export const BRIDGE_ACTIONS = [
   { name: 'help', group: 'meta', hint: '列出全部动作' },
+  { name: 'health', group: 'meta', hint: '查看开发版加载状态，不返回凭据或聊天正文' },
   { name: 'list', group: 'meta', hint: '列出应用内浏览器标签' },
   { name: 'state', group: 'meta', hint: '当前页 + 章节解析器全文 + 任务点' },
   { name: 'goto', group: 'browser', hint: '打开网址。args.url', alias: ['navigate'] },
@@ -187,6 +188,10 @@ const homeworkOf = async (
 const sendInApp = async (browserId: string, text: string) => {
   const { ensureBrowserChat, sendChatMessage, stopChat, selectChat } = await import('./chat')
   const { modelConfigManager } = await import('../model/config')
+  const { chatStoreReady } = await import('./chatStore')
+  // A dev hot reload may reconnect the bridge before encrypted stores finish
+  // hydrating. Do not create a duplicate owner or misreport a missing model.
+  await Promise.all([chatStoreReady, modelConfigManager.ready])
   const session = ensureBrowserChat({ browserId })
   if (!session) return { ok: false, error: '没有浏览器对话' }
   selectChat(session.id)
@@ -212,6 +217,17 @@ export const runBridgeAction = async (cmd: BridgeCmd) => {
 
   if (action === 'help') {
     return { ok: true, id, action, actions: BRIDGE_ACTIONS }
+  }
+  if (action === 'health') {
+    const { modelConfigManager } = await import('../model/config')
+    const { chatStoreReady, sessions } = await import('./chatStore')
+    const { secureStorageState } = await import('../security/secureStore')
+    await Promise.all([chatStoreReady, modelConfigManager.ready])
+    return { ok: !secureStorageState.error, id, action, host: location.origin,
+      visibility: document.visibilityState, focused: document.hasFocus(),
+      storageError: secureStorageState.error, sessions: sessions.value.length, browsers: listAppBrowsers().length,
+      agentModel: modelConfigManager.getSelectedAgentModel()?.displayName || modelConfigManager.getSelectedTextModel()?.displayName || '',
+    }
   }
 
   if (action === 'list') {
@@ -269,6 +285,8 @@ export const runBridgeAction = async (cmd: BridgeCmd) => {
       || null
     const last = session?.messages[session.messages.length - 1]
     const diagnostic = args.diagnostics === true
+    const { resolveContextBudget } = await import('../model/contextBudget')
+    const selectedModel = modelConfigManager.getSelectedAgentModel() || modelConfigManager.getSelectedTextModel()
     const { videoWatchFor } = await import('../platform/panelAccess')
     const { coursePlanFor } = await import('../browser/coursePlan')
     const { hasAgentWait } = await import('./agentWait')
@@ -289,6 +307,8 @@ export const runBridgeAction = async (cmd: BridgeCmd) => {
       lastRole: last?.role || '',
       lastText: clip(last?.content || last?.error || '', 240),
       ...(diagnostic ? {
+        contextBudget: resolveContextBudget(selectedModel),
+        run: last?.run,
         lastStatus: last?.status, taskOutcome: last?.taskOutcome, stopReason: last?.stopReason, waitingForEvent: hasAgentWait(session?.id || ''),
         lastError: args.details === true ? redactText(clip(last?.error || '', 1600)) : undefined,
         watch: watch ? { sessionId: watch.sessionId, status: watch.status, current: watch.current, duration: watch.duration, updatedAt: watch.updatedAt } : null,
@@ -304,6 +324,9 @@ export const runBridgeAction = async (cmd: BridgeCmd) => {
               frame: params.frame, frameId: params.frameId, loaderId: params.loaderId,
               requestedStatus: params.status, watching: result.watching, finished: result.finished,
               resultStatus: result.status, ok: result.ok,
+              ...(args.details === true && (step.status === 'failed' || result.ok === false) ? {
+                error: redactText(clip(step.detail || String(result.error || result.reason || ''), 1200)),
+              } : {}),
               ...(args.details === true && step.name === 'browser_press' ? { key: params.key } : {}),
               ...(args.details === true && /^(browser_eval|browser_get_page)$/.test(step.name) ? {
                 observationKeys: result.result && typeof result.result === 'object' ? Object.keys(result.result).slice(0, 30) : [],

@@ -43,6 +43,34 @@ describe('Agent frame 动作', () => {
     expect(JSON.parse(result!).ok).toBe(true)
   })
 
+  it.each([false, true])('数字键对象在工具信封外提示题序风险，保持原始数据与 frame（all=%s）', async all => {
+    const data = { 42: { text: '第三题' }, 41: { text: '第四题' } }
+    const frames = [{ frameId: 'quiz', result: data }]
+    const response = await handleActTools({ ...base(), name: 'browser_eval',
+      args: { script: 'document.title', ...(all ? { all } : { frameId: 'quiz', loaderId: 'doc' }) },
+      inspectEvalScript: () => null, isSpaceListTopUrl: () => false,
+      evaluate: async () => data, evalBrowserFrames: async () => ({ frames, hint: 'frame note' }) })
+    const result = JSON.parse(response!)
+    expect(result.ok).toBe(true)
+    expect(result.hint).toContain('键顺序不代表页面顺序')
+    if (all) {
+      expect(result.frames).toEqual(frames)
+      expect(result.hint).toContain('frame note')
+    } else {
+      expect(result.result).toEqual(data)
+      expect(result.frame).toBe('quiz')
+    }
+  })
+
+  it('有序题目数组保持题号和 ID 对应，不添加数字键提示', async () => {
+    const rows = [{ number: 3, id: 42 }, { number: 4, id: 41 }]
+    const response = await handleActTools({ ...base(), name: 'browser_eval', args: { script: 'document.title' },
+      inspectEvalScript: () => null, isSpaceListTopUrl: () => false, evaluate: async () => rows })
+    const result = JSON.parse(response!)
+    expect(result.result).toEqual(rows)
+    expect(result.hint).toBeUndefined()
+  })
+
   it('frame 失效后带回新快照的提示，不退回顶层执行或原样重试', async () => {
     const evaluate = vi.fn(async () => { throw new Error('目标 frame 不存在或不唯一，请使用快照中的 frameId') })
     const result = await handleActTools({ ...base(), name: 'browser_eval', args: { script: 'document.title', frame: 'video' },

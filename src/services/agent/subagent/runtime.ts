@@ -1,3 +1,9 @@
+import { websitePrimaryHost } from '../websiteIdentity'
+import { watch } from 'vue'
+import { agentApprovalState } from '../agentApproval'
+import { createRunController } from '../core/controller'
+import { taskStateContext } from '../core/taskContext'
+import { newRun } from '../core/run'
 import { redactObject, redactText } from '../../security/secretRedaction'
 /** 组 prompt + runTextModel + executeChatTool。父入口和子 Agent 共用。 */
 import type { ImportStepPreview } from '../../app/importTasks'
@@ -8,6 +14,7 @@ import { describeActivity } from '../activity'
 import type { AgentChatMessage } from '../chatTypes'
 import type { AgentToolRole } from '../toolContext'
 import {
+  flushChatCheckpoint,
   addChildStep,
   addStep,
   liveSession,
@@ -23,7 +30,8 @@ import {
 import { clipAgentDebug, logAgentDebug } from '../debugLog'
 import { executeChatTool } from '../executeChatTool'
 import { parseQuestions } from '../import'
-import { TOOL_ARGS_KEEP, TOOL_RESULT_KEEP, clipToolText, clipTranscript } from '../modelHistory'
+import { TOOL_RESULT_KEEP } from '../modelHistory'
+import { projectToolResult } from '../../model/toolResultProjection'
 import { isModelStopped, runTextModel, type ModelToolCall, type RunTextModelOptions } from '../../model/runner'
 import { parseToolArgs } from '../toolArgs'
 import { scheduleStudyProgressEval } from '../chatStudy'
@@ -94,6 +102,26 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
   const liveMessage = () =>
     sessions.value.find((item) => item.id === sessionId)
       ?.messages.find((message) => message.id === assistantId)
+  const run = createRunController({
+    run: liveMessage()?.run || newRun(assistantId),
+    changed: checkpoint => { if (liveMessage()) patchMessage(sessionId, assistantId, { run: checkpoint }) },
+    checkpoint: flushChatCheckpoint,
+    prepareBrowser: async () => {
+      const { ensureAgentBrowser } = await import('../agentBrowser')
+      return ensureAgentBrowser(parentSessionId || sessionId)
+    },
+    browserTabs: () => liveSession(parentSessionId || sessionId)?.browserIds || [liveSession(parentSessionId || sessionId)?.browserId || ''].filter(Boolean),
+    selectBrowser: async id => {
+      const session = liveSession(parentSessionId || sessionId)
+      const { browserIdsForChat, bindChatBrowser, ensureAgentBrowser } = await import('../agentBrowser')
+      const { listAppBrowsers } = await import('../../browser/appBrowser')
+      if (!session || !browserIdsForChat(session).includes(id) || !listAppBrowsers().some(tab => tab.id === id)) return false
+      bindChatBrowser(session.id, id)
+      return await ensureAgentBrowser(session.id) === id
+    },
+    browserId: () => liveSession(parentSessionId || sessionId)?.browserId || '', signal: abort.signal,
+  })
+  run.state('running')
   // 旧会话清单供模型参考，只有本轮实际更新的清单才约束本轮。
   const completion = createTaskCompletionCheck(() => ({
     todos: liveMessage()?.todos || [],
@@ -112,6 +140,8 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
   })
   const visibleText = (text?: string) => Boolean(String(text || '').replace(/\u200B/g, '').trim())
   const stripMarks = (text: string) => redactText(String(text || '').replace(/\u200B/g, ''))
+  let consultedSitePath = ''
+  let siteActionFailures = 0
   let awaitingTool = false
   let spokenText = ''
   let roundBase = ''
@@ -199,8 +229,15 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
     })
   }
 
+  let waitingForApproval = false
   let waitingForVideo = false
   const pauseListeners = new Set<(paused: boolean) => void>()
+  const stopApprovalWatch = watch(() => agentApprovalState.pending?.sessionId === sessionId, pending => {
+    waitingForApproval = pending
+    run.state(pending ? 'waiting_user' : waitingForVideo ? 'waiting_video' : 'running')
+    pauseListeners.forEach(listener => listener(waitingForVideo || pending))
+    void flushChatCheckpoint().catch(() => undefined)
+  }, { flush: 'sync' })
   const continueVideo = role === 'parent' ? createWatchContinuation({
     sessionId, signal: abort.signal,
     browserId: () => liveSession(sessionId)?.browserId || '',
@@ -208,19 +245,23 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
       && step.status === 'done' && parseToolArgs(step.result || '').watching === true)?.id,
     canFinish: () => Boolean(completion.terminal()),
     waiting: value => {
+      run.state(waitingForApproval ? 'waiting_user' : value ? 'waiting_video' : 'running')
       waitingForVideo = value
-      pauseListeners.forEach(listener => listener(value))
+      pauseListeners.forEach(listener => listener(value || waitingForApproval))
+      void flushChatCheckpoint().catch(() => undefined)
       flushStreamHold()
       if (liveMessage()?.status === 'streaming') patchMessage(sessionId, assistantId, { awaitingVideo: value, waiting: !value })
     },
   }) : async () => undefined
 
   try {
+    await flushChatCheckpoint()
     const finalText = await runTextModel(modelPrompt, (delta) => {
       if (abort.signal.aborted || liveMessage()?.status !== 'streaming') return
       streamText(delta)
     }, {
       timeoutMs,
+      validateTools: true,
       compactBrowserContext: isBrowserChat,
       userContent,
       signal: abort.signal,
@@ -230,24 +271,26 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
       useAgentModel: true,
       history,
       maxRounds,
-      liveContext: () => controlGate.liveContext(liveContext),
+      liveContext: () => controlGate.liveContext(async () => [await liveContext?.() || '', run.context(), taskStateContext(liveSession(sessionId), assistantId)].join('\n')),
       beforeComplete: async remaining => {
+        const recovery = !completion.terminal() ? run.beforeComplete() : undefined
+        if (recovery) return recovery
         const continuation = await continueVideo()
         return completion.beforeComplete(remaining, continuation) || learningCheck.beforeComplete(remaining)
       },
       subscribePause: listener => {
-        pauseListeners.add(listener); listener(waitingForVideo)
+        pauseListeners.add(listener); listener(waitingForVideo || waitingForApproval)
         return () => { pauseListeners.delete(listener) }
       },
       onTurnTranscript: (items) => {
         flushStreamHold()
         const prev = liveMessage()?.transcript || []
         patchMessage(sessionId, assistantId, {
-          transcript: clipTranscript(redactObject([...prev, ...items])),
+          transcript: redactObject([...prev, ...items]),
         })
       },
       executeTool: async (call: ModelToolCall) => {
-        const result = await controlGate.runTool(call, browserEpoch => executeChatTool({
+        const result = await controlGate.runTool(call, browserEpoch => run.execute(call, expectedBrowserId => executeChatTool({
           call,
           ctx: {
             sessionId,
@@ -263,6 +306,7 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
               const { ensureAgentBrowser } = await import('../agentBrowser')
               const target = parentSessionId || sessionId
               const id = await ensureAgentBrowser(target)
+              if (expectedBrowserId && id !== expectedBrowserId) throw new Error('网页操作未执行：当前标签页已改变，请重新读取页面。')
 
               return id
             },
@@ -298,7 +342,7 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
               patchMessage(target, messageId, { todos })
             },
           },
-        }))
+        })))
         const finished = call.name === 'browser_finish' ? parseToolArgs(result) : null
         if (role === 'parent' && finished?.ok === true && finished.status === 'watching') {
           const continuation = await continueVideo()
@@ -309,6 +353,9 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
       },
       onEvent: (event) => {
         if (abort.signal.aborted || liveMessage()?.status !== 'streaming') return
+        if (event.type === 'request') { run.request(event.inputTokens); return }
+        if (event.type === 'usage') { run.usage(event.outputTokens); return }
+        if (event.type === 'context_compacted') { run.compacted(event.beforeTokens, event.afterTokens); return }
         if (event.type === 'round_start') {
           awaitingTool = false
           beginRound()
@@ -353,7 +400,7 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
                 : undefined,
             status: 'running' as const,
             startedAt: Date.now(),
-            arguments: clipToolText(event.arguments, TOOL_ARGS_KEEP),
+            arguments: event.arguments,
             jobId,
           }
           addStep(sessionId, assistantId, step)
@@ -370,6 +417,14 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
             extra = null
           }
           const parsedError = extra && typeof extra === 'object' ? extra.error : null
+          if (event.name === 'read_agent_skill_file' && extra?.id === 'site-learn' && /^sites\/[^/]+\/SKILL\.md$/.test(extra.path || '') && !extra.error) consultedSitePath = extra.path
+          if (consultedSitePath === `sites/${websitePrimaryHost(peekAppBrowserUrl(liveSession(sessionId)?.browserId || ''))}/SKILL.md` && /^browser_(click|click_text)$/.test(event.name) && (extra?.reason === 'not_found' || extra?.failGate)) {
+            siteActionFailures++
+            if (siteActionFailures >= 2) patchMessage(sessionId, assistantId, { skillEvidence: [{ path: consultedSitePath, verifiedAt: Date.now(), browserId: liveSession(sessionId)?.browserId || '', outcome: 'needs_review' }] })
+          }
+          if (event.name === 'browser_finish' && extra?.ok && extra.finished && extra.status === 'done' && ['updated', 'covered'].includes(extra.learning?.decision) && extra.learning?.path) {
+            patchMessage(sessionId, assistantId, { skillEvidence: [{ path: extra.learning.path, verifiedAt: Date.now(), browserId: liveSession(sessionId)?.browserId || '', outcome: 'validated' }] })
+          }
           const status: 'failed' | 'done' = event.error || parsedError ? 'failed' : 'done'
           debug({
             type: 'tool_end',
@@ -397,7 +452,7 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
             target: activity.target,
             title: quizTitle || undefined,
             detail: event.error || (typeof parsedError === 'string' ? parsedError : parsedError ? JSON.stringify(parsedError) : undefined),
-            result: clipToolText(event.result, TOOL_RESULT_KEEP),
+            result: projectToolResult(event.result, TOOL_RESULT_KEEP, event.id),
             finishedAt: Date.now(),
             ...(quizCards.length ? {
               preview: quizCards as ImportStepPreview[],
@@ -420,12 +475,15 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
     const assistantContent = visibleText(liveNow)
       ? liveNow
       : joinRound(finalText || '')
+    await run.finish(completion.outcome === 'blocked' || completion.outcome === 'incomplete' ? 'blocked' : 'completed')
     return { text: learningCheck.deferred ? `${assistantContent}\n\n本轮新的站点经验未确认保存到 Skill。` : assistantContent,
       aborted: false, taskOutcome: completion.outcome }
   } catch (error) {
     if (abort.signal.aborted || isModelStopped(error)) {
       return { text: liveContent(), aborted: true }
     }
+    run.fail(error)
+    await flushChatCheckpoint().catch(() => undefined)
     return {
       text: liveContent(),
       aborted: false,
@@ -433,6 +491,8 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
       taskOutcome: completion.active ? 'incomplete' : undefined,
     }
   } finally {
+    stopApprovalWatch()
+    run.dispose()
     flushStreamHold()
     void liveSession(sessionId)
   }

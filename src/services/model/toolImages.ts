@@ -17,9 +17,9 @@ const IMAGE_KEYS = new Set([
 
 export const VISION_SMALL_CHARS = 80_000
 
-export const visionDetailOf = (url: string): 'high' | 'low' => (
-  String(url || '').length < VISION_SMALL_CHARS ? 'high' : 'low'
-)
+// Encoded byte size says nothing about readable text size. A full-page course
+// screenshot needs high detail too, especially for Chinese and negation words.
+export const visionDetailOf = (_url: string): 'high' => 'high'
 
 /**
  * 只有「小图 + 整页」两张以上才是验证码流程（captchaImages 抠图 + 整页）。

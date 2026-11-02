@@ -1,3 +1,4 @@
+import { experienceStatus, latestExperience } from './core/experience'
 /** 上下文压缩、学习评估、回合环境前缀。模型循环在 chatLoop.ts。 */
 import { computed, ref } from 'vue'
 import { databaseService } from '../app/database'
@@ -7,7 +8,10 @@ import {
   peekAppBrowserUrl,
 } from '../browser/appBrowser'
 import { siteGraphAgentSnap } from '../browser/siteGraph'
-import { hasUsableVisionModel } from '../model/config'
+import { hasUsableVisionModel, modelConfigManager } from '../model/config'
+import { resolveContextBudget } from '../model/contextBudget'
+import { SUMMARY_SYSTEM, summarizeRecord } from '../model/contextSummary'
+import { redactObject } from '../security/secretRedaction'
 import { runTextModel } from '../model/runner'
 import { runStudyProgressEvaluation } from '../study/progressAgent'
 import { describeActivity } from './activity'
@@ -24,12 +28,7 @@ import {
   activeChat,
 } from './chatStore'
 import {
-  AGENT_CONTEXT_COMPACT_AT,
-  BROWSER_CONTEXT_COMPACT_AT,
-  BROWSER_CONTEXT_KEEP_TOKENS,
-  CONTEXT_COMPACT_INPUT_TOKENS,
   CONTEXT_COMPACT_MIN_MESSAGES,
-  CONTEXT_COMPACT_MSG_CHARS,
   CONTEXT_KEEP_MIN_MESSAGES,
   CONTEXT_KEEP_TOKENS,
   estimateAgentContext,
@@ -130,7 +129,7 @@ export const browserStatePrefix = async (sessionId: string) => {
       const node = siteGraphNodeForUrl(url)?.id || ''
       const section = node ? text.split(/^## /m).find((part) => part.startsWith(node)) : ''
       const body = (section ? `## ${section}` : text).trim().slice(0, 900)
-      if (body) skillLine = `【经验】\n${body}`
+      if (body) skillLine = `【经验】\n${experienceStatus(latestExperience(sessions.value.flatMap(session => session.messages), `sites/${host}/SKILL.md`))}\n${body}`
     } catch {
       skillLine = ''
     }
@@ -236,33 +235,6 @@ const collectRecentTurns = (sessionId: string, limit = 8) => {
   return [turns, quizLog ? `本轮作答摘要：${quizLog}` : ''].filter(Boolean).join('\n')
 }
 
-const COMPACT_SYSTEM = '你是对话归档员。把给定的对话压成结构化中文摘要，只保留后续对话还需要用到的信息。不要评论，不要写开场白。'
-
-const compactPrompt = (previous: string, transcript: string, browser = false) => [
-  previous ? `已有摘要（要和新内容合并，别丢掉里面的结论）：\n${previous}\n` : '',
-  `需要归档的对话：\n${transcript}\n`,
-  '输出合并后的摘要，1200 字以内，按下面的小标题分段，没有内容的标题写「无」：',
-  ...(browser
-    ? [
-      '【用户目标】（原话和 intent）',
-      '【未完成清单】',
-      '【已完成子 Agent】（每个一句 summary，不要内部 click 流水）',
-      '【做过】（成功的 handle / 节点）',
-      '【打开过的页面】',
-      '【题库与学习】（关联科目、文件夹等 id，讲解结论、练习与作答情况）',
-      '【工具调用与失败】（工具名、关键参数、error；同参失败要记下）',
-      '【待办与约定】',
-    ]
-    : [
-      '【用户背景与目标】',
-      '【已讲解的知识点】',
-      '【出过的题与作答情况】',
-      '【已完成的操作】（导入题目、改图谱、建科目等，带上关键 id 或名称）',
-      '【待办与约定】',
-    ]),
-  '只输出摘要正文。',
-].filter(Boolean).join('\n')
-
 const pickCompactBoundary = (kept: AgentChatMessage[], keepTokens = CONTEXT_KEEP_TOKENS) => {
   let tokens = 0
   let start = kept.length
@@ -277,25 +249,11 @@ const pickCompactBoundary = (kept: AgentChatMessage[], keepTokens = CONTEXT_KEEP
   return start
 }
 
-const buildCompactTranscript = (messages: AgentChatMessage[]) => {
-  const items = messages.flatMap((message) => {
-    const text = messageHistoryText(message).trim()
-    const quiz = formatQuizEvidence(message)
-    if (!text && !quiz) return []
-    const line = [
-      `${message.role === 'user' ? '用户' : '助手'}：${text.slice(0, CONTEXT_COMPACT_MSG_CHARS)}`,
-      quiz ? `作答记录：${quiz}` : '',
-    ].filter(Boolean).join('\n')
-    return [{ line, tokens: estimateTextTokens(line) }]
-  })
-  let total = items.reduce((sum, item) => sum + item.tokens, 0)
-  let from = 0
-  while (from < items.length - 1 && total > CONTEXT_COMPACT_INPUT_TOKENS) {
-    total -= items[from].tokens
-    from += 1
-  }
-  return items.slice(from).map((item) => item.line).join('\n\n')
-}
+const buildCompactTranscript = (messages: AgentChatMessage[]) => messages.map(message => JSON.stringify({
+  id: message.id, role: message.role, content: message.modelContent || message.content,
+  transcript: message.transcript || message.steps.map(step => ({ id: step.id, tool: step.name, arguments: step.arguments, result: step.result, status: step.status })),
+  todos: message.todos, quizAttempts: message.quizAttempts, taskOutcome: message.taskOutcome,
+})).join('\n')
 
 const compactInFlightIds = ref<string[]>([])
 
@@ -308,7 +266,9 @@ const runContextCompaction = async (sessionId: string) => {
   const session = sessions.value.find((item) => item.id === sessionId)
   if (!session) return
   const { summary, kept } = splitCompactedHistory(session)
-  const start = pickCompactBoundary(kept, session.browserId ? BROWSER_CONTEXT_KEEP_TOKENS : CONTEXT_KEEP_TOKENS)
+  const summaryModel = modelConfigManager.getSelectedAgentModel?.() || modelConfigManager.getSelectedTextModel?.()
+  const budget = resolveContextBudget(summaryModel)
+  const start = pickCompactBoundary(kept, Math.floor(budget.target * 0.5))
   if (start < CONTEXT_COMPACT_MIN_MESSAGES) return
   const archived = kept.slice(0, start)
   if (archived.some((item) => item.status === 'streaming')) return
@@ -319,26 +279,32 @@ const runContextCompaction = async (sessionId: string) => {
     .join('\n')
   const packed = [transcript, jobLines ? `已完成子 Agent：\n${jobLines}` : ''].filter(Boolean).join('\n\n')
   if (!packed) return
-  const text = await runTextModel(
-    compactPrompt(summary?.text || '', packed, Boolean(session.browserId)),
-    () => undefined,
-    {
-      timeoutMs: 4 * 60 * 1000,
-      tools: [],
-      systemPrompt: COMPACT_SYSTEM,
-      useAgentModel: true,
-      maxRounds: 1,
+  const text = await summarizeRecord({ text: packed, previous: summary?.text,
+    chunkTokens: Math.max(512, Math.min(8000, Math.floor(budget.inputLimit * 0.45))),
+    summarize: prompt => {
+      if (!sessions.value.some(item => item.id === sessionId)) throw new Error('对话已关闭，停止归档')
+      return runTextModel(prompt, undefined, {
+        timeoutMs: 4 * 60 * 1000,
+        tools: [],
+        systemPrompt: SUMMARY_SYSTEM,
+        useAgentModel: true,
+        contextSummaryOnly: true,
+        contextModel: summaryModel,
+        outputTokenLimit: Math.min(2048, budget.outputReserve),
+        maxRounds: 1,
+      })
     },
-  )
+  })
   const clean = String(text || '').trim()
   if (!clean) return
   const coveredThrough = archived[archived.length - 1].id
   patchSession(sessionId, (current) => {
     if (!current.messages.some((item) => item.id === coveredThrough)) return current
+    if (current.contextSummary?.coveredThrough !== summary?.coveredThrough) return current
     return {
       ...current,
       contextSummary: {
-        text: clean,
+        text: redactObject(clean),
         coveredThrough,
         coveredCount: (summary?.coveredCount || 0) + archived.length,
         tokens: estimateTextTokens(clean),
@@ -352,7 +318,8 @@ export const maybeCompactContext = (sessionId: string) => {
   const session = sessions.value.find((item) => item.id === sessionId)
   if (!session || compactInFlightIds.value.includes(sessionId)) return
   if (sessionIsStreaming(session)) return
-  if (estimateAgentContext(session).used < (session.browserId ? BROWSER_CONTEXT_COMPACT_AT : AGENT_CONTEXT_COMPACT_AT)) return
+  const budget = resolveContextBudget(modelConfigManager.getSelectedAgentModel?.() || modelConfigManager.getSelectedTextModel?.())
+  if (estimateAgentContext(session).used < budget.compactAt) return
   compactInFlightIds.value = [...compactInFlightIds.value, sessionId]
   void runContextCompaction(sessionId)
     .catch((error) => {

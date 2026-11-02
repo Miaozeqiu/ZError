@@ -1,3 +1,5 @@
+import { composePrompt } from './core/prompt'
+import { newRun, runRecoveryContext, classifyFailure, transitionRun } from './core/run'
 /** 一轮对话：组 prompt、跑模型、写回消息。会话状态在 chatStore.ts。 */
 import { databaseService } from '../app/database'
 import { peekAppBrowserUrl } from '../browser/appBrowser'
@@ -112,9 +114,14 @@ export const sendChatMessage = async (
     steps: [],
     status: 'done',
   }
+  const latestRunMessage = [...session.messages].reverse().find(message => message.role === 'assistant' && message.run)
+  const recoveryMessage = options?.kind !== 'watch' && /^(?:请|帮我)?(?:继续|接着|恢复|重试|再试)/.test(content) && latestRunMessage?.run?.status !== 'completed' ? latestRunMessage : undefined
+  const recovery = recoveryMessage?.run
   const assistantId = `assistant-${Date.now()}`
   const assistantMessage: AgentChatMessage = {
     id: assistantId,
+    run: { ...newRun(assistantId, Date.now(), recovery), goalMessageId: recovery?.goalMessageId || userMessage.id },
+    todos: recoveryMessage?.todos?.map(todo => ({ ...todo })),
     role: 'assistant',
     content: '',
     steps: [],
@@ -199,13 +206,15 @@ export const sendChatMessage = async (
     const { modelConfigManager } = await import('../model/config')
     await prepareTurn(abort.signal, () => modelConfigManager.ready)
     const providerIndex = modelConfigManager.getSettings().platforms.map(platform => ({ id: platform.id, name: platform.name }))
-    const turnSystemPrompt = [
-      `【API Key 服务索引】provider_id：search/exa=Exa 搜索，search/deepseek=DeepSeek 搜索；模型平台 ${JSON.stringify(providerIndex)}。这里只包含配置标识，不含密钥。`,
-      baseSystemPrompt,
-      overlay ? `【附加规则】\n${overlay}` : '',
-      contextSummaryPrompt(compacted.summary),
-      envBlock,
-    ].filter(Boolean).join('\n\n')
+    const originalGoal = recovery?.goalMessageId ? liveSession(sessionId)?.messages.find(message => message.id === recovery.goalMessageId)?.content || '' : ''
+    const turnSystemPrompt = composePrompt([
+      { id: 'core', priority: 0, trust: 'system', text: baseSystemPrompt },
+      { id: 'profile', priority: 10, trust: 'system', text: overlay ? `【附加规则】\n${overlay}` : '' },
+      { id: 'providers', priority: 20, trust: 'context', text: `【API Key 服务索引】provider_id：search/exa=Exa 搜索，search/deepseek=DeepSeek 搜索；模型平台 ${JSON.stringify(providerIndex)}。这里只包含配置标识，不含密钥。` },
+      { id: 'summary', priority: 30, trust: 'context', text: contextSummaryPrompt(compacted.summary) },
+      { id: 'recovery', priority: 40, trust: 'context', text: [runRecoveryContext(recovery), originalGoal ? `原任务目标（当前用户消息优先）：${originalGoal}` : ''].filter(Boolean).join('\n') },
+      { id: 'environment', priority: 50, trust: 'context', text: envBlock },
+    ])
     const promptBody = String(options?.modelText || '').trim() || content
     const modelPrompt = `【消息ID：${userMessage.id}】\n${modelUserContent(promptBody, promptFolders)}`
     const images = (attachments || []).filter((item) => isImageAttachment(item) && item.imageUrl)
@@ -318,8 +327,11 @@ export const sendChatMessage = async (
       if (current?.status === 'streaming') finalizeStopped(sessionId, assistantId)
       return
     }
+    const checkpoint = liveSession(sessionId)?.messages.find(message => message.id === assistantId)?.run
+    if (checkpoint) { checkpoint.failure = classifyFailure(error); transitionRun(checkpoint, 'failed') }
     patchMessage(sessionId, assistantId, {
-      status: 'failed',
+      run: checkpoint,
+      status: 'failed', waiting: false, awaitingVideo: false,
       error: error instanceof Error ? error.message : String(error),
     })
   } finally {

@@ -1,3 +1,4 @@
+vi.mock('../../src/services/model/providers', () => ({ createBuiltinProvider: () => null }))
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 const mock = vi.hoisted(() => ({ fetch: vi.fn(), model: { id: 'test-model' } }))

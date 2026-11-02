@@ -171,3 +171,32 @@ describe('first message preparation', () => {
     expect(api.run).not.toHaveBeenCalled()
   })
 })
+
+it('rehydrates an interrupted video checkpoint without restarting timers, and restores its original goal on explicit continuation', async () => {
+  const run = { version: 1, id: 'old-run', goalMessageId: 'goal', status: 'waiting_video', updatedAt: 1, needsObservation: false, operations: [], trace: [], sequence: 0, usage: { requests: 2, inputTokens: 100, outputTokens: 10, tools: 2, failures: 0 } }
+  hydration.resolve([{ id: 'old', title: 'old', createdAt: 1, updatedAt: 1, messages: [
+    { id: 'goal', role: 'user', status: 'done', content: '完成第一至第三章，包括测验', steps: [] },
+    { id: 'answer', role: 'assistant', status: 'streaming', awaitingVideo: true, waiting: true, content: '等待视频', steps: [], run },
+  ] }])
+  await store.chatStoreReady
+  const previous = store.liveSession('old')!.messages[1]
+  expect(previous).toMatchObject({ status: 'failed', awaitingVideo: false, waiting: false, run: { status: 'interrupted', needsObservation: true } })
+  const pending = send('继续', undefined, { sessionId: 'old' })
+  await vi.advanceTimersByTimeAsync(0); await pending
+  expect(api.run).toHaveBeenCalledOnce()
+  const args = api.run.mock.calls[0][0]
+  expect(args.systemPrompt).toContain('完成第一至第三章，包括测验')
+  expect(args.systemPrompt).toContain('不能复用旧 ref')
+})
+
+it('does not resurrect an older failed task when the latest run has already completed', async () => {
+  const base = { version: 1, updatedAt: 1, needsObservation: false, operations: [], trace: [], sequence: 0, usage: { requests: 0, inputTokens: 0, outputTokens: 0, tools: 0, failures: 0 } }
+  hydration.resolve([{ id: 'old', title: 'old', createdAt: 1, updatedAt: 1, messages: [
+    { id: 'failed', role: 'assistant', status: 'failed', content: 'failed', steps: [], run: { ...base, id: 'failed-run', status: 'failed' } },
+    { id: 'done', role: 'assistant', status: 'done', content: 'done', steps: [], run: { ...base, id: 'completed-run', status: 'completed' } },
+  ] }])
+  await store.chatStoreReady
+  const pending = send('继续', undefined, { sessionId: 'old' })
+  await vi.advanceTimersByTimeAsync(0); await pending
+  expect(api.run.mock.calls[0][0].systemPrompt).not.toContain('任务恢复检查点')
+})

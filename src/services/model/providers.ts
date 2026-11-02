@@ -1,0 +1,777 @@
+/** Built-in providers execute as compiled code. Custom user JS remains an explicit trusted extension.
+ * Protocol conversion preserves the legacy templates; parity tests cover both paths. */
+import { normalizeThinkingOptions, resolveRuntimeModelId } from './protocol'
+import { resolveModelApiProtocol } from './configTypes'
+import type { AIModel, AIPlatform } from './configTypes'
+export type ProviderMessage = { role: string; content?: unknown; tool_calls?: unknown[]; tool_call_id?: string; name?: string; [key: string]: unknown }
+export type ProviderRequest = { messages: ProviderMessage[]; tools?: unknown[]; stream?: boolean; model?: string }
+export type ProviderConfig = { baseUrl: string; apiKey: string; modelId?: string; model?: string; customHeaders?: Record<string, string>; temperature?: number; topP?: number; maxTokens?: number }
+export type ProviderChunk = { content?: string; reasoning_content?: string; tool_calls?: unknown[]; thinking_blocks?: unknown[]; usage?: Record<string, unknown> }
+export type ProviderFetch = (url: string, init: RequestInit) => Promise<Response>
+export type ProviderAdapter = (input: ProviderRequest, config: ProviderConfig, fetch: ProviderFetch, abortSignal: AbortSignal) => Promise<ProviderChunk | AsyncIterable<ProviderChunk>>
+const incompleteOutputError = (reason: string, config: ProviderConfig) => Object.assign(new Error(reason === 'content_filter'
+  ? '模型服务端过滤了输出（content_filter），响应未完成。'
+  : `模型输出达到长度上限（${config.maxTokens || '服务端默认'} token，${reason}），响应未完成。请在模型设置中增加最大输出长度；思考内容也可能占用该额度。`),
+  { name: reason === 'content_filter' ? 'ModelContentFilterError' : 'ModelOutputLimitError' })
+const helpersFor = (input: ProviderRequest, config: ProviderConfig, modelId: string, thinking: ReturnType<typeof normalizeThinkingOptions>) => {
+
+
+    const PRESET_MODEL_ID = modelId;
+    const THINKING = thinking;
+    const ENABLE_THINKING = !!(THINKING && THINKING.enable);
+
+    const pickFirstString = (...values) => {
+      for (const value of values) {
+        if (typeof value === 'string' && value.length > 0) return value;
+      }
+      return '';
+    };
+
+    const normalizeBaseUrl = (baseUrl) => String(baseUrl || '').replace(/\/+$/, '');
+
+    // Chat：关 → enable_thinking / thinking.type；开 → reasoning_effort
+    // Responses：关 → reasoning.effort none|minimal；开 → reasoning.effort
+    // apiKind: 'chat' | 'responses'
+    const applyOpenAIThinkingPayload = (payload, apiKind) => {
+      const kind = apiKind === 'responses' ? 'responses' : 'chat';
+      const effort = (THINKING && THINKING.effort) || 'medium';
+
+      if (kind === 'responses') {
+        if (ENABLE_THINKING) {
+          payload.reasoning = { effort: effort };
+        } else {
+          const offEffort = (THINKING && THINKING.offResponsesEffort) || 'minimal';
+          payload.reasoning = { effort: offEffort };
+        }
+        return;
+      }
+
+      // chat
+      if (ENABLE_THINKING) {
+        payload.reasoning_effort = effort;
+        return;
+      }
+      if (!THINKING || THINKING.offEnableThinkingFalse !== false) {
+        payload.enable_thinking = false;
+      }
+      if (THINKING && THINKING.offThinkingTypeDisabled) {
+        payload.thinking = { type: 'disabled' };
+      }
+    };
+
+    const getRuntimeModelId = () => PRESET_MODEL_ID || config.modelId || input.model || config.model || '';
+
+    const buildHeaders = (extraHeaders = {}) => {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        ...extraHeaders
+      };
+
+      if (config.apiKey) {
+        headers.Authorization = 'Bearer ' + config.apiKey;
+      }
+
+      if (config.customHeaders && typeof config.customHeaders === 'object') {
+        Object.assign(headers, config.customHeaders);
+      }
+
+      return headers;
+    };
+
+    const ensureOk = async (response) => {
+      if (response.ok) return;
+      let message = '';
+      try {
+        message = await response.text();
+      } catch {}
+      const status = response.status || 0;
+      const statusText = response.statusText || '';
+      const body = (message || '').trim();
+      let detail = body;
+      try {
+        const parsed = JSON.parse(body);
+        detail = parsed.error?.message || parsed.message || parsed.error || body;
+        if (detail && typeof detail !== 'string') detail = JSON.stringify(detail);
+      } catch {}
+      throw new Error(
+        'HTTP ' + status + (statusText ? ' ' + statusText : '') + (detail ? ': ' + detail : '')
+      );
+    };
+
+    const parseJsonSafe = async (response) => {
+      const text = await response.text();
+      if (!text) return {};
+      try {
+        const payload = JSON.parse(text);
+        if (payload?.error || payload?.success === false || ['failed', 'incomplete'].includes(payload?.status)) throw new Error('模型响应失败：' + JSON.stringify(payload.error || payload.incomplete_details || payload.status));
+        const reason = payload?.choices?.[0]?.finish_reason || payload?.stop_reason;
+        if (['length', 'content_filter', 'max_tokens'].includes(reason)) throw incompleteOutputError(reason, config);
+        return payload;
+      } catch (error) {
+        if (!(error instanceof SyntaxError)) throw error;
+        throw new Error('响应不是合法 JSON');
+      }
+    };
+
+    const readSSEPayloads = async function* (response: Response, protocol: 'chat' | 'responses' | 'anthropic') {
+      const reader = response.body?.getReader();
+      if (!reader) return;
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let completed = false;
+      function* parse(block: string) {
+        const data = block.split(/\r?\n/).filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart()).join('\n').trim();
+        if (!data) return;
+        if (data === '[DONE]') { if (protocol === 'chat') completed = true; return; }
+        let payload: any;
+        try { payload = JSON.parse(data); } catch { throw new Error('模型流式响应包含无效 JSON，响应未完成。'); }
+        if (payload?.error || ['error', 'response.failed', 'response.incomplete'].includes(payload?.type)) throw new Error('模型流式响应失败：' + JSON.stringify(payload.error || payload.response?.error || payload.response?.incomplete_details || payload.type));
+        const reason = payload.choices?.[0]?.finish_reason;
+        if (reason === 'length' || reason === 'content_filter' || payload.delta?.stop_reason === 'max_tokens') throw incompleteOutputError(reason || payload.delta.stop_reason, config);
+        if ((protocol === 'chat' && reason != null) || (protocol === 'responses' && payload.type === 'response.completed') || (protocol === 'anthropic' && payload.type === 'message_stop')) completed = true;
+        yield payload;
+      }
+      let finished = false;
+      try {
+        while (true) {
+          const { value, done } = await reader.read();
+          buffer = (buffer + decoder.decode(value || new Uint8Array(), { stream: !done })).replace(/\r\n/g, '\n');
+          let at: number;
+          while ((at = buffer.indexOf('\n\n')) >= 0) {
+            const block = buffer.slice(0, at); buffer = buffer.slice(at + 2); yield* parse(block);
+          }
+          if (done) { if (buffer.trim()) yield* parse(buffer); finished = true; break; }
+        }
+        if (!completed) throw new Error('模型流式连接提前结束，未收到完整结束回执。');
+      } finally {
+        if (!finished) await reader.cancel().catch(() => undefined);
+        reader.releaseLock();
+      }
+    };
+
+    const joinTextParts = (value) => {
+      if (typeof value === 'string') return value;
+      if (!Array.isArray(value)) return '';
+      return value.map((item) => {
+        if (typeof item === 'string') return item;
+        if (!item || typeof item !== 'object') return '';
+        if (item.type === 'text' && typeof item.text === 'string') return item.text;
+        if (item.type === 'output_text' && typeof item.text === 'string') return item.text;
+        if (typeof item.content === 'string') return item.content;
+        return '';
+      }).join('');
+    };
+
+    const mapResponseTool = (tool) => {
+      if (!tool || tool.type !== 'function' || !tool.function) return null;
+      return {
+        type: 'function',
+        name: tool.function.name,
+        description: tool.function.description,
+        parameters: tool.function.parameters || {
+          type: 'object',
+          properties: {}
+        }
+      };
+    };
+
+    const mapAnthropicTool = (tool) => {
+      if (!tool || tool.type !== 'function' || !tool.function) return null;
+      return {
+        name: tool.function.name,
+        description: tool.function.description,
+        input_schema: tool.function.parameters || {
+          type: 'object',
+          properties: {}
+        }
+      };
+    };
+
+    const normalizeOpenAIChunk = (payload) => {
+      const choice = payload && payload.choices ? payload.choices[0] || {} : {};
+      const delta = choice.delta || {};
+      const message = choice.message || {};
+      const content = joinTextParts(delta.content ?? message.content ?? payload.content ?? payload.response);
+      const reasoning = pickFirstString(
+        delta.reasoning_content,
+        delta.reasoning,
+        message.reasoning_content,
+        message.reasoning,
+        payload.reasoning_content,
+        payload.reasoning
+      );
+      const toolCalls = delta.tool_calls || message.tool_calls || payload.tool_calls;
+
+      if (!content && !reasoning && (!toolCalls || !toolCalls.length) && !payload.usage) {
+        return null;
+      }
+
+      return {
+        ...payload,
+        content,
+        reasoning_content: reasoning,
+        ...(toolCalls ? { tool_calls: toolCalls } : {})
+      };
+    };
+
+    const mapResponsesContent = (content) => {
+      if (typeof content === 'string') {
+        return [{ type: 'input_text', text: content }];
+      }
+
+      if (!Array.isArray(content)) return [];
+
+      return content
+        .map((item) => {
+          if (!item || typeof item !== 'object') return null;
+
+          if (item.type === 'text' && typeof item.text === 'string') {
+            return { type: 'input_text', text: item.text };
+          }
+
+          const imageUrl = item.image_url && typeof item.image_url.url === 'string' ? item.image_url.url : '';
+          if (item.type === 'image_url' && imageUrl) {
+            return { type: 'input_image', image_url: imageUrl, detail: item.image_url.detail || 'auto' };
+          }
+
+          return null;
+        })
+        .filter(Boolean);
+    };
+
+    const parseToolArguments = (raw) => {
+      if (raw && typeof raw === 'object') return raw;
+      try {
+        return JSON.parse(raw || '{}');
+      } catch {
+        return {};
+      }
+    };
+
+    const buildChatMessages = (messages) => {
+      return (messages || []).map((message) => {
+        if (message.role === 'tool') {
+          return {
+            role: 'tool',
+            tool_call_id: message.tool_call_id || message.id,
+            content: typeof message.content === 'string' ? message.content : joinTextParts(message.content)
+          };
+        }
+
+        if (message.role === 'assistant') {
+          const next: Record<string, any> = {
+            role: 'assistant',
+            content: message.content == null ? '' : message.content
+          };
+          if (Array.isArray(message.tool_calls) && message.tool_calls.length) {
+            next.tool_calls = message.tool_calls;
+          }
+          if (typeof message.reasoning_content === 'string') next.reasoning_content = message.reasoning_content;
+          return next;
+        }
+
+        return {
+          role: message.role,
+          content: message.content
+        };
+      });
+    };
+
+    const buildResponsesInput = (messages) => {
+      const items = [];
+
+      for (const message of messages || []) {
+        if (message.role === 'tool') {
+          items.push({
+            type: 'function_call_output',
+            call_id: message.tool_call_id || message.id,
+            output: typeof message.content === 'string' ? message.content : joinTextParts(message.content)
+          });
+          continue;
+        }
+
+        if (message.role === 'assistant' && Array.isArray(message.tool_calls) && message.tool_calls.length) {
+          const text = typeof message.content === 'string' ? message.content : joinTextParts(message.content);
+          if (text) {
+            items.push({
+              role: 'assistant',
+              content: [{ type: 'output_text', text: text }]
+            });
+          }
+          for (const tc of message.tool_calls) {
+            items.push({
+              type: 'function_call',
+              call_id: tc.id,
+              name: (tc.function && tc.function.name) || tc.name || '',
+              arguments: (tc.function && typeof tc.function.arguments === 'string')
+                ? tc.function.arguments
+                : JSON.stringify((tc.function && tc.function.arguments) || {})
+            });
+          }
+          continue;
+        }
+
+        items.push({
+          role: message.role === 'system' ? 'system' : message.role,
+          content: mapResponsesContent(message.content)
+        });
+      }
+
+      return items;
+    };
+
+    const extractResponsesText = (payload) => {
+      if (typeof payload.output_text === 'string' && payload.output_text) return payload.output_text;
+
+      const outputs = Array.isArray(payload.output) ? payload.output : Array.isArray(payload.response && payload.response.output) ? payload.response.output : [];
+      return outputs
+        .map((item) => {
+          if (!item || typeof item !== 'object') return '';
+          if (Array.isArray(item.content)) {
+            return item.content
+              .map((part) => {
+                if (!part || typeof part !== 'object') return '';
+                if (typeof part.text === 'string') return part.text;
+                if (typeof part.content === 'string') return part.content;
+                return '';
+              })
+              .join('');
+          }
+          return typeof item.text === 'string' ? item.text : '';
+        })
+        .join('');
+    };
+
+    const normalizeResponsesPayload = (payload) => {
+      const content = extractResponsesText(payload);
+      const reasoning = pickFirstString(
+        payload.reasoning_content,
+        payload.reasoning,
+        payload.response && payload.response.reasoning_content,
+        payload.response && payload.response.reasoning
+      );
+
+      const outputs = Array.isArray(payload.output) ? payload.output : Array.isArray(payload.response && payload.response.output) ? payload.response.output : [];
+      const toolCalls = outputs
+        .filter((item) => item && item.type === 'function_call')
+        .map((item) => ({
+          id: item.call_id || item.id || 'function_call',
+          function: {
+            name: item.name || '',
+            arguments: typeof item.arguments === 'string' ? item.arguments : JSON.stringify(item.arguments || {})
+          }
+        }));
+
+      if (!content && !reasoning && !toolCalls.length && !payload.usage) {
+        return null;
+      }
+
+      return {
+        ...payload,
+        content,
+        reasoning_content: reasoning,
+        ...(toolCalls.length ? { tool_calls: toolCalls } : {})
+      };
+    };
+
+    const mapAnthropicContent = (content) => {
+      if (typeof content === 'string') return content;
+      if (!Array.isArray(content)) return [];
+
+      return content
+        .map((item) => {
+          if (!item || typeof item !== 'object') return null;
+
+          if (item.type === 'thinking' || item.type === 'redacted_thinking') return item;
+
+          if (item.type === 'text' && typeof item.text === 'string') {
+            return { type: 'text', text: item.text };
+          }
+
+          if (item.type === 'tool_use') {
+            return {
+              type: 'tool_use',
+              id: item.id,
+              name: item.name || '',
+              input: item.input || {}
+            };
+          }
+
+          if (item.type === 'tool_result') {
+            return {
+              type: 'tool_result',
+              tool_use_id: item.tool_use_id || item.id,
+              content: typeof item.content === 'string' ? item.content : joinTextParts(item.content)
+            };
+          }
+
+          const imageUrl = item.image_url && typeof item.image_url.url === 'string' ? item.image_url.url : '';
+          if (item.type === 'image_url' && imageUrl.startsWith('data:')) {
+            const match = imageUrl.match(/^data:(.+?);base64,(.+)$/);
+            if (!match) return null;
+            return {
+              type: 'image',
+              source: {
+                type: 'base64',
+                media_type: match[1],
+                data: match[2]
+              }
+            };
+          }
+
+          return null;
+        })
+        .filter(Boolean);
+    };
+
+    const buildAnthropicMessages = (messages) => {
+      const systemParts = [];
+      const normalizedMessages = [];
+
+      const pushMessage = (role, content) => {
+        if (content == null || (Array.isArray(content) && !content.length)) return;
+        const last = normalizedMessages[normalizedMessages.length - 1];
+        if (last && last.role === role && Array.isArray(last.content) && Array.isArray(content)) {
+          last.content = last.content.concat(content);
+          return;
+        }
+        normalizedMessages.push({ role: role, content: content });
+      };
+
+      for (const message of messages || []) {
+        if (message.role === 'system' || message.role === 'developer') {
+          const systemText = typeof message.content === 'string' ? message.content : joinTextParts(message.content);
+          if (systemText) systemParts.push(systemText);
+          continue;
+        }
+
+        if (message.role === 'tool') {
+          pushMessage('user', [{
+            type: 'tool_result',
+            tool_use_id: message.tool_call_id || message.id,
+            content: typeof message.content === 'string' ? message.content : joinTextParts(message.content)
+          }]);
+          continue;
+        }
+
+        if (message.role === 'assistant') {
+          const blocks = [];
+          for (const block of message.thinking_blocks || []) {
+            if (block && (block.type === 'thinking' || block.type === 'redacted_thinking')) blocks.push(block);
+          }
+          const text = typeof message.content === 'string' ? message.content : joinTextParts(message.content);
+          if (text) blocks.push({ type: 'text', text: text });
+          if (Array.isArray(message.content)) {
+            for (const item of mapAnthropicContent(message.content)) {
+              if (item && item.type && item.type !== 'text') blocks.push(item);
+            }
+          }
+          for (const tc of message.tool_calls || []) {
+            blocks.push({
+              type: 'tool_use',
+              id: tc.id,
+              name: (tc.function && tc.function.name) || tc.name || '',
+              input: parseToolArguments(tc.function && tc.function.arguments)
+            });
+          }
+          pushMessage('assistant', blocks.length ? blocks : (text || ''));
+          continue;
+        }
+
+        pushMessage('user', mapAnthropicContent(message.content));
+      }
+
+      return {
+        system: systemParts.join('\n\n'),
+        messages: normalizedMessages
+      };
+    };
+
+    const normalizeAnthropicPayload = (payload) => {
+      const contentBlocks = Array.isArray(payload.content) ? payload.content : [];
+      const content = contentBlocks
+        .filter((item) => item && item.type === 'text')
+        .map((item) => item.text || '')
+        .join('');
+      const reasoning = contentBlocks
+        .filter((item) => item && (item.type === 'thinking' || item.type === 'redacted_thinking'))
+        .map((item) => item.thinking || item.text || '')
+        .join('');
+      const toolCalls = contentBlocks
+        .filter((item) => item && item.type === 'tool_use')
+        .map((item) => ({
+          id: item.id || 'tool_use',
+          function: {
+            name: item.name || '',
+            arguments: JSON.stringify(item.input || {})
+          }
+        }));
+
+      if (!content && !reasoning && !toolCalls.length && !payload.usage) {
+        return null;
+      }
+
+      return {
+        ...payload,
+        content,
+        reasoning_content: reasoning,
+        thinking_blocks: contentBlocks.filter((item) => item && (item.type === 'thinking' || item.type === 'redacted_thinking')),
+        ...(toolCalls.length ? { tool_calls: toolCalls } : {})
+      };
+    };
+
+
+
+return {getRuntimeModelId,buildChatMessages,applyOpenAIThinkingPayload,normalizeBaseUrl,buildHeaders,ensureOk,readSSEPayloads,normalizeOpenAIChunk,parseJsonSafe,buildResponsesInput,mapResponseTool,normalizeResponsesPayload,buildAnthropicMessages,mapAnthropicTool,normalizeAnthropicPayload,ENABLE_THINKING,THINKING};
+}
+
+const chatProvider = (modelId: string, thinking: ReturnType<typeof normalizeThinkingOptions>): ProviderAdapter => async (input, config, fetch, abortSignal) => {
+const {getRuntimeModelId,buildChatMessages,applyOpenAIThinkingPayload,normalizeBaseUrl,buildHeaders,ensureOk,readSSEPayloads,normalizeOpenAIChunk,parseJsonSafe,buildResponsesInput,mapResponseTool,normalizeResponsesPayload,buildAnthropicMessages,mapAnthropicTool,normalizeAnthropicPayload,ENABLE_THINKING,THINKING} = helpersFor(input,config,modelId,thinking);
+  const runtimeModelId = getRuntimeModelId();
+  const payload: Record<string, any> = {
+    model: runtimeModelId,
+    messages: buildChatMessages(input.messages || []),
+    stream: input.stream !== false
+  };
+
+  if (input.tools && input.tools.length) {
+    payload.tools = input.tools;
+  }
+  if (typeof config.temperature === 'number') payload.temperature = config.temperature;
+  if (typeof config.topP === 'number') payload.top_p = config.topP;
+  if (typeof config.maxTokens === 'number') payload.max_tokens = config.maxTokens;
+  applyOpenAIThinkingPayload(payload, 'chat');
+
+  const response = await fetch(normalizeBaseUrl(config.baseUrl) + '/chat/completions', {
+    method: 'POST',
+    headers: buildHeaders(),
+    body: JSON.stringify(payload),
+    signal: abortSignal
+  });
+
+  await ensureOk(response);
+
+  if (payload.stream && response.body && !response.headers?.get('content-type')?.includes('application/json')) {
+    return (async function* () {
+      for await (const event of readSSEPayloads(response, 'chat')) {
+        const chunk = normalizeOpenAIChunk(event);
+        if (chunk) yield chunk;
+      }
+    })();
+  }
+
+  return normalizeOpenAIChunk(await parseJsonSafe(response)) || {};
+
+}
+
+const responsesProvider = (modelId: string, thinking: ReturnType<typeof normalizeThinkingOptions>): ProviderAdapter => async (input, config, fetch, abortSignal) => {
+const {getRuntimeModelId,buildChatMessages,applyOpenAIThinkingPayload,normalizeBaseUrl,buildHeaders,ensureOk,readSSEPayloads,normalizeOpenAIChunk,parseJsonSafe,buildResponsesInput,mapResponseTool,normalizeResponsesPayload,buildAnthropicMessages,mapAnthropicTool,normalizeAnthropicPayload,ENABLE_THINKING,THINKING} = helpersFor(input,config,modelId,thinking);
+  const runtimeModelId = getRuntimeModelId();
+  const payload: Record<string, any> = {
+    model: runtimeModelId,
+    input: buildResponsesInput(input.messages || []),
+    stream: input.stream !== false
+  };
+
+  if (input.tools && input.tools.length) {
+    payload.tools = input.tools.map(mapResponseTool).filter(Boolean);
+  }
+  applyOpenAIThinkingPayload(payload, 'responses');
+
+  const response = await fetch(normalizeBaseUrl(config.baseUrl) + '/responses', {
+    method: 'POST',
+    headers: buildHeaders(),
+    body: JSON.stringify(payload),
+    signal: abortSignal
+  });
+
+  await ensureOk(response);
+
+  if (payload.stream && response.body && !response.headers?.get('content-type')?.includes('application/json')) {
+    return (async function* () {
+      const toolCallState = new Map();
+
+      for await (const event of readSSEPayloads(response, 'responses')) {
+        const eventType = event && event.type ? event.type : '';
+
+        if (eventType === 'response.output_text.delta' && typeof event.delta === 'string') {
+          yield { ...event, content: event.delta };
+          continue;
+        }
+
+        if (eventType.includes('reasoning') && typeof event.delta === 'string') {
+          yield { ...event, reasoning_content: event.delta };
+          continue;
+        }
+
+        if (eventType === 'response.output_item.added' && event.item && event.item.type === 'function_call') {
+          const state = {
+            id: event.item.call_id || event.item.id || 'function_call',
+            name: event.item.name || ''
+          };
+          toolCallState.set(event.item.id || state.id, state);
+          yield {
+            ...event,
+            tool_calls: [
+              {
+                id: state.id,
+                function: {
+                  name: state.name,
+                  arguments: ''
+                }
+              }
+            ]
+          };
+          continue;
+        }
+
+        if (eventType === 'response.function_call_arguments.delta' && typeof event.delta === 'string') {
+          const state = toolCallState.get(event.item_id) || {
+            id: event.call_id || event.item_id || 'function_call',
+            name: ''
+          };
+          yield {
+            ...event,
+            tool_calls: [
+              {
+                id: state.id,
+                function: {
+                  name: state.name,
+                  arguments: event.delta
+                }
+              }
+            ]
+          };
+          continue;
+        }
+
+        if (event.type === 'response.completed' && event.response?.usage) yield { usage: event.response.usage };
+        if (event.usage) {
+          yield event;
+        }
+      }
+    })();
+  }
+
+  return normalizeResponsesPayload(await parseJsonSafe(response)) || {};
+
+}
+
+const anthropicProvider = (modelId: string, thinking: ReturnType<typeof normalizeThinkingOptions>): ProviderAdapter => async (input, config, fetch, abortSignal) => {
+const {getRuntimeModelId,buildChatMessages,applyOpenAIThinkingPayload,normalizeBaseUrl,buildHeaders,ensureOk,readSSEPayloads,normalizeOpenAIChunk,parseJsonSafe,buildResponsesInput,mapResponseTool,normalizeResponsesPayload,buildAnthropicMessages,mapAnthropicTool,normalizeAnthropicPayload,ENABLE_THINKING,THINKING} = helpersFor(input,config,modelId,thinking);
+  const runtimeModelId = getRuntimeModelId();
+  const prepared = buildAnthropicMessages(input.messages || []);
+  const payload: Record<string, any> = {
+    model: runtimeModelId,
+    max_tokens: typeof config.maxTokens === 'number' ? config.maxTokens : 4096,
+    messages: prepared.messages,
+    stream: input.stream !== false
+  };
+
+  if (prepared.system) {
+    payload.system = prepared.system;
+  }
+
+  if (input.tools && input.tools.length) {
+    payload.tools = input.tools.map(mapAnthropicTool).filter(Boolean);
+  }
+  if (ENABLE_THINKING) {
+    const effort = (THINKING && THINKING.effort) || 'medium';
+    payload.reasoning = { effort: effort };
+  } else {
+    payload.thinking = { type: 'disabled' };
+  }
+
+  const requestInit = {
+    method: 'POST',
+    headers: buildHeaders({
+      'anthropic-version': '2023-06-01'
+    }),
+    body: JSON.stringify(payload),
+    signal: abortSignal
+  };
+  const base = normalizeBaseUrl(config.baseUrl);
+  let response = await fetch(base + '/v1/messages', requestInit);
+  if (response.status === 404) {
+    response = await fetch(base + '/anthropic/v1/messages', requestInit);
+  }
+
+  await ensureOk(response);
+
+  if (payload.stream && response.body && !response.headers?.get('content-type')?.includes('application/json')) {
+    return (async function* () {
+      const blockState = new Map();
+
+      for await (const event of readSSEPayloads(response, 'anthropic')) {
+        if (event.type === 'content_block_start' && event.content_block) {
+          blockState.set(event.index, event.content_block);
+
+          if (event.content_block.type === 'tool_use') {
+            yield {
+              ...event,
+              tool_calls: [
+                {
+                  id: event.content_block.id || 'tool_use',
+                  function: {
+                    name: event.content_block.name || '',
+                    arguments: event.content_block.input ? JSON.stringify(event.content_block.input) : ''
+                  }
+                }
+              ]
+            };
+          }
+          continue;
+        }
+
+        if (event.type === 'content_block_delta' && event.delta) {
+          const state = blockState.get(event.index);
+          if (state && event.delta.type === 'thinking_delta') state.thinking = (state.thinking || '') + (event.delta.thinking || '');
+          if (state && event.delta.type === 'signature_delta') state.signature = (state.signature || '') + (event.delta.signature || '');
+          if (event.delta.type === 'text_delta' && typeof event.delta.text === 'string') {
+            yield { ...event, content: event.delta.text };
+            continue;
+          }
+
+          if (event.delta.type === 'thinking_delta' && typeof event.delta.thinking === 'string') {
+            yield { ...event, reasoning_content: event.delta.thinking };
+            continue;
+          }
+
+          if (event.delta.type === 'input_json_delta' && typeof event.delta.partial_json === 'string') {
+            const block = blockState.get(event.index) || {};
+            yield {
+              ...event,
+              tool_calls: [
+                {
+                  id: block.id || 'tool_use',
+                  function: {
+                    name: block.name || '',
+                    arguments: event.delta.partial_json
+                  }
+                }
+              ]
+            };
+            continue;
+          }
+        }
+
+        if (event.type === 'response.completed' && event.response?.usage) yield { usage: event.response.usage };
+        if (event.usage) {
+          yield event;
+        }
+      }
+      const thinkingBlocks = [...blockState.values()].filter((block) => block.type === 'thinking' || block.type === 'redacted_thinking');
+      if (thinkingBlocks.length) yield { thinking_blocks: thinkingBlocks };
+    })();
+  }
+
+  return normalizeAnthropicPayload(await parseJsonSafe(response)) || {};
+
+}
+
+export const createBuiltinProvider = (model: AIModel, platform: Pick<AIPlatform, 'apiProtocol'>): ProviderAdapter | null => {
+ const protocol = resolveModelApiProtocol(model, platform)
+ if (protocol === 'custom' && model.jsCode?.trim()) return null
+ const factory = protocol === 'anthropic' ? anthropicProvider : protocol === 'openai-response' ? responsesProvider : chatProvider
+ return factory(resolveRuntimeModelId(model), normalizeThinkingOptions(model))
+}

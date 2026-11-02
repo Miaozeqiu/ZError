@@ -1,3 +1,4 @@
+import { interruptRun } from './core/run'
 /** 会话列表、持久化、作曲栏。发送循环在 chatLoop.ts，不要把模型调用写回这里。 */
 import { computed, ref, watch } from 'vue'
 import { readSecureDocument, writeSecureDocument } from '../security/secureStore'
@@ -16,7 +17,6 @@ import type {
 } from './chatTypes'
 import { writeBrowserTranscript } from './debugLog'
 import { isFileAttachment, isFolderAttachment, isImageAttachment } from './folderTokens'
-import { clipToolText, clipTranscript, TOOL_ARGS_KEEP, TOOL_RESULT_KEEP } from './modelHistory'
 
 const STORAGE_KEY = 'zerror-agent-chat-sessions'
 const CHAT_LIST_COLLAPSED_KEY = 'zerror-chat-list-collapsed'
@@ -61,7 +61,7 @@ const stripImageData = (items?: AgentChatAttachment[]) =>
 
 const persist = (writeTranscript = true) => {
   const toPayload = (stripImages: boolean) =>
-    sessions.value.filter((session) => !session.parentId).slice(0, 30).map((session) => ({
+    sessions.value.filter((session) => !session.parentId).sort((a, b) => Number(sessionIsStreaming(b)) - Number(sessionIsStreaming(a)) || b.updatedAt - a.updatedAt).slice(0, 30).map((session) => ({
       ...session,
       attachments: stripImages ? stripImageData(session.attachments) : session.attachments,
       messages: session.messages.map((message) => ({
@@ -70,18 +70,22 @@ const persist = (writeTranscript = true) => {
         steps: message.steps.map((step) => ({
           ...step,
           preview: clipPreview(step.preview),
-          arguments: step.arguments ? clipToolText(step.arguments, TOOL_ARGS_KEEP) : undefined,
-          result: step.result ? clipToolText(step.result, TOOL_RESULT_KEEP) : undefined,
+          arguments: step.arguments,
+          result: step.result,
         })),
-        transcript: message.transcript ? clipTranscript(message.transcript) : undefined,
+        // Full redacted text is the history source. Only request projections are clipped.
+        transcript: message.transcript,
       })),
     }))
-  void chatStoreReady.then(() => writeSecureDocument('agent_chats', redactObject(toPayload(false)))).catch(() => undefined)
-  if (!writeTranscript) return
+  const saved = chatStoreReady.then(() => writeSecureDocument('agent_chats', redactObject(toPayload(false))))
+  // Routine autosave reports failures through secureStorageState; explicit checkpoints await and propagate them.
+  void saved.catch(() => undefined)
+  if (!writeTranscript) return saved
   const latestBrowser = sessions.value
     .filter((session) => session.browserId && !session.parentId)
     .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))[0]
   writeBrowserTranscript(latestBrowser)
+  return saved
 }
 
 const loadPersisted = async () => {
@@ -102,14 +106,16 @@ const loadPersisted = async () => {
         : undefined,
       messages: (session.messages || []).map((message) => ({
         ...message,
+        run: message.run ? interruptRun(message.run) : undefined,
+        waiting: false, awaitingVideo: false,
         attachments: Array.isArray(message.attachments) ? message.attachments : undefined,
         steps: Array.isArray(message.steps) ? message.steps : [],
         transcript: Array.isArray(message.transcript) ? message.transcript : undefined,
         studyEval: message.studyEval?.status === 'running'
           ? { status: 'empty', text: '上次评估在关闭前中断了。' }
           : message.studyEval,
-        status: message.status === 'streaming' ? 'failed' : message.status,
-        error: message.status === 'streaming' ? '应用关闭时对话中断' : message.error,
+        status: message.status === 'streaming' ? (message.run?.status === 'completed' || message.run?.status === 'blocked' ? 'done' : 'failed') : message.status,
+        error: message.status === 'streaming' && message.run?.status !== 'completed' && message.run?.status !== 'blocked' ? '应用关闭时对话中断；可发送“继续”核对页面后恢复。' : message.error,
       })),
     }))
     sessions.value = [...sessions.value, ...restored].slice(0, 30)
@@ -197,6 +203,9 @@ export const persistSoon = (immediate = false) => {
   const streaming = sessions.value.some((session) => sessionIsStreaming(session))
   persistTimer = window.setTimeout(() => run(false), streaming ? 10_000 : 1500)
 }
+
+/** Persist the exact pre-side-effect checkpoint before sending any browser action. */
+export const flushChatCheckpoint = () => persist(false)
 
 export const liveSession = (sessionId: string) =>
   sessions.value.find((session) => session.id === sessionId)
@@ -408,6 +417,7 @@ export const finalizeStopped = (sessionId: string, messageId: string, reason: Ag
       return {
         ...message,
         status: 'stopped' as const,
+        run: message.run ? interruptRun(message.run) : undefined,
         stopReason: reason,
         waiting: false,
         awaitingVideo: false,

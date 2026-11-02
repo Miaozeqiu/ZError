@@ -144,6 +144,44 @@ pub(crate) fn round_browser_view(view: &objc2_app_kit::NSView) {
   }
 }
 
+#[cfg(target_os = "macos")]
+struct NativeInputView { view: usize, preview: bool }
+#[cfg(target_os = "macos")]
+fn fallback_input_views() -> &'static Mutex<HashMap<String, NativeInputView>> {
+  static VIEWS: OnceLock<Mutex<HashMap<String, NativeInputView>>> = OnceLock::new();
+  VIEWS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+#[cfg(target_os = "macos")]
+pub(crate) fn fallback_user_input_target(event: &objc2_app_kit::NSEvent) -> Option<String> {
+  let views = fallback_input_views().lock().ok()?;
+  for (id, entry) in views.iter() {
+    let view = unsafe { &*(entry.view as *const objc2_app_kit::NSView) };
+    if entry.preview || view.isHiddenOrHasHiddenAncestor() { continue; }
+    if crate::cef::native_event_targets_view(event, view) { return Some(id.clone()); }
+  }
+  None
+}
+#[cfg(target_os = "macos")]
+pub(crate) fn clear_fallback_user_focus(app: &AppHandle, session: &str) -> Result<(), String> {
+  let session = session.to_string();
+  app.run_on_main_thread(move || {
+    if let Ok(views) = fallback_input_views().lock() {
+      for (id, entry) in views.iter() {
+        if !crate::browser_control::session_owns_tab(&session, id) { continue; }
+        let view = unsafe { &*(entry.view as *const objc2_app_kit::NSView) };
+        if let Some(window) = view.window() {
+          if let Some(responder) = window.firstResponder() {
+            let is_view: bool = unsafe { objc2::msg_send![&*responder, isKindOfClass: objc2::class!(NSView)] };
+            if is_view && unsafe { (&*(objc2::rc::Retained::as_ptr(&responder) as *const objc2_app_kit::NSView)).isDescendantOf(view) } {
+              let _ = window.makeFirstResponder(None);
+            }
+          }
+        }
+      }
+    }
+  }).map_err(|error| error.to_string())
+}
+
 fn apply_bounds(webview: &tauri::Webview, x: f64, y: f64, width: f64, height: f64) -> Result<(), String> {
   let width = width.max(1.0);
   let height = height.max(1.0);
@@ -376,20 +414,6 @@ fn handle_deferred_popup(app: &AppHandle, opener_id: &str, opener_url: &str, raw
 }
 
 /// 导航页点卡片：立刻清空画面并通知宿主，再 no-referrer 跳转。
-// 备用 WebView 没有 CDP 注入输入；真实 DOM 输入在所有 frame 接管，脚本 .click 不触发。
-const BROWSER_USER_INPUT: &str = r#"(function(){
-  if (window.__ZE_CONTROL_INPUT__) return; window.__ZE_CONTROL_INPUT__=true;
-  var last=0;
-  function relay(){
-    if(Date.now()-last<600) return; last=Date.now();
-    var title=document.title; document.title='ZR_USER_CONTROL';
-    setTimeout(function(){if(document.title==='ZR_USER_CONTROL') document.title=title;},0);
-  }
-  if(window===window.top) window.addEventListener('message',function(e){if(e.data==='ZR_USER_CONTROL') relay();});
-  function claim(e){ if(!e.isTrusted) return; if(window===window.top) relay(); else window.top.postMessage('ZR_USER_CONTROL','*'); }
-  ['pointerdown','keydown','wheel'].forEach(function(name){window.addEventListener(name,claim,{capture:true,passive:true});});
-})();"#;
-
 const BROWSER_HOME_LAUNCH: &str = r#"(function(){
   try {
     if (!/\/browser-home\.html(?:$|[?#])/i.test(String(location.href || ''))) return;
@@ -950,7 +974,6 @@ pub async fn browser_open(
     .focused(!hidden.unwrap_or(false))
     .accept_first_mouse(true)
     .user_agent(SAFARI_UA)
-    .initialization_script_for_all_frames(BROWSER_USER_INPUT)
     .initialization_script_for_all_frames(BROWSER_HOME_LAUNCH)
     .initialization_script_for_all_frames(CHAOXING_BBS_CARDS)
     .on_new_window(move |url, _features| {
@@ -982,10 +1005,6 @@ pub async fn browser_open(
       }
     })
     .on_document_title_changed(move |webview, title| {
-      if title == "ZR_USER_CONTROL" {
-        let _ = crate::browser_control::set_owner(webview.app_handle(), &title_id, "user");
-        return;
-      }
       let url = webview
         .url()
         .map(|value| value.to_string())
@@ -1022,8 +1041,14 @@ pub async fn browser_open(
     }
   };
   #[cfg(target_os = "macos")]
-  webview.with_webview(|platform| unsafe {
+  webview.with_webview({ let id = id.clone(); move |platform| unsafe {
     round_browser_view(&*(platform.inner() as *const objc2_app_kit::NSView));
+    // Retain until close so a late native event never sees a freed view.
+    let retained = objc2::rc::Retained::retain(platform.inner() as *mut objc2_app_kit::NSView).expect("native browser view");
+    let old = fallback_input_views().lock().unwrap().insert(id, NativeInputView { view: objc2::rc::Retained::into_raw(retained) as usize, preview: false });
+    if let Some(old) = old { drop(objc2::rc::Retained::from_raw(old.view as *mut objc2_app_kit::NSView)); }
+    crate::cef::install_user_input_monitor();
+  }
   }).map_err(|err| err.to_string())?;
   if hidden.unwrap_or(false) {
     hide_webview(&webview, &id);
@@ -1053,6 +1078,10 @@ pub async fn browser_set_bounds(
   }
   {
   let webview = find_browser(&app, &id)?;
+  #[cfg(target_os = "macos")]
+  if let Ok(mut views) = fallback_input_views().lock() {
+    if let Some(view) = views.get_mut(&id) { view.preview = preview.unwrap_or(false); }
+  }
   apply_bounds(&webview, x, y, width, height)?;
   // 拖窗口时不要每帧 show（很卡）；白屏修复交给前端 settle 后的 browser_show。
   mark_shown(&id);
@@ -1110,6 +1139,15 @@ pub async fn browser_close(app: AppHandle, id: String) -> Result<(), String> {
     return crate::cef::close(app, id);
   }
   {
+  #[cfg(target_os = "macos")]
+  {
+    let id = id.clone();
+    app.run_on_main_thread(move || {
+      if let Ok(mut views) = fallback_input_views().lock() {
+        if let Some(view) = views.remove(&id) { unsafe { drop(objc2::rc::Retained::from_raw(view.view as *mut objc2_app_kit::NSView)); } }
+      }
+    }).map_err(|error| error.to_string())?;
+  }
   if let Ok(webview) = find_browser(&app, &id) {
     webview.close().map_err(|err| err.to_string())?;
   }

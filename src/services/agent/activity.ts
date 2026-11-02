@@ -9,6 +9,8 @@ export const describeActivity = (name: string, args: any, status: ImportTaskStep
     label: status === 'running' ? '正在保存网站图标' : status === 'failed' ? '保存网站图标失败' : '已保存网站图标',
   }
   const browserLabels: Record<string, [string, string, string]> = {
+    search_conversation_history: ['正在查找对话记录', '查找对话记录失败', '已查找对话记录'],
+    read_conversation_history: ['正在读取历史原文', '读取历史原文失败', '已读取历史原文'],
     protect_credentials: ['正在保护凭据', '凭据保存失败', '凭据已安全保存，对话已替换为变量'],
     browser_get_state: ['正在查看网页', '查看网页失败', '查看了当前网页'],
     browser_set_checked: ['正在设置选项', '选项状态未确认，请重新读取页面', '勾选状态已验证'],

@@ -1,5 +1,6 @@
 import type { BrowserLocator } from '../../browser/engine/types'
 import { handleCheckTool } from './check'
+import { resultOrderHint } from './resultOrderHint'
 
 import { observedJson } from '../../browser/engine'
 import { explainEvalError, videoSnapshotNote } from '../../browser/eval'
@@ -237,7 +238,7 @@ export const handleActTools = async (ctx: Record<string, any>): Promise<string |
         return JSON.stringify({
           ok: !report.error || report.frames.some((item) => item.error == null),
           ...report,
-          hint: [report.hint, note].filter(Boolean).join(' ') || undefined,
+          hint: [report.hint, note, resultOrderHint(report.frames)].filter(Boolean).join(' ') || undefined,
         })
       }
       const target = frameId ? { frameId, ...(loaderId ? { loaderId } : {}) } : frame ? { frame } : undefined
@@ -247,7 +248,7 @@ export const handleActTools = async (ctx: Record<string, any>): Promise<string |
         ok: result == null ? false : (typeof result === 'object' && result !== null && 'ok' in result ? Boolean((result as { ok?: unknown }).ok !== false) : true),
         result,
         frame: frameId || frame || 'top',
-        hint: note || undefined,
+        hint: [note, resultOrderHint(result)].filter(Boolean).join(' ') || undefined,
       })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)

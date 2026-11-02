@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+vi.mock('../../src/services/model/providers', () => ({ createBuiltinProvider: () => null }))
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const api = vi.hoisted(() => ({
@@ -52,7 +53,7 @@ vi.mock('../../src/services/agent/executeChatTool', () => ({ executeChatTool: as
 } }))
 vi.mock('../../src/services/chaoxing/browser/playback', () => ({ ensureStudyWatch: vi.fn(), liveStudyPlayback: () => ({ playing: false }) }))
 vi.mock('../../src/services/agent/chatWatch', () => ({ stopWatchFor: api.stopWatch }))
-vi.mock('../../src/services/agent/agentApproval', () => ({ cancelApprovalsForSession: vi.fn() }))
+vi.mock('../../src/services/agent/agentApproval', async importOriginal => ({ ...await importOriginal<typeof import('../../src/services/agent/agentApproval')>(), cancelApprovalsForSession: vi.fn() }))
 
 vi.mock('../../src/services/agent/subagent/owner', () => ({ abortChildrenOf: vi.fn() }))
 vi.mock('../../src/services/agent/chatStudy', () => ({
@@ -64,8 +65,10 @@ vi.mock('../../src/services/agent/context', () => ({
   contextSummaryPrompt: () => '', splitCompactedHistory: () => ({ kept: [] }),
 }))
 vi.mock('../../src/services/agent/debugLog', () => ({ clipAgentDebug: (text: string) => text, logAgentDebug: vi.fn(), writeBrowserTranscript: vi.fn(), writeDebugDump: vi.fn() }))
-vi.mock('../../src/services/agent/modelHistory', () => ({ TOOL_ARGS_KEEP: 12000, TOOL_RESULT_KEEP: 24000, buildModelHistory: () => [], clipToolText: (text: string) => text, clipTranscript: (items: unknown) => items }))
-vi.mock('../../src/services/agent/tools', () => ({ assembleAgentTools: () => [], availableAgentTools: () => [] }))
+vi.mock('../../src/services/agent/tools', async () => {
+  const { BROWSER_PRIMITIVE_TOOLS } = await import('../../src/services/agent/toolDefs/browserPrimitiveTools')
+  return { assembleAgentTools: () => BROWSER_PRIMITIVE_TOOLS, availableAgentTools: (tools: unknown[]) => tools }
+})
 vi.mock('../../src/services/app/settings', () => ({ useSettings: () => ({ settings: {} }), settingsManager: { get: () => 0 } }))
 
 vi.mock('../../src/services/chaoxing/study', () => ({
@@ -130,6 +133,41 @@ describe('same task completion through the real chat loop and model runner', () 
     })
     return session
   }
+  it('completion storage failure is reported as failed and a new turn can recover the original run', async () => {
+    await init()
+    api.write.mockImplementation(async (_name, payload) => {
+      if (payload.some((session: any) => session.messages?.some((message: any) => message.run?.status === 'completed'))) throw new Error('completion storage unavailable')
+    })
+    api.fetch.mockResolvedValueOnce({ content: '第一轮结果' })
+    const first = send('原始核对任务')
+    await vi.advanceTimersByTimeAsync(0); await first
+    const failed = store.activeChat.value!.messages.at(-1)!
+    expect(failed).toMatchObject({ status: 'failed', run: { status: 'failed' } })
+    expect(failed.error).toContain('completion storage unavailable')
+    await vi.advanceTimersByTimeAsync(1)
+    api.write.mockResolvedValue(undefined)
+    api.execute.mockResolvedValue('{"ok":true,"snapshot":"当前页面已核对"}')
+    api.fetch.mockResolvedValueOnce(tool('browser_get_page', 'recovery-page'))
+      .mockResolvedValueOnce({ content: '已核对当前页面' })
+    const resumed = send('继续')
+    await vi.advanceTimersByTimeAsync(0); await resumed
+    expect(store.activeChat.value!.messages.at(-1)!).toMatchObject({ status: 'done', run: { status: 'completed', recoveredFrom: failed.run!.id, goalMessageId: failed.run!.goalMessageId } })
+  })
+  it('stores full redacted tool text in the encrypted document while keeping the UI result bounded and parseable', async () => {
+    await init()
+    const raw = JSON.stringify({ ok: true, content: '题'.repeat(25000) + '完整题目末尾' })
+    api.execute.mockResolvedValue(raw)
+    api.fetch.mockResolvedValueOnce(tool('browser_get_page', 'large-page')).mockResolvedValueOnce({ content: '已读取' })
+    const pending = send('读取资料')
+    await vi.advanceTimersByTimeAsync(0); await pending
+    const message = store.activeChat.value!.messages.at(-1)!
+    expect(message.transcript!.find(item => item.tool_call_id === 'large-page')?.content).toBe(raw)
+    const preview = JSON.parse(message.steps.find(step => step.id === 'large-page')!.result!)
+    expect(preview).toMatchObject({ truncated: true, history_ref: 'large-page' })
+    await store.flushChatCheckpoint()
+    const payload = api.write.mock.calls.at(-1)![1]
+    expect(payload[0].messages.at(-1).transcript.find((item: any) => item.tool_call_id === 'large-page').content).toBe(raw)
+  })
   it('keeps progress text in the same message, resumes pending steps and requires a receipt even after all boxes are checked', async () => {
     await init()
     api.fetch.mockResolvedValueOnce(tool('browser_todo', 'plan', { action: 'set', items: ['提交并核对回执'] }))
@@ -222,8 +260,8 @@ const start = async (skipFinish = false) => {
   api.tick.mockImplementation(async () => ({ hasVideo: true, current: 10 + (Date.now() - at) / 1000,
     duration: 7200, paused: false, ended: false, mid: 'm2', visible: true }))
   api.fetch.mockResolvedValueOnce(tool('browser_watch', 'watch-call'))
-    .mockResolvedValueOnce(skipFinish ? { content: '监控已挂好，之后会继续。' } : tool('browser_finish', 'waiting-call', { status: 'watching' }))
-    .mockResolvedValueOnce(tool('browser_finish', 'done-call', { status: 'done' }))
+    .mockResolvedValueOnce(skipFinish ? { content: '监控已挂好，之后会继续。' } : tool('browser_finish', 'waiting-call', { status: 'watching', summary: '已挂监控，等待视频结束' }))
+    .mockResolvedValueOnce(tool('browser_finish', 'done-call', { status: 'done', summary: '视频与剩余任务已核对' }))
     .mockResolvedValue({ content: '视频已完成，后续任务已核对完毕。' })
   const pending = send('完成视频任务')
   await vi.advanceTimersByTimeAsync(0)
@@ -244,10 +282,10 @@ describe('same task video waiting with the actual model runner and watch event c
     expect(returned).toBe(false)
     expect(api.fetch).toHaveBeenCalledTimes(2)
     expect(api.fetch.mock.calls[0][1].signal.aborted).toBe(false)
-    expect(store.activeChat.value!.messages.at(-1)!).toMatchObject({ status: 'streaming', awaitingVideo: true, waiting: false })
+    expect(store.activeChat.value!.messages.at(-1)!).toMatchObject({ status: 'streaming', awaitingVideo: true, waiting: false, run: { status: 'waiting_video', usage: { requests: 2 } } })
     await endVideo(); await run.pending
     expect(store.activeChat.value!.messages).toHaveLength(2)
-    expect(store.activeChat.value!.messages.at(-1)!).toMatchObject({ id: run.assistantId, status: 'done', awaitingVideo: false })
+    expect(store.activeChat.value!.messages.at(-1)!).toMatchObject({ id: run.assistantId, status: 'done', awaitingVideo: false, run: { status: 'completed' } })
     expect(api.fetch).toHaveBeenCalledTimes(4)
     expect(store.activeChat.value!.messages.at(-1)!.content).toContain('后续任务已核对完毕')
   })
@@ -265,13 +303,13 @@ describe('same task video waiting with the actual model runner and watch event c
     store.stopChat(run.id)
     await run.pending
     expect(api.fetch.mock.calls[0][1].signal.aborted).toBe(true)
-    expect(store.activeChat.value!.messages.at(-1)!).toMatchObject({ status: 'stopped', awaitingVideo: false })
+    expect(store.activeChat.value!.messages.at(-1)!).toMatchObject({ status: 'stopped', awaitingVideo: false, run: { status: 'interrupted' } })
     await endVideo()
     expect(api.fetch).toHaveBeenCalledTimes(2)
   })
   it('wakes the same task with an explicit failure when its monitor disappears', async () => {
     const run = await start()
-    api.fetch.mockReset().mockResolvedValueOnce(tool('browser_finish', 'blocked-call', { status: 'blocked' }))
+    api.fetch.mockReset().mockResolvedValueOnce(tool('browser_finish', 'blocked-call', { status: 'blocked', summary: '监控已丢失，需要用户核对' }))
       .mockResolvedValue({ content: '监控登记丢失，当前任务受阻。' })
     const { stopChaoxingWatch } = await import('../../src/services/chaoxing/browser/watch')
     stopChaoxingWatch('watched-video')

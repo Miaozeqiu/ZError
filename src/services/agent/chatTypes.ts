@@ -53,6 +53,9 @@ export type AgentTranscriptItem = {
 }
 
 export interface AgentChatMessage {
+  run?: import('./core/run').RunCheckpoint
+  skillEvidence?: import('./core/experience').ExperienceEvidence[]
+
   id: string
   role: 'user' | 'assistant'
   content: string
@@ -123,6 +126,9 @@ export interface AgentChatSession {
 }
 
 export type AgentContextUsage = {
+  contextWindow?: number
+  outputReserve?: number
+  estimatedWindow?: boolean
   limit: number
   used: number
   remain: number

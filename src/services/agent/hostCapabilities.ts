@@ -23,7 +23,9 @@ export const emptyHostCapabilities = (): HostCapabilities => ({
 /** 视频进度监控任何站都有。目录和面板只在学习通这种已经接过宿主的站上打开。 */
 export const hostCapabilitiesFor = (url: string): HostCapabilities => {
   const caps = emptyHostCapabilities()
-  if (/chaoxing\.com|mooc1\.|i\.chaoxing/i.test(String(url || ''))) {
+  let chaoxing = false
+  try { const parsed = new URL(url); chaoxing = /^https?:$/.test(parsed.protocol) && (parsed.hostname === 'chaoxing.com' || parsed.hostname.endsWith('.chaoxing.com')) } catch { /* invalid URL */ }
+  if (chaoxing) {
     caps.catalog = true
     caps.panel = true
     caps.captcha = true
@@ -36,6 +38,9 @@ export const missingHostNeeds = (_url: string) => [] as string[]
 
 export const executeToolNamesFor = (caps: HostCapabilities) => {
   const names: string[] = [
+    'browser_select_tab',
+    'browser_run_status',
+    'browser_verify_operation',
     'browser_get_state',
     'browser_find',
     'browser_wait',

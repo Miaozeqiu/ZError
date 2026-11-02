@@ -15,6 +15,7 @@
    播放页可能是多层 iframe：`studentstudy` → `knowledge/cards` → 视频框（按 mid 区分）→ 测验还可能再套一层。快照按框分段。
 5. 点指定那一条视频框里的播放，确认在播后再 `browser_watch`。裸点只作用于当前看得见的那条。
 6. `browser_wait`。面板出现测验、本节做完、卡住或验证码会结束等待。
+   转入章节测验时先读 `references/homework.md`，按显示题号绑定题干、选项与元素，再作答；不要按元素 ID 大小配题。
 
 ## 坑
 

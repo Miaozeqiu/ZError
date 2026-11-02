@@ -3,6 +3,7 @@ export type BrowserTaskIntent = 'play' | 'homework' | 'unknown'
 type TaskMemory = {
   intent: BrowserTaskIntent
   focus?: string
+  targets?: string[]
 }
 
 const bySession = new Map<string, TaskMemory>()
@@ -11,9 +12,12 @@ const FOCUS_RE = /《([^》]{2,20})》|([^\s，。、]{2,16}(?:数学|英语|物
 
 export const intentFromText = (text: string): BrowserTaskIntent => {
   const raw = String(text || '')
-  const skipQuiz = /测验|测试/.test(raw) && /不用|不要|跳过|不做/.test(raw)
-  const play = /播放|刷课|刷完|看课|章节|视频|未完成|播完|看完这|播放任务|章节任务/.test(raw)
-  const homework = /作业|答题|作答|写作业/.test(raw) || (/测验/.test(raw) && !skipQuiz && !play)
+  // Remove only a negated task phrase, never the rest of an unpunctuated sentence.
+  const taskWord = '(?:播放视频|看视频|播放|刷课|视频|作业|答题|作答|题目|测验|测试|问答|论坛|讨论区)'
+  const negative = new RegExp('(?:不要|不用|无需|暂不|不必|禁止|别|不做|跳过)(?:再|去|做|进行|操作|完成|处理|任何|这些|的)*' + taskWord + '(?:[和与及、/ ]+' + taskWord + ')*', 'g')
+  const active = raw.replace(/(?:不要|别|不能)跳过/g, '需要完成').replace(negative, '')
+  const play = /播放|刷课|刷完|看课|章节|视频|未完成|播完|看完这|播放任务|章节任务/.test(active)
+  const homework = /作业|答题|作答|写作业/.test(active) || (/测验|测试/.test(active) && !play)
   if (play && !homework) return 'play'
   if (homework && !play) return 'homework'
   return 'unknown'
@@ -42,6 +46,7 @@ export const rememberBrowserTaskIntent = (sessionId: string, text: string) => {
   const next: TaskMemory = {
     intent: intent === 'unknown' && continuing ? (prev?.intent || 'unknown') : intent,
     focus: focus || (continuing ? prev?.focus : undefined),
+    targets: continuing ? prev?.targets : specifiedChapterTargets(text),
   }
   bySession.set(id, next)
   return next.intent
@@ -51,7 +56,7 @@ export const setBrowserTaskIntent = (sessionId: string, intent: BrowserTaskInten
   const id = String(sessionId || '').trim()
   if (!id || intent === 'unknown') return
   const prev = bySession.get(id)
-  bySession.set(id, { intent, focus: prev?.focus })
+  bySession.set(id, { ...prev, intent })
 }
 
 export const intentFromTodoItems = (items: string[]): BrowserTaskIntent => {
@@ -70,6 +75,15 @@ export const browserTaskFocus = (sessionId?: string) => {
   const id = String(sessionId || '').trim()
   return (id && bySession.get(id)?.focus) || ''
 }
+
+/** Conservative explicit scope, never inferred from an Agent's todo/summary. */
+export const specifiedChapterTargets = (text: string): string[] => {
+  const scope = text.replace(/(?:不要|不用|无需|不必|不做|不要求|不是|别)(?:再|继续|完成|执行|播放|刷|做)*(?:整门(?:课程|课)?|整个课程|全课程|所有章节|全部章节)/g, '')
+  if (/整门|整个课程|全课程|(?:全部|所有)(?:的|未完成的?)?(?:课程|章节|小节)|(?:课程|课).{0,8}(?:全部|所有)(?:任务|章节)/.test(scope)) return []
+  const targets = [...new Set([...String(text || '').matchAll(/(?:^|[^\dA-Za-z.])(\d{1,2}(?:\.\d{1,2}){1,3})(?![\d.]|分|秒|版本)/g)].map(match => match[1]!))]
+  return targets.length <= 32 ? targets : []
+}
+export const browserTaskTargets = (sessionId: string) => [...(bySession.get(sessionId)?.targets || [])]
 
 export const clearBrowserTaskIntent = (sessionId?: string) => {
   const id = String(sessionId || '').trim()

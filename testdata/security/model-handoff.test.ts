@@ -1,3 +1,4 @@
+vi.mock('../../src/services/model/providers', () => ({ createBuiltinProvider: () => null }))
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 const state = vi.hoisted(() => ({ fetch: vi.fn(), model: { id: 'secure-model' } }))
 vi.mock('../../src/services/model/config', () => ({ modelConfigManager: {

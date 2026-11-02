@@ -482,6 +482,10 @@ pub fn run() {
             
             #[cfg(target_os = "macos")]
             let _main = tauri::WebviewWindowBuilder::new(app, "main", url)
+                // Agent execution and video-event continuation live in this
+                // webview. WK's default five-minute hidden-view suspension
+                // must not freeze them when the user switches applications.
+                .background_throttling(tauri::utils::config::BackgroundThrottlingPolicy::Disabled)
                 .title("")  // macOS 不显示原生标题文字，避免系统/软件主题不一致时标题看不清
                 .inner_size(main_window_size.width, main_window_size.height)
                 .min_inner_size(main_window_size.min_width, main_window_size.min_height)
