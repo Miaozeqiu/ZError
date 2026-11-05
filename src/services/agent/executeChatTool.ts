@@ -21,6 +21,7 @@ import { reviewSiteLearning, siteSkillReadIndex } from './siteLearningReview'
 import { websitePrimaryHost } from './websiteIdentity'
 import { resolveWebsiteSkillTarget } from './websiteSkillTarget'
 import { canonicalSkillToolName } from './skillToolNames'
+import { websiteRepositoryTarget } from './websiteRepositoryTarget'
 
 const ensureApproved = async (
   ctx: ChatToolContext,
@@ -166,6 +167,16 @@ export const executeChatTool = async (input: {
       return JSON.stringify({ ok: false, id, path, error: `读取文件失败：${error instanceof Error ? error.message : String(error)}` })
     }
     if (!content) {
+      const repository = websiteRepositoryTarget(id, path)
+      if (repository) {
+        const { repositoryPath } = await import('./websiteRepositoryCore')
+        if (repositoryPath(repository.path)) {
+          const { readWebsiteRepositoryFile } = await import('./websiteRepository')
+          const missing = await readWebsiteRepositoryFile(repository.host, repository.path)
+          return JSON.stringify({ ok: true, id, path, exists: false, content: '', repository_version: missing.version,
+            hint: '该文件尚不存在；创建时将 repository_version 放入 base_version，修改只保存在本地分支。' })
+        }
+      }
       if (id === 'site-learn' && /^sites\/[^/]+\/SKILL\.md$/.test(path)) {
         return JSON.stringify({
           ok: true, id, path, exists: false, content: '',
@@ -202,10 +213,10 @@ export const executeChatTool = async (input: {
     const { siteGraphWriteBlocked } = await import('../browser/siteGraphSave')
     const blocked = siteGraphWriteBlocked(path)
     if (blocked) return JSON.stringify({ ok: false, error: blocked })
-    if (id === 'site-learn' && /^sites\/[^/]+\/SKILL\.md$/.test(path)) {
+    if ((id === 'site-learn' && /^sites\/[^/]+\/SKILL\.md$/.test(path)) || (id === 'chaoxing' && path === 'SKILL.md')) {
       const { liveSession } = await import('./chatStore')
       const steps = liveSession(ctx.sessionId)?.messages.find(message => message.id === ctx.assistantId)?.steps || []
-      if (siteSkillReadIndex(steps, path) < 0) {
+      if (siteSkillReadIndex(steps, id === 'chaoxing' ? 'sites/chaoxing.com/SKILL.md' : path) < 0) {
         return JSON.stringify({ error: '先 read_agent_skill_file 读取本站原文，再合并增量；不要覆盖未读取的站点文件。', id, path })
       }
       const { readAgentSkillFileContent } = await import('./agentSkills')
@@ -214,6 +225,9 @@ export const executeChatTool = async (input: {
         return JSON.stringify({ ok: true, id, path, unchanged: true, hint: '内容与已有文件一致，无需写入或申请授权；收尾使用 covered。' })
       }
     }
+    const repository = websiteRepositoryTarget(id, path)
+    if (repository && !String(args.base_version || '').trim()) return JSON.stringify({ ok: false, id, path,
+      error: '先读取仓库文件原文，并将返回的 repository_version 填入 base_version；未修改本地或官方版本。' })
     const approved = await ensureApproved(
       ctx,
       'write_skill',
@@ -222,11 +236,11 @@ export const executeChatTool = async (input: {
     )
     if (!approved.ok) return JSON.stringify({ ...parseToolArgs(approved.result), id, path })
     const { writeAgentSkillFileContent } = await import('./agentSkills')
-    return JSON.stringify({ ...await writeAgentSkillFileContent(
-      id,
-      path,
-      String(redactObject(args.content ?? '')),
-    ), id, path })
+    const text = String(redactObject(args.content ?? ''))
+    const written = repository
+      ? await writeAgentSkillFileContent(id, path, text, String(args.base_version))
+      : await writeAgentSkillFileContent(id, path, text)
+    return JSON.stringify({ ...written, id, path })
   }
 
   if (call.name === 'reset_agent_skill_file') {

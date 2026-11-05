@@ -4,7 +4,7 @@
   "host": "zjooc.cn",
   "hostPattern": "zjooc\\.cn",
   "notes": [
-    "先做章节目录卡再刷课。账号走 siteAccounts，不要把密码写进图谱。"
+    "先读取章节目录再定位指定任务点。账号使用凭据变量，不要把密码写进图谱。"
   ],
   "nodes": [
     {
@@ -31,7 +31,7 @@
       "title": "章节目录",
       "path": "/plan",
       "summary": "el-tree 任务点。点叶子进播放页。",
-      "structure": "Element UI el-tree。叶子 icon-shipin=视频，icon-iconset0387=文档。目录卡 parsers/study。",
+      "structure": "常见 Element UI el-tree。叶子 icon-shipin=视频，icon-iconset0387=文档；以当前快照中的真实节名和控件为准。",
       "row": 0,
       "col": 1,
       "patterns": ["course/study/[^/]+/plan$", "/plan$"],
@@ -41,8 +41,8 @@
       "id": "course-study-player",
       "title": "播放页",
       "path": "/plan/detail",
-      "summary": "ckplayer 原生 video（blob src）。invoke play 后 browser_watch。",
-      "structure": "页面内 <video>，没有学习通 iframe。",
+      "summary": "定位真实视频控件，确认播放时间推进后 browser_watch，等待事件再继续。",
+      "structure": "常见页面内 <video>；若实际存在播放器 iframe，按最新快照的精确 frameId/loaderId 定位。",
       "row": 1,
       "col": 1,
       "patterns": ["course/study/[^/]+/plan/detail", "/plan/detail"],

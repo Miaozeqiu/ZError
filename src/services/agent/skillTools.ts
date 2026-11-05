@@ -49,6 +49,7 @@ export const WRITE_AGENT_SKILL_FILE_TOOL = {
         skill_id: { type: 'string', description: 'Skill id' },
         path: { type: 'string', description: '相对路径' },
         content: { type: 'string', description: '完整文件内容' },
+        base_version: { type: 'string', description: '仓库管理的网站文件必须填写读取结果中的 repository_version；原文更新后需重新读取合并，不能覆盖旧版本。修改仅存本地分支。' },
       },
       required: ['skill_id', 'path', 'content'],
     },

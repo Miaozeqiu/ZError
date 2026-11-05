@@ -22,7 +22,7 @@ import { executeChatTool } from '../../src/services/agent/executeChatTool'
 import { collectFinishEvidence, judgeFinish } from '../../src/services/agent/finishGate'
 const path = 'sites/zjooc.cn/SKILL.md'
 const run = async (content: string) => JSON.parse(await executeChatTool({
-  call: { id: 'write', name: 'write_agent_skill_file', arguments: JSON.stringify({ skill_id: 'site-learn', path, content }) },
+  call: { id: 'write', name: 'write_agent_skill_file', arguments: JSON.stringify({ skill_id: 'site-learn', path, content, base_version: 'revision:1' }) },
   ctx: { sessionId: 'chat', assistantId: 'answer', browserId: () => 'tab', abort: new AbortController().signal } as any,
 }))
 describe('站点 Skill 写入的真实工具入口', () => {
@@ -80,6 +80,21 @@ describe('站点 Skill 写入的真实工具入口', () => {
     expect(api.write).not.toHaveBeenCalled()
     expect(api.approve).not.toHaveBeenCalled()
   })
+  it('学习通的站点别名统一到仓库文件，写入必须携带读取版本', async () => {
+    const args = { skill_id: 'site-learn', path: 'sites/chaoxing.com/SKILL.md', content: '# 原有步骤\n\n## 新经验' }
+    api.steps = [{ id: 'repo-read', name: 'read_agent_skill_file', status: 'done',
+      arguments: JSON.stringify({ skill_id: 'site-learn', path: args.path }),
+      result: JSON.stringify({ id: 'chaoxing', path: 'SKILL.md', content: '# 原有步骤', repository_version: 'revision:1' }) }]
+    const write = async (extra = {}) => JSON.parse(await executeChatTool({
+      call: { id: 'repo-write', name: 'write_agent_skill_file', arguments: JSON.stringify({ ...args, ...extra }) },
+      ctx: { sessionId: 'chat', assistantId: 'answer', browserId: () => 'tab', abort: new AbortController().signal } as any,
+    }))
+    expect(await write()).toMatchObject({ ok: false, id: 'chaoxing', path: 'SKILL.md', error: expect.stringContaining('base_version') })
+    expect(api.write).not.toHaveBeenCalled()
+    expect(api.approve).not.toHaveBeenCalled()
+    expect(await write({ base_version: 'revision:1' })).toMatchObject({ ok: true, id: 'chaoxing', path: 'SKILL.md' })
+    expect(api.write).toHaveBeenCalledWith('chaoxing', 'SKILL.md', args.content, 'revision:1')
+  })
   it('只读内置 Skill 在授权前被拒绝', async () => {
     const result = JSON.parse(await executeChatTool({
       call: { id: 'write', name: 'write_agent_skill_file', arguments: JSON.stringify({ skill_id: 'campus-bank', path: 'SKILL.md', content: 'replacement' }) },
@@ -106,7 +121,7 @@ describe('站点 Skill 写入的真实工具入口', () => {
   it('有增量时沿用已有授权流程并持久化完整正文', async () => {
     expect(await run('# 原有步骤\n\n## 新的分组方法')).toMatchObject({ ok: true, id: 'site-learn', path })
     expect(api.approve).toHaveBeenCalledOnce()
-    expect(api.write).toHaveBeenCalledWith('site-learn', path, '# 原有步骤\n\n## 新的分组方法')
+    expect(api.write).toHaveBeenCalledWith('site-learn', path, '# 原有步骤\n\n## 新的分组方法', 'revision:1')
   })
   it('即使误选学习通，外站登录经验也归档到主网站，并执行原文检查', async () => {
     const path = 'sites/menhu.haou.edu.cn/SKILL.md'

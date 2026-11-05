@@ -25,6 +25,7 @@ vi.mock('@tauri-apps/plugin-fs', () => ({
 }))
 const credentials = vi.hoisted(() => ({ read: vi.fn(), write: vi.fn() }))
 vi.mock('../../src/services/security/secureStore', () => ({
+  isNativeSecureStore: () => false,
   readSecureDocument: credentials.read, writeSecureDocument: credentials.write,
   isSecretReference: (value: unknown) => typeof value === 'string' && value.startsWith('{{secret:'),
   redactNative: async (value: unknown) => value,

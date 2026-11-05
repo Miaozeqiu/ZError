@@ -108,3 +108,35 @@ describe('native chat text selection', () => {
     editor.remove()
   })
 })
+
+it('folds consecutive tool calls under the first row and keeps search results and interleaved text accessible', async () => {
+  const content = '\n\nChecking the result.'
+  const search = {
+    id: 'search', kind: 'tool', name: 'web_search', label: '搜索', status: 'done', startedAt: 1, atContentLength: 0,
+    result: JSON.stringify({ query: 'example', results: [{ title: 'Example result', url: 'https://example.com' }] }),
+  }
+  const read = { id: 'read', kind: 'tool', name: 'browser_get_page', label: '读取网页', status: 'done', startedAt: 2, atContentLength: 2 }
+  const finish = { id: 'finish', kind: 'tool', name: 'browser_snapshot', label: '确认结果', status: 'done', startedAt: 3, atContentLength: content.length }
+  state.chat.value = { messages: [{ id: 'grouped', role: 'assistant', content, status: 'done', steps: [search, read, finish] }] }
+  await nextTick()
+  const group = root.querySelector<HTMLButtonElement>('.is-group-toggle')!
+  expect(group.textContent).toContain('2 次调用')
+  expect(group.getAttribute('aria-expanded')).toBe('false')
+  expect(thread().textContent).not.toContain('读取网页')
+  expect(thread().textContent).toContain('确认结果')
+  expect(root.querySelector('.assistant-text')).not.toBeNull()
+
+  group.click()
+  await nextTick()
+  expect(group.getAttribute('aria-expanded')).toBe('true')
+  expect(thread().textContent).toContain('读取网页')
+  root.querySelector<HTMLButtonElement>('.activity-search-action')!.click()
+  await nextTick()
+  expect(thread().textContent).toContain('Example result')
+
+  group.click()
+  await nextTick()
+  expect(thread().textContent).not.toContain('读取网页')
+  expect(thread().textContent).not.toContain('Example result')
+  expect(thread().textContent).toContain('确认结果')
+})

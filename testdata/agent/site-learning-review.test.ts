@@ -15,6 +15,13 @@ const check = (steps = actions, learning?: unknown, writePolicy = 'ask') => revi
 const decision = (decision: string) => ({ decision, reason: '独立题目容器分组已核对，避免题干与选项跨题混合' })
 
 describe('站点经验收尾', () => {
+  it('学习通仓库文件和原站点路径是同一份读写证据', () => {
+    const steps = [...actions,
+      step('read', 'read_agent_skill_file', { skill_id: 'site-learn', path: 'sites/chaoxing.com/SKILL.md' }, { id: 'chaoxing', path: 'SKILL.md', content: '# 学习通' }),
+      step('write', 'write_agent_skill_file', { skill_id: 'chaoxing', path: 'SKILL.md' }, { id: 'chaoxing', path: 'SKILL.md', ok: true }),
+    ]
+    expect(reviewSiteLearning({ url: 'https://mooc1.chaoxing.com/mycourse/studentstudy', steps, learning: decision('updated') })).toMatchObject({ ok: true, path: 'sites/chaoxing.com/SKILL.md' })
+  })
   it('登录服务与门户使用同一份经验，结束在登录域名时也不重复建站', () => {
     const path = 'sites/menhu.haou.edu.cn/SKILL.md'
     const steps = [...actions,

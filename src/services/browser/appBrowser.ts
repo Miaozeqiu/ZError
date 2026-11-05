@@ -78,7 +78,12 @@ export type BrowserBounds = {
     viewportWidth: number; viewportHeight: number
     paddingRatio: number; paddingMin: number; paddingMax: number
     compactBreakpoint: number; compactPadding: number
-    preview?: { wideWidth: number; mediumWidth: number; compactWidth: number; widePadding: number; mediumPadding: number; compactPadding: number; mediumBreakpoint: number; compactBreakpoint: number }
+    preview?: {
+      wideWidth: number; mediumWidth: number; compactWidth: number
+      widePadding: number; mediumPadding: number; compactPadding: number
+      mediumBreakpoint: number; compactBreakpoint: number
+      rendererWidth?: number; rendererHeight?: number
+    }
   }
 }
 
@@ -281,7 +286,7 @@ export const closeBrowserView = async (id: string) => {
   delete next[id]
   browserAudioMuted.value = next
 }
-/** 当前应用进程内每个标签页的原生静音状态；页面导航和刷新不会重置。 */
+/** 每个标签页默认静音，此处记录用户切换后的状态。页面导航和刷新不会重置。 */
 export const browserAudioMuted = ref<Record<string, boolean>>({})
 export const setBrowserAudioMuted = async (id: string, muted: boolean) => {
   await invoke('browser_set_audio_muted', { id, muted })

@@ -1,6 +1,7 @@
 /** 本轮站点经验收尾检查。只核对工具证据，不自动生成或执行网页脚本。 */
 import { websitePrimaryHost } from './websiteIdentity'
 import { canonicalSkillToolName } from './skillToolNames'
+import { resolveWebsiteSkillTarget } from './websiteSkillTarget'
 type Step = { id: string; name: string; status: string; arguments?: string; result?: string }
 export type LearningDecision = 'updated' | 'covered' | 'no_new' | 'deferred'
 const object = (value: unknown): Record<string, any> => {
@@ -13,7 +14,9 @@ const observation = /^(browser_select_tab|browser_run_status|browser_verify_oper
 const matchesSiteFile = (step: Step, path: string) => {
   const args = object(step.arguments)
   const result = object(step.result)
-  return (result.id || args.skill_id) === 'site-learn' && (result.path || args.path) === path
+  const target = resolveWebsiteSkillTarget(String(result.id || args.skill_id || ''), String(result.path || args.path || ''))
+  const expected = resolveWebsiteSkillTarget('site-learn', path)
+  return target.skillId === expected.skillId && target.path === expected.path
 }
 export const siteSkillReadIndex = (steps: Step[], path: string) => {
   for (let index = steps.length - 1; index >= 0; index--) {

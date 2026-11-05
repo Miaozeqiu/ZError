@@ -799,6 +799,7 @@ fn valid_document(name: &str) -> bool {
         "app_settings",
         "site_accounts",
         "agent_chats",
+        "website_repositories",
         "auth",
     ]
     .contains(&name)
@@ -1494,6 +1495,13 @@ mod credential_tests {
             document_read("site_accounts", None).unwrap()["zjooc"]["password"],
             "{{secret:site/zjooc/password}}"
         );
+        let repository = json!({"version":1,"fork":{"files":{"SKILL.md":"synthetic-private-site-experience"}}});
+        document_write("website_repositories", repository.clone()).unwrap();
+        let encrypted_repository = std::fs::read_to_string(vault_path()).unwrap();
+        assert!(encrypted_repository.starts_with(PREFIX));
+        assert!(!encrypted_repository.contains("synthetic-private-site-experience"));
+        *CACHE.get().unwrap().lock() = None;
+        assert_eq!(document_read("website_repositories", None).unwrap(), repository);
         document_write(
             "agent_chats",
             json!([{"content":"pending-password-for-test"}]),

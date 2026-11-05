@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, h, nextTick, reactive, ref, type App } from 'vue'
-const native = vi.hoisted(() => ({ ensure: vi.fn(), hide: vi.fn(), show: vi.fn(), bounds: vi.fn(), close: vi.fn(), control: vi.fn(), rect: { x: 300, y: 100, width: 800, height: 450 } }))
+const native = vi.hoisted(() => ({ ensure: vi.fn(), hide: vi.fn(), show: vi.fn(), bounds: vi.fn(), close: vi.fn(), control: vi.fn(), audio: vi.fn(), rect: { x: 300, y: 100, width: 800, height: 450 } }))
 const state = vi.hoisted(() => ({} as Record<string, any>))
 vi.mock('../../src/services/agent/chatStore', async () => {
   const { ref } = await import('vue')
@@ -21,14 +21,16 @@ vi.mock('../../src/services/agent/agentBrowser', async () => {
 })
 vi.mock('../../src/services/browser/appBrowser', async () => {
   const { ref } = await import('vue')
+  state.audioMuted = ref<Record<string, boolean>>({})
   return {
-    browserAudioMuted: ref({}), browserHomeUrl: () => 'about:blank', closeBrowserView: native.close,
+    browserAudioMuted: state.audioMuted, browserHomeUrl: () => 'about:blank', closeBrowserView: native.close,
     createAppBrowser: vi.fn(), goBackBrowserView: vi.fn(), goForwardBrowserView: vi.fn(),
     hideAllBrowserViews: native.hide, hostBounds: () => ({ ...native.rect }),
-    hostnameOf: () => 'example.com', isBrowserHome: () => false, listenBrowserLoad: vi.fn().mockResolvedValue(() => undefined),
+    hostnameOf: () => 'example.com', isBrowserHome: () => false, isCefEngine: async () => true,
+    listenBrowserLoad: vi.fn().mockResolvedValue(() => undefined),
     navigateBrowserView: vi.fn(), normalizeBrowserUrl: (url: string) => url, patchAppBrowser: vi.fn(),
     reloadBrowserView: vi.fn(), removeAppBrowser: vi.fn(), screenshotBrowserView: vi.fn().mockResolvedValue({ image: 'data:image/png;base64,AA==' }),
-    setBrowserAudioMuted: vi.fn(), setBrowserBounds: native.bounds, setBrowserZoom: vi.fn(), showBrowserView: native.show,
+    setBrowserAudioMuted: native.audio, setBrowserBounds: native.bounds, setBrowserZoom: vi.fn(), showBrowserView: native.show,
   }
 })
 vi.mock('../../src/services/app/environmentDetector', () => ({ isTauriEnvironment: () => true }))
@@ -60,6 +62,7 @@ describe('浏览器小窗原生视图生命周期', () => {
     native.show.mockResolvedValue(undefined)
     native.bounds.mockResolvedValue(undefined)
     native.control.mockResolvedValue(undefined)
+    state.audioMuted.value = {}
     state.userControl.value = false
     native.rect = { x: 300, y: 100, width: 800, height: 450 }
     state.expanded.value = false
@@ -89,29 +92,37 @@ describe('浏览器小窗原生视图生命周期', () => {
     expect(native.close).not.toHaveBeenCalled()
   })
 
-  it('展开动画期间不提前显示原生层，结束后使用最终位置', async () => {
+  it('放大和收起使用同一个原生视图及渲染尺寸', async () => {
     await mount()
+    await vi.waitFor(() => expect(native.show).toHaveBeenCalledOnce())
+    expect(native.bounds).toHaveBeenLastCalledWith('tab-one', expect.objectContaining({
+      preview: true,
+      layout: expect.objectContaining({ preview: expect.objectContaining({ rendererWidth: 800, rendererHeight: 450 }) }),
+    }))
     clickToggle()
-    await nextTick()
-    expect(native.show).not.toHaveBeenCalled()
-    expect(native.bounds).not.toHaveBeenCalled()
-    const end = new Event('animationend', { bubbles: true })
-    Object.defineProperty(end, 'animationName', { value: 'browser-screen-open-scoped' })
-    document.querySelector('.browser-screen')!.dispatchEvent(end)
-    await vi.waitFor(() => expect(native.show).toHaveBeenCalledWith('tab-one'))
-    expect(native.bounds).toHaveBeenCalledWith('tab-one', expect.objectContaining(native.rect))
+    await vi.waitFor(() => expect(native.bounds).toHaveBeenLastCalledWith('tab-one', expect.objectContaining({ preview: false, width: 800, height: 450 })))
+    clickToggle()
+    await vi.waitFor(() => expect(native.bounds).toHaveBeenLastCalledWith('tab-one', expect.objectContaining({
+      preview: true,
+      layout: expect.objectContaining({ preview: expect.objectContaining({ rendererWidth: 800, rendererHeight: 450 }) }),
+    })))
+    expect(native.hide).not.toHaveBeenCalled()
+    expect(native.show).toHaveBeenCalledOnce()
+    expect(native.ensure).toHaveBeenCalledOnce()
+    expect(native.control).not.toHaveBeenCalled()
   })
 
-  it('展开动画未结束就收起，只显示收起状态的实时预览', async () => {
+  it('同一轮放大再收起时保持原有预览位置', async () => {
     await mount()
+    await vi.waitFor(() => expect(native.show).toHaveBeenCalledOnce())
+    native.bounds.mockClear()
+    clickToggle()
     clickToggle()
     await nextTick()
-    clickToggle()
     await nextTick()
-    await new Promise(resolve => setTimeout(resolve, 350))
     expect(state.expanded.value).toBe(false)
-    await vi.waitFor(() => expect(native.bounds).toHaveBeenLastCalledWith('tab-one', expect.objectContaining({ preview: true })))
-    expect(native.bounds.mock.calls.every(([, bounds]) => bounds.preview === true)).toBe(true)
+    expect(native.bounds).not.toHaveBeenCalled()
+    expect(native.hide).not.toHaveBeenCalled()
   })
 
   it('离开 Agent 页和弹窗遮挡时隐藏原生层，返回时恢复', async () => {
@@ -175,6 +186,29 @@ describe('浏览器小窗原生视图生命周期', () => {
     ;(document.querySelector('.browser-stop-control') as HTMLButtonElement).click()
     await vi.waitFor(() => expect(address.disabled).toBe(true))
     expect(native.control).toHaveBeenLastCalledWith('tab-one', 'chat-one', 'agent')
+  })
+
+  it('默认静音，仅观看时也可以开启或关闭声音', async () => {
+    state.expanded.value = true
+    native.audio.mockImplementation(async (id: string, muted: boolean) => {
+      state.audioMuted.value[id] = muted
+    })
+    await mount()
+    await vi.waitFor(() => expect(document.querySelector('button[aria-label="开启声音"]')).not.toBeNull())
+    const audio = document.querySelector<HTMLButtonElement>('button[aria-label="开启声音"]')!
+    expect(audio.disabled).toBe(false)
+    expect(audio.closest('[inert]')).toBeNull()
+    expect(audio.getAttribute('aria-pressed')).toBe('true')
+    audio.click()
+    await vi.waitFor(() => expect(audio.getAttribute('aria-label')).toBe('关闭声音'))
+    expect(native.audio).toHaveBeenLastCalledWith('tab-one', false)
+    state.userControl.value = true
+    await nextTick()
+    expect(audio.getAttribute('aria-label')).toBe('关闭声音')
+    audio.click()
+    await vi.waitFor(() => expect(audio.getAttribute('aria-label')).toBe('开启声音'))
+    expect(native.audio).toHaveBeenLastCalledWith('tab-one', true)
+    expect(native.control).not.toHaveBeenCalled()
   })
 
   it('连续缩放只更新尺寸，不重复打开、显示或进入加载态，最终使用最新尺寸', async () => {

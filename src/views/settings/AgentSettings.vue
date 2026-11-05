@@ -36,6 +36,7 @@
     <template v-if="activePane === 'websites'">
       <div class="pane-intro">
         <p class="group-hint">按网站管理账号密码、操作经验和导航图谱。</p>
+        <button type="button" class="import-repository-button" @click="openRepositoryImport"><Icon icon="lucide:github" width="16" height="16" aria-hidden="true" />导入 GitHub 仓库</button>
       </div>
       <div v-if="websiteError" class="install-error" role="alert">{{ websiteError }}</div>
       <div v-if="siteAccountsState.saveError" class="install-error" role="alert">{{ siteAccountsState.saveError }}</div>
@@ -59,7 +60,12 @@
             <span class="website-host">{{ site.host }}</span>
           </div>
           <div class="account-actions">
-            <span v-if="site.builtin" class="skill-badge builtin">内置</span>
+            <button v-if="site.repositoryHost" type="button" class="skill-badge builtin repository-history-button" :title="'查看提交历史 · ' + (site.repositoryUrl || site.host)" :aria-label="`查看${site.name}提交历史`" @click="historyHost = site.repositoryHost">
+              <Icon v-if="repositoryState(site)?.source === 'repository'" icon="lucide:github" width="14" height="14" aria-label="GitHub 仓库" />
+              <Icon v-if="repositoryState(site)?.hasFork" icon="lucide:history" width="13" height="13" aria-hidden="true" />
+              {{ repositoryState(site)?.hasFork ? '本地修改' : '仓库' }}
+            </button>
+            <span v-else-if="site.builtin" class="skill-badge builtin">内置</span>
             <button type="button" class="icon-btn" aria-label="网站设置" title="网站设置" @click="editWebsite(site)"><Icon icon="lucide:settings-2" width="16" height="16" aria-hidden="true" /></button>
           </div>
         </header>
@@ -77,10 +83,14 @@
         <div class="website-info-row">
           <div class="website-info-main">
             <span class="website-info-label">操作经验</span>
-            <span class="website-info-value">{{ site.files.includes(siteMainPath(site)) ? '已记录' : '尚未记录' }}</span>
+            <span class="website-info-value">{{ site.repositoryHost ? repositoryLabel(site) : site.files.includes(siteMainPath(site)) ? '已记录' : '尚未记录' }}</span>
           </div>
-          <button type="button" class="icon-btn" :aria-label="site.files.includes(siteMainPath(site)) ? '编辑操作经验' : '添加操作经验'" :title="site.files.includes(siteMainPath(site)) ? '编辑操作经验' : '添加操作经验'" @click="openWebsiteExperience(site)"><Icon :icon="site.files.includes(siteMainPath(site)) ? 'lucide:square-pen' : 'lucide:plus'" width="16" height="16" aria-hidden="true" /></button>
+          <div class="account-actions">
+            <button v-if="site.repositoryHost" type="button" class="icon-btn" :disabled="repositoryState(site)?.refreshing || repositoryState(site)?.pinned" aria-label="更新仓库操作经验" title="更新仓库操作经验，保留本地修改" @click="updateRepository(site)"><Icon icon="lucide:refresh-cw" width="16" height="16" aria-hidden="true" /></button>
+            <button type="button" class="icon-btn" :aria-label="site.files.includes(siteMainPath(site)) ? '编辑操作经验' : '添加操作经验'" :title="site.files.includes(siteMainPath(site)) ? '编辑操作经验' : '添加操作经验'" @click="openWebsiteExperience(site)"><Icon :icon="site.files.includes(siteMainPath(site)) ? 'lucide:square-pen' : 'lucide:plus'" width="16" height="16" aria-hidden="true" /></button>
+          </div>
         </div>
+        <p v-if="repositoryState(site)?.error" class="group-hint" role="status">{{ repositoryState(site)?.error }}</p>
         <div class="website-info-row">
           <div class="website-info-main">
             <span class="website-info-label">导航图谱</span>
@@ -93,6 +103,34 @@
 
     <AgentBehaviorSettings v-else />
     </template>
+
+    <WebsiteRepositoryHistory v-if="historyHost" :host="historyHost" @close="historyHost = ''" />
+    <Teleport to="body">
+      <div v-if="repositoryImportOpen" class="dialog-overlay" @click="closeRepositoryImport">
+        <form class="dialog-panel account-dialog" role="dialog" aria-modal="true" aria-labelledby="repository-import-title" @click.stop @submit.prevent="repositoryCandidates.length ? confirmRepositoryImport() : inspectRepository()" @keydown.escape.prevent="closeRepositoryImport">
+          <div class="dialog-header"><h3 id="repository-import-title" class="dialog-title">导入 GitHub 网站仓库</h3></div>
+          <div class="dialog-body">
+            <div class="form-group">
+              <label class="form-label" for="repository-import-url">仓库链接</label>
+              <input id="repository-import-url" v-model="repositoryImportUrl" class="form-input" placeholder="https://github.com/用户名/网站仓库" :disabled="repositoryImportBusy" autocomplete="off" spellcheck="false" required>
+            </div>
+            <div v-if="repositoryCandidates.length" class="repository-candidates" role="radiogroup" aria-label="选择要导入的网站">
+              <label v-for="(candidate, index) in repositoryCandidates" :key="candidate.website.host" class="repository-candidate">
+                <input v-model="repositoryCandidateIndex" type="radio" :value="index" :disabled="repositoryImportBusy">
+                <img :src="candidate.icon.dataUrl" alt="" width="28" height="28">
+                <span><strong>{{ candidate.website.name }}</strong><span>{{ candidate.website.host }}</span></span>
+              </label>
+              <p class="group-hint">Agent 将参考所选网站的操作经验；修改只保存在本机。</p>
+            </div>
+            <p v-if="repositoryImportError" class="install-error" role="alert">{{ repositoryImportError }}</p>
+            <div class="account-dialog-footer">
+              <button type="button" class="account-dialog-cancel" :disabled="repositoryImportBusy" @click="closeRepositoryImport">取消</button>
+              <button type="submit" class="btn-confirm" :disabled="repositoryImportBusy || !repositoryImportUrl.trim()">{{ repositoryImportBusy ? '处理中…' : repositoryCandidates.length ? '确认导入' : '读取仓库' }}</button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </Teleport>
 
     <Teleport to="body">
       <div v-if="websiteDialogOpen" class="dialog-overlay" @click="closeWebsiteDialog">
@@ -160,12 +198,14 @@ import { Icon } from '@iconify/vue/offline'
 import '../../utils/ui/agentIcons'
 import AgentSkillDetail from './AgentSkillDetail.vue'
 import AgentBehaviorSettings from './AgentBehaviorSettings.vue'
+import WebsiteRepositoryHistory from './WebsiteRepositoryHistory.vue'
 import { agentSkillsState } from '../../services/agent/agentSkills'
 import SecureSecretInput from '../../components/ui/SecureSecretInput.vue'
 import { isNativeSecureStore, isSecretReference } from '../../services/security/secureStore'
 import { forgetSiteAccount, rememberSiteAccount, siteAccountsState, refreshSiteAccounts } from '../../services/agent/siteAccounts'
 import { addWebsiteSettings, listWebsiteSettings, type WebsiteSettingsItem } from '../../services/agent/websiteSettings'
 import { websiteIdentityState } from '../../services/agent/websiteIdentity'
+import { websiteRepositoryStates, repositoryRegistryState, refreshWebsiteRepository, previewWebsiteRepository, importWebsiteRepository, type WebsiteRepositoryCandidate } from '../../services/agent/websiteRepository'
 
 const emit = defineEmits<{ 'skill-detail-change': [open: boolean] }>()
 const activePane = ref<'websites' | 'behavior'>('websites')
@@ -173,6 +213,34 @@ const websites = ref<WebsiteSettingsItem[]>([])
 const websiteIconStatus = ref(new Map<string, 'loaded' | 'failed'>())
 const websiteIconSource = (site: WebsiteSettingsItem) => site.iconUrl || `https://${site.host}/favicon.ico`
 const websiteError = ref('')
+const historyHost = ref('')
+const repositoryState = (site: WebsiteSettingsItem) => site.repositoryHost ? websiteRepositoryStates[site.repositoryHost] : undefined
+const repositoryLabel = (site: WebsiteSettingsItem) => {
+  const state = repositoryState(site)
+  return state?.pinned ? '历史快照' : state?.refreshing ? '正在更新' : state?.conflicts.length ? '本地修改 · 待合并' : state?.changedPaths.length ? '本地修改' : state?.source === 'repository' ? '仓库版本已缓存' : '内置离线副本'
+}
+const updateRepository = async (site: WebsiteSettingsItem) => {
+  try { if (site.repositoryHost) await refreshWebsiteRepository(site.repositoryHost, true) } catch (error) { websiteError.value = error instanceof Error ? error.message : '更新失败，已保留缓存' }
+}
+const repositoryImportOpen = ref(false), repositoryImportBusy = ref(false), repositoryImportUrl = ref(''), repositoryImportError = ref('')
+const repositoryCandidates = ref<WebsiteRepositoryCandidate[]>([]), repositoryCandidateIndex = ref(0)
+const openRepositoryImport = () => { repositoryImportUrl.value = ''; repositoryImportError.value = ''; repositoryCandidates.value = []; repositoryImportOpen.value = true }
+const closeRepositoryImport = () => { if (!repositoryImportBusy.value) repositoryImportOpen.value = false }
+watch(repositoryImportUrl, () => { repositoryCandidates.value = []; repositoryCandidateIndex.value = 0; repositoryImportError.value = '' })
+const inspectRepository = async () => {
+  repositoryImportBusy.value = true; repositoryImportError.value = ''
+  try { repositoryCandidates.value = await previewWebsiteRepository(repositoryImportUrl.value) }
+  catch (error) { repositoryImportError.value = error instanceof Error ? error.message : '读取仓库失败' }
+  finally { repositoryImportBusy.value = false }
+}
+const confirmRepositoryImport = async () => {
+  const candidate = repositoryCandidates.value[repositoryCandidateIndex.value]
+  if (!candidate) return
+  repositoryImportBusy.value = true; repositoryImportError.value = ''
+  try { await importWebsiteRepository(candidate); await refreshWebsites(); repositoryImportOpen.value = false }
+  catch (error) { repositoryImportError.value = error instanceof Error ? error.message : '导入失败，已有资料保持不变' }
+  finally { repositoryImportBusy.value = false }
+}
 let websiteRevision = 0
 const refreshWebsites = async () => {
   const revision = ++websiteRevision
@@ -188,6 +256,8 @@ const refreshWebsites = async () => {
 watch(() => agentSkillsState.items, refreshWebsites, { immediate: true })
 watch(() => Object.keys(siteAccountsState.rows).join('|'), refreshWebsites)
 watch(() => websiteIdentityState.profiles, refreshWebsites)
+watch(() => repositoryRegistryState.revision, refreshWebsites)
+watch(() => Object.entries(websiteRepositoryStates).map(([host, state]) => [host, state.version, state.iconUrl]), refreshWebsites)
 
 // Usernames belong to this settings view only; shared Agent state keeps opaque references.
 const accountNames = ref<Record<string, string>>({})
@@ -305,6 +375,13 @@ const submitWebsite = async () => {
 .agent-pane-tab { border: none; background: transparent; color: var(--text-secondary); font-size: 13px; font-weight: 500; padding: 6px 10px; border-radius: 6px; cursor: pointer; }
 .agent-pane-tab:hover, .agent-pane-tab.active { color: var(--text-primary); }
 .pane-intro { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.import-repository-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid var(--border-color); border-radius: 8px; padding: 7px 10px; color: var(--text-primary); background: var(--hover-bg, rgba(0, 0, 0, .04)); font: inherit; font-size: 12px; white-space: nowrap; cursor: pointer; }
+.import-repository-button:hover { background: color-mix(in srgb, var(--text-primary) 8%, transparent); }
+.repository-candidates { display: flex; flex-direction: column; gap: 10px; }
+.repository-candidate { display: flex; align-items: center; gap: 10px; padding: 12px; border: 1px solid var(--border-color); border-radius: 10px; cursor: pointer; }
+.repository-candidate img { flex-shrink: 0; object-fit: contain; }
+.repository-candidate > span { display: flex; flex-direction: column; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
+.repository-candidate > span > span { color: var(--text-secondary); font-size: 12px; }
 .group-hint { margin: 0; font-size: 12px; line-height: 1.5; color: var(--text-secondary); }
 .network-group { background: var(--network-group-bg); border: 1px solid var(--border-color); border-radius: 14px; padding: 0 16px; margin: 12px 0; box-shadow: 0 2px 12px rgba(0, 0, 0, 0.05); }
 .website-card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 0 12px; }
@@ -314,7 +391,11 @@ const submitWebsite = async () => {
 .website-icon img.is-loaded { opacity: 1; }
 .website-name { margin: 0; font-size: 14px; font-weight: 500; color: var(--text-primary); overflow-wrap: anywhere; }
 .website-host { color: var(--text-secondary); font-size: 12px; overflow-wrap: anywhere; }
-.skill-badge { font-size: 10px; line-height: 1; padding: 3px 6px; border-radius: 999px; background: var(--hover-bg, rgba(0, 0, 0, 0.05)); color: var(--text-secondary); flex-shrink: 0; }
+.skill-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; line-height: 1; padding: 3px 6px; border-radius: 999px; background: var(--hover-bg, rgba(0, 0, 0, 0.05)); color: var(--text-secondary); flex-shrink: 0; }
+.skill-badge svg { flex-shrink: 0; }
+.repository-history-button { border: none; cursor: pointer; }
+.repository-history-button:hover { background: color-mix(in srgb, var(--text-primary) 10%, transparent); }
+.repository-history-button:focus-visible { outline: 2px solid var(--color-primary, #6a8cc6); outline-offset: 2px; }
 .website-info-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-inline-start: 32px; padding: 12px 0; border-top: 1px solid var(--border-color); }
 .website-info-main { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; min-width: 0; font-size: 12px; }
 .website-info-label { color: var(--text-primary); font-weight: 500; }

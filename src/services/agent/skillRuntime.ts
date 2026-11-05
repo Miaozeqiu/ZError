@@ -1,6 +1,7 @@
 import { homeworkCaptureScript } from '../chaoxing/host/homeworkHost'
 import '../chaoxing/host'
 import { listBundledSkillFiles, readBundledSkillFile } from './skills/builtinSkillAssets'
+import { readChaoxingRepositoryFile, onWebsiteRepositoryChanged, websiteRepositoryHosts, readWebsiteRepositoryFile } from './websiteRepository'
 
 import type { SiteGraphData } from '../browser/siteGraphCore'
 
@@ -51,7 +52,7 @@ export const readOverrideChaoxingFile = async (path: string): Promise<string | n
 }
 
 export const readChaoxingImplFile = async (path: string): Promise<string | null> => (
-  (await readOverrideChaoxingFile(path)) || readBundledChaoxingFile(path)
+  (await readChaoxingRepositoryFile(path)).content
 )
 
 export const isChaoxingImplPath = (path: string) => path === SITE_GRAPH_PATH
@@ -118,6 +119,12 @@ export const reloadLearnedSiteGraphs = async () => {
   } catch {
     /* 还没有学过其它站点 */
   }
+  try {
+    for (const host of await websiteRepositoryHosts()) if (host !== 'chaoxing.com') {
+      const file = await readWebsiteRepositoryFile(host, SITE_GRAPH_PATH)
+      if (file.content) applyLearnedSiteGraphContent(file.content)
+    }
+  } catch { /* 缓存不可用时保留现有图谱 */ }
 }
 
 export const applyChaoxingImplContent = (path: string, content: string) => {
@@ -135,6 +142,10 @@ export const reloadChaoxingImpl = async (path?: string) => {
 
 
 void reloadChaoxingImpl()
+onWebsiteRepositoryChanged(host => {
+  if (host === 'chaoxing.com') void reloadChaoxingImpl(SITE_GRAPH_PATH)
+  else void readWebsiteRepositoryFile(host, SITE_GRAPH_PATH).then(file => { if (file.content) applyLearnedSiteGraphContent(file.content) }).catch(() => undefined)
+})
 try { seedBundledLearnedSites() } catch (error) {
   console.warn('[site-learn] 内置站点解析器加载失败', error)
 }

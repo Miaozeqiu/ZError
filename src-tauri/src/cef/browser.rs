@@ -44,9 +44,6 @@ fn fit_scale(hole_w: f64, hole_h: f64) -> f64 {
   (hole_w / PAGE_W).min(hole_h / PAGE_H)
 }
 
-fn renderer_stage_size() -> (f64, f64) {
-  (PAGE_W, PAGE_H)
-}
 fn stage_points(hole_w: f64, hole_h: f64) -> (f64, f64) {
   let s = fit_scale(hole_w, hole_h);
   (
@@ -58,6 +55,14 @@ fn page_fit(w: f64, h: f64) -> f64 {
   (w / PAGE_W).min(h / PAGE_H)
 }
 
+fn renderer_size(hole: NSSize, preview: bool, expanded: Option<(f64, f64)>, current: (f64, f64)) -> (f64, f64) {
+  if preview {
+    expanded.map(|(width, height)| stage_points(width, height)).unwrap_or(current)
+  } else {
+    stage_points(hole.width, hole.height)
+  }
+}
+
 #[derive(Clone, Copy)]
 struct ViewPtr(*mut c_void);
 unsafe impl Send for ViewPtr {}
@@ -66,7 +71,7 @@ unsafe impl Sync for ViewPtr {}
 struct Tab {
   id: String,
   wrapper: ViewPtr,
-  /// CEF 的父舞台。小窗保留完整渲染尺寸，展开时沿用页面适配尺寸。
+  /// CEF 的父舞台。小窗和展开态共用网页渲染尺寸。
   stage: ViewPtr,
   browser_id: i32,
   /// 原生 Browser 对应的 DevTools target，独立于网址、跳转和 WebSocket 会话。
@@ -137,7 +142,7 @@ struct ZeCefHoleIvars {
   pending: Cell<bool>,
   scroll: Cell<ViewPtr>,
   stage: Cell<ViewPtr>,
-  /// 用户页面缩放。小窗以图层缩放显示，不将 fit 乘到页面 zoom。
+  /// 用户页面缩放。小窗的图层比例不计入页面 zoom。
   user_zoom: Cell<f64>,
   /// 页面到洞口的显示缩放。小窗单独缩放原生图层。
   fit: Cell<f64>,
@@ -145,6 +150,7 @@ struct ZeCefHoleIvars {
   stage_h: Cell<f64>,
   layout: Cell<Option<AnchoredBrowserGeometry>>,
   preview: Cell<bool>,
+  preview_renderer_size: Cell<Option<(f64, f64)>>,
   presentation_dirty: Cell<bool>,
 }
 
@@ -215,28 +221,19 @@ define_class!(
       }
       let size = ns.bounds().size;
       let preview = iv.preview.get();
-      let (w, h) = if preview {
-        renderer_stage_size()
-      } else {
-        stage_points(size.width, size.height)
-      };
-      let fit = if preview {
-        fit_scale(size.width, size.height)
-      } else {
-        page_fit(w, h)
-      };
+      let (w, h) = renderer_size(size, preview, iv.preview_renderer_size.get(), (iv.stage_w.get(), iv.stage_h.get()));
+      let renderer_fit = page_fit(w, h);
+      let layer_fit = if preview { (size.width / w).min(size.height / h) } else { 1.0 };
       let resized = (w - iv.stage_w.get()).abs() >= 0.5 || (h - iv.stage_h.get()).abs() >= 0.5;
       iv.stage_w.set(w);
       iv.stage_h.set(h);
-      iv.fit.set(fit);
+      iv.fit.set(renderer_fit * layer_fit);
       resize_stage(iv.stage.get(), w, h);
-      present_stage_layer(iv.stage.get(), preview, size.width, size.height, fit);
+      present_stage_layer(iv.stage.get(), preview, size.width, size.height, layer_fit);
       let bid = iv.browser_id.get();
-      if bid > 0 {
-        if resized {
-          notify_browser_resized(bid);
-        }
-        apply_browser_zoom(bid, iv.user_zoom.get() * if preview { 1.0 } else { fit });
+      if bid > 0 && resized {
+        notify_browser_resized(bid);
+        apply_browser_zoom(bid, iv.user_zoom.get() * renderer_fit);
       }
     }
   }
@@ -323,6 +320,7 @@ impl ZeCefHoleView {
       stage_h: Cell::new(0.0),
       layout: Cell::new(None),
       preview: Cell::new(false),
+      preview_renderer_size: Cell::new(None),
       presentation_dirty: Cell::new(false),
     });
     unsafe { msg_send![super(this), initWithFrame: frame] }
@@ -721,6 +719,9 @@ wrap_life_span_handler! {
   impl LifeSpanHandler {
     fn on_after_created(&self, browser: Option<&mut Browser>) {
       let Some(browser) = browser else { return };
+      if let Some(host) = browser.host() {
+        host.set_audio_muted(1);
+      }
       let bid = browser.identifier();
       eprintln!("[cef] on_after_created browser={bid}");
       if let Ok(mut reg) = registry().lock() {
@@ -926,6 +927,15 @@ fn make_client(tab_id: &str) -> Client {
   ZeClient::new(ZeLifeSpan::new(tab_id.to_string()), ZeLoad::new(), ZeDragHandler::new(tab_id.to_string()))
 }
 
+fn clear_focus_in_hole(hole: &ZeCefHoleView) {
+  let Some(window) = hole.window() else { return };
+  let Some(responder) = window.firstResponder() else { return };
+  let is_view: bool = unsafe { msg_send![&*responder, isKindOfClass: objc2::class!(NSView)] };
+  if is_view && unsafe { (&*(Retained::as_ptr(&responder) as *const NSView)).isDescendantOf(hole) } {
+    let _ = window.makeFirstResponder(None);
+  }
+}
+
 pub fn clear_user_focus(app: &AppHandle, session: &str) -> Result<(), String> {
   let session = session.to_string();
   on_main(app, move || {
@@ -936,13 +946,7 @@ pub fn clear_user_focus(app: &AppHandle, session: &str) -> Result<(), String> {
       // Ownership is shared by the session; locked descendants cannot retain
       // a text responder/IME after control is handed back to the Agent.
       if crate::browser_control::user_input_allowed(&tab.id) { continue; }
-      let Some(window) = hole.window() else { continue };
-      if let Some(responder) = window.firstResponder() {
-        let is_view: bool = unsafe { msg_send![&*responder, isKindOfClass: objc2::class!(NSView)] };
-        if is_view && unsafe { (&*(Retained::as_ptr(&responder) as *const NSView)).isDescendantOf(hole) } {
-          let _ = window.makeFirstResponder(None);
-        }
-      }
+      clear_focus_in_hole(hole);
     }
     Ok(())
   })?
@@ -1064,7 +1068,7 @@ fn hole_renderer_zoom(ptr: ViewPtr) -> f64 {
   }
   unsafe {
     let iv = (*(ptr.0 as *const ZeCefHoleView)).ivars();
-    iv.user_zoom.get() * if iv.preview.get() { 1.0 } else { iv.fit.get() }
+    iv.user_zoom.get() * page_fit(iv.stage_w.get(), iv.stage_h.get())
   }
 }
 
@@ -1753,7 +1757,7 @@ pub fn set_bounds(
   layout: Option<BrowserViewportLayout>,
   preview: bool,
 ) -> Result<(), String> {
-  on_main(&app.clone(), move || {
+  on_main(&app, move || {
     let Some(wrapper) = (|| {
       let reg = registry().lock().ok()?;
       let tab = reg.tabs.get(&id)?;
@@ -1767,13 +1771,12 @@ pub fn set_bounds(
       let entering_preview = preview && !previous_preview;
       if previous_preview != preview { hole.ivars().presentation_dirty.set(true); }
       hole.ivars().preview.set(preview);
+      hole.ivars().preview_renderer_size.set(layout.and_then(|rule| rule.preview?.renderer_size()));
       hole.ivars().layout.set(
         layout.and_then(|rule| AnchoredBrowserGeometry::new(rule, x, y, width, height)),
       );
       // A hidden caret must not keep accepting keyboard input after collapse.
-      if entering_preview {
-        if let Some(main) = app.get_webview("main") { let _ = main.set_focus(); }
-      }
+      if entering_preview { clear_focus_in_hole(hole); }
     }
     // 先放手再 setFrame。hole_size_tick / was_resized 不能再抢同一把锁。
     // 下一圈统一更新舞台/图层，禁止在 setFrameSize 回调里同步刷新 Chromium。
@@ -5025,15 +5028,16 @@ mod tests {
   }
 
   #[test]
-  fn native_surface_fits_from_miniature_to_large_without_reflowing_renderer() {
-    for (w,h) in [(134.0,75.375), (224.0,126.0), (777.0,654.0), (1280.0,800.0), (3840.0,2160.0)] {
-      let (rw,rh) = renderer_stage_size();
-      let scale = fit_scale(w,h);
-      assert_eq!((rw,rh), (1920.0,1080.0));
-      assert!(rw*scale <= w+0.001 && rh*scale <= h+0.001);
-      assert!((rw*scale-w).abs() < 0.001 || (rh*scale-h).abs() < 0.001);
+  fn toggling_preview_keeps_the_expanded_renderer_size() {
+    let miniature = NSSize::new(224.0, 126.0);
+    for (width, height) in [(777.0, 654.0), (1280.0, 800.0), (3840.0, 2160.0)] {
+      let expanded = NSSize::new(width, height);
+      let warm_stage = (960.0, 540.0);
+      let preview = renderer_size(miniature, true, Some((width, height)), warm_stage);
+      let large = renderer_size(expanded, false, None, preview);
+      assert_eq!(preview, large);
+      assert_eq!(renderer_size(miniature, true, None, large), large);
     }
-    assert!(fit_scale(224.0,126.0) < 0.25);
   }
 
   #[test]

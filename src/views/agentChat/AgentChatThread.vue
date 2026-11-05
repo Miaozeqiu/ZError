@@ -74,31 +74,40 @@
               <div v-else class="assistant-turn">
                 <template v-for="block in assistantTimeline(message)" :key="block.key">
                   <div
-                    v-if="block.type === 'step'"
+                    v-if="block.type === 'step' && (!block.group || block.groupHead || expandedToolGroups.has(block.group.key))"
                     class="activity-entry"
+                    :class="{ 'is-group-child': block.group && !block.groupHead }"
                   >
-                    <div
+                    <component
+                      :is="block.groupHead || (block.step.name === 'web_search' && block.step.status === 'done') ? 'button' : 'div'"
                       class="activity-line"
-                      :class="[`is-${block.step.status}`, { 'is-search-toggle': block.step.name === 'web_search' && block.step.status === 'done' }]"
-                      :aria-expanded="block.step.name === 'web_search' ? expandedSearchSteps.has(block.step.id) : undefined"
-                      @click="block.step.name === 'web_search' && block.step.status === 'done' && toggleSearchResults(block.step.id)"
+                      :class="[`is-${block.step.status}`, { 'is-group-toggle': block.groupHead }]"
+                      :type="block.groupHead || (block.step.name === 'web_search' && block.step.status === 'done') ? 'button' : undefined"
+                      :aria-expanded="block.groupHead ? expandedToolGroups.has(block.groupHead.key) : block.step.name === 'web_search' && block.step.status === 'done' ? expandedSearchSteps.has(block.step.id) : undefined"
+                      @click="block.groupHead ? toggleToolGroup(block.groupHead.key) : block.step.name === 'web_search' && block.step.status === 'done' && toggleSearchResults(block.step.id)"
                     >
                       <span class="activity-icon" aria-hidden="true">
                         <Icon :icon="activityIconName(block.step.name)" width="14" height="14" />
                       </span>
                       <span class="activity-text" :class="{ 'is-live': block.step.status === 'running', 'is-url': /https?:\/\//i.test(block.step.label) }" :title="/https?:\/\//i.test(block.step.label) ? block.step.label : undefined">{{ block.step.name === 'web_search' ? `正在搜索 ${searchQueryFor(block.step) || '网页资料'}` : block.step.label }}</span>
+                      <span v-if="block.groupHead" class="activity-group-count">
+                        {{ block.groupHead.count }} 次调用<template v-if="block.groupHead.running"> · 进行中</template><template v-if="block.groupHead.failed"> · {{ block.groupHead.failed }} 次失败</template>
+                      </span>
                       <Icon
-                        v-if="block.step.name === 'web_search' && block.step.status === 'done'"
+                        v-if="block.groupHead || (block.step.name === 'web_search' && block.step.status === 'done')"
                         class="search-results-chevron"
-                        :icon="expandedSearchSteps.has(block.step.id) ? 'lucide:chevron-down' : 'lucide:chevron-right'"
+                        icon="lucide:chevron-right"
                         width="14"
                         height="14"
                         aria-hidden="true"
                       />
-                    </div>
+                    </component>
                     <p v-if="block.step.status === 'failed' && block.step.detail" class="activity-detail">{{ block.step.detail }}</p>
 
-                    <div v-if="block.step.name === 'web_search' && block.step.status === 'done'" class="search-results-block">
+                    <div v-if="block.step.name === 'web_search' && block.step.status === 'done' && (!block.groupHead || expandedToolGroups.has(block.groupHead.key))" class="search-results-block">
+                      <button v-if="block.groupHead" type="button" class="activity-search-action" :aria-expanded="expandedSearchSteps.has(block.step.id)" @click="toggleSearchResults(block.step.id)">
+                        {{ expandedSearchSteps.has(block.step.id) ? '收起搜索结果' : '查看搜索结果' }}
+                      </button>
                       <div v-if="expandedSearchSteps.has(block.step.id)" class="search-results-content" @wheel="onSearchResultsWheel">
                         <TransitionGroup name="search-result-item" tag="div" class="search-results-list">
                           <button
@@ -355,6 +364,13 @@ const openSearchResult = async (url: string) => {
 }
 
 const expandedSearchSteps = ref(new Set<string>())
+const expandedToolGroups = ref(new Set<string>())
+const toggleToolGroup = (key: string) => {
+  if (selectedChatText()) return
+  const expanded = expandedToolGroups.value
+  if (expanded.has(key)) expanded.delete(key)
+  else expanded.add(key)
+}
 const onSearchResultsWheel = (event: WheelEvent) => {
   if (event.ctrlKey || event.metaKey || !event.cancelable) return
   const list = (event.currentTarget as HTMLElement).querySelector<HTMLElement>('.search-results-list')
@@ -583,6 +599,7 @@ const scheduleHighlight = () => {
 }
 
 watch(activeChatId, async () => {
+  expandedToolGroups.value.clear()
   scrollController.reset()
   openedWriteStepId.value = null
   threadPinned.value = true
@@ -956,17 +973,48 @@ defineExpose({
   gap: 8px;
 }
 
-.activity-line.is-search-toggle {
+.activity-entry.is-group-child {
+  margin-inline-start: 16px;
+}
+
+button.activity-line,
+.activity-search-action {
+  width: fit-content;
+  max-width: 100%;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  text-align: start;
   cursor: pointer;
+}
+
+.activity-group-count,
+.activity-search-action {
+  flex-shrink: 0;
+  color: var(--text-secondary, #718096);
+  font-size: 11px;
+}
+
+.activity-search-action:hover {
+  text-decoration: underline;
 }
 
 .search-results-chevron {
   flex: 0 0 auto;
   margin-left: 0;
+  transition: transform 160ms ease-out;
 }
 
-.activity-line.is-search-toggle .activity-text {
-  flex: 0 0 auto;
+.activity-line[aria-expanded="true"] .search-results-chevron {
+  transform: rotate(90deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .search-results-chevron {
+    transition: none;
+  }
 }
 
 .activity-icon {

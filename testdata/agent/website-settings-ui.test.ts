@@ -3,7 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, h, nextTick, type App } from 'vue'
 
 const state = vi.hoisted(() => ({} as Record<string, any>))
-const actions = vi.hoisted(() => ({ remember: vi.fn(), forget: vi.fn(), website: vi.fn(), native: vi.fn() }))
+const actions = vi.hoisted(() => ({ remember: vi.fn(), forget: vi.fn(), website: vi.fn(), native: vi.fn(), preview: vi.fn(), importRepository: vi.fn() }))
+vi.mock('../../src/services/agent/websiteRepository', async original => ({
+  ...await original<typeof import('../../src/services/agent/websiteRepository')>(), previewWebsiteRepository: actions.preview, importWebsiteRepository: actions.importRepository,
+}))
 vi.mock('@tauri-apps/api/core', () => ({ invoke: actions.native }))
 vi.mock('../../src/services/agent/agentSkills', () => ({ agentSkillsState: { items: [] } }))
 vi.mock('../../src/services/agent/siteAccounts', async () => {
@@ -13,12 +16,17 @@ vi.mock('../../src/services/agent/siteAccounts', async () => {
 vi.mock('../../src/services/agent/websiteSettings', () => ({
   listWebsiteSettings: async () => [
     { id: 'menhu.haou.edu.cn', name: '河南开放大学·云上河开', host: 'menhu.haou.edu.cn', skillId: 'site-learn', siteHost: 'menhu.haou.edu.cn', files: ['sites/menhu.haou.edu.cn/SKILL.md'], loginHosts: ['authserver.open.ha.cn'], iconUrl: state.icon },
-    { id: 'chaoxing', name: '学习通', host: 'chaoxing.com', skillId: 'chaoxing', files: ['SKILL.md', 'site-graph.json'], builtin: true },
+    { id: 'chaoxing', name: '学习通', host: 'chaoxing.com', skillId: 'chaoxing', files: ['SKILL.md', 'site-graph.json'], builtin: true,
+      ...(state.repository ? { repositoryHost: 'chaoxing.com', repositoryUrl: 'https://github.com/owner/repo' } : {}) },
     ...[{ id: 'zhihuishu', name: '智慧树', host: 'zhihuishu.com' }, { id: 'zjooc', name: '在浙学', host: 'zjooc.cn' }].map(site => ({ ...site, skillId: 'site-learn', siteHost: site.host, files: [`sites/${site.host}/SKILL.md`, `sites/${site.host}/site-graph.json`], builtin: true })),
   ],
   addWebsiteSettings: actions.website,
 }))
 vi.mock('../../src/views/settings/AgentBehaviorSettings.vue', () => ({ default: { render: () => null } }))
+vi.mock('../../src/views/settings/WebsiteRepositoryHistory.vue', async () => {
+  const { defineComponent, h } = await import('vue')
+  return { default: defineComponent({ props: ['host'], emits: ['close'], setup: (props, { emit }) => () => h('button', { 'data-history-host': props.host, onClick: () => emit('close') }, '关闭历史') }) }
+})
 vi.mock('../../src/views/settings/AgentSkillDetail.vue', async () => {
   const { defineComponent, h } = await import('vue')
   return { default: defineComponent({
@@ -33,6 +41,7 @@ beforeEach(async () => {
   vi.clearAllMocks()
   actions.native.mockReset()
   state.icon = undefined
+  state.repository = false
   state.accounts.rows = { chaoxing: { account: 'cx-user', password: 'cx-secret', note: '' }, zjooc: { account: 'zj-user', password: 'zj-secret', note: '' } }
   actions.remember.mockImplementation((id, row) => { state.accounts.rows[id] = row })
   actions.forget.mockImplementation(id => { delete state.accounts.rows[id] })
@@ -44,6 +53,22 @@ afterEach(() => { app.unmount(); root.remove(); delete (window as any).__TAURI_I
 const site = (id: string) => root.querySelector(`[data-website="${id}"]`)!
 
 describe('one settings card per website', () => {
+  it('shows local modifications only for local differences and opens history for the selected website', async () => {
+    state.repository = true
+    const { websiteRepositoryStates } = await import('../../src/services/agent/websiteRepository')
+    websiteRepositoryStates['chaoxing.com'].source = 'repository'
+    websiteRepositoryStates['chaoxing.com'].hasFork = true
+    const { websiteIdentityState } = await import('../../src/services/agent/websiteIdentity')
+    websiteIdentityState.profiles = [...websiteIdentityState.profiles]
+    await vi.waitFor(() => expect(site('chaoxing').querySelector('.repository-history-button')?.textContent).toContain('本地修改'))
+    site('chaoxing').querySelector<HTMLButtonElement>('.repository-history-button')!.click(); await nextTick()
+    expect(root.querySelector('[data-history-host]')?.getAttribute('data-history-host')).toBe('chaoxing.com')
+    root.querySelector<HTMLButtonElement>('[data-history-host]')!.click(); await nextTick()
+    expect(root.querySelector('[data-history-host]')).toBeNull()
+    websiteRepositoryStates['chaoxing.com'].hasFork = false; await nextTick()
+    expect(site('chaoxing').querySelector('.repository-history-button')?.textContent).toContain('仓库')
+    expect(site('zjooc').textContent).not.toContain('本地修改')
+  })
   it('retries a newly saved icon even if the old favicon failed earlier', async () => {
     const portal = site('menhu.haou.edu.cn')
     portal.querySelector('.website-icon img')!.dispatchEvent(new Event('error'))
@@ -148,5 +173,35 @@ describe('one settings card per website', () => {
     site('zjooc').querySelectorAll<HTMLButtonElement>('.website-info-row')[2].querySelector('button')!.click()
     await nextTick()
     expect(root.querySelector('[data-editor-path]')?.getAttribute('data-editor-path')).toBe('sites/zjooc.cn/site-graph.json')
+  })
+  it('previews a repository icon and domain before an explicit import, preserving saved accounts', async () => {
+    const candidate = { website: { version: 1, id: 'portal', name: '示例门户', host: 'portal.example.com', icon: 'assets/icon.png' },
+      source: { owner: 'owner', name: 'website', branch: 'main', root: 'skills/portal', url: 'https://github.com/owner/website' },
+      icon: { path: 'assets/icon.png', dataUrl: 'data:image/png;base64,iVBORw0KGgo=' }, revision: 'a'.repeat(40) }
+    actions.preview.mockResolvedValue([candidate]); actions.importRepository.mockResolvedValue(candidate.website.host)
+    root.querySelector<HTMLButtonElement>('.import-repository-button')!.click()
+    await nextTick()
+    const input = document.querySelector<HTMLInputElement>('#repository-import-url')!
+    input.value = candidate.source.url; input.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+    const form = document.querySelector<HTMLFormElement>('[aria-labelledby="repository-import-title"]')!
+    form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(form.textContent).toContain(candidate.website.host))
+    expect(form.querySelector('img')?.getAttribute('src')).toBe(candidate.icon.dataUrl)
+    expect(actions.importRepository).not.toHaveBeenCalled()
+    form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(actions.importRepository).toHaveBeenCalledWith(candidate))
+    expect(state.accounts.rows.zjooc.password).toBe('zj-secret')
+    expect(state.accounts.rows.chaoxing.password).toBe('cx-secret')
+  })
+  it('keeps repository read failures in the import dialog without changing website settings', async () => {
+    actions.preview.mockRejectedValue(new Error('网站图标缺失'))
+    root.querySelector<HTMLButtonElement>('.import-repository-button')!.click(); await nextTick()
+    const input = document.querySelector<HTMLInputElement>('#repository-import-url')!
+    input.value = 'owner/website'; input.dispatchEvent(new Event('input', { bubbles: true })); await nextTick()
+    document.querySelector<HTMLFormElement>('[aria-labelledby="repository-import-title"]')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(document.querySelector('[aria-labelledby="repository-import-title"]')?.textContent).toContain('网站图标缺失'))
+    expect(actions.importRepository).not.toHaveBeenCalled()
+    expect(actions.website).not.toHaveBeenCalled()
   })
 })

@@ -35,6 +35,7 @@ const props = withDefaults(defineProps<{
   language?: 'markdown' | 'javascript' | 'json' | 'plain'
   placeholder?: string
   autofocus?: boolean
+  readonly?: boolean
 }>(), {
   language: 'markdown',
   placeholder: '',
@@ -206,6 +207,7 @@ const roundedRectPath = (rect: SelectionRect, radius = 4) => {
     return `M ${rect.left} ${rect.top} L ${rect.right} ${rect.top} L ${rect.right} ${rect.bottom} L ${rect.left} ${rect.bottom} Z`
   }
   return [
+    EditorState.readOnly.of(Boolean(props.readonly)),
     `M ${rect.left + rad} ${rect.top}`,
     `L ${rect.right - rad} ${rect.top}`,
     `Q ${rect.right} ${rect.top} ${rect.right} ${rect.top + rad}`,
@@ -618,7 +620,7 @@ watch(() => props.modelValue, (value) => {
   setDoc(value ?? '')
 })
 
-watch(() => props.language, () => {
+watch(() => [props.language, props.readonly], () => {
   const text = view?.state.doc.toString() ?? props.modelValue
   createEditor(text)
 })

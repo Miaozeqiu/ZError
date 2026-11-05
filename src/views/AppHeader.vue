@@ -46,49 +46,6 @@
 
     <div class="header-right" :class="{ 'header-right--macos': isMacOS }">
       <div
-        v-if="tipVisible && tipText"
-        class="update-tip"
-        :class="`update-tip--${status}`"
-        data-tauri-drag-region-exclude
-      >
-        <button
-          type="button"
-          class="update-tip-main"
-          :title="tipTitle"
-          @click="handleTipClick"
-        >
-          <span
-            class="update-tip-icon-wrap"
-            :class="{ 'is-progress': status === 'downloading' || status === 'installing' }"
-            aria-hidden="true"
-          >
-            <svg
-              v-if="status === 'downloading' || status === 'installing'"
-              class="update-tip-ring"
-              viewBox="0 0 36 36"
-            >
-              <circle class="update-tip-ring-bg" cx="18" cy="18" r="15.5" />
-              <circle
-                class="update-tip-ring-fg"
-                cx="18"
-                cy="18"
-                r="15.5"
-                :style="ringStyle"
-              />
-            </svg>
-            <svg
-              class="update-tip-icon"
-              viewBox="0 0 1024 1024"
-              xmlns="http://www.w3.org/2000/svg"
-            >
-              <path d="M307.173388 679.532423c0 28.903692-22.882089 52.26751-51.183621 52.267509h-51.123405C101.174367 731.920364 13.800914 652.796507 1.456629 547.599112-10.82744 442.401716 55.771484 344.49046 156.57311 319.561025 177.046558 156.255165 301.69373 27.031576 461.266196 3.727974c159.452034-23.243386 314.568515 65.213955 378.939445 216.17553 121.997667 36.731775 199.074179 159.452034 180.828723 288.073463-18.245456 128.621429-126.212788 224.003613-253.449249 223.822965a51.725565 51.725565 0 0 1-51.123405-52.267509c0-28.903692 22.882089-52.26751 51.183621-52.26751 76.35392 0.180648 141.266795-57.024576 152.226111-134.281736 10.959317-77.196944-35.346807-150.901359-108.569493-172.880208l-45.764179-13.849685-19.08848-44.559859c-45.884611-107.846901-156.682097-171.073727-270.671032-154.51432-113.928719 16.619623-203.048436 108.930789-217.68093 225.56923L249.305788 404.224756l-68.525836 16.920703c-49.979301 12.826013-82.917466 61.600994-76.835648 113.92872 6.142035 52.387942 49.37714 91.829438 100.982274 92.190734h51.183621c28.241316 0 51.183621 23.424034 51.183621 52.26751z m385.743856 107.003876a53.050318 53.050318 0 0 1 0 73.885063l-145.000188 148.010989a50.461029 50.461029 0 0 1-72.379662 0L330.597422 860.421362a53.050318 53.050318 0 0 1 0.60216-73.222687 50.400813 50.400813 0 0 1 71.777502-0.662376l57.747168 59.011704V418.25509c0-28.903692 22.882089-52.26751 51.183621-52.26751 28.241316 0 51.123405 23.363818 51.123405 52.26751v427.112265l57.626736-58.831056a50.400813 50.400813 0 0 1 72.25923 0z" fill="currentColor"/>
-            </svg>
-          </span>
-          <span class="update-tip-text">{{ tipText }}</span>
-        </button>
-      </div>
-
-      <div
         v-if="showStudyChip && linkedSubject"
         class="study-status"
         :class="{ 'is-evaluating': studyEvalRunning }"
@@ -173,7 +130,6 @@ import { ref, onMounted, computed, onUnmounted } from 'vue'
 import HeaderTutorialStepper from './appHeader/HeaderTutorialStepper.vue'
 import AgentPaneSwitcher from './agentChat/AgentPaneSwitcher.vue'
 import { activeChat, chatListCollapsed, setChatListCollapsed, studyEvalRunning } from '../services/agent/chat'
-import { useAppUpdate } from '../composables/useAppUpdate'
 import { databaseService, type StudySubject } from '../services/app/database'
 import { progressColor } from '../utils/study/studyGraph'
 
@@ -187,25 +143,6 @@ const emit = defineEmits<{
   'guide-to': [target: string]
   navigate: [tab: string]
 }>()
-
-const {
-  tipVisible,
-  tipText,
-  tipTitle,
-  status,
-  progress,
-  handleTipClick,
-} = useAppUpdate()
-
-const RING_C = 2 * Math.PI * 15.5
-const ringStyle = computed(() => {
-  const pct = Math.min(100, Math.max(status.value === 'installing' ? 100 : progress.value, 4))
-  const offset = RING_C * (1 - pct / 100)
-  return {
-    strokeDasharray: `${RING_C}`,
-    strokeDashoffset: `${offset}`,
-  }
-})
 
 const isMaximized = ref(false)
 const isTauri = ref(false)

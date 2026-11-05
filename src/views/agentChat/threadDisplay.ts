@@ -63,9 +63,11 @@ export const visibleSteps = (steps: ImportTaskStep[]) => {
   return items
 }
 
+type ToolActivityGroup = { key: string; count: number; failed: number; running: boolean }
+
 export type AssistantTimelineBlock =
   | { type: 'text'; key: string; content: string }
-  | { type: 'step'; key: string; step: ImportTaskStep }
+  | { type: 'step'; key: string; step: ImportTaskStep; group?: ToolActivityGroup; groupHead?: ToolActivityGroup }
 
 /** 按工具调用时的正文位置穿插显示，避免工具全部挤在最前面。 */
 export const assistantTimeline = (message: AgentChatMessage): AssistantTimelineBlock[] => {
@@ -74,12 +76,30 @@ export const assistantTimeline = (message: AgentChatMessage): AssistantTimelineB
   if (!steps.length) {
     return content ? [{ type: 'text', key: `${message.id}-text`, content }] : []
   }
+  const blocks: AssistantTimelineBlock[] = []
+  const appendStep = (step: ImportTaskStep) => {
+    const previous = blocks.at(-1)
+    if (step.kind === 'model' || previous?.type !== 'step' || previous.step.kind === 'model') {
+      blocks.push({ type: 'step', key: step.id, step })
+      return
+    }
+    if (!previous.group) {
+      previous.group = {
+        key: `${message.id}-tools-${previous.step.id}`, count: 1,
+        failed: Number(previous.step.status === 'failed'), running: previous.step.status === 'running',
+      }
+      previous.groupHead = previous.group
+    }
+    previous.group.count++
+    previous.group.failed += Number(step.status === 'failed')
+    previous.group.running ||= step.status === 'running'
+    blocks.push({ type: 'step', key: step.id, step, group: previous.group })
+  }
   const hasAnchors = steps.some((step) => typeof step.atContentLength === 'number')
   if (!hasAnchors) {
-    return [
-      ...steps.map((step) => ({ type: 'step' as const, key: step.id, step })),
-      ...(content ? [{ type: 'text' as const, key: `${message.id}-text`, content }] : []),
-    ]
+    steps.forEach(appendStep)
+    if (content) blocks.push({ type: 'text', key: `${message.id}-text`, content })
+    return blocks
   }
   const sorted = [...steps].sort((a, b) => {
     const sa = a.startedAt || 0
@@ -94,18 +114,14 @@ export const assistantTimeline = (message: AgentChatMessage): AssistantTimelineB
     lastAt = at
     return { step, at }
   })
-  const blocks: AssistantTimelineBlock[] = []
   let cursor = 0
   for (const { step, at } of anchors) {
     if (at > cursor) {
-      blocks.push({
-        type: 'text',
-        key: `${message.id}-text-${cursor}`,
-        content: content.slice(cursor, at),
-      })
+      const text = content.slice(cursor, at)
+      if (text.trim()) blocks.push({ type: 'text', key: `${message.id}-text-${cursor}`, content: text })
       cursor = at
     }
-    blocks.push({ type: 'step', key: step.id, step })
+    appendStep(step)
   }
   if (cursor < content.length) {
     blocks.push({

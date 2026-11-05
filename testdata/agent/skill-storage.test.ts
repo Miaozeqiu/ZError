@@ -1,7 +1,12 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const io = vi.hoisted(() => ({ files: new Map<string, string>(), requests: vi.fn(), writes: vi.fn() }))
+const io = vi.hoisted(() => ({ files: new Map<string, string>(), documents: new Map<string, unknown>(), requests: vi.fn(), writes: vi.fn(), native: false }))
+vi.mock('../../src/services/security/secureStore', async importOriginal => ({
+  ...await importOriginal<typeof import('../../src/services/security/secureStore')>(), isNativeSecureStore: () => io.native,
+  readSecureDocument: async (name: string) => io.documents.get(name) ?? null,
+  writeSecureDocument: async (name: string, value: unknown) => { io.documents.set(name, JSON.parse(JSON.stringify(value))); return value },
+}))
 vi.mock('@tauri-apps/plugin-fs', () => ({
   BaseDirectory: { Home: 1 },
   readTextFile: vi.fn(async (path: string) => {
@@ -21,7 +26,7 @@ const load = async () => {
 }
 
 beforeEach(() => {
-  vi.resetModules(); vi.clearAllMocks(); localStorage.clear(); io.files.clear()
+  vi.resetModules(); vi.clearAllMocks(); localStorage.clear(); io.files.clear(); io.documents.clear(); io.native = false
 })
 
 describe('Skill storage and installation', () => {
@@ -91,7 +96,7 @@ describe('Skill storage and installation', () => {
     expect(doc?.files).not.toContain('SKILL.md')
     expect(await mod.getSkillDocument('site-learn', '../zhihuishu.com')).toBeNull()
     expect(await mod.getSkillDocument('site-learn')).toBeNull()
-    const { readDir } = await import('@tauri-apps/plugin-fs')
+    const { readDir, readTextFile } = await import('@tauri-apps/plugin-fs')
     io.files.set(base + 'site-learn/sites/custom.example.com/SKILL.md', '# Custom site')
     vi.mocked(readDir).mockImplementation(async (path: any) => {
       const entries: Record<string, any[]> = {
@@ -101,12 +106,28 @@ describe('Skill storage and installation', () => {
       }
       return entries[path] || []
     })
+    // The lazy filesystem module can be loaded through both the host adapter
+    // and the mocked module after registry initialization. Exercise the same
+    // native command boundary for either path.
+    Object.defineProperty(window, '__TAURI_INTERNALS__', { configurable: true, value: {
+      invoke: async (command: string, args: any) => {
+        if (command === 'plugin:fs|read_dir') return readDir(args.path, args.options)
+        if (command === 'plugin:fs|read_text_file') return new TextEncoder().encode(await readTextFile(args.path, args.options))
+        if (command === 'secure_redact') return args.value
+        throw new Error(`Unexpected native command: ${command}`)
+      },
+    } })
     try {
+      const identity = await import('../../src/services/agent/websiteIdentity')
+      expect(identity.websitePrimaryHost('custom.example.com')).toBe('custom.example.com')
+      expect(await mod.listSkillFiles('site-learn')).toContain('sites/custom.example.com/SKILL.md')
+      expect(await mod.getSkillFileContent('site-learn', 'sites/custom.example.com/SKILL.md')).toMatchObject({ content: '# Custom site' })
       const custom = await mod.getSkillDocument('site-learn', 'custom.example.com')
       expect(custom?.builtin).toBe(false)
       expect(custom?.files).toEqual(['sites/custom.example.com/SKILL.md'])
     } finally {
       vi.mocked(readDir).mockResolvedValue([])
+      delete (window as any).__TAURI_INTERNALS__
     }
   })
 
@@ -143,7 +164,8 @@ describe('Skill storage and installation', () => {
     expect(skill?.content).toContain('# 学习通')
   })
 
-  it('presents old overrides in standard form without writing them until saved', async () => {
+  it('migrates old overrides into an encrypted local branch without changing the originals', async () => {
+    io.native = true
     const path = base + 'chaoxing/SKILL.md'
     const original = '---\nname: 我的学习通\ndescription: 旧说明\n---\n\n用户正文\n'
     io.files.set(path, original)
@@ -153,8 +175,10 @@ describe('Skill storage and installation', () => {
     expect(doc?.markdown).toContain('name: chaoxing')
     expect(io.files.get(path)).toBe(original)
     await mod.saveSkillDocument('chaoxing', doc!.markdown)
-    expect(io.files.get(path)).toContain('display-name: 我的学习通')
-    expect(io.files.get(path)).toContain('\n\n用户正文\n')
+    expect(io.files.get(path)).toBe(original)
+    const { chaoxingRepository } = await import('../../src/services/agent/websiteRepository')
+    expect(chaoxingRepository.inspect().fork?.files['SKILL.md']).toContain('display-name: 我的学习通')
+    expect((await mod.getSkillDocument('chaoxing'))?.markdown).toContain('\n\n用户正文\n')
   })
 
   it('rejects invalid saves before touching the existing root file', async () => {

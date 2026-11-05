@@ -38,14 +38,37 @@
           </label>
         </div>
         <button
-          v-if="skillDoc?.builtin && skillDoc.customized"
+          v-if="skillDoc?.customized && (skillDoc.builtin || isRepositorySkill) && !websiteRepositoryState?.pinned"
           type="button"
           class="action-btn danger"
           :disabled="saving"
           @click="resetSkill"
         >
-          恢复默认
+          {{ isRepositorySkill ? '恢复仓库版本' : '恢复默认' }}
         </button>
+      </div>
+    </div>
+
+    <div v-if="isRepositorySkill" class="repository-status" role="status">
+      <button type="button" class="repository-source" :title="'查看提交历史 · ' + (repositorySource?.url || '')" aria-label="查看网站提交历史" @click="historyOpen = true">
+        <Icon v-if="websiteRepositoryState.source === 'repository'" icon="lucide:github" width="14" height="14" aria-label="GitHub 仓库" />
+        <Icon v-if="websiteRepositoryState.hasFork" icon="lucide:history" width="14" height="14" aria-hidden="true" />
+        {{ websiteRepositoryState.hasFork ? '本地修改' : websiteRepositoryState.source === 'repository' ? 'GitHub 仓库缓存' : '内置离线副本' }}
+      </button>
+      <button type="button" class="action-btn" :disabled="dirty || saving || websiteRepositoryState.refreshing || websiteRepositoryState.pinned" @click="updateRepository">{{ websiteRepositoryState.refreshing ? '更新中…' : '检查更新' }}</button>
+      <span v-if="websiteRepositoryState.pinned">正在使用历史快照，可在时间线回到工作版本。</span>
+      <span v-if="websiteRepositoryState.error">{{ websiteRepositoryState.error }}</span>
+      <span v-else-if="dirty && loadedRepositoryVersion !== websiteRepositoryState.version">仓库或本地版本已变化，请重新读取后合并再保存。</span>
+    </div>
+
+    <WebsiteRepositoryHistory v-if="historyOpen && repository" :host="repository.host" :allow-switch="!dirty && !saving" @close="historyOpen = false" />
+    <div v-if="currentConflict" class="repository-conflict" role="alert">
+      <p>这个文件的仓库版本与本地版本都有修改，当前保留本地内容。请核对后选择。</p>
+      <details><summary>查看仓库新版本</summary><pre>{{ conflictUpstream }}</pre></details>
+      <div class="header-actions">
+        <button type="button" class="action-btn" :disabled="dirty || saving" @click="resolveConflict('local')">保留本地版本</button>
+        <button type="button" class="action-btn" :disabled="dirty || saving" @click="resolveConflict('upstream')">采用仓库版本</button>
+        <span v-if="dirty">先保存或放弃当前编辑，再选择版本。</span>
       </div>
     </div>
 
@@ -105,6 +128,7 @@
             ref="editorRef"
             v-model="markdown"
             :language="editorLanguage"
+            :readonly="websiteRepositoryState?.pinned"
             :autofocus="panelMode === 'source'"
             :placeholder="isMarkdownFile ? '在此编辑 Markdown…' : '在此编辑文件…'"
           />
@@ -133,6 +157,8 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { Icon } from '@iconify/vue/offline'
+import '../../utils/ui/agentIcons'
 import MarkdownRender, { setCustomComponents } from 'markstream-vue'
 import 'markstream-vue/index.css'
 import 'katex/dist/katex.min.css'
@@ -140,8 +166,11 @@ import '../../services/model/markstream'
 import SkillMarkdownEditor from '../../components/settings/SkillMarkdownEditor.vue'
 import SkillUnsavedDialog from '../../components/settings/SkillUnsavedDialog.vue'
 import SkillFileTree from '../../components/settings/SkillFileTree.vue'
+import WebsiteRepositoryHistory from './WebsiteRepositoryHistory.vue'
 import BrowserSiteGraphPanel from '../../components/browser/BrowserSiteGraphPanel.vue'
 import { SITE_GRAPH_PATH } from '../../services/agent/skillRuntime'
+import { repositoryForHost, repositorySourceFor, websiteRepositoryStates, refreshWebsiteRepository } from '../../services/agent/websiteRepository'
+import { websiteRepositoryTarget } from '../../services/agent/websiteRepositoryTarget'
 import type { SiteGraphData } from '../../services/browser/siteGraph'
 import {
   agentSkillsState,
@@ -194,6 +223,18 @@ const emit = defineEmits<{
 }>()
 
 const skillDoc = ref<SkillDocument | null>(null)
+const repository = computed(() => websiteRepositoryTarget(props.skillId, props.siteHost ? `sites/${props.siteHost}/SKILL.md` : 'SKILL.md'))
+const isRepositorySkill = computed(() => Boolean(repository.value))
+const historyOpen = ref(false)
+const repositorySource = computed(() => repository.value ? repositorySourceFor(repository.value.host) : undefined)
+const websiteRepositoryState = computed(() => repository.value ? websiteRepositoryStates[repository.value.host] : undefined)
+const repositoryPath = computed(() => websiteRepositoryTarget(props.skillId, currentPath.value)?.path || '')
+const loadedRepositoryVersion = ref<string | undefined>()
+const currentConflict = computed(() => isRepositorySkill.value && !websiteRepositoryState.value?.pinned && websiteRepositoryState.value?.conflicts.includes(repositoryPath.value))
+const conflictUpstream = computed(() => {
+  void websiteRepositoryState.value?.version
+  return currentConflict.value ? repositoryForHost(repository.value!.host).inspect().upstream.files[repositoryPath.value] ?? '仓库版本已移除此文件' : ''
+})
 const files = ref<string[]>(['SKILL.md'])
 const currentPath = ref('SKILL.md')
 const markdown = ref('')
@@ -226,9 +267,7 @@ const siteGraphPreview = computed(() => {
   }
 })
 const dirty = computed(() => markdown.value !== loadedMarkdown.value)
-const canSave = computed(() => (
-  currentPath.value === 'SKILL.md' ? Boolean(markdown.value.trim()) : true
-))
+const canSave = computed(() => !websiteRepositoryState.value?.pinned && (currentPath.value !== 'SKILL.md' || Boolean(markdown.value.trim())))
 
 const previewParts = computed(() => parseSkillFrontmatter(markdown.value))
 /** 预览绝不把 YAML frontmatter 丢给 markstream（`---` 会被渲染成奇怪的水平线）。 */
@@ -279,6 +318,7 @@ const loadFile = async (path: string) => {
   currentPath.value = file.path
   markdown.value = file.content
   loadedMarkdown.value = file.content
+  loadedRepositoryVersion.value = file.repositoryVersion
   editorKey.value += 1
   if (isSiteGraphPath(file.path)) panelMode.value = 'preview'
   else if (!isMarkdownPath(file.path)) panelMode.value = 'source'
@@ -287,6 +327,7 @@ const loadFile = async (path: string) => {
 const loadSkill = async () => {
   loadError.value = ''
   saveError.value = ''
+  const hadDocument = Boolean(skillDoc.value)
   const doc = await getSkillDocument(props.skillId, props.siteHost)
   if (!doc) {
     loadError.value = '无法读取 Skill'
@@ -294,8 +335,26 @@ const loadSkill = async () => {
   }
   skillDoc.value = doc
   files.value = doc.files?.length ? doc.files : ['SKILL.md']
-  await loadFile(props.initialPath || (props.siteHost ? `sites/${props.siteHost}/SKILL.md` : 'SKILL.md'))
+  const preferred = hadDocument ? currentPath.value : props.initialPath || (props.siteHost ? `sites/${props.siteHost}/SKILL.md` : 'SKILL.md')
+  await loadFile(files.value.includes(preferred) ? preferred : files.value[0])
 }
+
+const updateRepository = async () => {
+  try { if (repository.value) await refreshWebsiteRepository(repository.value.host, true); if (!dirty.value) await loadSkill() }
+  catch (error) { saveError.value = errorMessage(error, '更新失败，已保留缓存') }
+}
+const resolveConflict = async (choice: 'local' | 'upstream') => {
+  if (dirty.value || saving.value) return
+  saving.value = true
+  saveError.value = ''
+  try { if (repository.value) await repositoryForHost(repository.value.host).resolve(repositoryPath.value, choice); await loadSkill(); emit('saved') }
+  catch (error) { saveError.value = errorMessage(error, '合并失败，已保留原版本') }
+  finally { saving.value = false }
+}
+watch(() => websiteRepositoryState.value?.version, async () => {
+  if (!isRepositorySkill.value || !skillDoc.value || dirty.value || saving.value) return
+  try { await loadSkill() } catch (error) { loadError.value = errorMessage(error, '读取网站仓库失败') }
+})
 
 type LeaveIntent = { kind: 'back' } | { kind: 'file'; path: string }
 
@@ -383,15 +442,16 @@ const submitSave = async (options?: { quiet?: boolean }) => {
   saving.value = true
   saveError.value = ''
   try {
-    await saveSkillFileContent(skillDoc.value.id, currentPath.value, markdown.value)
+    await saveSkillFileContent(skillDoc.value.id, currentPath.value, markdown.value, { repositoryVersion: loadedRepositoryVersion.value })
     const doc = await getSkillDocument(skillDoc.value.id, props.siteHost)
     if (doc) {
       skillDoc.value = doc
       files.value = doc.files?.length ? doc.files : ['SKILL.md']
     }
-    loadedMarkdown.value = markdown.value
+    const savedFile = await getSkillFileContent(skillDoc.value.id, currentPath.value)
+    if (savedFile) { markdown.value = savedFile.content; loadedMarkdown.value = savedFile.content; loadedRepositoryVersion.value = savedFile.repositoryVersion }
     emit('saved')
-    if (!options?.quiet) showHint('已保存')
+    if (!options?.quiet) showHint(isRepositorySkill.value ? '已保存到本机，未上传仓库' : '已保存')
     return true
   } catch (error) {
     saveError.value = errorMessage(error, '保存失败')
@@ -402,10 +462,11 @@ const submitSave = async (options?: { quiet?: boolean }) => {
 }
 
 const resetSkill = async () => {
-  if (!skillDoc.value?.builtin || saving.value) return
+  if (!skillDoc.value || (!skillDoc.value.builtin && !isRepositorySkill.value) || saving.value || websiteRepositoryState.value?.pinned) return
   flushEditor()
   if (dirty.value && !window.confirm('将丢弃当前未保存修改，并恢复为内置默认内容，继续？')) return
-  if (!window.confirm(currentPath.value === 'SKILL.md' ? '确定恢复整个 Skill 为内置默认？' : `确定恢复「${currentPath.value}」为内置默认？`)) return
+  const source = isRepositorySkill.value ? '当前仓库缓存版本' : '内置默认'
+  if (!window.confirm(currentPath.value === 'SKILL.md' ? `确定恢复全部文件为${source}？本地修改将被丢弃。` : `确定恢复「${currentPath.value}」为${source}？`)) return
   saving.value = true
   saveError.value = ''
   try {
@@ -421,7 +482,7 @@ const resetSkill = async () => {
       panelMode.value = 'preview'
     }
     emit('saved')
-    showHint('已恢复默认')
+    showHint(isRepositorySkill.value ? '已恢复仓库缓存版本' : '已恢复默认')
   } catch (error) {
     saveError.value = error instanceof Error ? error.message : '恢复失败'
   } finally {
@@ -873,4 +934,34 @@ onUnmounted(() => {
   color: #059669;
   flex-shrink: 0;
 }
+.repository-status {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  padding: 8px 16px;
+  color: #71717a;
+  font-size: 12px;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.12);
+}
+.repository-source { display: inline-flex; align-items: center; gap: 6px; border: none; padding: 3px 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.repository-source:hover { color: var(--text-primary); }
+.repository-source svg { flex-shrink: 0; }
+.repository-conflict {
+  margin: 10px 16px;
+  padding: 12px;
+  border: 1px solid rgba(180, 120, 30, 0.25);
+  border-radius: 10px;
+  background: rgba(240, 180, 70, 0.07);
+  font-size: 13px;
+}
+.repository-conflict p { margin: 0 0 8px; }
+.repository-conflict pre {
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+}
+.repository-conflict .header-actions { margin-top: 10px; flex-wrap: wrap; }
 </style>

@@ -34,6 +34,7 @@ export type BridgeCmd = {
 export const BRIDGE_ACTIONS = [
   { name: 'help', group: 'meta', hint: '列出全部动作' },
   { name: 'health', group: 'meta', hint: '查看开发版加载状态，不返回凭据或聊天正文' },
+  { name: 'website_repository', group: 'meta', hint: '网站仓库验收：op=status|refresh|preview|import|history；history 可选 source=github；不返回经验正文。' },
   { name: 'list', group: 'meta', hint: '列出应用内浏览器标签' },
   { name: 'state', group: 'meta', hint: '当前页 + 章节解析器全文 + 任务点' },
   { name: 'goto', group: 'browser', hint: '打开网址。args.url', alias: ['navigate'] },
@@ -222,12 +223,38 @@ export const runBridgeAction = async (cmd: BridgeCmd) => {
     const { modelConfigManager } = await import('../model/config')
     const { chatStoreReady, sessions } = await import('./chatStore')
     const { secureStorageState } = await import('../security/secureStore')
+    const { websiteRepositoryState } = await import('./websiteRepository')
     await Promise.all([chatStoreReady, modelConfigManager.ready])
     return { ok: !secureStorageState.error, id, action, host: location.origin,
       visibility: document.visibilityState, focused: document.hasFocus(),
       storageError: secureStorageState.error, sessions: sessions.value.length, browsers: listAppBrowsers().length,
       agentModel: modelConfigManager.getSelectedAgentModel()?.displayName || modelConfigManager.getSelectedTextModel()?.displayName || '',
+      websiteRepository: { source: websiteRepositoryState.source, revision: websiteRepositoryState.revision,
+        modifiedFiles: websiteRepositoryState.changedPaths.length, conflicts: websiteRepositoryState.conflicts.length,
+        refreshing: websiteRepositoryState.refreshing, error: websiteRepositoryState.error },
     }
+  }
+  if (action === 'website_repository') {
+    const repositories = await import('./websiteRepository')
+    const op = arg(args, 'op') || 'status'
+    const host = arg(args, 'host')
+    if (op === 'history') {
+      const local = await repositories.readWebsiteLocalHistory(host)
+      return { ok: true, id, action, host, history: arg(args, 'source') === 'github'
+        ? args.refresh === true || arg(args, 'refresh') === 'true'
+          ? await repositories.refreshWebsiteGitHistory(host)
+          : await repositories.readWebsiteGitHistory(host, await repositories.readWebsiteGitHistoryRevision(host, local.revision), Number(arg(args, 'page') || 1)) : local }
+    }
+    if (op === 'refresh') { await repositories.ensureWebsiteRepository(host); await repositories.refreshWebsiteRepository(host, true) }
+    if (op === 'preview' || op === 'import') {
+      const candidates = await repositories.previewWebsiteRepository(arg(args, 'url'))
+      if (op === 'preview') return { ok: true, id, action, candidates: candidates.map(item => ({ website: item.website, source: item.source, revision: item.revision, hasIcon: Boolean(item.icon.dataUrl) })) }
+      const selected = host ? candidates.find(item => item.website.host === host) : candidates.length === 1 ? candidates[0] : undefined
+      if (!selected) return { ok: false, id, action, error: '请选择要导入的网站域名' }
+      await repositories.importWebsiteRepository(selected)
+    }
+    const hosts = await repositories.websiteRepositoryHosts()
+    return { ok: true, id, action, repositories: hosts.map(host => ({ host, ...repositories.websiteRepositoryStates[host], iconUrl: undefined, hasIcon: Boolean(repositories.websiteRepositoryStates[host]?.iconUrl) })) }
   }
 
   if (action === 'list') {

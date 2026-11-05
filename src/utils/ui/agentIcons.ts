@@ -5,6 +5,14 @@ import lucide from '@iconify-json/lucide/icons.json'
 
 const NEEDED = [
   'globe',
+  'github',
+  'cloud',
+  'git-fork',
+  'git-commit-horizontal',
+  'history',
+  'list-filter',
+  'file-text',
+  'external-link',
   'settings-2',
   'square-pen',
   'key-round',

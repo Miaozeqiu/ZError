@@ -5,6 +5,11 @@ import { createSkillMarkdown, normalizeLegacySkillMarkdown, parseSkillFrontmatte
 import { normalizeWebsiteHost, websitePrimaryHost } from './websiteIdentity'
 import { isBuiltinRuntimeSkillFile, WEBSITE_RUNTIME_FILE_HINT } from './skillRuntimeFiles'
 import { resolveWebsiteSkillTarget } from './websiteSkillTarget'
+import { chaoxingRepository, ensureChaoxingRepository, listChaoxingRepositoryFiles, readChaoxingRepositoryFile,
+  writeChaoxingRepositoryFile, websiteRepositoryState, onWebsiteRepositoryChanged, CHAOXING_REPOSITORY,
+  websiteRepositoryHosts, listWebsiteRepositoryFiles, readWebsiteRepositoryFile, writeWebsiteRepositoryFile, repositoryForHost, websiteRepositoryStates, repositorySourceFor } from './websiteRepository'
+import { websiteRepositoryTarget } from './websiteRepositoryTarget'
+import { repositoryPath as isRepositoryPath } from './websiteRepositoryCore'
 export { parseSkillFrontmatter } from './skillFormat'
 import {
   listBundledSkillFiles,
@@ -48,6 +53,7 @@ export type SkillFileContent = {
   path: string
   content: string
   readonly: boolean
+  repositoryVersion?: string
 }
 
 type SkillConfigRow = {
@@ -356,6 +362,7 @@ const readSkillOverride = async (id: string): Promise<string | null> => {
 }
 
 const hasSkillOverride = async (id: string) => {
+  if (id === 'chaoxing') { await ensureChaoxingRepository(); return websiteRepositoryState.changedPaths.length > 0 }
   if (await readSkillOverride(id)) return true
   const extras = await walkSkillDir(skillOverrideDir(id))
   if (extras.some((path) => path !== SKILL_MAIN_FILE && isBuiltinRuntimeSkillFile(path))) return true
@@ -443,6 +450,7 @@ const removeLegacySkillOverrideFile = async (id: string) => {
 export const listSkillFiles = async (id: string): Promise<string[]> => {
   const item = skillItemOf(id)
   if (!item) return []
+  if (id === 'chaoxing') return (await listChaoxingRepositoryFiles()).sort((a, b) => a === SKILL_MAIN_FILE ? -1 : b === SKILL_MAIN_FILE ? 1 : a.localeCompare(b, 'en'))
   const files = new Set<string>()
   if (item.builtin) {
     for (const path of listBundledSkillFiles(id)) files.add(path)
@@ -454,6 +462,11 @@ export const listSkillFiles = async (id: string): Promise<string[]> => {
     }
   }
   if (!files.size) files.add(SKILL_MAIN_FILE)
+  if (id === 'site-learn') for (const host of await websiteRepositoryHosts()) {
+    if (host === 'chaoxing.com') continue
+    for (const path of files) if (path.startsWith(`sites/${host}/`)) files.delete(path)
+    for (const path of await listWebsiteRepositoryFiles(host)) files.add(`sites/${host}/${path}`)
+  }
   return [...files].filter((path) => !isParserScriptPath(path) && (!item.builtin || isBuiltinRuntimeSkillFile(path))
     && !(id === 'chaoxing' && path.startsWith('sites/'))
     && !(id === 'site-learn' && /^sites\/[^/]+\//.test(path) && path.split('/')[1] !== websitePrimaryHost(path.split('/')[1]))).sort((a, b) => {
@@ -464,6 +477,7 @@ export const listSkillFiles = async (id: string): Promise<string[]> => {
 }
 
 const readStoredSkillMarkdown = async (id: string): Promise<string | null> => {
+  if (id === 'chaoxing') return (await readChaoxingRepositoryFile(SKILL_MAIN_FILE)).content
   const override = await readSkillOverride(id)
   if (override) return override
   const bundled = readBundledSkillFile(id, SKILL_MAIN_FILE)
@@ -523,7 +537,7 @@ const buildItems = async (config: SkillConfigFile): Promise<AgentSkillItem[]> =>
     const customized = await hasSkillOverride(id)
     let name = def.name
     let description = def.description
-    const markdown = (customized ? await readSkillOverride(id) : null) || readBundledSkillFile(id, SKILL_MAIN_FILE)
+    const markdown = id === 'chaoxing' ? await readStoredSkillMarkdown(id) : (customized ? await readSkillOverride(id) : null) || readBundledSkillFile(id, SKILL_MAIN_FILE)
     if (markdown) {
       const parsed = parseSkillFrontmatter(markdown)
       if (parsed.displayName) name = parsed.displayName
@@ -537,6 +551,7 @@ const buildItems = async (config: SkillConfigFile): Promise<AgentSkillItem[]> =>
       builtin: true,
       scope: def.scope,
       customized,
+      ...(id === 'chaoxing' ? { source: CHAOXING_REPOSITORY.url, sourcePath: CHAOXING_REPOSITORY.root } : {}),
       installedAt: row?.installedAt,
       updatedAt: row?.updatedAt,
     })
@@ -574,8 +589,14 @@ const syncState = async () => {
   agentSkillsState.items = await buildItems(memoryConfig)
   agentSkillsState.ready = fileReady
 }
+onWebsiteRepositoryChanged(() => { promptCache.delete('chaoxing'); void syncState().catch(() => undefined) })
 
 memoryConfig = readLocal()
+const skillLoadFailed = (error: unknown) => {
+  agentSkillsState.items = fallbackBuiltinItems()
+  agentSkillsState.ready = fileReady
+  websiteRepositoryState.error = error instanceof Error ? error.message : '网站仓库缓存暂不可用'
+}
 void loadFile().then(async (file) => {
   fileReady = true
   memoryConfig = migrateSkillConfig({
@@ -585,8 +606,8 @@ void loadFile().then(async (file) => {
   writeLocal(memoryConfig)
   persistFile(memoryConfig)
   await syncState()
-})
-void syncState()
+}).catch(skillLoadFailed)
+void syncState().catch(skillLoadFailed)
 
 export const refreshAgentSkills = async () => {
   await syncState()
@@ -685,8 +706,8 @@ export const matchSkillsForText = (text: string, limit = 2) => {
 export const getSkillPromptBlock = async (item: AgentSkillItem): Promise<{ triggerHint: string; prompt: string } | null> => {
   const builtin = BUILTIN_SKILLS[item.id]
   if (builtin) {
-    const override = await readSkillOverride(item.id)
-    const markdown = override || readBundledSkillFile(item.id, SKILL_MAIN_FILE)
+    const override = item.id === 'chaoxing' ? null : await readSkillOverride(item.id)
+    const markdown = item.id === 'chaoxing' ? await readStoredSkillMarkdown(item.id) : override || readBundledSkillFile(item.id, SKILL_MAIN_FILE)
     if (markdown) {
       const parsed = parseSkillFrontmatter(markdown)
       const body = parsed.body.trim()
@@ -828,6 +849,15 @@ export const readAgentSkillFileContent = async (id: string, relativePath: string
   if (!item) return null
   const path = normalizeSkillRelativePath(relativePath)
   if (!path) return null
+  await websiteRepositoryHosts()
+  const repository = websiteRepositoryTarget(id, path)
+  if (repository) {
+    if (!isRepositoryPath(repository.path)) return null
+    const file = await readWebsiteRepositoryFile(repository.host, repository.path)
+    return file.content == null ? null : { id, path, content: file.content, repository_version: file.version,
+      hint: file.readonly ? '当前使用历史快照。请在时间线回到工作版本后编辑。'
+        : `编辑时将 repository_version 原样放入 write_agent_skill_file 的 base_version；修改仅保存到本地分支，不上传仓库。${nextSkillFileHint(id, path, []) || ''}` }
+  }
   // Website creation needs a definitive absence check. Directory enumeration and
   // optional overrides deliberately tolerate errors elsewhere; neither can be
   // used as proof that an existing site's original text is safe to replace.
@@ -877,7 +907,7 @@ export const listAgentSkillsForAgent = async () => {
   return { skills }
 }
 
-export const writeAgentSkillFileContent = async (id: string, relativePath: string, content: string) => {
+export const writeAgentSkillFileContent = async (id: string, relativePath: string, content: string, repositoryVersion?: string) => {
   const item = skillItemOf(id)
   if (!item) return { error: `Skill "${id}" 不存在` }
   if (!isSkillEditable(id)) return { error: '此内置 Skill 为只读，不能修改' }
@@ -899,13 +929,13 @@ export const writeAgentSkillFileContent = async (id: string, relativePath: strin
     return { error: `文件超过 ${MAX_SKILL_FILE_BYTES} 字节` }
   }
   try {
-    await saveSkillFileContent(id, path, text)
+    await saveSkillFileContent(id, path, text, { repositoryVersion })
     const files = await listSkillFiles(id)
     return {
       ok: true,
       id,
       path,
-      hint: '已写入。图谱会热加载。站点步骤写在 SKILL.md。',
+      hint: id === 'chaoxing' ? '已保存到本地分支，未上传或修改官方仓库。图谱会热加载。' : '已写入。图谱会热加载。站点步骤写在 SKILL.md。',
       files,
     }
   } catch (error) {
@@ -932,7 +962,7 @@ export const resetAgentSkillFile = async (id: string, relativePath?: string) => 
       id,
       path,
       content: file?.content || '',
-      hint: '已恢复为内置默认',
+      hint: id === 'chaoxing' ? '已恢复为当前仓库缓存版本' : '已恢复为内置默认',
       files: await listSkillFiles(id),
     }
   } catch (error) {
@@ -951,7 +981,7 @@ export const getSkillDocument = async (id: string, siteHost?: string): Promise<S
   if (!markdown) return null
   const parsed = parseSkillFrontmatter(markdown)
   const customized = item.builtin ? (scoped
-    ? (await walkSkillDir(skillOverrideDir(id))).some(path => path.startsWith(prefix) && isBuiltinRuntimeSkillFile(path))
+    ? (websiteRepositoryTarget(id, mainPath) ? Boolean(websiteRepositoryStates[siteHost!]?.changedPaths.length) : (await walkSkillDir(skillOverrideDir(id))).some(path => path.startsWith(prefix) && isBuiltinRuntimeSkillFile(path)))
     : await hasSkillOverride(id)) : true
   const files = (await listSkillFiles(id)).filter(path => !scoped || path.startsWith(prefix))
   return {
@@ -961,8 +991,8 @@ export const getSkillDocument = async (id: string, siteHost?: string): Promise<S
     markdown,
     builtin: item.builtin && (!scoped || Boolean(readBundledSkillFile(id, mainPath))),
     customized,
-    source: item.source,
-    sourcePath: item.sourcePath,
+    source: websiteRepositoryTarget(id, mainPath) ? repositorySourceFor(websiteRepositoryTarget(id, mainPath)!.host)?.url : item.source,
+    sourcePath: websiteRepositoryTarget(id, mainPath) ? repositorySourceFor(websiteRepositoryTarget(id, mainPath)!.host)?.root : item.sourcePath,
     files,
   }
 }
@@ -972,6 +1002,13 @@ export const getSkillFileContent = async (id: string, relativePath: string): Pro
   if (!item) return null
   const path = normalizeSkillRelativePath(relativePath || SKILL_MAIN_FILE)
   if (!path) return null
+  await websiteRepositoryHosts()
+  const repository = websiteRepositoryTarget(id, path)
+  if (repository) {
+    if (!isRepositoryPath(repository.path)) return null
+    const file = await readWebsiteRepositoryFile(repository.host, repository.path)
+    return file.content == null ? null : { id, path, content: file.content, readonly: file.readonly, repositoryVersion: file.version }
+  }
   const files = await listSkillFiles(id)
   if (!files.includes(path)) return null
   let content = ''
@@ -990,7 +1027,7 @@ export const getSkillFileContent = async (id: string, relativePath: string): Pro
   }
 }
 
-export const saveSkillFileContent = async (id: string, relativePath: string, content: string) => {
+export const saveSkillFileContent = async (id: string, relativePath: string, content: string, options?: { repositoryVersion?: string }) => {
   const item = skillItemOf(id)
   if (!item) throw new Error('Skill 不存在')
   assertSkillEditable(id)
@@ -1004,10 +1041,23 @@ export const saveSkillFileContent = async (id: string, relativePath: string, con
   if (isParserScriptPath(path)) throw new Error('不要写解析脚本。把步骤写进 sites/<主网站域名>/SKILL.md。')
   const text = String(await redactNative(redactObject(String(content ?? ''))))
   if (!text.trim() && path === SKILL_MAIN_FILE) throw new Error('Skill 内容不能为空')
+  await websiteRepositoryHosts()
+  const repository = websiteRepositoryTarget(id, path)
+  if (repository && id !== 'chaoxing') {
+    await writeWebsiteRepositoryFile(repository.host, repository.path, text.endsWith('\n') ? text : `${text}\n`, options?.repositoryVersion)
+    promptCache.delete(id)
+    await syncState()
+    return
+  }
 
   promptCache.delete(id)
   if (path === SKILL_MAIN_FILE) {
-    await saveSkillDocument(id, text)
+    await saveSkillDocument(id, text, options)
+    return
+  }
+  if (id === 'chaoxing') {
+    await writeChaoxingRepositoryFile(path, text.endsWith('\n') ? text : `${text}\n`, options?.repositoryVersion)
+    await syncState()
     return
   }
   if (item.builtin) {
@@ -1051,7 +1101,7 @@ export const saveSkillFileContent = async (id: string, relativePath: string, con
   }
 }
 
-export const saveSkillDocument = async (id: string, markdown: string) => {
+export const saveSkillDocument = async (id: string, markdown: string, options?: { repositoryVersion?: string }) => {
   const item = skillItemOf(id)
   if (!item) throw new Error('Skill 不存在')
   assertSkillEditable(id)
@@ -1062,7 +1112,9 @@ export const saveSkillDocument = async (id: string, markdown: string) => {
   const parsed = parseSkillFrontmatter(content)
   promptCache.delete(id)
 
-  if (item.builtin) {
+  if (id === 'chaoxing') {
+    await writeChaoxingRepositoryFile(SKILL_MAIN_FILE, content.endsWith('\n') ? content : `${content}\n`, options?.repositoryVersion)
+  } else if (item.builtin) {
     await writeSkillOverride(id, content.endsWith('\n') ? content : `${content}\n`)
   } else {
     const meta = await readSkillMeta(id)
@@ -1093,7 +1145,8 @@ export const resetSkillDocument = async (id: string) => {
   const item = skillItemOf(id)
   if (!item?.builtin) return
   assertSkillEditable(id)
-  await removeSkillOverride(id)
+  if (id === 'chaoxing') await chaoxingRepository.reset()
+  else await removeSkillOverride(id)
   promptCache.delete(id)
   await syncState()
   if (id === 'chaoxing') {
@@ -1110,9 +1163,21 @@ export const resetSkillFileContent = async (id: string, relativePath: string) =>
   if (!path) throw new Error('无效的文件路径')
   const writeError = skillFileWriteError(id, relativePath || SKILL_MAIN_FILE)
   if (writeError) throw new Error(writeError)
+  await websiteRepositoryHosts()
+  const repository = websiteRepositoryTarget(id, path)
+  if (repository && id !== 'chaoxing') {
+    await repositoryForHost(repository.host).reset(repository.path)
+    await syncState()
+    return
+  }
   promptCache.delete(id)
   if (path === SKILL_MAIN_FILE) {
     await resetSkillDocument(id)
+    return
+  }
+  if (id === 'chaoxing') {
+    await chaoxingRepository.reset(path)
+    await syncState()
     return
   }
   try {

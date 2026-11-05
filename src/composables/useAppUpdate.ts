@@ -383,7 +383,7 @@ async function checkForUpdates(options?: { forceDialog?: boolean }) {
       const remindTime = new Date(updateRemindTime)
       if (new Date() < remindTime) {
         console.log(`用户选择一周后提醒，提醒时间: ${remindTime.toLocaleString()}`)
-        // 仅抑制自动检查的顶部提示/下载；手动「检查更新」仍弹出
+        // 仅抑制自动检查的侧边栏提示和下载，手动「检查更新」仍弹窗
         suppressAuto = !wantDialog
       } else {
         localStorage.removeItem('updateRemindTime')

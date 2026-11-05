@@ -25,9 +25,15 @@ pub struct PreviewViewportLayout {
   pub compact_padding: f64,
   pub medium_breakpoint: f64,
   pub compact_breakpoint: f64,
+  pub renderer_width: Option<f64>,
+  pub renderer_height: Option<f64>,
 }
 
 impl PreviewViewportLayout {
+  pub fn renderer_size(self) -> Option<(f64, f64)> {
+    let (width, height) = (self.renderer_width?, self.renderer_height?);
+    (width.is_finite() && height.is_finite() && width >= 8.0 && height >= 8.0).then_some((width, height))
+  }
   fn pane(self, viewport_width: f64) -> (f64, f64) {
     if viewport_width <= self.compact_breakpoint { (self.compact_width, self.compact_padding) }
     else if viewport_width <= self.medium_breakpoint { (self.medium_width, self.medium_padding) }
@@ -127,7 +133,7 @@ mod tests {
     let mut r = rule();
     r.preview = Some(PreviewViewportLayout { wide_width: 252.0, medium_width: 210.0, compact_width: 150.0,
       wide_padding: 14.0, medium_padding: 10.0, compact_padding: 8.0,
-      medium_breakpoint: 1150.0, compact_breakpoint: 760.0 });
+      medium_breakpoint: 1150.0, compact_breakpoint: 760.0, renderer_width: None, renderer_height: None });
     let layout = AnchoredBrowserGeometry::new(r, 963.0, 90.0, 223.0, 125.4375).unwrap();
     for (viewport, expected_x, expected_width, expected_right) in [
       (1600.0, 1363.0, 223.0, 14.0), (1000.0, 801.0, 189.0, 10.0), (700.0, 559.0, 133.0, 8.0),
@@ -145,7 +151,7 @@ mod tests {
     let mut r = rule();
     r.preview = Some(PreviewViewportLayout { wide_width: 252.0, medium_width: 210.0, compact_width: 150.0,
       wide_padding: 14.0, medium_padding: 10.0, compact_padding: 8.0,
-      medium_breakpoint: 700.0, compact_breakpoint: 760.0 });
+      medium_breakpoint: 700.0, compact_breakpoint: 760.0, renderer_width: None, renderer_height: None });
     assert!(AnchoredBrowserGeometry::new(r, 900.0, 50.0, 223.0, 125.0).is_none());
   }
 }
