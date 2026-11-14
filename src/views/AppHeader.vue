@@ -13,15 +13,12 @@
       </div>
       <div class="app-title">ZError</div>
     </div>
-    <button
-      v-if="showExpandChats"
-      class="expand-chats"
-      type="button"
-      title="展开对话列表"
-      @click="setChatListCollapsed(false)"
-    >
-      展开对话
-    </button>
+    <ChatSidebarToggle
+      v-if="isAgentTab"
+      class="header-chat-sidebar-toggle"
+      :expanded="!chatListCollapsed"
+      @click="setChatListCollapsed(!chatListCollapsed)"
+    />
     
     <div class="header-center">
       <HeaderTutorialStepper
@@ -46,7 +43,7 @@
 
     <div class="header-right" :class="{ 'header-right--macos': isMacOS }">
       <div
-        v-if="showStudyChip && linkedSubject"
+        v-if="isAgentTab && linkedSubject"
         class="study-status"
         :class="{ 'is-evaluating': studyEvalRunning }"
         data-tauri-drag-region-exclude
@@ -129,6 +126,7 @@
 import { ref, onMounted, computed, onUnmounted } from 'vue'
 import HeaderTutorialStepper from './appHeader/HeaderTutorialStepper.vue'
 import AgentPaneSwitcher from './agentChat/AgentPaneSwitcher.vue'
+import ChatSidebarToggle from './agentChat/ChatSidebarToggle.vue'
 import { activeChat, chatListCollapsed, setChatListCollapsed, studyEvalRunning } from '../services/agent/chat'
 import { databaseService, type StudySubject } from '../services/app/database'
 import { progressColor } from '../utils/study/studyGraph'
@@ -149,12 +147,7 @@ const isTauri = ref(false)
 const isMacOS = ref(false)
 
 const studySubjects = ref<StudySubject[]>([])
-const showStudyChip = computed(() => {
-  const tab = props.activeTab || ''
-  return tab === 'agent' || tab === 'import-tasks'
-})
-
-const showExpandChats = computed(() => showStudyChip.value && chatListCollapsed.value)
+const isAgentTab = computed(() => props.activeTab === 'agent' || props.activeTab === 'import-tasks')
 
 const linkedSubject = computed(() => {
   const id = Number(activeChat.value?.studySubjectId)

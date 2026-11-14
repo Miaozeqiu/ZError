@@ -34,8 +34,7 @@
         { "path": "$HOME/**" },
         { "path": "$DESKTOP/**" },
         { "path": "$DOCUMENTS/**" },
-        { "path": "$DOWNLOADS/**" },
-        { "path": "C\\\\Users\\\\Administrator\\\\project\\\\program\\\\**" }
+        { "path": "$DOWNLOADS/**" }
       ]
     },
     "http:allow-fetch",

@@ -1,6 +1,7 @@
 /** 平台 / 模型增删改、右键菜单、协议下拉。测连通和图标不要写回这里。 */
 import { computed, nextTick, ref } from 'vue'
 import type { AIModel, AIPlatform, ApiProtocol } from '../../../services/model/config'
+import { DEFAULT_MODEL_OUTPUT_TOKENS } from '../../../services/model/contextBudget'
 import { environmentDetector } from '../../../services/app/environmentDetector'
 import { claimExclusiveMenu, useExclusiveMenu } from '../../../composables/useExclusiveMenu'
 import type { ModelConfigApi } from './types'
@@ -28,7 +29,6 @@ export const bindPlatformOps = (ctx: PlatformOpsCtx) => {
     selectedModel,
     selectedCategory,
     isSelectedPlatformDisabled,
-    isVisionUnavailable,
     showTestDialog,
     testDialogModelName,
     testingModelId,
@@ -60,13 +60,14 @@ export const bindPlatformOps = (ctx: PlatformOpsCtx) => {
     settings: modelConfig,
     addPlatform,
     updatePlatform,
+    setPlatformApiProtocol,
+    resetPlatformConnection,
     removePlatform,
     addModelToPlatform,
     updateModel,
     removeModel,
     toggleSelectedTextModel,
     toggleSelectedSummaryModel,
-    toggleSelectedVisionModel,
     toggleSelectedAgentModel,
   } = ctx.config
 
@@ -158,16 +159,13 @@ export const bindPlatformOps = (ctx: PlatformOpsCtx) => {
 
   const revealModelInList = async (
     platformId: string,
-    modelId: string,
-    category: 'summary' | 'text' | 'vision' | 'agent'
+    modelId: string
   ) => {
     const latestPlatform = modelConfig.platforms.find(platform => platform.id === platformId)
     if (latestPlatform) {
       selectedPlatform.value = latestPlatform
       selectedModel.value = latestPlatform.models.find(model => model.id === modelId) || null
     }
-
-    selectedCategory.value = category
 
     await nextTick()
     updateScrollbarThumb()
@@ -178,17 +176,14 @@ export const bindPlatformOps = (ctx: PlatformOpsCtx) => {
   }
 
   const selectModel = (model: AIModel) => {
-    if (isSelectedPlatformDisabled.value || isVisionUnavailable(model)) {
+    if (isSelectedPlatformDisabled.value) {
       return
     }
 
-    if (selectedCategory.value === 'text') {
+    if (selectedCategory.value === 'answer') {
       toggleSelectedTextModel(model.id)
     } else if (selectedCategory.value === 'summary') {
       toggleSelectedSummaryModel(model.id)
-    } else if (selectedCategory.value === 'vision') {
-      toggleSelectedVisionModel(model.id)
-      // currentVisionModel 由 watch(globalSelectedVisionModel) 同步
     } else if (selectedCategory.value === 'agent') {
       toggleSelectedAgentModel(model.id)
     }
@@ -281,11 +276,11 @@ export const bindPlatformOps = (ctx: PlatformOpsCtx) => {
     showApiKey.value = !showApiKey.value
   }
 
-  const updatePlatformApiKey = async () => {
+  const updatePlatformApiKey = async (apiKey: string) => {
     if (selectedPlatform.value) {
       try {
         await updatePlatform(selectedPlatform.value.id, {
-          apiKey: selectedPlatform.value.apiKey
+          apiKey
         })
       } catch (error) {
         console.error('更新API Key失败:', error)
@@ -362,7 +357,6 @@ export const bindPlatformOps = (ctx: PlatformOpsCtx) => {
   }
 
   const togglePlatformProtocolDropdown = async () => {
-    if (selectedPlatform.value?.isRemote) return
     showPlatformProtocolDropdown.value = !showPlatformProtocolDropdown.value
     if (showPlatformProtocolDropdown.value) {
       await nextTick()
@@ -370,9 +364,14 @@ export const bindPlatformOps = (ctx: PlatformOpsCtx) => {
     }
   }
 
-  const selectPlatformProtocol = async (protocol: ApiProtocol) => {
+  const selectPlatformProtocol = (protocol: ApiProtocol) => {
     closePlatformProtocolDropdown()
-    await updatePlatformApiProtocol(protocol)
+    if (selectedPlatform.value) setPlatformApiProtocol(selectedPlatform.value.id, protocol)
+  }
+
+  const restorePlatformConnection = () => {
+    closePlatformProtocolDropdown()
+    if (selectedPlatform.value) resetPlatformConnection(selectedPlatform.value.id)
   }
 
   const handlePlatformProtocolOutsideClick = (event: Event) => {
@@ -388,16 +387,6 @@ export const bindPlatformOps = (ctx: PlatformOpsCtx) => {
       return
     }
     closePlatformProtocolDropdown()
-  }
-
-  const updatePlatformApiProtocol = async (protocol: ApiProtocol) => {
-    if (!selectedPlatform.value || selectedPlatform.value.isRemote) return
-    try {
-      selectedPlatform.value.apiProtocol = protocol
-      await updatePlatform(selectedPlatform.value.id, { apiProtocol: protocol })
-    } catch (error) {
-      console.error('更新平台协议失败:', error)
-    }
   }
 
   // -------- 添加模型下拉 --------
@@ -459,12 +448,12 @@ export const bindPlatformOps = (ctx: PlatformOpsCtx) => {
     try {
       const platformId = selectedPlatform.value.id
       let newModelId: string | null = null
-      let revealCategory: 'summary' | 'text' | 'vision' | 'agent' | null = null
 
       if (editingModel.value) {
-        // 远程模型只允许改本机思考开关，名称 / id / 协议仍跟远控
+        // 远程模型保留本机输出长度与思考设置。
         if (editingModel.value.isRemote) {
           await updateModel(editingModel.value.id, {
+            maxTokensOverride: modelData.maxTokensOverride,
             enableThinking: modelData.enableThinking,
             thinkingOffEnableThinkingFalse: modelData.thinkingOffEnableThinkingFalse,
             thinkingOffThinkingTypeDisabled: modelData.thinkingOffThinkingTypeDisabled,
@@ -476,6 +465,7 @@ export const bindPlatformOps = (ctx: PlatformOpsCtx) => {
         }
         // 使用 ModelConfigManager 的 updateModel 以确保正确保存
         await updateModel(editingModel.value.id, {
+          maxTokensOverride: modelData.maxTokensOverride,
           displayName: modelData.displayName,
           modelId: modelData.modelId,
           jsCode: modelData.jsCode,
@@ -492,7 +482,8 @@ export const bindPlatformOps = (ctx: PlatformOpsCtx) => {
         // 使用 addModelToPlatform 自动生成 ID 并保存
         const newModelData = {
           displayName: modelData.displayName || '新模型',
-          maxTokens: 4096,
+          maxTokens: DEFAULT_MODEL_OUTPUT_TOKENS,
+          maxTokensOverride: modelData.maxTokensOverride,
           temperature: 0.7,
           topP: 1.0,
           enabled: true,
@@ -508,14 +499,12 @@ export const bindPlatformOps = (ctx: PlatformOpsCtx) => {
           apiProtocol: selectedPlatform.value.apiProtocol || modelData.apiProtocol
         }
         newModelId = await addModelToPlatform(platformId, newModelData)
-        const stayOnCurrent = selectedCategory.value !== 'vision' || newModelData.hasVision
-        revealCategory = stayOnCurrent ? selectedCategory.value : 'text'
       }
     
       closeModelDialog()
 
-      if (newModelId && revealCategory) {
-        await revealModelInList(platformId, newModelId, revealCategory)
+      if (newModelId) {
+        await revealModelInList(platformId, newModelId)
       }
     } catch (error) {
       console.error('保存模型失败:', error)
@@ -611,7 +600,7 @@ export const bindPlatformOps = (ctx: PlatformOpsCtx) => {
   const addModel = async (platformId: string, model: AIModel) => {
     if (selectedPlatform.value && selectedPlatform.value.id === platformId) {
       selectedPlatform.value.models.push(model)
-      await updatePlatform(selectedPlatform.value.id, selectedPlatform.value)
+      await updatePlatform(selectedPlatform.value.id, { models: selectedPlatform.value.models })
     }
   }
   return {
@@ -648,8 +637,8 @@ export const bindPlatformOps = (ctx: PlatformOpsCtx) => {
     closePlatformProtocolDropdown,
     togglePlatformProtocolDropdown,
     selectPlatformProtocol,
+    restorePlatformConnection,
     handlePlatformProtocolOutsideClick,
-    updatePlatformApiProtocol,
     showAddModelDropdown,
     addModelDropdownRef,
     openAddModelDropdown,

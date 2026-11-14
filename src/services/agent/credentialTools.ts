@@ -45,6 +45,7 @@ export const protectCredentials: ChatToolHandler = async ({ args, ctx }) => {
   if (fields.api_key) {
     const [{ modelConfigManager }, { settingsManager }] = await Promise.all([import('../model/config'), import('../app/settings')])
     const config = await readSecureDocument<any>('model_settings')
+    if (typeof config?.deepseekApiKey === 'string') modelConfigManager.setDeepSeekApiKey(config.deepseekApiKey)
     for (const row of config?.platforms || []) {
       const platform = modelConfigManager.getSettings().platforms.find(item => item.id === row.id)
       if (platform) platform.apiKey = row.apiKey

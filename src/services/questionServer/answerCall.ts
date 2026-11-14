@@ -33,7 +33,6 @@ const {
   platforms,
   selectedTextModels: globalSelectedTextModels,
   selectedSummaryModels: globalSelectedSummaryModels,
-  selectedVisionModel: globalSelectedVisionModel,
 } = modelApi
 
 export const getRequestReasoningForBackend = (requestId: string, modelId?: string): string => {
@@ -127,12 +126,7 @@ export const callModelAPI = async (requestId: string, query: string) => {
   void sendModelProgressToBackend(requestId, 'dispatch')
 
   try {
-    // 只有文本模型参与基础输出；视觉模型仅在 query 包含图片时才加入
-    const hasImage = /https?:\/\/\S+\.(png|jpg|jpeg|gif|webp)/i.test(query) || query.includes('base64')
-    const selectedModels = [...globalSelectedTextModels.value]
-    if (hasImage && globalSelectedVisionModel.value) {
-      selectedModels.push(globalSelectedVisionModel.value)
-    }
+    const selectedModels = globalSelectedTextModels.value
 
     if (selectedModels.length === 0) {
       const logIndex = requestLogs.value.findIndex(log => log.id === requestId)
@@ -195,11 +189,10 @@ export const callModelAPI = async (requestId: string, query: string) => {
     }
 
     // 并发调用基础模型
-    // 重试条件：仅有一个基础模型，或当前是视觉模型
-    const visionModelId = globalSelectedVisionModel.value?.id
+    // 图片题有独立的请求流程和重试设置。
     const results: { model: AIModel; response: string; success: boolean }[] = []
     const modelPromises = selectedModels.map(async (model) => {
-      const allowRetry = selectedModels.length === 1 || (!!visionModelId && model.id === visionModelId)
+      const allowRetry = selectedModels.length === 1
       try {
         const response = await withModelRetry(
           requestId,
@@ -289,6 +282,8 @@ export const callModelAPI = async (requestId: string, query: string) => {
 
     if (summaryModels.length > 0 && successfulResults.length > 0) {
       console.log('开始总结阶段:', summaryModels.map(m => m.displayName))
+      await sendModelProgressToBackend(requestId, 'summary-started')
+      if (isRequestCancelled(requestId)) return
 
       // 在日志中添加总结模型的占位项（如果尚未在多模型数组中）
       const log = requestLogs.value.find(l => l.id === requestId)
@@ -398,6 +393,10 @@ ${baseCombinedResponse}
       if (isRequestCancelled(requestId)) return
 
       const successfulSummaryEntries = summaryResults.filter(entry => entry.success)
+      await sendModelProgressToBackend(
+        requestId,
+        successfulSummaryEntries.length > 0 ? 'summary-finished' : 'summary-failed'
+      )
 
       if (successfulSummaryEntries.length > 0) {
         finalOutput = formatModelOutputs(

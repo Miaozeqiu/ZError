@@ -7,7 +7,7 @@
       <!-- 右侧设置内容 -->
       <div class="settings-content">
         <Transition name="page-switch">
-          <div v-if="activeCategory === 'general'" key="general" class="settings-section">
+          <div v-if="activeCategory === 'general'" key="general" class="settings-section settings-card-stagger">
             <div class="settings-inner-wrapper general-scroll-wrap">
               <div class="settings-content-wrapper general-scroll-content" ref="generalScrollContent" @scroll="onGeneralScroll">
                 <GeneralSettings @open-question-folder="handleOpenQuestionFolder" />
@@ -18,7 +18,7 @@
             </div>
           </div>
 
-          <div v-else-if="activeCategory === 'agent'" key="agent" class="settings-section" :class="{ 'agent-skill-detail-layout': agentSkillDetailOpen }">
+          <div v-else-if="activeCategory === 'agent'" key="agent" class="settings-section agent-settings-layout" :class="{ 'agent-skill-detail-layout': agentSkillDetailOpen }">
             <div class="settings-inner-wrapper" :class="agentSkillDetailOpen ? 'agent-detail-fill' : 'agent-scroll-wrap'">
               <div
                 class="settings-content-wrapper"
@@ -40,7 +40,7 @@
             </div>
           </div>
 
-          <div v-else-if="activeCategory === 'search'" key="search" class="settings-section">
+          <div v-else-if="activeCategory === 'search'" key="search" class="settings-section settings-card-stagger">
             <div class="settings-inner-wrapper">
               <div class="settings-content-wrapper">
                 <SearchSettings />
@@ -48,7 +48,7 @@
             </div>
           </div>
 
-          <div v-else-if="activeCategory === 'about'" key="about" class="settings-section">
+          <div v-else-if="activeCategory === 'about'" key="about" class="settings-section settings-card-stagger">
             <div class="settings-inner-wrapper about-scroll-wrap">
               <div class="settings-content-wrapper about-scroll-content" ref="aboutScrollContent" @scroll="onAboutScroll">
                 <AboutApp />
@@ -255,6 +255,19 @@ const onAboutScrollbarMouseup = () => {
 }
 </script>
 
+<style>
+.settings-page,
+.settings-popup {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+:is(.settings-page, .settings-popup) :is(input, textarea, [contenteditable="true"], [contenteditable="plaintext-only"], .cm-content) {
+  -webkit-user-select: text;
+  user-select: text;
+}
+</style>
+
 <style scoped>
 .settings-page {
   height: 100%;
@@ -288,30 +301,29 @@ const onAboutScrollbarMouseup = () => {
   margin: 0;
 }
 
-/* 常规 / 关于：整张卡片错开浮入 */
-.settings-section:not(.model-settings-layout).page-switch-enter-from {
+/* 常规、搜索和关于页面的卡片，以及 Agent 页的区块，各自在内容区域内浮入。 */
+.settings-card-stagger.page-switch-enter-from,
+.agent-settings-layout.page-switch-enter-from {
   opacity: 1;
   transform: none;
 }
 
-.settings-section:not(.model-settings-layout).page-switch-leave-to {
-  transform: none;
-}
-
-.settings-section:not(.model-settings-layout).page-switch-enter-active {
+.settings-card-stagger.page-switch-enter-active {
   transition-duration: 620ms;
 }
 
-.settings-section:not(.model-settings-layout).page-switch-enter-active :deep(.network-group) {
-  animation: settings-stagger-in 420ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+.settings-card-stagger.page-switch-enter-active :deep(.network-group),
+.agent-settings-layout :deep(.agent-settings-overview > section),
+.agent-settings-layout :deep(.agent-website-detail) {
+  animation: settings-stagger-in 420ms cubic-bezier(0.2, 0.7, 0.2, 1) backwards;
 }
 
-.settings-section:not(.model-settings-layout).page-switch-enter-active :deep(.network-group:nth-child(1)) { animation-delay: 0ms; }
-.settings-section:not(.model-settings-layout).page-switch-enter-active :deep(.network-group:nth-child(2)) { animation-delay: 70ms; }
-.settings-section:not(.model-settings-layout).page-switch-enter-active :deep(.network-group:nth-child(3)) { animation-delay: 140ms; }
-.settings-section:not(.model-settings-layout).page-switch-enter-active :deep(.network-group:nth-child(4)) { animation-delay: 210ms; }
-.settings-section:not(.model-settings-layout).page-switch-enter-active :deep(.network-group:nth-child(5)) { animation-delay: 280ms; }
-.settings-section:not(.model-settings-layout).page-switch-enter-active :deep(.network-group:nth-child(6)) { animation-delay: 350ms; }
+.settings-card-stagger.page-switch-enter-active :deep(.network-group:nth-child(2)),
+.agent-settings-layout :deep(.agent-settings-overview > section:nth-child(2)) { animation-delay: 70ms; }
+.settings-card-stagger.page-switch-enter-active :deep(.network-group:nth-child(3)) { animation-delay: 140ms; }
+.settings-card-stagger.page-switch-enter-active :deep(.network-group:nth-child(4)) { animation-delay: 210ms; }
+.settings-card-stagger.page-switch-enter-active :deep(.network-group:nth-child(5)) { animation-delay: 280ms; }
+.settings-card-stagger.page-switch-enter-active :deep(.network-group:nth-child(6)) { animation-delay: 350ms; }
 
 @keyframes settings-stagger-in {
   from {
@@ -325,7 +337,9 @@ const onAboutScrollbarMouseup = () => {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .settings-section:not(.model-settings-layout).page-switch-enter-active :deep(.network-group) {
+  .settings-card-stagger.page-switch-enter-active :deep(.network-group),
+  .agent-settings-layout :deep(.agent-settings-overview > section),
+  .agent-settings-layout :deep(.agent-website-detail) {
     animation: none;
   }
 }

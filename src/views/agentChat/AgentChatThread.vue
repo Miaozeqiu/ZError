@@ -29,6 +29,11 @@
               :class="`is-${message.role}`"
             >
               <div v-if="message.role === 'user'" class="user-turn">
+                <AgentQuizOptionQuote
+                  v-for="(quote, index) in message.quizOptionQuotes"
+                  :key="index"
+                  :quote="quote"
+                />
                 <div v-if="imagesForMessage(activeChat, message).length" class="user-images">
                   <template v-for="item in imagesForMessage(activeChat, message)" :key="item.filePath">
                     <img
@@ -57,7 +62,11 @@
                     <span class="user-file-name">{{ item.fileName }}</span>
                   </div>
                 </div>
-                <div v-if="message.content" class="user-bubble">
+                <AgentQuizReview
+                  v-if="quizReviews.has(message.id)"
+                  :review="quizReviews.get(message.id)!"
+                />
+                <div v-else-if="message.content" class="user-bubble">
                   <template v-for="(part, partIndex) in parseMessageParts(message.content)" :key="partIndex">
                     <span v-if="part.type === 'folder'" class="folder-mention">
                       <span class="folder-mention-icon" aria-hidden="true">
@@ -72,6 +81,28 @@
                 </div>
               </div>
               <div v-else class="assistant-turn">
+                <div v-if="message.reasoning" class="assistant-reasoning">
+                  <button
+                    class="reasoning-toggle"
+                    type="button"
+                    :aria-expanded="expandedReasoning.has(message.id)"
+                    :aria-controls="`${reasoningPanelId}-${message.id}`"
+                    @click="toggleReasoning(message.id)"
+                  >
+                    <span>{{ reasoningLabel(message.reasoningDurationMs) }}</span>
+                    <Icon class="reasoning-chevron" icon="lucide:chevron-right" width="14" height="14" aria-hidden="true" />
+                  </button>
+                  <div
+                    :id="`${reasoningPanelId}-${message.id}`"
+                    class="reasoning-panel"
+                    :class="{ 'is-open': expandedReasoning.has(message.id) }"
+                    :inert="expandedReasoning.has(message.id) ? undefined : true"
+                  >
+                    <div class="reasoning-clip">
+                      <div class="reasoning-content">{{ message.reasoning }}</div>
+                    </div>
+                  </div>
+                </div>
                 <template v-for="block in assistantTimeline(message)" :key="block.key">
                   <div
                     v-if="block.type === 'step' && (!block.group || block.groupHead || expandedToolGroups.has(block.group.key))"
@@ -289,7 +320,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, useId, watch } from 'vue'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { Icon } from '@iconify/vue/offline'
 import { activeChat, activeChatId, parseMessageParts } from '../../services/agent/chat'
@@ -305,6 +336,8 @@ import { parseOptions } from '../../utils/question/quizPractice'
 import UnifiedContextMenu, { type MenuItem } from '../../components/ui/UnifiedContextMenu.vue'
 import MarkdownRender from 'markstream-vue'
 import AgentChatFeatureCards from './AgentChatFeatureCards.vue'
+import AgentQuizReview from './AgentQuizReview.vue'
+import AgentQuizOptionQuote from './AgentQuizOptionQuote.vue'
 import {
   assistantTimeline,
   filesForMessage,
@@ -315,8 +348,10 @@ import {
   isQuizStep,
   isThinking,
   quizCardsFor,
+  quizReviewsFor,
   quizStatFor,
   quizTitleFor,
+  reasoningLabel,
   typeTagKind,
   visiblePreview,
 } from './threadDisplay'
@@ -334,6 +369,7 @@ defineProps<{
 }>()
 
 const threadPinned = defineModel<boolean>('pinned', { default: true })
+const quizReviews = computed(() => quizReviewsFor(activeChat.value?.messages || []))
 
 const emit = defineEmits<{
   import: []
@@ -365,6 +401,14 @@ const openSearchResult = async (url: string) => {
 
 const expandedSearchSteps = ref(new Set<string>())
 const expandedToolGroups = ref(new Set<string>())
+const expandedReasoning = ref(new Set<string>())
+const reasoningPanelId = useId()
+const toggleReasoning = (messageId: string) => {
+  const expanded = expandedReasoning.value
+  if (expanded.has(messageId)) expanded.delete(messageId)
+  else expanded.add(messageId)
+}
+
 const toggleToolGroup = (key: string) => {
   if (selectedChatText()) return
   const expanded = expandedToolGroups.value
@@ -600,6 +644,7 @@ const scheduleHighlight = () => {
 
 watch(activeChatId, async () => {
   expandedToolGroups.value.clear()
+  expandedReasoning.value.clear()
   scrollController.reset()
   openedWriteStepId.value = null
   threadPinned.value = true
@@ -1430,6 +1475,70 @@ button.activity-line,
 
 .activity-text.is-live {
   animation: chat-think-pulse 1.2s ease-in-out infinite;
+}
+
+.assistant-reasoning {
+  margin: 0 0 6px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.reasoning-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: fit-content;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.reasoning-chevron {
+  flex: none;
+  transition: transform 160ms ease-out;
+}
+
+.reasoning-toggle[aria-expanded="true"] .reasoning-chevron {
+  transform: rotate(90deg);
+}
+
+.reasoning-panel {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition: grid-template-rows 160ms ease-out, opacity 120ms ease-out;
+}
+
+.reasoning-panel.is-open {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transition-duration: 200ms, 160ms;
+}
+
+.reasoning-clip {
+  min-height: 0;
+  overflow: clip;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reasoning-chevron,
+  .reasoning-panel {
+    transition: none;
+  }
+}
+
+.reasoning-content {
+  max-height: 320px;
+  overflow: auto;
+  padding: 6px 0 0 14px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
 }
 
 .assistant-thinking {

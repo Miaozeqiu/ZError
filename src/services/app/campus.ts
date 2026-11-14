@@ -1,4 +1,4 @@
-import { CAMPUS_API_BASE, pickField, remoteJson, remoteUpload } from './remoteHttp'
+import { CAMPUS_API_BASE, pickField, remoteJson } from './remoteHttp'
 
 export interface CampusSchool {
   id: number
@@ -14,7 +14,6 @@ export interface CampusIdentity {
   is_reviewer?: boolean
   class_id?: number | null
   class_name?: string | null
-  avatar?: string | null
 }
 
 export interface CampusCourse {
@@ -40,6 +39,7 @@ export interface CampusFolder {
   tag_name?: string | null
   question_count?: number
   archived?: boolean
+  creator_id?: number
 }
 
 export interface CampusQuestion {
@@ -118,7 +118,8 @@ const normalizeFolder = (raw: any): CampusFolder | null => {
     tag_id: asNumber(pickField(raw, 'tag_id', 'TagID', 'tagId')) || asNumber(pickField(tag, 'id', 'ID')) || null,
     tag_name: tagName || null,
     question_count: asOptionalCount(raw, 'question_count', 'QuestionCount'),
-    archived: Boolean(pickField(raw, 'archived', 'Archived', 'is_archived')),
+    archived: Boolean(pickField(raw, 'archived', 'Archived', 'is_archived', 'IsArchived')),
+    creator_id: asNumber(pickField(raw, 'creator_id', 'CreatorID')) || undefined,
   }
 }
 
@@ -306,7 +307,8 @@ export function campusImageUrl(image?: string | null) {
   const value = asText(image)
   if (!value) return ''
   if (/^https?:\/\//i.test(value)) return value
-  return `${CAMPUS_API_BASE}/images/${value.replace(/^\/+/, '')}`
+  const path = value.replace(/^\/+/, '').replace(/^images\//, '')
+  return path ? `${CAMPUS_API_BASE}/images/${path}` : ''
 }
 
 export async function listCampusSchools() {
@@ -319,20 +321,10 @@ export async function listCampusTags() {
   return unwrapList(raw).map(normalizeTag).filter(Boolean) as CampusTag[]
 }
 
-export function campusAvatarUrl(avatar?: string | null) {
-  const value = asText(avatar)
-  if (!value) return ''
-  if (value.startsWith('http://') || value.startsWith('https://')) return value
-  const name = value.replace(/^\/+/, '').replace(/^images\//, '')
-  return `${CAMPUS_API_BASE}/images/${name}`
-}
-
-export async function getUserCampus(userId?: number): Promise<CampusIdentity> {
+export async function getUserCampus(): Promise<CampusIdentity> {
   const raw = await remoteJson(`${CAMPUS_API_BASE}/user/campus`)
   const campus = normalizeSchool(raw?.campus)
   const year = asNumber(raw?.enrollment_year)
-  const reviewers = unwrapList(raw?.reviewers)
-  const fromReviewer = reviewers.find((item) => asNumber(pickField(item, 'id', 'ID')) === userId)
   return {
     campus,
     status: asText(raw?.status) || undefined,
@@ -341,15 +333,7 @@ export async function getUserCampus(userId?: number): Promise<CampusIdentity> {
     is_reviewer: Boolean(raw?.is_reviewer),
     class_id: asNumber(raw?.class_id) || null,
     class_name: asText(pickField(raw?.class, 'Name', 'name')) || null,
-    avatar: asText(raw?.avatar) || asText(pickField(fromReviewer, 'avatar', 'Avatar')) || null,
   }
-}
-
-export async function uploadCampusAvatar(file: File) {
-  const raw = await remoteUpload(`${CAMPUS_API_BASE}/user/reviewer/avatar`, file, 'image')
-  const avatar = asText(pickField(raw, 'avatar', 'Avatar'))
-  if (!avatar) throw new Error('上传成功但没有返回头像')
-  return avatar
 }
 
 export async function bindCampus(campusId: number) {
@@ -370,6 +354,25 @@ export async function listCampusCourses(campusId: number, name = '') {
   const query = name.trim() ? `?name=${encodeURIComponent(name.trim())}` : ''
   const raw = await remoteJson(`${CAMPUS_API_BASE}/campus/${campusId}/courses${query}`)
   return unwrapList(raw).map(normalizeCourse).filter(Boolean) as CampusCourse[]
+}
+
+export async function createCampusCourse(campusId: number, name: string, signal?: AbortSignal) {
+  const body = new FormData()
+  body.set('campus_id', String(campusId))
+  body.set('name', name)
+  const raw = await remoteJson(`${CAMPUS_API_BASE}/courses`, { method: 'POST', body, signal })
+  const course = normalizeCourse(raw)
+  if (!course) throw new Error('服务未返回课程信息，请先核对课程列表再重试。')
+  return course
+}
+
+export async function renameCampusCourse(courseId: number, name: string, signal?: AbortSignal) {
+  const body = new FormData()
+  body.set('name', name)
+  const raw = await remoteJson(`${CAMPUS_API_BASE}/courses/${courseId}`, { method: 'PUT', body, signal })
+  const course = normalizeCourse(raw?.course)
+  if (!course) throw new Error('服务未返回课程状态，请刷新课程列表核对。')
+  return course
 }
 
 export async function getCampusCourse(courseId: number): Promise<CampusCourseDetail> {
@@ -415,6 +418,18 @@ export async function searchCampusQuestions(query: string, page = 1, pageSize = 
   return unwrapList(raw).map(normalizeCampusQuestion).filter(Boolean) as CampusQuestion[]
 }
 
+export async function searchCampusQuestionsExact(question: string) {
+  const raw = await remoteJson(`${CAMPUS_API_BASE}/search/exact?q=${encodeURIComponent(question)}`)
+  return unwrapList(raw).flatMap(item => {
+    const result = normalizeCampusQuestion(item)
+    return result ? [{
+      ...result,
+      course_name: asText(item.course_name) || undefined,
+      paper_name: asText(item.folder_name) || undefined,
+    }] : []
+  })
+}
+
 export function enrollmentYearOptions(now = new Date().getFullYear()) {
   const years: number[] = []
   for (let year = now; year >= 2000; year -= 1) years.push(year)
@@ -444,6 +459,24 @@ export async function updateCampusPaper(folderId: number, input: { name: string;
     }),
   })
   return normalizeFolder(pickField(raw, 'folder', 'Folder') || raw) || { id: folderId, name: input.name }
+}
+
+export async function setCampusPaperArchived(paperId: number, archived: boolean, remark: string, signal?: AbortSignal) {
+  const action = archived ? 'archive' : 'unarchive'
+  const raw = await remoteJson(`${CAMPUS_API_BASE}/folders/${paperId}/${action}`, {
+    method: 'POST',
+    body: JSON.stringify({ remark }),
+    signal,
+  })
+  return { voteId: asNumber(pickField(raw?.vote, 'id', 'ID')), voteStarted: Boolean(raw?.vote) }
+}
+
+export async function reorderCampusPaperQuestions(paperId: number, questionIds: number[], signal?: AbortSignal) {
+  await remoteJson(`${CAMPUS_API_BASE}/folders/${paperId}/reorder`, {
+    method: 'POST',
+    body: JSON.stringify({ question_ids: questionIds }),
+    signal,
+  })
 }
 
 export async function createCampusQuestion(courseId: number, input: {

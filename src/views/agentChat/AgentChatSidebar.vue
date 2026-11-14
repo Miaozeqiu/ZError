@@ -1,14 +1,17 @@
 <template>
-  <aside class="chat-sidebar" :class="{ 'is-collapsed': chatListCollapsed }">
-    <div class="pane-header">
-      <div class="header-title">对话</div>
-      <div class="header-actions">
-        <button class="header-action" type="button" @click="() => createChat()">新对话</button>
-        <button class="header-action" type="button" title="收起对话列表" @click="setChatListCollapsed(true)">收起</button>
-      </div>
-    </div>
+  <aside id="agent-chat-sidebar" class="chat-sidebar" aria-label="对话列表" :class="{ 'is-collapsed': chatListCollapsed }" :inert="chatListCollapsed">
     <div class="chat-list-wrap">
       <div ref="contentRef" class="chat-list">
+        <button
+          class="chat-item new-chat"
+          :class="{ 'is-selected': newChatSelected }"
+          type="button"
+          :aria-current="newChatSelected ? 'true' : undefined"
+          @click="selectChat(null)"
+        >
+          <Icon icon="lucide:square-pen" width="16" height="16" aria-hidden="true" />
+          <span class="chat-item-name">新对话</span>
+        </button>
         <div
           v-for="session in chatSessions"
           :key="session.id"
@@ -51,14 +54,15 @@
 
 <script setup lang="ts">
 import { onMounted } from 'vue'
+import { Icon } from '@iconify/vue/offline'
+import '../../utils/ui/agentIcons'
 import {
   activeChatId,
   chatListCollapsed,
   chatSessions,
-  createChat,
+  newChatSelected,
   removeChat,
   selectChat,
-  setChatListCollapsed,
 } from '../../services/agent/chat'
 import type { AgentChatSession } from '../../services/agent/chat'
 import { useCustomScrollbar } from '../../composables/useCustomScrollbar'
@@ -107,56 +111,6 @@ onMounted(() => bind())
   .chat-sidebar {
     transition: none;
   }
-}
-
-.pane-header {
-  position: relative;
-  height: 36px;
-  min-height: 36px;
-  padding: 0 12px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-shrink: 0;
-}
-
-.pane-header::after {
-  content: '';
-  position: absolute;
-  left: 10px;
-  right: 10px;
-  bottom: 0;
-  height: 1px;
-  background: color-mix(in srgb, var(--border-primary, #e2e8f0) 42%, transparent);
-  transform: scaleY(0.5);
-}
-
-.header-title {
-  font-size: 14px;
-  font-weight: 550;
-  color: var(--text-primary, #2d3748);
-}
-
-.header-actions {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-}
-
-.header-action {
-  border: none;
-  background: transparent;
-  color: var(--text-secondary, #718096);
-  font-size: 14px;
-  font-weight: 450;
-  cursor: pointer;
-  padding: 4px 6px;
-  border-radius: 6px;
-}
-
-.header-action:hover {
-  color: var(--text-primary, #2d3748);
-  background: var(--hover-bg, rgba(0, 0, 0, 0.04));
 }
 
 .chat-list-wrap {
@@ -235,6 +189,16 @@ onMounted(() => bind())
 
 .chat-item:hover {
   background: var(--model-item-hover-bg, #efefef);
+}
+
+.new-chat {
+  flex-shrink: 0;
+  color: var(--text-secondary, #718096);
+}
+
+.new-chat:focus-visible {
+  outline: 2px solid var(--color-primary, #2563eb);
+  outline-offset: -2px;
 }
 
 .chat-item.is-selected,

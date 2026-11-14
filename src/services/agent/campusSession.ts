@@ -12,6 +12,7 @@ import {
   resolveCampusPaper,
   resolveCampusTagId,
 } from './campusResolve'
+import { campusWriteDenial } from './campusPolicy'
 import { saveQuizCards, saveQuizTitle, type QuizCard } from '../../utils/question/quizPractice'
 
 type CampusPaperCache = { id: number; name: string; courseName?: string; courseId?: number }
@@ -140,6 +141,8 @@ export const resolveCampusWriteTarget = async (
     Number(args.tag_id) || undefined,
     campusTagArg(args) || undefined,
   )
+  const denied = campusWriteDenial('save_campus_questions') || campusWriteDenial('create_campus_paper')
+  if (denied) return { error: denied, course }
   const paper = await createCampusPaper(course.id, paperName, tagId)
   remember(paper)
   return { course, paper, createdPaper: true }

@@ -1,5 +1,4 @@
 import { computed, ref } from 'vue'
-import { campusAvatarUrl, getUserCampus, uploadCampusAvatar } from './campus'
 import {
   AUTH_API_BASE,
   RemoteApiError,
@@ -20,7 +19,6 @@ export interface AuthUser {
   campus_id?: number | null
   campus_name?: string | null
   api_token?: string
-  avatar?: string | null
 }
 
 const USER_KEY = 'zerror-auth-user'
@@ -29,6 +27,7 @@ export const authToken = ref('')
 export const authUser = ref<AuthUser | null>(null)
 export const authReady = ref(false)
 export const authLoading = ref(false)
+export const authRevision = ref(0)
 export const isLoggedIn = computed(() => Boolean(authToken.value))
 
 export function openLoginDialog() {
@@ -72,7 +71,13 @@ const readCachedUser = (): AuthUser | null => {
   }
 }
 
-const writeAuthFile = async (token: string, user: AuthUser | null) => {
+let authWriteQueue = Promise.resolve()
+const writeAuthFile = (token: string, user: AuthUser | null) => {
+  authWriteQueue = authWriteQueue.then(() => saveAuthFile(token, user))
+  return authWriteQueue
+}
+
+const saveAuthFile = async (token: string, user: AuthUser | null) => {
   try {
     const { invoke } = await import('@tauri-apps/api/core')
     if (!token) {
@@ -106,6 +111,7 @@ const readAuthFile = async (): Promise<{ token: string; user: AuthUser | null }>
 }
 
 const hydrateLocalSession = (token: string, user: AuthUser | null) => {
+  authRevision.value++
   rememberAuthToken(token)
   persistUserLocalOnly(token ? user : null)
   authToken.value = token
@@ -141,41 +147,29 @@ const normalizeUser = (raw: any): AuthUser | null => {
     campus_id: data.campus_id ?? null,
     campus_name: data.campus_name ?? null,
     api_token: data.api_token,
-    avatar: String(data.avatar || '').trim() || null,
   }
-}
-
-const attachCampusAvatar = async (user: AuthUser) => {
-  try {
-    const identity = await getUserCampus(user.id)
-    if (identity.avatar) user.avatar = identity.avatar
-  } catch {
-    // 校园接口失败时保留 zzx / 本地头像
-  }
-  return user
 }
 
 export async function fetchAuthUser() {
-  const raw = await remoteJson(`${AUTH_API_BASE}/api/user/info`)
+  const revision = authRevision.value
+  let raw: unknown
+  try {
+    raw = await remoteJson(`${AUTH_API_BASE}/api/user/info`)
+  } catch (error) {
+    if (revision !== authRevision.value) return authUser.value
+    throw error
+  }
+  if (revision !== authRevision.value) return authUser.value
   const user = normalizeUser(raw)
   if (!user) throw new Error('无法读取用户信息')
-  await attachCampusAvatar(user)
   authUser.value = user
   persistUser(user)
   emitAuthChanged()
   return user
 }
 
-export async function uploadAuthAvatar(file: File) {
-  const avatar = await uploadCampusAvatar(file)
-  if (!authUser.value) throw new Error('请先登录')
-  authUser.value = { ...authUser.value, avatar }
-  persistUser(authUser.value)
-  emitAuthChanged()
-  return avatar
-}
-
 export async function applyAuthSession(token: string, user?: AuthUser | null) {
+  authRevision.value++
   authToken.value = token
   persistToken(token)
   if (user) {
@@ -194,11 +188,25 @@ export async function applyAuthSession(token: string, user?: AuthUser | null) {
 }
 
 export function clearAuthSession() {
+  authRevision.value++
   authToken.value = ''
   authUser.value = null
   persistToken('')
   persistUser(null)
   emitAuthChanged()
+}
+
+// Verify a proposed iframe login before changing the authoritative desktop session.
+export async function acceptCampusWebSession(token: string, revision: number, isCurrent: () => boolean) {
+  const raw = await remoteJson(`${AUTH_API_BASE}/api/user/info`, {
+    headers: { Authorization: `Bearer ${token}` },
+  }, false)
+  const user = normalizeUser(raw)
+  if (!user) throw new Error('无法验证网页登录账号')
+  if (revision !== authRevision.value || !isCurrent()) return
+  hydrateLocalSession(token, user)
+  emitAuthChanged()
+  await writeAuthFile(token, user)
 }
 
 export async function logoutAuth() {
@@ -280,8 +288,4 @@ export function userDisplayName(user = authUser.value) {
 export function userInitial(user = authUser.value) {
   const name = userDisplayName(user).trim()
   return name.slice(0, 1) || '我'
-}
-
-export function userAvatarSrc(user = authUser.value) {
-  return campusAvatarUrl(user?.avatar)
 }

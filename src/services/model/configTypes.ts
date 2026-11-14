@@ -2,21 +2,33 @@
 import { normalizeApiProtocol } from './protocol'
 
 export type ApiProtocol = 'openai-chat' | 'openai-response' | 'anthropic' | 'custom'
+export type ModelSelectionCategory = 'answer' | 'summary' | 'agent'
+// 兼容旧版最多 5 个文本模型加 1 个视觉模型。
+export const MAX_ANSWER_MODELS = 6
+type BuiltinApiProtocol = Exclude<ApiProtocol, 'custom'>
+
+export const isBuiltinApiProtocol = (protocol: unknown): protocol is BuiltinApiProtocol =>
+  protocol === 'openai-chat' || protocol === 'openai-response' || protocol === 'anthropic'
 
 export interface AIPlatform {
   id: string
   name: string
   displayName: string
   baseUrl: string
+  /** 远程目录下发的默认 API 地址。 */
+  remoteBaseUrl?: string
+  baseUrlOverride?: string
   apiKey: string
   enabled: boolean
   models: AIModel[]
   /** 平台级协议；该平台下所有模型共用 */
   apiProtocol?: ApiProtocol
+  remoteApiProtocol?: BuiltinApiProtocol
+  apiProtocolOverride?: BuiltinApiProtocol
   customHeaders?: Record<string, string>
   description?: string
   icon?: string        // 平台图标
-  isRemote?: boolean   // 是否来自远程同步（禁止编辑/删除）
+  isRemote?: boolean   // 是否来自远程目录
   url?: string         // 平台官网/控制台地址
   inviteUrl?: string   // 邀请链接
   inviteText?: string  // 邀请文字
@@ -35,6 +47,8 @@ export interface AIModel {
   displayName: string
   platformId: string
   maxTokens: number
+  /** Local output budget preference, retained when the remote catalog syncs. */
+  maxTokensOverride?: number
   /** Input + output context window. Unknown models use a conservative local estimate. */
   contextWindow?: number
   temperature: number
@@ -93,11 +107,13 @@ export const resolveModelApiProtocol = (
 
 // 模型配置设置接口
 export interface ModelSettings {
+  /** 密钥由 DeepSeek 官方模型和联网搜索共用。 */
+  deepseekApiKey?: string
   selectedTextModel: string | null    // 选中的文本模型（向后兼容，等于 selectedTextModels[0] 或 null）
-  selectedTextModels: string[]        // 选中的文本模型列表（最多5个）
+  selectedTextModels: string[]        // 答题模型列表，沿用旧配置字段名
   selectedSummaryModel: string | null // 选中的总结模型（向后兼容，等于 selectedSummaryModels[0] 或 null）
   selectedSummaryModels: string[]     // 选中的总结模型列表（最多5个）
-  selectedVisionModel: string | null  // 选中的视觉模型
+  selectedVisionModel?: string | null // 旧配置字段，加载后合并到答题模型
   selectedAgentModel: string | null   // agent 使用的模型（文本或视觉）
   platforms: AIPlatform[]
   globalSettings: {

@@ -9,10 +9,10 @@
       <div class="step-tooltip">
         <strong>步骤 1：配置 AI 模型</strong><br>
         前往"设置 &gt; 模型设置"，选择一个 AI 平台并填写您的 API Key。<br>
-        <a data-v-f7451f5a="" href="https://docs.zerror.cc/get-apiKey" target="_blank" rel="noopener noreferrer" class="api-doc-link">如何获取Api Key?</a><br><br>
+        <a data-v-f7451f5a="" href="https://docs.zerrorai.com/get-apiKey" target="_blank" rel="noopener noreferrer" class="api-doc-link">如何获取Api Key?</a><br><br>
         <strong>必须完成：</strong><br>
-        • 在填写 API Key 的平台下，至少选择<strong>一个文本模型</strong>。<br>
-        • （可选）还可以选择一个视觉和总结模型。
+        • 在填写 API Key 的平台下，至少选择<strong>一个答题模型</strong>。<br>
+        • 需要处理图片题时，选择支持视觉的答题模型。
       </div>
     </div>
     <div class="step-connector" :class="{ completed: isStep1Completed }"></div>

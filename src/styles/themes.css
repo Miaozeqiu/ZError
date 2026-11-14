@@ -294,16 +294,14 @@
 
 
   /* 侧边栏导航项颜色 */
-  --nav-item-text: #636363;
+  --nav-item-text: #858589;
   --nav-item-text-hover: #2d3748;
-  --nav-item-text-active: #ff8928;
+  --nav-item-text-active: #29292d;
   --nav-item-bg: transparent;
   --nav-item-bg-hover: #ffffff;
-  --nav-item-bg-active: #ffffff;
+  --nav-item-bg-active: #e7e7eb;
   --nav-item-border: transparent;
   --nav-item-border-hover: transparent;
-  --nav-item-border-active: #eaeaea;
-  --nav-item-border-active: #eaeaea;
 
   /* 平台列表项颜色 */
   --platform-item-bg: transparent;
@@ -778,15 +776,14 @@
   --context-menu-danger-hover-bg: rgba(107, 42, 42, 0.72);
 
   /* 侧边栏导航项颜色 */
-  --nav-item-text: #a0aec0;
+  --nav-item-text: #96969d;
   --nav-item-text-hover: #e2e8f0;
-  --nav-item-text-active: #ffa256;
+  --nav-item-text-active: #e6e6e9;
   --nav-item-bg: transparent;
   --nav-item-bg-hover: #5c5c5c;
-  --nav-item-bg-active: #5c5c5c;
+  --nav-item-bg-active: #38383c;
   --nav-item-border: transparent;
   --nav-item-border-hover: transparent;
-  --nav-item-border-active: #606060;
 
   /* 平台列表项颜色 */
   --platform-item-bg: transparent;

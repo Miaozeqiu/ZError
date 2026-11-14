@@ -1,4 +1,5 @@
 import { callModelAPI } from './answerCall'
+import { requestLogs } from './runtime'
 import { handleSameQuestionCheckRequest } from './sameQuestion'
 import { handleUrlQuestionRequest } from './urlQuestion'
 
@@ -30,6 +31,11 @@ export const modelCallPhase = (query: string) => {
 export const dispatchModelCallRequest = (requestId: string, query: string, images?: string[]) => {
   if (!requestId || typeof query !== 'string') return
   const phase = modelCallPhase(query)
+  // 答题、图片和 URL 阶段由服务端在本地题库未命中后触发。
+  if (phase !== 'same') {
+    const log = requestLogs.value.find(entry => entry.id === requestId)
+    if (log?.path === '/query' && !log.localSearch) log.localSearch = 'miss'
+  }
   const key = `${requestId}:${phase}`
   const imageList = Array.isArray(images)
     ? images.map(url => typeof url === 'string' ? url : '')

@@ -1,13 +1,14 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest'
 const state = vi.hoisted(() => ({} as Record<string, any>))
+vi.mock('../../src/services/platform/panelAccess', () => ({ agentWatchBusy: () => false }))
 vi.mock('../../src/services/agent/chatStore', async () => {
   const { ref, computed } = await import('vue')
   const sessions = ref<any[]>([])
   let restore!: () => void
   const chatStoreReady = new Promise<void>(resolve => { restore = () => { sessions.value.push({ id: 'old-empty', browserId: 'same-browser', messages: [] }, { id: 'real-task', title: '课程任务', browserId: 'same-browser', messages: [{ role: 'assistant', content: '监控中' }] }); resolve() } })
   state.sessions = sessions; state.restore = restore
-  return { sessions, chatStoreReady, activeChat: computed(() => sessions.value[0]),
+  return { sessions, chatStoreReady, activeChat: computed(() => sessions.value[0]), newChatDraft: ref(null), isChatBusy: ref(false),
     createChat: (init: any) => { const session = { id: 'empty-legacy', messages: [], ...init }; sessions.value.push(session); return session },
     liveSession: (id: string) => sessions.value.find(session => session.id === id),
     patchSession: (id: string, mutate: any) => { const session = sessions.value.find(session => session.id === id); Object.assign(session, mutate(session)) },

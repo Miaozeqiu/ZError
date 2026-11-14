@@ -1,6 +1,7 @@
 <template>
-  <div class="campus-page">
+  <div ref="campusPage" class="campus-page" :class="{ 'compact-navigation': compactNavigation }">
     <CampusSidebar
+      v-show="!compactNavigation || !showPaperCol"
       :sidebar-title="sidebarTitle"
       :is-logged-in="isLoggedIn"
       :identity="identity"
@@ -11,7 +12,6 @@
       :courses="courses"
       :selected-course-id="selectedCourseId"
       :courses-loading="coursesLoading"
-      @reload="reload"
       @update:school-query="schoolQuery = $event"
       @choose-school="chooseSchool"
       @select-course="selectCourse"
@@ -19,6 +19,8 @@
 
     <CampusPaperList
       v-if="showPaperCol"
+      :compact="compactNavigation"
+      :course-name="selectedCourseName"
       :visible-paper-count="visiblePaperCount"
       :platform-options="platformOptions"
       :platform-filter="platformFilter"
@@ -26,6 +28,7 @@
       :papers-loading="papersLoading"
       :visible-papers="visiblePapers"
       :selected-paper-id="selectedPaperId"
+      @back="backToCourses"
       @toggle-filter="platformFilterOpen = !platformFilterOpen"
       @set-platform-filter="setPlatformFilter"
       @select-paper="selectPaper"
@@ -94,6 +97,16 @@ interface PaperItem {
   question_count?: number
 }
 
+const DUAL_COLUMN_MIN_WIDTH = 1000
+const campusPage = ref<HTMLElement | null>(null)
+const compactNavigation = ref(false)
+let layoutObserver: ResizeObserver | undefined
+
+const measureCampusLayout = () => {
+  const width = campusPage.value?.clientWidth
+  if (width) compactNavigation.value = width < DUAL_COLUMN_MIN_WIDTH
+}
+
 const identity = ref<CampusIdentity | null>(null)
 const schools = ref<CampusSchool[]>([])
 const courses = ref<CampusCourse[]>([])
@@ -113,6 +126,8 @@ const questionsLoading = ref(false)
 const papersByCourse = new Map<number, CampusFolder[]>()
 const questionsByPaper = new Map<number, CampusQuestion[]>()
 const lastPaperByCourse = new Map<number, number>()
+let courseNavigationVersion = 0
+let paperLoadVersion = 0
 const savingYear = ref(false)
 const bindingId = ref<number | null>(null)
 const error = ref('')
@@ -185,11 +200,10 @@ const sidebarTitle = computed(() => {
 
 const selectedPaper = computed(() => papers.value.find((item) => item.id === selectedPaperId.value) || null)
 
-const mainTitle = computed(() => {
-  if (selectedPaper.value) return selectedPaper.value.name
-  const course = courses.value.find((item) => item.id === selectedCourseId.value)
-  return course?.name || '题目'
-})
+const selectedCourseName = computed(() =>
+  courses.value.find((item) => item.id === selectedCourseId.value)?.name || '',
+)
+const mainTitle = computed(() => selectedPaper.value?.name || selectedCourseName.value || '题目')
 
 const filteredSchools = computed(() => {
   const q = schoolQuery.value.trim().toLowerCase()
@@ -270,6 +284,7 @@ watch(visiblePapers, (list) => {
 
 const selectPaper = async (paperId: number) => {
   if (!selectedCourseId.value) return
+  const version = ++paperLoadVersion
   const courseId = selectedCourseId.value
   selectedPaperId.value = paperId
   lastPaperByCourse.set(courseId, paperId)
@@ -285,8 +300,8 @@ const selectPaper = async (paperId: number) => {
   }
   try {
     const next = await listFolderQuestions(paperId)
+    if (version !== paperLoadVersion || selectedPaperId.value !== paperId) return
     questionsByPaper.set(paperId, next)
-    if (selectedPaperId.value !== paperId) return
     questions.value = next
     folders.value = folders.value.map((folder) => (
       folder.id === paperId ? { ...folder, question_count: next.length } : folder
@@ -294,18 +309,34 @@ const selectPaper = async (paperId: number) => {
     if (selectedCourseId.value) papersByCourse.set(selectedCourseId.value, folders.value)
     showQuestion(cached?.length ? currentIndex.value : 0)
   } catch (err) {
-    if (selectedPaperId.value !== paperId) return
+    if (version !== paperLoadVersion || selectedPaperId.value !== paperId) return
     if (!handleAuthError(err)) error.value = err instanceof Error ? err.message : '加载题目失败'
     if (!cached?.length) {
       questions.value = []
       selectedQuestion.value = null
     }
   } finally {
-    if (selectedPaperId.value === paperId) questionsLoading.value = false
+    if (version === paperLoadVersion && selectedPaperId.value === paperId) questionsLoading.value = false
   }
 }
 
+const backToCourses = () => {
+  courseNavigationVersion += 1
+  selectedCourseId.value = null
+  selectedPaperId.value = null
+  selectedQuestion.value = null
+  folders.value = []
+  questions.value = []
+  papersLoading.value = false
+  questionsLoading.value = false
+  platformFilter.value = ''
+  platformFilterOpen.value = false
+  error.value = ''
+}
+
 const selectCourse = async (courseId: number) => {
+  measureCampusLayout()
+  const version = ++courseNavigationVersion
   selectedCourseId.value = courseId
   const cached = papersByCourse.get(courseId)
   if (cached) {
@@ -327,7 +358,7 @@ const selectCourse = async (courseId: number) => {
   }
   try {
     const detail = await getCampusCourse(courseId)
-    if (selectedCourseId.value !== courseId) return
+    if (version !== courseNavigationVersion) return
     const raw = detail.folders.filter((item) => !item.archived)
     rememberFolders(courseId, raw)
     const paperId = pickPaperId(courseId, raw)
@@ -338,17 +369,14 @@ const selectCourse = async (courseId: number) => {
       selectedQuestion.value = null
     }
     void withFolderQuestionCounts(raw).then((counted) => {
-      if (selectedCourseId.value !== courseId) {
-        papersByCourse.set(courseId, counted)
-        return
-      }
+      if (version !== courseNavigationVersion) return
       rememberFolders(courseId, counted)
     })
   } catch (err) {
-    if (selectedCourseId.value !== courseId) return
+    if (version !== courseNavigationVersion) return
     if (!handleAuthError(err)) error.value = err instanceof Error ? err.message : '加载课程失败'
   } finally {
-    if (selectedCourseId.value === courseId) papersLoading.value = false
+    if (version === courseNavigationVersion) papersLoading.value = false
   }
 }
 
@@ -404,21 +432,24 @@ const reload = async () => {
 const refreshCurrentCourse = async (preferPaperId?: number) => {
   const courseId = selectedCourseId.value
   if (!courseId) return
+  const version = courseNavigationVersion
   try {
     const detail = await getCampusCourse(courseId)
-    if (selectedCourseId.value !== courseId) return
+    if (version !== courseNavigationVersion) return
     const raw = detail.folders.filter((item) => !item.archived)
     rememberFolders(courseId, raw)
     const keep = preferPaperId || selectedPaperId.value
-    if (keep && raw.some((folder) => folder.id === keep)) {
-      lastPaperByCourse.set(courseId, keep)
-      void selectPaper(keep)
+    const nextPaperId = raw.find(folder => folder.id === keep)?.id || raw[0]?.id
+    if (nextPaperId) {
+      void selectPaper(nextPaperId)
+    } else {
+      selectedPaperId.value = null
+      questions.value = []
+      selectedQuestion.value = null
+      questionsLoading.value = false
     }
     const counted = await withFolderQuestionCounts(raw)
-    if (selectedCourseId.value !== courseId) {
-      papersByCourse.set(courseId, counted)
-      return
-    }
+    if (version !== courseNavigationVersion) return
     rememberFolders(courseId, counted)
   } catch {
     // ignore background refresh
@@ -430,7 +461,11 @@ const onAuthChanged = () => {
 }
 
 const onCampusUpdated = (event: Event) => {
-  const detail = (event as CustomEvent<{ courseId?: number; paperId?: number }>).detail || {}
+  const detail = (event as CustomEvent<{ courseId?: number; paperId?: number; courseListChanged?: boolean }>).detail || {}
+  if (detail.courseListChanged) {
+    void loadCourses().catch(() => { /* 保留当前列表，等待下次刷新 */ })
+    return
+  }
   if (detail.courseId && selectedCourseId.value && detail.courseId !== selectedCourseId.value) return
   void refreshCurrentCourse(detail.paperId)
 }
@@ -457,6 +492,13 @@ const onKeydown = (event: KeyboardEvent) => {
 }
 
 onMounted(() => {
+  measureCampusLayout()
+  if (typeof ResizeObserver !== 'undefined' && campusPage.value) {
+    layoutObserver = new ResizeObserver(measureCampusLayout)
+    layoutObserver.observe(campusPage.value)
+  } else {
+    window.addEventListener('resize', measureCampusLayout)
+  }
   void reload()
   window.addEventListener('auth-changed', onAuthChanged)
   window.addEventListener('campus-updated', onCampusUpdated)
@@ -465,6 +507,8 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  layoutObserver?.disconnect()
+  window.removeEventListener('resize', measureCampusLayout)
   window.removeEventListener('auth-changed', onAuthChanged)
   window.removeEventListener('campus-updated', onCampusUpdated)
   window.removeEventListener('keydown', onKeydown)
@@ -478,5 +522,10 @@ onUnmounted(() => {
   display: flex;
   gap: 4px;
   background: var(--bg-primary, #f5f5f7);
+}
+
+.compact-navigation > .campus-sidebar,
+.compact-navigation > .campus-papers {
+  width: clamp(148px, 36%, 240px);
 }
 </style>

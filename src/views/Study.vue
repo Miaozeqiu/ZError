@@ -3,7 +3,15 @@
     <aside class="study-sidebar">
       <div class="pane-header">
         <div class="header-title">科目</div>
-        <button class="header-action" type="button" @click="startCreate">新建</button>
+        <button
+          class="icon-action-btn icon-action-btn--add icon-action-btn--sm"
+          type="button"
+          title="新建科目"
+          aria-label="新建科目"
+          @click="startCreate"
+        >
+          <Icon icon="lucide:plus" width="16" height="16" aria-hidden="true" />
+        </button>
       </div>
       <div class="subject-list">
         <button
@@ -126,6 +134,8 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { Icon } from '@iconify/vue/offline'
+import '../utils/ui/agentIcons'
 import StudyData from '../components/study/StudyData.vue'
 import StudyMermaidGraph from '../components/study/StudyMermaidGraph.vue'
 import StudyQuestionBank from '../components/study/StudyQuestionBank.vue'
@@ -133,7 +143,7 @@ import StudyTimeline from '../components/study/StudyTimeline.vue'
 import CreateFormDialog, { type CreateFormField } from '../components/ui/CreateFormDialog.vue'
 import UnifiedContextMenu, { type MenuItem } from '../components/ui/UnifiedContextMenu.vue'
 import { databaseService, type QuestionKnowledgeLink, type StudyActivity, type StudySubject, type StudyTimelineSummary } from '../services/app/database'
-import { isChatBusy, startStudyGraphChat, startStudySubjectChat } from '../services/agent/chat'
+import { draftStudyGraphChat, isChatBusy, startStudySubjectChat } from '../services/agent/chat'
 import { backfillClosedStudySessions } from '../services/study/timelineSummary'
 import { studyGraphStream } from '../services/study/graphStream'
 import {
@@ -352,7 +362,7 @@ const openBankQuestion = (id: number) => {
 
 const askAgent = () => {
   const subject = selected.value
-  void startStudyGraphChat(subject ? { subjectId: subject.id, subjectName: subject.name } : undefined)
+  if (subject) draftStudyGraphChat({ subjectId: subject.id, subjectName: subject.name })
 }
 
 const loadRelatedQuestions = async (nodeId?: number) => {
@@ -439,6 +449,8 @@ onUnmounted(() => {
 })
 </script>
 
+<style scoped src="../styles/icon-action-button.css"></style>
+
 <style scoped>
 .study-page {
   height: 100%;
@@ -504,8 +516,9 @@ onUnmounted(() => {
   white-space: nowrap;
 }
 
+.study-sidebar .icon-action-btn,
 .study-main .header-action:first-of-type {
-  margin-left: auto;
+  margin-inline-start: auto;
 }
 
 .header-action {

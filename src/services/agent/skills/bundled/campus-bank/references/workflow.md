@@ -9,10 +9,24 @@
 3. 有试卷就必须 `list_campus_questions`，不能只看 paper 数量就说没题
 4. list/search 会弹出浏览卡片，只供看题，不是作答。成功后不要再列出选项，也不要 `present_quiz`，除非用户明确说要练习、做题或订正
 
+课程下未放进试卷的题，用 `list_campus_uncategorized_questions` 分页查看。查重用 `check_campus_question_duplicate`，提供完整题干和原顺序选项；仅题干一致时，说明选项还未核对。
+
 ## 练习
 
 - `present_quiz` 只传 `campus_question_ids` 或 `paper_id` 和 `title`
 - `campus_question_id` 不能传给 `get_practice_history`、`move_questions`、`save_questions`
+
+## 新建课程
+
+- 先确认用户指定的课程名称。缺少名称时先询问。
+- 调用 `create_campus_course(name)`，使用账号已绑定的学校。接口返回 `pending` 时告知用户已提交审核。
+- 工具缺失、未登录、未认证或接口失败时，说明原因。用户明确要求使用网站时才操作浏览器。
+
+## 管理课程和试卷
+
+- 改名用 `rename_campus_course`，先确认课程 ID 和新名称。待审核时告知用户申请已提交。
+- 归档和取消归档用 `set_campus_paper_archived`。查已归档试卷时用 `list_campus_papers(include_archived=true)`。需要投票时先征求用户同意，发起投票后如实告知当前尚未生效。
+- 排序用 `reorder_campus_paper_questions`，先读完整份试卷的分页，按新顺序提供全部顶层题 ID。排序范围限该试卷的顶层题。
 
 ## 上传 / 改题
 

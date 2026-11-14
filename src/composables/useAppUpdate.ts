@@ -4,7 +4,6 @@ import {
   downloadUpdatePackage,
   openDownloadedUpdate,
   resolveDownloadFileName,
-  resolvePlatformDownloadUrl,
 } from '../services/app/updateDownload'
 import { environmentDetector } from '../services/app/environmentDetector'
 
@@ -40,8 +39,34 @@ const downloadUrl = ref('')
 
 let downloadPromise: Promise<void> | null = null
 let checkPromise: Promise<void> | null = null
+let previewMode = false
+
+/** Development-only UI preview; never starts an installer or writes reminder state. */
+export async function previewAppUpdate() {
+  if (!import.meta.env.DEV) return false
+  // Let an existing check finish so it cannot overwrite the preview.
+  if (checkPromise) await checkPromise.catch(() => {})
+  if (downloadPromise || status.value === 'installing') return false
+  previewMode = true
+  const parts = VersionCheckService.getCurrentVersion().split('.').map(Number)
+  const version = parts.length === 3 && parts.every(Number.isFinite)
+    ? `${parts[0]}.${parts[1]}.${parts[2] + 1}` : '9.0.0'
+  updateInfo.value = {
+    version,
+    changelog: '界面预览：以下为示例更新内容，并非真实发布。\n优化校园题库嵌入体验，减少重复导航。\n改进软件与网页之间的登录状态同步。\n修复若干界面显示与交互问题。',
+    downloadUrl: '',
+  }
+  status.value = 'available'
+  progress.value = 0
+  errorMessage.value = ''
+  nativeUpdater.value = false
+  tipVisible.value = true
+  showUpdateDialog.value = false
+  return true
+}
 
 function markDialogSkipped(version?: string) {
+  if (previewMode) { showUpdateDialog.value = false; return }
   const ver = version || updateInfo.value?.version
   if (ver && ver !== '?') {
     sessionStorage.setItem(DIALOG_SKIP_KEY, ver)
@@ -109,24 +134,8 @@ function restorePendingRelaunchTip(): boolean {
 }
 
 function pickNativePackageUrl(update: any): string {
-  const raw = update?.rawJson
-  if (!raw || typeof raw !== 'object') return ''
-  const platforms = (raw as any).platforms
-  if (!platforms || typeof platforms !== 'object') return ''
-  const isMac = typeof navigator !== 'undefined' && (
-    /mac/i.test(navigator.platform || '') || /mac/i.test(navigator.userAgent || '')
-  )
-  const keys = isMac
-    ? ['darwin-aarch64', 'darwin-x86_64', 'darwin-arm64']
-    : ['windows-x86_64', 'windows-aarch64', 'windows-i686']
-  for (const key of keys) {
-    const url = platforms[key]?.url
-    if (typeof url === 'string' && url) return url
-  }
-  for (const item of Object.values(platforms) as any[]) {
-    if (item && typeof item.url === 'string' && item.url) return item.url
-  }
-  return ''
+  const url = update?.rawJson?.url
+  return typeof url === 'string' ? url : ''
 }
 
 function setDownloadTarget(url: string, version: string, fileName?: string) {
@@ -171,8 +180,6 @@ const tipTitle = computed(() => {
 
 const hasUpdate = computed(() => !!updateInfo.value)
 
-const nativeCheckError = ref('')
-
 async function tryNativeUpdaterCheck(): Promise<{
   available: boolean
   version?: string
@@ -183,8 +190,7 @@ async function tryNativeUpdaterCheck(): Promise<{
   if (!environmentDetector.isTauriEnvironment()) return null
   try {
     const { check } = await import('@tauri-apps/plugin-updater')
-    const update = await check()
-    nativeCheckError.value = ''
+    const update = await check({ timeout: 12000 })
     if (!update) return { available: false }
     return {
       available: true,
@@ -194,7 +200,6 @@ async function tryNativeUpdaterCheck(): Promise<{
     }
   } catch (err: any) {
     const msg = err?.message || String(err)
-    nativeCheckError.value = msg
     console.warn('原生 updater 检查失败:', err)
     return { available: false, error: msg }
   }
@@ -290,6 +295,7 @@ async function finishNativeUpdateAndRelaunch() {
 }
 
 async function startAutoDownload(force = false) {
+  if (previewMode) return
   const info = updateInfo.value
   if (!info) return
   if (downloadPromise && !force) return downloadPromise
@@ -302,7 +308,7 @@ async function startAutoDownload(force = false) {
     try {
       // 优先：原生 updater（Mac 原地替换 .app，无需拖拽）
       const native = await tryNativeUpdaterCheck()
-      if (native?.error) {
+      if (native?.error && !info.downloadUrl) {
         status.value = 'error'
         errorMessage.value = `原生更新不可用：${native.error}`
         tipVisible.value = true
@@ -313,7 +319,7 @@ async function startAutoDownload(force = false) {
         updateInfo.value = {
           version: native.version || info.version,
           changelog: native.notes || info.changelog || '',
-          downloadUrl: resolvePlatformDownloadUrl(info) || info.downloadUrl,
+          downloadUrl: info.downloadUrl,
           releaseDate: info.releaseDate,
         }
         await startNativeInstall(native.update)
@@ -321,9 +327,8 @@ async function startAutoDownload(force = false) {
         return
       }
 
-      // 回退：仅当原生检查明确「无更新通道」时才下安装包；联调期尽量不用
       nativeUpdater.value = false
-      const url = resolvePlatformDownloadUrl(info)
+      const url = info.downloadUrl
       if (!url) {
         status.value = 'error'
         errorMessage.value = '未配置下载地址'
@@ -364,6 +369,7 @@ async function startAutoDownload(force = false) {
 }
 
 async function checkForUpdates(options?: { forceDialog?: boolean }) {
+  if (previewMode) { if (options?.forceDialog) openUpdateDialog({ force: true }); return }
   if (checkPromise && !options?.forceDialog) {
     return checkPromise
   }
@@ -390,64 +396,24 @@ async function checkForUpdates(options?: { forceDialog?: boolean }) {
       }
     }
 
-    // 1) 先试原生 updater（tauri.conf → live/update.json）
     const native = await tryNativeUpdaterCheck()
-    if (native !== null) {
-      if (native.error) {
-        // 不再静默回退 DMG：把真实错误亮出来
-        currentVersion.value = VersionCheckService.getCurrentVersion()
-        updateInfo.value = { version: '?', changelog: '', downloadUrl: '' }
-        try {
-          const legacy = await VersionCheckService.checkForUpdate()
-          if (legacy.versionInfo) {
-            updateInfo.value = legacy.versionInfo
-            setDownloadTarget(
-              resolvePlatformDownloadUrl(legacy.versionInfo),
-              legacy.versionInfo.version,
-            )
-          }
-        } catch {
-          /* ignore */
-        }
-        status.value = 'error'
-        errorMessage.value = `原生更新检查失败：${native.error}`
-        tipVisible.value = true
-        if (wantDialog) {
-          openUpdateDialog({ force: true, version: updateInfo.value?.version })
-        }
-        return
+    if (native?.available && native.version) {
+      updateInfo.value = {
+        version: native.version,
+        changelog: native.notes || '',
+        downloadUrl: '',
       }
-      if (native.available && native.version) {
-        updateInfo.value = {
-          version: native.version,
-          changelog: native.notes || '',
-          downloadUrl: '',
-        }
-        setDownloadTarget(
-          pickNativePackageUrl(native.update),
-          native.version || '',
-        )
-        currentVersion.value = VersionCheckService.getCurrentVersion()
-        const dismissed = localStorage.getItem(DISMISS_KEY) === native.version
-        const shouldShowTip = wantDialog || (!suppressAuto && !dismissed)
-        tipVisible.value = shouldShowTip
-        status.value = 'available'
-        // 仅手动「检查更新」才弹窗；发现更新后不自动下载，等用户点击
-        if (wantDialog) {
-          openUpdateDialog({ force: true, version: native.version })
-        }
-        return
-      }
-
-      // update.json 可达且无新版本（或尚无完整 platforms）
-      tipVisible.value = false
-      updateInfo.value = null
-      status.value = 'idle'
+      setDownloadTarget(pickNativePackageUrl(native.update), native.version)
+      currentVersion.value = VersionCheckService.getCurrentVersion()
+      const dismissed = localStorage.getItem(DISMISS_KEY) === native.version
+      tipVisible.value = wantDialog || (!suppressAuto && !dismissed)
+      status.value = 'available'
+      if (wantDialog) openUpdateDialog({ force: true, version: native.version })
       return
     }
 
-    // 2) 回退：用 latest_version.json 的 downloadUrl* 下载安装包
     const result = await VersionCheckService.checkForUpdate()
+    if (native?.error && !result.needsUpdate) throw new Error(native.error)
     currentVersion.value = result.currentVersion
 
     if (!result.needsUpdate || !result.versionInfo) {
@@ -464,7 +430,7 @@ async function checkForUpdates(options?: { forceDialog?: boolean }) {
     status.value = 'available'
     nativeUpdater.value = false
     setDownloadTarget(
-      resolvePlatformDownloadUrl(result.versionInfo),
+      result.versionInfo.downloadUrl,
       result.versionInfo.version,
     )
 
@@ -473,6 +439,7 @@ async function checkForUpdates(options?: { forceDialog?: boolean }) {
     }
   } catch (error) {
     console.error('版本检查失败:', error)
+    if (wantDialog) throw error
   } finally {
     checkPromise = null
   }
@@ -482,6 +449,7 @@ async function checkForUpdates(options?: { forceDialog?: boolean }) {
 }
 
 function dismissTip() {
+  if (previewMode) { tipVisible.value = false; return }
   if (updateInfo.value?.version) {
     localStorage.setItem(DISMISS_KEY, updateInfo.value.version)
   }
@@ -489,6 +457,7 @@ function dismissTip() {
 }
 
 async function handleTipClick() {
+  if (previewMode) { openUpdateDialog({ force: true }); return }
   if (status.value === 'error') {
     tipVisible.value = true
     await startAutoDownload(true)
@@ -521,6 +490,7 @@ async function handleTipClick() {
 }
 
 async function handleDialogDownload() {
+  if (previewMode) return
   tipVisible.value = true
   markDialogSkipped()
   if (status.value === 'ready-relaunch' || (status.value === 'done' && nativeUpdater.value)) {
@@ -565,6 +535,7 @@ function handleLater() {
 }
 
 function handleWeekLater() {
+  if (previewMode) { showUpdateDialog.value = false; return }
   markDialogSkipped()
   const oneWeekLater = new Date()
   oneWeekLater.setDate(oneWeekLater.getDate() + 7)

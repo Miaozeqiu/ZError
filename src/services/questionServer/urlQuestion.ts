@@ -1,5 +1,8 @@
 import { ref } from 'vue'
 import { resolveExecutableModelJsCode, resolveRuntimeModelId } from '../model/protocol'
+import { resolveModelOutputLimit } from '../model/contextBudget'
+import { createBuiltinProvider } from '../model/providers'
+import { secureFetch } from '../security/secureFetch'
 import {
   buildImageAnswerRule,
   buildUrlOptionMapForMode,
@@ -416,7 +419,7 @@ export const analyzeUrlQuestion = async (requestId: string) => {
 
   const visionModel = globalSelectedVisionModel.value
   if (!visionModel) {
-    const errorMessage = '请先在模型选择中配置视觉模型'
+    const errorMessage = '请先在「答题」中选择一个支持视觉的模型'
     log.urlQuestion.analysisError = errorMessage
     log.urlQuestion.analyzing = false
     log.urlQuestion.streamingResponse = ''
@@ -492,15 +495,15 @@ export const analyzeUrlQuestion = async (requestId: string) => {
     }
     const runtimeModelId = resolveRuntimeModelId(visionModel)
     const executableCode = resolveExecutableModelJsCode(visionModel, platform)
-    const config = { ...visionModel, apiKey: platform.apiKey, baseUrl: platform.baseUrl, model: runtimeModelId, modelId: runtimeModelId }
+    const config = { ...visionModel, apiKey: modelApi.getPlatformApiKey(platform), customHeaders: platform.customHeaders, maxTokens: resolveModelOutputLimit(visionModel),
+      baseUrl: platform.baseUrl, model: runtimeModelId, modelId: runtimeModelId }
 
-    const tauriHttp = await import('@tauri-apps/plugin-http')
-    const rawTauriFetch: typeof fetch = ((input: RequestInfo | URL, init: RequestInit = {}) =>
-      tauriHttp.fetch(input as any, {
+    const rawTauriFetch: typeof fetch = (input, init: RequestInit = {}) =>
+      secureFetch(input, {
         ...init,
         credentials: init.credentials ?? 'include',
         signal: init.signal ?? abortController.signal
-      } as any)) as typeof fetch
+      })
 
     const transport = trackModelHttpOutcome(rawTauriFetch)
     const tauriFetch = transport.fetch
@@ -526,13 +529,14 @@ export const analyzeUrlQuestion = async (requestId: string) => {
           }
         }
 
-        let processModel: any
-        if (executableCode.startsWith('async function') || executableCode.startsWith('function')) {
+        let processModel: any = createBuiltinProvider(visionModel, platform)
+        if (!processModel && (executableCode.startsWith('async function') || executableCode.startsWith('function'))) {
           processModel = new Function('input', 'config', 'fetch', 'abortSignal', `${executableCode}\nreturn processModel;`)(analysisInput, config, tauriFetch, abortController.signal)
-        } else {
+        } else if (!processModel) {
           processModel = new Function('input', 'config', 'fetch', 'abortSignal', `return (async function processModel(input, config) { ${executableCode} });`)(analysisInput, config, tauriFetch, abortController.signal)
         }
 
+        if (attempt === 1) void sendModelProgressToBackend(requestId, 'started')
         const result = await executeVisionModelWithAutoUpscale(processModel, analysisInput, config, tauriFetch, abortController.signal)
         transport.assertSuccess()
         assertSuccessfulModelResponse(result)

@@ -1,0 +1,50 @@
+/* 图标操作按钮（与 add-question-button 风格一致） */
+.icon-action-btn {
+  padding: 6px;
+  width: 33px;
+  height: 33px;
+  background-color: var(--platform-config-toggle-button-bg);
+  color: var(--text-secondary);
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.icon-action-btn:hover {
+  background-color: var(--platform-config-toggle-button-hover-bg);
+  color: var(--text-primary);
+}
+
+.icon-action-btn--ghost {
+  background-color: transparent;
+}
+
+.icon-action-btn--ghost:hover {
+  background-color: var(--platform-config-toggle-button-hover-bg);
+}
+
+.icon-action-btn--sm {
+  width: 22px;
+  height: 22px;
+  padding: 3px;
+  border-radius: 5px;
+}
+
+.icon-action-btn--model-add {
+  border-radius: 8px;
+}
+
+.icon-action-btn--add {
+  background-color: var(--add-btn-icon-bg);
+  color: var(--add-btn-icon-color);
+}
+
+.icon-action-btn--add:hover {
+  background-color: var(--add-btn-icon-hover-bg);
+  color: var(--add-btn-icon-color);
+}

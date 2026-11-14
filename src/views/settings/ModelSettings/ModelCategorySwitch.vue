@@ -14,7 +14,7 @@ export default {
   props: {
     modelValue: {
       type: String,
-      default: 'text',
+      default: 'answer',
     },
     showSummary: {
       type: Boolean,
@@ -29,14 +29,11 @@ export default {
   },
   computed: {
     options() {
-      const baseOptions = [
-        { value: 'text', label: '文本' },
-        { value: 'vision', label: '视觉' }
-      ];
+      const baseOptions = [{ value: 'answer', label: '答题' }];
       const withSummary = this.showSummary
         ? [...baseOptions, { value: 'summary', label: '总结' }]
         : baseOptions;
-      return [...withSummary, { value: 'agent', label: 'agent' }];
+      return [...withSummary, { value: 'agent', label: 'Agent' }];
     },
     selectedIndex() {
       return this.options.findIndex(o => o.value === this.selectedOption);
@@ -53,7 +50,7 @@ export default {
     },
     showSummary() {
       if (!this.showSummary && this.selectedOption === 'summary') {
-        this.selectedOption = 'text';
+        this.selectedOption = 'answer';
         this.updateValue();
       }
     }

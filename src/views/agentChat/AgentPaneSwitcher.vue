@@ -8,7 +8,7 @@
       :aria-pressed="selectedAgentPane === item.id"
       :aria-label="item.label"
       :disabled="!item.available"
-      :title="item.available ? `显示${item.label}` : item.empty"
+      :title="item.id === 'browser' && selectedAgentPane === 'browser' ? '收起浏览器' : item.available ? `显示${item.label}` : item.empty"
       @click="selectAgentPane(item.id)"
     >
       <Icon :icon="item.icon" width="14" height="14" aria-hidden="true" />

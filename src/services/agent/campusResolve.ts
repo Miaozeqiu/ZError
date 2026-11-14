@@ -14,7 +14,7 @@ export const campusFail = (err: unknown, fallback: string) => {
     if (err.status === 401) return '校园登录已失效，请先在顶栏重新登录。'
     if (err.status === 403) {
       const msg = String(err.message || '')
-      if (/not verified|未认证/i.test(msg)) return '需要先完成校园认证才能上传或改题。'
+      if (/not verified|未认证/i.test(msg)) return '此操作需要先完成校园认证。'
       if (/not the creator/i.test(msg)) return '只能改自己创建的试卷。'
       if (/archived/i.test(msg)) return '这份试卷已归档，不能再改。'
       return msg || '没有权限做这个操作。'
@@ -33,7 +33,7 @@ export const loadCampusContext = async (opts?: { requireVerified?: boolean }) =>
       return { error: '还没有绑定学校。请先打开校园题库页选择学校。' }
     }
     if (opts?.requireVerified && identity.status !== 'verified') {
-      return { error: '需要先完成校园认证才能上传或改题。请先在校园题库页完成认证。' }
+      return { error: '此操作需要先完成校园认证。请先在校园题库页完成认证。' }
     }
     return { identity }
   } catch (err) {
@@ -53,6 +53,7 @@ export const summarizeCampusPaper = (item: CampusFolder) => ({
   name: item.name,
   tag: item.tag_name || '',
   year: item.year || null,
+  archived: Boolean(item.archived),
   ...(item.question_count != null ? { question_count: item.question_count } : {}),
 })
 
@@ -80,9 +81,9 @@ export const resolveCampusCourse = async (campusId: number, id?: number, name?: 
   throw new Error(`没有找到课程「${keyword}」`)
 }
 
-export const resolveCampusPaper = async (courseId: number, id?: number, name?: string) => {
+export const resolveCampusPaper = async (courseId: number, id?: number, name?: string, includeArchived = false) => {
   const detail = await getCampusCourse(courseId)
-  const papers = detail.folders.filter((item) => !item.archived)
+  const papers = includeArchived ? detail.folders : detail.folders.filter((item) => !item.archived)
   if (Number(id) > 0) {
     const found = papers.find((item) => item.id === Number(id))
     if (found) return { course: detail.course, paper: found, papers }

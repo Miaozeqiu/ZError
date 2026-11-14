@@ -43,3 +43,17 @@ export const formatJSON = (jsonString: string) => {
     return jsonString
   }
 }
+
+export const getQueryResult = (responseBody?: string) => {
+  if (!responseBody) return undefined
+  try {
+    const response = JSON.parse(responseBody)
+    const result = Array.isArray(response?.data) ? response.data[0] : response?.data
+    return {
+      answer: typeof result?.answer === 'string' ? result.answer : undefined,
+      message: typeof response?.message === 'string' ? response.message : undefined,
+    }
+  } catch {
+    return undefined
+  }
+}

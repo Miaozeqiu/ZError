@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { describe, expect, it, vi } from 'vitest'
-import { downloadChaoxingRepository, downloadWebsiteRepository, discoverWebsiteRepositories, downloadWebsiteCommitHistory, downloadWebsiteHistoryHead, CHAOXING_REPOSITORY } from '../../src/services/agent/websiteRepositoryGitHub'
+import { downloadChaoxingRepository, discoverWebsiteRepositories } from '../../src/services/agent/websiteRepositoryGitHub'
 import type { WebsiteSnapshot } from '../../src/services/agent/websiteRepositoryCore'
 
 const files = { 'SKILL.md': '---\nname: chaoxing\ndescription: Website operations\n---\n# 学习通\n',
@@ -25,53 +25,6 @@ const fixture = () => {
 }
 
 describe('GitHub website snapshot downloads', () => {
-  it('can use a validated historic snapshot that predates the import manifest', async () => {
-    const { request, entries } = fixture()
-    entries.splice(2)
-    const revision = 'a'.repeat(40)
-    const original = request.getMockImplementation()!
-    request.mockImplementation((url, init) => original(url.replace('/commits/' + revision, '/commits/main'), init))
-    const selected = await downloadWebsiteRepository({ ...CHAOXING_REPOSITORY, branch: revision }, fallback, request as typeof fetch,
-      { id: 'chaoxing', host: 'chaoxing.com' }, 2000, { allowLegacy: true })
-    expect(request.mock.calls[0][0]).toMatch(new RegExp('/commits/' + revision + '$'))
-    expect(selected).toMatchObject({ revision, files })
-    await expect(downloadChaoxingRepository(fallback, request as typeof fetch)).rejects.toThrow('不支持')
-  })
-
-  it('resolves the current branch head without downloading or merging website files', async () => {
-    const request = vi.fn(async (url: string) => {
-      expect(url).toBe('https://api.github.com/repos/Miaozeqiu/ZError-chaoxing/commits/main')
-      return Response.json({ sha: 'd'.repeat(40) })
-    })
-    expect(await downloadWebsiteHistoryHead(CHAOXING_REPOSITORY, request as typeof fetch)).toBe('d'.repeat(40))
-    expect(request).toHaveBeenCalledOnce()
-    await expect(downloadWebsiteHistoryHead(CHAOXING_REPOSITORY, (async () => Response.json({ sha: '../main' })) as typeof fetch)).rejects.toThrow('分支版本无效')
-  })
-  it('reads real commit history pinned to the cached version and website directory, with pagination', async () => {
-    const revision = 'a'.repeat(40)
-    const request = vi.fn(async (url: string, init: RequestInit) => {
-      const parsed = new URL(url)
-      expect(parsed.origin).toBe('https://api.github.com')
-      expect(parsed.searchParams.get('sha')).toBe(revision)
-      expect(parsed.searchParams.get('path')).toBe('skills/chaoxing')
-      expect(parsed.searchParams.get('page')).toBe('2')
-      expect(init.credentials).toBe('omit')
-      return Response.json([{ sha: revision, parents: [{ sha: 'b'.repeat(40) }], html_url: 'javascript:alert(1)', commit: { message: 'Update website\nDetails', author: { name: 'Author', date: '2026-11-02T01:00:00Z' } } }],
-        { headers: { link: '<https://api.github.com/ignored>; rel="next"' } })
-    })
-    expect(await downloadWebsiteCommitHistory(CHAOXING_REPOSITORY, revision, 2, request as typeof fetch)).toEqual({
-      commits: [{ sha: revision, parents: ['b'.repeat(40)], message: 'Update website\nDetails', author: 'Author', date: '2026-11-02T01:00:00Z', url: `${CHAOXING_REPOSITORY.url}/commit/${revision}` }], hasMore: true,
-    })
-    expect(request).toHaveBeenCalledOnce()
-  })
-
-  it('rejects invalid history pages and malformed commits, respecting rate-limit errors', async () => {
-    const request = vi.fn(async () => Response.json([{ sha: 'invalid' }]))
-    await expect(downloadWebsiteCommitHistory(CHAOXING_REPOSITORY, 'a'.repeat(40), 1, request as typeof fetch)).rejects.toThrow('提交记录无效')
-    for (const page of [0, -1, 1.5]) await expect(downloadWebsiteCommitHistory(CHAOXING_REPOSITORY, 'a'.repeat(40), page, request as typeof fetch)).rejects.toThrow('页码无效')
-    const limited = vi.fn(async () => new Response('', { status: 429, headers: { 'retry-after': '120' } }))
-    await expect(downloadWebsiteCommitHistory(CHAOXING_REPOSITORY, 'a'.repeat(40), 1, limited as typeof fetch)).rejects.toMatchObject({ retryAt: expect.any(Number) })
-  })
   it('downloads a public snapshot pinned to one commit, verifying actual blob bytes', async () => {
     const { request } = fixture()
     const result = await downloadChaoxingRepository(fallback, request as typeof fetch, 1000)

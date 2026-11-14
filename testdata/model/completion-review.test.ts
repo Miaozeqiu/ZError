@@ -4,6 +4,7 @@ const mock = vi.hoisted(() => ({ fetch: vi.fn(), model: { id: 'review-model' } }
 vi.mock('../../src/services/model/config', () => ({
   modelConfigManager: {
     getSelectedTextModel: () => mock.model, getSelectedAgentModel: () => mock.model,
+    getPlatformApiKey: (platform: { apiKey: string }) => platform.apiKey,
     getSettings: () => ({ platforms: [{ apiKey: 'test-key', baseUrl: 'https://model.test', models: [mock.model] }] }),
   }, modelHasVision: () => false,
 }))

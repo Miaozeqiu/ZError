@@ -1,4 +1,4 @@
-use crate::database::{increment_daily_request_count};
+use crate::database::{increment_daily_request_count, LocalQuestionMatch};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
@@ -6,6 +6,15 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;
 use tokio::time::Duration;
 use uuid;
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalQuestionSearch {
+    Hit,
+    Miss,
+    Failed,
+    Unconfirmed,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RequestLog {
@@ -15,12 +24,24 @@ pub struct RequestLog {
     pub path: String,
     pub status: Option<u16>,        // 开始时为None，完成时有值
     pub response_time: Option<u64>, // 开始时为None，完成时有值
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_target: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_address: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub http_status: Option<u16>,
     pub request_body: Option<String>,
     pub response_body: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response_headers: Option<HashMap<String, String>>,
     pub headers: Option<HashMap<String, String>>,
     pub ip: Option<String>,
     pub user_agent: Option<String>,
     pub stage: String, // "started" 或 "completed"
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_search: Option<LocalQuestionSearch>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub local_matches: Vec<LocalQuestionMatch>,
 }
 
 // 新增：模型调用请求事件
@@ -138,6 +159,8 @@ impl RequestLogger {
         headers: Option<HashMap<String, String>>,
         ip: Option<String>,
         user_agent: Option<String>,
+        request_target: String,
+        remote_address: Option<String>,
     ) {
         let log = RequestLog {
             id,
@@ -146,12 +169,18 @@ impl RequestLogger {
             path,
             status: None,
             response_time: None,
+            request_target: Some(request_target),
+            remote_address,
+            http_status: None,
             request_body,
             response_body: None,
+            response_headers: None,
             headers,
             ip,
             user_agent,
             stage: "started".to_string(),
+            local_search: None,
+            local_matches: Vec::new(),
         };
 
         let mut logs = self.logs.lock().unwrap();
@@ -176,6 +205,13 @@ impl RequestLogger {
         }
     }
 
+    pub fn record_local_matches(&self, id: &str, matches: Vec<LocalQuestionMatch>) {
+        let mut logs = self.logs.lock().unwrap();
+        if let Some(log) = logs.iter_mut().rev().find(|log| log.id == id) {
+            log.local_matches = matches;
+        }
+    }
+
     // 记录请求完成
     pub fn log_request_complete(
         &self,
@@ -183,15 +219,21 @@ impl RequestLogger {
         method: String,
         path: String,
         status: u16,
+        http_status: u16,
         response_time: u64,
         response_body: Option<String>,
-    ) {
+        response_headers: Option<HashMap<String, String>>,
+        local_search: LocalQuestionSearch,
+    ) -> Vec<LocalQuestionMatch> {
         let mut logs = self.logs.lock().unwrap();
         // 优先就地更新 started 记录，避免同一请求占两条导致上限形同虚设
         let log = if let Some(existing) = logs.iter_mut().rev().find(|item| item.id == id) {
             existing.status = Some(status);
+            existing.http_status = Some(http_status);
             existing.response_time = Some(response_time);
             existing.response_body = response_body;
+            existing.response_headers = response_headers;
+            existing.local_search = Some(local_search);
             existing.stage = "completed".to_string();
             existing.clone()
         } else {
@@ -202,12 +244,18 @@ impl RequestLogger {
                 path,
                 status: Some(status),
                 response_time: Some(response_time),
+                request_target: None,
+                remote_address: None,
+                http_status: Some(http_status),
                 request_body: None,
                 response_body,
+                response_headers,
                 headers: None,
                 ip: None,
                 user_agent: None,
                 stage: "completed".to_string(),
+                local_search: Some(local_search),
+                local_matches: Vec::new(),
             };
             logs.push_back(created.clone());
             while logs.len() > self.max_logs {
@@ -222,10 +270,14 @@ impl RequestLogger {
             "📡 Broadcasting request complete to {} subscribers",
             self.subscriber_count()
         );
+        // Similar question titles are for the desktop UI, not the HTTP log stream.
+        let mut log = log;
+        let local_matches = std::mem::take(&mut log.local_matches);
         match self.broadcaster.send(SSEEvent::RequestLog(log)) {
             Ok(_) => println!("✅ Request complete broadcast successful"),
             Err(e) => println!("❌ Request complete broadcast failed: {:?}", e),
         }
+        local_matches
     }
 
     // 保留原有方法以兼容其他路由
@@ -248,12 +300,18 @@ impl RequestLogger {
             path,
             status: Some(status),
             response_time: Some(response_time),
+            request_target: None,
+            remote_address: None,
+            http_status: None,
             request_body,
             response_body,
+            response_headers: None,
             headers,
             ip,
             user_agent,
             stage: "completed".to_string(), // 一次性记录视为已完成
+            local_search: None,
+            local_matches: Vec::new(),
         };
 
         let mut logs = self.logs.lock().unwrap();

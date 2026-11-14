@@ -17,21 +17,17 @@ vi.mock('../../src/services/agent/websiteSettings', () => ({
   listWebsiteSettings: async () => [
     { id: 'menhu.haou.edu.cn', name: '河南开放大学·云上河开', host: 'menhu.haou.edu.cn', skillId: 'site-learn', siteHost: 'menhu.haou.edu.cn', files: ['sites/menhu.haou.edu.cn/SKILL.md'], loginHosts: ['authserver.open.ha.cn'], iconUrl: state.icon },
     { id: 'chaoxing', name: '学习通', host: 'chaoxing.com', skillId: 'chaoxing', files: ['SKILL.md', 'site-graph.json'], builtin: true,
-      ...(state.repository ? { repositoryHost: 'chaoxing.com', repositoryUrl: 'https://github.com/owner/repo' } : {}) },
+      ...(state.repository ? { repositoryHost: 'chaoxing.com' } : {}) },
     ...[{ id: 'zhihuishu', name: '智慧树', host: 'zhihuishu.com' }, { id: 'zjooc', name: '在浙学', host: 'zjooc.cn' }].map(site => ({ ...site, skillId: 'site-learn', siteHost: site.host, files: [`sites/${site.host}/SKILL.md`, `sites/${site.host}/site-graph.json`], builtin: true })),
   ],
   addWebsiteSettings: actions.website,
 }))
 vi.mock('../../src/views/settings/AgentBehaviorSettings.vue', () => ({ default: { render: () => null } }))
-vi.mock('../../src/views/settings/WebsiteRepositoryHistory.vue', async () => {
-  const { defineComponent, h } = await import('vue')
-  return { default: defineComponent({ props: ['host'], emits: ['close'], setup: (props, { emit }) => () => h('button', { 'data-history-host': props.host, onClick: () => emit('close') }, '关闭历史') }) }
-})
 vi.mock('../../src/views/settings/AgentSkillDetail.vue', async () => {
   const { defineComponent, h } = await import('vue')
   return { default: defineComponent({
-    props: ['skillId', 'siteHost', 'initialPath'], emits: ['back', 'saved'],
-    setup: (props, { emit }) => () => h('button', { 'data-editor-host': props.siteHost, 'data-editor-path': props.initialPath, onClick: () => emit('back') }, '返回'),
+    props: ['skillId', 'siteHost', 'initialPath', 'initialMode'], emits: ['back', 'saved'],
+    setup: (props, { emit }) => () => h('button', { 'data-editor-host': props.siteHost, 'data-editor-path': props.initialPath, 'data-editor-mode': props.initialMode, onClick: () => emit('back') }, '返回'),
   }) }
 })
 import AgentSettings from '../../src/views/settings/AgentSettings.vue'
@@ -53,22 +49,32 @@ afterEach(() => { app.unmount(); root.remove(); delete (window as any).__TAURI_I
 const site = (id: string) => root.querySelector(`[data-website="${id}"]`)!
 
 describe('one settings card per website', () => {
-  it('shows local modifications only for local differences and opens history for the selected website', async () => {
+  it('opens the combined preview and local experience editor from separate icons', async () => {
     state.repository = true
     const { websiteRepositoryStates } = await import('../../src/services/agent/websiteRepository')
     websiteRepositoryStates['chaoxing.com'].source = 'repository'
-    websiteRepositoryStates['chaoxing.com'].hasFork = true
+    websiteRepositoryStates['chaoxing.com'].changedPaths = ['SKILL.md']
     const { websiteIdentityState } = await import('../../src/services/agent/websiteIdentity')
     websiteIdentityState.profiles = [...websiteIdentityState.profiles]
-    await vi.waitFor(() => expect(site('chaoxing').querySelector('.repository-history-button')?.textContent).toContain('本地修改'))
-    site('chaoxing').querySelector<HTMLButtonElement>('.repository-history-button')!.click(); await nextTick()
-    expect(root.querySelector('[data-history-host]')?.getAttribute('data-history-host')).toBe('chaoxing.com')
-    root.querySelector<HTMLButtonElement>('[data-history-host]')!.click(); await nextTick()
-    expect(root.querySelector('[data-history-host]')).toBeNull()
-    websiteRepositoryStates['chaoxing.com'].hasFork = false; await nextTick()
-    expect(site('chaoxing').querySelector('.repository-history-button')?.textContent).toContain('仓库')
-    expect(site('zjooc').textContent).not.toContain('本地修改')
+    await vi.waitFor(() => expect(site('chaoxing').querySelector('[aria-label="查看操作经验"]')?.getAttribute('title')).toBe('操作经验 · 已同步'))
+    expect(site('chaoxing').querySelector('button[aria-label="同步云端经验"]')).toBeNull()
+    const edit = () => site('chaoxing').querySelector<HTMLButtonElement>('[aria-label="编辑本地经验"]')!
+    expect(edit().title).toBe('本地经验 · 已记录')
+    site('chaoxing').querySelector<HTMLButtonElement>('[aria-label="查看操作经验"]')!.click()
+    await nextTick()
+    const detail = () => root.querySelector<HTMLButtonElement>('[data-editor-mode]')!
+    expect(detail().dataset.editorMode).toBe('view')
+    detail().click()
+    await nextTick()
+    websiteRepositoryStates['chaoxing.com'].changedPaths = []
+    await nextTick()
+    expect(edit().title).toBe('本地经验 · 尚未记录')
+    edit().click()
+    await nextTick()
+    expect(detail().dataset.editorMode).toBe('local')
+    expect(detail().dataset.editorPath).toBe('SKILL.md')
   })
+
   it('retries a newly saved icon even if the old favicon failed earlier', async () => {
     const portal = site('menhu.haou.edu.cn')
     portal.querySelector('.website-icon img')!.dispatchEvent(new Event('error'))
@@ -94,7 +100,19 @@ describe('one settings card per website', () => {
     expect(site('zjooc').querySelector('.website-icon svg')).toBeNull()
     expect(portal.textContent).not.toContain('登录域名：')
     expect(root.querySelector('[data-website="authserver.open.ha.cn"]')).toBeNull()
-    portal.querySelector<HTMLButtonElement>('.website-card-head button')!.click()
+    const settings = portal.querySelector<HTMLButtonElement>('button[aria-label="网站设置"]')!
+    settings.click()
+    await nextTick()
+    const dialog = () => document.querySelector('[aria-labelledby="website-dialog-title"]')
+    const back = dialog()!.querySelector<HTMLButtonElement>('button[aria-label="返回"]')!
+    expect(back.querySelector('svg')).not.toBeNull()
+    expect(back.textContent?.trim()).toBe('')
+    back.click()
+    await nextTick()
+    expect(dialog()).toBeNull()
+    expect(actions.website).not.toHaveBeenCalled()
+
+    settings.click()
     await nextTick()
     expect(document.querySelector<HTMLInputElement>('#website-host')!.disabled).toBe(true)
     const aliases = document.querySelector<HTMLInputElement>('#website-login-hosts')!
@@ -107,11 +125,11 @@ describe('one settings card per website', () => {
   })
 
   it('edits credentials for the clicked website, with no cross-platform selector or password in the card', async () => {
-    expect(site('chaoxing').textContent).toContain('cx-user')
-    expect(site('zjooc').textContent).toContain('zj-user')
+    expect(site('chaoxing').textContent).not.toContain('cx-user')
+    expect(site('zjooc').textContent).not.toContain('zj-user')
     expect(root.textContent).not.toContain('cx-secret')
     expect(root.textContent).not.toContain('zj-secret')
-    site('zjooc').querySelector<HTMLButtonElement>('.website-info-row button')!.click()
+    site('zjooc').querySelector<HTMLButtonElement>('[aria-label="编辑账号密码"]')!.click()
     await nextTick()
     expect(document.querySelector('.account-site-label')!.textContent).toContain('在浙学 · zjooc.cn')
     expect(document.querySelector('#agent-acc-platform')).toBeNull()
@@ -124,7 +142,7 @@ describe('one settings card per website', () => {
     await nextTick()
     expect(actions.remember).toHaveBeenCalledWith('zjooc', { account: 'new-zj-user', password: 'new-zj-secret', note: '' })
     expect(state.accounts.rows.chaoxing.password).toBe('cx-secret')
-    expect(site('zjooc').textContent).toContain('new-zj-user')
+    expect(site('zjooc').textContent).not.toContain('new-zj-user')
   })
 
   it('displays saved usernames without verification, with verification only when revealing a saved password', async () => {
@@ -134,14 +152,15 @@ describe('one settings card per website', () => {
     actions.native.mockImplementation(async command => command === 'secure_site_account_names'
       ? { zjooc: 'visible-user' } : { value: 'verified-password' })
     state.accounts.rows = { zjooc: { account: accountReference, password: passwordReference, updatedAt: 1, note: '' } }
-    await vi.waitFor(() => expect(site('zjooc').textContent).toContain('visible-user'))
+    await vi.waitFor(() => expect(actions.native).toHaveBeenCalledWith('secure_site_account_names'))
+    expect(site('zjooc').textContent).not.toContain('visible-user')
     expect(actions.native.mock.calls.every(([name]) => name === 'secure_site_account_names')).toBe(true)
     expect(site('zjooc').textContent).not.toContain(passwordReference)
     expect(site('zjooc').textContent).not.toContain('verified-password')
     site('zjooc').querySelector<HTMLButtonElement>('[aria-label="编辑账号密码"]')!.click()
     await nextTick()
+    await vi.waitFor(() => expect(document.querySelector<HTMLInputElement>('#agent-acc-account')?.value).toBe('visible-user'))
     const account = document.querySelector<HTMLInputElement>('#agent-acc-account')!
-    expect(account.value).toBe('visible-user')
     expect(account.type).toBe('text')
     expect(document.querySelector('[aria-label="查看账号"]')).toBeNull()
     expect(actions.native.mock.calls.every(([name]) => name === 'secure_site_account_names')).toBe(true)
@@ -151,26 +170,43 @@ describe('one settings card per website', () => {
     expect(state.accounts.rows.zjooc.password).toBe(passwordReference)
   })
 
-  it('uses labelled library icons for website settings, credential configuration, editing and clearing', () => {
+  it('uses labelled library icons for website settings, credentials, experience and graphs', () => {
     const saved = site('zjooc')
-    for (const label of ['网站设置', '编辑账号密码', '清除账号密码', '编辑操作经验', '编辑导航图谱']) {
+    for (const label of ['网站设置', '编辑账号密码', '编辑操作经验', '编辑导航图谱']) {
       const button = saved.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`)!
       expect(button).not.toBeNull()
-      expect(button.title).toBe(label)
+      expect(button.title).not.toBe('')
+      expect(button.closest('.website-card-head')).not.toBeNull()
       expect(button.querySelector('svg')).not.toBeNull()
       expect(button.textContent).toBe('')
     }
     expect(site('menhu.haou.edu.cn').querySelector('[aria-label="配置账号密码"] svg')).not.toBeNull()
   })
 
+  it('clears only the selected website credentials from the account editor', async () => {
+    const saved = site('zjooc')
+    expect(saved.querySelector('[aria-label="清除账号密码"]')).toBeNull()
+    saved.querySelector<HTMLButtonElement>('[aria-label="编辑账号密码"]')!.click()
+    await nextTick()
+    document.querySelector<HTMLButtonElement>('.account-editor-dialog .account-delete')!.click()
+    await nextTick()
+    expect(actions.forget).toHaveBeenCalledExactlyOnceWith('zjooc')
+    expect(actions.remember).not.toHaveBeenCalled()
+    expect(document.querySelector('.account-editor-dialog')).toBeNull()
+    expect(state.accounts.rows.chaoxing).toBeDefined()
+    saved.querySelector<HTMLButtonElement>('[aria-label="配置账号密码"]')!.click()
+    await nextTick()
+    expect(document.querySelector('.account-editor-dialog .account-delete')).toBeNull()
+  })
+
   it('routes experience and graph buttons to the clicked website even when they share a Skill', async () => {
-    site('zhihuishu').querySelectorAll<HTMLButtonElement>('.website-info-row')[1].querySelector('button')!.click()
+    site('zhihuishu').querySelector<HTMLButtonElement>('[aria-label="编辑操作经验"]')!.click()
     await nextTick()
     expect(root.querySelector('[data-editor-host]')?.getAttribute('data-editor-host')).toBe('zhihuishu.com')
     expect(root.querySelector('[data-editor-path]')?.getAttribute('data-editor-path')).toBe('sites/zhihuishu.com/SKILL.md')
     root.querySelector<HTMLButtonElement>('[data-editor-host]')!.click()
     await nextTick()
-    site('zjooc').querySelectorAll<HTMLButtonElement>('.website-info-row')[2].querySelector('button')!.click()
+    site('zjooc').querySelector<HTMLButtonElement>('[aria-label="编辑导航图谱"]')!.click()
     await nextTick()
     expect(root.querySelector('[data-editor-path]')?.getAttribute('data-editor-path')).toBe('sites/zjooc.cn/site-graph.json')
   })

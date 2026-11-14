@@ -11,26 +11,9 @@
           </div>
           <div class="quiz-stem">{{ current.question }}</div>
 
-          <template v-if="isBrowse">
-            <div v-if="kindOf(current) === 'fill'" class="quiz-fill-answer">
-              {{ showAnswer ? (formatAnswerLabel(current.answer, current.options, current.question_type) || current.answer || '暂无答案') : '填空题' }}
-            </div>
-            <div v-else class="quiz-options">
-              <div
-                v-for="option in browseOptions(current)"
-                :key="option.key || option.text"
-                class="quiz-option is-static"
-                :class="{ correct: showAnswer && option.correct }"
-              >
-                <span v-if="option.key" class="quiz-opt-key">{{ option.key }}</span>
-                <span class="quiz-opt-text">{{ option.text }}</span>
-              </div>
-            </div>
-            <button class="quiz-submit" type="button" @click="showAnswer = !showAnswer">
-              {{ showAnswer ? '隐藏答案' : '显示答案' }}
-            </button>
-            <div v-if="showAnswer && current.explanation" class="quiz-explain">{{ current.explanation }}</div>
-          </template>
+          <div v-if="isBrowse && kindOf(current) === 'fill'" class="quiz-fill-answer">
+            {{ showAnswer ? (formatAnswerLabel(current.answer, current.options, current.question_type) || current.answer || '暂无答案') : '填空题' }}
+          </div>
 
           <div v-else-if="kindOf(current) === 'fill'" class="quiz-fill">
             <input
@@ -51,35 +34,37 @@
             <div v-else class="quiz-fill-answer">{{ stateOf(current).selected[0] }}</div>
           </div>
 
-          <div v-else-if="kindOf(current) === 'judgement' && !optionsOf(current).length" class="quiz-options">
-            <button
-              v-for="choice in judgementChoices"
-              :key="choice.key"
-              class="quiz-option"
-              type="button"
-              :class="optionClass(current, choice.key)"
-              :disabled="stateOf(current).submitted"
-              @click="pick(current, choice.key)"
-            >
-              <span class="quiz-opt-key">{{ choice.key }}</span>
-              <span class="quiz-opt-text">{{ choice.text }}</span>
-            </button>
+          <div v-else class="quiz-options">
+            <div v-for="option in currentOptions" :key="option.key || option.text" class="quiz-option-row">
+              <component
+                :is="isBrowse ? 'div' : 'button'"
+                class="quiz-option"
+                :class="isBrowse ? { 'is-static': true, correct: showAnswer && option.correct } : optionClass(current, option.key || option.text)"
+                :type="isBrowse ? undefined : 'button'"
+                :disabled="isBrowse ? undefined : stateOf(current).submitted"
+                @click="!isBrowse && pick(current, option.key || option.text)"
+              >
+                <span v-if="option.key" class="quiz-opt-key">{{ option.key }}</span>
+                <span class="quiz-opt-text">{{ option.text }}</span>
+              </component>
+              <button
+                class="quiz-option-quote"
+                type="button"
+                :title="`引用选项 ${option.key || option.text} 到对话`"
+                :aria-label="`引用选项 ${option.key || option.text} 到对话`"
+                @click="quoteOption(current, option)"
+              >
+                <Icon icon="lucide:quote" width="14" height="14" aria-hidden="true" />
+              </button>
+            </div>
           </div>
 
-          <div v-else class="quiz-options">
-            <button
-              v-for="option in optionsOf(current)"
-              :key="option.key || option.text"
-              class="quiz-option"
-              type="button"
-              :class="optionClass(current, option.key || option.text)"
-              :disabled="stateOf(current).submitted"
-              @click="pick(current, option.key || option.text)"
-            >
-              <span v-if="option.key" class="quiz-opt-key">{{ option.key }}</span>
-              <span class="quiz-opt-text">{{ option.text }}</span>
+          <template v-if="isBrowse">
+            <button class="quiz-submit" type="button" @click="showAnswer = !showAnswer">
+              {{ showAnswer ? '隐藏答案' : '显示答案' }}
             </button>
-          </div>
+            <div v-if="showAnswer && current.explanation" class="quiz-explain">{{ current.explanation }}</div>
+          </template>
 
           <button
             v-if="!isBrowse && kindOf(current) === 'multiple' && !stateOf(current).submitted"
@@ -98,6 +83,14 @@
             <span>已记录选择 {{ stateOf(current).selected.join('') }}</span>
           </div>
           <div v-if="stateOf(current).submitted && current.explanation" class="quiz-explain">{{ current.explanation }}</div>
+          <button
+            v-if="!isBrowse && stateOf(current).submitted"
+            class="quiz-text-action quiz-why"
+            type="button"
+            :disabled="explainBusy"
+            :title="explainBusy ? '等当前回复结束后再请求解析' : '请 Agent 解析这道题'"
+            @click="emit('explain', attemptPayload(current))"
+          >为什么🧐</button>
         </div>
       </Transition>
     </div>
@@ -132,6 +125,9 @@
 
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
+import { Icon } from '@iconify/vue/offline'
+import '../../utils/ui/agentIcons'
+import type { AgentQuizAttempt, AgentQuizOptionQuote } from '../../services/agent/chatTypes'
 import { databaseService } from '../../services/app/database'
 import { masteryLabel } from '../../utils/question/questionMetrics'
 import {
@@ -144,6 +140,7 @@ import {
   resolveAnswerKeys,
   setQuizAnswer,
   type QuizAnswerState,
+  type QuizOption,
   type QuizCard,
 } from '../../utils/question/quizPractice'
 
@@ -152,6 +149,8 @@ const props = defineProps<{
   stepId: string
   layout?: 'chat' | 'pane'
   mode?: 'practice' | 'browse'
+  focus?: { uid: string } | null
+  explainBusy?: boolean
 }>()
 
 const isPane = computed(() => props.layout === 'pane')
@@ -159,36 +158,10 @@ const isBrowse = computed(() => props.mode === 'browse')
 const showAnswer = ref(true)
 
 const emit = defineEmits<{
-  attempt: [payload: {
-    stepId: string
-    uid: string
-    question_id?: number
-    question: string
-    options?: string
-    selected: string
-    answer: string
-    correct?: boolean
-    note?: string
-    explanation?: string
-    index?: number
-    total?: number
-    kind?: 'submit' | 'note'
-  }]
-  complete: [payload: {
-    stepId: string
-    uid: string
-    question_id?: number
-    question: string
-    options?: string
-    selected: string
-    answer: string
-    correct?: boolean
-    note?: string
-    explanation?: string
-    index?: number
-    total?: number
-    kind?: 'submit' | 'note'
-  }[]]
+  attempt: [payload: AgentQuizAttempt]
+  complete: [payload: AgentQuizAttempt[]]
+  explain: [payload: AgentQuizAttempt]
+  'quote-option': [option: Omit<AgentQuizOptionQuote, 'messageId'>]
 }>()
 
 const judgementChoices = [
@@ -266,6 +239,21 @@ const masteryText = (value?: number) => masteryLabel(value)
 const kindOf = (card: QuizCard) => quizKind(card.question_type, card.options)
 const optionsOf = (card: QuizCard) => parseOptions(card.options)
 
+const currentOptions = computed<Array<QuizOption & { correct?: boolean }>>(() => {
+  const card = current.value
+  if (!card || kindOf(card) === 'fill') return []
+  if (isBrowse.value) return browseOptions(card)
+  const options = optionsOf(card)
+  return options.length || kindOf(card) !== 'judgement' ? options : judgementChoices
+})
+
+const quoteOption = (card: QuizCard, option: QuizOption) => {
+  emit('quote-option', {
+    stepId: props.stepId, uid: card.uid, question_id: card.question_id,
+    question: card.question, key: option.key, text: option.text,
+  })
+}
+
 const optionClass = (card: QuizCard, key: string) => {
   const state = stateOf(card)
   const picked = state.selected.includes(key)
@@ -302,6 +290,10 @@ const goTo = (index: number) => {
   slideDir.value = index > currentIndex.value ? 'next' : 'prev'
   currentIndex.value = index
 }
+
+watch(() => props.focus, (focus) => {
+  if (focus) goTo(props.cards.findIndex(card => card.uid === focus.uid))
+}, { immediate: true })
 
 const onFill = (card: QuizCard, value: string) => {
   const state = stateOf(card)
@@ -445,14 +437,41 @@ const dotClass = (card: QuizCard, index: number) => {
   margin-top: 10px;
 }
 
+.quiz-option-row {
+  position: relative;
+}
+
+.quiz-option-quote {
+  position: absolute;
+  inset-inline-end: 5px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-secondary, #718096);
+  cursor: pointer;
+}
+
+.quiz-option-quote:hover,
+.quiz-option-quote:focus-visible {
+  color: var(--text-primary);
+  background: var(--hover-bg, rgba(0, 0, 0, .06));
+}
+
 .quiz-option {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 8px;
   width: 100%;
   border: none;
   border-radius: 8px;
-  padding: 8px 10px;
+  padding: 8px 38px 8px 10px;
   background: color-mix(in srgb, var(--text-primary, #2d3748) 6%, transparent);
   color: var(--text-primary, #2d3748);
   text-align: left;
@@ -553,6 +572,28 @@ const dotClass = (card: QuizCard, index: number) => {
 
 .quiz-result-answer {
   color: var(--text-secondary, #718096);
+}
+
+.quiz-text-action {
+  align-self: flex-start;
+  margin-top: 8px;
+  padding: 4px 9px;
+  border: 0;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--text-primary, #2d3748) 7%, transparent);
+  color: var(--text-primary, #2d3748);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.quiz-text-action:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text-primary, #2d3748) 12%, transparent);
+}
+
+.quiz-text-action:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .quiz-explain,

@@ -1,5 +1,5 @@
 import { computed, ref, watch } from 'vue'
-import { activeChat, hydrateQuizCards, isChatBusy } from '../../services/agent/chat'
+import { activeChat, hydrateQuizCards, isChatBusy, type AgentQuizAttempt, type AgentQuizAttemptRef } from '../../services/agent/chat'
 import { databaseService } from '../../services/app/database'
 import { finishStudyGraphStream, studyGraphStream } from '../../services/study/graphStream'
 import { graphFromPayload, type StudyGraphNode } from '../../utils/study/studyGraph'
@@ -33,6 +33,7 @@ export const hydrateMessageQuiz = async (message: Parameters<typeof stepQuizCard
 
 export const openedWriteStepId = ref<string | null>(null)
 export const openedQuizKey = ref<string | null>(null)
+const quizFocus = ref<{ uid: string } | null>(null)
 export const openedGraphSubjectId = ref<number | null>(null)
 export const paneGraph = ref<StudyGraphNode | null>(null)
 export const paneGraphName = ref('')
@@ -55,9 +56,7 @@ export const latestQuizKey = computed(() => {
   return null
 })
 
-export const openedQuiz = computed(() => {
-  if (!openedQuizKey.value) return null
-  const [messageId, stepId] = openedQuizKey.value.split('\t')
+const quizFor = (messageId: string, stepId: string) => {
   const message = activeChat.value?.messages.find((item) => item.id === messageId)
   if (!message || !stepId) return null
   const step = message.steps.find((item) => item.id === stepId)
@@ -75,7 +74,29 @@ export const openedQuiz = computed(() => {
     title: quizTitleFor(step, stepId),
     mode: isBrowseQuizStep(step) ? 'browse' as const : 'practice' as const,
   }
+}
+
+export const openedQuiz = computed(() => {
+  if (!openedQuizKey.value) return null
+  const [messageId, stepId] = openedQuizKey.value.split('\t')
+  return quizFor(messageId, stepId)
 })
+
+export const quizCardForReview = (target: AgentQuizAttemptRef, attempt: Pick<AgentQuizAttempt, 'question_id' | 'question'>) => {
+  const cards = quizFor(target.messageId, target.stepId)?.cards || []
+  return cards.find(card => card.uid === target.uid)
+    || (attempt.question_id && cards.find(card => card.question_id === attempt.question_id))
+    || cards.find(card => card.question === attempt.question)
+}
+
+export const openQuizReview = (target: AgentQuizAttemptRef, attempt: Pick<AgentQuizAttempt, 'question_id' | 'question'>) => {
+  const card = quizCardForReview(target, attempt)
+  if (!card) return
+  openedWriteStepId.value = null
+  openedGraphSubjectId.value = null
+  openedQuizKey.value = quizKeyOf(target.messageId, target.stepId)
+  quizFocus.value = { uid: card.uid }
+}
 
 export const paneQuiz = computed(() => {
   const quiz = openedQuiz.value
@@ -86,6 +107,7 @@ export const paneQuiz = computed(() => {
     cards: quiz.cards,
     title: quiz.title,
     mode: quiz.mode,
+    focus: quizFocus.value,
     stat: quizStatFor(quiz.message, quiz.stepId, quiz.cards, quiz.mode === 'browse'),
   }
 })
@@ -221,17 +243,29 @@ export const availableWriteStepId = computed(() => {
   return steps.find(step => step.id === rememberedPane.value.write)?.id || steps.at(-1)?.id || null
 })
 export const availableGraphSubjectId = computed(() => rememberedPane.value.graph ?? activeChat.value?.studySubjectId ?? null)
-export const selectedAgentPane = computed<AgentPane>(() =>
-  paneQuiz.value ? 'quiz' : openedWriteStep.value ? 'write' : paneGraphView.value ? 'graph' : 'browser',
+export const browserPaneVisible = ref(false)
+export const browserPreviewRequest = ref(0)
+export const selectedAgentPane = computed<AgentPane | null>(() =>
+  paneQuiz.value ? 'quiz'
+    : openedWriteStep.value ? 'write'
+    : paneGraphView.value ? 'graph'
+    : browserPaneVisible.value ? 'browser' : null,
 )
 
 export const selectAgentPane = (pane: AgentPane) => {
-  if (pane === selectedAgentPane.value) return
+  if (pane === selectedAgentPane.value) {
+    if (pane === 'browser') browserPaneVisible.value = false
+    return
+  }
   if (pane === 'quiz' && !availableQuizKey.value) return
   if (pane === 'write' && !availableWriteStepId.value) return
   if (pane === 'graph') {
     if (availableGraphSubjectId.value != null) openGraphPane(availableGraphSubjectId.value)
     return
+  }
+  if (pane === 'browser') {
+    browserPaneVisible.value = true
+    browserPreviewRequest.value += 1
   }
   const quiz = pane === 'quiz' ? availableQuizKey.value : null
   const write = pane === 'write' ? availableWriteStepId.value : null
@@ -242,6 +276,7 @@ export const selectAgentPane = (pane: AgentPane) => {
 
 export const bindAgentChatPanes = () => {
   let resettingPanes = false
+  watch(openedQuizKey, () => { quizFocus.value = null }, { flush: 'sync' })
   // Remember each conversation's selected content when its panel is hidden.
   watch(() => activeChat.value?.id, () => {
     resettingPanes = true

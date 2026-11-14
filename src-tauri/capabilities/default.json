@@ -27,8 +27,7 @@
         { "path": "$HOME/.local/share/zerror/**" },
         { "path": "$DESKTOP/**" },
         { "path": "$DOCUMENTS/**" },
-        { "path": "$DOWNLOADS/**" },
-        { "path": "C\\\\Users\\\\Administrator\\\\project\\\\program\\\\**" }
+        { "path": "$DOWNLOADS/**" }
       ]
     },
     {
@@ -116,6 +115,11 @@
     {
       "identifier": "opener:default",
       "allow": [
+        { "url": "https://exa.ai/**" },
+        { "url": "https://api-docs.deepseek.com/**" },
+        { "url": "https://www.tavily.com/**" },
+        { "url": "https://brave.com/search/api/**" },
+        { "url": "https://you.com/**" },
         {
           "url": "https://app.zerror.cc/**"
         },

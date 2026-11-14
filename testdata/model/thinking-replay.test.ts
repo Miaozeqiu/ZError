@@ -3,6 +3,7 @@ const api = vi.hoisted(() => ({ fetch: vi.fn(), model: { id: 'thinking-test', mo
 vi.mock('../../src/services/model/config', () => ({
   modelHasVision: () => false,
   modelConfigManager: { getSelectedTextModel: () => api.model, getSelectedAgentModel: () => api.model,
+    getPlatformApiKey: (platform: { apiKey: string }) => platform.apiKey,
     getSettings: () => ({ platforms: [{ id: 'test', apiProtocol: api.model.apiProtocol, apiKey: 'test-key', baseUrl: 'https://model.test', models: [api.model] }] }) },
 }))
 vi.mock('../../src/services/security/secureFetch', () => ({ secureFetch: api.fetch }))
@@ -11,6 +12,7 @@ vi.mock('../../src/services/app/settings', () => ({ settingsManager: { get: () =
 vi.mock('../../src/services/agent/debugLog', () => ({ logAgentDebug: vi.fn() }))
 import { runTextModel } from '../../src/services/model/runner'
 import { redactReplayMessages } from '../../src/services/model/replayState'
+import { rememberRedaction } from '../../src/services/security/secretRedaction'
 
 const json = (body: unknown) => ({ ok: true, status: 200, body: null, text: async () => JSON.stringify(body) })
 const thinking = (text: string, signature: string) => ({ type: 'thinking', thinking: text, signature })
@@ -20,6 +22,27 @@ const request = (at: number) => JSON.parse(api.fetch.mock.calls[at][1].body)
 beforeEach(() => { api.fetch.mockReset(); api.model.apiProtocol = 'anthropic' })
 
 describe('actual model runner and protocol thinking replay', () => {
+  it('reports redacted thinking when the stream ends at its output cap', async () => {
+    api.model.apiProtocol = 'openai-chat'
+    rememberRedaction('synthetic-hidden-key', '{{secret:test/key}}')
+    const onEvent = vi.fn()
+    const events = [
+      { choices: [{ delta: { reasoning_content: '思考 synthetic-hidden-' } }] },
+      { choices: [{ delta: { reasoning_content: 'key 后未完成' }, finish_reason: 'length' }] },
+    ]
+    api.fetch.mockResolvedValueOnce(new Response(events.map(event => `data: ${JSON.stringify(event)}\n\n`).join('')))
+    await expect(runTextModel('执行', undefined, { onEvent })).rejects.toThrow('16384 token')
+    expect(request(0).max_tokens).toBe(16384)
+    expect(onEvent).toHaveBeenCalledWith({ type: 'reasoning', text: '思考 {{secret:test/key}} 后未完成', durationMs: expect.any(Number) })
+  })
+
+  it('preserves the returned reasoning on a truncated non-stream response', async () => {
+    api.model.apiProtocol = 'openai-chat'
+    const onEvent = vi.fn()
+    api.fetch.mockResolvedValueOnce(json({ choices: [{ message: { reasoning_content: '已收到的思考' }, finish_reason: 'length' }] }))
+    await expect(runTextModel('执行', undefined, { onEvent })).rejects.toThrow('长度上限')
+    expect(onEvent).toHaveBeenCalledWith({ type: 'reasoning', text: '已收到的思考', durationMs: expect.any(Number) })
+  })
   it('preserves thinking and signatures after tools AND after a plain reply rejected by the completion guard', async () => {
     api.fetch.mockResolvedValueOnce(json({ content: [thinking('opaque-thought-1', 'signature-1'), tool] }))
       .mockResolvedValueOnce(json({ content: [thinking('opaque-thought-2', 'signature-2'), content('先汇报当前进展。')] }))

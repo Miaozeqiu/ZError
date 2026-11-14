@@ -66,7 +66,7 @@ watch(normalizedText, (text) => {
       <span
         v-if="normalizedText"
         ref="tooltipRef"
-        class="ol-tip-tooltip"
+        class="ol-tip-tooltip settings-popup"
         :class="{ visible }"
         :style="tooltipStyle"
       >{{ normalizedText }}</span>

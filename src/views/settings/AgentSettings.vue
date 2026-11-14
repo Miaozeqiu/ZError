@@ -2,111 +2,103 @@
   <div class="agent-settings">
     <AgentSkillDetail
       v-if="selectedWebsite"
+      class="agent-website-detail"
       :skill-id="selectedWebsite.skillId"
       :site-host="selectedWebsite.siteHost"
       :initial-path="selectedWebsitePath"
+      :initial-mode="selectedWebsiteMode"
       @saved="refreshWebsites"
       @back="closeSkillDetail"
     />
 
-    <template v-else>
-    <nav class="agent-pane-nav" role="tablist" aria-label="Agent 设置">
-      <button
-        type="button"
-        class="agent-pane-tab"
-        role="tab"
-        :aria-selected="activePane === 'websites'"
-        :class="{ active: activePane === 'websites' }"
-        @click="activePane = 'websites'"
-      >
-        网站
-      </button>
-      <button
-        type="button"
-        class="agent-pane-tab"
-        role="tab"
-        :aria-selected="activePane === 'behavior'"
-        :class="{ active: activePane === 'behavior' }"
-        @click="activePane = 'behavior'"
-      >
-        行为与权限
-      </button>
-    </nav>
-
-    <template v-if="activePane === 'websites'">
-      <div class="pane-intro">
-        <p class="group-hint">按网站管理账号密码、操作经验和导航图谱。</p>
-        <button type="button" class="import-repository-button" @click="openRepositoryImport"><Icon icon="lucide:github" width="16" height="16" aria-hidden="true" />导入 GitHub 仓库</button>
-      </div>
-      <div v-if="websiteError" class="install-error" role="alert">{{ websiteError }}</div>
-      <div v-if="siteAccountsState.saveError" class="install-error" role="alert">{{ siteAccountsState.saveError }}</div>
-      <div v-if="accountNamesError" class="install-error" role="alert">{{ accountNamesError }}</div>
-      <div v-for="site in websites" :key="site.id" class="network-group website-card" :data-website="site.id">
-        <header class="website-card-head">
-          <div class="website-heading">
-            <span class="website-icon" aria-hidden="true">
-              <Icon v-if="websiteIconStatus.get(websiteIconSource(site)) !== 'loaded'" icon="lucide:globe" width="20" height="20" />
-              <img
-                v-if="websiteIconStatus.get(websiteIconSource(site)) !== 'failed'"
-                :key="websiteIconSource(site)"
-                :src="websiteIconSource(site)"
-                :class="{ 'is-loaded': websiteIconStatus.get(websiteIconSource(site)) === 'loaded' }"
-                alt="" loading="lazy" referrerpolicy="no-referrer"
-                @load="websiteIconStatus.set(websiteIconSource(site), 'loaded')"
-                @error="websiteIconStatus.set(websiteIconSource(site), 'failed')"
-              >
-            </span>
-            <h3 class="website-name">{{ site.name }}</h3>
-            <span class="website-host">{{ site.host }}</span>
-          </div>
-          <div class="account-actions">
-            <button v-if="site.repositoryHost" type="button" class="skill-badge builtin repository-history-button" :title="'查看提交历史 · ' + (site.repositoryUrl || site.host)" :aria-label="`查看${site.name}提交历史`" @click="historyHost = site.repositoryHost">
-              <Icon v-if="repositoryState(site)?.source === 'repository'" icon="lucide:github" width="14" height="14" aria-label="GitHub 仓库" />
-              <Icon v-if="repositoryState(site)?.hasFork" icon="lucide:history" width="13" height="13" aria-hidden="true" />
-              {{ repositoryState(site)?.hasFork ? '本地修改' : '仓库' }}
-            </button>
-            <span v-else-if="site.builtin" class="skill-badge builtin">内置</span>
-            <button type="button" class="icon-btn" aria-label="网站设置" title="网站设置" @click="editWebsite(site)"><Icon icon="lucide:settings-2" width="16" height="16" aria-hidden="true" /></button>
-          </div>
-        </header>
-        <div class="website-info-row">
-          <div class="website-info-main">
-            <span class="website-info-label">账号密码</span>
-            <span class="website-info-value">{{ displayAccount(site.id) }}<span v-if="siteAccountsState.rows[site.id]?.password"> · ••••••</span></span>
-            <span v-if="siteAccountsState.rows[site.id]?.note" class="website-note">{{ siteAccountsState.rows[site.id]?.note }}</span>
-          </div>
-          <div class="account-actions">
-            <button type="button" class="icon-btn" :aria-label="siteAccountsState.rows[site.id] ? '编辑账号密码' : '配置账号密码'" :title="siteAccountsState.rows[site.id] ? '编辑账号密码' : '配置账号密码'" @click="openAccount(site)"><Icon :icon="siteAccountsState.rows[site.id] ? 'lucide:square-pen' : 'lucide:key-round'" width="16" height="16" aria-hidden="true" /></button>
-            <button v-if="siteAccountsState.rows[site.id]" type="button" class="icon-btn danger" aria-label="清除账号密码" title="清除账号密码" @click="clearRow(site.id)"><Icon icon="lucide:trash" width="16" height="16" aria-hidden="true" /></button>
+    <div v-else class="agent-settings-overview">
+      <section aria-labelledby="agent-websites-heading">
+        <div class="website-section-header">
+          <h2 id="agent-websites-heading" class="agent-section-title">网站</h2>
+          <button
+            type="button"
+            class="import-repository-button icon-action-btn icon-action-btn--add icon-action-btn--sm"
+            title="导入 GitHub 仓库"
+            aria-label="导入 GitHub 仓库"
+            @click="openRepositoryImport"
+          >
+            <Icon icon="lucide:plus" width="16" height="16" aria-hidden="true" />
+          </button>
+        </div>
+        <div v-if="websiteError" class="install-error" role="alert">{{ websiteError }}</div>
+        <div v-if="siteAccountsState.saveError" class="install-error" role="alert">{{ siteAccountsState.saveError }}</div>
+        <div v-if="accountNamesError" class="install-error" role="alert">{{ accountNamesError }}</div>
+        <div v-if="websites.length" class="network-group">
+          <div v-for="site in websites" :key="site.id" class="website-row" :data-website="site.id">
+            <header class="website-card-head">
+              <div class="website-heading">
+                <span class="website-icon" aria-hidden="true">
+                  <Icon v-if="websiteIconStatus.get(websiteIconSource(site)) !== 'loaded'" icon="lucide:globe" width="20" height="20" />
+                  <img
+                    v-if="websiteIconStatus.get(websiteIconSource(site)) !== 'failed'"
+                    :key="websiteIconSource(site)"
+                    :src="websiteIconSource(site)"
+                    :class="{ 'is-loaded': websiteIconStatus.get(websiteIconSource(site)) === 'loaded' }"
+                    alt="" loading="lazy" referrerpolicy="no-referrer"
+                    @load="websiteIconStatus.set(websiteIconSource(site), 'loaded')"
+                    @error="websiteIconStatus.set(websiteIconSource(site), 'failed')"
+                  >
+                </span>
+                <h3 class="website-name" :title="site.name">{{ site.name }}</h3>
+                <span class="website-host" :title="site.host">{{ site.host }}</span>
+              </div>
+              <div class="website-actions">
+                <button
+                  v-if="site.repositoryHost" type="button" class="icon-btn" aria-label="编辑本地经验"
+                  :title="'本地经验 · ' + (hasLocalExperience(site) ? '已记录' : '尚未记录')"
+                  :disabled="!site.files.includes(siteMainPath(site))"
+                  @click="openWebsiteFile(site, siteMainPath(site), 'local')"
+                >
+                  <Icon icon="lucide:notebook-pen" width="16" height="16" aria-hidden="true" />
+                </button>
+                <button
+                  type="button" class="icon-btn"
+                  :aria-label="siteAccountsState.rows[site.id] ? '编辑账号密码' : '配置账号密码'"
+                  :title="siteAccountsState.rows[site.id] ? '账号密码 · 已配置' : '账号密码 · 未配置'"
+                  @click="openAccount(site)"
+                >
+                  <Icon icon="lucide:key-round" width="16" height="16" aria-hidden="true" />
+                </button>
+                <button
+                  type="button" class="icon-btn"
+                  :aria-label="site.repositoryHost ? '查看操作经验' : site.files.includes(siteMainPath(site)) ? '编辑操作经验' : '添加操作经验'"
+                  :title="'操作经验 · ' + experienceStatus(site)"
+                  :disabled="Boolean(site.repositoryHost) && !site.files.includes(siteMainPath(site))"
+                  @click="openWebsiteExperience(site)"
+                >
+                  <Icon icon="lucide:book-open" width="16" height="16" aria-hidden="true" />
+                </button>
+                <button
+                  type="button" class="icon-btn" aria-label="编辑导航图谱"
+                  :title="'导航图谱 · ' + (site.files.includes(siteGraphPath(site)) ? '已生成' : '尚未生成')"
+                  :disabled="!site.files.includes(siteGraphPath(site))"
+                  @click="openWebsiteFile(site, siteGraphPath(site))"
+                >
+                  <Icon icon="lucide:workflow" width="16" height="16" aria-hidden="true" />
+                </button>
+                <button type="button" class="icon-btn" aria-label="网站设置" title="网站设置" @click="editWebsite(site)">
+                  <Icon icon="lucide:settings-2" width="16" height="16" aria-hidden="true" />
+                </button>
+              </div>
+            </header>
+            <p class="website-sync-status" role="status">{{ repositoryState(site)?.error }}</p>
           </div>
         </div>
-        <div class="website-info-row">
-          <div class="website-info-main">
-            <span class="website-info-label">操作经验</span>
-            <span class="website-info-value">{{ site.repositoryHost ? repositoryLabel(site) : site.files.includes(siteMainPath(site)) ? '已记录' : '尚未记录' }}</span>
-          </div>
-          <div class="account-actions">
-            <button v-if="site.repositoryHost" type="button" class="icon-btn" :disabled="repositoryState(site)?.refreshing || repositoryState(site)?.pinned" aria-label="更新仓库操作经验" title="更新仓库操作经验，保留本地修改" @click="updateRepository(site)"><Icon icon="lucide:refresh-cw" width="16" height="16" aria-hidden="true" /></button>
-            <button type="button" class="icon-btn" :aria-label="site.files.includes(siteMainPath(site)) ? '编辑操作经验' : '添加操作经验'" :title="site.files.includes(siteMainPath(site)) ? '编辑操作经验' : '添加操作经验'" @click="openWebsiteExperience(site)"><Icon :icon="site.files.includes(siteMainPath(site)) ? 'lucide:square-pen' : 'lucide:plus'" width="16" height="16" aria-hidden="true" /></button>
-          </div>
-        </div>
-        <p v-if="repositoryState(site)?.error" class="group-hint" role="status">{{ repositoryState(site)?.error }}</p>
-        <div class="website-info-row">
-          <div class="website-info-main">
-            <span class="website-info-label">导航图谱</span>
-            <span class="website-info-value">{{ site.files.includes(siteGraphPath(site)) ? '已生成' : '尚未生成' }}</span>
-          </div>
-          <button type="button" class="icon-btn" aria-label="编辑导航图谱" title="编辑导航图谱" :disabled="!site.files.includes(siteGraphPath(site))" @click="openWebsiteFile(site, siteGraphPath(site))"><Icon icon="lucide:square-pen" width="16" height="16" aria-hidden="true" /></button>
-        </div>
-      </div>
-    </template>
+      </section>
 
-    <AgentBehaviorSettings v-else />
-    </template>
+      <section aria-labelledby="agent-behavior-heading">
+        <h2 id="agent-behavior-heading" class="agent-section-title">行为与权限</h2>
+        <AgentBehaviorSettings />
+      </section>
+    </div>
 
-    <WebsiteRepositoryHistory v-if="historyHost" :host="historyHost" @close="historyHost = ''" />
     <Teleport to="body">
-      <div v-if="repositoryImportOpen" class="dialog-overlay" @click="closeRepositoryImport">
+      <div v-if="repositoryImportOpen" class="dialog-overlay settings-popup" @click="closeRepositoryImport">
         <form class="dialog-panel account-dialog" role="dialog" aria-modal="true" aria-labelledby="repository-import-title" @click.stop @submit.prevent="repositoryCandidates.length ? confirmRepositoryImport() : inspectRepository()" @keydown.escape.prevent="closeRepositoryImport">
           <div class="dialog-header"><h3 id="repository-import-title" class="dialog-title">导入 GitHub 网站仓库</h3></div>
           <div class="dialog-body">
@@ -133,17 +125,19 @@
     </Teleport>
 
     <Teleport to="body">
-      <div v-if="websiteDialogOpen" class="dialog-overlay" @click="closeWebsiteDialog">
-        <form class="dialog-panel account-dialog" @click.stop @submit.prevent="submitWebsite">
+      <div v-if="websiteDialogOpen" class="dialog-overlay settings-popup" @click="closeWebsiteDialog">
+        <form class="dialog-panel account-dialog" role="dialog" aria-modal="true" aria-labelledby="website-dialog-title" @click.stop @submit.prevent="submitWebsite" @keydown.escape.prevent="closeWebsiteDialog">
           <div class="dialog-header">
-            <button type="button" class="btn-back" :disabled="savingWebsite" @click="closeWebsiteDialog">取消</button>
-            <h3 class="dialog-title">网站设置</h3>
+            <button type="button" class="btn-back" aria-label="返回" title="返回" :disabled="savingWebsite" @click="closeWebsiteDialog">
+              <Icon icon="lucide:chevron-left" width="18" height="18" aria-hidden="true" />
+            </button>
+            <h3 id="website-dialog-title" class="dialog-title">网站设置</h3>
             <button type="submit" class="btn-confirm" :disabled="savingWebsite || !websiteForm.host.trim()">{{ savingWebsite ? '保存中…' : '保存' }}</button>
           </div>
           <div class="dialog-body">
             <div class="form-group">
               <label class="form-label" for="website-host">网站网址</label>
-              <input id="website-host" v-model="websiteForm.host" class="form-input" placeholder="例如 example.com" autocomplete="url" required disabled @keydown.escape.prevent="closeWebsiteDialog">
+              <input id="website-host" v-model="websiteForm.host" class="form-input" placeholder="例如 example.com" autocomplete="url" required disabled>
             </div>
             <div class="form-group">
               <label class="form-label" for="website-name">网站名称</label>
@@ -161,7 +155,7 @@
     </Teleport>
 
     <Teleport to="body">
-      <div v-if="dialogOpen" class="dialog-overlay" @click="closeDialog">
+      <div v-if="dialogOpen" class="dialog-overlay settings-popup" @click="closeDialog">
         <div class="dialog-panel account-dialog account-editor-dialog" role="dialog" aria-modal="true" aria-labelledby="account-dialog-title" @click.stop @keydown.escape.prevent="closeDialog">
           <div class="dialog-header">
             <h3 id="account-dialog-title" class="dialog-title">{{ dialogMode === 'add' ? '添加账号' : '编辑账号' }}</h3>
@@ -181,6 +175,9 @@
               <SecureSecretInput :key="`password-${accountSite?.id}`" id="agent-acc-password" v-model="form.password" label="密码" placeholder="登录密码" required @keydown.escape.prevent="closeDialog" />
             </div>
             <div class="account-dialog-footer">
+              <button v-if="accountSite && siteAccountsState.rows[accountSite.id]" type="button" class="text-btn danger account-delete" @click="clearAccount">
+                清除账号密码
+              </button>
               <button type="button" class="account-dialog-cancel" @click="closeDialog">取消</button>
               <button type="submit" class="btn-confirm" :disabled="!canSubmit()">{{ dialogMode === 'add' ? '添加' : '保存' }}</button>
             </div>
@@ -198,29 +195,26 @@ import { Icon } from '@iconify/vue/offline'
 import '../../utils/ui/agentIcons'
 import AgentSkillDetail from './AgentSkillDetail.vue'
 import AgentBehaviorSettings from './AgentBehaviorSettings.vue'
-import WebsiteRepositoryHistory from './WebsiteRepositoryHistory.vue'
 import { agentSkillsState } from '../../services/agent/agentSkills'
 import SecureSecretInput from '../../components/ui/SecureSecretInput.vue'
 import { isNativeSecureStore, isSecretReference } from '../../services/security/secureStore'
 import { forgetSiteAccount, rememberSiteAccount, siteAccountsState, refreshSiteAccounts } from '../../services/agent/siteAccounts'
 import { addWebsiteSettings, listWebsiteSettings, type WebsiteSettingsItem } from '../../services/agent/websiteSettings'
 import { websiteIdentityState } from '../../services/agent/websiteIdentity'
-import { websiteRepositoryStates, repositoryRegistryState, refreshWebsiteRepository, previewWebsiteRepository, importWebsiteRepository, type WebsiteRepositoryCandidate } from '../../services/agent/websiteRepository'
+import { websiteRepositoryStates, repositoryRegistryState, previewWebsiteRepository, importWebsiteRepository, type WebsiteRepositoryCandidate } from '../../services/agent/websiteRepository'
 
 const emit = defineEmits<{ 'skill-detail-change': [open: boolean] }>()
-const activePane = ref<'websites' | 'behavior'>('websites')
 const websites = ref<WebsiteSettingsItem[]>([])
 const websiteIconStatus = ref(new Map<string, 'loaded' | 'failed'>())
 const websiteIconSource = (site: WebsiteSettingsItem) => site.iconUrl || `https://${site.host}/favicon.ico`
 const websiteError = ref('')
-const historyHost = ref('')
 const repositoryState = (site: WebsiteSettingsItem) => site.repositoryHost ? websiteRepositoryStates[site.repositoryHost] : undefined
-const repositoryLabel = (site: WebsiteSettingsItem) => {
+const hasLocalExperience = (site: WebsiteSettingsItem) => repositoryState(site)?.changedPaths.includes('SKILL.md') ?? false
+const experienceStatus = (site: WebsiteSettingsItem) => {
+  if (!site.repositoryHost) return site.files.includes(siteMainPath(site)) ? '已记录' : '尚未记录'
   const state = repositoryState(site)
-  return state?.pinned ? '历史快照' : state?.refreshing ? '正在更新' : state?.conflicts.length ? '本地修改 · 待合并' : state?.changedPaths.length ? '本地修改' : state?.source === 'repository' ? '仓库版本已缓存' : '内置离线副本'
-}
-const updateRepository = async (site: WebsiteSettingsItem) => {
-  try { if (site.repositoryHost) await refreshWebsiteRepository(site.repositoryHost, true) } catch (error) { websiteError.value = error instanceof Error ? error.message : '更新失败，已保留缓存' }
+  if (state?.refreshing) return '同步中…'
+  return state?.source === 'repository' ? '已同步' : '离线资料'
 }
 const repositoryImportOpen = ref(false), repositoryImportBusy = ref(false), repositoryImportUrl = ref(''), repositoryImportError = ref('')
 const repositoryCandidates = ref<WebsiteRepositoryCandidate[]>([]), repositoryCandidateIndex = ref(0)
@@ -281,16 +275,17 @@ const accountName = (id: string) => {
   if (!reference) return ''
   return isSecretReference(reference) ? accountNames.value[id] || '' : reference
 }
-const displayAccount = (id: string) => accountName(id) || (siteAccountsState.rows[id]?.account ? '已保存账号' : '未配置')
 
 const selectedWebsite = ref<WebsiteSettingsItem | null>(null)
 const selectedWebsitePath = ref('')
+const selectedWebsiteMode = ref<'view' | 'local'>('view')
 watch(selectedWebsite, site => emit('skill-detail-change', Boolean(site)))
 const siteMainPath = (site: WebsiteSettingsItem) => site.siteHost ? `sites/${site.siteHost}/SKILL.md` : 'SKILL.md'
 const siteGraphPath = (site: WebsiteSettingsItem) => site.siteHost ? `sites/${site.siteHost}/site-graph.json` : 'site-graph.json'
-const openWebsiteFile = (site: WebsiteSettingsItem, path: string) => {
+const openWebsiteFile = (site: WebsiteSettingsItem, path: string, mode: 'view' | 'local' = 'view') => {
   if (!site.files.includes(path)) return
   selectedWebsitePath.value = path
+  selectedWebsiteMode.value = mode
   selectedWebsite.value = site
 }
 const openWebsiteExperience = async (site: WebsiteSettingsItem) => {
@@ -337,7 +332,11 @@ const submitDialog = () => {
   rememberSiteAccount(accountSite.value.id, { account: form.account.trim() || siteAccountsState.rows[accountSite.value.id]?.account || '', password: form.password || siteAccountsState.rows[accountSite.value.id]?.password || '', note: form.note.trim() })
   closeDialog()
 }
-const clearRow = (id: string) => { forgetSiteAccount(id) }
+const clearAccount = () => {
+  if (!accountSite.value || !siteAccountsState.rows[accountSite.value.id]) return
+  forgetSiteAccount(accountSite.value.id)
+  closeDialog()
+}
 
 const websiteDialogOpen = ref(false)
 const savingWebsite = ref(false)
@@ -370,38 +369,33 @@ const submitWebsite = async () => {
 @import '../../styles/dialog.css';
 </style>
 
+<style scoped src="../../styles/icon-action-button.css"></style>
+
 <style scoped>
-.agent-pane-nav { display: flex; align-items: center; gap: 4px; margin-bottom: 4px; padding: 12px 0 4px; }
-.agent-pane-tab { border: none; background: transparent; color: var(--text-secondary); font-size: 13px; font-weight: 500; padding: 6px 10px; border-radius: 6px; cursor: pointer; }
-.agent-pane-tab:hover, .agent-pane-tab.active { color: var(--text-primary); }
-.pane-intro { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
-.import-repository-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid var(--border-color); border-radius: 8px; padding: 7px 10px; color: var(--text-primary); background: var(--hover-bg, rgba(0, 0, 0, .04)); font: inherit; font-size: 12px; white-space: nowrap; cursor: pointer; }
-.import-repository-button:hover { background: color-mix(in srgb, var(--text-primary) 8%, transparent); }
+.agent-settings-overview { display: flex; flex-direction: column; gap: 20px; padding-top: 12px; }
+
+.agent-section-title { margin: 0 0 8px; color: var(--text-primary); font-size: 14px; font-weight: 600; }
+.website-section-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.website-section-header .agent-section-title { margin: 0; }
 .repository-candidates { display: flex; flex-direction: column; gap: 10px; }
 .repository-candidate { display: flex; align-items: center; gap: 10px; padding: 12px; border: 1px solid var(--border-color); border-radius: 10px; cursor: pointer; }
 .repository-candidate img { flex-shrink: 0; object-fit: contain; }
 .repository-candidate > span { display: flex; flex-direction: column; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
 .repository-candidate > span > span { color: var(--text-secondary); font-size: 12px; }
 .group-hint { margin: 0; font-size: 12px; line-height: 1.5; color: var(--text-secondary); }
-.network-group { background: var(--network-group-bg); border: 1px solid var(--border-color); border-radius: 14px; padding: 0 16px; margin: 12px 0; box-shadow: 0 2px 12px rgba(0, 0, 0, 0.05); }
-.website-card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 0 12px; }
-.website-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
+.network-group { position: relative; background: var(--network-group-bg); border: 1px solid var(--border-color); border-radius: 14px; padding: 0 12px; margin: 8px 0; box-shadow: 0 2px 12px rgba(0, 0, 0, 0.05); }
+.website-row { position: relative; }
+.website-row + .website-row { border-top: 1px solid var(--border-color); }
+.website-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 52px; }
+.website-heading { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .website-icon { position: relative; display: inline-flex; align-items: center; justify-content: center; flex: 0 0 24px; width: 24px; height: 24px; color: var(--text-secondary); }
 .website-icon img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; border-radius: 5px; opacity: 0; }
 .website-icon img.is-loaded { opacity: 1; }
-.website-name { margin: 0; font-size: 14px; font-weight: 500; color: var(--text-primary); overflow-wrap: anywhere; }
-.website-host { color: var(--text-secondary); font-size: 12px; overflow-wrap: anywhere; }
-.skill-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; line-height: 1; padding: 3px 6px; border-radius: 999px; background: var(--hover-bg, rgba(0, 0, 0, 0.05)); color: var(--text-secondary); flex-shrink: 0; }
-.skill-badge svg { flex-shrink: 0; }
-.repository-history-button { border: none; cursor: pointer; }
-.repository-history-button:hover { background: color-mix(in srgb, var(--text-primary) 10%, transparent); }
-.repository-history-button:focus-visible { outline: 2px solid var(--color-primary, #6a8cc6); outline-offset: 2px; }
-.website-info-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-inline-start: 32px; padding: 12px 0; border-top: 1px solid var(--border-color); }
-.website-info-main { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; min-width: 0; font-size: 12px; }
-.website-info-label { color: var(--text-primary); font-weight: 500; }
-.website-info-value { color: var(--text-secondary); overflow-wrap: anywhere; }
-.website-note { flex-basis: 100%; color: var(--text-secondary); line-height: 1.5; overflow-wrap: anywhere; }
-.account-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.website-name, .website-host { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.website-name { flex: 0 1 auto; margin: 0; font-size: 14px; font-weight: 500; color: var(--text-primary); }
+.website-host { flex: 0 2 auto; color: var(--text-secondary); font-size: 12px; }
+.website-actions { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+.website-sync-status { position: absolute; width: 1px; height: 1px; margin: 0; overflow: hidden; clip-path: inset(50%); }
 .account-site-label { margin-bottom: 16px; }
 .icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: none; border-radius: 6px; background: transparent; color: var(--text-secondary); cursor: pointer; flex-shrink: 0; transition: background-color 120ms ease, color 120ms ease, transform 120ms ease-out; }
 .icon-btn:focus-visible { outline: 2px solid var(--color-primary, #3b82f6); outline-offset: 2px; transition: none; }
@@ -409,7 +403,6 @@ const submitWebsite = async () => {
 .icon-btn:disabled { opacity: .45; cursor: not-allowed; }
 @media (hover: hover) and (pointer: fine) {
   .icon-btn:hover:not(:disabled) { color: var(--text-primary); background: var(--hover-bg, rgba(0, 0, 0, .04)); }
-  .icon-btn.danger:hover:not(:disabled) { color: var(--color-error, #c2410c); }
 }
 @media (prefers-reduced-motion: reduce) {
   .icon-btn { transition: none; }
@@ -417,22 +410,13 @@ const submitWebsite = async () => {
 }
 .text-btn { border: none; background: transparent; color: var(--text-secondary); font-size: 12px; padding: 4px 6px; border-radius: 6px; cursor: pointer; flex-shrink: 0; }
 .text-btn:hover:not(:disabled) { color: var(--text-primary); background: var(--hover-bg, rgba(0, 0, 0, 0.04)); }
-.text-btn.danger:hover { color: #c2410c; }
+.account-delete { margin-inline-end: auto; color: var(--color-error, #c2410c); }
+.account-delete:hover:not(:disabled) { color: var(--color-error, #c2410c); }
 .text-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 .install-error { margin: 8px 0; font-size: 12px; color: var(--color-error, #c2410c); overflow-wrap: anywhere; }
-.account-dialog { width: 440px; max-width: calc(100vw - 32px); }
 .account-editor-dialog { --account-corner: 24px; position: relative; border-radius: var(--account-corner); }
 .account-editor-dialog .dialog-header { box-sizing: border-box; min-height: 48px; justify-content: center; padding: 12px 76px; }
 .account-editor-dialog .dialog-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center; }
-.account-dialog-footer { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding-top: 4px; }
-.account-dialog-cancel { border: none; border-radius: 999px; padding: 6px 14px; font-size: 14px; font-weight: 500; background: color-mix(in srgb, var(--text-primary) 10%, var(--platform-config-dialog-bg)); color: var(--text-primary); cursor: pointer; transition: background-color 150ms ease; }
-.account-dialog-cancel:focus-visible { outline: 2px solid var(--color-primary, #3b82f6); outline-offset: 2px; }
-@media (hover: hover) and (pointer: fine) {
-  .account-dialog-cancel:hover { background: color-mix(in srgb, var(--text-primary) 15%, var(--platform-config-dialog-bg)); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .account-dialog-cancel { transition: none; }
-}
 .pwd-wrap { position: relative; display: flex; align-items: center; }
 .pwd-wrap .form-input { padding-right: 56px; }
 .pwd-toggle { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); }

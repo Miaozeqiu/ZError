@@ -1,6 +1,6 @@
 <template>
   <Teleport to="body">
-    <div v-if="visible" class="dialog-overlay" @click="handleOverlayClick">
+    <div v-if="visible" class="dialog-overlay settings-popup" @click="handleOverlayClick">
       <div class="dialog-panel unsaved-panel" role="dialog" aria-modal="true" aria-labelledby="skill-unsaved-title" @click.stop>
         <div class="dialog-header">
           <button type="button" class="btn-back" title="取消" @click="emit('cancel')">

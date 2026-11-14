@@ -17,7 +17,7 @@ vi.mock('../../src/services/browser/control', async () => {
 })
 vi.mock('../../src/services/model/config', () => ({
   modelHasVision: () => false,
-  modelConfigManager: { ready: Promise.resolve(), getSelectedAgentModel: () => ({ id: 'test-model' }),
+  modelConfigManager: { ready: Promise.resolve(), getPlatformApiKey: () => 'test-key', getSelectedAgentModel: () => ({ id: 'test-model' }),
     getSelectedTextModel: () => ({ id: 'test-model' }),
     getSettings: () => ({ platforms: [{ id: 'test', apiKey: 'test-key', baseUrl: 'https://model.test', models: [{ id: 'test-model' }] }] }) },
 }))

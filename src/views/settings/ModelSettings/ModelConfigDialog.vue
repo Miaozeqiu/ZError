@@ -79,7 +79,7 @@
                 <div
                   v-if="showModelDropdown && fetchedModelList.length > 0"
                   ref="modelDropdownRef"
-                  class="qa-dropdown"
+                  class="qa-dropdown settings-popup"
                   :style="modelDropdownStyle"
                   @mousedown.prevent
                 >
@@ -114,6 +114,13 @@
                 :readonly="isRemote"
                 :disabled="isRemote"
               >
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="model-max-output-tokens">最大输出长度</label>
+              <input id="model-max-output-tokens" v-model.number="formData.maxTokensOverride" type="number"
+                class="form-input" min="1" step="1" :placeholder="String(defaultOutputTokens)">
+              <p class="form-hint">单位为 token，留空使用默认值。部分模型的思考会占用这项额度，实际请求还受上下文窗口和服务端限制。</p>
             </div>
 
             <div class="form-group">
@@ -255,10 +262,13 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useModelConfigDialog, Props, Emits } from './useModelConfigDialog'
+import { resolveModelOutputLimit } from '../../../services/model/contextBudget'
 
 const props = defineProps<Props>()
 const emit = defineEmits<Emits>()
+const defaultOutputTokens = computed(() => resolveModelOutputLimit({ maxTokens: props.model?.maxTokens }))
 
 const {
   thinkingEffortOptions, effortMatrixRaf, effortMatrixStop, effortMatrixIo, effortMatrixRo, stopEffortMatrixFx, startEffortMatrixFx, bindEffortMatrix, modelDropdownAnchorRef, modelIdInputRef, modelDropdownRef, modelDropdownStyle, isFetchingModels, showModelDropdown, fetchedModelList, formData, isEditing, isRemote, effortMaxIndex, EFFORT_THUMB_PX, effortBarRef, effortSlide, isDraggingEffort, effortIndex, isMaxEffort, effortThumbOffset, effortFillWidth, effortStopLeft, effortThumbLeft, snapEffortValue, applyEffortMagnet, slideEffortFromClientX, suppressEffortSelectStart, lockEffortTextSelect, onEffortPointerDown, onEffortPointerMove, onEffortPointerUp, onEffortKeydown, dialogTitle, requiresModelId, isChatProtocol, isResponsesProtocol, isMessagesProtocol, isFormValid, filteredFetchedModels, groupedFetchedModels, updateModelDropdownPosition, modelDropdownBlurTimer, clearModelDropdownBlurTimer, openModelDropdown, closeModelDropdown, normalizeBaseUrl, modelsCacheByBaseUrl, fetchModelsGeneration, tauriFetchPromise, getTauriFetch, applyFetchedModels, restoreModelsFromCache, handleModelIdFocus, toggleModelDropdown, handleModelIdBlur, handleModelIdInput, handleModelDropdownOutsideClick, handleModelDropdownViewportChange, parseModelsResponse, fetchModels, selectFetchedModel, DEFAULT_JS_CODE, DEFAULT_VISION_JS_CODE, thinkingPresetOptions, buildCurrentPresetJsCode, syncPresetJsCode, EFFORT_VALUES, normalizeEffort, normalizeOffResponsesEffort, createDialogFormData, readEnableThinkingFromJsCode, applyEnableThinkingToJsCode, deriveEnableThinking, showAdvancedCode, applyModelIdToJsCode, onDialogAfterLeave, cmContainerRef, cmView, themeObserver, rebuildEditorWithDoc, jsSyntaxLinter, initCodeMirror, setEditorDoc, handleOverlayClick, handlePrimaryAction, handleSubmit, isTestingModel, modelTestStatus, modelTestMessage, modelTestElapsedMs, modelTestAbort, canTestModel, modelTestCardClass, modelTestTitle, modelTestTooltip, modelTestMeta, resetModelTestState, isAbortError, collectProcessModelOutput, testModelAvailability

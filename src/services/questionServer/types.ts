@@ -10,17 +10,30 @@ export interface MultiModelResponse {
   isLoading: boolean
 }
 
+export type LocalQuestionSearch = 'hit' | 'miss' | 'failed' | 'unconfirmed'
+
+export interface LocalQuestionMatch {
+  id: number
+  question: string
+  similarity: number
+  status?: 'similar' | 'candidate' | 'used'
+}
+
 export interface RequestLog {
   id: string
   timestamp: number
   method: string
   path: string
+  requestTarget?: string
+  remoteAddress?: string
+  httpStatus?: number
   status?: number
   ip: string
   userAgent: string
   responseTime?: number
   requestBody?: string
   responseBody?: string
+  responseHeaders?: Record<string, string>
   headers?: Record<string, string>
   stage?: string
   modelResponse?: string
@@ -33,6 +46,8 @@ export interface RequestLog {
     modelId: string
   }
   multiModelResponses?: MultiModelResponse[]
+  localSearch?: LocalQuestionSearch
+  localMatches?: LocalQuestionMatch[]
   searchTraces?: SearchTrace[]
   urlQuestion?: {
     title: string

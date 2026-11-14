@@ -222,3 +222,53 @@ test('search caches are isolated by provider and API key', async () => {
   await performWebSearch('provider cache isolation', { ...settings, deepseekApiKey: 'key-two' })
   assert.equal(calls, 2)
 })
+
+test.each([
+  {
+    provider: 'tavily',
+    field: 'tavilyApiKey',
+    endpoint: 'https://api.tavily.com/search',
+    header: 'Authorization',
+    value: 'Bearer synthetic-key',
+    body: { query: '测试搜索', search_depth: 'basic', max_results: 5 },
+    payload: { results: [{ title: '示例', url: 'https://example.test/', content: '相关片段' }] },
+  },
+  {
+    provider: 'brave',
+    field: 'braveApiKey',
+    endpoint: 'https://api.search.brave.com/res/v1/web/search',
+    header: 'X-Subscription-Token',
+    value: 'synthetic-key',
+    payload: { web: { results: [{ title: '示例', url: 'https://example.test/', description: '相关片段' }] } },
+  },
+  {
+    provider: 'you',
+    field: 'youApiKey',
+    endpoint: 'https://ydc-index.io/v1/search',
+    header: 'X-API-Key',
+    value: 'synthetic-key',
+    body: { query: '测试搜索', count: 5 },
+    payload: { results: { web: [{ title: '示例', url: 'https://example.test/', snippets: ['相关片段'] }] } },
+  },
+] as const)('$provider sends its own key and returns searchable excerpts', async (fixture) => {
+  fetchImpl = async (url, init) => {
+    const requestUrl = new URL(url)
+    assert.equal(requestUrl.origin + requestUrl.pathname, fixture.endpoint)
+    assert.equal(new Headers(init.headers).get(fixture.header), fixture.value)
+    if ('body' in fixture) {
+      assert.equal(init.method, 'POST')
+      assert.deepEqual(JSON.parse(init.body), fixture.body)
+    } else {
+      assert.equal(init.method ?? 'GET', 'GET')
+      assert.equal(requestUrl.searchParams.get('q'), '测试搜索')
+      assert.equal(requestUrl.searchParams.get('count'), '5')
+    }
+    return json(fixture.payload)
+  }
+  const outcome = await performWebSearch('测试搜索', {
+    ...config, apiKey: 'unrelated-exa-key', provider: fixture.provider, [fixture.field]: ' synthetic-key ',
+  }, { force: true })
+  assert.equal(outcome.toolName, `${fixture.provider}_search`)
+  assert.deepEqual(outcome.results, [{ title: '示例', url: 'https://example.test/', snippet: '相关片段' }])
+  assert.match(formatSearchContextForModel(outcome), /相关片段/)
+})

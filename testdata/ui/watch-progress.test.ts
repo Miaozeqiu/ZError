@@ -28,7 +28,8 @@ describe('visible video watch progress', () => {
   it('updates elapsed time and progress while the model waits, and retains progress when paused', async () => {
     const live = startWatch()
     mount(() => h(BrowserAgentWatchBar, { browserId: 'video-tab' }))
-    expect(root.textContent).toContain('监控中 · 当前视频 0:20 / 1:40')
+    expect(root.querySelector('.watch-bar-text')?.textContent).toBe('监控中 · 当前视频')
+    expect(root.querySelector('.watch-bar-clock')?.textContent).toBe('0:20 / 1:40')
     expect(progress()?.getAttribute('aria-valuenow')).toBe('20')
     live.current = 35; await nextTick()
     expect(progress()?.getAttribute('aria-valuenow')).toBe('35')
@@ -108,4 +109,47 @@ describe('visible video watch progress', () => {
     app.unmount()
     expect(disconnect).toHaveBeenCalledOnce()
   })
+})
+
+it('keeps choosing and pasting images available with a text-only Agent model', async () => {
+  const open = vi.fn()
+  const addFolder = vi.fn()
+  const paste = vi.fn()
+  const chooseVision = vi.fn()
+  const image = new File(['image'], 'screenshot.png', { type: 'image/png' })
+  const images = reactive([])
+  mount(() => h(Composer, {
+    draft: '', threadPinned: true, composerFiles: [], composerImages: images,
+    sending: false, canSubmit: false, agentHasVision: false, agentModelLabel: '文本模型',
+    composerPlaceholder: '发送消息', contextUsagePercent: 0, contextCompacting: false,
+    contextUsageLabel: '', contextRingDash: '', contextUsageRows: [], contextTipNote: '', fileManagerLabel: '访达',
+    onAddAttachments: open, onAddFolder: addFolder, onPasteImages: paste, onChooseVisionModel: chooseVision,
+  }))
+
+  const trigger = root.querySelector<HTMLButtonElement>('button[aria-label="添加附件"]')!
+  const menu = () => root.querySelector('.composer-attachment-menu')
+  expect(root.querySelectorAll('.composer-add')).toHaveLength(1)
+  trigger.click()
+  await nextTick()
+  expect(trigger.getAttribute('aria-expanded')).toBe('true')
+  menu()!.querySelector<HTMLButtonElement>('button')!.click()
+  expect(open).toHaveBeenCalledOnce()
+  await nextTick()
+  expect(menu()).toBeNull()
+  trigger.click()
+  await nextTick()
+  menu()!.querySelectorAll<HTMLButtonElement>('button')[1].click()
+  expect(addFolder).toHaveBeenCalledOnce()
+  const event = new Event('paste', { bubbles: true, cancelable: true })
+  Object.defineProperty(event, 'clipboardData', { value: {
+    items: [{ kind: 'file', type: 'image/png', getAsFile: () => image }], files: [image],
+  } })
+  root.querySelector('[role="textbox"]')!.dispatchEvent(event)
+  expect(event.defaultPrevented).toBe(true)
+  expect(paste).toHaveBeenCalledExactlyOnceWith([image])
+
+  images.push({ kind: 'image', filePath: 'image:test', fileName: image.name, imageUrl: 'data:image/png;base64,aW1hZ2U=' })
+  await nextTick()
+  root.querySelector<HTMLButtonElement>('.composer-image-notice button')!.click()
+  expect(chooseVision).toHaveBeenCalledOnce()
 })

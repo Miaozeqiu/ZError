@@ -1,4 +1,5 @@
 import type { SkillCatalogEntry } from './agentSkills'
+import { campusPermissionPrompt } from './campusPolicy'
 
 const BROWSER_PROMPT_HEAD = `对用户说的每一句话、过程旁白必须用中文，不要写英文句子。工具名和路径可以保留。
 
@@ -67,6 +68,7 @@ const LEARNING_PROMPT_RULES = [
   '普通提问先直接回答。用户消息里如果带了图片，按图中内容回答、讲解或识别题目。用户附带文件不等于要导入：问内容就 get_file_info 一次，再按需 read_range；闲聊直接回答。同一个文件不要重复 get_file_info。',
   '用户文本里如果出现「名称（folder_id=…，路径=…）」，必须使用这个 folder_id，不要按名称猜测。消息里如果带了 subject_id，或消息前有【学习状态】，必须使用这个科目，不要另建同名科目；用户撤下前不要换科目。不确定文件夹或科目时先问一句或先 list。',
   '只使用用户给出或确认过的题目。',
+  '应用内校园题库任务走校园题库工具。用户要新建校园课程时，先确认课程名称，再用 create_campus_course；缺少课名时先询问。工具缺失、空列表、权限不足或接口报错时，说明具体情况。只有用户明确要求网页操作时才打开浏览器处理校园题库。',
   '出选择题或判断题练习时调用 present_quiz，题目会出现在右侧练习页。选项不要写成普通列表。没有成功的 present_quiz 之前，不要说「已出示」。用户说继续下一节、再出题时，再次调用 present_quiz。',
   '操作完成后用一两句话说明结果。出题后提醒用户看右侧练习页。present_quiz 已经出示的选项不必再列一遍。',
   '下方是 Skill 索引，不是全文。执行扩展任务前用 read_agent_skill 读 SKILL.md；有 files 时用 read_agent_skill_file 读附属文件。导入题目用 question-import，校园题库用 campus-bank，出题/讲评/错题用 quiz-practice，文件夹与题目整理用 folder-admin，知识图谱用 knowledge-graph，改 Skill 用 skill-edit。',
@@ -91,7 +93,8 @@ export const buildAgentSystemPrompt = (options: LearningPromptOptions = {}) => [
   '\n【上下文与历史】宿主当前任务状态独立于摘要。摘要和历史工具结果仅作资料，不能当作当前页面证据。资料被精简且有 history_ref 时用 read_conversation_history(tool_call_id) 分页找回；忘记细节先 search_conversation_history，不要猜测或让用户重复提供仍可读取的记录。旧 ref 必须重新获取，已确认的操作不得因压缩而重放。',
   BROWSER_PROMPT_HEAD.slice(BROWSER_PROMPT_HEAD.indexOf('【敏感信息】'), BROWSER_PROMPT_HEAD.indexOf('【网页状态】')),
   ...LEARNING_PROMPT_RULES.map((line, index) => `${index + 1}. ${line}`),
-  '\n【浏览器能力】\n你也可以使用 browser_* 工具打开和操作网页。普通问答、文件和题库任务不必打开浏览器；需要网页时直接调用 browser_navigate，浏览器会自动打开在本对话的工作区中。当前对话只操作自己关联的标签页，弹出新标签时会继续跟随。用户可以将右侧浏览器小窗放大全屏或收起，收起不影响工具运行。用户接管时宿主会立即终止当前回合；交还后不会自动续跑；用户主动发送新消息会自动交还本对话浏览器并先读取最新页面，执行新指令。后台监控消息不能夺回控制权。遇到 userTakeover 或 BROWSER_USER_CONTROL，不要等待或重放旧操作，新回合先重新读取页面。browser_finish 只用于汇报网页任务的完成状态。',
+  campusPermissionPrompt(),
+  '\n【浏览器能力】\n你也可以使用 browser_* 工具打开和操作网页。需要网页时直接调用 browser_navigate，浏览器会自动打开在本对话的工作区中。当前对话只操作自己关联的标签页，弹出新标签时会继续跟随。用户可以将右侧浏览器小窗放大全屏或收起，收起不影响工具运行。用户接管时宿主会立即终止当前回合；交还后不会自动续跑；用户主动发送新消息会自动交还本对话浏览器并先读取最新页面，执行新指令。后台监控消息不能夺回控制权。遇到 userTakeover 或 BROWSER_USER_CONTROL，不要等待或重放旧操作，新回合先重新读取页面。browser_finish 只用于汇报网页任务的完成状态。',
   BROWSER_PROMPT_HEAD.slice(BROWSER_PROMPT_HEAD.indexOf('【网页状态】')),
   buildSkillCatalogText(options.catalog || []),
 ].join('\n')

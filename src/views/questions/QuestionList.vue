@@ -94,7 +94,7 @@
 
           <transition name="search-expand">
             <input v-if="searchOpen" ref="searchInputRef" type="text" v-model="searchTerm" @input="handleSearch"
-              @keyup.enter="performSearch" @blur="collapseSearch" placeholder="搜索题目标题..." class="search-input" />
+              @keyup.enter="performSearch()" @blur="collapseSearch" placeholder="搜索题目标题..." class="search-input" />
           </transition>
           <button v-if="searchOpen && searchTerm" @mousedown.prevent.stop="clearSearch" class="clear-button">
             ✕
@@ -196,24 +196,26 @@
           </thead>
           <tbody>
             <tr v-for="question in questions" :key="question.id" class="question-row"
-              :class="{ active: selectedQuestionId === question.id, selected: selectedQuestions.has(question.id) }"
+              :class="{ active: selectedQuestionId === question.id, selected: selectedQuestions.has(question.id), 'is-cut': cutQuestionIds.has(question.id) }"
               @click="handleQuestionClick(question)" @contextmenu.prevent.stop="handleRightClick($event, question)">
               <td class="col-checkbox" @click.stop>
-                <input type="checkbox" :checked="selectedQuestions.has(question.id)"
-                  @change="handleQuestionSelect(question.id, $event)" class="question-checkbox" />
+                <label class="question-checkbox-hit-area">
+                  <input type="checkbox" :checked="selectedQuestions.has(question.id)" :aria-label="`选择题目 ${question.id}`"
+                    @change="handleQuestionSelect(question.id, $event)" class="question-checkbox" />
+                </label>
               </td>
               <td class="col-question">
                 <div class="cell-question">
-                  <template v-if="isSearchMode && searchTerm">
-                    <span v-html="highlightSearchTerm(question.question)"></span>
-                  </template>
-                  <template v-else>
-                    <template v-for="(part, i) in getContentParts(question.question)" :key="question.id + '-' + i">
-                      <span v-if="part.type === 'text'">{{ part.text }}</span>
-                      <img v-else-if="imgSrc(part.url as string)" :src="imgSrc(part.url as string)"
-                        :class="['list-image', invertClass(part.url as string)]" />
-                      <span v-else class="image-loading">[图片加载中]</span>
+                  <template v-for="(part, i) in getContentParts(question.question)" :key="question.id + '-' + i">
+                    <template v-if="part.type === 'text'">
+                      <template v-for="(chunk, index) in highlightSearchTerm(part.text || '')" :key="index">
+                        <mark v-if="chunk.matched" class="search-highlight">{{ chunk.text }}</mark>
+                        <template v-else>{{ chunk.text }}</template>
+                      </template>
                     </template>
+                    <img v-else-if="imgSrc(part.url as string)" :src="imgSrc(part.url as string)"
+                      :class="['list-image', invertClass(part.url as string)]" />
+                    <span v-else class="image-loading">[图片加载中]</span>
                   </template>
                 </div>
                 <div v-if="knowledgeFor(question.id).length" class="knowledge-tags">
@@ -231,7 +233,12 @@
                 <div class="cell-question">
                   <template v-for="(part, i) in getContentParts(question.options || '')"
                     :key="'opt-' + question.id + '-' + i">
-                    <span v-if="part.type === 'text'">{{ part.text }}</span>
+                    <template v-if="part.type === 'text'">
+                      <template v-for="(chunk, index) in highlightSearchTerm(part.text || '')" :key="index">
+                        <mark v-if="chunk.matched" class="search-highlight">{{ chunk.text }}</mark>
+                        <template v-else>{{ chunk.text }}</template>
+                      </template>
+                    </template>
                     <img v-else-if="imgSrc(part.url as string)" :src="imgSrc(part.url as string)"
                       :class="['list-image', invertClass(part.url as string)]" />
                     <span v-else class="image-loading">[图片加载中]</span>
@@ -242,11 +249,12 @@
                 <span v-if="!question.answer">暂无答案</span>
                 <div v-else class="cell-answer">
                   <template v-for="(part, i) in getContentParts(question.answer)" :key="'ans-' + question.id + '-' + i">
-                    <span
-                      v-if="part.type === 'text' && isSearchMode && searchTerm"
-                      v-html="highlightSearchTerm(part.text || '')"
-                    ></span>
-                    <span v-else-if="part.type === 'text'">{{ part.text }}</span>
+                    <template v-if="part.type === 'text'">
+                      <template v-for="(chunk, index) in highlightSearchTerm(part.text || '')" :key="index">
+                        <mark v-if="chunk.matched" class="search-highlight">{{ chunk.text }}</mark>
+                        <template v-else>{{ chunk.text }}</template>
+                      </template>
+                    </template>
                     <img v-else-if="imgSrc(part.url as string)" :src="imgSrc(part.url as string)"
                       :class="['list-image', invertClass(part.url as string)]" />
                     <span v-else class="image-loading">[图片加载中]</span>
@@ -328,6 +336,7 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import QuestionContextMenu from './QuestionContextMenu.vue';
 import QuestionBatchDeleteConfirmDialog from './QuestionBatchDeleteConfirmDialog.vue';
 import QuestionEditor from './QuestionEditor.vue';
@@ -351,6 +360,12 @@ const emit = defineEmits<{
 const {
   PENDING_CORRECTION_FOLDER_ID, questions, knowledgeByQuestion, loading, hasLoaded, listTransitionName, selectedQuestionId, selectedQuestionDetails, showDetailOverlay, folderPath, knowledgeFor, openKnowledge, loadKnowledgeLinks, currentPage, pageSize, totalQuestions, pageBeforeSearch, searchTerm, isSearchMode, searchDebounceTimer, highlightTerms, createTimeSortOrder, listContentKey, loadGeneration, hasSelectedFolder, parseFolderId, isResizing, overlayWidth, startX, startWidth, importButtonRef, exportButtonRef, importMenuOpen, exportMenuOpen, importMenuPos, exportMenuPos, importMenuItems, exportMenuItems, placeDropdownMenu, toggleImportMenu, handleImportMenuClick, agentImportPickerVisible, pendingAgentImportPath, agentImportInitialFolderId, importOtherFileWithAgent, cancelAgentImportFolder, confirmAgentImportFolder, importSoftwareExportedFile, toggleExportMenu, handleExportMenuClick, getExportQuestions, exportFile, searchOpen, searchInputRef, openSearch, collapseSearch, selectedQuestions, batchDeleteDialog, isAllSelected, isIndeterminate, contextMenu, selectedQuestion, isEditMode, isSavingEdit, editFormData, fillEditForm, resetEditForm, _imageCache, imageSrcMap, blackOnlyMap, getContentParts, imgSrc, invertClass, visibleImageUrls, fetchImages, analyzeImage, isEditFormValid, clipboard, showAddQuestionModal, canPaste, isPendingCorrectionFolder, totalPages, getQuestionCreateTime, sortQuestionListByCreateTime, applyCreateTimeSort, goToPreviousPage, goToNextPage, goToPage, toggleCreateTimeSort, fetchQuestionPage, loadQuestions, refreshData, questionHasImages, applyQuestionSelection, handleQuestionClick, closeDetail, toggleEditMode, cancelEdit, replaceQuestionInList, updateQuestionLocally, removeQuestionLocally, saveEdit, typeTagKind, formatTime, handleQuestionSelect, handleSelectAll, updateSelectAllState, startResize, handleResize, stopResize, showResizeCursor, hideResizeCursor, handleSearch, performSearch, clearSearch, highlightSearchTerm, handleRightClick, handleListRightClick, copyQuestionToClipboard, copyAnswerToClipboard, batchCopyQuestions, batchCutQuestions, deleteQuestion, batchDeleteQuestions, confirmBatchDeleteQuestions, cancelBatchDeleteQuestions, copyQuestion, cutQuestion, pasteQuestion, hideContextMenu, handleClickOutside, showAddQuestionDialog, hideAddQuestionDialog, handleQuestionSubmit, onKnowledgeUpdated
 } = useQuestionList(props, emit)
+
+const cutQuestionIds = computed(() => {
+  const { operation, question, questions } = clipboard.value
+  if (operation !== 'cut') return new Set<number>()
+  return new Set(questions?.length ? questions.map(item => item.id) : question ? [question.id] : [])
+})
 
 defineExpose({
   refreshData

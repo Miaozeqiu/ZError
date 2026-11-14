@@ -20,7 +20,7 @@ export type QuestionListEmit = {
 
 export type QuestionListOps = {
   loadQuestions: (folderId?: string | null, requestedPage?: number) => Promise<void>
-  performSearch: () => Promise<void>
+  performSearch: (page?: number) => Promise<void>
   updateSelectAllState: () => void
   importSoftwareExportedFile: () => Promise<void>
   importOtherFileWithAgent: () => Promise<void>

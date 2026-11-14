@@ -1,9 +1,13 @@
 .thread-jump {
+  /* Keep the measured composer height stable as the button appears and disappears. */
+  position: absolute;
+  bottom: calc(100% - 12px);
+  left: 50%;
+  transform: translateX(-50%);
   pointer-events: auto;
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  margin-bottom: 8px;
   padding: 5px 10px;
   border: 0.5px solid color-mix(in srgb, var(--border-primary, #e2e8f0) 70%, transparent);
   border-radius: 999px;
@@ -79,45 +83,95 @@
   border-color: color-mix(in srgb, var(--text-primary, #2d3748) 8%, var(--border-primary, #e2e8f0));
 }
 
-.composer-images {
+.composer-attachments {
+  --composer-attachment-height: 56px;
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  align-items: stretch;
+  gap: 8px;
+  min-width: 0;
+  padding: 5px 5px 5px 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+}
+
+.composer-image-notice {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.composer-image-notice button {
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-primary, #2563eb);
+  font: inherit;
+  cursor: pointer;
+}
+
+.composer-image-notice button:hover {
+  text-decoration: underline;
 }
 
 .composer-image {
   position: relative;
-  width: 56px;
-  height: 56px;
+  flex: 0 0 var(--composer-attachment-height);
+  width: var(--composer-attachment-height);
+  height: var(--composer-attachment-height);
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--text-primary, #2d3748) 16%, transparent);
   border-radius: 8px;
-  overflow: hidden;
   background: color-mix(in srgb, var(--text-primary, #2d3748) 6%, transparent);
+  box-shadow: 0 1px 4px rgb(0 0 0 / 12%);
 }
 
-.composer-image img {
+.composer-image-preview {
+  display: block;
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
   cursor: zoom-in;
 }
 
-.composer-image .composer-file-remove {
+.composer-image img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 7px;
+  object-fit: cover;
+}
+
+.composer-attachments :deep(.attachment-corner-remove) {
   position: absolute;
-  top: 2px;
-  right: 2px;
-  background: color-mix(in srgb, #000 42%, transparent);
+  z-index: 1;
+  top: -4px;
+  right: -4px;
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--bg-secondary, #fff);
+  border-radius: 50%;
+  background: #49494f;
+  color: #fff;
+  cursor: pointer;
+}
+
+.composer-attachments :deep(.attachment-corner-remove:hover) {
+  background: #303036;
   color: #fff;
 }
 
-.composer-image .composer-file-remove:hover {
-  background: color-mix(in srgb, #000 58%, transparent);
-  color: #fff;
-}
-
-.composer-files {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+.composer-attachments :deep(.attachment-corner-remove:focus-visible) {
+  outline: 2px solid var(--color-primary, #2563eb);
+  outline-offset: -2px;
 }
 
 .composer-file-leave-active {
@@ -146,12 +200,16 @@
 
 .composer-file {
   display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
-  gap: 6px;
-  max-width: 100%;
-  height: 26px;
-  padding: 0 4px 0 4px;
-  border-radius: 7px;
+  gap: 8px;
+  min-width: 0;
+  max-width: min(220px, 100%);
+  height: var(--composer-attachment-height);
+  box-sizing: border-box;
+  padding: 0 8px;
+  border: 1px solid color-mix(in srgb, var(--text-primary, #2d3748) 10%, transparent);
+  border-radius: 8px;
   background: color-mix(in srgb, var(--text-primary, #2d3748) 5%, transparent);
   color: var(--text-secondary, #718096);
   font-size: 12px;
@@ -293,9 +351,49 @@
   cursor: pointer;
 }
 
-.composer-add:hover {
+.composer-add:hover,
+.composer-add[aria-expanded="true"] {
   color: var(--text-primary, #2d3748);
   background: color-mix(in srgb, var(--text-primary, #2d3748) 6%, transparent);
+}
+
+.composer-attachment-picker {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.composer-attachment-menu {
+  position: absolute;
+  z-index: 2;
+  inset-inline-start: 0;
+  bottom: calc(100% + 6px);
+  display: grid;
+  min-width: 154px;
+  padding: 4px;
+  border: 1px solid var(--border-primary, #e2e8f0);
+  border-radius: 10px;
+  background: var(--bg-secondary, #fff);
+  box-shadow: 0 4px 14px rgb(0 0 0 / 12%);
+}
+
+.composer-attachment-menu button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 30px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary, #2d3748);
+  font: inherit;
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.composer-attachment-menu button:hover {
+  background: color-mix(in srgb, var(--text-primary, #2d3748) 7%, transparent);
 }
 
 .composer-model {

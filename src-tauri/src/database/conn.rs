@@ -29,6 +29,7 @@ pub(crate) fn configure_conn(conn: &Connection) -> Result<(), rusqlite::Error> {
 pub(crate) fn open_db_at(db_path: &str) -> Result<Connection, String> {
     let conn = Connection::open(db_path).map_err(|e| format!("{}", e))?;
     configure_conn(&conn).map_err(|e| format!("{}", e))?;
+    super::question_search::register_functions(&conn).map_err(|e| e.to_string())?;
     Ok(conn)
 }
 

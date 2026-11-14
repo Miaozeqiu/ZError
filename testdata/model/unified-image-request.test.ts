@@ -2,11 +2,13 @@ vi.mock('../../src/services/model/providers', () => ({ createBuiltinProvider: ()
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 const state = vi.hoisted(() => ({ inputs: [] as any[] }))
 vi.mock('../../src/services/model/config', () => ({ fetchRemoteModelsCatalog: vi.fn().mockResolvedValue({}) }))
+vi.mock('../../src/services/model/providers', () => ({ createBuiltinProvider: () => null }))
 vi.mock('../../src/services/model/protocol', () => ({
   resolveRuntimeModelId: () => 'vision',
   resolveExecutableModelJsCode: () => `async function processModel(input) { globalThis.__imageQuestionInputs.push(input); return 'ANSWER: 2'; }`,
 }))
 vi.mock('../../src/services/questionServer/deps', () => ({ modelApi: {
+  getPlatformApiKey: () => 'test-key',
   platforms: { value: [{ models: [{ id: 'vision' }] }] },
   selectedVisionModel: { value: { id: 'vision', displayName: 'Vision' } },
 } }))

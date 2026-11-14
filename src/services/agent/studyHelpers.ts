@@ -40,14 +40,6 @@ export const WRITE_GRAPH_HINT = '图谱是空的，请调用 patch_knowledge_gra
 
 export const KEEP_GRAPH_HINT = '已有图谱。先看现有节点再 patch 增删改，不要 set_knowledge_graph，不要清空重画。只有用户明确说重画、推倒重来、全部重做时才整图替换。'
 
-export const GRAPH_QUALITY = `用 patch_knowledge_graph 分批改图，不要一次写整张 mermaid。图谱必须像教材目录，不要像散落考点云。
-- 三层：科目 → 章（8–12 个章名）→ 节（每章 2–4 个节名）。到节为止
-- 已有图谱时：先 get_knowledge_graph，只补缺的章/节或按用户点名增删改，保留已有节点和遗忘进度
-- 空图才从零画：第一批只加章；之后每批给 1–2 章补节，parent_key 填章名；每批 3–8 个，大约 28–45 个
-- 节点名用教材目录口吻，例如「劳动需求」「短期劳动需求」「人力资本」
-- 禁止空泛桶：学科基础、核心概念、方法与应用、基础知识、综合应用、概述、其他
-- 禁止把定理、模型、公式、论文平铺成叶子，例如不要单独列出「保留工资定理」「明瑟方程」「Oaxaca-Blinder」「Card-Krueger」`
-
 export const graphSubjectHint = (name: string) => {
   if (/英语|CET|四级|六级|考研英语/i.test(name)) {
     return `「${name}」按应试教材目录展开（章=题型，节=技能），必须画到这一细度（可增删，不能更粗）：

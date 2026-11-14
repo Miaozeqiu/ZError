@@ -18,6 +18,16 @@ use zeroize::Zeroizing;
 const SERVICE: &str = "cc.zerror.credentials";
 const KEY_ACCOUNT: &str = "vault-master-v1";
 const PREFIX: &str = "zerror-secure-v1:";
+const DEEPSEEK_ORIGIN: &str = "https://api.deepseek.com";
+const DEEPSEEK_KEY_FIELD: &str = "deepseekApiKey";
+const DEEPSEEK_KEY_ID: &str = "search/deepseekApiKey";
+const SEARCH_API_KEYS: [(&str, &str, &str); 5] = [
+    ("exa", "apiKey", "https://mcp.exa.ai"),
+    ("deepseek", DEEPSEEK_KEY_FIELD, DEEPSEEK_ORIGIN),
+    ("tavily", "tavilyApiKey", "https://api.tavily.com"),
+    ("brave", "braveApiKey", "https://api.search.brave.com"),
+    ("you", "youApiKey", "https://ydc-index.io"),
+];
 #[derive(Default, Serialize, Deserialize)]
 struct Vault {
     #[serde(default)]
@@ -640,8 +650,48 @@ fn merge_accounts(left: Value, right: Value) -> Value {
     }
     serde_json::to_value(rows).unwrap()
 }
+fn is_official_deepseek(platform: &Value) -> bool {
+    platform["isRemote"].as_bool() == Some(true)
+        && platform["baseUrl"].as_str().and_then(origin).as_deref() == Some(DEEPSEEK_ORIGIN)
+}
+
+fn protect_deepseek_key(v: &mut Vault, data: &mut Value) -> Result<(), String> {
+    let legacy_model_key = data["platforms"].as_array().into_iter().flatten()
+        .filter(|platform| is_official_deepseek(platform))
+        .filter_map(|platform| {
+            let key = platform["apiKey"].as_str()?.trim();
+            if let Some(reference) = token_id(key) {
+                let expected = format!("model/{}/apiKey", platform["id"].as_str()?);
+                if reference != expected { return None; }
+                return v.secrets.get(reference)
+                    .filter(|secret| secret.origins.iter().any(|value| value == DEEPSEEK_ORIGIN))
+                    .map(|secret| secret.value.as_str());
+            }
+            (!key.is_empty()).then_some(key)
+        })
+        .next();
+    let key = data[DEEPSEEK_KEY_FIELD].as_str()
+        .or(legacy_model_key)
+        .map(str::to_owned)
+        .unwrap_or_else(|| {
+            if v.secrets.contains_key(DEEPSEEK_KEY_ID) { token(DEEPSEEK_KEY_ID) } else { String::new() }
+        });
+    data[DEEPSEEK_KEY_FIELD] = json!(put_secret(
+        v, DEEPSEEK_KEY_ID, &key, "api", vec![DEEPSEEK_ORIGIN.into()]
+    )?);
+    if let Some(search) = v.documents.get_mut("app_settings")
+        .and_then(|settings| settings["search"].as_object_mut())
+    {
+        search.remove(DEEPSEEK_KEY_FIELD);
+    }
+    Ok(())
+}
+
 fn protect_document(v: &mut Vault, name: &str, data: &mut Value) -> Result<(), String> {
     if name == "model_settings" {
+        if data.is_object() {
+            protect_deepseek_key(v, data)?;
+        }
         if let Some(platforms) = data["platforms"].as_array_mut() {
             for platform in platforms {
                 let id = platform["id"]
@@ -651,7 +701,10 @@ fn protect_document(v: &mut Vault, name: &str, data: &mut Value) -> Result<(), S
                 let origins: Vec<String> = origin(platform["baseUrl"].as_str().unwrap_or(""))
                     .into_iter()
                     .collect();
-                if let Some(key) = platform["apiKey"].as_str() {
+                if is_official_deepseek(platform) {
+                    v.secrets.remove(&format!("model/{}/apiKey", id));
+                    platform["apiKey"] = json!("");
+                } else if let Some(key) = platform["apiKey"].as_str() {
                     platform["apiKey"] = Value::String(put_secret(
                         v,
                         &format!("model/{}/apiKey", id),
@@ -688,10 +741,15 @@ fn protect_document(v: &mut Vault, name: &str, data: &mut Value) -> Result<(), S
         }
     }
     if name == "app_settings" {
-        for (field, endpoint) in [
-            ("apiKey", "https://mcp.exa.ai"),
-            ("deepseekApiKey", "https://api.deepseek.com"),
-        ] {
+        for (_, field, endpoint) in SEARCH_API_KEYS {
+            if field == DEEPSEEK_KEY_FIELD && v.documents.get("model_settings")
+                .is_some_and(|settings| settings[DEEPSEEK_KEY_FIELD].is_string())
+            {
+                if let Some(search) = data["search"].as_object_mut() {
+                    search.remove(field);
+                }
+                continue;
+            }
             if let Some(key) = data["search"][field].as_str() {
                 data["search"][field] = Value::String(put_secret(
                     v,
@@ -876,7 +934,7 @@ pub fn document_read(name: &str, legacy: Option<Value>) -> Result<Value, String>
         let importing = legacy.as_ref().is_some_and(|data| !data.is_null())
             && !v.legacy_imported.contains(name);
         if let Some(stored) = v.documents.get(name) {
-            if !importing {
+            if !importing && (name != "model_settings" || stored[DEEPSEEK_KEY_FIELD].is_string()) {
                 return Ok(stored.clone());
             }
         }
@@ -904,6 +962,9 @@ pub fn document_read(name: &str, legacy: Option<Value>) -> Result<Value, String>
                 .or(file)
                 .unwrap_or(Value::Null)
         };
+        if name == "model_settings" && data.is_null() && v.secrets.contains_key(DEEPSEEK_KEY_ID) {
+            data = json!({"platforms": []});
+        }
         if !data.is_null() {
             protect_document(v, name, &mut data)?;
             if importing {
@@ -1061,6 +1122,26 @@ pub async fn secure_site_account_names(window: tauri::WebviewWindow) -> Result<B
     storage_task(|| with_vault(false, |vault| Ok(site_account_names_in_vault(vault)))).await
 }
 
+#[tauri::command]
+pub async fn secure_api_key_length(
+    window: tauri::WebviewWindow,
+    reference: String,
+) -> Result<usize, String> {
+    trusted_window(&window)?;
+    storage_task(move || {
+        with_vault(false, |vault| {
+            let id = token_id(&reference).ok_or("无效的凭据变量")?;
+            let key = vault
+                .secrets
+                .get(id)
+                .filter(|secret| secret.kind == "api")
+                .ok_or("API Key 已删除或尚未配置")?;
+            Ok(key.value.chars().count())
+        })
+    })
+    .await
+}
+
 // User-only retrieval. Never expose this as an IPC command or call from Agent tools.
 // The native verification boundary in secret_access must authorize every use.
 pub(crate) fn value_for_verified_user(reference: &str) -> Result<Zeroizing<String>, String> {
@@ -1178,35 +1259,34 @@ fn register_api_inner(provider: String, value: String) -> Result<Value, String> 
         return Err("API Key 无效".into());
     }
     with_vault(true, |v| {
-        let (id, origins) = match provider.as_str() {
-            "search/exa" => (
-                "search/apiKey".to_string(),
-                vec!["https://mcp.exa.ai".into()],
-            ),
-            "search/deepseek" => (
-                "search/deepseekApiKey".to_string(),
-                vec!["https://api.deepseek.com".into()],
-            ),
-            _ => {
-                let platform = v
-                    .documents
-                    .get("model_settings")
-                    .and_then(|d| d["platforms"].as_array())
-                    .and_then(|rows| rows.iter().find(|p| p["id"].as_str() == Some(&provider)));
-                let endpoint = platform
-                    .and_then(|p| p["baseUrl"].as_str())
-                    .and_then(origin)
-                    .ok_or("请先在设置中配置对应模型平台，再登记 API Key")?;
+        let search_provider = SEARCH_API_KEYS
+            .iter()
+            .find(|(id, _, _)| provider.strip_prefix("search/") == Some(*id))
+            .copied();
+        let (id, origins) = if let Some((_, field, endpoint)) = search_provider {
+            (format!("search/{}", field), vec![endpoint.into()])
+        } else {
+            let platform = v
+                .documents
+                .get("model_settings")
+                .and_then(|d| d["platforms"].as_array())
+                .and_then(|rows| rows.iter().find(|p| p["id"].as_str() == Some(&provider)));
+            let endpoint = platform
+                .and_then(|p| p["baseUrl"].as_str())
+                .and_then(origin)
+                .ok_or("请先在设置中配置对应模型平台，再登记 API Key")?;
+            if platform.is_some_and(is_official_deepseek) {
+                (DEEPSEEK_KEY_ID.into(), vec![endpoint])
+            } else {
                 (format!("model/{}/apiKey", provider), vec![endpoint])
             }
         };
         let reference = put_secret(v, &id, &value, "api", origins)?;
-        if provider.starts_with("search/") {
-            let field = if provider == "search/exa" {
-                "apiKey"
-            } else {
-                "deepseekApiKey"
-            };
+        if id == DEEPSEEK_KEY_ID {
+            let settings = v.documents.entry("model_settings".into())
+                .or_insert_with(|| json!({"platforms": []}));
+            settings[DEEPSEEK_KEY_FIELD] = json!(reference);
+        } else if let Some((_, field, _)) = search_provider {
             if let Some(settings) = v.documents.get_mut("app_settings") {
                 settings["search"][field] = json!(reference);
             }
@@ -1622,6 +1702,46 @@ mod credential_tests {
         protect_document(&mut vault, "site_accounts", &mut json!({})).unwrap();
         assert!(vault.secrets.is_empty());
     }
+    #[test]
+    fn deepseek_shares_one_origin_bound_key_and_does_not_restore_a_cleared_key() {
+        let mut vault = Vault::default();
+        let mut search = json!({"search":{"deepseekApiKey":"old-search-key"}});
+        protect_document(&mut vault, "app_settings", &mut search).unwrap();
+        vault.documents.insert("app_settings".into(), search.clone());
+        let mut model = json!({"platforms":[
+            {"id":"deepseek","baseUrl":"https://api.deepseek.com/v1","isRemote":true,"apiKey":"old-model-key"},
+            {"id":"proxy","baseUrl":"https://api.deepseek.com.example.test/v1","isRemote":true,"apiKey":"proxy-key"}
+        ]});
+        model["platforms"][0]["apiKey"] = json!(put_secret(
+            &mut vault, "model/deepseek/apiKey", "old-model-key", "api", vec![DEEPSEEK_ORIGIN.into()]
+        ).unwrap());
+        protect_document(&mut vault, "model_settings", &mut model).unwrap();
+        assert_eq!(model[DEEPSEEK_KEY_FIELD], token(DEEPSEEK_KEY_ID));
+        assert_eq!(vault.secrets[DEEPSEEK_KEY_ID].value, "old-model-key");
+        assert_eq!(vault.secrets[DEEPSEEK_KEY_ID].origins, vec![DEEPSEEK_ORIGIN]);
+        assert!(!vault.secrets.contains_key("model/deepseek/apiKey"));
+        assert_eq!(model["platforms"][1]["apiKey"], token("model/proxy/apiKey"));
+        assert!(vault.documents["app_settings"]["search"].get(DEEPSEEK_KEY_FIELD).is_none());
+
+        model[DEEPSEEK_KEY_FIELD] = json!("");
+        protect_document(&mut vault, "model_settings", &mut model).unwrap();
+        vault.documents.insert("model_settings".into(), model);
+        protect_document(&mut vault, "app_settings", &mut search).unwrap();
+        assert!(!vault.secrets.contains_key(DEEPSEEK_KEY_ID));
+        assert!(search["search"].get(DEEPSEEK_KEY_FIELD).is_none());
+    }
+
+    #[test]
+    fn deepseek_migrates_a_search_key_without_a_configured_model() {
+        let mut vault = Vault::default();
+        let mut search = json!({"search":{"deepseekApiKey":"search-only-key"}});
+        protect_document(&mut vault, "app_settings", &mut search).unwrap();
+        let mut model = json!({"platforms":[]});
+        protect_document(&mut vault, "model_settings", &mut model).unwrap();
+        assert_eq!(model[DEEPSEEK_KEY_FIELD], token(DEEPSEEK_KEY_ID));
+        assert_eq!(vault.secrets[DEEPSEEK_KEY_ID].value, "search-only-key");
+    }
+
     #[test]
     fn headers_are_bound_to_the_configured_service_and_pending_sites_have_no_origin() {
         let mut vault = Vault::default();

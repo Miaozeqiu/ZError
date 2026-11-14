@@ -89,6 +89,7 @@ export type BrowserBounds = {
 
 const STORAGE_KEY = 'zerror-app-browsers'
 const SELECTED_KEY = 'zerror-app-browser-selected'
+const temporaryBrowsers = new Map<string, AppBrowser>()
 
 const createId = () => {
   const raw = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`
@@ -124,7 +125,7 @@ export const hostnameOf = (value: string) => {
   }
 }
 
-const readList = (): AppBrowser[] => {
+const readSavedList = (): AppBrowser[] => {
   try {
     const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]')
     if (!Array.isArray(parsed)) return []
@@ -144,8 +145,23 @@ const readList = (): AppBrowser[] => {
   }
 }
 
+const readList = () => [...readSavedList(), ...temporaryBrowsers.values()]
+
 const writeList = (items: AppBrowser[]) => {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(items))
+  const temporary = items.filter(item => temporaryBrowsers.has(item.id))
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(items.filter(item => !temporaryBrowsers.has(item.id))))
+  temporaryBrowsers.clear()
+  for (const item of temporary) temporaryBrowsers.set(item.id, item)
+}
+
+export const saveTemporaryBrowsers = (ids: string[]) => {
+  const items = ids.flatMap(id => {
+    const tab = temporaryBrowsers.get(id)
+    return tab ? [tab] : []
+  })
+  if (!items.length) return
+  localStorage.setItem(STORAGE_KEY, JSON.stringify([...readSavedList(), ...items]))
+  for (const item of items) temporaryBrowsers.delete(item.id)
 }
 
 export const listAppBrowsers = () => readList().sort((a, b) => a.createdAt - b.createdAt || a.updatedAt - b.updatedAt)
@@ -179,7 +195,7 @@ export const setSelectedBrowserId = (id: string) => {
   else localStorage.removeItem(SELECTED_KEY)
 }
 
-export const createAppBrowser = (input?: Partial<AppBrowser> & { id?: string }) => {
+export const createAppBrowser = (input?: Partial<AppBrowser>, temporary = false) => {
   const now = Date.now()
   const url = normalizeBrowserUrl(input?.url || browserHomeUrl())
   const next: AppBrowser = {
@@ -191,7 +207,8 @@ export const createAppBrowser = (input?: Partial<AppBrowser> & { id?: string }) 
     createdAt: input?.createdAt || now,
     updatedAt: now,
   }
-  writeList([...readList().filter((item) => item.id !== next.id), next])
+  if (temporary) temporaryBrowsers.set(next.id, next)
+  else writeList([...readList().filter((item) => item.id !== next.id), next])
   setSelectedBrowserId(next.id)
   return next
 }

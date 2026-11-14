@@ -1,4 +1,4 @@
-use crate::database::conn::{get_conn, get_db_path, open_db_at};
+use crate::database::conn::get_conn;
 use crate::database::query_match::*;
 use crate::database::types::{map_ai_response_row, *};
 use rusqlite::{Connection, OptionalExtension};
@@ -975,124 +975,6 @@ pub async fn add_folder(name: String, parent_id: i64) -> Result<i64, String> {
     Ok(conn.last_insert_rowid())
 }
 
-#[tauri::command]
-pub async fn search_questions_fuzzy(
-    keyword: String,
-    folder_id: Option<i64>,
-) -> Result<Vec<AIResponse>, String> {
-    let db_path = get_db_path();
-    let keyword_clone = keyword.clone();
-
-    let result = tokio::task::spawn_blocking(move || -> Result<Vec<AIResponse>, String> {
-        let conn = open_db_at(&db_path)?;
-
-        // 1. 获取候选题目（根据文件夹过滤）
-        let query = if let Some(fid) = folder_id {
-            if fid == 0 {
-                // 默认文件夹仅显示自身题目
-                "SELECT
-                  ar.Id, ar.Question, ar.Options, ar.Answer, ar.QuestionType,
-                  ar.FolderId, f.Name as FolderName, ar.CreateTime, ar.IsAi, COALESCE(ar.IsPendingCorrection, 0), COALESCE(ar.Importance, 0), COALESCE(ar.Mastery, 0), COALESCE(ar.Difficulty, 0)
-                FROM AIResponses ar
-                INNER JOIN Folders f ON ar.FolderId = f.Id
-                WHERE ar.FolderId = 0"
-            } else {
-                // 指定文件夹及其子文件夹
-                "WITH RECURSIVE folder_tree AS (
-                  SELECT Id, Name, ParentId FROM Folders WHERE Id = ?
-                  UNION ALL
-                  SELECT f.Id, f.Name, f.ParentId FROM Folders f
-                  INNER JOIN folder_tree ft ON f.ParentId = ft.Id
-                )
-                SELECT
-                  ar.Id, ar.Question, ar.Options, ar.Answer, ar.QuestionType,
-                  ar.FolderId, f.Name as FolderName, ar.CreateTime, ar.IsAi, COALESCE(ar.IsPendingCorrection, 0), COALESCE(ar.Importance, 0), COALESCE(ar.Mastery, 0), COALESCE(ar.Difficulty, 0)
-                FROM AIResponses ar
-                INNER JOIN folder_tree ft ON ar.FolderId = ft.Id
-                INNER JOIN Folders f ON ar.FolderId = f.Id"
-            }
-        } else {
-            // 所有文件夹
-            "SELECT
-              ar.Id, ar.Question, ar.Options, ar.Answer, ar.QuestionType,
-              ar.FolderId, f.Name as FolderName, ar.CreateTime, ar.IsAi, COALESCE(ar.IsPendingCorrection, 0), COALESCE(ar.Importance, 0), COALESCE(ar.Mastery, 0), COALESCE(ar.Difficulty, 0)
-            FROM AIResponses ar
-            LEFT JOIN Folders f ON ar.FolderId = f.Id"
-        };
-
-        let mut stmt = conn.prepare(query).map_err(|e| format!("{}", e))?;
-
-        let params_vec: Vec<&dyn rusqlite::ToSql> = if let Some(ref fid) = folder_id {
-            if *fid == 0 {
-                vec![]
-            } else {
-                vec![fid]
-            }
-        } else {
-            vec![]
-        };
-        let params = params_vec.as_slice();
-
-        let rows = stmt
-            .query_map(params, map_ai_response_row)
-            .map_err(|e| format!("{}", e))?;
-
-        let mut results = Vec::new();
-        let keyword_lower = keyword_clone.to_lowercase();
-        let keywords: Vec<&str> = keyword_lower.split_whitespace().collect();
-
-        if keywords.is_empty() {
-            // 如果关键词为空，返回所有结果
-            for row in rows {
-                if let Ok(item) = row {
-                    results.push((item, 1.0));
-                }
-            }
-        } else {
-            for row in rows {
-                if let Ok(item) = row {
-                    let q_lower = item.question.to_lowercase();
-                    let a_lower = item.answer.clone().unwrap_or_default().to_lowercase();
-                    let o_lower = item.options.clone().unwrap_or_default().to_lowercase();
-
-                    let mut all_terms_matched = true;
-
-                    for term in &keywords {
-                        let mut term_matched = false;
-                        if q_lower.contains(term)
-                            || a_lower.contains(term)
-                            || o_lower.contains(term)
-                        {
-                            term_matched = true;
-                        }
-                        if !term_matched {
-                            all_terms_matched = false;
-                            break;
-                        }
-                    }
-
-                    if all_terms_matched {
-                        results.push((item, 1.0));
-                    }
-                }
-            }
-        }
-
-        // 按分数降序排序，分数相同按时间倒序
-        results.sort_by(|a, b| {
-            b.1.partial_cmp(&a.1)
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then_with(|| b.0.create_time.cmp(&a.0.create_time))
-        });
-
-        Ok(results.into_iter().map(|(item, _)| item).collect())
-    })
-    .await
-    .map_err(|e| format!("{}", e))??;
-
-    Ok(result)
-}
-
 #[derive(Debug, Clone)]
 pub struct QuestionMatch {
     pub id: i64,
@@ -1101,11 +983,14 @@ pub struct QuestionMatch {
     pub answer: String,
     pub is_ai: bool,
     pub is_pending_correction: bool,
+    pub question_type: Option<String>,
     pub score: f64,
+    pub title_similarity: f64,
 }
 
-pub fn score_question_row(
-    title: &str,
+fn score_question_row(
+    title_score: f64,
+    title_similarity: f64,
     query_options: &Option<String>,
     require_option_match: bool,
     id: i64,
@@ -1114,29 +999,24 @@ pub fn score_question_row(
     answer: String,
     is_ai: bool,
     is_pending_correction: bool,
+    question_type: Option<String>,
 ) -> Option<QuestionMatch> {
-    let query_urls = extract_urls(title);
-    if !query_urls.is_empty() {
-        let db_urls = extract_urls(&question);
-        if query_urls != db_urls {
-            return None;
-        }
-    }
-
-    let title_similarity = compute_query_match_score(title, &question)?;
-
     let has_query_options = query_options.is_some();
     let option_similarity = match (
         query_options.as_deref(),
         normalize_optional_query_text(db_options.as_deref()),
     ) {
         (Some(query_options), Some(db_options)) => {
-            compute_query_match_score(query_options, &db_options)
+            if same_query_options_unordered(query_options, &db_options) {
+                Some(1.0)
+            } else {
+                compute_query_match_score(query_options, &db_options)
+            }
         }
         _ => None,
     };
 
-    let is_exact_title_match = is_exact_match_score(title_similarity);
+    let is_exact_title_match = is_exact_match_score(title_score);
     if !is_exact_title_match
         && (require_option_match || has_query_options)
         && option_similarity.is_none()
@@ -1145,8 +1025,8 @@ pub fn score_question_row(
     }
 
     let final_similarity = match option_similarity {
-        Some(option_similarity) => title_similarity * 0.7 + option_similarity * 0.3,
-        None => title_similarity,
+        Some(option_similarity) => title_score * 0.7 + option_similarity * 0.3,
+        None => title_score,
     };
 
     Some(QuestionMatch {
@@ -1156,7 +1036,9 @@ pub fn score_question_row(
         answer,
         is_ai,
         is_pending_correction,
+        question_type,
         score: final_similarity,
+        title_similarity,
     })
 }
 
@@ -1173,48 +1055,126 @@ pub fn is_exact_question_match(
     }
 
     match normalize_optional_query_text(query_options) {
-        None => true,
-        Some(query_opts) => match normalize_optional_query_text(matched.options.as_deref()) {
-            Some(db_opts) => compute_query_match_score(&query_opts, &db_opts)
-                .map(is_exact_match_score)
-                .unwrap_or(false),
-            None => false,
-        },
+        None => normalize_optional_query_text(matched.options.as_deref()).is_none(),
+        Some(query_opts) => matched.options.as_deref()
+            .is_some_and(|db_opts| exact_query_options_match(&query_opts, db_opts)),
     }
 }
 
-pub fn scan_question_matches(
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct LocalQuestionMatch {
+    pub id: i64,
+    pub question: String,
+    pub similarity: f64,
+    #[serde(default)]
+    pub status: LocalMatchStatus,
+}
+
+#[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalMatchStatus {
+    #[default]
+    Similar,
+    Candidate,
+    Used,
+}
+
+fn read_match_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<QuestionMatch> {
+    Ok(QuestionMatch {
+        id: row.get(0)?,
+        question: row.get(1)?,
+        options: row.get(2)?,
+        answer: row.get(3)?,
+        is_ai: row.get(4)?,
+        is_pending_correction: row.get(5)?,
+        question_type: row.get(6)?,
+        score: 0.0,
+        title_similarity: 0.0,
+    })
+}
+
+const MATCH_COLUMNS: &str = "Id, Question, Options, Answer, IsAi, COALESCE(IsPendingCorrection, 0), QuestionType";
+
+pub fn question_match_is_current(matched: &QuestionMatch) -> bool {
+    let Ok(conn) = get_conn() else { return false };
+    conn.query_row(
+        &format!("SELECT {MATCH_COLUMNS} FROM AIResponses WHERE Id = ?"),
+        [matched.id],
+        read_match_row,
+    ).is_ok_and(|current| {
+        !current.is_pending_correction
+            && current.question == matched.question
+            && current.options == matched.options
+            && current.answer == matched.answer
+            && current.question_type == matched.question_type
+            && current.is_ai == matched.is_ai
+    })
+}
+
+fn scan_question_matches(
+    conn: &Connection,
     title: &str,
     options: Option<&str>,
-) -> Result<Vec<QuestionMatch>, Box<dyn std::error::Error + Send + Sync>> {
-    let db_path = get_db_path();
-    let title_clone = title.to_string();
+    display_limit: usize,
+    indexed: bool,
+) -> Result<(Vec<QuestionMatch>, Vec<LocalQuestionMatch>), Box<dyn std::error::Error + Send + Sync>> {
+    let normalized_title = QueryMatchText::new(title);
+    let query_urls = extract_urls(title);
+    let title_with_urls = compact_query_spacing(title);
     let query_options = normalize_optional_query_text(options);
-    let require_option_match = should_require_option_match(&title_clone);
+    let require_option_match = should_require_option_match(&normalized_title.compact);
 
-    let conn = open_db_at(&db_path).map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-        Box::new(std::io::Error::new(std::io::ErrorKind::Other, e))
-    })?;
-    let mut stmt = conn.prepare(
-        "SELECT Id, Question, Options, Answer, IsAi, COALESCE(IsPendingCorrection, 0) FROM AIResponses",
-    )?;
-
-    let rows = stmt.query_map([], |row| {
-        Ok((
-            row.get::<_, i64>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, Option<String>>(2)?,
-            row.get::<_, String>(3)?,
-            row.get::<_, bool>(4)?,
-            row.get::<_, bool>(5)?,
-        ))
-    })?;
+    let query = if indexed {
+        super::question_search::candidate_query(conn, &normalized_title.compact)?
+    } else {
+        super::question_search::CandidateQuery::default()
+    };
+    let sql = format!("SELECT {MATCH_COLUMNS} FROM AIResponses {}", query.filter);
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(rusqlite::params_from_iter(query.params), read_match_row)?;
 
     let mut results = Vec::new();
+    let mut similar: Vec<LocalQuestionMatch> = Vec::new();
     for row in rows {
-        let (id, question, db_options, answer, is_ai, is_pending_correction) = row?;
+        let QuestionMatch { id, question, options: db_options, answer, is_ai, is_pending_correction, question_type, .. } = row?;
+        let different_urls = query_urls != extract_urls(&question);
+        if different_urls && display_limit == 0 {
+            continue;
+        }
+        let normalized_question = QueryMatchText::new(&question);
+        let omitted_blank = !different_urls && normalized_title.matches_omitted_blank(&normalized_question);
+        let similarity = if different_urls {
+            // Different images should not appear identical because of a shared URL placeholder.
+            query_text_similarity(&title_with_urls, &compact_query_spacing(&question))
+        } else {
+            query_text_similarity(&normalized_title.compact, &normalized_question.compact)
+        };
+        if display_limit > 0 && similarity > 0.0 {
+            let index = similar.partition_point(|item| item.similarity >= similarity);
+            if index < display_limit {
+                similar.insert(index, LocalQuestionMatch {
+                    id,
+                    question: question.clone(),
+                    similarity,
+                    status: LocalMatchStatus::Similar,
+                });
+                similar.truncate(display_limit);
+            }
+        }
+        if different_urls {
+            continue;
+        }
+        let title_score = if omitted_blank {
+            Some(similarity)
+        } else {
+            filter_query_match_score(&normalized_title, &normalized_question, similarity)
+        };
+        let Some(title_score) = title_score else {
+            continue;
+        };
         if let Some(matched) = score_question_row(
-            &title_clone,
+            title_score,
+            similarity,
             &query_options,
             require_option_match,
             id,
@@ -1223,59 +1183,184 @@ pub fn scan_question_matches(
             answer,
             is_ai,
             is_pending_correction,
+            question_type,
         ) {
             results.push(matched);
         }
     }
 
     results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
-    Ok(results)
+    Ok((results, similar))
 }
 
-/// 仅返回题干（及有选项时的选项）规范化后 100% 相同的记录
-pub async fn query_database_exact(
-    title: &str,
-    options: Option<&str>,
-) -> Result<Vec<QuestionMatch>, Box<dyn std::error::Error + Send + Sync>> {
-    let title = title.to_string();
-    let options = options.map(|s| s.to_string());
+#[cfg(test)]
+mod local_question_matches_tests {
+    use super::{is_exact_question_match, scan_question_matches, Connection};
 
-    let result = tokio::task::spawn_blocking(
-        move || -> Result<Vec<QuestionMatch>, Box<dyn std::error::Error + Send + Sync>> {
-            let matches = scan_question_matches(&title, options.as_deref())?;
-            Ok(matches
-                .into_iter()
-                .filter(|m| is_exact_question_match(&title, options.as_deref(), m))
-                .collect())
-        },
-    )
-    .await?;
+    #[test]
+    fn display_includes_weak_matches_without_admitting_them_as_answers() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE AIResponses (
+                Id INTEGER, Question TEXT, Options TEXT, Answer TEXT,
+                IsAi INTEGER, IsPendingCorrection INTEGER, QuestionType TEXT
+             );
+             INSERT INTO AIResponses VALUES
+                (1, 'abcdef', NULL, 'exact answer', 0, 0, NULL),
+                (2, 'axxxxx', NULL, 'unrelated answer', 0, 0, NULL),
+                (3, 'zzzzzz', NULL, 'unrelated answer', 0, 0, NULL);",
+        ).unwrap();
 
-    result
+        let (answers, similar) = scan_question_matches(&conn, "abcdef", None, 5, false).unwrap();
+        assert_eq!(answers.iter().map(|row| row.id).collect::<Vec<_>>(), [1]);
+        assert_eq!(similar.iter().map(|row| row.id).collect::<Vec<_>>(), [1, 2]);
+        assert_eq!(similar[0].similarity, 1.0);
+        assert!((0.0..0.72).contains(&similar[1].similarity));
+        assert!(similar[1].similarity > 0.0);
+    }
+
+    #[test]
+    fn title_only_lookup_reuses_exact_self_contained_choice_questions() {
+        use super::classify_request_matches;
+
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE AIResponses (
+                Id INTEGER, Question TEXT, Options TEXT, Answer TEXT,
+                IsAi INTEGER, IsPendingCorrection INTEGER, QuestionType TEXT
+             );",
+        ).unwrap();
+        let title = "劳动力市场与普通商品市场最显著的差异是？";
+        let options = "A. 劳动力不能被储存\nB. 供给完全无弹性";
+        conn.execute(
+            "INSERT INTO AIResponses VALUES (1, ?, ?, 'A', 0, 0, '单选'),
+                 (2, ?, ?, 'B', 0, 1, '单选'),
+                 (3, '下列哪项正确？', ?, 'A', 0, 0, '单选')",
+            [title, options, title, options, options],
+        ).unwrap();
+
+        let classify = |title, options, kind| {
+            let (matches, similar) = scan_question_matches(&conn, title, options, 5, false).unwrap();
+            classify_request_matches(title, options, kind, 5, matches, similar)
+        };
+        let title_only = classify(title, None, None);
+        assert_eq!(title_only.exact.iter().map(|row| row.id).collect::<Vec<_>>(), [1]);
+        assert!(title_only.candidates.is_empty());
+        assert!(classify(title, None, Some("single")).exact.is_empty());
+        assert!(classify(title, Some("A. 不同的选项\nB. 供给完全无弹性"), None).exact.is_empty());
+        assert!(classify("下列哪项正确？", None, None).exact.is_empty());
+    }
+
+    #[test]
+    fn spacing_variants_hit_the_bank_but_omitted_blank_needs_confirmation() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE AIResponses (
+                Id INTEGER, Question TEXT, Options TEXT, Answer TEXT,
+                IsAi INTEGER, IsPendingCorrection INTEGER, QuestionType TEXT
+             );",
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO AIResponses VALUES (1, ?, ?, '甲', 0, 0, NULL)",
+            ["请选择（ ）", "A. 甲（注）\nB. 乙"],
+        ).unwrap();
+
+        let options = Some("A. 甲\n ( 注 )\n\nB.乙");
+        let title = "请\n选择 (\t)";
+        let (matches, similar) = scan_question_matches(&conn, title, options, 5, false).unwrap();
+        assert_eq!(similar[0].similarity, 1.0);
+        assert!(is_exact_question_match(title, options, &matches[0]));
+
+        let title = "请选择 ";
+        let (matches, _) = scan_question_matches(&conn, title, options, 5, false).unwrap();
+        assert_eq!(matches.len(), 1);
+        assert!(!is_exact_question_match(title, options, &matches[0]));
+    }
 }
 
-/// 模糊候选，供 AI 同题判断（排除精确命中，最多 Top N）
-pub async fn query_database_candidates(
+pub struct RequestQuestionMatches {
+    pub exact: Vec<QuestionMatch>,
+    pub candidates: Vec<QuestionMatch>,
+    pub similar: Vec<LocalQuestionMatch>,
+}
+
+/// Scan once for both answer matching and the request details display.
+pub async fn query_database_for_request(
     title: &str,
     options: Option<&str>,
+    query_type: Option<&str>,
     limit: usize,
-) -> Result<Vec<QuestionMatch>, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<RequestQuestionMatches, Box<dyn std::error::Error + Send + Sync>> {
     let title = title.to_string();
     let options = options.map(|s| s.to_string());
 
-    let result = tokio::task::spawn_blocking(
-        move || -> Result<Vec<QuestionMatch>, Box<dyn std::error::Error + Send + Sync>> {
-            let matches = scan_question_matches(&title, options.as_deref())?;
-            Ok(matches
-                .into_iter()
-                .filter(|m| !is_exact_question_match(&title, options.as_deref(), m))
-                .take(limit)
-                .collect())
-        },
-    )
-    .await?;
+    let query_type = query_type.map(str::to_owned);
 
-    result
+    tokio::task::spawn_blocking(move || {
+        let conn = get_conn()?;
+        let (matches, similar) = scan_question_matches(&conn, &title, options.as_deref(), limit, true)?;
+        Ok(classify_request_matches(&title, options.as_deref(), query_type.as_deref(), limit, matches, similar))
+    })
+    .await?
+}
+
+fn classify_request_matches(
+    title: &str,
+    options: Option<&str>,
+    query_type: Option<&str>,
+    limit: usize,
+    matches: Vec<QuestionMatch>,
+    similar: Vec<LocalQuestionMatch>,
+) -> RequestQuestionMatches {
+    let query_kind = query_type.and_then(crate::server::detect_question_kind);
+    let title_only = query_type.is_none_or(|kind| kind.trim().is_empty());
+    let needs_options = query_kind.is_some_and(|kind| kind.requires_options())
+        || should_require_option_match(&QueryMatchText::new(title).compact);
+    let query_options = normalize_optional_query_text(options);
+    let supplied_options = query_options.as_deref().unwrap_or_default();
+    let mut exact = Vec::new();
+    let mut candidates = Vec::new();
+
+    for matched in matches {
+        if matched.is_pending_correction || matched.answer.trim().is_empty()
+            || (matched.is_ai && crate::model_response::validate_answer(&matched.answer).is_err())
+        {
+            continue;
+        }
+
+        let stored_kind = matched.question_type.as_deref().and_then(crate::server::detect_question_kind);
+        if matches!((query_kind, stored_kind), (Some(a), Some(b)) if a != b) {
+            continue;
+        }
+
+        let stored_options = matched.options.as_deref().unwrap_or_default();
+        if [title, supplied_options, &matched.question, stored_options].iter().any(|text| text.contains("[图片")) {
+            continue;
+        }
+        let stored_has_options = normalize_optional_query_text(matched.options.as_deref()).is_some();
+
+        if query_options.is_none() && needs_options {
+            continue;
+        }
+        if query_options.is_none() && stored_has_options {
+            // A title-only lookup can use a self-contained question, but only on an
+            // exact title match. The caller checks for conflicting answers.
+            if title_only && is_exact_match_score(matched.title_similarity) {
+                exact.push(matched);
+            }
+            continue;
+        }
+        if !stored_has_options && (query_options.is_some() || stored_kind.is_some_and(|kind| kind.requires_options())) {
+            continue;
+        }
+        if is_exact_question_match(title, options, &matched) {
+            exact.push(matched);
+        } else if candidates.len() < limit && same_query_options_unordered(supplied_options, stored_options) {
+            candidates.push(matched);
+        }
+    }
+
+    RequestQuestionMatches { exact, candidates, similar }
 }
 
 /// 兼容旧调用：返回模糊匹配（含精确），最多 50 条
@@ -1288,7 +1373,8 @@ pub async fn query_database(
 
     let result = tokio::task::spawn_blocking(
         move || -> Result<Vec<(i64, String, String, bool, bool)>, Box<dyn std::error::Error + Send + Sync>> {
-            let matches = scan_question_matches(&title, options.as_deref())?;
+            let conn = get_conn()?;
+            let (matches, _) = scan_question_matches(&conn, &title, options.as_deref(), 0, false)?;
             Ok(matches
                 .into_iter()
                 .take(50)
@@ -1299,30 +1385,6 @@ pub async fn query_database(
     .await?;
 
     result
-}
-
-pub fn get_ai_response_by_id(
-    id: i64,
-) -> Result<QuestionMatch, Box<dyn std::error::Error + Send + Sync>> {
-    let conn = get_conn().map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-        Box::new(std::io::Error::new(std::io::ErrorKind::Other, e))
-    })?;
-    let row = conn.query_row(
-        "SELECT Id, Question, Options, Answer, IsAi, COALESCE(IsPendingCorrection, 0) FROM AIResponses WHERE Id = ?",
-        [id],
-        |row| {
-            Ok(QuestionMatch {
-                id: row.get(0)?,
-                question: row.get(1)?,
-                options: row.get(2)?,
-                answer: row.get(3)?,
-                is_ai: row.get(4)?,
-                is_pending_correction: row.get(5)?,
-                score: 1.0,
-            })
-        },
-    )?;
-    Ok(row)
 }
 
 pub fn insert_ai_response(

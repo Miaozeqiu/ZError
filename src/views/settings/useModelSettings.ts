@@ -1,5 +1,5 @@
 /** 模型设置编排。状态 ModelSettings/state.ts；滚动 / 测连通 / 图标 / 平台操作分文件。弹窗逻辑在 useModelConfigDialog.ts。 */
-import { nextTick, onMounted, onUnmounted, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, watch } from 'vue'
 import { useModelConfig, modelHasVision } from '../../services/model/config'
 import { bindModelIcons } from './ModelSettings/icons'
 import { bindPlatformOps } from './ModelSettings/platform'
@@ -9,8 +9,12 @@ import { bindModelTest } from './ModelSettings/testModel'
 
 export function useModelSettings() {
   const config = useModelConfig()
-  const { settings: modelConfig, selectedVisionModel: globalSelectedVisionModel } = config
+  const { settings: modelConfig } = config
   const state = createModelSettingsState(config)
+  const orderedPlatforms = computed(() => [
+    ...modelConfig.platforms.filter(platform => platform.enabled !== false),
+    ...modelConfig.platforms.filter(platform => platform.enabled === false),
+  ])
 
   const scrollHooks: { onBeforeDetailScroll?: () => void } = {}
   const scroll = bindSettingsScroll(scrollHooks)
@@ -29,8 +33,8 @@ export function useModelSettings() {
     icons.loadPlatformIcons()
     icons.loadRemoteModelIconMappings()
 
-    if (modelConfig.platforms.length > 0) {
-      state.selectedPlatform.value = modelConfig.platforms[0]
+    if (orderedPlatforms.value.length > 0) {
+      state.selectedPlatform.value = orderedPlatforms.value[0]
     }
 
     nextTick(() => {
@@ -61,18 +65,9 @@ export function useModelSettings() {
     scroll.updatePlatformScrollbarThumb()
   })
 
-  watch(globalSelectedVisionModel, (newModel) => {
-    console.log('🔄 [DEBUG] globalSelectedVisionModel changed to:', newModel?.displayName || 'null')
-    state.currentVisionModel.value = newModel
-  }, { immediate: true })
-
-  onMounted(() => {
-    state.currentVisionModel.value = globalSelectedVisionModel.value
-  })
-
   watch(() => modelConfig.platforms, (newPlatforms, oldPlatforms) => {
     if (!state.selectedPlatform.value && newPlatforms.length > 0) {
-      state.selectedPlatform.value = newPlatforms[0]
+      state.selectedPlatform.value = orderedPlatforms.value[0]
     } else if (state.selectedPlatform.value) {
       const latestSelectedPlatform = newPlatforms.find((item) => item.id === state.selectedPlatform.value?.id)
       if (latestSelectedPlatform) {
@@ -111,7 +106,7 @@ export function useModelSettings() {
     ...icons,
     ...test,
     ...platform,
-    modelConfig,
+    orderedPlatforms,
     modelHasVision,
   }
 }

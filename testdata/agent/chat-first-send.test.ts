@@ -63,6 +63,84 @@ beforeEach(async () => {
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers() })
 
 describe('first message preparation', () => {
+  it('prefills a graph request for the selected subject without creating or sending a chat', async () => {
+    hydration.resolve(null); await store.chatStoreReady
+    const { draftStudyGraphChat } = await import('../../src/services/agent/chatStarters')
+    const navigate = vi.fn()
+    const prefill = vi.fn()
+    window.addEventListener('navigate-tab', navigate)
+    window.addEventListener('prefill-agent-composer', prefill)
+    try {
+      draftStudyGraphChat({ subjectId: 7, subjectName: '劳动经济学' })
+      expect(navigate.mock.calls[0][0].detail).toBe('agent')
+      expect(prefill.mock.calls[0][0].detail).toBe('请绘制或完善「劳动经济学」的知识图谱。')
+      expect(store.newChatSelected.value).toBe(true)
+      expect(store.activeChat.value).toMatchObject({ studySubjectId: 7, messages: [] })
+      expect(store.chatSessions.value).toHaveLength(0)
+      expect(api.run).not.toHaveBeenCalled()
+    } finally {
+      window.removeEventListener('navigate-tab', navigate)
+      window.removeEventListener('prefill-agent-composer', prefill)
+    }
+    const pending = send('请只补充劳动需求这一章。')
+    await vi.advanceTimersByTimeAsync(0)
+    await pending
+    expect(api.run).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      streamSubjectId: 7, modelPrompt: expect.stringContaining('请只补充劳动需求这一章。'),
+    }))
+  })
+
+  it('passes an attached image into the Agent model input', async () => {
+    hydration.resolve(null); await store.chatStoreReady
+    const imageUrl = 'data:image/png;base64,aW1hZ2U='
+    const pending = send('请看我附上的图片。', [{
+      kind: 'image', filePath: 'image:test', fileName: '截图.png', imageUrl,
+    }])
+    await vi.advanceTimersByTimeAsync(0); await pending
+    expect(api.run.mock.calls[0][0].userContent).toEqual([
+      { type: 'image_url', image_url: { url: imageUrl, detail: 'high' } },
+      { type: 'text', text: expect.stringContaining('请看我附上的图片。') },
+    ])
+  })
+
+  it('sends an option quote by itself with its question and preserves the card target', async () => {
+    hydration.resolve(null); await store.chatStoreReady
+    const quote = {
+      messageId: 'quiz-message', stepId: 'quiz-step', uid: 'q-1',
+      question: '哪一项正确？', key: 'B', text: '选项正文',
+    }
+    const pending = send('', undefined, { quizOptionQuotes: [quote] })
+    expect(store.activeChat.value?.messages[0]).toMatchObject({ content: '', quizOptionQuotes: [quote] })
+    await vi.advanceTimersByTimeAsync(0); await pending
+    expect(api.run.mock.calls[0][0].modelPrompt).toContain('引用题目：哪一项正确？\n选项 B：选项正文')
+    expect(store.activeChat.value?.messages[0].modelContent).toContain('选项 B：选项正文')
+  })
+
+  it('keeps the blank chat selected across hydration and saves it only after the first message', async () => {
+    store.selectChat(null)
+    const draftId = store.activeChatId.value
+    hydration.resolve([{ id: 'older', title: '旧对话', messages: [] }])
+    await store.chatStoreReady
+    store.setChatStudySubject(7)
+    await send('   ')
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(store.newChatSelected.value).toBe(true)
+    expect(store.chatSessions.value.map(session => session.id)).toEqual(['older'])
+    expect(api.write).not.toHaveBeenCalled()
+
+    store.selectChat('older')
+    expect(store.newChatSelected.value).toBe(false)
+    store.selectChat(null)
+    expect(store.activeChatId.value).toBe(draftId)
+    const pending = send('第一条消息')
+    expect(store.newChatSelected.value).toBe(false)
+    expect(store.activeChat.value).toMatchObject({ id: draftId, title: '第一条消息', studySubjectId: 7 })
+    expect(store.chatSessions.value.map(session => session.id)).toEqual([draftId, 'older'])
+    expect(store.liveSession('older')?.messages).toHaveLength(0)
+    await vi.advanceTimersByTimeAsync(0)
+    await pending
+  })
+
   it('定期保存仍在运行的对话和工具记录，避免长任务中断后丢失整轮', async () => {
     hydration.resolve(null); await store.chatStoreReady
     const model = deferred<any>()

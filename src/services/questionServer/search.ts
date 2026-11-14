@@ -7,6 +7,8 @@ import {
   stopSearchHeartbeat, unregisterAbortController,
 } from './runtime'
 import { formatSearchContextForModel, performWebSearch, type SearchTrace } from '../searchService'
+import { getSearchProvider } from '../searchProviders'
+import { modelConfigManager, withConfiguredDeepSeekKey } from '../model/configManager'
 
 export const getSearchQuestionText = (requestId: string): string => {
   const log = requestLogs.value.find(item => item.id === requestId)
@@ -34,7 +36,7 @@ export const runSearchForRequest = async (
   const log = requestLogs.value.find(item => item.id === requestId)
   const trace = reactive<SearchTrace>({
     id: `${requestId}-search-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-    query, modelId: '', modelName, mode: 'remote', toolName: config.provider === 'deepseek' ? 'deepseek_search' : 'web_search_exa',
+    query, modelId: '', modelName, mode: 'remote', toolName: getSearchProvider(config.provider).toolName,
     status: 'searching', startedAt: Date.now(), results: [],
   })
   if (log) (log.searchTraces ??= []).push(trace)
@@ -45,7 +47,11 @@ export const runSearchForRequest = async (
   startSearchHeartbeat(requestId, heartbeat)
   heartbeat()
   try {
-    const outcome = await performWebSearch(query, { ...config }, { signal: controller.signal })
+    if (config.provider === 'deepseek') {
+      await modelConfigManager.ready
+      if (controller.signal.aborted) throw createCancelledRequestError()
+    }
+    const outcome = await performWebSearch(query, withConfiguredDeepSeekKey({ ...config }), { signal: controller.signal })
     Object.assign(trace, {
       status: 'success', durationMs: outcome.durationMs, results: outcome.results,
       rawText: outcome.rawText, mode: outcome.mode, toolName: outcome.toolName,
@@ -61,6 +67,6 @@ export const runSearchForRequest = async (
   } finally {
     unregisterAbortController(requestId, controller)
     stopSearchHeartbeat(requestId)
-    void sendModelProgressToBackend(requestId, 'search-finished')
+    await sendModelProgressToBackend(requestId, trace.status === 'success' ? 'search-finished' : 'search-failed')
   }
 }

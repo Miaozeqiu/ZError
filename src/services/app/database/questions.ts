@@ -1,6 +1,7 @@
 /** 题库 / 文件夹。SQL 在 src-tauri/src/database/questions.rs。 */
 import { invoke } from '@tauri-apps/api/core'
 import { isTauri } from './env'
+import { normalizeLocalSearchText } from '../../../utils/question/localSearchText'
 import { mockAIResponses, mockFolders, replaceList } from './mock'
 import type {
   AIResponse,
@@ -209,46 +210,37 @@ export async function getFolderQuestionCount(folderId: number): Promise<number> 
   }
 }
 
-// 根据标题搜索题目（模糊搜索 + 文件夹过滤）
+const searchMockQuestions = (keyword: string, folderId?: number, pendingOnly = false) => {
+  const phrase = normalizeLocalSearchText(keyword)
+  return mockAIResponses.filter(response =>
+    (pendingOnly ? !!response.is_pending_correction : folderId == null || response.folder_id === folderId)
+    && [response.question, response.options, response.answer].some(text =>
+      normalizeLocalSearchText(text || '').includes(phrase),
+    ),
+  )
+}
 
-export async function searchQuestionsByTitle(searchTerm: string, folderId?: number): Promise<AIResponse[]> {
-  if (!isTauri()) {
-    console.log('使用模拟数据进行搜索');
-    let filteredResponses = mockAIResponses;
-    if (folderId !== undefined) {
-      filteredResponses = filteredResponses.filter(response => response.folder_id === folderId);
-    }
-    return filteredResponses.filter(response => 
-      response.question.toLowerCase().includes(searchTerm.toLowerCase())
-    );
-  }
-  
-  try {
-    console.log(`调用 Rust 模糊搜索: keyword=${searchTerm}, folderId=${folderId}`);
-    
-    // 对查询词进行中文分词
-    let segQuery = searchTerm;
-    try {
-      const segmented = await invoke<string[]>('segment_text', { text: searchTerm });
-      if (segmented && segmented.length > 0) {
-        console.log('使用后端分词结果:', segmented);
-        segQuery = segmented.join(' ');
-      }
-    } catch (e) {
-      console.warn('后端分词失败或未实现，使用原始查询词:', e);
-    }
+export async function searchQuestionsByTitle(searchTerm: string, folderId?: number, pendingOnly = false): Promise<AIResponse[]> {
+  if (!isTauri()) return searchMockQuestions(searchTerm, folderId, pendingOnly)
+  return invoke<AIResponse[]>('search_questions_fuzzy', {
+    keyword: searchTerm,
+    folderId: folderId ?? null,
+    pendingCorrectionOnly: pendingOnly,
+  })
+}
 
-    const results = await invoke<AIResponse[]>('search_questions_fuzzy', { 
-      keyword: segQuery, 
-      folderId: folderId !== undefined ? folderId : null 
-    });
-    
-    console.log(`搜索"${searchTerm}"找到 ${results.length} 条记录`);
-    return results;
-  } catch (error) {
-    console.error('搜索题目失败:', error);
-    return [];
-  }
+export async function searchQuestionsPage(params: {
+  keyword: string
+  folderId?: number
+  pendingCorrectionOnly: boolean
+  page: number
+  pageSize: number
+  sortOrder: 'asc' | 'desc'
+}): Promise<PaginatedAIResponses> {
+  if (isTauri()) return invoke<PaginatedAIResponses>('search_questions_page', params)
+  const results = searchMockQuestions(params.keyword, params.folderId, params.pendingCorrectionOnly)
+  const start = (params.page - 1) * params.pageSize
+  return { items: results.slice(start, start + params.pageSize), total: results.length }
 }
 
 export async function getFolderPath(folderId: number): Promise<{id: number, name: string}[]> {

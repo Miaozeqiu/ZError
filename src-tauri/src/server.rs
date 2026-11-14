@@ -1,7 +1,7 @@
 use crate::app_activity::{begin_server_activity, end_server_activity};
 use crate::database::{
-    get_ai_response_by_id, insert_ai_response, query_database_candidates, query_database_exact,
-    set_question_pending_correction, QuestionMatch,
+    insert_ai_response, query_database_for_request, question_match_is_current,
+    set_question_pending_correction, LocalMatchStatus, LocalQuestionMatch, QuestionMatch,
 };
 use crate::types::{
     ModelCallProgressRequest, ModelCallResponseRequest, QueryData, QueryRequest, QueryResponse,
@@ -11,11 +11,75 @@ use futures_util::StreamExt;
 use regex::Regex;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use tauri::{AppHandle, Emitter, State};
 use tokio_stream::wrappers::BroadcastStream;
 use uuid;
 use warp::http::HeaderMap;
-use warp::Filter;
+use warp::{Filter, Reply};
+
+mod correction;
+mod query_progress;
+
+use query_progress::{QueryProgress, State as ProgressState, Step as ProgressStep};
+
+fn complete_query_reply(
+    logger: &crate::logger::RequestLogger,
+    app: Option<&AppHandle>,
+    request_id: String,
+    method: &str,
+    response_time: u64,
+    outcome: (u16, QueryResponse, crate::logger::LocalQuestionSearch),
+    progress: &QueryProgress,
+) -> warp::reply::Response {
+    let (status, response, local_search) = outcome;
+    let response_body = serde_json::to_string(&response).unwrap_or_default();
+    let reply = warp::reply::json(&response).into_response();
+    let http_status = reply.status().as_u16();
+    let response_headers: HashMap<String, String> = reply
+        .headers()
+        .iter()
+        .filter_map(|(name, value)| {
+            value
+                .to_str()
+                .ok()
+                .map(|value| (name.to_string(), value.to_string()))
+        })
+        .collect();
+
+    let local_matches = logger.log_request_complete(
+        request_id.clone(),
+        method.to_string(),
+        "/query".to_string(),
+        status,
+        http_status,
+        response_time,
+        Some(response_body.clone()),
+        Some(response_headers.clone()),
+        local_search,
+    );
+    if let Some(app) = app {
+        let _ = app.emit_to(
+            "main",
+            "request-log-complete",
+            serde_json::json!({
+                "id": &request_id,
+                "status": status,
+                "http_status": http_status,
+                "response_time": response_time,
+                "stage": "completed",
+                "path": "/query",
+                "method": method,
+                "response_body": &response_body,
+                "response_headers": &response_headers,
+                "local_search": local_search,
+                "local_matches": local_matches,
+            }),
+        );
+    }
+    progress.finish(&response);
+    reply
+}
 
 const QUERY_TEST_PAGE_HTML: &str = include_str!("query_test_page.html");
 
@@ -202,13 +266,16 @@ fn build_query_request_log_body(request: &QueryRequest) -> String {
     .to_string()
 }
 
-fn resolve_request_origin(headers: &HeaderMap) -> String {
+fn resolve_request_origin(headers: &HeaderMap, port: u16) -> String {
     let host = headers
         .get("host")
         .and_then(|value| value.to_str().ok())
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or("127.0.0.1:3000");
-    format!("http://{}", host)
+        .and_then(|value| value.parse::<warp::http::uri::Authority>().ok())
+        .filter(|authority| !authority.as_str().contains('@'));
+    match host {
+        Some(host) => format!("http://{host}"),
+        None => format!("http://127.0.0.1:{port}"),
+    }
 }
 
 fn escape_html(text: &str) -> String {
@@ -217,22 +284,6 @@ fn escape_html(text: &str) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
         .replace('\'', "&#39;")
-}
-
-fn build_pending_correction_button(origin: &str, question_id: i64, is_pending_correction: bool) -> String {
-    if question_id <= 0 {
-        return String::new();
-    }
-
-    if is_pending_correction {
-        return "<button type=\"button\" disabled style=\"padding:4px 10px;border:none;border-radius:999px;background:#f59e0b;color:#fff;font-size:12px;cursor:not-allowed;opacity:0.75;white-space:nowrap;\">已标记待修正</button>".to_string();
-    }
-
-    let url = format!("{}/api/questions/{}/pending-correction", origin, question_id);
-    format!(
-        r#"<button type="button" style="padding:4px 10px;border:none;border-radius:999px;background:#ef4444;color:#fff;font-size:12px;cursor:pointer;white-space:nowrap;" onclick="(async()=>{{const btn=this;if(btn.dataset.loading==='1')return;const text=btn.textContent||'标记为待修正';btn.dataset.loading='1';btn.disabled=true;btn.textContent='标记中...';try{{const res=await fetch('{url}',{{method:'POST'}});const data=await res.json().catch(()=>({{success:false,message:'标记失败'}}));if(!res.ok||!data.success)throw new Error(data.message||'标记失败');btn.textContent='已标记待修正';btn.style.opacity='0.75';btn.style.cursor='not-allowed';}}catch(error){{btn.disabled=false;btn.textContent=text;alert(error&&error.message?error.message:'标记失败');}}finally{{delete btn.dataset.loading;}}}})()">标记为待修正</button>"#,
-        url = url
-    )
 }
 
 fn build_query_data(
@@ -244,27 +295,29 @@ fn build_query_data(
     is_pending_correction: bool,
 ) -> QueryData {
     let escaped_question = escape_html(question).replace('\n', "<br>");
-    let button_html = build_pending_correction_button(origin, question_id, is_pending_correction);
-    let question_html = if button_html.is_empty() {
-        escaped_question
+    let correction_path = (question_id > 0 && !is_pending_correction)
+        .then(|| correction::path_for(question_id));
+    let question_html = if let Some(path) = &correction_path {
+        format!("{escaped_question}{}", correction::link(&format!("{origin}{path}")))
+    } else if is_pending_correction {
+        format!("{escaped_question}<span style=\"display:block;margin-top:8px\">已标记待修正</span>")
     } else {
-        format!(
-            "<div style=\"display:flex;align-items:flex-start;gap:8px;flex-wrap:wrap;\"><span style=\"flex:1 1 auto;min-width:0;\">{}</span>{}</div>",
-            escaped_question, button_html
-        )
+        escaped_question
     };
 
     QueryData {
         id: question_id,
         question: question_html,
+        question_text: Some(question.to_owned()),
+        correction_path,
         answer,
         is_ai,
         is_pending_correction,
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-enum QuestionKind {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum QuestionKind {
     Single,
     Multiple,
     Judgement,
@@ -272,6 +325,10 @@ enum QuestionKind {
 }
 
 impl QuestionKind {
+    pub(crate) fn requires_options(self) -> bool {
+        matches!(self, Self::Single | Self::Multiple)
+    }
+
     fn chinese_name(&self) -> &'static str {
         match self {
             QuestionKind::Single => "单选",
@@ -331,7 +388,7 @@ impl QuestionKind {
     }
 }
 
-fn detect_question_kind(query_type: &str) -> Option<QuestionKind> {
+pub(crate) fn detect_question_kind(query_type: &str) -> Option<QuestionKind> {
     let trimmed = query_type.trim();
     if trimmed.is_empty() {
         return None;
@@ -399,10 +456,10 @@ fn build_model_query_prompt(
 const SAME_QUESTION_CHECK_PREFIX: &str = "__SAME_QUESTION_CHECK__:";
 const SAME_QUESTION_CANDIDATE_LIMIT: usize = 5;
 
-fn build_same_question_check_prompt(title: &str, options: Option<&str>, candidates: &[QuestionMatch]) -> String {
+fn build_same_question_check_prompt(title: &str, options: Option<&str>, candidates: &[(QuestionMatch, String)]) -> String {
     let candidate_list: Vec<serde_json::Value> = candidates
         .iter()
-        .map(|c| {
+        .map(|(c, _)| {
             serde_json::json!({
                 "id": c.id,
                 "question": c.question,
@@ -625,13 +682,98 @@ async fn wait_and_store_ai_answer(
     }
 }
 
+fn publish_local_matches(
+    logger: &crate::logger::RequestLogger,
+    app: Option<&AppHandle>,
+    request_id: &str,
+    matches: Vec<LocalQuestionMatch>,
+) {
+    if matches.is_empty() {
+        return;
+    }
+    if let Some(app) = app {
+        let _ = app.emit_to("main", "request-log-local-matches", serde_json::json!({
+            "id": request_id,
+            "local_matches": &matches,
+        }));
+    }
+    logger.record_local_matches(request_id, matches);
+}
+
+fn set_local_match_status(
+    similar: &mut Vec<LocalQuestionMatch>,
+    matched: &QuestionMatch,
+    status: LocalMatchStatus,
+) {
+    if let Some(row) = similar.iter_mut().find(|row| row.id == matched.id) {
+        row.status = status;
+    } else if matches!(status, LocalMatchStatus::Used) {
+        // The options can make a lower-ranked title the answer source.
+        let result = LocalQuestionMatch {
+            id: matched.id,
+            question: matched.question.clone(),
+            similarity: matched.title_similarity,
+            status,
+        };
+        if similar.len() == SAME_QUESTION_CANDIDATE_LIMIT {
+            if let Some(index) = similar.iter().rposition(|row| !matches!(row.status, LocalMatchStatus::Used)) {
+                similar.remove(index);
+            } else {
+                return;
+            }
+        }
+        if result.similarity > 0.0 {
+            let index = similar.partition_point(|row| row.similarity >= result.similarity);
+            similar.insert(index, result);
+        }
+    }
+}
+
+fn answer_for_local_match(matched: &QuestionMatch, request: &QueryRequest) -> Option<String> {
+    use crate::database::query_match::{labeled_options, nonempty_option_lines, same_option_text};
+
+    // A stored letter refers to the stored order, even when the request shuffles the options.
+    let answer = normalize_answer_against_options(&matched.answer, matched.options.as_deref());
+    let current_options = request.options.as_deref().filter(|value| !value.trim().is_empty());
+    let Some(options_to_check) = current_options.or(matched.options.as_deref().filter(|value| !value.trim().is_empty())) else {
+        return Some(answer);
+    };
+    let labeled = labeled_options(options_to_check);
+    let choices: Vec<_> = match &labeled {
+        Some(items) => items.iter().map(|(_, text)| text.as_str()).collect(),
+        None => nonempty_option_lines(options_to_check).collect(),
+    };
+    let expected = request.query_type.as_deref().and_then(detect_question_kind)
+        .or_else(|| matched.question_type.as_deref().and_then(detect_question_kind));
+    if matches!(expected, Some(QuestionKind::Completion | QuestionKind::Judgement)) {
+        return Some(answer);
+    }
+    let parts = answer.split("###").map(|part| {
+        let mut same = choices.iter().copied().filter(|value| same_option_text(value, part));
+        match (same.next(), same.next()) {
+            (Some(value), None) => Some(value),
+            _ => None,
+        }
+    }).collect::<Option<Vec<_>>>()?;
+    if current_options.is_none() && parts.iter().any(|part| {
+        ["以上", "上述", "前两项", "后两项", "所有选项", "其他选项"]
+            .iter()
+            .any(|reference| part.contains(reference))
+    }) {
+        return None;
+    }
+    Some(parts.join("###"))
+}
+
 async fn resolve_query_with_same_question_check(
     logger: &crate::logger::RequestLogger,
     app: Option<&AppHandle>,
     request: &QueryRequest,
     request_id: &str,
     request_origin: &str,
-) -> (u16, QueryResponse) {
+    progress: &QueryProgress,
+) -> (u16, QueryResponse, crate::logger::LocalQuestionSearch) {
+    use crate::logger::LocalQuestionSearch;
     let mut has_url = contains_url(&request.title);
     if let Some(options) = &request.options {
         if !has_url {
@@ -639,62 +781,96 @@ async fn resolve_query_with_same_question_check(
         }
     }
 
-    // 1) 精确命中直接返回
-    match query_database_exact(&request.title, request.options.as_deref()).await.map(|hits| {
-        hits.into_iter().filter(|hit| !hit.is_ai || crate::model_response::validate_answer(&hit.answer).is_ok()).collect::<Vec<_>>()
-    }) {
-        Ok(exact_hits) if !exact_hits.is_empty() => {
-            println!("✅ 精确匹配命中: {} 条", exact_hits.len());
-            let data_list: Vec<QueryData> = exact_hits
-                .into_iter()
-                .map(|m| {
-                    let answer = normalize_answer_against_options(
-                        &m.answer,
-                        request.options.as_deref(),
-                    );
-                    build_query_data(
-                        request_origin,
-                        m.id,
-                        &m.question,
-                        answer,
-                        m.is_ai,
-                        m.is_pending_correction,
-                    )
-                })
-                .collect();
-            return (200, QueryResponse::success(data_list));
-        }
-        Ok(_) => {
-            println!("🔍 无精确匹配: {}", request.title);
-        }
-        Err(e) => {
-            eprintln!("Database exact query error: {}", e);
-            return (
-                500,
-                QueryResponse::error(format!("Database error: {}", e)),
-            );
-        }
-    }
-
-    // 2) 模糊候选 → AI 同题判断
-    let candidates = match query_database_candidates(
+    progress.step(ProgressStep::Local, ProgressState::Running, "正在匹配题干和选项");
+    let search = match query_database_for_request(
         &request.title,
         request.options.as_deref(),
+        request.query_type.as_deref(),
         SAME_QUESTION_CANDIDATE_LIMIT,
     )
     .await
     {
-        Ok(c) => c.into_iter().filter(|hit| !hit.is_ai || crate::model_response::validate_answer(&hit.answer).is_ok()).collect::<Vec<_>>(),
+        Ok(search) => search,
         Err(e) => {
-            eprintln!("Database candidate query error: {}", e);
+            eprintln!("Database query error: {}", e);
+            progress.step(ProgressStep::Local, ProgressState::Failed, "无法读取本地题库");
             return (
                 500,
                 QueryResponse::error(format!("Database error: {}", e)),
+                LocalQuestionSearch::Failed,
             );
         }
     };
 
+    let mut similar = search.similar;
+
+    let exact_hits: Vec<_> = search.exact.into_iter().filter_map(|matched| {
+        let answer = answer_for_local_match(&matched, request)?;
+        Some((matched, answer))
+    }).collect();
+    let distinct_answers: std::collections::HashSet<_> = exact_hits.iter().map(|(_, answer)| {
+        let mut parts: Vec<_> = answer.split("###")
+            .map(crate::database::query_match::compact_query_spacing)
+            .collect();
+        if request.query_type.as_deref().and_then(detect_question_kind) == Some(QuestionKind::Multiple) {
+            parts.sort_unstable();
+        }
+        parts
+    }).collect();
+    let conflicting_answers = distinct_answers.len() > 1;
+    if !exact_hits.is_empty() && !conflicting_answers {
+        println!("✅ 精确匹配命中: {} 条", exact_hits.len());
+        progress.step(ProgressStep::Local, ProgressState::Done, "命中本地答案");
+        for (matched, _) in &exact_hits {
+            set_local_match_status(&mut similar, matched, LocalMatchStatus::Used);
+        }
+        publish_local_matches(logger, app, request_id, similar);
+        let data_list: Vec<QueryData> = exact_hits
+            .into_iter()
+            .map(|(m, answer)| {
+                build_query_data(
+                    request_origin,
+                    m.id,
+                    &m.question,
+                    answer,
+                    m.is_ai,
+                    m.is_pending_correction,
+                )
+            })
+            .collect();
+        return (
+            200,
+            QueryResponse::success(data_list),
+            LocalQuestionSearch::Hit,
+        );
+    }
+    println!("🔍 无精确匹配: {}", request.title);
+
+    // 2) 模糊候选 → AI 同题判断
+    let candidates: Vec<_> = if conflicting_answers {
+        Vec::new()
+    } else {
+        search.candidates.into_iter().filter_map(|matched| {
+            let answer = answer_for_local_match(&matched, request)?;
+            Some((matched, answer))
+        }).collect()
+    };
+    for (candidate, _) in &candidates {
+        set_local_match_status(&mut similar, candidate, LocalMatchStatus::Candidate);
+    }
+    publish_local_matches(logger, app, request_id, similar.clone());
+
+    let local_detail = if conflicting_answers {
+        "本地答案有冲突，未直接采用".to_string()
+    } else if candidates.is_empty() {
+        "未命中本地答案".to_string()
+    } else {
+        format!("找到 {} 道待核对的相似题", candidates.len())
+    };
+    progress.step(ProgressStep::Local, ProgressState::Done, local_detail);
+
     if !candidates.is_empty() {
+        progress.step(ProgressStep::Verify, ProgressState::Running, "正在核对相似题是否为同一道题");
         println!(
             "🤖 发现 {} 条近似候选，请求 AI 同题判断",
             candidates.len()
@@ -713,19 +889,25 @@ async fn resolve_query_with_same_question_check(
                 // 未选择模型等客户端错误：直接返回，避免再回落正常答题又等一轮
                 if let Some((status, err_msg)) = classify_model_failure(&judge_content) {
                     if status == 400 && err_msg.contains("未选择模型") {
-                        return (status, QueryResponse::error(err_msg));
+                        progress.step(ProgressStep::Verify, ProgressState::Failed, "未选择可用模型");
+                        return (
+                            status,
+                            QueryResponse::error(err_msg),
+                            LocalQuestionSearch::Unconfirmed,
+                        );
                     }
                 }
                 if let Some(matched_id) = parse_same_question_result(&judge_content) {
-                    if let Some(matched) = candidates.iter().find(|c| c.id == matched_id).cloned() {
-                        let answer = normalize_answer_against_options(
-                            &matched.answer,
-                            request.options.as_deref(),
-                        );
+                    if let Some((matched, answer)) = candidates.iter()
+                        .find(|(candidate, _)| candidate.id == matched_id && question_match_is_current(candidate))
+                    {
+                        set_local_match_status(&mut similar, matched, LocalMatchStatus::Used);
+                        publish_local_matches(logger, app, request_id, similar);
+                        progress.step(ProgressStep::Verify, ProgressState::Done, "确认是同一道题，采用本地答案");
                         let response_id = if should_auto_add_to_question_bank() {
                             match insert_ai_response(
                                 &request.title,
-                                &answer,
+                                answer,
                                 request.options.clone(),
                                 request.query_type.clone(),
                                 matched.is_ai,
@@ -754,46 +936,15 @@ async fn resolve_query_with_same_question_check(
                             request_origin,
                             response_id,
                             &request.title,
-                            answer,
+                            answer.clone(),
                             matched.is_ai,
                             false,
                         );
-                        return (200, QueryResponse::success(vec![data]));
-                    }
-
-                    // matched_id 不在候选中，尝试按 id 查库
-                    if let Ok(matched) = get_ai_response_by_id(matched_id).and_then(|hit| {
-                        if hit.is_ai && crate::model_response::validate_answer(&hit.answer).is_err() {
-                            Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "历史模型失败记录不可作为答案").into())
-                        } else { Ok(hit) }
-                    }) {
-                        let answer = normalize_answer_against_options(
-                            &matched.answer,
-                            request.options.as_deref(),
+                        return (
+                            200,
+                            QueryResponse::success(vec![data]),
+                            LocalQuestionSearch::Hit,
                         );
-                        let response_id = if should_auto_add_to_question_bank() {
-                            match insert_ai_response(
-                                &request.title,
-                                &answer,
-                                request.options.clone(),
-                                request.query_type.clone(),
-                                matched.is_ai,
-                            ) {
-                                Ok(id) => id,
-                                Err(_) => matched.id,
-                            }
-                        } else {
-                            matched.id
-                        };
-                        let data = build_query_data(
-                            request_origin,
-                            response_id,
-                            &request.title,
-                            answer,
-                            matched.is_ai,
-                            false,
-                        );
-                        return (200, QueryResponse::success(vec![data]));
                     }
 
                     println!(
@@ -803,11 +954,17 @@ async fn resolve_query_with_same_question_check(
                 } else {
                     println!("ℹ️ AI 判定为不同题或解析失败，回落正常答题");
                 }
+                progress.step(ProgressStep::Verify, ProgressState::Done, "未能确认是同一道题");
             }
             Err(e) => {
+                progress.step(ProgressStep::Verify, ProgressState::Failed, "未能完成相似题核对");
                 if e.contains("未选择模型") {
                     let (status, message) = classify_explicit_model_failure(&e);
-                    return (status, QueryResponse::error(message));
+                    return (
+                        status,
+                        QueryResponse::error(message),
+                        LocalQuestionSearch::Unconfirmed,
+                    );
                 }
                 println!("⚠️ 同题判断超时/失败: {}，回落正常答题", e);
             }
@@ -817,7 +974,12 @@ async fn resolve_query_with_same_question_check(
     }
 
     // 3) 正常 AI 答题
-    wait_and_store_ai_answer(logger, app, request, request_id, request_origin, has_url).await
+    let (status, response) = progress.track_answer(
+        logger,
+        request_id,
+        wait_and_store_ai_answer(logger, app, request, request_id, request_origin, has_url),
+    ).await;
+    (status, response, LocalQuestionSearch::Miss)
 }
 
 /// 启动HTTP服务器
@@ -913,12 +1075,25 @@ pub async fn start_server(
     let logger_for_query = state.logger.clone();
     let app_for_query = state.app_handle.clone();
 
+    let request_connection = warp::path::full()
+        .and(warp::query::raw().map(Some).or(warp::any().map(|| None)).unify())
+        .and(warp::addr::remote())
+        .map(|path: warp::path::FullPath, query: Option<String>, remote: Option<SocketAddr>| {
+            let mut target = path.as_str().to_owned();
+            if let Some(query) = query {
+                target.push('?');
+                target.push_str(&query);
+            }
+            (target, remote.map(|address| address.to_string()))
+        });
+
     // POST 请求处理
     let query_post_route = warp::path("query")
         .and(warp::post())
         .and(warp::header::headers_cloned())
+        .and(request_connection)
         .and(warp::body::json())
-        .and_then(move |headers: HeaderMap, request: QueryRequest| {
+        .and_then(move |headers: HeaderMap, (request_target, remote_address), request: QueryRequest| {
             let logger = logger_for_query.clone();
             let app = app_for_query.clone();
             async move {
@@ -956,9 +1131,11 @@ pub async fn start_server(
                     Some(header_map),
                     Some(ip),
                     user_agent,
+                    request_target,
+                    remote_address,
                 );
 
-                let request_origin = resolve_request_origin(&headers);
+                let request_origin = resolve_request_origin(&headers, port);
 
                 // 独立任务执行：请求端断开时仍会写完 completed 日志，避免 UI 一直「处理中」
                 let logger_task = logger.clone();
@@ -966,49 +1143,37 @@ pub async fn start_server(
                 let request_task = request;
                 let request_id_task = request_id.clone();
                 let request_origin_task = request_origin;
+                let (progress, stream_reply) = QueryProgress::for_request(&headers);
                 let join = tokio::spawn(async move {
-                    let result = resolve_query_with_same_question_check(
+                    let outcome = resolve_query_with_same_question_check(
                         &logger_task,
                         app_task.as_ref(),
                         &request_task,
                         &request_id_task,
                         &request_origin_task,
+                        &progress,
                     )
                     .await;
-                    let response_time = start_time.elapsed().as_millis() as u64;
-                    let response_body = serde_json::to_string(&result.1).unwrap_or_default();
-                    if let Some(app) = app_task.as_ref() {
-                        let _ = app.emit(
-                            "request-log-complete",
-                            serde_json::json!({
-                                "id": request_id_task,
-                                "status": result.0,
-                                "response_time": response_time,
-                                "stage": "completed",
-                                "path": "/query",
-                                "method": "POST",
-                                "response_body": response_body,
-                            }),
-                        );
-                    }
-                    logger_task.log_request_complete(
+                    complete_query_reply(
+                        &logger_task,
+                        app_task.as_ref(),
                         request_id_task,
-                        "POST".to_string(),
-                        "/query".to_string(),
-                        result.0,
-                        response_time,
-                        Some(serde_json::to_string(&result.1).unwrap_or_default()),
-                    );
-                    result
+                        "POST",
+                        start_time.elapsed().as_millis() as u64,
+                        outcome,
+                        &progress,
+                    )
                 });
 
+                if let Some(reply) = stream_reply {
+                    return Ok::<_, warp::Rejection>(reply);
+                }
                 match join.await {
-                    Ok(result) => Ok::<_, warp::Rejection>(warp::reply::json(&result.1)),
+                    Ok(reply) => Ok::<_, warp::Rejection>(reply),
                     Err(e) => {
                         eprintln!("❌ /query POST task join error: {}", e);
-                        Ok(warp::reply::json(&QueryResponse::error(
-                            "Internal query task failed".to_string(),
-                        )))
+                        let response = QueryResponse::error("Internal query task failed".to_string());
+                        Ok(warp::reply::json(&response).into_response())
                     }
                 }
             }
@@ -1020,8 +1185,9 @@ pub async fn start_server(
     let query_get_route = warp::path("query")
         .and(warp::get())
         .and(warp::header::headers_cloned())
+        .and(request_connection)
         .and(warp::query::<HashMap<String, String>>())
-        .and_then(move |headers: HeaderMap, params: HashMap<String, String>| {
+        .and_then(move |headers: HeaderMap, (request_target, remote_address), params: HashMap<String, String>| {
             let logger = logger_for_query_get.clone();
             let app = app_for_query_get.clone();
             async move {
@@ -1074,9 +1240,11 @@ pub async fn start_server(
                     Some(header_map),
                     Some(ip),
                     user_agent,
+                    request_target,
+                    remote_address,
                 );
 
-                let request_origin = resolve_request_origin(&headers);
+                let request_origin = resolve_request_origin(&headers, port);
 
                 let logger_task = logger.clone();
                 let app_task = app.clone();
@@ -1084,48 +1252,33 @@ pub async fn start_server(
                 let request_id_task = request_id.clone();
                 let request_origin_task = request_origin;
                 let join = tokio::spawn(async move {
-                    let result = resolve_query_with_same_question_check(
+                    let progress = QueryProgress::default();
+                    let outcome = resolve_query_with_same_question_check(
                         &logger_task,
                         app_task.as_ref(),
                         &request_task,
                         &request_id_task,
                         &request_origin_task,
+                        &progress,
                     )
                     .await;
-                    let response_time = start_time.elapsed().as_millis() as u64;
-                    let response_body = serde_json::to_string(&result.1).unwrap_or_default();
-                    if let Some(app) = app_task.as_ref() {
-                        let _ = app.emit(
-                            "request-log-complete",
-                            serde_json::json!({
-                                "id": request_id_task,
-                                "status": result.0,
-                                "response_time": response_time,
-                                "stage": "completed",
-                                "path": "/query",
-                                "method": "GET",
-                                "response_body": response_body,
-                            }),
-                        );
-                    }
-                    logger_task.log_request_complete(
+                    complete_query_reply(
+                        &logger_task,
+                        app_task.as_ref(),
                         request_id_task,
-                        "GET".to_string(),
-                        "/query".to_string(),
-                        result.0,
-                        response_time,
-                        Some(serde_json::to_string(&result.1).unwrap_or_default()),
-                    );
-                    result
+                        "GET",
+                        start_time.elapsed().as_millis() as u64,
+                        outcome,
+                        &progress,
+                    )
                 });
 
                 match join.await {
-                    Ok(result) => Ok::<_, warp::Rejection>(warp::reply::json(&result.1)),
+                    Ok(reply) => Ok::<_, warp::Rejection>(reply),
                     Err(e) => {
                         eprintln!("❌ /query GET task join error: {}", e);
-                        Ok(warp::reply::json(&QueryResponse::error(
-                            "Internal query task failed".to_string(),
-                        )))
+                        let response = QueryResponse::error("Internal query task failed".to_string());
+                        Ok(warp::reply::json(&response).into_response())
                     }
                 }
             }
@@ -1138,8 +1291,22 @@ pub async fn start_server(
         .and(warp::path("questions"))
         .and(warp::path::param::<i64>())
         .and(warp::path("pending-correction"))
+        .and(warp::path::end())
         .and(warp::post())
-        .and_then(|question_id: i64| async move {
+        .and(warp::header::headers_cloned())
+        .and_then(move |question_id: i64, headers: HeaderMap| async move {
+            let same_origin = headers.get("origin").map_or(true, |origin| {
+                origin.as_bytes() == resolve_request_origin(&headers, port).as_bytes()
+            });
+            if !same_origin {
+                return Ok::<_, warp::Rejection>(warp::reply::with_status(
+                    warp::reply::json(&serde_json::json!({
+                        "success": false,
+                        "message": "请重新查询以获取待修正链接",
+                    })),
+                    warp::http::StatusCode::FORBIDDEN,
+                ));
+            }
             match set_question_pending_correction(question_id, true).await {
                 Ok(_) => Ok::<_, warp::Rejection>(warp::reply::with_status(
                     warp::reply::json(&serde_json::json!({
@@ -1242,7 +1409,15 @@ pub async fn start_server(
 
     let root_route = warp::path::end()
         .and(warp::get())
-        .map(|| warp::reply::html(QUERY_TEST_PAGE_HTML));
+        .map(|| warp::reply::with_header(warp::reply::html(QUERY_TEST_PAGE_HTML), "cache-control", "no-cache"));
+
+    let app_icon_route = warp::path("app-icon.png")
+        .and(warp::path::end())
+        .and(warp::get())
+        .map(|| {
+            let icon = include_bytes!("../../public/icons/app-icon.png");
+            warp::reply::with_header(icon.as_slice(), "content-type", "image/png")
+        });
 
     // 根路由的HEAD方法
     let app_handle_clone = state.app_handle.clone();
@@ -1392,9 +1567,11 @@ pub async fn start_server(
 
     // 组合所有路由（query路由和SSE路由不需要额外的日志中间件）
     let routes = root_route
+        .or(app_icon_route)
         .or(root_head_route)
         .or(logged_routes)
         .or(query_route)
+        .or(correction::routes(state.app_handle.clone()))
         .or(mark_pending_correction_route)
         .or(model_response_route)
         .or(model_progress_route)
@@ -1504,42 +1681,10 @@ pub async fn get_server_status(state: State<'_, ServerState>) -> Result<ServerIn
 
 /// 从选项文本解析 A/B/C → 选项正文
 fn parse_option_letter_map(options: Option<&str>) -> HashMap<char, String> {
-    let mut map = HashMap::new();
-    let Some(options) = options.map(str::trim).filter(|s| !s.is_empty()) else {
-        return map;
-    };
-    let Ok(re) = Regex::new(r"^([A-Za-z])([\.、．\)])\s*(.+)$") else {
-        return map;
-    };
-    for raw in options.replace("\r\n", "\n").lines() {
-        let line = raw.trim();
-        if line.is_empty() {
-            continue;
-        }
-        if let Some(caps) = re.captures(line) {
-            let letter = caps
-                .get(1)
-                .and_then(|m| m.as_str().chars().next())
-                .map(|c| c.to_ascii_uppercase());
-            let sep = caps.get(2).map(|m| m.as_str()).unwrap_or("");
-            let text = caps.get(3).map(|m| m.as_str().trim()).unwrap_or("");
-            // 避免把正文「C、H、O、N…」误当成选项标号行
-            if sep == "、"
-                && text
-                    .chars()
-                    .next()
-                    .map(|c| c.is_ascii_alphabetic())
-                    .unwrap_or(false)
-                && text.chars().nth(1) == Some('、')
-            {
-                continue;
-            }
-            if let (Some(letter), true) = (letter, !text.is_empty()) {
-                map.insert(letter, text.to_string());
-            }
-        }
-    }
-    map
+    options.and_then(crate::database::query_match::labeled_options)
+        .unwrap_or_default()
+        .into_iter()
+        .collect()
 }
 
 /// 去掉行首选项字母前缀：`B. 传动角` → `传动角`
@@ -1799,7 +1944,30 @@ fn is_model_error(text: &str) -> Option<String> {
 
 #[cfg(test)]
 mod same_question_tests {
-    use super::{classify_model_failure, normalize_answer_against_options, parse_same_question_result};
+    use super::{answer_for_local_match, classify_model_failure, normalize_answer_against_options, parse_same_question_result};
+    use crate::{database::QuestionMatch, types::QueryRequest};
+
+    #[test]
+    fn maps_stored_choice_letter_by_content_after_reordering() {
+        let matched = QuestionMatch {
+            id: 1, question: "测试题".into(), options: Some("A. 山水画\n（宋代）\nB. 花鸟画".into()),
+            answer: "A".into(), is_ai: false, is_pending_correction: false,
+            question_type: Some("single".into()), score: 1.0, title_similarity: 1.0,
+        };
+        let mut request: QueryRequest = serde_json::from_value(serde_json::json!({
+            "title": "测试题", "type": "single", "options": "A. 花鸟画\nB. 山水画(宋代)"
+        })).unwrap();
+        assert_eq!(answer_for_local_match(&matched, &request).as_deref(), Some("山水画(宋代)"));
+        request.options = Some("A. 花鸟画\nB. 山水画(明代)".into());
+        assert_eq!(answer_for_local_match(&matched, &request), None);
+        request.options = None;
+        request.query_type = None;
+        assert_eq!(answer_for_local_match(&matched, &request).as_deref(), Some("山水画\n（宋代）"));
+
+        let mut dependent = matched;
+        dependent.options = Some("A. 以上都正确\nB. 花鸟画".into());
+        assert_eq!(answer_for_local_match(&dependent, &request), None);
+    }
 
     #[test]
     fn preserves_empty_completion_answer_slots() {

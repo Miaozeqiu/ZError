@@ -304,9 +304,14 @@ const assertSkillEditable = (id: string) => {
   if (!isSkillEditable(id)) throw new Error('此内置 Skill 为只读，不能修改或恢复')
 }
 
-export const skillFileWriteError = (id: string, relativePath: string): string | null => (
-  BUILTIN_SKILLS[id] && !isBuiltinRuntimeSkillFile(relativePath) ? WEBSITE_RUNTIME_FILE_HINT : null
-)
+export const skillFileWriteError = (id: string, relativePath: string): string | null => {
+  if (BUILTIN_SKILLS[id] && !isBuiltinRuntimeSkillFile(relativePath)) return WEBSITE_RUNTIME_FILE_HINT
+  const path = normalizeSkillRelativePath(relativePath)
+  if (path && websiteRepositoryTarget(id, path)?.path.startsWith('references/')) {
+    return '云端参考文件为只读。请在本站 SKILL.md 中补充几条已验证的要点。'
+  }
+  return null
+}
 
 const isTextSkillFile = (relativePath: string) => {
   const lower = relativePath.toLowerCase()
@@ -855,8 +860,9 @@ export const readAgentSkillFileContent = async (id: string, relativePath: string
     if (!isRepositoryPath(repository.path)) return null
     const file = await readWebsiteRepositoryFile(repository.host, repository.path)
     return file.content == null ? null : { id, path, content: file.content, repository_version: file.version,
-      hint: file.readonly ? '当前使用历史快照。请在时间线回到工作版本后编辑。'
-        : `编辑时将 repository_version 原样放入 write_agent_skill_file 的 base_version；修改仅保存到本地分支，不上传仓库。${nextSkillFileHint(id, path, []) || ''}` }
+      hint: repository.path.startsWith('references/')
+        ? '云端参考文件为只读。本站的新经验统一在 SKILL.md 中补充。'
+        : `保留已有经验，仅补充几条本轮验证过、云端尚未覆盖的要点；将 repository_version 原样放入 write_agent_skill_file 的 base_version。新增经验保存到本站唯一的本地笔记。${nextSkillFileHint(id, path, []) || ''}` }
   }
   // Website creation needs a definitive absence check. Directory enumeration and
   // optional overrides deliberately tolerate errors elsewhere; neither can be
@@ -929,13 +935,14 @@ export const writeAgentSkillFileContent = async (id: string, relativePath: strin
     return { error: `文件超过 ${MAX_SKILL_FILE_BYTES} 字节` }
   }
   try {
-    await saveSkillFileContent(id, path, text, { repositoryVersion })
+    const changed = await saveSkillFileContent(id, path, text, { repositoryVersion })
+    if (changed === false) return { ok: true, id, path, unchanged: true, hint: '没有新增本地经验；收尾使用 covered。' }
     const files = await listSkillFiles(id)
     return {
       ok: true,
       id,
       path,
-      hint: id === 'chaoxing' ? '已保存到本地分支，未上传或修改官方仓库。图谱会热加载。' : '已写入。图谱会热加载。站点步骤写在 SKILL.md。',
+      hint: websiteRepositoryTarget(id, path) ? '已保存本地补充。图谱会热加载。' : '已写入。图谱会热加载。站点步骤写在 SKILL.md。',
       files,
     }
   } catch (error) {
@@ -1007,7 +1014,7 @@ export const getSkillFileContent = async (id: string, relativePath: string): Pro
   if (repository) {
     if (!isRepositoryPath(repository.path)) return null
     const file = await readWebsiteRepositoryFile(repository.host, repository.path)
-    return file.content == null ? null : { id, path, content: file.content, readonly: file.readonly, repositoryVersion: file.version }
+    return file.content == null ? null : { id, path, content: file.content, readonly: false, repositoryVersion: file.version }
   }
   const files = await listSkillFiles(id)
   if (!files.includes(path)) return null
@@ -1044,21 +1051,20 @@ export const saveSkillFileContent = async (id: string, relativePath: string, con
   await websiteRepositoryHosts()
   const repository = websiteRepositoryTarget(id, path)
   if (repository && id !== 'chaoxing') {
-    await writeWebsiteRepositoryFile(repository.host, repository.path, text.endsWith('\n') ? text : `${text}\n`, options?.repositoryVersion)
+    const changed = await writeWebsiteRepositoryFile(repository.host, repository.path, text.endsWith('\n') ? text : `${text}\n`, options?.repositoryVersion)
     promptCache.delete(id)
     await syncState()
-    return
+    return changed
   }
 
   promptCache.delete(id)
   if (path === SKILL_MAIN_FILE) {
-    await saveSkillDocument(id, text, options)
-    return
+    return saveSkillDocument(id, text, options)
   }
   if (id === 'chaoxing') {
-    await writeChaoxingRepositoryFile(path, text.endsWith('\n') ? text : `${text}\n`, options?.repositoryVersion)
+    const changed = await writeChaoxingRepositoryFile(path, text.endsWith('\n') ? text : `${text}\n`, options?.repositoryVersion)
     await syncState()
-    return
+    return changed
   }
   if (item.builtin) {
     await writeOverrideSkillFile(id, path, text.endsWith('\n') ? text : `${text}\n`)
@@ -1112,8 +1118,9 @@ export const saveSkillDocument = async (id: string, markdown: string, options?: 
   const parsed = parseSkillFrontmatter(content)
   promptCache.delete(id)
 
+  let changed: boolean | undefined
   if (id === 'chaoxing') {
-    await writeChaoxingRepositoryFile(SKILL_MAIN_FILE, content.endsWith('\n') ? content : `${content}\n`, options?.repositoryVersion)
+    changed = await writeChaoxingRepositoryFile(SKILL_MAIN_FILE, content.endsWith('\n') ? content : `${content}\n`, options?.repositoryVersion)
   } else if (item.builtin) {
     await writeSkillOverride(id, content.endsWith('\n') ? content : `${content}\n`)
   } else {
@@ -1139,6 +1146,7 @@ export const saveSkillDocument = async (id: string, markdown: string, options?: 
   writeLocal(memoryConfig)
   persistFile(memoryConfig)
   await syncState()
+  return changed
 }
 
 export const resetSkillDocument = async (id: string) => {

@@ -1,4 +1,5 @@
 /** 展示用纯函数。不碰 Vue ref。 */
+import { normalizeLocalSearchCharacter, normalizeLocalSearchText } from '../../../utils/question/localSearchText'
 import type { AIResponse } from '../../../services/app/database'
 
 export const hasSelectedFolder = (folderId?: string | null) => (
@@ -49,12 +50,39 @@ export const sortQuestionListByCreateTime = (list: AIResponse[], order: 'desc' |
 )
 
 export const highlightSearchTerm = (text: string, searchTerm: string, highlightTerms: string[]) => {
-  if (!searchTerm.trim()) return text
-  let terms = highlightTerms
-  if (!terms.length) {
-    terms = searchTerm.trim().split(/\s+/).filter((item) => item.length > 0)
+  const phrase = normalizeLocalSearchText(searchTerm)
+  const terms = [...new Set([phrase, ...highlightTerms.filter(term => /[\p{L}\p{N}]/u.test(term)).map(normalizeLocalSearchText)])]
+    .filter(Boolean).sort((a, b) => b.length - a.length)
+  if (!terms.length) return [{ text, matched: false }]
+
+  let normalized = ''
+  let offset = 0
+  const positions: { start: number; end: number }[] = []
+  for (const char of text) {
+    const mapped = normalizeLocalSearchCharacter(char)
+    for (let i = 0; i < mapped.length; i++) positions.push({ start: offset, end: offset + char.length })
+    normalized += mapped
+    offset += char.length
   }
-  if (!terms.length) return text
-  const escaped = terms.map((item) => item.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-  return text.replace(new RegExp(`(${escaped.join('|')})`, 'gi'), '<mark class="search-highlight">$1</mark>')
+  const parts: { text: string; matched: boolean }[] = []
+  let start = 0
+  for (let i = 0; i < normalized.length;) {
+    const term = terms.find(term => normalized.startsWith(term, i))
+    if (!term) {
+      i++
+      continue
+    }
+    const left = positions[i].start
+    const right = positions[i + term.length - 1].end
+    if (left < start) {
+      i++
+      continue
+    }
+    if (left > start) parts.push({ text: text.slice(start, left), matched: false })
+    parts.push({ text: text.slice(left, right), matched: true })
+    start = right
+    i += term.length
+  }
+  if (start < text.length) parts.push({ text: text.slice(start), matched: false })
+  return parts
 }

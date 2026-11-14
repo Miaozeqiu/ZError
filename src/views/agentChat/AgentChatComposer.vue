@@ -13,22 +13,32 @@
     </button>
     <div class="composer-status"><slot name="status" /></div>
     <div class="composer-box">
-      <div v-if="composerImages.length" class="composer-images">
+      <div
+        v-if="composerImages.length || composerFiles.length || quizOptionQuotes?.length"
+        class="composer-attachments"
+        role="group"
+        aria-label="待发送附件"
+        @wheel="onAttachmentWheel"
+      >
         <div
           v-for="item in composerImages"
           :key="item.filePath"
           class="composer-image"
         >
-          <img
-            :src="item.imageUrl"
-            :alt="item.fileName"
-            title="预览图片"
-            @click="emit('preview-image', item)"
-          />
           <button
-            class="composer-file-remove"
+            class="composer-image-preview"
+            type="button"
+            :title="item.fileName"
+            :aria-label="`预览图片 ${item.fileName}`"
+            @click="emit('preview-image', item)"
+          >
+            <img :src="item.imageUrl" alt="" />
+          </button>
+          <button
+            class="composer-file-remove attachment-corner-remove"
             type="button"
             title="移除"
+            :aria-label="`移除图片 ${item.fileName}`"
             @click.stop="emit('remove-attachment', item.filePath)"
           >
             <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
@@ -37,14 +47,12 @@
             </svg>
           </button>
         </div>
-      </div>
-      <div v-if="composerFiles.length" class="composer-files">
         <div
           v-for="item in composerFiles"
           :key="item.filePath"
           class="composer-file"
           :class="{ 'is-openable': isDiskPath(item.filePath) }"
-          :title="isDiskPath(item.filePath) ? fileManagerLabel : item.fileName"
+          :title="isDiskPath(item.filePath) ? `${item.fileName}\n${fileManagerLabel}` : item.fileName"
           @click="emit('reveal-file', item.filePath)"
         >
           <span class="composer-file-icon" :class="'is-' + fileTypeOf(item.fileName)">
@@ -55,6 +63,7 @@
             class="composer-file-remove"
             type="button"
             title="移除"
+            :aria-label="`移除文件 ${item.fileName}`"
             @click.stop="emit('remove-attachment', item.filePath)"
           >
             <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
@@ -63,7 +72,19 @@
             </svg>
           </button>
         </div>
+        <AgentQuizOptionQuote
+          v-for="(quote, index) in quizOptionQuotes"
+          :key="index"
+          :quote="quote"
+          removable
+          compact
+          @remove="emit('remove-quiz-option', index)"
+        />
       </div>
+      <p v-if="imageError" class="composer-image-notice" role="status">{{ imageError }}</p>
+      <p v-if="composerImages.length && !agentHasVision" class="composer-image-notice" role="status">
+        发送图片需要支持视觉的模型。<button type="button" @click="emit('choose-vision-model')">选择视觉模型</button>
+      </p>
       <div
         ref="composerRef"
         class="composer-input"
@@ -82,30 +103,30 @@
         @contextmenu.prevent="onComposerContextMenu"
       />
       <div class="composer-toolbar">
-        <button class="composer-add" type="button" title="添加文件" @click="emit('add-file')">
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-            <path d="M12 5v14" />
-            <path d="M5 12h14" />
-          </svg>
-        </button>
-        <button
-          v-if="agentHasVision"
-          class="composer-add"
-          type="button"
-          title="添加图片"
-          @click="emit('add-image')"
-        >
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="3" y="5" width="18" height="14" rx="2" />
-            <circle cx="8.5" cy="10" r="1.5" />
-            <path d="M21 16l-5-5-4 4-2-2-5 5" />
-          </svg>
-        </button>
-        <button class="composer-add" type="button" title="添加文件夹" @mousedown.prevent="saveComposerSelection" @click="emit('add-folder')">
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" />
-          </svg>
-        </button>
+        <div ref="attachmentPickerRef" class="composer-attachment-picker" @keydown.esc="onAttachmentEscape" @focusout="onAttachmentFocusOut">
+          <button
+            ref="attachmentTriggerRef"
+            class="composer-add"
+            type="button"
+            aria-label="添加附件"
+            title="添加附件"
+            :aria-expanded="attachmentPickerOpen"
+            @mousedown="saveComposerSelection"
+            @click="attachmentPickerOpen = !attachmentPickerOpen"
+          >
+            <Icon icon="lucide:plus" width="18" height="18" aria-hidden="true" />
+          </button>
+          <div v-if="attachmentPickerOpen" class="composer-attachment-menu" role="group" aria-label="添加附件">
+            <button type="button" @click="chooseAttachment('add-attachments')">
+              <Icon icon="lucide:paperclip" width="14" height="14" aria-hidden="true" />
+              文件/图片
+            </button>
+            <button type="button" @click="chooseAttachment('add-folder')">
+              <Icon icon="lucide:folder-plus" width="14" height="14" aria-hidden="true" />
+              题库文件夹
+            </button>
+          </div>
+        </div>
         <button class="composer-model" type="button" @click="emit('open-model')" :title="agentModelLabel">
           {{ agentModelLabel }}
         </button>
@@ -205,10 +226,13 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { Icon } from '@iconify/vue/offline'
+import '../../utils/ui/agentIcons'
 import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager'
 import UnifiedContextMenu, { type MenuItem } from '../../components/ui/UnifiedContextMenu.vue'
 import { encodeFolderToken } from '../../services/agent/chat'
-import type { AgentChatAttachment } from '../../services/agent/chat'
+import type { AgentChatAttachment, AgentQuizOptionQuote as QuizOptionQuote } from '../../services/agent/chat'
+import AgentQuizOptionQuote from './AgentQuizOptionQuote.vue'
 import { shouldSubmitComposerEnter } from '../../utils/ui/composerEnter'
 import { fileTypeLabel, fileTypeOf } from '../../utils/ui/fileKind'
 
@@ -216,6 +240,8 @@ const props = defineProps<{
   threadPinned: boolean
   composerFiles: AgentChatAttachment[]
   composerImages: AgentChatAttachment[]
+  imageError?: string
+  quizOptionQuotes?: QuizOptionQuote[]
   sending: boolean
   canSubmit: boolean
   agentHasVision: boolean
@@ -235,32 +261,65 @@ const emit = defineEmits<{
   submit: []
   stop: []
   'jump-thread': []
-  'add-file': []
-  'add-image': []
+  'add-attachments': []
   'add-folder': []
   'open-model': []
+  'choose-vision-model': []
   'remove-attachment': [filePath: string]
+  'remove-quiz-option': [index: number]
   'preview-image': [item: { imageUrl?: string; fileName?: string; filePath?: string }]
   'reveal-file': [filePath: string]
-  'paste-image': [imageUrl: string, fileName: string]
+  'paste-images': [files: File[]]
   'hide-selection-menu': []
 }>()
 
 const draft = defineModel<string>('draft', { required: true })
+
+const attachmentPickerRef = ref<HTMLElement | null>(null)
+const attachmentTriggerRef = ref<HTMLButtonElement | null>(null)
+const attachmentPickerOpen = ref(false)
+
+const chooseAttachment = (action: 'add-attachments' | 'add-folder') => {
+  attachmentPickerOpen.value = false
+  if (action === 'add-folder') emit('add-folder')
+  else emit('add-attachments')
+}
+
+const onAttachmentEscape = (event: KeyboardEvent) => {
+  if (!attachmentPickerOpen.value) return
+  event.stopPropagation()
+  attachmentPickerOpen.value = false
+  attachmentTriggerRef.value?.focus()
+}
+
+const onAttachmentFocusOut = (event: FocusEvent) => {
+  if (event.relatedTarget instanceof Node && !attachmentPickerRef.value?.contains(event.relatedTarget)) {
+    attachmentPickerOpen.value = false
+  }
+}
+
+const onAttachmentOutside = (event: PointerEvent) => {
+  if (event.target instanceof Node && !attachmentPickerRef.value?.contains(event.target)) attachmentPickerOpen.value = false
+}
 
 const isDiskPath = (path?: string) => {
   const value = String(path || '').trim()
   return Boolean(value) && !value.startsWith('image:') && !value.startsWith('folder:') && !value.startsWith('data:')
 }
 
-const fileToDataUrl = (file: File) => new Promise<string>((resolve, reject) => {
-  const reader = new FileReader()
-  reader.onload = () => resolve(String(reader.result || ''))
-  reader.onerror = () => reject(reader.error)
-  reader.readAsDataURL(file)
-})
-
 const composerRoot = ref<HTMLElement | null>(null)
+
+const onAttachmentWheel = (event: WheelEvent) => {
+  if (event.ctrlKey || event.metaKey || event.shiftKey || !event.cancelable) return
+  if (Math.abs(event.deltaX) >= Math.abs(event.deltaY)) return
+  const strip = event.currentTarget as HTMLElement
+  if (strip.scrollWidth <= strip.clientWidth) return
+  const distance = event.deltaY * (event.deltaMode === 1 ? 20 : event.deltaMode === 2 ? strip.clientWidth : 1)
+  const previous = strip.scrollLeft
+  strip.scrollLeft += distance
+  if (strip.scrollLeft !== previous) event.preventDefault()
+}
+
 let composerObserver: ResizeObserver | null = null
 const composerRef = ref<HTMLElement | null>(null)
 const composing = ref(false)
@@ -468,7 +527,7 @@ const restoreComposerSelection = () => {
   input.focus()
   const sel = window.getSelection()
   if (!sel) return
-  if (savedComposerRange && input.contains(savedComposerRange.startContainer)) {
+  if (savedComposerRange && input.contains(savedComposerRange.startContainer) && input.contains(savedComposerRange.endContainer)) {
     sel.removeAllRanges()
     sel.addRange(savedComposerRange)
     return
@@ -545,32 +604,29 @@ const insertComposerText = (text: string) => {
     if (!sel || !sel.rangeCount) return
     const range = sel.getRangeAt(0)
     range.deleteContents()
-    range.insertNode(document.createTextNode(text))
-    range.collapse(false)
+    const inserted = document.createTextNode(text)
+    range.insertNode(inserted)
+    range.setStartAfter(inserted)
+    range.collapse(true)
   }
   syncDraftFromComposer()
   resizeComposer()
 }
 
-const onComposerPaste = async (event: ClipboardEvent) => {
-  const items = Array.from(event.clipboardData?.items || [])
-  const imageItems = props.agentHasVision
-    ? items.filter((item) => item.type.startsWith('image/'))
-    : []
-  if (imageItems.length) {
+const onComposerPaste = (event: ClipboardEvent) => {
+  const data = event.clipboardData
+  if (!data) return
+  const imageFiles = Array.from(data.items || []).flatMap(item => {
+    const file = item.kind === 'file' && item.type.startsWith('image/') ? item.getAsFile() : null
+    return file ? [file] : []
+  })
+  const images = imageFiles.length ? imageFiles : Array.from(data.files || []).filter(file => file.type.startsWith('image/'))
+  if (images.length) {
     event.preventDefault()
-    for (const item of imageItems) {
-      const file = item.getAsFile()
-      if (!file) continue
-      try {
-        emit('paste-image', await fileToDataUrl(file), file.name || '粘贴的图片')
-      } catch (error) {
-        console.error('粘贴图片失败:', error)
-      }
-    }
+    emit('paste-images', images)
     return
   }
-  const text = event.clipboardData?.getData('text/plain') || ''
+  const text = data.getData('text/plain')
   if (!text) return
   event.preventDefault()
   insertComposerText(text)
@@ -648,7 +704,7 @@ const composerMenuItems = computed<MenuItem[]>(() => [
   { id: 'select-all', label: '全选', action: 'select-all', disabled: !composerMenuHasContent.value },
 ])
 
-const hideMenu = () => {
+const hideContextMenu = () => {
   composerMenuVisible.value = false
 }
 
@@ -750,7 +806,7 @@ const selectAllComposer = () => {
 }
 
 const onComposerMenuClick = async (item: MenuItem) => {
-  hideMenu()
+  hideContextMenu()
   if (item.action === 'cut') await cutComposerSelection()
   if (item.action === 'copy') await copyComposerSelection()
   if (item.action === 'paste') await pasteComposerSelection()
@@ -793,22 +849,25 @@ onMounted(() => {
     composerObserver.observe(composerRoot.value)
   }
   window.addEventListener('resize', closeContextTip)
+  document.addEventListener('pointerdown', onAttachmentOutside)
   window.addEventListener('scroll', closeContextTip, true)
 })
 
 onUnmounted(() => {
   composerObserver?.disconnect()
   window.removeEventListener('resize', closeContextTip)
+  document.removeEventListener('pointerdown', onAttachmentOutside)
   window.removeEventListener('scroll', closeContextTip, true)
 })
 
 defineExpose({
+  focusComposer: restoreComposerSelection,
   fillComposer,
   insertFolderMention,
   saveComposerSelection,
   syncDraftFromComposer,
   clearComposer,
-  hideMenu,
+  hideContextMenu,
 })
 </script>
 

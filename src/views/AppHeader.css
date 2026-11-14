@@ -67,35 +67,13 @@
   justify-content: flex-start;
 }
 
-.expand-chats {
-  display: inline-flex;
-  align-items: center;
-  flex: 0 0 auto;
-  height: 26px;
+.header-chat-sidebar-toggle {
   margin-left: 4px;
-  padding: 0 10px;
-  border: 1px solid color-mix(in srgb, var(--text-secondary, #718096) 18%, transparent);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--bg-primary, #fff) 78%, transparent);
-  color: var(--text-primary, #2d3748);
-  font-size: 12px;
-  line-height: 1;
-  cursor: pointer;
-  -webkit-app-region: no-drag;
   pointer-events: auto;
 }
 
-.app-header.macos-header .expand-chats {
+.app-header.macos-header .header-chat-sidebar-toggle {
   margin-left: 0;
-}
-
-.expand-chats:hover {
-  background: color-mix(in srgb, var(--color-primary, #667eea) 10%, var(--bg-primary, #fff));
-  border-color: color-mix(in srgb, var(--color-primary, #667eea) 36%, var(--border-color, #e2e8f0));
-}
-
-.expand-chats:active {
-  transform: scale(0.98);
 }
 
 .campus-entry {

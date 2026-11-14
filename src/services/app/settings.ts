@@ -1,6 +1,9 @@
 import { reactive, watch } from 'vue'
 import { readSecureDocument, writeSecureDocument } from '../security/secureStore'
 import { environmentDetector } from './environmentDetector'
+import { DEFAULT_SEARCH_SETTINGS, normalizeSearchSettings, SEARCH_PROVIDERS, type SearchSettings } from '../searchProviders'
+
+export { DEFAULT_SEARCH_SETTINGS, normalizeSearchSettings, type SearchSettings } from '../searchProviders'
 
 // 设置接口定义
 export interface AppSettings {
@@ -64,31 +67,6 @@ export interface AlgorithmConfig {
   name: string
   applicableType: string
   code: string
-}
-
-/** 联网搜索设置，连接参数由软件管理。 */
-export interface SearchSettings {
-  enabled: boolean
-  apiKey: string
-  provider?: 'exa' | 'deepseek'
-  deepseekApiKey?: string
-}
-
-export const DEFAULT_SEARCH_SETTINGS: SearchSettings = {
-  enabled: true,
-  apiKey: '',
-  provider: 'exa',
-  deepseekApiKey: '',
-}
-
-export const normalizeSearchSettings = (value: unknown): SearchSettings => {
-  const saved = value && typeof value === 'object' ? value as Partial<SearchSettings> : {}
-  return {
-    enabled: typeof saved.enabled === 'boolean' ? saved.enabled : DEFAULT_SEARCH_SETTINGS.enabled,
-    apiKey: typeof saved.apiKey === 'string' ? saved.apiKey.trim() : '',
-    provider: saved.provider === 'deepseek' ? 'deepseek' : 'exa',
-    deepseekApiKey: typeof saved.deepseekApiKey === 'string' ? saved.deepseekApiKey.trim() : '',
-  }
 }
 
 // 默认设置
@@ -177,7 +155,7 @@ class SettingsManager {
     const snapshot = JSON.parse(JSON.stringify(this.settings)) as AppSettings
     this.notifyListeners()
     void writeSecureDocument('app_settings', snapshot).then(saved => {
-      for (const key of ['apiKey', 'deepseekApiKey'] as const) {
+      for (const { key } of SEARCH_PROVIDERS) {
         if (this.settings.search[key] === snapshot.search[key] && this.settings.search[key] !== saved.search[key]) this.settings.search[key] = saved.search[key]
       }
     }).catch(() => undefined)
@@ -301,7 +279,16 @@ class SettingsManager {
    * 导出设置为JSON
    */
   export(): string {
-    return JSON.stringify({ ...this.settings, adminToken: '', multiUser: { ...this.settings.multiUser, users: this.settings.multiUser.users.map(user => ({ ...user, token: '' })) }, search: { ...this.settings.search, apiKey: '', deepseekApiKey: '' } }, null, 2)
+    const search = { ...this.settings.search }
+    for (const { key } of SEARCH_PROVIDERS) {
+      if (key in search) search[key] = ''
+    }
+    return JSON.stringify({
+      ...this.settings,
+      adminToken: '',
+      multiUser: { ...this.settings.multiUser, users: this.settings.multiUser.users.map(user => ({ ...user, token: '' })) },
+      search,
+    }, null, 2)
   }
 
   /**

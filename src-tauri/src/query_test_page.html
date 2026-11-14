@@ -1,438 +1,819 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh-CN">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ZError 查询测试页</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <link rel="icon" type="image/png" href="/app-icon.png">
+    <title>本地题库查询 · ZError</title>
     <style>
         :root {
-            color-scheme: light;
-            --bg-start: #eef4ff;
-            --bg-end: #f8fafc;
-            --panel-bg: rgba(255, 255, 255, 0.92);
-            --panel-border: rgba(148, 163, 184, 0.22);
-            --panel-shadow: 0 24px 60px rgba(15, 23, 42, 0.12);
-            --title-text: #0f172a;
-            --muted-text: #475569;
-            --label-text: #334155;
-            --input-border: #dbe4f0;
-            --input-bg: #ffffff;
-            --input-focus: rgba(37, 99, 235, 0.16);
-            --primary: #2563eb;
-            --primary-hover: #1d4ed8;
-            --primary-shadow: rgba(37, 99, 235, 0.26);
-            --result-bg: #f8fafc;
-            --result-border: #cbd5e1;
-            --success-bg: #ecfdf3;
-            --success-border: #22c55e;
-            --error-bg: #fef2f2;
-            --error-border: #ef4444;
-            --loading-bg: #eff6ff;
-            --loading-border: #3b82f6;
-            --code-bg: #0f172a;
-            --code-text: #e2e8f0;
+            color-scheme: light dark;
+            --canvas: #f5f5f7;
+            --panel: #ffffff;
+            --field: #f5f5f7;
+            --hover: #e8e8ed;
+            --line: #e5e5ea;
+            --ink: #1d1d1f;
+            --muted: #6e6e73;
+            --accent: #0066cc;
+            --accent-fill: #ebf4ff;
+            --action: #f8b62b;
+            --action-hover: #ecaa20;
+            --action-ink: #2a1c04;
+            --success: #237242;
+            --success-fill: #eaf7ee;
+            --error: #b4232b;
+            --code-bg: #f8fafc;
+            --code-border: #dbe4f0;
         }
 
-        * {
-            box-sizing: border-box;
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --canvas: #1c1c1e;
+                --panel: #2c2c2e;
+                --field: #353537;
+                --hover: #414144;
+                --line: #3a3a3c;
+                --ink: #f5f5f7;
+                --muted: #b2b2b7;
+                --accent: #75baff;
+                --accent-fill: #26384d;
+                --action: #ffc451;
+                --action-hover: #ffcf71;
+                --success: #8cd5a3;
+                --success-fill: #263e30;
+                --error: #ff9599;
+                --code-bg: #1a202c;
+                --code-border: #435066;
+            }
         }
+
+        * { box-sizing: border-box; }
 
         body {
             margin: 0;
-            min-height: 100vh;
-            font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-            background: linear-gradient(160deg, var(--bg-start) 0%, var(--bg-end) 100%);
-            color: var(--title-text);
+            background: var(--canvas);
+            color: var(--ink);
+            font: 14px/1.55 Inter, Avenir, "PingFang SC", "Microsoft YaHei", sans-serif;
         }
 
-        .page {
-            width: min(920px, calc(100% - 32px));
-            margin: 40px auto;
+        .topbar {
+            border-bottom: 1px solid var(--line);
+            background: var(--canvas);
         }
 
-        .container {
-            background: var(--panel-bg);
-            border: 1px solid var(--panel-border);
-            border-radius: 24px;
-            box-shadow: var(--panel-shadow);
-            overflow: hidden;
-            backdrop-filter: blur(10px);
+        .shell {
+            width: min(1120px, calc(100% - 48px));
+            margin-inline: auto;
         }
 
-        .hero {
-            padding: 32px 32px 20px;
-            background: linear-gradient(135deg, rgba(37, 99, 235, 0.08), rgba(59, 130, 246, 0.02));
-            border-bottom: 1px solid rgba(148, 163, 184, 0.18);
-        }
-
-        .badge {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            padding: 8px 14px;
-            border-radius: 999px;
-            background: rgba(37, 99, 235, 0.1);
-            color: var(--primary);
-            font-size: 13px;
-            font-weight: 700;
-            letter-spacing: 0.04em;
-        }
-
-        h1 {
-            margin: 18px 0 12px;
-            font-size: clamp(28px, 4vw, 36px);
-            line-height: 1.2;
-        }
-
-        .description {
-            margin: 0;
-            color: var(--muted-text);
-            font-size: 15px;
-            line-height: 1.75;
-        }
-
-        .inline-code {
-            display: inline-block;
-            padding: 2px 8px;
-            border-radius: 8px;
-            background: rgba(37, 99, 235, 0.08);
-            color: #1d4ed8;
-            font-family: "Cascadia Code", "Consolas", monospace;
-            font-size: 0.92em;
-            line-height: 1.4;
-        }
-
-        .content {
-            padding: 28px 32px 32px;
-        }
-
-        .section-title {
-            margin: 0 0 18px;
-            font-size: 18px;
-            font-weight: 700;
-        }
-
-        .tips {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-            gap: 12px;
-            margin-bottom: 24px;
-        }
-
-        .tip-card {
-            padding: 14px 16px;
-            border-radius: 16px;
-            background: rgba(248, 250, 252, 0.9);
-            border: 1px solid rgba(203, 213, 225, 0.8);
-        }
-
-        .tip-card strong {
-            display: block;
-            margin-bottom: 6px;
-            color: var(--label-text);
-            font-size: 14px;
-        }
-
-        .tip-card span {
-            color: var(--muted-text);
-            font-size: 13px;
-            line-height: 1.6;
-        }
-
-        form {
-            display: grid;
-            gap: 18px;
-        }
-
-        .form-group {
-            display: grid;
-            gap: 8px;
-        }
-
-        label {
-            color: var(--label-text);
-            font-size: 14px;
-            font-weight: 700;
-        }
-
-        input {
-            width: 100%;
-            padding: 14px 16px;
-            border: 1px solid var(--input-border);
-            border-radius: 14px;
-            background: var(--input-bg);
-            font-size: 14px;
-            color: var(--title-text);
-            transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
-        }
-
-        input::placeholder {
-            color: #94a3b8;
-        }
-
-        input:focus {
-            outline: none;
-            border-color: var(--primary);
-            box-shadow: 0 0 0 4px var(--input-focus);
-            transform: translateY(-1px);
-        }
-
-        .submit-row {
+        .topbar .shell, .panel-header, .form-actions, .result-heading, .raw-heading {
             display: flex;
-            flex-wrap: wrap;
             align-items: center;
             justify-content: space-between;
             gap: 12px;
-            margin-top: 6px;
         }
 
-        .submit-note {
-            color: var(--muted-text);
-            font-size: 13px;
+        .topbar .shell { min-height: 60px; flex-wrap: wrap; padding-block: 8px; }
+        .brand { display: flex; align-items: center; gap: 9px; min-width: 0; }
+        .brand img { border-radius: 7px; flex: none; }
+        .brand h1 { margin: 0; font-size: 17px; font-weight: 650; }
+        .service-status {
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            padding: 4px 10px;
+            border-radius: 999px;
+            background: var(--panel);
+            color: var(--muted);
+            font-size: 12px;
+            white-space: nowrap;
         }
+        .service-status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+        .service-status[data-state="ready"] { color: var(--success); background: var(--success-fill); }
+        .service-status[data-state="error"] { color: var(--error); }
+
+        main { padding: 20px 0 36px; }
+
+        .workspace {
+            display: grid;
+            grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+            gap: 16px;
+            align-items: start;
+        }
+
+        .panel {
+            min-width: 0;
+            background: var(--panel);
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        .panel-header { min-height: 50px; border-bottom: 1px solid var(--line); padding: 10px 18px; }
+        .panel-header h2 { margin: 0; font-size: 15px; font-weight: 650; }
+
+        .panel-body { padding: 18px; }
+        form { display: grid; gap: 16px; }
+        label { display: block; margin-bottom: 6px; font-weight: 550; font-size: 14px; }
+        .optional { margin-left: 6px; color: var(--muted); font-size: 12px; font-weight: 400; }
+        textarea, input {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid transparent;
+            border-radius: 8px;
+            background: var(--field);
+            color: var(--ink);
+            font: inherit;
+        }
+        textarea { display: block; resize: vertical; }
+        textarea::placeholder, input::placeholder { color: var(--muted); }
+        textarea:focus, input:focus { border-color: var(--accent); outline: none; }
+        button:focus-visible, summary:focus-visible {
+            outline: 2px solid var(--accent);
+            outline-offset: 2px;
+        }
+        .status-note { margin: 6px 0 0; color: var(--muted); font-size: 12px; }
 
         button {
-            border: none;
-            border-radius: 14px;
-            padding: 14px 22px;
-            min-width: 144px;
-            background: linear-gradient(135deg, var(--primary), #3b82f6);
-            color: #ffffff;
-            font-size: 15px;
-            font-weight: 700;
-            cursor: pointer;
-            box-shadow: 0 12px 24px var(--primary-shadow);
-            transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
-        }
-
-        button:hover {
-            background: linear-gradient(135deg, var(--primary-hover), var(--primary));
-            transform: translateY(-1px);
-            box-shadow: 0 16px 28px rgba(29, 78, 216, 0.28);
-        }
-
-        button:active {
-            transform: translateY(0);
-        }
-
-        .result {
-            margin-top: 24px;
-            padding: 20px;
-            border-radius: 18px;
-            background: var(--result-bg);
-            border: 1px solid var(--result-border);
-        }
-
-        .result.success {
-            background: var(--success-bg);
-            border-color: rgba(34, 197, 94, 0.28);
-            box-shadow: inset 0 0 0 1px rgba(34, 197, 94, 0.08);
-        }
-
-        .result.error {
-            background: var(--error-bg);
-            border-color: rgba(239, 68, 68, 0.28);
-            box-shadow: inset 0 0 0 1px rgba(239, 68, 68, 0.08);
-        }
-
-        .result.loading {
-            background: var(--loading-bg);
-            border-color: rgba(59, 130, 246, 0.28);
-            box-shadow: inset 0 0 0 1px rgba(59, 130, 246, 0.08);
-        }
-
-        .result h3,
-        .result h4 {
-            margin: 0 0 12px;
-        }
-
-        .result p {
-            margin: 8px 0;
-            line-height: 1.7;
-        }
-
-        pre {
-            margin: 14px 0 0;
-            padding: 16px;
-            border-radius: 14px;
-            background: var(--code-bg);
-            color: var(--code-text);
+            border: 1px solid transparent;
+            border-radius: 8px;
+            padding: 6px 13px;
+            background: var(--field);
+            color: var(--ink);
+            font: inherit;
             font-size: 13px;
-            line-height: 1.7;
-            white-space: pre-wrap;
-            word-break: break-word;
+            cursor: pointer;
+        }
+        button:disabled { opacity: .55; cursor: default; }
+        .primary { padding: 8px 16px; background: var(--action); color: var(--action-ink); border-radius: 999px; font-weight: 650; }
+        .correction { color: var(--accent); background: var(--accent-fill); }
+        @media (hover: hover) {
+            button:not(.query-step-button):hover:not(:disabled) { background: var(--hover); }
+            button.primary:hover:not(:disabled) { background: var(--action-hover); }
+            button.correction:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 14%, var(--panel)); }
+        }
+
+        .result-panel { min-height: 360px; }
+        .result { min-width: 0; }
+        .result[data-state="idle"] {
+            min-height: 270px;
+            display: grid;
+            place-content: center;
+            text-align: center;
+        }
+        .result h3 { margin: 0; font-size: 16px; }
+        .result p { overflow-wrap: anywhere; }
+        .result-heading, .form-actions { flex-wrap: wrap; }
+        .result-heading { align-items: baseline; }
+        .result-meta { color: var(--muted); font-size: 12px; }
+        .result[data-state="error"] h3, .correction-error { color: var(--error); }
+        .result[data-state="success"] h3, .correction-done { color: var(--success); }
+
+        .response-details { display: grid; gap: 16px; margin: 16px 0 0; }
+        .response-details dt { color: var(--muted); font-size: 13px; }
+        .response-details dd { margin: 3px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+        .response-answer { padding: 12px 14px; border-radius: 8px; background: var(--field); }
+        .response-answer dd { font-weight: 600; }
+        .correction-row { margin-top: 16px; display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; }
+        .correction-row span { font-size: 13px; }
+
+        .query-progress {
+            margin-bottom: 18px;
+            padding-bottom: 14px;
+            border-bottom: 1px solid var(--line);
+        }
+        .query-steps {
+            --step-outline: #83838b;
+            --step-connector: #aaaab2;
+            --step-completed: #2d854d;
+            --step-completed-text: #fff;
+            display: grid;
+            grid-auto-flow: column;
+            grid-auto-columns: minmax(62px, 1fr);
+            gap: 4px;
+            list-style: none;
+            margin: 0;
+            padding: 3px;
             overflow-x: auto;
         }
-
-        .footer {
-            padding: 18px 32px 28px;
-            color: var(--muted-text);
+        @media (prefers-color-scheme: dark) {
+            .query-steps {
+                --step-outline: #92929a;
+                --step-connector: #77777f;
+                --step-completed: #80c99a;
+                --step-completed-text: #14261a;
+            }
+        }
+        .query-step {
+            --indicator-size: 25px;
+            position: relative;
+        }
+        .query-step + .query-step::before {
+            content: "";
+            position: absolute;
+            top: calc(7px + var(--indicator-size) / 2 - 1px);
+            right: calc(50% + var(--indicator-size) / 2 + 4px);
+            width: calc(100% - var(--indicator-size) - 4px);
+            border-top: 2px solid var(--step-connector);
+            pointer-events: none;
+        }
+        .query-step[data-state="done"] + .query-step[data-state="done"]::before {
+            border-color: var(--step-completed);
+        }
+        .query-step[data-state="skipped"] + .query-step::before,
+        .query-step + .query-step[data-state="skipped"]::before {
+            border-top-style: dashed;
+        }
+        .query-step-button {
+            position: relative;
+            display: grid;
+            justify-items: center;
+            gap: 6px;
+            width: 100%;
+            padding: 6px 0 9px;
+            border-color: transparent;
+            background: transparent;
+            color: var(--ink);
+            font-size: 12px;
+            line-height: 1.25;
+            white-space: nowrap;
+        }
+        :where(.query-step:is([data-state="idle"], [data-state="unknown"], [data-state="skipped"])) .query-step-button {
+            color: var(--muted);
+        }
+        .query-step-button[aria-pressed="true"] {
+            color: var(--accent);
+            font-weight: 650;
+        }
+        .query-step-button[aria-pressed="true"]::after {
+            content: "";
+            position: absolute;
+            bottom: 3px;
+            width: 16px;
+            height: 2px;
+            border-radius: 1px;
+            background: currentColor;
+        }
+        .query-step-indicator {
+            display: grid;
+            place-items: center;
+            width: var(--indicator-size);
+            height: var(--indicator-size);
+            border: 1px solid var(--step-outline);
+            border-radius: 50%;
+            background: var(--panel);
+            color: var(--muted);
+            font-weight: 650;
+        }
+        .query-step[data-state="skipped"] .query-step-indicator { background: var(--field); }
+        .query-step[data-state="done"] .query-step-indicator {
+            border-color: var(--step-completed);
+            background: var(--step-completed);
+            color: var(--step-completed-text);
+        }
+        .query-step[data-state="running"] .query-step-indicator {
+            border-color: var(--accent);
+            background: var(--accent-fill);
+            color: var(--accent);
+        }
+        .query-step[data-state="failed"] .query-step-indicator {
+            border-color: var(--error);
+            background: color-mix(in srgb, var(--error) 12%, var(--panel));
+            color: var(--error);
+        }
+        .query-step-button[aria-pressed="true"] .query-step-indicator {
+            outline: 1px solid var(--accent);
+            outline-offset: 2px;
+        }
+        @media (hover: hover) {
+            .query-step-button:hover { color: var(--accent); }
+            .query-step-button:hover .query-step-indicator {
+                box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+            }
+        }
+        .query-step-button:focus-visible { outline: none; }
+        .query-step-button:focus-visible .query-step-indicator {
+            outline: 2px solid var(--accent);
+            outline-offset: 2px;
+        }
+        .query-step-detail {
+            margin: 8px 0 0;
+            padding: 8px 10px;
+            border-radius: 8px;
+            background: var(--field);
+            color: var(--muted);
             font-size: 13px;
-            text-align: right;
+            overflow-wrap: anywhere;
         }
 
-        @media (max-width: 640px) {
-            .page {
-                width: min(100%, calc(100% - 20px));
-                margin: 20px auto;
+        .raw { margin-top: 20px; padding-top: 14px; border-top: 1px solid var(--line); }
+        summary { width: fit-content; color: var(--muted); font-size: 13px; cursor: pointer; }
+        .raw-heading { margin: 10px 0 8px; flex-wrap: wrap; }
+        .raw-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+        .raw-actions button { padding: 4px 8px; }
+        .raw-response {
+            --json-key: #7141a0;
+            --json-string: #27613b;
+            --json-number: #245b9b;
+            --json-literal: #97501c;
+            max-height: 20rem;
+            margin: 0;
+            overflow: auto;
+            padding: 12px;
+            border: 1px solid var(--code-border);
+            border-radius: 8px;
+            background: var(--code-bg);
+            font: 12px/1.65 ui-monospace, SFMono-Regular, Consolas, monospace;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+        }
+        .json-key { color: var(--json-key); }
+        .json-string { color: var(--json-string); }
+        .json-number { color: var(--json-number); }
+        .json-literal { color: var(--json-literal); }
+        .json-punctuation, .json-ellipsis { color: var(--muted); }
+        @media (prefers-color-scheme: dark) {
+            .raw-response {
+                --json-key: #d0adfb;
+                --json-string: #a1d7a8;
+                --json-number: #a5cbfc;
+                --json-literal: #f0b888;
             }
+        }
+        [hidden] { display: none !important; }
 
-            .hero,
-            .content,
-            .footer {
-                padding-left: 20px;
-                padding-right: 20px;
-            }
-
-            .submit-row {
-                align-items: stretch;
-            }
-
-            button {
-                width: 100%;
-            }
+        @media (max-width: 750px) {
+            .workspace { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+            .result-panel { min-height: 0; }
+            .result[data-state="idle"] { min-height: 144px; }
+        }
+        @media (max-width: 480px) {
+            .shell { width: calc(100% - 28px); }
+            .panel-header { padding-inline: 16px; }
+            .panel-body { padding: 16px; }
         }
     </style>
 </head>
 <body>
-    <div class="page">
-        <div class="container">
-            <div class="hero">
-                <div class="badge">ZError Query Tester</div>
-                <h1>测试本地 <span class="inline-code">/query</span> 端点</h1>
-                <p class="description">用于快速验证查询接口是否可用，并查看返回的原始数据与解析结果。页面请求将自动使用当前服务地址，不依赖固定端口。</p>
+    <header class="topbar">
+        <div class="shell">
+            <div class="brand">
+                <img src="/app-icon.png" width="26" height="26" alt="ZError">
+                <h1>本地题库查询</h1>
             </div>
-
-            <div class="content">
-                <h2 class="section-title">请求参数</h2>
-                <div class="tips">
-                    <div class="tip-card">
-                        <strong>title</strong>
-                        <span>必填，用于提交待查询的问题标题。</span>
-                    </div>
-                    <div class="tip-card">
-                        <strong>options</strong>
-                        <span>可选，适用于带选项的问题查询。</span>
-                    </div>
-                    <div class="tip-card">
-                        <strong>type</strong>
-                        <span>可选，可传题目类型或业务标识。</span>
-                    </div>
-                </div>
-
-                <form id="queryForm">
-                    <div class="form-group">
-                        <label for="title">标题 (title)</label>
-                        <input type="text" id="title" name="title" placeholder="请输入要查询的标题" required>
-                    </div>
-
-                    <div class="form-group">
-                        <label for="options">选项 (options)</label>
-                        <input type="text" id="options" name="options" placeholder="可选，例如 A.选项1 B.选项2">
-                    </div>
-
-                    <div class="form-group">
-                        <label for="type">类型 (type)</label>
-                        <input type="text" id="type" name="type" placeholder="可选，例如 single_choice">
-                    </div>
-
-                    <div class="submit-row">
-                        <span class="submit-note">提交前会先检查 <span class="inline-code">/api/status</span>。</span>
-                        <button type="submit">发送查询</button>
-                    </div>
-                </form>
-
-                <div id="result"></div>
-            </div>
-
-            <div class="footer">由ZError提供服务</div>
+            <span class="service-status" id="serviceStatus" role="status">正在检查服务</span>
         </div>
-    </div>
+    </header>
+
+    <main class="shell">
+        <div class="workspace">
+            <section class="panel" aria-labelledby="query-heading">
+                <div class="panel-header">
+                    <h2 id="query-heading">查询条件</h2>
+                </div>
+                <div class="panel-body">
+                    <form id="queryForm">
+                        <div>
+                            <label for="title">题干</label>
+                            <textarea id="title" name="title" rows="3" placeholder="粘贴题目原文" required></textarea>
+                        </div>
+                        <div>
+                            <label for="options">选项<span class="optional">选填</span></label>
+                            <textarea id="options" name="options" rows="4" placeholder="A. 选项一&#10;B. 选项二"></textarea>
+                        </div>
+                        <div>
+                            <label for="type">题型<span class="optional">选填</span></label>
+                            <input id="type" name="type" list="questionTypes" placeholder="选择或输入题型" autocomplete="off">
+                            <datalist id="questionTypes">
+                                <option value="single">单选</option>
+                                <option value="multiple">多选</option>
+                                <option value="judgement">判断</option>
+                                <option value="completion">填空</option>
+                            </datalist>
+                        </div>
+                        <div class="form-actions">
+                            <button id="exampleButton" type="button">填入示例</button>
+                            <button id="submitButton" class="primary" type="submit">查询答案</button>
+                        </div>
+                    </form>
+                </div>
+            </section>
+
+            <section class="panel result-panel" aria-labelledby="result-heading">
+                <div class="panel-header">
+                    <h2 id="result-heading">查询结果</h2>
+                </div>
+                <div class="panel-body">
+                    <section id="queryProgress" class="query-progress" aria-label="查询过程" hidden>
+                        <ol id="querySteps" class="query-steps" aria-label="查询步骤"></ol>
+                        <p id="queryStepDetail" class="query-step-detail" role="status"></p>
+                    </section>
+                    <div class="result" id="result" data-state="idle">
+                        <div>
+                            <div class="result-heading">
+                                <h3 id="resultTitle" aria-live="polite">等待查询</h3>
+                                <span class="result-meta" id="resultSource" hidden></span>
+                            </div>
+                            <p class="status-note" id="resultNote">提交题干后，答案会显示在这里。</p>
+                        </div>
+                        <dl class="response-details" id="responseDetails" hidden>
+                            <div><dt>匹配题干</dt><dd id="matchedQuestion"></dd></div>
+                            <div class="response-answer"><dt>答案</dt><dd id="matchedAnswer"></dd></div>
+                        </dl>
+                        <div class="correction-row" id="correctionRow" hidden>
+                            <button class="correction" id="correctionButton" type="button">标记为待修正</button>
+                            <span id="correctionStatus" role="status"></span>
+                        </div>
+                    </div>
+                    <details class="raw" id="rawDetails" hidden>
+                        <summary>原始响应</summary>
+                        <div class="raw-heading">
+                            <span class="result-meta" id="httpStatus"></span>
+                            <div class="raw-actions">
+                                <button id="toggleRawStrings" type="button" aria-controls="rawResponse" aria-expanded="false" hidden>展开长字段</button>
+                                <button id="copyRaw" type="button">复制完整响应</button>
+                            </div>
+                        </div>
+                        <pre class="raw-response" id="rawResponse" tabindex="0" aria-label="响应内容"><code id="rawCode"></code></pre>
+                    </details>
+                </div>
+            </section>
+        </div>
+    </main>
 
     <script>
-        const queryForm = document.getElementById('queryForm');
-        const resultDiv = document.getElementById('result');
+        const byId = (id) => document.getElementById(id);
+        const form = byId('queryForm');
+        const title = byId('title');
+        const options = byId('options');
+        const type = byId('type');
+        const serviceStatus = byId('serviceStatus');
+        const result = byId('result');
+        const correction = byId('correctionButton');
+        const correctionStatus = byId('correctionStatus');
+        const rawCode = byId('rawCode');
+        const toggleRawStrings = byId('toggleRawStrings');
+        const jsonToken = /("(?:\\.|[^"\\])*")([ \t]*:)?|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)|(true|false|null)|([{}\[\],:])/g;
+        const rawStringPreviewLength = 120;
+        let rawText = '';
+        let formattedRaw = '';
+        let rawIsJson = false;
+        const steps = byId('querySteps');
+        const stepDetail = byId('queryStepDetail');
+        const stageTitles = new Map([
+            ['receive', '接收'],
+            ['local', '本地搜索'],
+            ['verify', '相似题核对'],
+            ['search', '联网搜索'],
+            ['model', 'AI 处理'],
+            ['summary', '总结'],
+            ['return', '返回'],
+        ]);
+        const stageStates = {
+            idle: '待处理',
+            running: '进行中',
+            done: '已完成',
+            failed: '失败',
+            skipped: '已跳过',
+            unknown: '暂无记录',
+        };
+        const stageIcons = {
+            done: '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 4 4L19 6"/></svg>',
+            skipped: '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 12h12"/></svg>',
+        };
+        const stages = new Map();
+        let activeStage;
+        let followProgress = true;
+        let latestResult;
 
-        function escapeHtml(value) {
-            return String(value)
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;')
-                .replace(/'/g, '&#39;');
+        function selectStage(step) {
+            if (activeStage) stages.get(activeStage).button.setAttribute('aria-pressed', 'false');
+            const stage = stages.get(step);
+            activeStage = step;
+            stage.button.setAttribute('aria-pressed', 'true');
+            const description = stageTitles.get(step) + ' · ' + stage.detail;
+            if (stepDetail.textContent !== description) stepDetail.textContent = description;
         }
 
-        function renderState(type, title, content) {
-            resultDiv.innerHTML = `
-                <div class="result ${type}">
-                    <h3>${escapeHtml(title)}</h3>
-                    ${content}
-                </div>
-            `;
-        }
-
-        function formatResult(result) {
-            let resultHtml = '<div class="result success">';
-            resultHtml += '<h3>查询结果</h3>';
-
-            if (result.code === 1 && result.data) {
-                const isAiGenerated = result.data.is_ai ?? result.data.ai ?? false;
-                resultHtml += '<p><strong>状态：</strong>查询成功</p>';
-                resultHtml += `<div><strong>问题：</strong>${result.data.question ?? '-'}</div>`;
-                resultHtml += `<p><strong>答案：</strong>${escapeHtml(result.data.answer ?? '-')}</p>`;
-                resultHtml += `<p><strong>AI生成：</strong>${isAiGenerated ? '是' : '否'}</p>`;
-                resultHtml += `<p><strong>待修正：</strong>${result.data.is_pending_correction ? '是' : '否'}</p>`;
-            } else if (result.code === 0) {
-                resultHtml += '<p><strong>状态：</strong>未找到匹配结果</p>';
-            } else {
-                resultHtml += '<p><strong>状态：</strong>查询返回异常结果</p>';
+        function showStep({ step, state, detail }, follow = true) {
+            if (!stageTitles.has(step) || !Object.hasOwn(stageStates, state)) return;
+            let stage = stages.get(step);
+            if (!stage) {
+                const row = document.createElement('li');
+                row.className = 'query-step';
+                row.dataset.step = step;
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = 'query-step-button';
+                button.setAttribute('aria-controls', stepDetail.id);
+                button.setAttribute('aria-pressed', 'false');
+                button.addEventListener('click', () => {
+                    followProgress = false;
+                    selectStage(step);
+                });
+                const indicator = document.createElement('span');
+                indicator.className = 'query-step-indicator';
+                indicator.setAttribute('aria-hidden', 'true');
+                const label = document.createElement('span');
+                label.textContent = stageTitles.get(step);
+                button.append(indicator, label);
+                row.append(button);
+                steps.insertBefore(row, step === 'verify' ? stages.get('search').row : null);
+                stage = { row, button, indicator };
+                stages.set(step, stage);
             }
 
-            resultHtml += `<pre>${escapeHtml(JSON.stringify(result, null, 2))}</pre>`;
-            resultHtml += '</div>';
-            return resultHtml;
+            stage.detail = detail;
+            stage.row.dataset.state = state;
+            const label = stageTitles.get(step) + '，' + stageStates[state];
+            stage.button.setAttribute('aria-label', label);
+            stage.button.title = label;
+            if (Object.hasOwn(stageIcons, state)) {
+                stage.indicator.innerHTML = stageIcons[state];
+            } else {
+                stage.indicator.textContent = state === 'failed' ? '!' : stageIndex(stage.row);
+            }
+            if (step === 'verify') {
+                // Inserting an optional step shifts the numbers of the steps that follow.
+                for (const other of stages.values()) {
+                    if (['idle', 'running', 'unknown'].includes(other.row.dataset.state)) {
+                        other.indicator.textContent = stageIndex(other.row);
+                    }
+                }
+            }
+            if (step === activeStage || (follow && followProgress)) selectStage(step);
         }
 
-        queryForm.addEventListener('submit', async function (e) {
-            e.preventDefault();
+        function stageIndex(row) {
+            return Array.prototype.indexOf.call(steps.children, row) + 1;
+        }
 
-            const title = document.getElementById('title').value;
-            const options = document.getElementById('options').value;
-            const type = document.getElementById('type').value;
+        function resetSteps() {
+            steps.replaceChildren();
+            stages.clear();
+            activeStage = undefined;
+            followProgress = true;
+            for (const step of stageTitles.keys()) {
+                if (step === 'verify') continue;
+                showStep({ step, state: 'idle', detail: '尚未开始' }, false);
+            }
+            showStep({ step: 'receive', state: 'running', detail: '正在提交查询' });
+        }
 
-            const requestData = {
-                title,
-                options: options || null,
-                type: type || null
-            };
+        function finishSteps(state, detail, receivedFinalProgress) {
+            for (const [step, { row }] of stages) {
+                if (step === 'return') continue;
+                if (row.dataset.state === 'running') {
+                    showStep({ step, state: 'failed', detail: '处理未完成' }, false);
+                } else if (row.dataset.state === 'idle') {
+                    const skipped = receivedFinalProgress && step !== 'local';
+                    showStep({
+                        step,
+                        state: skipped ? 'skipped' : 'unknown',
+                        detail: skipped ? '本次查询未执行此步骤' : '没有收到这一步的处理记录',
+                    }, false);
+                }
+            }
+            showStep({ step: 'return', state, detail });
+        }
 
-            renderState('loading', '正在查询', '<p>正在检查服务状态并发送请求，请稍候...</p>');
+        async function readQueryResponse(response) {
+            if (!response.headers.get('content-type')?.startsWith('text/event-stream')) {
+                return response.text();
+            }
+            if (!response.body) throw new Error('浏览器未收到查询进度。');
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+            try {
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    buffer += decoder.decode(value, { stream: true });
+                    let end;
+                    while ((end = buffer.indexOf('\n\n')) !== -1) {
+                        const frame = buffer.slice(0, end);
+                        buffer = buffer.slice(end + 2);
+                        const lines = frame.split('\n');
+                        const event = lines.find((line) => line.startsWith('event:'))?.slice(6).trim();
+                        const data = lines.filter((line) => line.startsWith('data:'))
+                            .map((line) => line.slice(5).trimStart()).join('\n');
+                        if (event === 'progress' && data) showStep(JSON.parse(data));
+                        if (event === 'result' && data) return data;
+                    }
+                }
+                throw new Error('查询连接中断，未收到结果。');
+            } finally {
+                void reader.cancel().catch(() => {});
+                reader.releaseLock();
+            }
+        }
+
+        function updateService(ready) {
+            serviceStatus.dataset.state = ready ? 'ready' : 'error';
+            serviceStatus.textContent = ready ? '本地服务运行中' : '本地服务不可用';
+        }
+
+        async function checkService() {
+            const ready = await fetch('/api/status', { cache: 'no-store' })
+                .then((response) => response.ok, () => false);
+            updateService(ready);
+        }
+
+        function showResult(state, heading, note = '') {
+            result.dataset.state = state;
+            byId('resultTitle').textContent = heading;
+            byId('resultNote').textContent = note;
+            byId('resultNote').hidden = !note;
+            byId('resultSource').hidden = state !== 'success';
+            byId('responseDetails').hidden = state !== 'success';
+            byId('correctionRow').hidden = true;
+        }
+
+        function showCorrection(data) {
+            byId('correctionRow').hidden = !(data.correction_path || data.is_pending_correction);
+            correction.hidden = !data.correction_path || Boolean(data.is_pending_correction);
+            correction.disabled = false;
+            correction.textContent = '标记为待修正';
+            correctionStatus.className = data.is_pending_correction ? 'correction-done' : '';
+            correctionStatus.textContent = data.is_pending_correction ? '已标记待修正' : '';
+        }
+
+        byId('exampleButton').addEventListener('click', () => {
+            title.value = '下列哪个是中国的首都？';
+            options.value = 'A. 上海\nB. 北京\nC. 广州\nD. 杭州';
+            type.value = 'single';
+            title.focus();
+        });
+
+        function renderRawResponse(expanded = false) {
+            toggleRawStrings.setAttribute('aria-expanded', String(expanded));
+            toggleRawStrings.textContent = expanded ? '收起长字段' : '展开长字段';
+            if (!rawIsJson) {
+                rawCode.textContent = rawText;
+                toggleRawStrings.hidden = true;
+                return;
+            }
+
+            const output = document.createDocumentFragment();
+            let cursor = 0;
+            let hasLongStrings = false;
+            for (const match of formattedRaw.matchAll(jsonToken)) {
+                output.append(formattedRaw.slice(cursor, match.index));
+                cursor = match.index + match[0].length;
+                const [, quoted, keySeparator, number, literal] = match;
+                const token = document.createElement('span');
+                token.className = keySeparator ? 'json-key'
+                    : quoted ? 'json-string'
+                    : number ? 'json-number'
+                    : literal ? 'json-literal' : 'json-punctuation';
+                token.textContent = quoted ?? match[0];
+                const stringValue = quoted && !keySeparator && quoted.length > rawStringPreviewLength + 2
+                    ? JSON.parse(quoted) : '';
+                if (stringValue.length > rawStringPreviewLength) {
+                    hasLongStrings = true;
+                    if (!expanded) {
+                        // Keep the preview a complete quoted string even if truncation crosses a JSON escape.
+                        const preview = stringValue.slice(0, rawStringPreviewLength).replace(/[\uD800-\uDBFF]$/, '');
+                        token.textContent = JSON.stringify(preview);
+                        const ellipsis = document.createElement('span');
+                        ellipsis.className = 'json-ellipsis';
+                        ellipsis.textContent = '…';
+                        output.append(token, ellipsis);
+                        continue;
+                    }
+                }
+                output.append(token);
+                if (keySeparator) output.append(keySeparator);
+            }
+            output.append(formattedRaw.slice(cursor));
+            rawCode.replaceChildren(output);
+            toggleRawStrings.hidden = !hasLongStrings;
+        }
+
+        toggleRawStrings.addEventListener('click', () => {
+            renderRawResponse(toggleRawStrings.getAttribute('aria-expanded') !== 'true');
+        });
+
+        form.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const question = title.value.trim();
+            if (!question) { title.focus(); return; }
+            const submit = byId('submitButton');
+            if (submit.disabled) return;
+            submit.disabled = true;
+            submit.textContent = '查询中…';
+            latestResult = null;
+            rawText = '';
+            byId('rawDetails').hidden = true;
+            byId('rawDetails').open = false;
+            byId('copyRaw').textContent = '复制完整响应';
+            resetSteps();
+            byId('queryProgress').hidden = false;
+            showResult('loading', '正在查询');
 
             try {
-                const statusResponse = await fetch('/api/status');
-                if (!statusResponse.ok) {
-                    throw new Error('本地服务器未运行，请先启动服务器');
-                }
-
                 const response = await fetch('/query', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify(requestData)
+                    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+                    body: JSON.stringify({
+                        title: question,
+                        options: options.value.trim() || null,
+                        type: type.value.trim() || null
+                    })
                 });
-
-                if (!response.ok) {
-                    throw new Error(`HTTP错误: ${response.status}`);
+                updateService(true);
+                const hasProgress = response.headers.get('content-type')?.startsWith('text/event-stream') ?? false;
+                if (response.ok || hasProgress) {
+                    showStep({ step: 'receive', state: 'done', detail: '服务已接收查询请求' });
                 }
-
-                const result = await response.json();
-                resultDiv.innerHTML = formatResult(result);
+                rawText = await readQueryResponse(response);
+                byId('httpStatus').textContent = 'HTTP ' + response.status;
+                byId('rawDetails').hidden = false;
+                let data;
+                rawIsJson = false;
+                try {
+                    data = JSON.parse(rawText);
+                    formattedRaw = JSON.stringify(data, null, 2);
+                    rawIsJson = true;
+                } finally {
+                    renderRawResponse();
+                }
+                if (!response.ok) throw new Error(data.message || 'HTTP ' + response.status);
+                if (data.code === 1 && data.data) {
+                    latestResult = data.data;
+                    showResult('success', '查询成功');
+                    finishSteps('done', '已返回答案', hasProgress);
+                    byId('resultSource').textContent = latestResult.is_ai ? 'AI 生成' : '本地题库';
+                    byId('matchedQuestion').textContent = latestResult.question_text || question;
+                    byId('matchedAnswer').textContent = latestResult.answer || '—';
+                    showCorrection(latestResult);
+                } else if (data.code === 0 && (!data.message || data.message === 'No matching records found')) {
+                    finishSteps('done', '未找到匹配题目', hasProgress);
+                    showResult('empty', '未找到匹配题目', '可以检查题干、选项和题型后再试。');
+                } else {
+                    finishSteps('failed', '查询未完成', hasProgress);
+                    showResult('error', '查询未完成', data.message || '服务返回了无法识别的结果。');
+                }
             } catch (error) {
-                const message = error instanceof Error ? error.message : String(error);
-                renderState('error', '请求失败', `<p>${escapeHtml(message)}</p>`);
+                finishSteps('failed', '请求未完成', false);
+                if (byId('rawDetails').hidden) void checkService();
+                showResult('error', '请求失败', error.message || '请检查本地题库服务后重试。');
+            } finally {
+                submit.disabled = false;
+                submit.textContent = '查询答案';
             }
         });
+
+        correction.addEventListener('click', async () => {
+            const data = latestResult;
+            if (!data || correction.disabled) return;
+            correction.disabled = true;
+            correction.textContent = '标记中…';
+            correctionStatus.textContent = '';
+            try {
+                const url = new URL(data.correction_path, location.origin);
+                if (url.origin !== location.origin) throw new Error('待修正链接无效');
+                const response = await fetch(url, { method: 'POST', headers: { Accept: 'application/json' } });
+                const receipt = await response.json();
+                if (!response.ok || !receipt.success || receipt.id !== data.id) {
+                    throw new Error(receipt.message || '标记失败，请重试');
+                }
+                data.is_pending_correction = true;
+                if (latestResult === data) showCorrection(data);
+            } catch (error) {
+                if (latestResult === data) {
+                    showCorrection(data);
+                    correctionStatus.className = 'correction-error';
+                    correctionStatus.textContent = error.message || '标记失败，请重试';
+                }
+            }
+        });
+
+        byId('copyRaw').addEventListener('click', async (event) => {
+            const button = event.currentTarget;
+            const copiedResponse = rawText;
+            try {
+                await navigator.clipboard.writeText(copiedResponse);
+                if (rawText === copiedResponse) button.textContent = '已复制';
+            } catch {
+                if (rawText !== copiedResponse) return;
+                renderRawResponse(true);
+                byId('rawResponse').focus();
+                const selection = window.getSelection();
+                if (selection) {
+                    const range = document.createRange();
+                    range.selectNodeContents(rawCode);
+                    selection.removeAllRanges();
+                    selection.addRange(range);
+                }
+                button.textContent = '请手动复制';
+            }
+        });
+
+        void checkService();
     </script>
 </body>
 </html>

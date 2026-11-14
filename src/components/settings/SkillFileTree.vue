@@ -22,6 +22,7 @@ const PARSER_FOLDER_ICON = 'folder-type-js'
 const props = defineProps<{
   files: string[]
   selected: string
+  rootPath?: string
 }>()
 
 const emit = defineEmits<{
@@ -53,8 +54,10 @@ const buildTree = (files: string[]): SkillFileTreeNodeData[] => {
     return node
   }
 
+  const prefix = props.rootPath ? `${props.rootPath}/` : ''
   for (const file of files) {
-    const parts = String(file || '').split('/').filter(Boolean)
+    const relativePath = prefix && file.startsWith(prefix) ? file.slice(prefix.length) : file
+    const parts = relativePath.split('/').filter(Boolean)
     if (!parts.length) continue
     const name = parts[parts.length - 1] || file
     const dir = parts.slice(0, -1).join('/')

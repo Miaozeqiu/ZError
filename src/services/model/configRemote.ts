@@ -1,19 +1,11 @@
 /** 远程模型目录：拉取、归一化、和本地缓存合并去重。 */
 import type { AIModel, AIPlatform, RemoteModelIconMapping, RemoteModelsCatalog } from './configTypes'
-import { inferPlatformApiProtocol, modelHasVision } from './configTypes'
+import { inferPlatformApiProtocol, isBuiltinApiProtocol, modelHasVision } from './configTypes'
+import { fetchOpenApiJson } from '../app/openApi'
 
-// 远程模型数据 URL（测试版 / 正式版统一）
-export const PROD_REMOTE_MODELS_URL = 'https://webapi.zaizhexue.top/live/models.json'
-export const TAURI_DEV_REMOTE_MODELS_URL = 'https://webapi.zaizhexue.top/live/models.json'
 export const REMOTE_MODELS_REQUEST_COOLDOWN_MS = 30 * 1000
 export const USER_CREATED_PLATFORM_ID_PREFIX = 'custom_'
 export const LEGACY_USER_CREATED_MODEL_ID_PREFIX = 'model_'
-
-const getRemoteModelsUrls = (): string[] => {
-  return [TAURI_DEV_REMOTE_MODELS_URL, PROD_REMOTE_MODELS_URL].filter(
-    (url, index, arr) => arr.indexOf(url) === index
-  )
-}
 
 export const normalizeRemoteModelsCatalog = (json: unknown): RemoteModelsCatalog => {
   const toStringList = (value: unknown): string[] => {
@@ -214,20 +206,26 @@ export const sanitizeStoredPlatforms = (platforms: AIPlatform[]): AIPlatform[] =
       ...preferredPlatform,
       models,
     })
-    // 远程平台不再允许 custom：2.2.8 起只走固定协议，旧缓存里的 custom 需纠正
-    const hasRemoteModels = models.some((model) => model.isRemote)
-    const apiProtocol = (hasRemoteModels || preferredPlatform.isRemote) && inferredProtocol === 'custom'
-      ? 'openai-chat'
-      : inferredProtocol
+    const remote = preferredPlatform.isRemote
+    const { remoteApiProtocol, apiProtocolOverride } = preferredPlatform
+    const remoteBaseUrl = remote && typeof preferredPlatform.remoteBaseUrl === 'string' ? preferredPlatform.remoteBaseUrl : undefined
+    const baseUrlOverride = remote && typeof preferredPlatform.baseUrlOverride === 'string' ? preferredPlatform.baseUrlOverride : undefined
+    const storedProtocol = (remote || models.some(model => model.isRemote)) && inferredProtocol === 'custom'
+      ? 'openai-chat' : inferredProtocol
+    const defaultProtocol = isBuiltinApiProtocol(remoteApiProtocol) ? remoteApiProtocol : storedProtocol
+    const override = remote && isBuiltinApiProtocol(apiProtocolOverride) ? apiProtocolOverride : undefined
+    const apiProtocol = remote ? override ?? defaultProtocol : storedProtocol
     return {
       ...preferredPlatform,
       displayName: preferredPlatform.displayName || preferredPlatform.name || preferredPlatform.id,
       apiKey: getPlatformApiKey(sameIdPlatforms, preferredPlatform),
+      baseUrl: baseUrlOverride ?? remoteBaseUrl ?? preferredPlatform.baseUrl,
+      remoteBaseUrl,
+      baseUrlOverride,
       apiProtocol,
-      models: models.map((model) => ({
-        ...model,
-        apiProtocol: model.isRemote && apiProtocol === 'custom' ? 'openai-chat' : apiProtocol,
-      })),
+      remoteApiProtocol: remote && isBuiltinApiProtocol(defaultProtocol) ? defaultProtocol : undefined,
+      apiProtocolOverride: override,
+      models: models.map(model => ({ ...model, apiProtocol })),
     }
   })
 }
@@ -235,40 +233,6 @@ export const sanitizeStoredPlatforms = (platforms: AIPlatform[]): AIPlatform[] =
 let cachedRemoteModelsCatalog: RemoteModelsCatalog | null = null
 let cachedRemoteModelsCatalogAt = 0
 let pendingRemoteModelsCatalogRequest: Promise<RemoteModelsCatalog> | null = null
-
-const fetchRemoteModelsCatalogFromUrl = async (url: string): Promise<RemoteModelsCatalog> => {
-  try {
-    const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http')
-    const r = await tauriFetch(url, { method: 'GET' })
-    if (!r.ok) throw new Error(`HTTP ${r.status}`)
-    return normalizeRemoteModelsCatalog(await r.json())
-  } catch (tauriError) {
-    // 非 Tauri 或插件失败时回退到浏览器 fetch
-    try {
-      const r = await fetch(url)
-      if (!r.ok) throw new Error(`HTTP ${r.status}`)
-      return normalizeRemoteModelsCatalog(await r.json())
-    } catch (browserError) {
-      throw browserError instanceof Error ? browserError : tauriError
-    }
-  }
-}
-
-const requestRemoteModelsCatalog = async (): Promise<RemoteModelsCatalog> => {
-  const urls = getRemoteModelsUrls()
-  let lastError: unknown
-
-  for (const url of urls) {
-    try {
-      return await fetchRemoteModelsCatalogFromUrl(url)
-    } catch (error) {
-      lastError = error
-      console.warn(`加载远程模型目录失败 (${url}):`, error)
-    }
-  }
-
-  throw lastError instanceof Error ? lastError : new Error('加载远程模型目录失败')
-}
 
 export const fetchRemoteModelsCatalog = async (): Promise<RemoteModelsCatalog> => {
   const now = Date.now()
@@ -281,7 +245,7 @@ export const fetchRemoteModelsCatalog = async (): Promise<RemoteModelsCatalog> =
     return pendingRemoteModelsCatalogRequest
   }
 
-  pendingRemoteModelsCatalogRequest = requestRemoteModelsCatalog()
+  pendingRemoteModelsCatalogRequest = fetchOpenApiJson('/v1/config/models').then(normalizeRemoteModelsCatalog)
     .then((catalog) => {
       cachedRemoteModelsCatalog = catalog
       cachedRemoteModelsCatalogAt = Date.now()

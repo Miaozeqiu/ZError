@@ -12,13 +12,16 @@ vi.mock('../../src/services/agent/chatStore', () => ({
 vi.mock('../../src/services/agent/agentBrowser', () => ({
   agentBrowserExpanded: { __v_isRef: true, get value() { return test.expanded.value }, set value(value) { test.expanded.value = value } },
   currentAgentBrowser: { __v_isRef: true, get value() { return test.selected.value } }, currentAgentBrowsers: { __v_isRef: true, value: [] },
+  currentAgentBrowserOpen: { __v_isRef: true, get value() { return Boolean(test.selected.value) } },
+  agentBrowserHasTasks: { __v_isRef: true, value: false },
   bindChatBrowser: vi.fn(), browserIdsForChat: () => [], ensureAgentBrowser: test.ensure,
   refreshAgentBrowsers: vi.fn(), startAgentBrowserWorkspace: async () => {},
 }))
 vi.mock('../../src/services/browser/appBrowser', () => ({
   browserAudioMuted: { __v_isRef: true, value: {} }, browserHomeUrl: () => 'about:blank', hostnameOf: (url: string) => url,
   closeBrowserView: vi.fn(), createAppBrowser: vi.fn(), goBackBrowserView: vi.fn(), goForwardBrowserView: vi.fn(),
-  hideAllBrowserViews: test.hide, isBrowserHome: () => false, listenBrowserLoad: async () => () => {},
+  hideAllBrowserViews: test.hide, isBrowserHome: () => false, isCefEngine: async () => true,
+  listenBrowserLoad: async () => () => {},
   navigateBrowserView: vi.fn(), normalizeBrowserUrl: (url: string) => url, patchAppBrowser: vi.fn(), reloadBrowserView: vi.fn(),
   removeAppBrowser: vi.fn(), screenshotBrowserView: test.screenshot, setBrowserAudioMuted: vi.fn(),
   setBrowserBounds: test.bounds, setBrowserZoom: vi.fn(), showBrowserView: test.show,

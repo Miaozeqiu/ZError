@@ -1,5 +1,8 @@
 import type { AIModel } from '../model/config'
 import { resolveExecutableModelJsCode, resolveRuntimeModelId } from '../model/protocol'
+import { resolveModelOutputLimit } from '../model/contextBudget'
+import { createBuiltinProvider } from '../model/providers'
+import { secureFetch } from '../security/secureFetch'
 import { buildAnswerChatMessages } from '../../utils/answer/answerFewShot'
 import { modelApi, settingsApi } from './deps'
 import {
@@ -182,7 +185,9 @@ export const callModelWithStreaming = async (
   // 构建配置对象
   const config = {
     ...model,
-    apiKey: platform.apiKey,
+    apiKey: modelApi.getPlatformApiKey(platform),
+    customHeaders: platform.customHeaders,
+    maxTokens: resolveModelOutputLimit(model),
     baseUrl: platform.baseUrl,
     model: runtimeModelId,
     modelId: runtimeModelId
@@ -202,15 +207,14 @@ export const callModelWithStreaming = async (
     }
   }, timeoutMs)
 
-  const tauriHttp = await import('@tauri-apps/plugin-http')
   const { invoke } = await import('@tauri-apps/api/core')
   const rawTauriFetch = async (input: RequestInfo | URL, init: RequestInit = {}) => {
     try {
-      return await tauriHttp.fetch(input as any, {
+      return await secureFetch(input, {
         ...init,
         credentials: init.credentials ?? 'include',
         signal: init.signal ?? abortController.signal
-      } as any)
+      })
     } catch (error) {
       if (isAbortLikeError(error)) throw error
       throw new Error(formatModelCallError(error, '网络请求失败'))
@@ -223,15 +227,15 @@ export const callModelWithStreaming = async (
   // 执行JavaScript配置代码
   if (executableCode) {
     // 创建一个安全的执行环境
-    let processModel
+    let processModel: any = createBuiltinProvider(model, platform)
 
-    if (executableCode.startsWith('async function') || executableCode.startsWith('function')) {
+    if (!processModel && (executableCode.startsWith('async function') || executableCode.startsWith('function'))) {
       const safeEval = new Function('input', 'config', 'fetch', 'abortSignal', `
         ${executableCode}
         return processModel;
       `)
       processModel = safeEval(testInput, config, tauriFetch, abortController.signal)
-    } else {
+    } else if (!processModel) {
       const wrapperFunction = new Function('input', 'config', 'fetch', 'abortSignal', `
         return (async function processModel(input, config) {
           ${executableCode}
@@ -416,32 +420,33 @@ export const callModel = async (model: AIModel, query: string) => {
   // 构建配置对象
   const config = {
     ...model,
-    apiKey: platform.apiKey,
+    apiKey: modelApi.getPlatformApiKey(platform),
+    customHeaders: platform.customHeaders,
+    maxTokens: resolveModelOutputLimit(model),
     baseUrl: platform.baseUrl,
     model: runtimeModelId,
     modelId: runtimeModelId
   }
 
-  const tauriHttp = await import('@tauri-apps/plugin-http')
   const tauriFetch = (input: RequestInfo | URL, init: RequestInit = {}) =>
-    tauriHttp.fetch(input as any, {
+    secureFetch(input, {
       ...init,
       credentials: init.credentials ?? 'include'
-    } as any)
+    })
 
   // 执行JavaScript配置代码
   if (executableCode) {
     // 创建一个安全的执行环境
-    let processModel
+    let processModel: any = createBuiltinProvider(model, platform)
 
-    if (executableCode.startsWith('async function') || executableCode.startsWith('function')) {
+    if (!processModel && (executableCode.startsWith('async function') || executableCode.startsWith('function'))) {
       // 如果是完整的函数声明，使用eval在安全环境中执行
       const safeEval = new Function('input', 'config', 'fetch', `
         ${executableCode}
         return processModel;
       `)
       processModel = safeEval(testInput, config, tauriFetch)
-    } else {
+    } else if (!processModel) {
       // 如果是函数体，包装为async函数
       const wrapperFunction = new Function('input', 'config', 'fetch', `
         return (async function processModel(input, config) {

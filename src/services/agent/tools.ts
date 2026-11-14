@@ -5,6 +5,7 @@ import { withoutSubagentTools } from './subagent/enabled'
 import { BROWSER_PRIMITIVE_TOOLS } from './toolDefs/browserPrimitiveTools'
 import { WEB_SEARCH_TOOLS } from './toolDefs/webSearchTools'
 import { CHAT_TOOLS } from './toolDefs/chatTools'
+import { campusWriteDenial } from './campusPolicy'
 
 export { CHAT_TOOLS } from './toolDefs/chatTools'
 export { BROWSER_PRIMITIVE_TOOLS } from './toolDefs/browserPrimitiveTools'
@@ -14,7 +15,9 @@ export const BROWSER_TOOLS = [...BROWSER_PRIMITIVE_TOOLS, ...WEB_SEARCH_TOOLS]
 
 /** 工具表与当前设置一致，关闭的能力不让模型继续尝试。 */
 export const availableAgentTools = <T extends Array<{ function: { name: string } }>>(tools: T, search: { enabled: boolean }) => (
-  search.enabled ? tools : tools.filter(tool => tool.function.name !== 'web_search')
+  tools.filter(({ function: { name } }) =>
+    (search.enabled || name !== 'web_search') && !campusWriteDenial(name),
+  )
 )
 
 export const assembleBrowserTools = (input?: {

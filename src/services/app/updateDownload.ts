@@ -40,22 +40,11 @@ export const resolveDownloadFileName = (url: string, version = ''): string => {
 export const isOpenableInstallerPath = (filePath: string): boolean =>
   /\.(dmg|exe|zip|msi|pkg|AppImage)$/i.test(filePath.split('?')[0] || '')
 
-/** 按当前系统挑选下载地址（兼容旧字段 downloadUrl） */
-export const resolvePlatformDownloadUrl = (info: VersionInfo): string => {
-  const isMac = typeof navigator !== 'undefined' && (
-    /mac/i.test(navigator.platform || '') || /mac/i.test(navigator.userAgent || '')
-  )
-  if (isMac) {
-    return info.downloadUrlMac || info.downloadUrlDarwin || info.downloadUrl || ''
-  }
-  return info.downloadUrlWin || info.downloadUrlWindows || info.downloadUrl || ''
-}
-
 export async function downloadUpdatePackage(
   info: VersionInfo,
   onProgress?: (p: UpdateDownloadProgress) => void,
 ): Promise<UpdateDownloadResult> {
-  const url = resolvePlatformDownloadUrl(info)
+  const url = info.downloadUrl
   if (!url) {
     throw new Error('未提供下载地址')
   }

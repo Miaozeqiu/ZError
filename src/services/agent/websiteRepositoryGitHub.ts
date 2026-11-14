@@ -3,12 +3,13 @@ import { parseGitHubWebsiteUrl, repositoryIcon, websiteManifest, type GitHubWebs
 export type { GitHubWebsiteSource } from './websiteRepositoryManifest'
 export const CHAOXING_REPOSITORY: GitHubWebsiteSource = { owner: 'Miaozeqiu', name: 'ZError-chaoxing', branch: 'main', root: 'skills/chaoxing', url: 'https://github.com/Miaozeqiu/ZError-chaoxing' }
 export const ZJOOC_REPOSITORY: GitHubWebsiteSource = { owner: 'Miaozeqiu', name: 'ZError-zjooc', branch: 'main', root: 'skills/zjooc', url: 'https://github.com/Miaozeqiu/ZError-zjooc' }
+export const ZHIHUISHU_REPOSITORY: GitHubWebsiteSource = { owner: 'Miaozeqiu', name: 'ZError-zhihuishu', branch: 'main', root: 'skills/zhihuishu', url: 'https://github.com/Miaozeqiu/ZError-zhihuishu' }
 export type WebsiteRepositoryCandidate = { source: GitHubWebsiteSource; website: WebsiteManifest; icon: WebsiteRepositoryIcon; revision: string }
 export class WebsiteRepositoryHttpError extends Error {
   constructor(message: string, public retryAt = 0) { super(message) }
 }
 const shaPattern = /^[0-9a-f]{40}$/
-const limitedJson = async (response: Response, limit: number) => {
+export const limitedJson = async (response: Response, limit: number) => {
   if (Number(response.headers.get('content-length')) > limit) throw new Error('网站仓库响应过大')
   if (!response.body) {
     const text = await response.text()
@@ -91,7 +92,7 @@ export const discoverWebsiteRepositories = async (input: string, request: typeof
   } finally { reader.close() }
 }
 export const downloadWebsiteRepository = async (source: GitHubWebsiteSource, previous: WebsiteSnapshot, request: typeof fetch,
-  expected: { id: string; host: string }, now = Date.now(), options?: { allowLegacy: boolean }): Promise<WebsiteSnapshot> => {
+  expected: { id: string; host: string }, now = Date.now()): Promise<WebsiteSnapshot> => {
   const reader = githubReader(source, request, now)
   if (source.root && !/^(?:skills|\.agents\/skills)\/[a-z0-9]+(?:-[a-z0-9]+)*$/.test(source.root)) { reader.close(); throw new Error('网站包目录无效') }
   try {
@@ -107,8 +108,8 @@ export const downloadWebsiteRepository = async (source: GitHubWebsiteSource, pre
     const tree = await reader.tree(head.data?.commit?.tree?.sha)
     const prefix = source.root ? `${source.root}/` : ''
     const manifest = tree.find(entry => entry.path === prefix + 'website.json')
-    const website = !manifest && options?.allowLegacy ? undefined : websiteManifest(JSON.parse(reader.text(await reader.blob(manifest, 16 * 1024))))
-    if (website && (website.id !== expected.id || website.host !== expected.host)) throw new Error('网站仓库变更了网站身份，已保留原缓存')
+    const website = websiteManifest(JSON.parse(reader.text(await reader.blob(manifest, 16 * 1024))))
+    if (website.id !== expected.id || website.host !== expected.host) throw new Error('网站仓库变更了网站身份，已保留原缓存')
     const entries = tree.filter(entry => typeof entry.path === 'string' && entry.path.startsWith(prefix) && entry.type !== 'tree')
     const files: Record<string, string> = {}
     let total = 0
@@ -119,41 +120,10 @@ export const downloadWebsiteRepository = async (source: GitHubWebsiteSource, pre
       if (Object.keys(files).length >= 32 || !Number.isSafeInteger(entry.size) || (total += entry.size) > 2 * 1024 * 1024) throw new Error('网站仓库文件过多或过大')
       files[path] = reader.text(await reader.blob(entry))
     }
-    const icon = website ? repositoryIcon(website.icon, await reader.blob(tree.find(entry => entry.path === prefix + website.icon), 256 * 1024)) : undefined
+    const icon = repositoryIcon(website.icon, await reader.blob(tree.find(entry => entry.path === prefix + website.icon), 256 * 1024))
     const snapshot = { revision, files, etag, checkedAt: now, website, icon }
     validateWebsiteSnapshot(snapshot, expected)
     return snapshot
   } finally { reader.close() }
 }
 export const downloadChaoxingRepository = (previous: WebsiteSnapshot, request: typeof fetch, now = Date.now()) => downloadWebsiteRepository(CHAOXING_REPOSITORY, previous, request, { id: 'chaoxing', host: 'chaoxing.com' }, now)
-
-export type WebsiteGitCommit = { sha: string; message: string; author: string; date: string; url: string; parents?: string[] }
-export const downloadWebsiteHistoryHead = async (source: GitHubWebsiteSource, request: typeof fetch) => {
-  const reader = githubReader(source, request, Date.now())
-  try {
-    const { data } = await reader.get(`/commits/${encodeURIComponent(source.branch)}`)
-    if (!shaPattern.test(data?.sha)) throw new Error('GitHub 分支版本无效')
-    return data.sha as string
-  } finally { reader.close() }
-}
-export const downloadWebsiteCommitHistory = async (source: GitHubWebsiteSource, revision: string, page: number, request: typeof fetch) => {
-  if (!shaPattern.test(revision) || !Number.isSafeInteger(page) || page < 1 || page > 1000) throw new Error('提交历史版本或页码无效')
-  if (source.root && !/^(?:skills|\.agents\/skills)\/[a-z0-9]+(?:-[a-z0-9]+)*$/.test(source.root)) throw new Error('网站包目录无效')
-  const reader = githubReader(source, request, Date.now())
-  try {
-    const query = new URLSearchParams({ sha: revision, per_page: '20', page: String(page) })
-    if (source.root) query.set('path', source.root)
-    const { data, response } = await reader.get(`/commits?${query}`)
-    if (!Array.isArray(data) || data.length > 20) throw new Error('GitHub 提交历史回执无效')
-    const commits: WebsiteGitCommit[] = data.map(value => {
-      const commit = value?.commit
-      if (!shaPattern.test(value?.sha) || typeof commit?.message !== 'string' || commit.message.length > 65536
-        || typeof commit.author?.name !== 'string' || commit.author.name.length > 512
-        || typeof commit.author.date !== 'string' || !Number.isFinite(Date.parse(commit.author.date))) throw new Error('GitHub 提交记录无效')
-      if (value.parents != null && (!Array.isArray(value.parents) || value.parents.length > 64 || value.parents.some((parent: any) => !shaPattern.test(parent?.sha)))) throw new Error('GitHub 提交父版本无效')
-      return { sha: value.sha, message: commit.message, author: commit.author.name, date: commit.author.date, parents: (value.parents || []).map((parent: any) => parent.sha),
-        url: `https://github.com/${source.owner}/${source.name}/commit/${value.sha}` }
-    })
-    return { commits, hasMore: /rel="next"/.test(response.headers.get('link') || '') }
-  } finally { reader.close() }
-}

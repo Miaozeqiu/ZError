@@ -4,6 +4,7 @@ vi.mock('../../src/services/model/providers', () => ({ createBuiltinProvider: ()
 vi.mock('../../src/services/model/config', () => ({ modelHasVision: () => true, modelConfigManager: {
   ready: Promise.resolve(), getSelectedTextModel: () => api.model, getSelectedAgentModel: () => api.model,
   getSelectedVisionModel: () => api.model,
+  getPlatformApiKey: (platform: { apiKey: string }) => platform.apiKey,
   getSettings: () => ({ platforms: [{ apiKey: 'test-key', baseUrl: 'https://model.test', models: [api.model] }] }),
 } }))
 vi.mock('../../src/services/model/protocol', () => ({ resolveRuntimeModelId: () => 'test-model',

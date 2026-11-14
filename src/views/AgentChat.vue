@@ -18,7 +18,7 @@
           @reveal-file="revealInFileManager"
           @quote="onQuoteSelection"
           @ask="onAskSelection"
-          @hide-composer-menu="composerCompRef?.hideMenu()"
+          @hide-composer-menu="composerCompRef?.hideContextMenu()"
         />
         <AgentChatComposer
           ref="composerCompRef"
@@ -26,6 +26,8 @@
           :thread-pinned="threadPinned"
           :composer-files="composerFiles"
           :composer-images="composerImages"
+          :image-error="imageError"
+          :quiz-option-quotes="quizOptionQuotes"
           :sending="sending"
           :can-submit="canSubmit"
           :agent-has-vision="agentHasVision"
@@ -41,14 +43,15 @@
           @submit="submit"
           @stop="stopChat"
           @jump-thread="jumpThreadToBottom"
-          @add-file="addFile"
-          @add-image="addImage"
+          @add-attachments="addAttachments"
           @add-folder="openFolderPicker"
-          @open-model="showModelSelector = true"
+          @open-model="openModelSelector()"
+          @choose-vision-model="openModelSelector(true)"
           @remove-attachment="removeComposerAttachment"
+          @remove-quiz-option="quizOptionQuotes.splice($event, 1)"
           @preview-image="openImagePreview"
           @reveal-file="revealInFileManager"
-          @paste-image="addImageFromDataUrl"
+          @paste-images="pasteImages"
           @hide-selection-menu="hideSelectionMenu"
           @height-change="composerHeight = $event"
         >
@@ -61,6 +64,7 @@
 
       <AgentChatWritePane
         :quiz="paneQuiz"
+        :quiz-explain-busy="sending"
         :write-step="openedWriteStep"
         :graph="paneGraphView"
         :folder-name="activeChat?.attachments?.[0]?.folderName || '题库'"
@@ -68,10 +72,14 @@
         @close-write="openedWriteStepId = null"
         @close-graph="closeGraphPane"
         @quiz-attempt="onQuizAttempt"
+        @quiz-explain="onQuizExplain"
+        @quote-quiz-option="onQuoteQuizOption"
         @graph-select="onGraphSelect"
       />
       <AgentBrowserPane
-        :active="active && ((!paneQuiz && !openedWriteStep && !paneGraphView) || agentBrowserExpanded)"
+        :active="active && (selectedAgentPane === 'browser' || agentBrowserExpanded)"
+        :dismissed="!active || (!browserPaneVisible && !agentBrowserExpanded)"
+        :preview-request="browserPreviewRequest"
         :obscured="browserObscured || showModelSelector || folderPickerVisible || !!previewImage"
       />
     </div>
@@ -79,8 +87,7 @@
     <ModelSelectorDialog
       :show="showModelSelector"
       force-category="agent"
-      :selected-text-model-ids="[]"
-      :selected-vision-model-id="null"
+      :require-vision="chooseVisionModel"
       :selected-summary-model-ids="[]"
       :selected-agent-model-id="agentModel?.id || null"
       :available-models="availableModels"
@@ -138,7 +145,7 @@ import {
   isImageAttachment,
   startFileImportChat,
   startFolderOrganizeChat,
-  startStudyGraphChat,
+  draftStudyGraphChat,
   extractFolderAttachments,
   isFileAttachment,
   parseFolderTokens,
@@ -150,7 +157,8 @@ import {
   formatQuizAttempt,
   recordQuizAttempt,
 } from '../services/agent/chat'
-import type { AgentQuizAttempt } from '../services/agent/chat'
+import type { AgentQuizAttempt, AgentQuizOptionQuote } from '../services/agent/chat'
+import { formatQuizOptionQuotes } from '../services/agent/quizAttemptText'
 import FolderPickerDialog from '../components/ui/FolderPickerDialog.vue'
 import { databaseService } from '../services/app/database'
 import type { AIModel } from '../services/model/config'
@@ -179,6 +187,8 @@ import AgentHtmlBlock from '../components/agent/AgentHtmlBlock.vue'
 import AgentCodeBlock from '../components/agent/AgentCodeBlock.vue'
 import {
   bindAgentChatPanes,
+  browserPaneVisible,
+  browserPreviewRequest,
   closeGraphPane,
   finishOpenGraphStream,
   onGraphSelect,
@@ -189,6 +199,7 @@ import {
   openedWriteStepId,
   paneGraphView,
   paneQuiz,
+  selectedAgentPane,
 } from './agentChat/useAgentChatPanes'
 import '../services/model/markstream'
 import 'markstream-vue/index.css'
@@ -227,6 +238,15 @@ const {
 } = useModelConfig()
 
 const showModelSelector = ref(false)
+const chooseVisionModel = ref(false)
+const imageError = ref('')
+const readingImages = ref(false)
+let composerVersion = 0
+
+const openModelSelector = (requireVision = false) => {
+  chooseVisionModel.value = requireVision
+  showModelSelector.value = true
+}
 
 const selectedFilePath = (selected: unknown): string => {
   if (!selected) return ''
@@ -239,6 +259,7 @@ const selectedFilePath = (selected: unknown): string => {
 }
 
 const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp']
+const DOCUMENT_EXTS = ['txt', 'md', 'csv', 'xlsx', 'xls', 'docx', 'doc', 'pdf']
 
 const mimeFromName = (name: string) => {
   const ext = fileExtOf(name)
@@ -249,62 +270,80 @@ const mimeFromName = (name: string) => {
 }
 
 const addImageFromDataUrl = (imageUrl: string, fileName?: string, filePath?: string) => {
-  if (!imageUrl.startsWith('data:image/')) return
+  if (!/^data:image\/[^;,]+;base64,.+/i.test(imageUrl)) throw new Error('无法读取此图片')
   const added = addComposerImage({
     imageUrl,
     fileName: fileName || '图片',
     mimeType: imageUrl.slice(5, imageUrl.indexOf(';')) || 'image/png',
     filePath,
   })
-  if (!added) alert('一次最多附带 4 张图片')
+  if (!added) imageError.value = '一次最多附带 4 张图片'
+  return added
 }
 
-const addImage = async () => {
-  if (!agentHasVision.value) return
+const addAttachments = async () => {
+  if (readingImages.value) return
   if (!isTauriEnvironment()) {
     alert('此功能仅在应用中可用')
     return
   }
+  const version = composerVersion
+  imageError.value = ''
+  readingImages.value = true
   try {
     const selected = await open({
-      title: '选择图片',
+      title: '选择附件',
       multiple: true,
       directory: false,
-      filters: [{ name: '图片', extensions: IMAGE_EXTS }],
+      filters: [{ name: '文件和图片', extensions: [...DOCUMENT_EXTS, ...IMAGE_EXTS] }],
     })
     const paths = Array.isArray(selected) ? selected : selected ? [selected] : []
-    for (const path of paths) {
-      const filePath = String(path || '')
-      if (!filePath) continue
-      const fileName = filePath.split(/[\\/]/).pop() || '图片'
-      const base64 = await readFileBase64(filePath)
-      addImageFromDataUrl(`data:${mimeFromName(fileName)};base64,${base64}`, fileName, filePath)
+    for (const filePath of paths) {
+      if (composerVersion !== version) break
+      const fileName = filePath.split(/[\\/]/).pop() || '附件'
+      if (!IMAGE_EXTS.includes(fileExtOf(fileName))) {
+        addComposerAttachment(filePath)
+        continue
+      }
+      try {
+        const base64 = await readFileBase64(filePath)
+        if (composerVersion === version) {
+          addImageFromDataUrl(`data:${mimeFromName(fileName)};base64,${base64}`, fileName, filePath)
+        }
+      } catch (error) {
+        console.error('读取图片失败:', error)
+        if (composerVersion === version) imageError.value = '部分图片无法读取，请重新选择。'
+      }
     }
   } catch (error) {
-    console.error('选择图片失败:', error)
+    console.error('选择附件失败:', error)
+    if (composerVersion === version) imageError.value = '无法选择附件，请重试。'
+  } finally {
+    readingImages.value = false
   }
 }
 
-const addFile = async () => {
-  if (!isTauriEnvironment()) {
-    alert('此功能仅在应用中可用')
-    return
-  }
+const pasteImages = async (files: File[]) => {
+  if (readingImages.value) return
+  const version = composerVersion
+  imageError.value = ''
+  readingImages.value = true
   try {
-    const selected = await open({
-      title: '选择文件',
-      multiple: false,
-      directory: false,
-      filters: [{
-        name: '文件',
-        extensions: ['txt', 'md', 'csv', 'xlsx', 'xls', 'docx', 'doc', 'pdf'],
-      }],
-    })
-    const filePath = selectedFilePath(selected)
-    if (!filePath) return
-    addComposerAttachment(filePath)
+    for (const file of files) {
+      const imageUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(String(reader.result || ''))
+        reader.onerror = () => reject(reader.error)
+        reader.readAsDataURL(file)
+      })
+      if (composerVersion !== version) break
+      if (!addImageFromDataUrl(imageUrl, file.name || '粘贴的图片')) break
+    }
   } catch (error) {
-    console.error('选择文件失败:', error)
+    console.error('粘贴图片失败:', error)
+    if (composerVersion === version) imageError.value = '无法读取剪贴板图片，请点加号选择「文件/图片」。'
+  } finally {
+    readingImages.value = false
   }
 }
 
@@ -317,6 +356,7 @@ const folderPickerInitialId = computed(() => {
 })
 const showFeatureCards = computed(() => !(activeChat.value?.messages.length))
 watch([paneQuiz, openedWriteStep, paneGraphView], ([quiz, write, graph]) => {
+  if (quiz) browserPaneVisible.value = false
   if (quiz || write || graph) agentBrowserExpanded.value = false
 })
 const approvalPending = computed(() => (
@@ -326,7 +366,7 @@ const approvalPending = computed(() => (
 const ensureAgentModel = () => {
   if (agentModel.value) return true
   alert('请先选择一个模型')
-  showModelSelector.value = true
+  openModelSelector()
   return false
 }
 
@@ -429,15 +469,12 @@ const startQuizFromCard = () => {
 }
 
 const startGraphFromCard = () => {
-  if (!ensureAgentModel()) return
-  void startStudyGraphChat()
+  draftStudyGraphChat()
 }
 const agentModel = computed(() => selectedAgentModel.value || selectedTextModel.value)
 const agentModelLabel = computed(() => agentModel.value?.displayName || '选择模型')
 const agentHasVision = computed(() => modelHasVision(agentModel.value))
-const composerPlaceholder = computed(() =>
-  agentHasVision.value ? '问问题，可粘贴或选择图片' : '问问题，或让我把题目保存到题库'
-)
+const composerPlaceholder = '问问题，可粘贴或选择图片'
 
 const onAgentModelSelected = (model: AIModel) => {
   setSelectedAgentModel(model.id)
@@ -445,14 +482,16 @@ const onAgentModelSelected = (model: AIModel) => {
 }
 
 const draft = ref('')
+const quizOptionQuotes = ref<AgentQuizOptionQuote[]>([])
 const composerHeight = ref(108)
 const composerCompRef = ref<{
   fillComposer: (text: string) => Promise<void>
+  focusComposer: () => void
   insertFolderMention: (folder: { folderId: number; folderName: string; folderPath: string }) => void
   saveComposerSelection: () => void
   syncDraftFromComposer: () => void
   clearComposer: () => void
-  hideMenu: () => void
+  hideContextMenu: () => void
 } | null>(null)
 const composerFiles = computed(() => composerAttachments.value.filter(isFileAttachment))
 const composerImages = computed(() => composerAttachments.value.filter(isImageAttachment))
@@ -469,7 +508,7 @@ const formatContextTokens = (value: number) => {
 
 const contextUsage = computed(() => estimateAgentContext(
   activeChat.value,
-  draft.value,
+  [draft.value, formatQuizOptionQuotes(quizOptionQuotes.value)].filter(Boolean).join('\n\n'),
   composerImages.value.length,
 ))
 
@@ -551,71 +590,67 @@ const sending = computed(() =>
 )
 
 const canSubmit = computed(() =>
-  Boolean((draft.value.trim() || composerFiles.value.length || composerImages.value.length) && !sending.value)
+  Boolean((draft.value.trim() || composerFiles.value.length || composerImages.value.length || quizOptionQuotes.value.length)
+    && !sending.value && !readingImages.value)
 )
 
-const reportedQuiz = new Set<string>()
-const pendingQuizReviews = ref<AgentQuizAttempt[]>([])
-let flushingQuiz = false
-
-const quizAttemptKey = (attempt: AgentQuizAttempt) => `${attempt.stepId}:${attempt.uid}`
-
-const sendQuizAttempt = async (attempt: AgentQuizAttempt) => {
-  threadPinned.value = true
-  await nextTick()
-  jumpThreadToBottom()
-  await sendChatMessage(formatQuizAttempt(attempt))
-}
-
-const flushQuizReviews = async () => {
-  if (flushingQuiz) return
-  flushingQuiz = true
-  try {
-    while (pendingQuizReviews.value.length && activeChatId.value && !sending.value) {
-      const attempt = pendingQuizReviews.value[0]
-      pendingQuizReviews.value = pendingQuizReviews.value.slice(1)
-      await sendQuizAttempt(attempt)
-    }
-  } finally {
-    flushingQuiz = false
+const onQuoteQuizOption = (option: AgentQuizOptionQuote) => {
+  const { messageId, stepId, uid, key } = option
+  if (!quizOptionQuotes.value.some(item => item.messageId === messageId && item.stepId === stepId && item.uid === uid && item.key === key)) {
+    quizOptionQuotes.value.push(option)
   }
+  composerCompRef.value?.focusComposer()
 }
 
 const onQuizAttempt = (messageId: string, attempt: AgentQuizAttempt) => {
   const sessionId = activeChatId.value
-  if (!sessionId) return
-  recordQuizAttempt(sessionId, messageId, attempt)
-  if (attempt.kind === 'note') return
-  const key = quizAttemptKey(attempt)
-  if (reportedQuiz.has(key)) return
-  reportedQuiz.add(key)
-  pendingQuizReviews.value = [...pendingQuizReviews.value, attempt]
-  void flushQuizReviews()
+  if (sessionId) recordQuizAttempt(sessionId, messageId, attempt)
+}
+
+const onQuizExplain = async (messageId: string, attempt: AgentQuizAttempt) => {
+  const sessionId = activeChatId.value
+  if (!sessionId || sending.value || !ensureAgentModel()) return
+  const { stepId, uid } = attempt
+  const source = activeChat.value?.messages.find(message => message.id === messageId)
+  if (!source) return
+  if (!source.quizAttempts?.some(item => item.stepId === stepId && item.uid === uid && item.kind !== 'note')) {
+    recordQuizAttempt(sessionId, messageId, attempt)
+  }
+  threadPinned.value = true
+  const turn = sendChatMessage(formatQuizAttempt(attempt), undefined, {
+    sessionId, quizAttemptRef: { messageId, stepId, uid },
+  })
+  await nextTick()
+  jumpThreadToBottom()
+  await turn
 }
 
 const submit = async () => {
   composerCompRef.value?.syncDraftFromComposer()
   const text = draft.value.trim()
+  const quotes = quizOptionQuotes.value
+  if (!canSubmit.value) return
+  if (composerImages.value.length && !agentHasVision.value) {
+    openModelSelector(true)
+    return
+  }
   const pending = consumeComposerAttachments()
   const files = pending.filter(isFileAttachment)
   const images = pending.filter(isImageAttachment)
   const folders = extractFolderAttachments(text)
-  if ((!text && !files.length && !images.length) || sending.value) return
-  if (images.length && !agentHasVision.value) {
-    alert('当前模型没有视觉能力，请先选择带视觉的模型')
-    composerAttachments.value = pending
-    return
-  }
+  imageError.value = ''
   composerCompRef.value?.clearComposer()
+  quizOptionQuotes.value = []
   threadPinned.value = true
-  await nextTick()
-  jumpThreadToBottom()
   const message = text || (
     files.length
       ? `我附上了「${files.map((item) => item.fileName).join('、')}」。`
-      : '请看我附上的图片。'
+      : images.length ? '请看我附上的图片。' : ''
   )
-  await sendChatMessage(message, [...files, ...images, ...folders])
+  const turn = sendChatMessage(message, [...files, ...images, ...folders], { quizOptionQuotes: quotes })
+  await nextTick()
+  jumpThreadToBottom()
+  await turn
 }
 
 const threadCompRef = ref<{
@@ -638,14 +673,22 @@ const onAskSelection = async (text: string) => {
   await fillComposer(`请解释下面这段内容：\n\n${text}`)
 }
 
+const onComposerPrefill = async (event: Event) => {
+  const text = (event as CustomEvent<string>).detail
+  await nextTick()
+  await fillComposer(text)
+}
+
 watch(sending, (busy) => {
   if (busy) return
-  void flushQuizReviews()
   finishOpenGraphStream()
 }, { immediate: true })
 
 watch(activeChatId, () => {
+  composerVersion++
   composerCompRef.value?.clearComposer()
+  quizOptionQuotes.value = []
+  imageError.value = ''
   threadPinned.value = true
 })
 
@@ -653,12 +696,14 @@ bindAgentChatPanes()
 
 onMounted(() => {
   document.addEventListener('keydown', onPreviewKeydown)
+  window.addEventListener('prefill-agent-composer', onComposerPrefill)
   window.addEventListener('study-graph-updated', onStudyGraphUpdated)
   window.addEventListener('open-study-graph', onOpenStudyGraph)
 })
 
 onUnmounted(() => {
   document.removeEventListener('keydown', onPreviewKeydown)
+  window.removeEventListener('prefill-agent-composer', onComposerPrefill)
   window.removeEventListener('study-graph-updated', onStudyGraphUpdated)
   window.removeEventListener('open-study-graph', onOpenStudyGraph)
 })

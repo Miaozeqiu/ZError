@@ -33,7 +33,8 @@ pub mod window_size;
 use crate::window_size::{resolve_window_size, MAIN_WINDOW_PRESET};
 pub use commands::open_text_window;
 pub use commands::{
-    can_native_updater_install, clear_macos_quarantine, clear_request_logs, convert_doc_to_docx, create_directory,
+    app_update_target, can_native_updater_install, clear_macos_quarantine, clear_request_logs,
+    convert_doc_to_docx, create_directory,
     fetch_image_as_base64, file_exists, get_daily_request_counts, get_request_logs, get_username,
     greet, load_cjk_system_font, open_cache_dir, open_devtools, open_url_content_window, read_config, read_doc_range,
     reveal_in_file_manager,
@@ -263,6 +264,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             greet,
             load_cjk_system_font,
+            app_update_target,
             can_native_updater_install,
             clear_macos_quarantine,
             create_directory,
@@ -291,6 +293,7 @@ pub fn run() {
             segment_text,
             secret_vault::secure_document_read,
             secret_vault::secure_site_account_names,
+            secret_vault::secure_api_key_length,
             secret_vault::secure_storage_authorize,
             secret_vault::secure_document_write,
             secret_vault::secure_register,
@@ -311,6 +314,7 @@ pub fn run() {
             open_cache_dir,
             reveal_in_file_manager,
             search_questions_fuzzy,
+            search_questions_page,
             get_folders,
             get_ai_responses,
             get_paginated_questions,
@@ -482,6 +486,7 @@ pub fn run() {
             
             #[cfg(target_os = "macos")]
             let _main = tauri::WebviewWindowBuilder::new(app, "main", url)
+                .initialization_script_for_all_frames(include_str!("campus_auth.js"))
                 // Agent execution and video-event continuation live in this
                 // webview. WK's default five-minute hidden-view suspension
                 // must not freeze them when the user switches applications.
@@ -502,6 +507,7 @@ pub fn run() {
                     tauri::image::Image::from_bytes(include_bytes!("../icons/128x128@2x.png"))
                         .expect("window icon png");
                 let built = tauri::WebviewWindowBuilder::new(app, "main", url)
+                    .initialization_script_for_all_frames(include_str!("campus_auth.js"))
                     .title("ZError")
                     .inner_size(main_window_size.width, main_window_size.height)
                     .min_inner_size(main_window_size.min_width, main_window_size.min_height)

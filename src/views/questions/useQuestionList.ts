@@ -131,8 +131,8 @@ export function useQuestionList(props: Props, emit: QuestionListEmit) {
     clearSearch: search.clearSearch,
     highlightSearchTerm: (text: string) => highlightSearchTerm(
       text,
-      state.searchTerm.value,
-      state.highlightTerms.value,
+      state.isSearchMode.value ? state.searchTerm.value : '',
+      state.isSearchMode.value ? state.highlightTerms.value : [],
     ),
     onKnowledgeUpdated,
   }

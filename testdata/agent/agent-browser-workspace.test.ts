@@ -3,17 +3,19 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const native = vi.hoisted(() => ({ invoke: vi.fn(), listen: vi.fn(), opened: undefined as undefined | ((event: { payload: any }) => void) }))
 vi.mock('@tauri-apps/api/core', () => ({ invoke: native.invoke }))
 vi.mock('@tauri-apps/api/event', () => ({ listen: native.listen }))
+vi.mock('../../src/services/platform/panelAccess', () => ({ agentWatchBusy: () => false }))
 vi.mock('../../src/services/browser/appBrowser', () => {
   let serial = 0
   const list = () => JSON.parse(localStorage.getItem('test-tabs') || '[]')
   return {
     listAppBrowsers: list,
+    saveTemporaryBrowsers: vi.fn(),
     browserHomeUrl: () => 'https://app.local/browser-home.html',
     isBrowserHome: (url: string) => !url || url.endsWith('browser-home.html'),
     closeBrowserView: vi.fn().mockResolvedValue(undefined),
     removeAppBrowser: (id: string) => localStorage.setItem('test-tabs', JSON.stringify(list().filter((tab: any) => tab.id !== id))),
     createAppBrowser: (input: any) => {
-      const tab = { id: `tab-${++serial}`, ...input }
+      const tab = { id: `tab-${++serial}`, zoom: 1, ...input }
       localStorage.setItem('test-tabs', JSON.stringify([...list(), tab]))
       return tab
     },
@@ -29,9 +31,9 @@ vi.mock('../../src/services/platform', () => ({ dropAllWatchQueues: vi.fn() }))
 vi.mock('../../src/services/agent/chatWatch', () => ({ stopWatchFor: vi.fn() }))
 vi.mock('../../src/services/agent/agentWait', () => ({ wakeAgentWait: vi.fn() }))
 vi.mock('../../src/services/agent/debugLog', () => ({ writeBrowserTranscript: vi.fn() }))
-import { activeChat, activeId, chatAborts, chatSessions, createChat, ensureBrowserChat, sessions } from '../../src/services/agent/chatStore'
+import { activeChat, activeId, chatAborts, chatSessions, commitNewChatDraft, createChat, ensureBrowserChat, ensureNewChatDraft, selectChat, sessions } from '../../src/services/agent/chatStore'
 import { applyBrowserControl, browserControlState, setBrowserControl } from '../../src/services/browser/control'
-import { listAppBrowsers } from '../../src/services/browser/appBrowser'
+import { listAppBrowsers, saveTemporaryBrowsers } from '../../src/services/browser/appBrowser'
 import {
   agentBrowserExpanded, bindChatBrowser, browserIdsForChat, currentAgentBrowsers,
   ensureAgentBrowser, startAgentBrowserWorkspace,
@@ -103,6 +105,35 @@ describe('统一 Agent 浏览器工作区', () => {
     expect(native.invoke).toHaveBeenCalledWith('browser_open', expect.objectContaining({ id, hidden: true }))
     await ensureAgentBrowser(chat.id)
     expect(native.invoke.mock.calls.filter(call => call[0] === 'browser_open')).toHaveLength(1)
+  })
+
+  it('空白对话打开浏览器时不进入历史，创建正式对话后复用同一个浏览器', async () => {
+    const previous = createChat()
+    selectChat(null)
+    const { id } = ensureNewChatDraft()
+    const tabId = await ensureAgentBrowser(id)
+    expect(chatSessions.value.map(chat => chat.id)).toEqual([previous.id])
+    expect(ensureBrowserChat({ browserId: tabId })?.id).toBe(id)
+    expect(activeChat.value?.browserId).toBe(tabId)
+
+    expect(commitNewChatDraft().id).toBe(id)
+    expect(saveTemporaryBrowsers).toHaveBeenCalledWith([tabId])
+    expect(await ensureAgentBrowser(id)).toBe(tabId)
+    expect(native.invoke.mock.calls.filter(call => call[0] === 'browser_open')).toHaveLength(1)
+  })
+
+  it('临时标签可以导航和关闭，只有随对话保留的标签才写入存储', async () => {
+    const tabs = await vi.importActual<typeof import('../../src/services/browser/appBrowser')>('../../src/services/browser/appBrowser')
+    const kept = tabs.createAppBrowser({ url: 'https://example.com/first' }, true)
+    const removed = tabs.createAppBrowser({ url: 'https://example.com/closed' }, true)
+    tabs.patchAppBrowser(kept.id, { url: 'https://example.com/next' })
+    tabs.removeAppBrowser(removed.id)
+    expect(tabs.listAppBrowsers().map(tab => tab.id)).toEqual([kept.id])
+    expect(JSON.parse(localStorage.getItem('zerror-app-browsers') || '[]')).toEqual([])
+    tabs.saveTemporaryBrowsers([kept.id, removed.id])
+    expect(JSON.parse(localStorage.getItem('zerror-app-browsers') || '[]')).toEqual([
+      expect.objectContaining({ id: kept.id, url: 'https://example.com/next' }),
+    ])
   })
 
   it('切换对话不会复用另一个对话的网页，后台工具不会改变前台对话', async () => {

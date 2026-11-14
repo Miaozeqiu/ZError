@@ -36,10 +36,7 @@
                 v-for="model in platform.models"
                 :key="model.id"
                 class="model-item"
-                :class="{
-                  active: isModelSelected(model),
-                  'model-item--no-vision': isVisionUnavailable(model)
-                }"
+                :class="{ active: isModelSelected(model) }"
                 @click="selectModel(model)"
               >
                 <div class="model-icon-wrap">
@@ -56,7 +53,9 @@
               </div>
             </div>
           </div>
-          <div v-if="platformsWithModels.length === 0" class="empty-tip">暂无匹配模型</div>
+          <div v-if="platformsWithModels.length === 0" class="empty-tip">
+            {{ requireVision && !searchQuery.trim() ? '请先在模型设置中启用支持视觉的 Agent 模型' : '暂无匹配模型' }}
+          </div>
         </div>
       </div>
     </div>
@@ -64,29 +63,30 @@
 </template>
 
 <script setup lang="ts">
+import { ZERROR_OPEN_ORIGIN } from '../../services/app/openApi'
 import { computed, ref, watch } from 'vue'
-import type { AIModel, AIPlatform, RemoteModelIconMapping } from '../../services/model/config'
+import type { AIModel, AIPlatform, ModelSelectionCategory, RemoteModelIconMapping } from '../../services/model/config'
 import { fetchRemoteModelsCatalog, modelHasVision } from '../../services/model/config'
 import ModelCategorySwitch from '../settings/ModelSettings/ModelCategorySwitch.vue'
 
 interface Props {
   show: boolean
-  selectedTextModelIds: string[]
-  selectedVisionModelId: string | null
+  selectedAnswerModelIds?: string[]
   selectedSummaryModelIds: string[]
   selectedAgentModelId?: string | null
   availableModels: AIModel[]
   platforms: AIPlatform[]
-  forceCategory?: 'text' | 'vision' | 'summary' | 'agent'
+  forceCategory?: ModelSelectionCategory
+  requireVision?: boolean
 }
 
 const props = defineProps<Props>()
 const emit = defineEmits<{
   close: []
-  modelSelected: [model: AIModel]
+  modelSelected: [model: AIModel, category: ModelSelectionCategory]
 }>()
 
-const ICON_BASE_URL = 'https://webapi.zaizhexue.top/models/'
+const ICON_BASE_URL = `${ZERROR_OPEN_ORIGIN}/models/`
 const remoteModelIconMappings = ref<RemoteModelIconMapping[]>([])
 
 const resolveModelIconUrl = (icon?: string): string => {
@@ -111,13 +111,13 @@ const getModelIcon = (model: AIModel): string => {
 }
 
 const searchQuery = ref('')
-const selectedCategory = ref<'text' | 'vision' | 'summary' | 'agent'>(props.forceCategory || 'text')
+const selectedCategory = ref<ModelSelectionCategory>(props.forceCategory || 'answer')
 
 const forceCategoryTitle = computed(() => {
-  if (props.forceCategory === 'vision') return '选择视觉模型'
+  if (props.requireVision) return '选择视觉模型'
   if (props.forceCategory === 'summary') return '选择总结模型'
-  if (props.forceCategory === 'agent') return '选择 agent 模型'
-  return '选择文本模型'
+  if (props.forceCategory === 'agent') return '选择 Agent 模型'
+  return '选择答题模型'
 })
 
 watch(() => props.forceCategory, (newVal) => {
@@ -127,18 +127,16 @@ watch(() => props.forceCategory, (newVal) => {
 })
 
 const isModelSelected = (model: AIModel) => {
-  if (selectedCategory.value === 'text') return props.selectedTextModelIds.includes(model.id)
-  if (selectedCategory.value === 'vision') return props.selectedVisionModelId === model.id
+  if (selectedCategory.value === 'answer') return props.selectedAnswerModelIds?.includes(model.id) ?? false
   if (selectedCategory.value === 'summary') return props.selectedSummaryModelIds.includes(model.id)
   if (selectedCategory.value === 'agent') return props.selectedAgentModelId === model.id
   return false
 }
 
-const isVisionUnavailable = (model: AIModel) =>
-  selectedCategory.value === 'vision' && !modelHasVision(model)
-
 const filteredModels = computed(() => {
-  let models = props.availableModels
+  let models = props.requireVision
+    ? props.availableModels.filter(model => modelHasVision(model) && model.supportsTools !== false)
+    : props.availableModels
   if (searchQuery.value.trim()) {
     const q = searchQuery.value.toLowerCase()
     models = models.filter(m => m.displayName.toLowerCase().includes(q) || m.id.toLowerCase().includes(q))
@@ -163,11 +161,7 @@ const handleOverlayClick = (e: MouseEvent) => {
 }
 
 const selectModel = (model: AIModel) => {
-  if (isVisionUnavailable(model)) return
-  emit('modelSelected', {
-    ...model,
-    category: selectedCategory.value === 'agent' ? model.category : selectedCategory.value,
-  })
+  emit('modelSelected', model, selectedCategory.value)
 }
 
 watch(() => props.show, async (v) => {
@@ -275,22 +269,6 @@ watch(() => props.show, async (v) => {
   border-color: var(--model-item-active-border);
   color: var(--model-item-active-text);
   box-shadow: var(--model-item-active-shadow);
-}
-
-.model-item--no-vision {
-  cursor: not-allowed;
-  opacity: 0.34;
-  filter: grayscale(1);
-}
-
-.model-item--no-vision:hover {
-  background: var(--model-item-bg);
-  border-color: var(--model-item-border);
-  color: var(--model-item-text);
-}
-
-.model-item--no-vision .model-name {
-  color: var(--text-secondary, #9aa3af);
 }
 
 .model-icon-wrap {

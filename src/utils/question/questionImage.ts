@@ -1,5 +1,5 @@
 import { shallowRef } from 'vue'
-import { fetchRemoteModelsCatalog } from '../../services/model/config'
+import { fetchOpenApiJson } from '../../services/app/openApi'
 
 export interface QuestionImagePart {
   type: 'text' | 'image'
@@ -351,18 +351,18 @@ const ensureRemoteQuestionImageAlgorithm = () => {
   }
   remoteQuestionImageAlgorithmLastAttemptAt = now
 
-  pendingRemoteQuestionImageAlgorithmRequest = fetchRemoteModelsCatalog()
-    .then((catalog) => {
-      remoteQuestionImageAlgorithmLoaded = true
-      const compiledAlgorithm = catalog.questionImageAlgorithm
-        ? compileQuestionImageAlgorithm(catalog.questionImageAlgorithm)
-        : null
-
+  pendingRemoteQuestionImageAlgorithmRequest = fetchOpenApiJson('/v1/question-images/algorithm')
+    .then((payload) => {
+      const result = payload as { success?: boolean; data?: { source?: unknown } } | null
+      const code = result?.success === true ? result.data?.source : undefined
+      if (typeof code !== 'string') return
+      const compiledAlgorithm = compileQuestionImageAlgorithm(code)
       if (!compiledAlgorithm) return
+      remoteQuestionImageAlgorithmLoaded = true
       activeQuestionImageAlgorithm.value = compiledAlgorithm
       activeQuestionImageAlgorithmMeta.value = {
         source: 'remote',
-        code: catalog.questionImageAlgorithm || '',
+        code,
       }
       questionImageAlgorithmVersion.value += 1
     })

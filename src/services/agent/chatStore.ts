@@ -4,6 +4,7 @@ import { computed, ref, watch } from 'vue'
 import { readSecureDocument, writeSecureDocument } from '../security/secureStore'
 import { redactObject } from '../security/secretRedaction'
 import { browserControlState } from '../browser/control'
+import { saveTemporaryBrowsers } from '../browser/appBrowser'
 import type { ImportStepPreview, ImportTaskStep } from '../app/importTasks'
 import { dropAllWatchQueues } from '../platform'
 import { cancelApprovalsForSession } from './agentApproval'
@@ -23,6 +24,7 @@ const CHAT_LIST_COLLAPSED_KEY = 'zerror-chat-list-collapsed'
 
 export const sessions = ref<AgentChatSession[]>([])
 export const activeId = ref<string | null>(null)
+export const newChatDraft = ref<AgentChatSession | null>(null)
 export const chatListCollapsed = ref(false)
 export const chatAborts = new Map<string, AbortController>()
 export const composerAttachments = ref<AgentChatAttachment[]>([])
@@ -119,7 +121,8 @@ const loadPersisted = async () => {
       })),
     }))
     sessions.value = [...sessions.value, ...restored].slice(0, 30)
-    if (!activeId.value || !sessions.value.some(session => session.id === activeId.value)) {
+    const draftSelected = activeId.value === null && newChatDraft.value
+    if (!draftSelected && !sessions.value.some(session => session.id === activeId.value)) {
       activeId.value = sessions.value[0]?.id || null
     }
   } catch {
@@ -131,10 +134,13 @@ export const chatStoreReady = loadPersisted()
 
 export const chatSessions = computed(() => sessions.value.filter((session) => !session.parentId))
 export const browserChatSessions = computed(() => sessions.value.filter((session) => session.browserId && !session.parentId))
-export const activeChatId = computed(() => activeId.value)
+export const newChatSelected = computed(() => activeId.value === null)
 export const activeChat = computed(
-  () => sessions.value.find((session) => session.id === activeId.value) || null
+  () => newChatSelected.value
+    ? newChatDraft.value
+    : sessions.value.find((session) => session.id === activeId.value) || null
 )
+export const activeChatId = computed(() => activeChat.value?.id ?? null)
 
 export const sessionIsStreaming = (session?: AgentChatSession | null) =>
   Boolean(session?.messages.some((message) => message.status === 'streaming'))
@@ -208,14 +214,14 @@ export const persistSoon = (immediate = false) => {
 export const flushChatCheckpoint = () => persist(false)
 
 export const liveSession = (sessionId: string) =>
-  sessions.value.find((session) => session.id === sessionId)
+  newChatDraft.value?.id === sessionId ? newChatDraft.value : sessions.value.find((session) => session.id === sessionId)
 
 export const patchSession = (sessionId: string, mutate: (session: AgentChatSession) => AgentChatSession) => {
   const current = liveSession(sessionId)
   if (!current) return
   const next = mutate(current)
   if (next !== current) Object.assign(current, next)
-  persistSoon()
+  if (current !== newChatDraft.value) persistSoon()
 }
 
 export const patchMessage = (sessionId: string, messageId: string, patch: Partial<AgentChatMessage>) => {
@@ -345,18 +351,16 @@ export const consumeComposerAttachments = () => {
   return items
 }
 
-export const selectChat = (id: string) => {
-  if (activeId.value !== id) composerAttachments.value = []
-  activeId.value = id
+export const selectChat = (id: string | null) => {
+  const nextId = id === newChatDraft.value?.id ? null : id
+  if (activeId.value !== nextId) composerAttachments.value = []
+  if (nextId === null) ensureNewChatDraft()
+  activeId.value = nextId
 }
 
 export const setChatStudySubject = (subjectId?: number | null, sessionId?: string) => {
-  const id = sessionId || activeId.value
   const nextId = Number(subjectId) > 0 ? Number(subjectId) : undefined
-  if (!id) {
-    createChat({ studySubjectId: nextId })
-    return
-  }
+  const id = sessionId || activeChatId.value || ensureNewChatDraft().id
   patchSession(id, (session) => ({
     ...session,
     studySubjectId: nextId,
@@ -364,19 +368,38 @@ export const setChatStudySubject = (subjectId?: number | null, sessionId?: strin
   }))
 }
 
-export const createChat = (init?: Partial<Pick<AgentChatSession, 'title' | 'attachments' | 'studySubjectId' | 'browserId'>> & { activate?: boolean }) => {
+type NewChatOptions = Partial<Pick<AgentChatSession, 'title' | 'attachments' | 'studySubjectId' | 'browserId'>> & { activate?: boolean }
+
+const makeChatSession = (init?: NewChatOptions): AgentChatSession => ({
+  id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  title: init?.title || '新对话',
+  messages: [],
+  attachments: init?.attachments,
+  studySubjectId: Number(init?.studySubjectId) > 0 ? Number(init?.studySubjectId) : undefined,
+  browserId: String(init?.browserId || '').trim() || undefined,
+  todos: [],
+  createdAt: Date.now(),
+  updatedAt: Date.now(),
+})
+
+export const ensureNewChatDraft = () => {
+  if (!newChatDraft.value) newChatDraft.value = makeChatSession()
+  return newChatDraft.value
+}
+
+export const commitNewChatDraft = () => {
+  const session = ensureNewChatDraft()
+  const browserIds = [...new Set([...(session.browserIds || []), session.browserId || ''].filter(Boolean))]
+  if (browserIds.length) saveTemporaryBrowsers(browserIds)
+  sessions.value = [session, ...sessions.value].slice(0, 40)
+  activeId.value = session.id
+  newChatDraft.value = null
+  return session
+}
+
+export const createChat = (init?: NewChatOptions) => {
   if (init?.activate !== false) composerAttachments.value = []
-  const session: AgentChatSession = {
-    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    title: init?.title || '新对话',
-    messages: [],
-    attachments: init?.attachments,
-    studySubjectId: Number(init?.studySubjectId) > 0 ? Number(init?.studySubjectId) : undefined,
-    browserId: String(init?.browserId || '').trim() || undefined,
-    todos: [],
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-  }
+  const session = makeChatSession(init)
   sessions.value = [session, ...sessions.value].slice(0, 40)
   if (init?.activate !== false) activeId.value = session.id
   persistSoon()
@@ -395,17 +418,14 @@ export const attachFileToChat = (input: {
     folderId: input.folderId,
     folderName: input.folderName,
   }
-  let session = activeChat.value
-  if (!session) session = createChat({ title: fileName })
-  const target = sessions.value.find((item) => item.id === session.id)
-  if (!target) return
+  const target = activeChat.value || ensureNewChatDraft()
   target.attachments = [
     attachment,
     ...(target.attachments || []).filter((item) => item.filePath !== attachment.filePath),
   ]
   if (!target.title || target.title === '新对话') target.title = fileName
   target.updatedAt = Date.now()
-  persist()
+  if (target !== newChatDraft.value) persist()
 }
 
 export const finalizeStopped = (sessionId: string, messageId: string, reason: AgentChatMessage['stopReason'] = 'user') => {
@@ -434,7 +454,7 @@ export const finalizeStopped = (sessionId: string, messageId: string, reason: Ag
 
 export const stopChat = (id?: string, reason: AgentChatMessage['stopReason'] = 'user') => {
   const sessionId = id || activeId.value
-  if (!sessionId) return
+  if (!sessionId || sessionId === newChatDraft.value?.id) return
   const abort = chatAborts.get(sessionId)
   const session = sessions.value.find((item) => item.id === sessionId)
   const message = session?.messages.find((item) => item.status === 'streaming')
@@ -477,6 +497,11 @@ export const stopBrowserAgent = (browserId?: string) => {
 export const ensureBrowserChat = (input: { browserId: string; title?: string }) => {
   const browserId = String(input.browserId || '').trim()
   if (!browserId) return null
+  const draft = newChatDraft.value
+  if (draft?.browserId === browserId || draft?.browserIds?.includes(browserId)) {
+    patchSession(draft.id, current => ({ ...current, browserId, title: input.title || current.title }))
+    return draft
+  }
   const keep = sessions.value.find((item) => !item.parentId
     && (item.browserId === browserId || item.browserIds?.includes(browserId)))
   if (keep) {

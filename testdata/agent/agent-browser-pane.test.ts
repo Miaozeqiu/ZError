@@ -7,7 +7,7 @@ vi.mock('../../src/services/agent/chatStore', async () => {
   const { ref } = await import('vue')
   state.activeId = ref('chat-one')
   state.chat = ref({ id: 'chat-one', browserId: 'tab-one', messages: [] })
-  return { activeChat: state.chat, activeChatId: state.activeId, createChat: vi.fn(), patchSession: vi.fn() }
+  return { activeChat: state.chat, activeChatId: state.activeId, ensureNewChatDraft: vi.fn(), patchSession: vi.fn() }
 })
 vi.mock('../../src/services/agent/agentBrowser', async () => {
   const { ref } = await import('vue')
@@ -15,6 +15,7 @@ vi.mock('../../src/services/agent/agentBrowser', async () => {
   state.tab = ref({ id: 'tab-one', title: '测试网页', url: 'https://example.com', zoom: 1 })
   return {
     agentBrowserExpanded: state.expanded, currentAgentBrowser: state.tab, currentAgentBrowsers: ref([state.tab.value]),
+    currentAgentBrowserOpen: ref(true), agentBrowserHasTasks: ref(false), suspendAgentBrowsers: vi.fn(),
     ensureAgentBrowser: native.ensure, startAgentBrowserWorkspace: vi.fn().mockResolvedValue(undefined),
     bindChatBrowser: vi.fn(), browserIdsForChat: vi.fn(), refreshAgentBrowsers: vi.fn(),
   }

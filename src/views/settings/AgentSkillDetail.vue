@@ -1,17 +1,18 @@
 <template>
   <div class="skill-detail-page">
     <div class="skill-detail-header">
-      <button type="button" class="back-btn" title="返回网站列表" @click="requestBack">
+      <button type="button" class="back-btn" title="返回网站列表" :disabled="saving" @click="requestBack">
         <svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" width="12" height="12">
           <path d="M768 96c19.2-19.2 19.2-51.2 0-70.4-19.2-19.2-51.2-19.2-70.4 0l-448 448c-19.2 19.2-19.2 51.2 0 70.4l448 448c19.2 19.2 51.2 19.2 70.4 0 19.2-19.2 19.2-51.2 0-70.4L358.4 512l409.6-416z" fill="currentColor"/>
         </svg>
         <span>返回</span>
       </button>
       <div v-if="skillDoc" class="skill-detail-title">
-        <span class="skill-path">{{ siteHost || skillDoc.name }}</span>
+        <span class="skill-path">{{ editingSupplement ? '本地经验 · ' : '' }}{{ siteHost || skillDoc.name }}</span>
       </div>
       <div class="header-actions">
         <button
+          v-if="!readingRepositoryMarkdown && !editingSupplement"
           type="button"
           class="action-btn primary"
           :disabled="!dirty || !canSave || saving"
@@ -21,54 +22,35 @@
           {{ saving ? '保存中…' : '保存' }}
         </button>
         <div
-          v-if="canPreview"
+          v-if="canPreview && !readingRepositoryMarkdown"
           class="radio-inputs edit-layout-toggle"
+          :class="{ 'local-mode-switch': editingSupplement }"
           :data-selected-index="panelMode === 'preview' ? 0 : 1"
-          role="tablist"
+          role="radiogroup"
           aria-label="显示模式"
         >
-          <div class="slider"></div>
-          <label class="radio" role="tab" title="预览">
-            <input v-model="panelMode" type="radio" name="skill-view-mode" value="preview">
+          <div class="slider" aria-hidden="true"></div>
+          <label class="radio" title="预览">
+            <input v-model="panelMode" type="radio" name="skill-view-mode" value="preview" :disabled="saving">
             <span class="name">预览</span>
           </label>
-          <label class="radio" role="tab" title="源码">
-            <input v-model="panelMode" type="radio" name="skill-view-mode" value="source" @change="switchToSource">
-            <span class="name">源码</span>
+          <label class="radio" :title="editingSupplement ? '编辑' : '源码'">
+            <input v-model="panelMode" type="radio" name="skill-view-mode" value="source" :disabled="saving">
+            <span class="name">{{ editingSupplement ? '编辑' : '源码' }}</span>
           </label>
         </div>
         <button
-          v-if="skillDoc?.customized && (skillDoc.builtin || isRepositorySkill) && !websiteRepositoryState?.pinned"
+          v-if="canReset"
           type="button"
           class="action-btn danger"
           :disabled="saving"
           @click="resetSkill"
         >
-          {{ isRepositorySkill ? '恢复仓库版本' : '恢复默认' }}
+          {{ isRepositorySkill ? '清除图谱的本地补充' : '恢复默认' }}
         </button>
-      </div>
-    </div>
-
-    <div v-if="isRepositorySkill" class="repository-status" role="status">
-      <button type="button" class="repository-source" :title="'查看提交历史 · ' + (repositorySource?.url || '')" aria-label="查看网站提交历史" @click="historyOpen = true">
-        <Icon v-if="websiteRepositoryState.source === 'repository'" icon="lucide:github" width="14" height="14" aria-label="GitHub 仓库" />
-        <Icon v-if="websiteRepositoryState.hasFork" icon="lucide:history" width="14" height="14" aria-hidden="true" />
-        {{ websiteRepositoryState.hasFork ? '本地修改' : websiteRepositoryState.source === 'repository' ? 'GitHub 仓库缓存' : '内置离线副本' }}
-      </button>
-      <button type="button" class="action-btn" :disabled="dirty || saving || websiteRepositoryState.refreshing || websiteRepositoryState.pinned" @click="updateRepository">{{ websiteRepositoryState.refreshing ? '更新中…' : '检查更新' }}</button>
-      <span v-if="websiteRepositoryState.pinned">正在使用历史快照，可在时间线回到工作版本。</span>
-      <span v-if="websiteRepositoryState.error">{{ websiteRepositoryState.error }}</span>
-      <span v-else-if="dirty && loadedRepositoryVersion !== websiteRepositoryState.version">仓库或本地版本已变化，请重新读取后合并再保存。</span>
-    </div>
-
-    <WebsiteRepositoryHistory v-if="historyOpen && repository" :host="repository.host" :allow-switch="!dirty && !saving" @close="historyOpen = false" />
-    <div v-if="currentConflict" class="repository-conflict" role="alert">
-      <p>这个文件的仓库版本与本地版本都有修改，当前保留本地内容。请核对后选择。</p>
-      <details><summary>查看仓库新版本</summary><pre>{{ conflictUpstream }}</pre></details>
-      <div class="header-actions">
-        <button type="button" class="action-btn" :disabled="dirty || saving" @click="resolveConflict('local')">保留本地版本</button>
-        <button type="button" class="action-btn" :disabled="dirty || saving" @click="resolveConflict('upstream')">采用仓库版本</button>
-        <span v-if="dirty">先保存或放弃当前编辑，再选择版本。</span>
+        <span v-if="websiteRepositoryState" class="skill-badge repository-status" role="status" :title="websiteRepositoryState.error || '打开详情时自动检查云端经验'">
+          {{ repositoryStatusLabel }}
+        </span>
       </div>
     </div>
 
@@ -78,7 +60,8 @@
       <aside class="skill-file-sidebar">
         <div class="sidebar-label">目录</div>
         <SkillFileTree
-          :files="files"
+          :files="directoryFiles"
+          :root-path="isRepositorySkill && siteHost ? `sites/${siteHost}` : undefined"
           :selected="currentPath"
           @select="selectFile"
         />
@@ -94,19 +77,20 @@
         </div>
 
         <div
-          v-else-if="panelMode === 'preview' && isMarkdownFile"
+          v-else-if="isMarkdownFile && (panelMode === 'preview' || readingRepositoryMarkdown)"
           class="skill-file-body skill-markdown-body"
+          :class="{ 'local-experience local-note-preview': editingSupplement }"
         >
-          <div v-if="previewMetaRows.length" class="skill-frontmatter">
+          <dl v-if="!editingSupplement && previewMetaRows.length" class="skill-frontmatter" aria-label="经验信息">
             <div
               v-for="row in previewMetaRows"
               :key="row.key"
               class="skill-frontmatter-row"
             >
-              <span class="skill-frontmatter-key">{{ row.key }}</span>
-              <span class="skill-frontmatter-val">{{ row.value }}</span>
+              <dt class="skill-frontmatter-key">{{ row.label }}</dt>
+              <dd class="skill-frontmatter-val">{{ row.value }}</dd>
             </div>
-          </div>
+          </dl>
           <MarkdownRender
             v-if="previewBody"
             :key="previewRenderKey"
@@ -116,6 +100,10 @@
             :batch-rendering="false"
             :max-live-nodes="480"
           />
+          <div v-else-if="editingSupplement" class="local-note-empty">
+            <strong>还没有本地经验</strong>
+            <p>可以补充云端经验里缺少的步骤，供 Agent 下次参考。</p>
+          </div>
           <div v-else class="skill-preview-empty">没有正文内容</div>
         </div>
 
@@ -123,14 +111,15 @@
           v-else-if="panelMode === 'source' || !canPreview"
           class="skill-file-body skill-edit-body"
         >
+          <p v-if="isRepositorySkill && isSiteGraphFile" class="panel-hint">图谱保存本地新增的节点、连接和字段改动。删除云端内容的操作不会保存。</p>
           <SkillMarkdownEditor
             :key="`${currentPath}-source-${editorKey}`"
             ref="editorRef"
             v-model="markdown"
-            :language="editorLanguage"
-            :readonly="websiteRepositoryState?.pinned"
+            :language="editingSupplement ? 'plain' : editorLanguage"
+            :readonly="editingSupplement && saving"
             :autofocus="panelMode === 'source'"
-            :placeholder="isMarkdownFile ? '在此编辑 Markdown…' : '在此编辑文件…'"
+            :placeholder="editingSupplement ? '在此补充已验证的步骤或例外…' : isMarkdownFile ? '在此编辑 Markdown…' : '在此编辑文件…'"
           />
         </div>
 
@@ -156,9 +145,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { Icon } from '@iconify/vue/offline'
-import '../../utils/ui/agentIcons'
+import { computed, nextTick, onBeforeUnmount, onMounted, onUnmounted, ref, watch } from 'vue'
 import MarkdownRender, { setCustomComponents } from 'markstream-vue'
 import 'markstream-vue/index.css'
 import 'katex/dist/katex.min.css'
@@ -166,10 +153,9 @@ import '../../services/model/markstream'
 import SkillMarkdownEditor from '../../components/settings/SkillMarkdownEditor.vue'
 import SkillUnsavedDialog from '../../components/settings/SkillUnsavedDialog.vue'
 import SkillFileTree from '../../components/settings/SkillFileTree.vue'
-import WebsiteRepositoryHistory from './WebsiteRepositoryHistory.vue'
 import BrowserSiteGraphPanel from '../../components/browser/BrowserSiteGraphPanel.vue'
 import { SITE_GRAPH_PATH } from '../../services/agent/skillRuntime'
-import { repositoryForHost, repositorySourceFor, websiteRepositoryStates, refreshWebsiteRepository } from '../../services/agent/websiteRepository'
+import { ensureWebsiteRepository, repositoryForHost, readWebsiteRepositoryFile, websiteRepositoryStates, writeWebsiteRepositorySupplement } from '../../services/agent/websiteRepository'
 import { websiteRepositoryTarget } from '../../services/agent/websiteRepositoryTarget'
 import type { SiteGraphData } from '../../services/browser/siteGraph'
 import {
@@ -194,6 +180,7 @@ const errorMessage = (error: unknown, fallback: string) => {
 }
 
 const isMarkdownPath = (path: string) => /\.md(?:own)?$/i.test(path)
+const LOCAL_EXPERIENCE_PATH = '本地经验.md'
 const isSiteGraphPath = (path: string) => path === SITE_GRAPH_PATH || /(^|\/)site-graph\.json$/i.test(path)
 const editorLanguageOf = (path: string): 'markdown' | 'javascript' | 'json' | 'plain' => {
   if (isMarkdownPath(path)) return 'markdown'
@@ -212,7 +199,7 @@ setCustomComponents(SKILL_PREVIEW_CUSTOM_ID, {
 
 const props = defineProps<{
   skillId: string
-  initialMode?: 'view' | 'edit'
+  initialMode?: 'view' | 'edit' | 'local'
   siteHost?: string
   initialPath?: string
 }>()
@@ -225,17 +212,17 @@ const emit = defineEmits<{
 const skillDoc = ref<SkillDocument | null>(null)
 const repository = computed(() => websiteRepositoryTarget(props.skillId, props.siteHost ? `sites/${props.siteHost}/SKILL.md` : 'SKILL.md'))
 const isRepositorySkill = computed(() => Boolean(repository.value))
-const historyOpen = ref(false)
-const repositorySource = computed(() => repository.value ? repositorySourceFor(repository.value.host) : undefined)
 const websiteRepositoryState = computed(() => repository.value ? websiteRepositoryStates[repository.value.host] : undefined)
+const repositoryStatusLabel = computed(() => {
+  const state = websiteRepositoryState.value
+  if (state?.refreshing) return '正在同步…'
+  if (state?.error) return '同步失败 · 离线可用'
+  return state?.source === 'repository' ? '云端经验 · 已同步' : '离线资料'
+})
 const repositoryPath = computed(() => websiteRepositoryTarget(props.skillId, currentPath.value)?.path || '')
 const loadedRepositoryVersion = ref<string | undefined>()
-const currentConflict = computed(() => isRepositorySkill.value && !websiteRepositoryState.value?.pinned && websiteRepositoryState.value?.conflicts.includes(repositoryPath.value))
-const conflictUpstream = computed(() => {
-  void websiteRepositoryState.value?.version
-  return currentConflict.value ? repositoryForHost(repository.value!.host).inspect().upstream.files[repositoryPath.value] ?? '仓库版本已移除此文件' : ''
-})
 const files = ref<string[]>(['SKILL.md'])
+const directoryFiles = computed(() => isRepositorySkill.value ? [...files.value, LOCAL_EXPERIENCE_PATH] : files.value)
 const currentPath = ref('SKILL.md')
 const markdown = ref('')
 const loadedMarkdown = ref('')
@@ -245,8 +232,11 @@ const saveHint = ref('')
 const saving = ref(false)
 const editorRef = ref<{ focus: () => void; getValue: () => string } | null>(null)
 const editorKey = ref(0)
-const panelMode = ref<'preview' | 'source'>(props.initialMode === 'edit' ? 'source' : 'preview')
+const initialPanelMode = () => props.initialMode === 'edit' || props.initialMode === 'local' ? 'source' : 'preview'
+const panelMode = ref<'preview' | 'source'>(initialPanelMode())
 let hintTimer: ReturnType<typeof setTimeout> | null = null
+let unmounting = false
+let discardOnExit = false
 
 const isMarkdownFile = computed(() => isMarkdownPath(currentPath.value))
 const isSiteGraphFile = computed(() => isSiteGraphPath(currentPath.value))
@@ -267,11 +257,18 @@ const siteGraphPreview = computed(() => {
   }
 })
 const dirty = computed(() => markdown.value !== loadedMarkdown.value)
-const canSave = computed(() => !websiteRepositoryState.value?.pinned && (currentPath.value !== 'SKILL.md' || Boolean(markdown.value.trim())))
+const editingSupplement = computed(() => isRepositorySkill.value && currentPath.value === LOCAL_EXPERIENCE_PATH)
+const readingRepositoryMarkdown = computed(() => isRepositorySkill.value && isMarkdownFile.value && !editingSupplement.value)
+const canSave = computed(() => !readingRepositoryMarkdown.value
+  && (editingSupplement.value || currentPath.value !== 'SKILL.md' || Boolean(markdown.value.trim())))
+const canReset = computed(() => isRepositorySkill.value
+  ? isSiteGraphFile.value && Boolean(websiteRepositoryState.value?.changedPaths.includes('site-graph.json'))
+  : Boolean(skillDoc.value?.customized && skillDoc.value.builtin))
 
 const previewParts = computed(() => parseSkillFrontmatter(markdown.value))
 /** 预览绝不把 YAML frontmatter 丢给 markstream（`---` 会被渲染成奇怪的水平线）。 */
 const previewBody = computed(() => {
+  if (editingSupplement.value) return markdown.value.trimEnd()
   const parts = previewParts.value
   if (parts.hasFrontmatter) return parts.body
   // 兜底：只要开头像 frontmatter，就硬剥掉，避免解析失败时整段进 markstream
@@ -281,16 +278,22 @@ const previewBody = computed(() => {
   return text.trim()
 })
 const previewMetaRows = computed(() => {
-  const rows: Array<{ key: string; value: string }> = []
-  if (previewParts.value.name) rows.push({ key: 'name', value: previewParts.value.name })
-  if (previewParts.value.description) rows.push({ key: 'description', value: previewParts.value.description })
-  if (previewParts.value.compatibility) rows.push({ key: 'compatibility', value: previewParts.value.compatibility })
-  if (previewParts.value.license) rows.push({ key: 'license', value: previewParts.value.license })
-  if (previewParts.value.allowedTools) rows.push({ key: 'allowed-tools', value: previewParts.value.allowedTools })
-  for (const [key, value] of Object.entries(previewParts.value.metadata)) {
-    rows.push({ key: `metadata.${key}`, value: String(value) })
+  const parts = previewParts.value
+  const rows = [
+    { key: 'name', label: '标识', value: parts.name },
+    { key: 'description', label: '用途', value: parts.description },
+    { key: 'compatibility', label: '使用条件', value: parts.compatibility === 'Requires ZError browser tools and a signed-in Chaoxing browser session.'
+      ? '需要 ZError 浏览器工具，并已在浏览器中登录学习通。' : parts.compatibility },
+    { key: 'license', label: '许可证', value: parts.license },
+    { key: 'allowed-tools', label: '允许的工具', value: parts.allowedTools },
+  ].filter(row => row.value)
+  for (const [key, value] of Object.entries(parts.metadata)) {
+    const label = key === 'display-name' ? '显示名称' : key === 'requires' ? '所需能力' : `扩展字段 · ${key}`
+    const text = key === 'requires' && value === 'ZError browser, credential and video-wait tools'
+      ? 'ZError 浏览器、凭据及视频播放等待工具' : String(value)
+    rows.push({ key: `metadata.${key}`, label, value: text })
   }
-  if (previewParts.value.errors.length) rows.push({ key: 'YAML 错误', value: previewParts.value.errors.join('；') })
+  if (parts.errors.length) rows.push({ key: 'errors', label: '格式错误', value: parts.errors.join('；') })
   return rows
 })
 const previewRenderKey = computed(() => (
@@ -312,22 +315,26 @@ const showHint = (text: string) => {
 }
 
 const loadFile = async (path: string) => {
-  if (!files.value.includes(path)) throw new Error('不能读取其他网站的文件')
-  const file = await getSkillFileContent(props.skillId, path)
+  if (!directoryFiles.value.includes(path)) throw new Error('不能读取其他网站的文件')
+  const file = path === LOCAL_EXPERIENCE_PATH && repository.value
+    ? await readWebsiteRepositoryFile(repository.value.host, 'SKILL.md')
+      .then(note => ({ path, content: note.supplement, repositoryVersion: note.version }))
+    : await getSkillFileContent(props.skillId, path)
   if (!file) throw new Error(`无法读取 ${path}`)
   currentPath.value = file.path
   markdown.value = file.content
-  loadedMarkdown.value = file.content
+  loadedMarkdown.value = markdown.value
   loadedRepositoryVersion.value = file.repositoryVersion
   editorKey.value += 1
   if (isSiteGraphPath(file.path)) panelMode.value = 'preview'
   else if (!isMarkdownPath(file.path)) panelMode.value = 'source'
 }
 
-const loadSkill = async () => {
+const loadSkill = async (useInitialPath = false) => {
   loadError.value = ''
   saveError.value = ''
   const hadDocument = Boolean(skillDoc.value)
+  if (useInitialPath && repository.value) await ensureWebsiteRepository(repository.value.host, true)
   const doc = await getSkillDocument(props.skillId, props.siteHost)
   if (!doc) {
     loadError.value = '无法读取 Skill'
@@ -335,22 +342,13 @@ const loadSkill = async () => {
   }
   skillDoc.value = doc
   files.value = doc.files?.length ? doc.files : ['SKILL.md']
-  const preferred = hadDocument ? currentPath.value : props.initialPath || (props.siteHost ? `sites/${props.siteHost}/SKILL.md` : 'SKILL.md')
-  await loadFile(files.value.includes(preferred) ? preferred : files.value[0])
+  const initialPath = props.initialMode === 'local' && isRepositorySkill.value
+    ? LOCAL_EXPERIENCE_PATH
+    : props.initialPath || (props.siteHost ? `sites/${props.siteHost}/SKILL.md` : 'SKILL.md')
+  const preferred = hadDocument && !useInitialPath ? currentPath.value : initialPath
+  await loadFile(directoryFiles.value.includes(preferred) ? preferred : files.value[0])
 }
 
-const updateRepository = async () => {
-  try { if (repository.value) await refreshWebsiteRepository(repository.value.host, true); if (!dirty.value) await loadSkill() }
-  catch (error) { saveError.value = errorMessage(error, '更新失败，已保留缓存') }
-}
-const resolveConflict = async (choice: 'local' | 'upstream') => {
-  if (dirty.value || saving.value) return
-  saving.value = true
-  saveError.value = ''
-  try { if (repository.value) await repositoryForHost(repository.value.host).resolve(repositoryPath.value, choice); await loadSkill(); emit('saved') }
-  catch (error) { saveError.value = errorMessage(error, '合并失败，已保留原版本') }
-  finally { saving.value = false }
-}
 watch(() => websiteRepositoryState.value?.version, async () => {
   if (!isRepositorySkill.value || !skillDoc.value || dirty.value || saving.value) return
   try { await loadSkill() } catch (error) { loadError.value = errorMessage(error, '读取网站仓库失败') }
@@ -382,6 +380,7 @@ const openNextFile = async (path: string) => {
   saveError.value = ''
   try {
     await loadFile(path)
+    if (path === LOCAL_EXPERIENCE_PATH) panelMode.value = 'preview'
   } catch (error) {
     saveError.value = error instanceof Error ? error.message : '读取失败'
   }
@@ -402,6 +401,7 @@ const confirmLeaveDiscard = async () => {
   if (!pending) return
   pendingLeave.value = null
   if (pending.kind === 'back') {
+    discardOnExit = true
     emit('back')
     return
   }
@@ -409,9 +409,10 @@ const confirmLeaveDiscard = async () => {
   await openNextFile(pending.path)
 }
 
-const requestBack = () => {
+const requestBack = async () => {
+  if (saving.value) return
   flushEditor()
-  if (!dirty.value) {
+  if (!dirty.value || (editingSupplement.value && await submitSave({ quiet: true }))) {
     emit('back')
     return
   }
@@ -419,9 +420,9 @@ const requestBack = () => {
 }
 
 const selectFile = async (path: string) => {
-  if (path === currentPath.value) return
+  if (path === currentPath.value || saving.value) return
   flushEditor()
-  if (dirty.value) {
+  if (dirty.value && (!editingSupplement.value || !await submitSave({ quiet: true }))) {
     pendingLeave.value = { kind: 'file', path }
     return
   }
@@ -442,19 +443,26 @@ const submitSave = async (options?: { quiet?: boolean }) => {
   saving.value = true
   saveError.value = ''
   try {
-    await saveSkillFileContent(skillDoc.value.id, currentPath.value, markdown.value, { repositoryVersion: loadedRepositoryVersion.value })
+    if (editingSupplement.value && repository.value) {
+      await writeWebsiteRepositorySupplement(repository.value.host, markdown.value, loadedMarkdown.value)
+    } else {
+      await saveSkillFileContent(skillDoc.value.id, currentPath.value, markdown.value, { repositoryVersion: loadedRepositoryVersion.value })
+    }
+    if (unmounting) return true
     const doc = await getSkillDocument(skillDoc.value.id, props.siteHost)
     if (doc) {
       skillDoc.value = doc
       files.value = doc.files?.length ? doc.files : ['SKILL.md']
     }
-    const savedFile = await getSkillFileContent(skillDoc.value.id, currentPath.value)
-    if (savedFile) { markdown.value = savedFile.content; loadedMarkdown.value = savedFile.content; loadedRepositoryVersion.value = savedFile.repositoryVersion }
+    const mode = panelMode.value
+    await loadFile(directoryFiles.value.includes(currentPath.value) ? currentPath.value : files.value[0])
+    panelMode.value = editingSupplement.value ? 'preview' : mode
     emit('saved')
-    if (!options?.quiet) showHint(isRepositorySkill.value ? '已保存到本机，未上传仓库' : '已保存')
+    if (!options?.quiet) showHint(isRepositorySkill.value ? '已保存本地补充' : '已保存')
     return true
   } catch (error) {
     saveError.value = errorMessage(error, '保存失败')
+    if (unmounting) console.warn('[本地经验] 离开时保存失败', saveError.value)
     return false
   } finally {
     saving.value = false
@@ -462,38 +470,34 @@ const submitSave = async (options?: { quiet?: boolean }) => {
 }
 
 const resetSkill = async () => {
-  if (!skillDoc.value || (!skillDoc.value.builtin && !isRepositorySkill.value) || saving.value || websiteRepositoryState.value?.pinned) return
+  if (!skillDoc.value || !canReset.value || saving.value) return
   flushEditor()
-  if (dirty.value && !window.confirm('将丢弃当前未保存修改，并恢复为内置默认内容，继续？')) return
-  const source = isRepositorySkill.value ? '当前仓库缓存版本' : '内置默认'
-  if (!window.confirm(currentPath.value === 'SKILL.md' ? `确定恢复全部文件为${source}？本地修改将被丢弃。` : `确定恢复「${currentPath.value}」为${source}？`)) return
+  const prompt = isRepositorySkill.value
+    ? '清除图谱的本地补充？未保存的修改也会丢弃。'
+    : '恢复默认内容？当前修改将被丢弃。'
+  if (!window.confirm(prompt)) return
   saving.value = true
   saveError.value = ''
   try {
-    if (currentPath.value === 'SKILL.md') await resetSkillDocument(skillDoc.value.id)
+    if (repository.value && repositoryPath.value) await repositoryForHost(repository.value.host).reset(repositoryPath.value)
+    else if (currentPath.value === 'SKILL.md') await resetSkillDocument(skillDoc.value.id)
     else await resetSkillFileContent(skillDoc.value.id, currentPath.value)
     const doc = await getSkillDocument(skillDoc.value.id, props.siteHost)
     if (doc) {
       skillDoc.value = doc
       files.value = doc.files?.length ? doc.files : ['SKILL.md']
     }
-    await loadFile(currentPath.value)
+    await loadFile(directoryFiles.value.includes(currentPath.value) ? currentPath.value : files.value[0])
     if (isMarkdownPath(currentPath.value) || isSiteGraphPath(currentPath.value)) {
       panelMode.value = 'preview'
     }
     emit('saved')
-    showHint(isRepositorySkill.value ? '已恢复仓库缓存版本' : '已恢复默认')
+    showHint(isRepositorySkill.value ? '已清除本地补充' : '已恢复默认')
   } catch (error) {
     saveError.value = error instanceof Error ? error.message : '恢复失败'
   } finally {
     saving.value = false
   }
-}
-
-const switchToSource = async () => {
-  panelMode.value = 'source'
-  await nextTick()
-  editorRef.value?.focus()
 }
 
 const onPageKeydown = (event: KeyboardEvent) => {
@@ -504,9 +508,9 @@ const onPageKeydown = (event: KeyboardEvent) => {
   }
 }
 
-watch(() => [props.skillId, props.siteHost, props.initialPath], () => {
-  panelMode.value = props.initialMode === 'edit' ? 'source' : 'preview'
-  void loadSkill()
+watch(() => [props.skillId, props.siteHost, props.initialPath, props.initialMode], () => {
+  panelMode.value = initialPanelMode()
+  void loadSkill(true).catch(error => { loadError.value = errorMessage(error, '读取失败') })
 })
 
 watch(panelMode, async (next) => {
@@ -515,6 +519,9 @@ watch(panelMode, async (next) => {
     editorRef.value?.focus()
   } else {
     flushEditor()
+    if (editingSupplement.value && dirty.value && !saving.value && !await submitSave()) {
+      panelMode.value = 'source'
+    }
   }
 })
 
@@ -526,7 +533,7 @@ onMounted(async () => {
     return
   }
   try {
-    await loadSkill()
+    await loadSkill(true)
     if (panelMode.value === 'source') {
       await nextTick()
       editorRef.value?.focus()
@@ -534,6 +541,11 @@ onMounted(async () => {
   } catch (error) {
     loadError.value = error instanceof Error ? error.message : '读取失败'
   }
+})
+
+onBeforeUnmount(() => {
+  unmounting = true
+  if (editingSupplement.value && dirty.value && !discardOnExit && !saving.value) void submitSave({ quiet: true })
 })
 
 onUnmounted(() => {
@@ -648,6 +660,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 6px;
   flex-shrink: 0;
+  margin-inline-start: auto;
 }
 
 .action-btn {
@@ -752,7 +765,10 @@ onUnmounted(() => {
 }
 
 .edit-layout-toggle .radio input {
-  display: none;
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
 }
 
 .edit-layout-toggle .radio .name {
@@ -776,6 +792,15 @@ onUnmounted(() => {
 .edit-layout-toggle .radio input:checked + .name {
   font-weight: 600;
   color: var(--text-primary);
+}
+
+.edit-layout-toggle .radio input:focus-visible + .name {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+
+.edit-layout-toggle .radio input:disabled + .name {
+  cursor: default;
 }
 
 .edit-layout-toggle .slider {
@@ -804,6 +829,23 @@ onUnmounted(() => {
   transform: translateX(100%);
 }
 
+.local-mode-switch {
+  --pad: 2px;
+  font-size: 12px;
+}
+
+.local-mode-switch .radio {
+  min-width: 34px;
+}
+
+.local-mode-switch .radio .name {
+  padding: 2px 6px;
+}
+
+.local-mode-switch .slider {
+  box-shadow: none;
+}
+
 .skill-file-body {
   flex: 1;
   min-height: 0;
@@ -814,6 +856,18 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+.local-experience {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(100%, 720px);
+  margin-inline: auto;
+  padding: 24px clamp(16px, 4vw, 36px);
+  box-sizing: border-box;
+  font-size: 13px;
+  color: var(--text-secondary);
 }
 
 .skill-graph-body {
@@ -832,35 +886,62 @@ onUnmounted(() => {
 }
 
 .skill-markdown-body {
-  padding: 8px 12px 0;
   color: var(--text-primary);
 }
 
+.skill-markdown-body:not(.local-experience) {
+  padding: 8px 12px 0;
+}
+
+.local-note-empty {
+  margin-top: 12px;
+  padding: 24px 16px;
+  border: 1px dashed var(--border-color);
+  border-radius: 10px;
+  text-align: center;
+  color: var(--text-secondary);
+}
+
+.local-note-empty strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.local-note-empty p {
+  margin: 6px 0 0;
+  line-height: 1.6;
+}
+
 .skill-frontmatter {
-  margin: 0 0 6px;
-  padding: 0 0 4px;
+  margin: 0 0 12px;
+  padding: 0 0 8px;
   border-bottom: 1px solid var(--border-color);
 }
 
 .skill-frontmatter-row {
   display: grid;
-  grid-template-columns: 72px minmax(0, 1fr);
-  gap: 2px 8px;
-  padding: 1px 0;
+  grid-template-columns: minmax(0, min(32%, 124px)) minmax(0, 1fr);
+  gap: 12px;
+  padding: 3px 0;
   align-items: baseline;
+}
+
+.skill-frontmatter-key,
+.skill-frontmatter-val {
+  min-width: 0;
+  margin: 0;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .skill-frontmatter-key {
   font-size: 12px;
-  line-height: 1.35;
   color: var(--text-secondary);
 }
 
 .skill-frontmatter-val {
   font-size: 13px;
-  line-height: 1.35;
   color: var(--text-primary);
-  word-break: break-word;
 }
 
 .skill-preview-empty {
@@ -913,6 +994,14 @@ onUnmounted(() => {
   display: none;
 }
 
+.local-note-preview :deep(.markstream-vue) {
+  --ms-text-body: 14px;
+  --ms-leading-body: 1.75;
+  font-size: 14px;
+  line-height: 1.75;
+  overflow-wrap: anywhere;
+}
+
 .skill-markdown-body :deep(.mermaid-block-container),
 .skill-markdown-body :deep(.infographic-block-container) {
   max-width: 100%;
@@ -934,34 +1023,4 @@ onUnmounted(() => {
   color: #059669;
   flex-shrink: 0;
 }
-.repository-status {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px 12px;
-  padding: 8px 16px;
-  color: #71717a;
-  font-size: 12px;
-  border-bottom: 1px solid rgba(128, 128, 128, 0.12);
-}
-.repository-source { display: inline-flex; align-items: center; gap: 6px; border: none; padding: 3px 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
-.repository-source:hover { color: var(--text-primary); }
-.repository-source svg { flex-shrink: 0; }
-.repository-conflict {
-  margin: 10px 16px;
-  padding: 12px;
-  border: 1px solid rgba(180, 120, 30, 0.25);
-  border-radius: 10px;
-  background: rgba(240, 180, 70, 0.07);
-  font-size: 13px;
-}
-.repository-conflict p { margin: 0 0 8px; }
-.repository-conflict pre {
-  max-height: 220px;
-  overflow: auto;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  font: inherit;
-}
-.repository-conflict .header-actions { margin-top: 10px; flex-wrap: wrap; }
 </style>

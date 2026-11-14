@@ -1,7 +1,12 @@
 <template>
-  <aside class="campus-col campus-papers">
+  <aside class="campus-col campus-papers" aria-label="作业与试卷">
     <div class="pane-header">
-      <div class="header-title">试卷</div>
+      <button v-if="compact" class="courses-back" type="button" title="返回课程列表" aria-label="返回课程列表" @click="$emit('back')">
+        <svg viewBox="0 0 16 16" width="16" height="16" fill="none" aria-hidden="true">
+          <path d="M10 3.5 5.5 8l4.5 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+      </button>
+      <div class="header-title" :title="compact ? courseName : undefined">{{ compact && courseName ? courseName : '试卷' }}</div>
       <div v-if="visiblePaperCount" class="header-meta">{{ visiblePaperCount }}</div>
       <div v-if="platformOptions.length" class="platform-filter" @mousedown.stop>
         <button
@@ -76,6 +81,8 @@ export interface CampusPaperItem {
 }
 
 defineProps<{
+  compact: boolean
+  courseName: string
   visiblePaperCount: number
   platformOptions: string[]
   platformFilter: string
@@ -86,6 +93,7 @@ defineProps<{
 }>()
 
 defineEmits<{
+  back: []
   'toggle-filter': []
   'set-platform-filter': [name: string]
   'select-paper': [id: number]
@@ -139,6 +147,27 @@ defineEmits<{
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.courses-back {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  margin-left: -4px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary, #718096);
+  cursor: pointer;
+}
+
+.courses-back:hover {
+  color: var(--text-primary, #2d3748);
+  background: var(--form-input-hover-bg, #f0f0f0);
 }
 
 .header-meta {

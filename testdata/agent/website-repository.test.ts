@@ -1,229 +1,134 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createWebsiteRepository, validateWebsiteSnapshot, type WebsiteRepositoryDocument, type WebsiteSnapshot } from '../../src/services/agent/websiteRepositoryCore'
+import { createWebsiteRepository, type StoredWebsiteRepositoryDocument, type WebsiteSnapshot } from '../../src/services/agent/websiteRepositoryCore'
 
-const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value))
-const main = (body = 'Official') => `---\nname: chaoxing\ndescription: 学习通操作\n---\n# ${body}\n`
-const snapshot = (revision = 'a'.repeat(40), body = 'Official'): WebsiteSnapshot => ({ revision, checkedAt: 1_000,
-  files: { 'SKILL.md': main(body), 'references/study.md': 'Study', 'site-graph.json': JSON.stringify({ id: 'chaoxing', host: 'chaoxing.com', hostPattern: 'chaoxing\\.com', nodes: [], edges: [] }) } })
-const harness = (stored: WebsiteRepositoryDocument | null = null) => {
-  let disk = clone(stored)
-  const save = vi.fn(async (next: WebsiteRepositoryDocument) => { disk = clone(next) })
-  const download = vi.fn(async () => snapshot('b'.repeat(40), 'Updated'))
-  const load = vi.fn(async () => clone(disk))
-  const create = (legacy?: () => Promise<Record<string, string>>) => createWebsiteRepository({ fallback: snapshot(), load, save, download, legacy, now: () => 2_000 })
+const main = (body = '# 云端经验') => `---\nname: chaoxing\ndescription: 学习通操作\n---\n${body}\n`
+const graph = (nodes: unknown[] = [], edges: unknown[] = []) => JSON.stringify({
+  id: 'chaoxing', host: 'chaoxing.com', hostPattern: 'chaoxing\\.com', nodes, edges,
+})
+const node = (id: string, fields = {}) => ({ id, title: id, summary: '', path: '/', row: 0, col: 0, patterns: [], ...fields })
+const snapshot = (revision = 'a'.repeat(40), body = '# 云端经验'): WebsiteSnapshot => ({
+  revision, checkedAt: 1000,
+  files: { 'SKILL.md': main(body), 'references/study.md': '云端参考', 'site-graph.json': graph() },
+})
+const harness = (stored: StoredWebsiteRepositoryDocument | null = null) => {
+  let disk = structuredClone(stored)
+  const save = vi.fn(async (next: StoredWebsiteRepositoryDocument) => { disk = structuredClone(next) })
+  const download = vi.fn(async () => snapshot('b'.repeat(40), '# 更新后的云端经验'))
+  const load = vi.fn(async () => structuredClone(disk))
+  const create = (legacy?: () => Promise<Record<string, string>>) => createWebsiteRepository({ fallback: snapshot(), load, save, download, legacy })
   return { create, save, download, load, disk: () => disk }
 }
 
-describe('local website repository without git', () => {
-  it('restores archived local content and returns to the original work after restart', async () => {
+describe('cloud website experience and local additions', () => {
+  it('always reads the latest cloud content plus local notes, including after restart', async () => {
     const h = harness(), repo = h.create()
-    await repo.write('SKILL.md', main('First'))
-    const first = repo.versionSelection().currentId
-    await repo.write('references/study.md', 'Second')
-    const working = repo.versionSelection().workingId
-    await repo.selectVersion(first)
-    expect(await repo.read('references/study.md')).toMatchObject({ content: 'Study', readonly: true })
-    expect(repo.versionSelection()).toMatchObject({ currentId: first, workingId: working, pinned: true })
-    await expect(repo.write('SKILL.md', main('Blocked'))).rejects.toThrow('工作版本')
+    const original = await repo.read('SKILL.md')
+    await repo.write('SKILL.md', original.content + '\n本地步骤', original.version)
+    expect(repo.inspect().supplement).toBe('本地步骤')
     await repo.refresh()
-    expect(h.download).not.toHaveBeenCalled()
-    const restarted = h.create()
-    expect(await restarted.read('references/study.md')).toMatchObject({ content: 'Study', readonly: true })
-    await restarted.selectVersion(null)
-    expect(await restarted.read('references/study.md')).toMatchObject({ content: 'Second', readonly: false })
-    expect(restarted.versionSelection()).toMatchObject({ currentId: working, pinned: false })
+    const current = await h.create().read('SKILL.md')
+    expect(current.content).toBe(main('# 更新后的云端经验\n\n## 本地补充经验\n\n本地步骤'))
+    expect(current.supplement).toBe('本地步骤')
+    await repo.reset('SKILL.md')
+    expect((await repo.read('SKILL.md')).content).toBe(main('# 更新后的云端经验'))
   })
 
-  it('keeps a selected snapshot through an in-flight update and leaves it intact on save failure', async () => {
-    const h = harness(), repo = h.create()
-    const earlier = snapshot('c'.repeat(40), 'Earlier')
-    let finish!: (value: WebsiteSnapshot) => void
-    h.download.mockReturnValueOnce(new Promise(resolve => { finish = resolve }))
-    const refresh = repo.refresh()
-    await vi.waitFor(() => expect(h.download).toHaveBeenCalledOnce())
-    await repo.selectVersion(earlier.revision, earlier)
-    finish(snapshot('b'.repeat(40), 'Newer'))
-    await refresh
-    expect(await repo.read('SKILL.md')).toMatchObject({ content: main('Earlier'), readonly: true })
-    expect(repo.inspect().upstream.revision).toBe('a'.repeat(40))
-    h.save.mockRejectedValueOnce(new Error('disk full'))
-    await expect(repo.selectVersion(null)).rejects.toThrow('disk full')
-    expect(repo.versionSelection().currentId).toBe(earlier.revision)
-    await expect(repo.selectVersion('d'.repeat(40), earlier)).rejects.toThrow('不一致')
-  })
-
-  it('durably records ordered local revisions and keeps them after reset and restart', async () => {
-    const h = harness(), repo = h.create()
-    await repo.write('SKILL.md', main('First'))
-    const first = repo.inspect().history![0]
-    expect(first).toMatchObject({ parent: 'a'.repeat(40), kind: 'write', paths: ['SKILL.md'], createdAt: 2000 })
-    expect(first.id).toMatch(/^[a-f0-9]{64}$/)
-    await repo.write('references/study.md', 'Second')
-    expect(repo.inspect().history![1].parent).toBe(first.id)
-    await repo.reset()
-    const restarted = h.create(); await restarted.ready()
-    expect(restarted.inspect().history!.map(commit => commit.kind)).toEqual(['write', 'write', 'reset'])
-    expect(restarted.inspect().fork).toBeUndefined()
-    expect(JSON.stringify(restarted.inspect().history)).not.toContain('Second')
-    expect(restarted.inspect().history![2].paths).toEqual(['SKILL.md', 'references/study.md'])
-  })
-
-  it('checkpoints old forks once without inventing earlier commits', async () => {
-    const h = harness({ version: 1, generation: 3, upstream: snapshot(), migrated: true,
-      fork: { id: 'existing', parentRevision: 'c'.repeat(40), updatedAt: 1234, files: { 'SKILL.md': main('Old') }, bases: { 'SKILL.md': main() }, conflicts: [] } })
-    const repo = h.create(); await repo.ready()
-    expect(repo.inspect().history).toHaveLength(1)
-    expect(repo.inspect().history![0]).toMatchObject({ kind: 'migrate', createdAt: 1234, parent: 'c'.repeat(40) })
-    expect(repo.inspect().generation).toBe(3)
-    const restarted = h.create(); await restarted.ready()
-    expect(restarted.inspect().history).toEqual(repo.inspect().history)
+  it('migrates the last working edits using their original base and resumes cloud sync', async () => {
+    const oldBase = main('# 旧云端经验\n\n原有步骤')
+    const stored = {
+      version: 1 as const, generation: 3, upstream: snapshot('a'.repeat(40), '# 最新云端经验'), migrated: true,
+      fork: { files: { 'SKILL.md': oldBase + '\n旧的本机步骤', 'references/new.md': '本机参考' }, bases: { 'SKILL.md': oldBase, 'references/new.md': null } },
+      selection: { id: 'old', snapshot: snapshot('c'.repeat(40), '# 曾选中的旧版本') },
+      history: [],
+    }
+    const h = harness(stored), repo = h.create()
+    expect((await repo.read('SKILL.md')).content).toBe(main('# 最新云端经验\n\n## 本地补充经验\n\n旧的本机步骤\n\n### new\n\n本机参考'))
+    expect((await repo.read('references/new.md')).content).toBeNull()
+    expect(h.disk()).toMatchObject({ version: 3, supplement: '旧的本机步骤\n\n### new\n\n本机参考' })
+    expect(h.disk()).not.toHaveProperty('selection')
+    await h.create().ready()
     expect(h.save).toHaveBeenCalledOnce()
+    await repo.refresh()
+    expect((await repo.read('SKILL.md')).content).toContain('# 更新后的云端经验')
   })
 
-  it('does not create phantom commits for failed, stale, unchanged writes or unchanged checks', async () => {
+  it('moves v2 notes from reference files into the single local note', async () => {
+    const h = harness({ version: 2, generation: 3, upstream: snapshot(), migrated: true,
+      supplements: { 'SKILL.md': '本地步骤', 'references/study.md': '参考补充' } })
+    const repo = h.create()
+    expect((await repo.read('SKILL.md')).supplement).toBe('本地步骤\n\n### study\n\n参考补充')
+    expect((await repo.read('references/study.md')).content).toBe('云端参考')
+    expect(h.disk()).toMatchObject({ version: 3 })
+    expect(h.disk()).not.toHaveProperty('supplements')
+  })
+
+  it('keeps Markdown fences intact and displays matching cloud and local notes only once', async () => {
     const h = harness(), repo = h.create()
-    await repo.write('SKILL.md', main())
-    expect(repo.inspect().history).toBeUndefined()
-    const before = await repo.read('SKILL.md')
-    await repo.write('SKILL.md', main('Saved'))
-    h.save.mockRejectedValueOnce(new Error('disk full'))
-    await expect(repo.write('references/study.md', 'Not saved')).rejects.toThrow('disk full')
-    await expect(repo.write('SKILL.md', main('Stale'), before.version)).rejects.toThrow('重新读取')
-    h.download.mockResolvedValue(snapshot())
+    const note = '~~~js\nfirst()\n\nsecond()\n~~~'
+    await repo.writeSupplement(note, '')
+    expect((await repo.read('SKILL.md')).content).toContain(note)
+    h.download.mockResolvedValue(snapshot('b'.repeat(40), '# 云端\n\n' + note))
     await repo.refresh()
-    expect(repo.inspect().history).toHaveLength(1)
-    expect(h.disk()!.history).toHaveLength(1)
+    expect((await repo.read('SKILL.md')).content).toBe(main('# 云端\n\n' + note))
+    expect((await repo.read('SKILL.md')).supplement).toBe(note)
+    const current = await repo.read('SKILL.md')
+    await repo.write('SKILL.md', current.content + '\n另一条补充', current.version)
+    expect((await repo.read('SKILL.md')).supplement).toBe(note + '\n\n另一条补充')
   })
 
-  it('records conflict decisions even when keeping the same local text', async () => {
+  it('adds local graph nodes and fields while taking unrelated changes from cloud', async () => {
+    const initial = snapshot()
+    initial.files['site-graph.json'] = graph([node('cloud')])
+    const h = harness({ version: 3, generation: 0, upstream: initial, supplement: '' }), repo = h.create()
+    await repo.write('site-graph.json', graph([node('cloud', { summary: '本机记录' }), node('local')], [{ from: 'cloud', to: 'local', label: '进入' }]))
+    const updated = snapshot('b'.repeat(40))
+    updated.files['site-graph.json'] = graph([node('cloud', { title: '新标题' }), node('new')])
+    h.download.mockResolvedValue(updated)
+    await repo.refresh()
+    expect(JSON.parse((await repo.read('site-graph.json')).content!)).toMatchObject({
+      nodes: [node('cloud', { title: '新标题', summary: '本机记录' }), node('new'), node('local')],
+      edges: [{ from: 'cloud', to: 'local', label: '进入' }],
+    })
+  })
+
+  it('accepts local editor saves during cloud updates and rejects concurrent local edits and stale agent writes', async () => {
     const h = harness(), repo = h.create()
-    await repo.write('SKILL.md', main('Local'))
-    await repo.refresh()
-    await repo.resolve('SKILL.md', 'local')
-    expect(repo.inspect().history!.map(commit => commit.kind)).toEqual(['write', 'update', 'resolve-local'])
-    expect(repo.inspect().history![2].paths).toEqual(['SKILL.md'])
-    expect((await repo.read('SKILL.md')).content).toBe(main('Local'))
-  })
-
-  it('bounds history and rejects corrupt stored records without overwriting them', async () => {
-    const h = harness(), repo = h.create()
-    for (let i = 0; i < 202; i++) await repo.write('references/study.md', String(i))
-    expect(repo.inspect().history).toHaveLength(200)
-    expect(repo.inspect().historyTruncated).toBe(true)
-    const stored = repo.inspect(); stored.history![0].paths = ['../secret']
-    const corrupt = harness(stored)
-    await expect(corrupt.create().ready()).rejects.toThrow('历史无效')
-    expect(corrupt.save).not.toHaveBeenCalled()
-  })
-  it('binds read versions to the website even when two packages share a commit', async () => {
-    const first = harness().create()
-    const fallback = snapshot()
-    const other = { ...fallback, files: { ...fallback.files, 'SKILL.md': main().replace('name: chaoxing', 'name: example'),
-      'site-graph.json': JSON.stringify({ id: 'example', host: 'example.com', hostPattern: 'example\\.com', nodes: [], edges: [] }) } }
-    const second = createWebsiteRepository({ fallback: other, load: async () => null, save: async () => undefined, download: async () => other })
-    const version = (await first.read('SKILL.md')).version
-    expect((await second.read('SKILL.md')).version).not.toBe(version)
-    await expect(second.write('references/study.md', 'foreign edit', version)).rejects.toThrow('重新读取')
-  })
-  it('reads a cache without creating a fork; first edit forks and survives restart, keeping the upstream intact', async () => {
-    const h = harness(); const repo = h.create()
-    const read = await repo.read('SKILL.md')
-    expect(read.content).toBe(main())
-    expect(repo.inspect().fork).toBeUndefined()
-    await repo.write('SKILL.md', main('Local'), read.version)
-    expect(repo.inspect().fork).toMatchObject({ parentRevision: 'a'.repeat(40), files: { 'SKILL.md': main('Local') } })
-    expect(repo.inspect().upstream.files['SKILL.md']).toBe(main())
-    expect((await h.create().read('SKILL.md')).content).toBe(main('Local'))
-    expect(h.download).not.toHaveBeenCalled()
-  })
-
-  it('preserves local content on conflicting upstream updates, while applying untouched files', async () => {
-    const h = harness(); const repo = h.create()
-    await repo.write('SKILL.md', main('Local'))
-    h.download.mockResolvedValue({ ...snapshot('b'.repeat(40), 'Updated'), files: { ...snapshot('b'.repeat(40), 'Updated').files, 'references/study.md': 'New study' } })
-    await repo.refresh()
-    expect((await repo.read('SKILL.md')).content).toBe(main('Local'))
-    expect((await repo.read('references/study.md')).content).toBe('New study')
-    expect(repo.inspect().fork?.conflicts).toEqual(['SKILL.md'])
-    await repo.resolve('SKILL.md', 'local')
-    expect(repo.inspect().fork?.conflicts).toEqual([])
-    expect(repo.inspect().fork?.bases['SKILL.md']).toBe(main('Updated'))
-    h.download.mockResolvedValue(snapshot('c'.repeat(40), 'Another official update'))
-    await repo.refresh()
-    await repo.resolve('SKILL.md', 'upstream')
-    expect((await repo.read('SKILL.md')).content).toBe(main('Another official update'))
-    expect(repo.inspect().fork?.files).toEqual({})
-  })
-
-  it('keeps edits made while a download is in flight and rejects stale writes', async () => {
-    const h = harness(); const repo = h.create()
-    await repo.ready()
     let finish!: (value: WebsiteSnapshot) => void
     h.download.mockImplementation(() => new Promise(resolve => { finish = resolve }))
+    const original = await repo.read('SKILL.md')
     const refresh = repo.refresh()
     await vi.waitFor(() => expect(finish).toBeTypeOf('function'))
-    const old = await repo.read('SKILL.md')
-    await repo.write('SKILL.md', main('During download'), old.version)
-    finish(snapshot('b'.repeat(40), 'Remote update'))
+    await repo.writeSupplement('同步期间保存的补充', '')
+    finish(snapshot('b'.repeat(40), '# 新云端经验'))
     await refresh
-    expect((await repo.read('SKILL.md')).content).toBe(main('During download'))
-    expect(repo.inspect().fork?.conflicts).toEqual(['SKILL.md'])
-    await expect(repo.write('SKILL.md', main('Stale overwrite'), old.version)).rejects.toThrow('重新读取')
+    await expect(repo.write('SKILL.md', original.content + '\n过期写入', original.version)).rejects.toThrow('重新读取')
+    await expect(repo.writeSupplement('另一份草稿', '')).rejects.toThrow('别处修改')
+    await expect(repo.write('references/study.md', '本地参考')).rejects.toThrow('只读')
+    const read = await repo.read('SKILL.md')
+    expect(read.content).toContain('# 新云端经验')
+    expect(read.supplement).toBe('同步期间保存的补充')
   })
 
-  it('serializes edits and never publishes a failed durable save', async () => {
-    const h = harness(); const repo = h.create()
-    const old = await repo.read('SKILL.md')
-    const results = await Promise.allSettled([repo.write('SKILL.md', main('First'), old.version), repo.write('SKILL.md', main('Second'), old.version)])
-    expect(results.map(value => value.status)).toEqual(['fulfilled', 'rejected'])
-    const before = repo.inspect()
-    h.save.mockRejectedValueOnce(new Error('disk full'))
-    await expect(repo.write('SKILL.md', main('Unsaved'))).rejects.toThrow('disk full')
-    expect(repo.inspect()).toEqual(before)
-    expect((await h.create().read('SKILL.md')).content).toBe(main('First'))
-  })
-
-  it('preserves the whole cache when network, file validation, or cache storage fails', async () => {
-    const h = harness(); const repo = h.create(); await repo.ready()
+  it('preserves the whole cache when download, validation or storage fails', async () => {
+    const h = harness(), repo = h.create()
+    await repo.ready()
     const before = repo.inspect()
     h.download.mockRejectedValueOnce(new Error('offline'))
     await expect(repo.refresh()).rejects.toThrow('offline')
     h.download.mockResolvedValueOnce({ ...snapshot(), files: { 'SKILL.md': main() } })
     await expect(repo.refresh()).rejects.toThrow('完整入口或图谱')
-    h.save.mockRejectedValueOnce(new Error('write failed'))
-    await expect(repo.refresh()).rejects.toThrow('write failed')
+    h.save.mockRejectedValueOnce(new Error('disk full'))
+    await expect(repo.writeSupplement('保存失败', '')).rejects.toThrow('disk full')
     expect(repo.inspect()).toEqual(before)
+    await expect(repo.write('../secret', 'x')).rejects.toThrow('文件路径')
   })
 
-  it('migrates old edits only once and reset restores the latest upstream without reimporting them', async () => {
-    const h = harness(); const legacy = vi.fn(async () => ({ 'SKILL.md': main('Old local edits') }))
+  it('does not reimport old local files once their migrated notes are cleared', async () => {
+    const h = harness(), legacy = vi.fn(async () => ({ 'SKILL.md': main('本机旧记录') }))
     const repo = h.create(legacy)
-    expect((await repo.read('SKILL.md')).content).toBe(main('Old local edits'))
-    await repo.refresh(); await repo.reset()
-    expect((await repo.read('SKILL.md')).content).toBe(main('Updated'))
-    const restarted = h.create(legacy)
-    expect((await restarted.read('SKILL.md')).content).toBe(main('Updated'))
+    expect((await repo.read('SKILL.md')).supplement).toBe('本机旧记录')
+    await repo.reset()
+    expect((await h.create(legacy).read('SKILL.md')).content).toBe(main())
     expect(legacy).toHaveBeenCalledOnce()
-  })
-
-  it('does not treat identical content or an unchanged cache check as a new edit', async () => {
-    const h = harness(); const repo = h.create()
-    const before = await repo.read('SKILL.md')
-    await repo.write('SKILL.md', before.content!, before.version)
-    expect(repo.inspect().fork).toBeUndefined()
-    h.download.mockResolvedValue({ ...snapshot(), checkedAt: 9_000 })
-    await repo.refresh()
-    expect((await repo.read('SKILL.md')).version).toBe(before.version)
-  })
-
-  it('fails closed on unread or corrupt existing storage; rejects paths and executable resources', async () => {
-    const h = harness(); h.load.mockRejectedValueOnce(new Error('storage locked'))
-    await expect(h.create().write('SKILL.md', main('Overwrite'))).rejects.toThrow('locked')
-    expect(h.save).not.toHaveBeenCalled()
-    for (const path of ['../SKILL.md', '/SKILL.md', 'references/../SKILL.md', 'scripts/run.js', 'references/x.js', '__proto__']) {
-      await expect(h.create().write(path, 'x')).rejects.toThrow('路径')
-    }
-    expect(() => validateWebsiteSnapshot({ ...snapshot(), files: { ...snapshot().files, 'references/script.js': 'bad' } })).toThrow('不支持')
-    expect(() => validateWebsiteSnapshot({ ...snapshot(), files: { ...snapshot().files, 'SKILL.md': main().replace('name: chaoxing', 'name: other') } })).toThrow('目录一致')
   })
 })

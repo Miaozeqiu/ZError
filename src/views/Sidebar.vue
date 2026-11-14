@@ -168,7 +168,6 @@ const ringStyle = computed(() => {
   color: var(--text-primary);
   display: flex;
   flex-direction: column;
-  box-shadow: 2px 0 10px rgba(0, 0, 0, 0.1);
 }
 
 .sidebar-header {
@@ -204,7 +203,7 @@ const ringStyle = computed(() => {
 }
 
 .nav-item {
-  border-radius: 100%;
+  border-radius: 12px;
   width: fit-content;
   display: flex;
   align-items: center;
@@ -227,8 +226,19 @@ const ringStyle = computed(() => {
 
 .nav-item.active {
   color: var(--nav-item-text-active);
+  background: transparent;
+  border-color: transparent;
+  isolation: isolate;
+}
+
+.nav-item.active::before {
+  content: '';
+  position: absolute;
+  inset: 4px 3px;
+  z-index: -1;
+  border-radius: 10px;
   background: var(--nav-item-bg-active);
-  border: 1px solid var(--nav-item-border-active);
+  pointer-events: none;
 }
 
 .nav-item svg {
@@ -241,7 +251,17 @@ const ringStyle = computed(() => {
 }
 
 .nav-item.update-tip {
-  padding: 9px;
+  border-radius: 100%;
+  padding: 7px;
+  color: #fff;
+  background: #f97316;
+  border-color: transparent;
+}
+
+.nav-item.update-tip:hover {
+  color: #fff;
+  background: #ea580c;
+  border-color: transparent;
 }
 
 .update-tip[aria-disabled="true"] {
@@ -250,18 +270,18 @@ const ringStyle = computed(() => {
 
 .update-tip-icon-wrap {
   position: relative;
-  width: 26px;
-  height: 26px;
+  width: 22px;
+  height: 22px;
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: #575F76;
+  color: inherit;
 }
 
 .update-tip-icon {
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   display: block;
   position: relative;
   z-index: 1;
@@ -287,32 +307,13 @@ const ringStyle = computed(() => {
 }
 
 .update-tip-ring-bg {
-  stroke: color-mix(in srgb, #3b82f6 22%, transparent);
+  stroke: rgb(255 255 255 / 28%);
 }
 
 .update-tip-ring-fg {
-  stroke: #3b82f6;
+  stroke: currentColor;
   stroke-linecap: round;
   transition: stroke-dashoffset 0.2s ease;
-}
-
-.update-tip--available .update-tip-icon-wrap,
-.update-tip--idle .update-tip-icon-wrap {
-  color: #f59e0b;
-}
-
-.update-tip--downloading .update-tip-icon-wrap,
-.update-tip--installing .update-tip-icon-wrap {
-  color: #3b82f6;
-}
-
-.update-tip--done .update-tip-icon-wrap,
-.update-tip--ready-relaunch .update-tip-icon-wrap {
-  color: #22c55e;
-}
-
-.update-tip--error .update-tip-icon-wrap {
-  color: #ef4444;
 }
 
 .fly-icon {

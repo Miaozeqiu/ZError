@@ -14,9 +14,11 @@ import { bindAllWatchAgents, flushAllWatchAfterTurn } from '../platform'
 import {
   chatStoreReady,
   chatAborts,
-  createChat,
+  commitNewChatDraft,
   finalizeStopped,
   liveSession,
+  newChatDraft,
+  newChatSelected,
   persistSoon,
   patchMessage,
   sessionFolders,
@@ -37,7 +39,8 @@ import {
   toMultimodalUserContent,
 } from './chatStudy'
 import { packAgentPanel } from '../platform/panelAccess'
-import type { AgentChatAttachment, AgentChatMessage } from './chatTypes'
+import type { AgentChatAttachment, AgentChatMessage, AgentQuizAttemptRef, AgentQuizOptionQuote } from './chatTypes'
+import { formatQuizOptionQuotes } from './quizAttemptText'
 import { contextSummaryPrompt, splitCompactedHistory } from './context'
 import { clipAgentDebug, logAgentDebug } from './debugLog'
 import { isFileAttachment, isFolderAttachment, isImageAttachment } from './folderTokens'
@@ -83,15 +86,18 @@ const prepareTurn = <T>(signal: AbortSignal, work: () => Promise<T>): Promise<T>
 export const sendChatMessage = async (
   text: string,
   files?: AgentChatAttachment[],
-  options?: { sessionId?: string; kind?: 'watch'; modelText?: string },
+  options?: { sessionId?: string; kind?: 'watch'; modelText?: string; quizAttemptRef?: AgentQuizAttemptRef; quizOptionQuotes?: AgentQuizOptionQuote[] },
 ) => {
   let content = redactText(text.trim())
-  if (!content) return
+  let quizOptionQuotes = options?.quizOptionQuotes?.length ? redactObject(options.quizOptionQuotes) : undefined
+  if (!content && !quizOptionQuotes) return
 
-  let session = options?.sessionId
-    ? sessions.value.find((item) => item.id === options.sessionId)
-    : activeChat.value
-  if (!session && !options?.sessionId) session = createChat()
+  const sendingDraft = options?.sessionId
+    ? options.sessionId === newChatDraft.value?.id
+    : newChatSelected.value
+  if (sendingDraft && options?.kind === 'watch') return
+  const session = sendingDraft ? commitNewChatDraft()
+    : options?.sessionId ? liveSession(options.sessionId) : activeChat.value
   if (!session) return
   const sessionId = session.id
   if (sessionIsStreaming(sessions.value.find((item) => item.id === sessionId))) return
@@ -104,12 +110,15 @@ export const sendChatMessage = async (
   const attachments = files?.length ? files : undefined
 
   const modelFacing = String(options?.modelText || '').trim()
+  const modelText = () => [modelFacing || content, quizOptionQuotes && formatQuizOptionQuotes(quizOptionQuotes)].filter(Boolean).join('\n\n')
   const userMessage: AgentChatMessage = {
     id: `user-${Date.now()}`,
     role: 'user',
     content,
     kind: options?.kind,
-    modelContent: modelFacing && modelFacing !== content ? modelFacing : undefined,
+    quizAttemptRef: options?.quizAttemptRef,
+    quizOptionQuotes,
+    modelContent: quizOptionQuotes || (modelFacing && modelFacing !== content) ? modelText() : undefined,
     attachments,
     steps: [],
     status: 'done',
@@ -136,12 +145,13 @@ export const sendChatMessage = async (
   })
 
   const live = liveSession(sessionId)
+  const titleText = (content || quizOptionQuotes?.[0]?.question || '').slice(0, 24)
   if (live) {
     if (live.title === '新对话' && !live.messages.length) {
       live.title = attachments?.find(isFileAttachment)?.fileName
         || attachments?.[0]?.folderPath
         || attachments?.[0]?.fileName
-        || content.slice(0, 24)
+        || titleText
     }
     live.updatedAt = Date.now()
     if (attachments?.length) {
@@ -164,11 +174,19 @@ export const sendChatMessage = async (
   try {
     await prepareTurn(abort.signal, () => chatStoreReady)
     const safeContent = await prepareTurn(abort.signal, () => redactNative(content))
+    if (quizOptionQuotes?.length) {
+      const quotes = quizOptionQuotes
+      const redacted = await prepareTurn(abort.signal, () => redactNative(quotes.map(({ question, text }) => ({ question, text }))))
+      quizOptionQuotes = quotes.map((quote, index) => ({ ...quote, ...redacted[index] }))
+    }
     const current = liveSession(sessionId)
     if (!current) return
-    if (current.title === content.slice(0, 24)) current.title = safeContent.slice(0, 24)
+    if (current.title === titleText) current.title = (safeContent || quizOptionQuotes?.[0]?.question || '').slice(0, 24)
     content = safeContent
-    patchMessage(sessionId, userMessage.id, { content })
+    patchMessage(sessionId, userMessage.id, {
+      content,
+      ...(quizOptionQuotes ? { quizOptionQuotes, modelContent: modelText() } : {}),
+    })
     if (options?.kind !== 'watch') {
       await prepareTurn(abort.signal, () => attachStudyFromUserText(sessionId, content, abort.signal))
       rememberBrowserTaskIntent(sessionId, content)
@@ -215,7 +233,7 @@ export const sendChatMessage = async (
       { id: 'recovery', priority: 40, trust: 'context', text: [runRecoveryContext(recovery), originalGoal ? `原任务目标（当前用户消息优先）：${originalGoal}` : ''].filter(Boolean).join('\n') },
       { id: 'environment', priority: 50, trust: 'context', text: envBlock },
     ])
-    const promptBody = String(options?.modelText || '').trim() || content
+    const promptBody = modelText()
     const modelPrompt = `【消息ID：${userMessage.id}】\n${modelUserContent(promptBody, promptFolders)}`
     const images = (attachments || []).filter((item) => isImageAttachment(item) && item.imageUrl)
     const userContent = images.length

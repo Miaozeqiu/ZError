@@ -18,11 +18,16 @@
         <div class="write-pane-body-wrap">
           <div ref="writePaneBodyRef" class="write-pane-body is-quiz-page">
             <AgentQuizBlock
+              :key="quiz.stepId"
               layout="pane"
               :mode="quiz.mode"
               :step-id="quiz.stepId"
               :cards="quiz.cards"
+              :focus="quiz.focus"
+              :explain-busy="quizExplainBusy"
               @attempt="emit('quiz-attempt', quiz.messageId, $event)"
+              @explain="emit('quiz-explain', quiz.messageId, $event)"
+              @quote-option="emit('quote-quiz-option', { ...$event, messageId: quiz.messageId })"
             />
           </div>
           <div
@@ -140,7 +145,7 @@ import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import AgentQuizBlock from '../../components/agent/AgentQuizBlock.vue'
 import StudyMermaidGraph from '../../components/study/StudyMermaidGraph.vue'
 import { useCustomScrollbar } from '../../composables/useCustomScrollbar'
-import type { AgentQuizAttempt } from '../../services/agent/chat'
+import type { AgentQuizAttempt, AgentQuizOptionQuote } from '../../services/agent/chat'
 import type { ImportTaskStep } from '../../services/app/importTasks'
 import { parseOptions, type QuizCard } from '../../utils/question/quizPractice'
 import type { StudyGraphNode } from '../../utils/study/studyGraph'
@@ -152,6 +157,7 @@ export type AgentChatPaneQuiz = {
   title: string
   mode: 'browse' | 'practice'
   stat: string
+  focus?: { uid: string } | null
 }
 
 export type AgentChatPaneGraph = {
@@ -165,6 +171,7 @@ export type AgentChatPaneGraph = {
 
 const props = defineProps<{
   quiz?: AgentChatPaneQuiz | null
+  quizExplainBusy?: boolean
   writeStep?: ImportTaskStep | null
   graph?: AgentChatPaneGraph | null
   folderName: string
@@ -175,6 +182,8 @@ const emit = defineEmits<{
   'close-write': []
   'close-graph': []
   'quiz-attempt': [messageId: string, attempt: AgentQuizAttempt]
+  'quiz-explain': [messageId: string, attempt: AgentQuizAttempt]
+  'quote-quiz-option': [option: AgentQuizOptionQuote]
   'graph-select': [name: string]
   'width-change': []
 }>()
@@ -254,6 +263,10 @@ watch([() => props.writeStep, () => props.quiz], async ([write, quiz]) => {
   await nextTick()
   if (write || quiz) writeScroll.bind()
 })
+
+watch(() => props.quiz?.focus, (focus) => {
+  if (focus && writePaneBodyRef.value) writePaneBodyRef.value.scrollTop = 0
+}, { flush: 'post' })
 
 watch(paneWidth, () => emit('width-change'))
 

@@ -33,9 +33,9 @@
       @confirm="handlePortConfirm" />
 
     <!-- 模型选择对话框 -->
-    <ModelSelectorDialog :show="showModelSelector" :selected-text-model-ids="globalSelectedTextModels.map(m => m.id)"
-      :selected-vision-model-id="globalSelectedVisionModel?.id || null"
+    <ModelSelectorDialog :show="showModelSelector" :selected-answer-model-ids="answerModels.map(m => m.id)"
       :selected-summary-model-ids="globalSelectedSummaryModels.map(m => m.id)" :available-models="availableModels"
+      :selected-agent-model-id="selectedAgentModel?.id || null"
       :platforms="platforms" @close="showModelSelector = false" @model-selected="selectModel" />
 
     <FolderPickerDialog :visible="showFolderPicker" :initial-folder-id="settings.questionSaveFolderId"
@@ -57,7 +57,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { useSettings } from '../services/app/settings'
-import { useModelConfig } from '../services/model/config'
+import { useModelConfig, type AIModel, type ModelSelectionCategory } from '../services/model/config'
 import { useQuestionServer } from '../services/questionServer'
 
 import PortConfigDialog from './home/PortConfigDialog.vue'
@@ -75,12 +75,12 @@ const props = defineProps<{ collapseTrigger?: number }>()
 const { settings, get, set, save } = useSettings()
 const {
   availableModels,
-  selectedTextModels: globalSelectedTextModels,
+  selectedTextModels: answerModels,
   selectedSummaryModels: globalSelectedSummaryModels,
-  selectedVisionModel: globalSelectedVisionModel,
+  selectedAgentModel,
   toggleSelectedTextModel,
   toggleSelectedSummaryModel,
-  toggleSelectedVisionModel,
+  toggleSelectedAgentModel,
   platforms,
 } = useModelConfig()
 
@@ -120,7 +120,7 @@ const toggleServer = async () => {
     await stopServer()
     return
   }
-  if ((!globalSelectedTextModels.value || globalSelectedTextModels.value.length === 0) && !settings.suppressNoModelWarning) {
+  if (answerModels.value.length === 0 && !settings.suppressNoModelWarning) {
     pendingStart.value = true
     showNoModelDialog.value = true
     return
@@ -173,10 +173,9 @@ const toggleNetworkAccess = async () => {
   await save()
 }
 
-const selectModel = (model: any) => {
-  const category = model.category || 'text'
+const selectModel = (model: AIModel, category: ModelSelectionCategory) => {
   if (category === 'summary') toggleSelectedSummaryModel(model.id)
-  else if (category === 'vision') toggleSelectedVisionModel(model.id)
+  else if (category === 'agent') toggleSelectedAgentModel(model.id)
   else toggleSelectedTextModel(model.id)
 }
 
@@ -213,8 +212,8 @@ const handleNoModelSelect = (dontRemind: boolean) => {
   showModelSelector.value = true
 }
 
-watch(globalSelectedTextModels, (newModels) => {
-  if (newModels && newModels.length > 0 && pendingStart.value) {
+watch(answerModels, (newModels) => {
+  if (newModels.length > 0 && pendingStart.value) {
     pendingStart.value = false
     void startServer()
   }

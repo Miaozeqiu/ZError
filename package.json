@@ -30,6 +30,7 @@
   },
   "dependencies": {
     "@antv/infographic": "^0.2.19",
+    "@blobatar/vue": "2.7.0",
     "@codemirror/commands": "^6.11.0",
     "@codemirror/lang-javascript": "^6.2.4",
     "@codemirror/lang-json": "^6.0.2",
@@ -54,6 +55,7 @@
     "@terrastruct/d2": "^0.1.33",
     "@vueuse/integrations": "^14.0.0",
     "acorn": "^8.15.0",
+    "blobatar": "2.7.0",
     "docx": "^9.5.1",
     "echarts": "^6.0.0",
     "highlight.js": "^11.12.0",

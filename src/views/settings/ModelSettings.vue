@@ -24,12 +24,12 @@
       
       <div class="platform-list-scroll-wrap" ref="platformListScrollWrap">
         <div class="platform-list-scroll" ref="platformListScroll" @scroll="onPlatformListScroll">
-          <div class="platform-list">
+          <TransitionGroup tag="div" name="platform-list" class="platform-list">
             <div 
-              v-for="platform in modelConfig.platforms" 
+              v-for="platform in orderedPlatforms"
               :key="platform.id"
               class="platform-item"
-              :class="{ active: selectedPlatform?.id === platform.id }"
+              :class="{ active: selectedPlatform?.id === platform.id, 'platform-item--disabled': platform.enabled === false }"
               @click="selectPlatform(platform)"
               @contextmenu="showPlatformMenu($event, platform)"
             >
@@ -61,7 +61,7 @@
                 </div>
                 <!-- 选中模型数量 badge -->
                 <span
-                  v-if="getPlatformSelectedCount(platform) > 0 && selectedCategory === 'text'"
+                  v-if="getPlatformSelectedCount(platform) > 0 && selectedCategory === 'answer'"
                   class="platform-selected-badge platform-selected-badge--count"
                 >{{ getPlatformSelectedCount(platform) }}</span>
                 <span
@@ -72,15 +72,9 @@
               <div class="platform-info">
                 <h4 class="platform-name">{{ platform.displayName }}</h4>
               </div>
-              <div class="platform-tags">
-                <span v-if="isPlatformSelectedForCategory(platform, 'text')" class="platform-tag">文本</span>
-                <span v-if="isPlatformSelectedForCategory(platform, 'vision')" class="platform-tag">视觉</span>
-                <span v-if="isPlatformSelectedForCategory(platform, 'summary')" class="platform-tag">总结</span>
-                <span v-if="isPlatformSelectedForCategory(platform, 'agent')" class="platform-tag">agent</span>
-              </div>
               <!-- 启用开关已移至详情面板 -->
             </div>
-          </div>
+          </TransitionGroup>
         </div>
         <div class="custom-scrollbar" :class="{ 'is-visible': platformScrollbarVisible }" ref="platformScrollbar" @mousedown="onPlatformScrollbarMousedown">
           <div 
@@ -96,7 +90,7 @@
       <div v-if="selectedPlatform" class="detail-scroll-wrap" ref="detailScrollWrap">
         <div class="detail-content" ref="detailContent" @scroll="onDetailScroll">
         <!-- 平台基本信息 -->
-        <div class="detail-section">
+        <div class="detail-section platform-overview">
           <div class="section-header">
             <div class="platform-title-row">
               <h4 class="subsection-title">{{ selectedPlatform.displayName }}</h4>
@@ -153,7 +147,7 @@
             <div class="form-label-row">
               <label class="form-label">API Key</label>
               <a
-                href="https://docs.zerror.cc/get-apiKey"
+                href="https://docs.zerrorai.com/get-apiKey"
                 target="_blank"
                 rel="noopener noreferrer"
                 class="api-doc-link"
@@ -162,11 +156,22 @@
               </a>
             </div>
             <div class="input-group">
-              <SecureSecretInput :key="selectedPlatform.id" v-model="selectedPlatform.apiKey" class="model-secret-input" kind="api" label="API Key" input-class="api-key-input" placeholder="请输入 API Key" @update:model-value="updatePlatformApiKey" />
+              <SecureSecretInput :key="selectedPlatform.id" :model-value="modelConfigManager.getPlatformApiKey(selectedPlatform)" class="model-secret-input" kind="api" label="API Key" input-class="api-key-input" placeholder="请输入 API Key" @update:model-value="updatePlatformApiKey" />
             </div>
           </div>
           <div class="form-group">
-            <label class="form-label">Base URL</label>
+            <div class="form-label-row">
+              <label class="form-label">Base URL</label>
+              <button
+                v-if="selectedPlatform.remoteBaseUrl !== undefined && (selectedPlatform.baseUrlOverride !== undefined || selectedPlatform.apiProtocolOverride)"
+                type="button"
+                class="connection-reset"
+                title="恢复默认 Base URL 和协议"
+                @click="restorePlatformConnection"
+              >
+                恢复默认
+              </button>
+            </div>
             <div class="base-url-row">
               <input
                 type="text"
@@ -181,8 +186,8 @@
                   type="button"
                   class="protocol-select-trigger"
                   :class="{ open: showPlatformProtocolDropdown }"
-                  :disabled="selectedPlatform.isRemote"
-                  :title="selectedPlatform.isRemote ? '远程平台协议由管理员下发' : '该平台下所有模型共用此协议'"
+                  title="该平台下所有模型共用此协议"
+                  aria-label="API 协议"
                   aria-haspopup="listbox"
                   :aria-expanded="showPlatformProtocolDropdown"
                   @click="togglePlatformProtocolDropdown"
@@ -197,7 +202,7 @@
                     <div
                       v-if="showPlatformProtocolDropdown"
                       ref="platformProtocolDropdownRef"
-                      class="protocol-dropdown"
+                      class="protocol-dropdown settings-popup"
                       :style="platformProtocolDropdownStyle"
                       role="listbox"
                       aria-label="API 协议"
@@ -239,8 +244,8 @@
             </div>
           </div>
           
-          <div v-if="selectedCategory === 'text' || selectedCategory === 'summary' || selectedCategory === 'vision' || selectedCategory === 'agent'" class="model-list-hint">
-            <template v-if="selectedCategory === 'text'">可多选，最多 5 个（已选 {{ currentMultiModels.length }}/5）</template>
+          <div class="model-list-hint">
+            <template v-if="selectedCategory === 'answer'">已选 {{ currentMultiModels.length }}/{{ MAX_ANSWER_MODELS }} · 图片题使用首个支持视觉的已选模型</template>
             <template v-else-if="selectedCategory === 'agent'">单选，显示全部模型，再点一次可取消选择</template>
             <template v-else>单选，再点一次可取消选择</template>
           </div>
@@ -252,8 +257,7 @@
               class="model-item"
               :class="{ 
                 active: isCurrentCategoryModelSelected(model),
-                'model-item--disabled': isSelectedPlatformDisabled,
-                'model-item--no-vision': isVisionUnavailable(model)
+                'model-item--disabled': isSelectedPlatformDisabled
               }"
               @click="selectModel(model)"
               @contextmenu.prevent="showModelContextMenuHandler($event, model)"
@@ -272,7 +276,7 @@
               <div class="model-actions">
                 <div
                   class="model-selected"
-                  :class="{ 'model-selected--multi': selectedCategory === 'text' }"
+                  :class="{ 'model-selected--multi': selectedCategory === 'answer' }"
                 >
                   <span v-if="isCurrentCategoryModelSelected(model)" class="model-dot"></span>
                 </div>
@@ -335,7 +339,7 @@
       :show="showModelConfigDialog"
       :model="editingModel"
       :platform-base-url="selectedPlatform?.baseUrl"
-      :platform-api-key="selectedPlatform?.apiKey"
+      :platform-api-key="selectedPlatform ? modelConfigManager.getPlatformApiKey(selectedPlatform) : undefined"
       :platform-api-protocol="selectedPlatform?.apiProtocol"
       @close="closeModelDialog"
       @after-leave="onModelConfigAfterLeave"
@@ -377,6 +381,7 @@
 </template>
 
 <script setup lang="ts">
+import { MAX_ANSWER_MODELS, modelConfigManager } from '../../services/model/config'
 import SecureSecretInput from '../../components/ui/SecureSecretInput.vue'
 import PlatformConfigDialog from './ModelSettings/PlatformConfigDialog.vue'
 import PlatformContextMenu from './ModelSettings/PlatformContextMenu.vue'
@@ -391,10 +396,10 @@ import OlTip from './OlTip.vue'
 import { useModelSettings } from './useModelSettings'
 
 const {
-  detailScrollWrap, detailContent, customScrollbar, customScrollbarThumb, platformListScrollWrap, platformListScroll, platformScrollbar, platformScrollbarThumb, isDraggingScrollbar, dragStartY, dragStartScrollTop, scrollHideTimer, scrollbarVisible, isDraggingPlatformScrollbar, platformDragStartY, platformDragStartScrollTop, platformScrollHideTimer, platformScrollbarVisible, showScrollbar, updateScrollbarThumb, onDetailScroll, onScrollbarMousedown, showPlatformScrollbar, updatePlatformScrollbarThumb, onPlatformListScroll, onPlatformScrollbarMousedown, showAddPlatformDialog, showEditPlatformDialog, editingPlatform, showModelConfigDialog, editingModel, selectedPlatform, selectedModel, currentVisionModel, showApiKey, currentMultiModels, getPlatformSelectedCount, selectedCategory, isPlatformSelectedForCategory, isCurrentCategoryModelSelected, filteredModels, isVisionUnavailable, isSelectedPlatformDisabled, currentModel, testingModelId, testResults, testErrors, testAbortController, showTestDialog, testDialogModelName, currentTestResult, currentTestError, streamingResponse, streamingReasoning, isAbortedTestError, cancelCurrentTest, showMarkdownDemo, extractNumericTokenValue, readTokenRateFromPayload, readOutputTokenCountFromPayload, estimateTextTokens, resolveTokenRate, hasVisibleOutputContent, showDeleteModelDialog, deleteModelName, deleteModelId, showDeletePlatformDialog, deletePlatformName, deletePlatformId, iconLoadErrors, platformIconUrls, platformIconBackgrounds, remoteModelIconMappings, PROD_REMOTE_MODEL_ICON_BASE_URL, DEV_REMOTE_MODEL_ICON_BASE_URL, getRemoteModelIconBaseUrl, resolveModelIconUrl, loadRemoteModelIconMappings, loadPlatformIcons, showPlatformContextMenu, contextMenuX, contextMenuY, contextMenuPlatform, showModelContextMenu, modelContextMenuX, modelContextMenuY, contextMenuModel, modelToTest, editPlatform, deletePlatform, confirmDeletePlatform, cancelDeletePlatform, closePlatformDialog, savePlatform, selectPlatform, revealModelInList, selectModel, getPlatformIconUrl, getPlatformInitials, isEmoji, isSvgIcon, shouldUsePlatformIconBackground, detectTransparentChannel, handlePlatformIconLoad, handleIconError, getModelIcon, showPlatformMenu, hidePlatformMenu, showModelContextMenuHandler, hideModelMenu, handleEditPlatform, handleDeletePlatform, handleEditModel, handleTestModel, handleStartTest, handleDeleteModel, toggleApiKeyVisibility, updatePlatformApiKey, updatePlatformEnabled, updatePlatformBaseUrl, platformProtocolOptions, currentPlatformProtocolPath, showPlatformProtocolDropdown, platformProtocolTriggerRef, platformProtocolDropdownRef, platformProtocolDropdownStyle, updatePlatformProtocolDropdownPosition, closePlatformProtocolDropdown, togglePlatformProtocolDropdown, selectPlatformProtocol, handlePlatformProtocolOutsideClick, updatePlatformApiProtocol, showAddModelDropdown, addModelDropdownRef, openAddModelDropdown, closeAddModelDropdown, openTemplate, openQuickAdd, handleAddModelOutsideClick, addNewModel, editModel, closeModelDialog, onModelConfigAfterLeave, saveModel, deleteModel, confirmDeleteModel, cancelDeleteModel, openModelConfigDocs, openPlatformUrl, copyTextToClipboard, inviteField, platformHasInvite, handleInviteButtonClick, createCookieEnabledFetch, addModel, testModel,   handleCloseTestDialog, handleCancelTest, modelConfig, modelHasVision
+  detailScrollWrap, detailContent, customScrollbar, customScrollbarThumb, platformListScrollWrap, platformListScroll, platformScrollbar, platformScrollbarThumb, isDraggingScrollbar, dragStartY, dragStartScrollTop, scrollHideTimer, scrollbarVisible, isDraggingPlatformScrollbar, platformDragStartY, platformDragStartScrollTop, platformScrollHideTimer, platformScrollbarVisible, showScrollbar, updateScrollbarThumb, onDetailScroll, onScrollbarMousedown, showPlatformScrollbar, updatePlatformScrollbarThumb, onPlatformListScroll, onPlatformScrollbarMousedown, showAddPlatformDialog, showEditPlatformDialog, editingPlatform, showModelConfigDialog, editingModel, selectedPlatform, selectedModel, showApiKey, currentMultiModels, getPlatformSelectedCount, selectedCategory, isCurrentCategoryModelSelected, filteredModels, isSelectedPlatformDisabled, testingModelId, testResults, testErrors, testAbortController, showTestDialog, testDialogModelName, currentTestResult, currentTestError, streamingResponse, streamingReasoning, isAbortedTestError, cancelCurrentTest, showMarkdownDemo, extractNumericTokenValue, readTokenRateFromPayload, readOutputTokenCountFromPayload, estimateTextTokens, resolveTokenRate, hasVisibleOutputContent, showDeleteModelDialog, deleteModelName, deleteModelId, showDeletePlatformDialog, deletePlatformName, deletePlatformId, iconLoadErrors, platformIconUrls, platformIconBackgrounds, remoteModelIconMappings, PROD_REMOTE_MODEL_ICON_BASE_URL, DEV_REMOTE_MODEL_ICON_BASE_URL, getRemoteModelIconBaseUrl, resolveModelIconUrl, loadRemoteModelIconMappings, loadPlatformIcons, showPlatformContextMenu, contextMenuX, contextMenuY, contextMenuPlatform, showModelContextMenu, modelContextMenuX, modelContextMenuY, contextMenuModel, modelToTest, editPlatform, deletePlatform, confirmDeletePlatform, cancelDeletePlatform, closePlatformDialog, savePlatform, selectPlatform, revealModelInList, selectModel, getPlatformIconUrl, getPlatformInitials, isEmoji, isSvgIcon, shouldUsePlatformIconBackground, detectTransparentChannel, handlePlatformIconLoad, handleIconError, getModelIcon, showPlatformMenu, hidePlatformMenu, showModelContextMenuHandler, hideModelMenu, handleEditPlatform, handleDeletePlatform, handleEditModel, handleTestModel, handleStartTest, handleDeleteModel, toggleApiKeyVisibility, updatePlatformApiKey, updatePlatformEnabled, updatePlatformBaseUrl, platformProtocolOptions, currentPlatformProtocolPath, showPlatformProtocolDropdown, platformProtocolTriggerRef, platformProtocolDropdownRef, platformProtocolDropdownStyle, updatePlatformProtocolDropdownPosition, closePlatformProtocolDropdown, togglePlatformProtocolDropdown, selectPlatformProtocol, restorePlatformConnection, handlePlatformProtocolOutsideClick, showAddModelDropdown, addModelDropdownRef, openAddModelDropdown, closeAddModelDropdown, openTemplate, openQuickAdd, handleAddModelOutsideClick, addNewModel, editModel, closeModelDialog, onModelConfigAfterLeave, saveModel, deleteModel, confirmDeleteModel, cancelDeleteModel, openModelConfigDocs, openPlatformUrl, copyTextToClipboard, inviteField, platformHasInvite, handleInviteButtonClick, createCookieEnabledFetch, addModel, testModel,   handleCloseTestDialog, handleCancelTest, orderedPlatforms, modelHasVision
 } = useModelSettings()
-
 
 </script>
 
+<style scoped src="../../styles/icon-action-button.css"></style>
 <style scoped src="./ModelSettings.css"></style>

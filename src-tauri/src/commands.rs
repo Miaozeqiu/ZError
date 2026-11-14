@@ -29,6 +29,11 @@ use zip::ZipArchive;
 
 static JIEBA: OnceLock<Jieba> = OnceLock::new();
 
+#[tauri::command]
+pub fn app_update_target() -> Option<String> {
+    tauri_plugin_updater::target()
+}
+
 /// macOS 原地更新只能替换 `.app` 包；`tauri:dev` 的 debug 二进制会误把 `target/debug` 整目录当目标。
 #[tauri::command]
 pub fn can_native_updater_install() -> bool {

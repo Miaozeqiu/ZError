@@ -53,7 +53,7 @@
           
           <!-- 图标选择器内容 -->
           <Teleport to="body">
-            <div v-if="showIconPicker" ref="iconPickerRef" class="icon-picker-content" :style="pickerStyle">
+            <div v-if="showIconPicker" ref="iconPickerRef" class="icon-picker-content settings-popup" :style="pickerStyle">
               <div v-if="iconError" class="icon-error">
                 {{ iconError }}
               </div>
@@ -138,7 +138,7 @@
                     <div
                       v-if="showProtocolDropdown"
                       ref="protocolDropdownRef"
-                      class="protocol-dropdown"
+                      class="protocol-dropdown settings-popup"
                       :style="protocolDropdownStyle"
                       role="listbox"
                       aria-label="API 协议"
@@ -164,13 +164,14 @@
           </div>
 
           <div class="form-group">
-            <label class="form-label">API Key</label>
-            <input
+            <label class="form-label" for="platform-dialog-api-key">API Key</label>
+            <SecureSecretInput
+              id="platform-dialog-api-key"
               v-model="formData.apiKey"
-              type="password"
-              class="form-input"
+              kind="api"
+              label="API Key"
               placeholder="输入您的API密钥"
-            >
+            />
           </div>
 
         </form>
@@ -181,7 +182,8 @@
 
 <script setup lang="ts">
 import { ref, watch, computed, nextTick, onMounted, onUnmounted } from 'vue'
-import { fetchRemoteModelsCatalog, type AIPlatform, type ApiProtocol } from '../../../services/model/config'
+import { fetchRemoteModelsCatalog, modelConfigManager, type AIPlatform, type ApiProtocol } from '../../../services/model/config'
+import SecureSecretInput from '../../../components/ui/SecureSecretInput.vue'
 import { getPlatformIconDisplayUrl, isImageIconValue, resolvePlatformIconUrl } from '../../../services/app/iconCache'
 import { useExclusiveMenu } from '../../../composables/useExclusiveMenu'
 
@@ -197,6 +199,7 @@ interface Emits {
 
 const props = defineProps<Props>()
 const emit = defineEmits<Emits>()
+let initialApiKey = ''
 
 const isEditing = computed(() => !!props.platform)
 
@@ -401,11 +404,12 @@ const handleIconError = (icon: string) => {
 
 // 监听平台数据变化，初始化表单
 watch(() => props.platform, (platform) => {
+  initialApiKey = platform ? modelConfigManager.getPlatformApiKey(platform) || '' : ''
   if (platform) {
     formData.value = {
       name: platform.name,
       baseUrl: platform.baseUrl,
-      apiKey: platform.apiKey || '',
+      apiKey: initialApiKey,
       icon: platform.icon || '',
       apiProtocol: platform.apiProtocol || 'openai-chat',
     }
@@ -448,9 +452,11 @@ const handleSubmit = () => {
     displayName: formData.value.name,
     baseUrl: formData.value.baseUrl,
     apiProtocol: formData.value.apiProtocol,
-    apiKey: formData.value.apiKey || undefined,
     icon: formData.value.icon || undefined,
     enabled: props.platform?.enabled ?? true
+  }
+  if (!isEditing.value || formData.value.apiKey !== initialApiKey) {
+    platformData.apiKey = formData.value.apiKey
   }
   
   // 只有在创建新平台时才提供空的模型数组

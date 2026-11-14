@@ -29,6 +29,8 @@ const lightHighlightStyle = HighlightStyle.define([
 const baseExtensions = [
   json(),
   EditorState.readOnly.of(true),
+  EditorView.editable.of(false),
+  EditorView.contentAttributes.of({ tabindex: '0' }),
   EditorView.theme({
     '&': {
       borderRadius: '8px',

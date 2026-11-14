@@ -8,9 +8,9 @@ import SecureSecretInput from '../../src/components/ui/SecureSecretInput.vue'
 let app: App, root: HTMLDivElement
 const reference = '{{secret:site/example.test/password}}'
 const model = ref(reference)
-const mount = () => {
+const mount = (kind: 'password' | 'api' = 'password') => {
   root = document.createElement('div'); document.body.append(root)
-  app = createApp({ render: () => h(SecureSecretInput, { modelValue: model.value, 'onUpdate:modelValue': value => { model.value = value } }) })
+  app = createApp({ render: () => h(SecureSecretInput, { kind, modelValue: model.value, 'onUpdate:modelValue': value => { model.value = value } }) })
   app.mount(root)
 }
 const field = () => root.querySelector('input')!
@@ -66,5 +66,32 @@ describe('system-verified saved credential fields', () => {
     expect(field().value).toBe('newly-typed-value')
     field().dispatchEvent(new FocusEvent('blur')); await nextTick()
     expect(field().value).toBe(''); expect(native.invoke).not.toHaveBeenCalled()
+  })
+
+  it('masks saved API keys using only the current key length', async () => {
+    app.unmount()
+    root.remove()
+    const first = '{{secret:model/first/apiKey}}'
+    const second = '{{secret:model/second/apiKey}}'
+    let finishFirst!: (length: number) => void
+    native.invoke.mockReset()
+    native.invoke.mockReturnValueOnce(new Promise<number>(resolve => { finishFirst = resolve }))
+    native.invoke.mockResolvedValueOnce(24)
+    model.value = first
+    mount('api')
+    model.value = second
+    await vi.waitFor(() => expect(field().placeholder).toBe('•'.repeat(24)))
+    finishFirst(12)
+    await nextTick()
+    await nextTick()
+
+    expect(native.invoke.mock.calls).toEqual([
+      ['secure_api_key_length', { reference: first }],
+      ['secure_api_key_length', { reference: second }],
+    ])
+    expect(field().placeholder).toBe('•'.repeat(24))
+    expect(field().value).toBe('')
+    expect(field().type).toBe('password')
+    expect(model.value).toBe(second)
   })
 })

@@ -1,9 +1,18 @@
-import type { AgentChatMessage, AgentChatSession } from '../../services/agent/chat'
+import type { AgentChatMessage, AgentChatSession, AgentQuizAttempt, AgentQuizAttemptRef } from '../../services/agent/chat'
 import { isFileAttachment, isImageAttachment } from '../../services/agent/chat'
+import { formatQuizAttempt } from '../../services/agent/quizAttemptText'
 import type { ImportStepPreview, ImportTaskStep } from '../../services/app/importTasks'
 import { getQuizCards, getQuizTitle, parseMarkdownQuizzes, parseQuizCards, stripMarkdownQuizzes, type QuizCard } from '../../utils/question/quizPractice'
 
 export const WRITE_PREVIEW_COUNT = 3
+
+export const reasoningLabel = (durationMs?: number) => {
+  if (durationMs == null || !Number.isFinite(durationMs) || durationMs < 0) return '思考过程'
+  const seconds = Math.floor(durationMs / 1000)
+  if (seconds < 1) return '思考了不到 1s'
+  if (seconds < 60) return `思考了 ${seconds}s`
+  return `思考了 ${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`
+}
 
 export const quizCardsFor = (step: ImportTaskStep): QuizCard[] => {
   const stored = getQuizCards(step.id)
@@ -16,6 +25,7 @@ export const quizTitleFor = (step?: ImportTaskStep, stepId?: string) =>
 
 export const isBrowseQuizStep = (step?: ImportTaskStep) =>
   step?.name === 'list_campus_questions'
+  || step?.name === 'list_campus_uncategorized_questions'
   || step?.name === 'search_campus_questions'
   || step?.name === 'save_campus_questions'
   || step?.name === 'update_campus_question'
@@ -144,6 +154,41 @@ export const visiblePreview = (step: ImportTaskStep): ImportStepPreview[] => {
 
 export const quizKeyOf = (messageId: string, stepId: string) => `${messageId}\t${stepId}`
 
+export const quizReviewsFor = (messages: AgentChatMessage[]) => {
+  type Review = { attempt: AgentQuizAttempt; target: AgentQuizAttemptRef }
+  const reviews = new Map<string, Review>()
+  const byMessage = new Map<string, AgentQuizAttempt[]>()
+  const byText = new Map<string, Review | null>()
+  for (const message of messages) {
+    if (message.role === 'assistant') {
+      const attempts = (message.quizAttempts || []).filter(attempt => attempt.kind !== 'note')
+      if (!attempts.length) continue
+      byMessage.set(message.id, attempts)
+      for (const attempt of attempts) {
+        const text = formatQuizAttempt(attempt).trim()
+        if (byText.has(text)) {
+          byText.set(text, null)
+          continue
+        }
+        byText.set(text, {
+          attempt, target: { messageId: message.id, stepId: attempt.stepId, uid: attempt.uid },
+        })
+      }
+      continue
+    }
+    const target = message.quizAttemptRef
+    if (target) {
+      const attempt = byMessage.get(target.messageId)?.find(item => item.stepId === target.stepId && item.uid === target.uid)
+      if (attempt) reviews.set(message.id, { attempt, target })
+    } else {
+      // Older review messages were saved as the full model prompt.
+      const review = byText.get(message.content)
+      if (review) reviews.set(message.id, review)
+    }
+  }
+  return reviews
+}
+
 export const quizStatFor = (message: AgentChatMessage, stepId: string, cards: QuizCard[], browse = false) => {
   if (browse) return `${cards.length} 题`
   const done = new Set((message.quizAttempts || []).map((item) => item.uid))
@@ -237,8 +282,14 @@ export const iconPaths = (name: string) => {
     || name === 'list_campus_courses'
     || name === 'list_campus_papers'
     || name === 'list_campus_questions'
+    || name === 'list_campus_uncategorized_questions'
+    || name === 'check_campus_question_duplicate'
+    || name === 'rename_campus_course'
+    || name === 'set_campus_paper_archived'
+    || name === 'reorder_campus_paper_questions'
     || name === 'search_campus_questions'
     || name === 'list_campus_tags'
+    || name === 'create_campus_course'
     || name === 'create_campus_paper'
     || name === 'update_campus_paper'
     || name === 'save_campus_questions'

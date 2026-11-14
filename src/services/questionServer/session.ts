@@ -8,6 +8,7 @@ import {
   clearAllRequestRuntimeState,
   cancelAllInFlightModelRequests,
   heartbeatIntervals,
+  MAX_REQUEST_LOGS,
   injectUrlQuestionIfNeeded,
   requestLogs,
   trimRequestLogs,
@@ -21,7 +22,7 @@ import {
   serverRunning,
   serverUrl,
 } from './serverRefs'
-import type { RequestLog } from './types'
+import type { LocalQuestionMatch, LocalQuestionSearch, RequestLog } from './types'
 
 const { get } = settingsApi
 
@@ -29,6 +30,33 @@ let logUpdateInterval: ReturnType<typeof setInterval> | null = null
 let sseEventSource: EventSource | null = null
 let unlistenModelCallRequest: (() => void) | null = null
 let unlistenRequestLogComplete: (() => void) | null = null
+let unlistenRequestLocalMatches: (() => void) | null = null
+const pendingLocalMatches = new Map<string, LocalQuestionMatch[]>()
+
+const applyLocalMatches = (payload: { id?: string; local_matches?: LocalQuestionMatch[] }) => {
+  const { id, local_matches: matches } = payload
+  if (!id || !matches?.length) return
+  const log = requestLogs.value.find(entry => entry.id === id)
+  if (log) {
+    log.localMatches = matches
+    return
+  }
+  // The desktop event can arrive before the SSE request log.
+  pendingLocalMatches.set(id, matches)
+  if (pendingLocalMatches.size > MAX_REQUEST_LOGS) {
+    const oldest = pendingLocalMatches.keys().next().value
+    if (oldest) pendingLocalMatches.delete(oldest)
+  }
+}
+
+const insertSseRequestLog = (log: RequestLog) => {
+  const matches = pendingLocalMatches.get(log.id)
+  if (matches) {
+    log.localMatches = matches
+    pendingLocalMatches.delete(log.id)
+  }
+  requestLogs.value.unshift(log)
+}
 
 export const checkTauriEnvironment = async () => {
   try {
@@ -175,6 +203,8 @@ export const startSSEConnection = () => {
             timestamp: new Date(logData.timestamp).getTime(),
             method: logData.method,
             path: logData.path,
+            requestTarget: logData.request_target,
+            remoteAddress: logData.remote_address,
             status: undefined, // 开始阶段没有状态码
             ip: logData.ip || '127.0.0.1',
             userAgent: logData.user_agent || 'Unknown',
@@ -186,7 +216,7 @@ export const startSSEConnection = () => {
           }
 
           console.log('创建的请求开始日志:', newLog)
-          requestLogs.value.unshift(newLog)
+          insertSseRequestLog(newLog)
           injectUrlQuestionIfNeeded(newLog)
 
         } else if (logData.stage === 'completed') {
@@ -198,8 +228,11 @@ export const startSSEConnection = () => {
             const existingLog = requestLogs.value[existingLogIndex]
             // 采用就地更新，保持对象引用，确保 selectedLog 同步
             existingLog.status = logData.status
+            existingLog.httpStatus = logData.http_status ?? existingLog.httpStatus
             existingLog.responseTime = logData.response_time
             existingLog.responseBody = logData.response_body || ''
+            existingLog.responseHeaders = logData.response_headers ?? existingLog.responseHeaders
+            existingLog.localSearch = logData.local_search ?? existingLog.localSearch
             existingLog.stage = 'completed'
             console.log('更新的请求完成日志:', existingLog)
           } else {
@@ -209,17 +242,22 @@ export const startSSEConnection = () => {
               timestamp: new Date(logData.timestamp).getTime(),
               method: logData.method,
               path: logData.path,
+              requestTarget: logData.request_target,
+              remoteAddress: logData.remote_address,
               status: logData.status,
-              ip: '127.0.0.1', // 完成阶段没有IP信息，使用默认值
-              userAgent: 'Unknown', // 完成阶段没有User-Agent信息，使用默认值
+              httpStatus: logData.http_status,
+              ip: logData.ip || '127.0.0.1',
+              userAgent: logData.user_agent || 'Unknown',
               responseTime: logData.response_time,
-              requestBody: '', // 完成阶段没有请求体信息
+              requestBody: logData.request_body || '',
               responseBody: logData.response_body || '',
-              headers: {}, // 完成阶段没有请求头信息
+              responseHeaders: logData.response_headers,
+              localSearch: logData.local_search,
+              headers: logData.headers || {},
               stage: 'completed'
             }
             console.log('创建的请求完成日志（无开始记录）:', newLog)
-            requestLogs.value.unshift(newLog)
+            insertSseRequestLog(newLog)
           }
         }
 
@@ -254,6 +292,8 @@ export const startSSEConnection = () => {
               timestamp: new Date(logData.timestamp).getTime(),
               method: logData.method,
               path: logData.path,
+              requestTarget: logData.request_target,
+              remoteAddress: logData.remote_address,
               status: undefined, // 开始阶段没有状态码
               ip: logData.ip || '127.0.0.1',
               userAgent: logData.user_agent || 'Unknown',
@@ -265,7 +305,7 @@ export const startSSEConnection = () => {
             }
 
             console.log('创建的请求开始日志:', newLog)
-            requestLogs.value.unshift(newLog)
+            insertSseRequestLog(newLog)
             injectUrlQuestionIfNeeded(newLog)
 
           } else if (logData.stage === 'completed') {
@@ -277,8 +317,11 @@ export const startSSEConnection = () => {
               const existingLog = requestLogs.value[existingLogIndex]
               // 采用就地更新，保持对象引用，确保 selectedLog 同步
               existingLog.status = logData.status
+              existingLog.httpStatus = logData.http_status ?? existingLog.httpStatus
               existingLog.responseTime = logData.response_time
               existingLog.responseBody = logData.response_body || ''
+              existingLog.responseHeaders = logData.response_headers ?? existingLog.responseHeaders
+              existingLog.localSearch = logData.local_search ?? existingLog.localSearch
               existingLog.stage = 'completed'
               console.log('更新的请求完成日志:', existingLog)
 
@@ -291,17 +334,22 @@ export const startSSEConnection = () => {
                 timestamp: new Date(logData.timestamp).getTime(),
                 method: logData.method,
                 path: logData.path,
+                requestTarget: logData.request_target,
+                remoteAddress: logData.remote_address,
                 status: logData.status,
-                ip: '127.0.0.1', // 完成阶段没有IP信息，使用默认值
-                userAgent: 'Unknown', // 完成阶段没有User-Agent信息，使用默认值
+                httpStatus: logData.http_status,
+                ip: logData.ip || '127.0.0.1',
+                userAgent: logData.user_agent || 'Unknown',
                 responseTime: logData.response_time,
-                requestBody: '', // 完成阶段没有请求体信息
+                requestBody: logData.request_body || '',
                 responseBody: logData.response_body || '',
-                headers: {}, // 完成阶段没有请求头信息
+                responseHeaders: logData.response_headers,
+                localSearch: logData.local_search,
+                headers: logData.headers || {},
                 stage: 'completed'
               }
               console.log('创建的请求完成日志（无开始记录）:', newLog)
-              requestLogs.value.unshift(newLog)
+              insertSseRequestLog(newLog)
 
               // 检查是否是URL检测响应，如果是则显示URL处理弹窗
               checkAndShowUrlDialog(newLog)
@@ -415,6 +463,7 @@ export const stopLogPolling = () => {
 }
 
 export const clearLogs = async () => {
+  pendingLocalMatches.clear()
   if (!isTauri.value) {
     clearAllRequestRuntimeState()
     return
@@ -444,14 +493,23 @@ export const fetchRequestLogs = async () => {
 
     // 转换日志格式以匹配前端接口
     const formattedLogs = (logs as any[]).map((log: any) => ({
-      id: `${log.timestamp}-${Math.random().toString(36).substr(2, 9)}`,
+      id: log.id,
       timestamp: new Date(log.timestamp).getTime(),
       method: log.method,
       path: log.path,
+      requestTarget: log.request_target,
+      remoteAddress: log.remote_address,
+      httpStatus: log.http_status,
       status: log.status,
       ip: '127.0.0.1', // 后端暂时没有IP信息，使用默认值
       userAgent: 'Unknown', // 后端暂时没有User-Agent信息，使用默认值
-      responseTime: log.response_time
+      responseTime: log.response_time,
+      requestBody: log.request_body,
+      headers: log.headers,
+      responseBody: log.response_body,
+      responseHeaders: log.response_headers,
+      localSearch: log.local_search,
+      localMatches: log.local_matches,
     }))
 
     // 只在没有SSE连接时更新日志，避免重复
@@ -530,12 +588,23 @@ export const bindQuestionServerEvents = async () => {
     unlistenRequestLogComplete = await listen<{
       id?: string
       status?: number
+      http_status?: number
       response_time?: number
       response_body?: string
+      response_headers?: Record<string, string>
+      local_search?: LocalQuestionSearch
+      local_matches?: LocalQuestionMatch[]
       stage?: string
     }>('request-log-complete', (event) => {
-      applyRequestLogCompletePayload(event.payload || {})
-    })
+      const payload = event.payload || {}
+      applyLocalMatches(payload)
+      applyRequestLogCompletePayload(payload)
+    }, { target: 'main' })
+    unlistenRequestLocalMatches = await listen<{ id: string; local_matches: LocalQuestionMatch[] }>(
+      'request-log-local-matches',
+      ({ payload }) => applyLocalMatches(payload),
+      { target: 'main' },
+    )
   } catch (e) {
     console.warn('注册 Tauri 事件监听失败:', e)
   }
@@ -548,6 +617,9 @@ export const unbindQuestionServerEvents = () => {
   document.removeEventListener('visibilitychange', onVisibilityChange)
   unlistenModelCallRequest?.()
   unlistenRequestLogComplete?.()
+  unlistenRequestLocalMatches?.()
+  pendingLocalMatches.clear()
   unlistenModelCallRequest = null
   unlistenRequestLogComplete = null
+  unlistenRequestLocalMatches = null
 }

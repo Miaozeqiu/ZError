@@ -363,6 +363,16 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
           return
         }
         if (event.type === 'text') return
+        if (event.type === 'reasoning') {
+          const message = liveMessage()
+          const text = [message?.reasoning, event.text].filter(Boolean).join('\n\n')
+          const limit = 64_000
+          patchMessage(sessionId, assistantId, {
+            reasoning: text.length > limit ? `…（较早的思考已省略）\n\n${text.slice(-limit)}` : text,
+            reasoningDurationMs: (message?.reasoningDurationMs ?? 0) + event.durationMs,
+          })
+          return
+        }
         if (event.type === 'tool_pending') {
           awaitingTool = true
           waitForFirstToken(false)
@@ -436,6 +446,7 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
           const activity = describeActivity(event.name, extra, status, extra)
           const quizCards = event.name === 'present_quiz'
             || event.name === 'list_campus_questions'
+            || event.name === 'list_campus_uncategorized_questions'
             || event.name === 'search_campus_questions'
             || event.name === 'save_campus_questions'
             || event.name === 'update_campus_question'

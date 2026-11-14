@@ -389,6 +389,32 @@ export const describeActivity = (name: string, args: any, status: ImportTaskStep
               : `查看了「${course}」的试卷`,
     }
   }
+  if (name === 'list_campus_uncategorized_questions') {
+    return {
+      target: extra?.course || args?.course_name || '未分类题目',
+      label: status === 'running' ? '正在查看未分类题目'
+        : status === 'failed' ? '查看未分类题目失败'
+          : `查到了 ${extra?.count ?? 0} 道未分类题目`,
+    }
+  }
+  if (name === 'check_campus_question_duplicate') {
+    return {
+      target: args?.question || '校园题目',
+      label: status === 'running' ? '正在检查校园题目是否重复'
+        : status === 'failed' ? '校园题目查重失败'
+          : extra?.message || '完成校园题目查重',
+    }
+  }
+  if (name === 'rename_campus_course' || name === 'set_campus_paper_archived' || name === 'reorder_campus_paper_questions') {
+    const action = name === 'rename_campus_course' ? '校园课程改名'
+      : name === 'set_campus_paper_archived' ? '修改校园试卷归档状态' : '调整校园试卷题目顺序'
+    return {
+      target: extra?.paper || extra?.name || args?.name || action,
+      label: status === 'running' ? `正在${action}`
+        : status === 'failed' ? `${action}失败`
+          : extra?.message || `已完成${action}`,
+    }
+  }
   if (name === 'list_campus_questions') {
     const paper = extra?.paper || args?.paper_name || '试卷'
     const count = extra?.count ?? extra?.questions?.length
@@ -446,6 +472,19 @@ export const describeActivity = (name: string, args: any, status: ImportTaskStep
             : tag
               ? `把「${paper}」改成了「${tag}」`
               : `修改了校园试卷「${paper}」`,
+    }
+  }
+  if (name === 'create_campus_course') {
+    const course = extra?.name || args?.name || '课程'
+    return {
+      target: course,
+      label: status === 'running'
+        ? `正在创建校园课程「${course}」`
+        : status === 'failed'
+          ? '创建校园课程失败'
+          : extra?.status === 'pending'
+            ? `已提交校园课程「${course}」审核`
+            : `创建了校园课程「${course}」`,
     }
   }
   if (name === 'create_campus_paper') {

@@ -6,310 +6,263 @@
       <div class="resizer" :class="{ active: isResizing }" @mousedown="startResize">
       </div>
       <div class="request-details-header">
-        <button class="back-btn" @click="$emit('close')">
-          <svg t="1760584170728" class="icon" viewBox="0 0 1536 1024" version="1.1" xmlns="http://www.w3.org/2000/svg"
-            p-id="13220" width="20" height="20">
+        <button type="button" class="back-btn" aria-label="关闭请求详情" title="关闭详情" @click="$emit('close')">
+          <svg viewBox="0 0 1536 1024" width="20" height="20" aria-hidden="true">
             <path
               d="M981.418667 71.893333A60.245333 60.245333 0 0 1 1070.506667 152.746667l-3.925334 4.309333L711.594667 512l354.986666 354.944c22.186667 22.144 23.466667 57.216 3.925334 80.896l-3.925334 4.266667a60.245333 60.245333 0 0 1-80.896 3.925333l-4.266666-3.925333-368.298667-368.213334a101.632 101.632 0 0 1-4.565333-138.88l4.565333-4.864 368.298667-368.256z"
-              fill="#838B9F" opacity=".25" p-id="13221"></path>
+              fill="#838B9F" opacity=".25"></path>
             <path
               d="M469.418667 71.893333A60.245333 60.245333 0 0 1 558.506667 152.746667l-3.925334 4.309333L199.594667 512l354.986666 354.944c22.186667 22.144 23.466667 57.216 3.925334 80.896l-3.925334 4.266667a60.245333 60.245333 0 0 1-80.896 3.925333l-4.266666-3.925333-368.298667-368.213334a101.632 101.632 0 0 1-4.565333-138.88l4.565333-4.864 368.298667-368.256z"
-              fill="#838B9F" p-id="13222"></path>
+              fill="#838B9F"></path>
           </svg>
         </button>
-        <h3>请求详情</h3>
+        <ol class="process-stepper" aria-label="请求处理过程">
+          <li v-for="(step, index) in processSteps" :key="step.id" :class="step.state">
+            <button type="button" class="process-step-button"
+              :aria-label="`${step.label}，${stepStateLabels[step.state]}`"
+              :title="`${step.label} · ${stepStateLabels[step.state]}`"
+              :aria-pressed="activeTab === step.id"
+              @click="activeTab = step.id">
+              <span class="process-step-indicator" aria-hidden="true">
+                <svg v-if="step.state === 'completed' || step.state === 'no-result' || step.state === 'skipped'"
+                  viewBox="0 0 24 24" fill="none"
+                  stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"
+                  width="12" height="12">
+                  <path :d="step.state === 'completed' ? 'm5 12 4 4L19 6' : 'M6 12h12'" />
+                </svg>
+                <span v-else>{{ step.state === 'failed' ? '!' : index + 1 }}</span>
+              </span>
+              <span>{{ step.label }}</span>
+            </button>
+          </li>
+        </ol>
       </div>
 
       <div class="request-details-content">
-        <!-- 标签页导航 -->
-        <div class="detail-tabs">
-          <button class="tab-button" :class="{ active: activeTab === 'modelResponse' }"
-            @click="activeTab = 'modelResponse'">
-            AI 模型响应
-          </button>
-          <button class="tab-button" :class="{ active: activeTab === 'requestBody' }"
-            @click="activeTab = 'requestBody'">
-            请求体
-          </button>
-          <button class="tab-button" :class="{ active: activeTab === 'responseBody' }"
-            @click="activeTab = 'responseBody'">
-            响应体
-          </button>
-          <button class="tab-button" :class="{ active: activeTab === 'basic' }" @click="activeTab = 'basic'">
-            基本信息
-          </button>
-          <button class="tab-button" :class="{ active: activeTab === 'headers' }" @click="activeTab = 'headers'">
-            请求头
-          </button>
-          <button class="tab-button" :class="{ active: activeTab === 'search' }" @click="activeTab = 'search'">
-            联网搜索
-          </button>
-        </div>
-
-        <!-- 标签页内容 -->
         <div class="detail-scroll-wrap">
           <div class="tab-content" ref="contentRef">
-
-          <HomeSearchTraces v-if="activeTab === 'search'" :log="log" />
-
-          <!-- 基本信息 -->
-          <div v-if="activeTab === 'basic'" class="detail-section">
-            <div class="detail-grid">
-              <div class="detail-item">
-                <label>时间:</label>
-                <span>{{ log ? formatTime(log.timestamp) : '' }}</span>
-              </div>
-              <div class="detail-item">
-                <label>方法:</label>
-                <span :class="['method-badge', log ? log.method.toLowerCase() : '']">{{ log ?
-                  log.method : '' }}</span>
-              </div>
-              <div class="detail-item">
-                <label>路径:</label>
-                <span>{{ log ? log.path : '' }}</span>
-              </div>
-              <div class="detail-item">
-                <label>状态码:</label>
-                <span v-if="log && log.status"
-                  :class="['status-text', getStatusClass(log.status)]">{{ log.status }}</span>
-                <span v-else class="status-text pending">处理中...</span>
-              </div>
-              <div class="detail-item">
-                <label>IP地址:</label>
-                <span>{{ log ? log.ip : '' }}</span>
-              </div>
-              <div class="detail-item">
-                <label>响应时间:</label>
-                <span v-if="log && log.responseTime">{{ log.responseTime }}ms</span>
-                <span v-else class="pending">-</span>
-              </div>
-            </div>
-          </div>
-
-          <!-- 请求头 -->
-          <div v-if="activeTab === 'headers'" class="detail-section">
-            <div v-if="log && log.headers && Object.keys(log.headers).length > 0"
-              class="headers-content">
-              <div v-for="(value, key) in log.headers" :key="key" class="header-item">
-                <strong>{{ key }}:</strong> {{ value }}
-              </div>
-            </div>
-            <div v-else class="no-data">
-              <span class="no-data-text">暂无请求头数据</span>
-            </div>
-          </div>
-
-          <!-- 请求体 -->
-          <div v-show="activeTab === 'requestBody'" class="detail-section">
-            <div v-if="log && log.requestBody">
-              <JsonCodeViewer :content="formatJSON(log.requestBody)" />
-            </div>
-            <div v-else class="no-data">
-              <span class="no-data-text">暂无请求体数据</span>
-            </div>
-          </div>
-
-          <!-- 响应体 -->
-          <div v-show="activeTab === 'responseBody'" class="detail-section">
-            <div v-if="log && log.responseBody">
-              <JsonCodeViewer :content="formatJSON(log.responseBody)" />
-            </div>
-            <div v-else class="no-data">
-              <span class="no-data-text">
-                <span v-if="log && !log.status">处理中，响应体暂未生成...</span>
-                <span v-else>暂无响应体数据</span>
-              </span>
-            </div>
-          </div>
-
-          <!-- 模型响应部分 -->
-          <div v-if="activeTab === 'modelResponse'" class="detail-section">
-
-            <!-- ===== URL 题目视觉分析视图 ===== -->
-            <template v-if="log && log.urlQuestion">
-              <div class="url-analysis-panel">
-                <!-- 题目图片区域：URL 转 base64 后渲染 -->
-                <div class="url-image-box">
-                  <div v-if="log.urlQuestion.renderedHtml" class="url-image-ready"
-                    v-html="log.urlQuestion.renderedHtml"></div>
-                  <div v-else class="loading-indicator">
-                    <div class="loading-spinner"></div>
-                    <span>图片加载中...</span>
-                  </div>
+            <div v-if="isReceive || activeTab === 'return'" class="exchange-details">
+              <section v-if="isReceive" class="exchange-section">
+                <h4 class="exchange-title">基本信息</h4>
+                <div class="exchange-overview">
+                  <dl class="receive-endpoint">
+                    <dt>请求 URL</dt>
+                    <dd><code>{{ requestUrl }}</code></dd>
+                  </dl>
+                  <dl class="exchange-meta">
+                    <div>
+                      <dt>请求方法</dt>
+                      <dd><span class="receive-method">{{ log.method }}</span></dd>
+                    </div>
+                    <div>
+                      <dt>HTTP 状态码</dt>
+                      <dd>{{ log.httpStatus ?? (log.status == null ? '等待响应…' : '未记录') }}</dd>
+                    </div>
+                    <div>
+                      <dt title="本地服务看到的连接对端">远程地址</dt>
+                      <dd>{{ log.remoteAddress ?? '未记录' }}</dd>
+                    </div>
+                    <div>
+                      <dt title="响应头声明的 Referrer-Policy">引荐来源政策</dt>
+                      <dd>{{ referrerPolicy || '未记录' }}</dd>
+                    </div>
+                    <div>
+                      <dt>接收时间</dt>
+                      <dd>{{ formatTime(log.timestamp) }}</dd>
+                    </div>
+                    <div>
+                      <dt>来源 IP</dt>
+                      <dd>{{ log.ip }}</dd>
+                    </div>
+                  </dl>
                 </div>
+              </section>
 
-                <!-- 分析结果区域 -->
-                <div class="url-analysis-result">
-                  <div v-if="log.urlQuestion.analyzing">
-                    <div v-if="!log.urlQuestion.streamingResponse && !log.urlQuestion.streamingReasoning" class="loading-indicator">
-                      <div class="loading-spinner"></div>
-                      <span>视觉模型分析中...</span>
+              <section v-else class="exchange-section">
+                <h4 class="exchange-title">返回结果</h4>
+                <div class="exchange-overview">
+                  <dl class="exchange-meta">
+                    <div>
+                      <dt>状态码</dt>
+                      <dd>{{ log.status ?? '处理中…' }}</dd>
                     </div>
-                    <div v-if="log.urlQuestion.streamingResponse || log.urlQuestion.streamingReasoning" class="content-stack-wrapper">
-                      <AIOutputRender 
-                        :streaming-reasoning="log.urlQuestion.streamingReasoning" 
-                        :response="log.urlQuestion.streamingResponse" 
-                        :is-loading="true" 
-                      />
+                    <div>
+                      <dt>响应时间</dt>
+                      <dd>{{ log.responseTime == null ? '—' : `${log.responseTime} ms` }}</dd>
                     </div>
-                  </div>
-                  <div v-else-if="log.urlQuestion.analysisResult || log.urlQuestion.reasoningContent">
-                    <div class="content-stack-wrapper">
-                      <AIOutputRender 
-                        :reasoning-content="log.urlQuestion.reasoningContent" 
-                        :response="log.urlQuestion.analysisResult || ''" 
-                      />
-                    </div>
-                  </div>
-                  <div v-else-if="log.urlQuestion.analysisError" class="url-analysis-error">
-                    <span>{{ log.urlQuestion.analysisError }}</span>
-                    <button class="retry-btn-sm" @click="$emit('retry-url-analysis', log.id)">重试</button>
-                  </div>
-                  <div v-else class="no-data">
-                    <span class="no-data-text">暂无分析结果</span>
-                  </div>
+                  </dl>
                 </div>
+                <div v-if="queryResult?.answer || queryResult?.message" class="response-result">
+                  <template v-if="queryResult?.answer">
+                    <strong>最终返回的答案</strong>
+                    <p>{{ queryResult.answer }}</p>
+                  </template>
+                  <p v-if="queryResult?.message" class="process-note">{{ queryResult.message }}</p>
+                </div>
+              </section>
 
-              </div>
-            </template>
+              <section class="exchange-section">
+                <h4 class="exchange-title">{{ isReceive ? '请求体' : '响应体' }}</h4>
+                <JsonCodeViewer v-if="exchangeBody" :key="activeTab" class="exchange-body"
+                  :content="formatJSON(exchangeBody)" />
+                <p v-else class="exchange-empty">
+                  {{ isReceive ? '暂无请求体数据' : log.status ? '暂无响应体记录' : '等待响应体…' }}
+                </p>
+              </section>
 
-            <!-- ===== 多模型切换视图 ===== -->
-            <template
-              v-if="log && log.multiModelResponses && log.multiModelResponses.length > 0 && !log.urlQuestion">
-              <!-- 横向模型选择器 -->
-              <div class="multi-model-tabs">
-                <button v-for="mr in log.multiModelResponses" :key="mr.modelId" class="multi-model-tab" :class="{
-                  active: activeModelTab === mr.modelId,
-                  loading: mr.isLoading,
-                  summary: mr.modelName.startsWith('总结:'),
-                  failed: !mr.isLoading && isModelResponseErrorText(mr.response)
-                }" @click="activeModelTab = mr.modelId">
-                  <div v-if="mr.isLoading" class="loading-spinner-sm"></div>
-                  <svg v-else-if="mr.modelName.startsWith('总结:')" width="12" height="12" viewBox="0 0 1024 1024"
-                    xmlns="http://www.w3.org/2000/svg">
-                    <path
-                      d="M303.146667 375.04A128.042667 128.042667 0 0 0 426.666667 469.333333h170.666666a213.418667 213.418667 0 0 1 210.218667 176.896A128.042667 128.042667 0 0 1 768 896a128 128 0 0 1-47.146667-247.04A128.042667 128.042667 0 0 0 597.333333 554.666667h-170.666666a212.394667 212.394667 0 0 1-128-42.666667v135.253333a128.042667 128.042667 0 1 1-85.333334 0V376.746667a128.042667 128.042667 0 1 1 89.813334-1.706667zM256 298.666667a42.666667 42.666667 0 1 0 0-85.333334 42.666667 42.666667 0 0 0 0 85.333334z m0 512a42.666667 42.666667 0 1 0 0-85.333334 42.666667 42.666667 0 0 0 0 85.333334z m512 0a42.666667 42.666667 0 1 0 0-85.333334 42.666667 42.666667 0 0 0 0 85.333334z"
-                      fill="currentColor"></path>
-                  </svg>
+              <section class="exchange-section">
+                <div class="exchange-section-heading">
+                  <h4 class="exchange-title">{{ isReceive ? '请求头' : '响应头' }}</h4>
+                  <span v-if="exchangeHeaders.length" class="exchange-header-count">{{ exchangeHeaders.length }} 项</span>
+                </div>
+                <dl v-if="exchangeHeaders.length" class="exchange-headers">
+                  <div v-for="[name, value] in exchangeHeaders" :key="name" class="exchange-header-row">
+                    <dt>{{ name }}</dt>
+                    <dd>{{ value }}</dd>
+                  </div>
+                </dl>
+                <p v-else class="exchange-empty">
+                  {{ isReceive ? '暂无请求头数据' : log.status ? '暂无响应头记录' : '等待响应头…' }}
+                </p>
+              </section>
+            </div>
 
+            <template v-else>
+              <section v-if="activeTab === 'local'" class="detail-section process-step">
+                <p class="process-note">{{ localSearchText }}</p>
+                <ul v-if="similarLocalQuestions.length" class="local-match-list" aria-label="相似题目">
+                  <li v-for="match in similarLocalQuestions" :key="match.id" class="local-match-row">
+                    <span class="local-match-question">{{ match.question }}</span>
+                    <span class="local-match-score" title="题干相似度">
+                      {{ localMatchLabels[match.status ?? 'similar'] }} · 题干 {{ formatSimilarity(match.similarity) }}
+                    </span>
+                  </li>
+                </ul>
+              </section>
 
-                  <span>{{ mr.modelName }}</span>
-                </button>
-              </div>
+              <section v-else-if="activeTab === 'web'" class="detail-section process-step">
+                <HomeSearchTraces :log="log" />
+              </section>
 
-              <!-- 当前选中模型的响应内容 -->
-              <template v-for="mr in log.multiModelResponses" :key="mr.modelId">
-                <div
-                  v-if="activeModelTab === mr.modelId || (!activeModelTab && log.multiModelResponses[0].modelId === mr.modelId)"
-                  class="model-response-card"
-                  :class="{
-                    'is-loading': mr.isLoading,
-                    'is-summary': mr.modelName.startsWith('总结:'),
-                    'is-failed': !mr.isLoading && isModelResponseErrorText(mr.response)
-                  }">
+              <section v-else-if="activeTab === 'ai'" class="detail-section process-step">
+                <!-- ===== URL 题目视觉分析视图 ===== -->
+                <template v-if="log.urlQuestion">
+                  <div class="url-analysis-panel">
+                    <!-- 题目图片区域：URL 转 base64 后渲染 -->
+                    <div class="url-image-box">
+                      <div v-if="log.urlQuestion.renderedHtml" class="url-image-ready"
+                        v-html="log.urlQuestion.renderedHtml"></div>
+                      <div v-else class="loading-indicator">
+                        <div class="loading-spinner"></div>
+                        <span>图片加载中...</span>
+                      </div>
+                    </div>
+
+                    <!-- 分析结果区域 -->
+                    <div class="url-analysis-result">
+                      <div v-if="log.urlQuestion.analyzing">
+                        <div v-if="!log.urlQuestion.streamingResponse && !log.urlQuestion.streamingReasoning" class="loading-indicator">
+                          <div class="loading-spinner"></div>
+                          <span>视觉模型分析中...</span>
+                        </div>
+                        <div v-if="log.urlQuestion.streamingResponse || log.urlQuestion.streamingReasoning" class="content-stack-wrapper">
+                          <AIOutputRender
+                            :streaming-reasoning="log.urlQuestion.streamingReasoning"
+                            :response="log.urlQuestion.streamingResponse"
+                            :is-loading="true"
+                          />
+                        </div>
+                      </div>
+                      <div v-else-if="log.urlQuestion.analysisResult || log.urlQuestion.reasoningContent">
+                        <div class="content-stack-wrapper">
+                          <AIOutputRender
+                            :reasoning-content="log.urlQuestion.reasoningContent"
+                            :response="log.urlQuestion.analysisResult || ''"
+                          />
+                        </div>
+                      </div>
+                      <div v-else-if="log.urlQuestion.analysisError" class="url-analysis-error">
+                        <span>{{ log.urlQuestion.analysisError }}</span>
+                        <button class="retry-btn-sm" @click="$emit('retry-url-analysis', log.id)">重试</button>
+                      </div>
+                      <div v-else class="no-data">
+                        <span class="no-data-text">暂无分析结果</span>
+                      </div>
+                    </div>
+
+                  </div>
+                </template>
+
+                <div v-if="answerModels.length > 1" class="multi-model-tabs">
+                  <button v-for="model in answerModels" :key="model.modelId" type="button"
+                    class="multi-model-tab" :class="{
+                      active: selectedAnswerModel?.modelId === model.modelId,
+                      loading: model.isLoading,
+                      failed: !model.isLoading && isModelResponseErrorText(model.response),
+                    }"
+                    :aria-pressed="selectedAnswerModel?.modelId === model.modelId"
+                    @click="activeModelTab = model.modelId">
+                    <span v-if="model.isLoading" class="loading-spinner-sm" aria-hidden="true"></span>
+                    <span>{{ model.modelName }}</span>
+                  </button>
+                </div>
+                <div v-if="selectedAnswerModel" class="model-response-card" :class="{
+                  'is-loading': selectedAnswerModel.isLoading,
+                  'is-failed': !selectedAnswerModel.isLoading && isModelResponseErrorText(selectedAnswerModel.response),
+                }">
                   <div class="model-response-card-header">
                     <div class="model-response-card-title">
-                      <div v-if="mr.modelName.startsWith('总结:')" class="summary-result-icon" title="最终总结答案">
-                        <svg width="14" height="14" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
-                          <path
-                            d="M303.146667 375.04A128.042667 128.042667 0 0 0 426.666667 469.333333h170.666666a213.418667 213.418667 0 0 1 210.218667 176.896A128.042667 128.042667 0 0 1 768 896a128 128 0 0 1-47.146667-247.04A128.042667 128.042667 0 0 0 597.333333 554.666667h-170.666666a212.394667 212.394667 0 0 1-128-42.666667v135.253333a128.042667 128.042667 0 1 1-85.333334 0V376.746667a128.042667 128.042667 0 1 1 89.813334-1.706667zM256 298.666667a42.666667 42.666667 0 1 0 0-85.333334 42.666667 42.666667 0 0 0 0 85.333334z m0 512a42.666667 42.666667 0 1 0 0-85.333334 42.666667 42.666667 0 0 0 0 85.333334z m512 0a42.666667 42.666667 0 1 0 0-85.333334 42.666667 42.666667 0 0 0 0 85.333334z"
-                            fill="currentColor"></path>
-                        </svg>
-
-                      </div>
-
-                      <span class="card-model-name">{{ mr.modelName }}</span>
-
-                      <span class="card-platform-name">{{ mr.platformName }}</span>
-                      <span v-if="mr.modelName.startsWith('总结:')" class="summary-tag">最终答案</span>
+                      <span class="card-model-name">{{ selectedAnswerModel.modelName }}</span>
+                      <span v-if="selectedAnswerModel.platformName" class="card-platform-name">
+                        {{ selectedAnswerModel.platformName }}
+                      </span>
                     </div>
-                    <div v-if="mr.isLoading" class="card-loading-badge">
-                      <div class="loading-spinner-sm"></div>
+                    <div v-if="selectedAnswerModel.isLoading" class="card-loading-badge">
+                      <span class="loading-spinner-sm" aria-hidden="true"></span>
                       <span>响应中</span>
                     </div>
-                    <div v-else-if="isModelResponseErrorText(mr.response)" class="card-failed-badge">✗ 失败</div>
-                    <div v-else class="card-done-badge">✓ 完成</div>
+                    <span v-else-if="isModelResponseErrorText(selectedAnswerModel.response)" class="card-failed-badge">失败</span>
+                    <span v-else class="card-done-badge">完成</span>
                   </div>
                   <div class="model-response-card-body">
-                    <div v-if="mr.reasoningContent || mr.streamingReasoning || mr.response" class="content-stack-wrapper">
-                      <AIOutputRender 
-                        :reasoning-content="mr.reasoningContent" 
-                        :streaming-reasoning="mr.streamingReasoning" 
-                        :response="mr.response" 
-                        :is-loading="mr.isLoading" 
-                      />
-                    </div>
-                    <div v-else-if="mr.isLoading" class="card-waiting">
-                      <div class="loading-dots"><span></span><span></span><span></span></div>
-                    </div>
-                    <div v-else class="no-data"><span class="no-data-text">暂无响应</span></div>
-                  </div>
-
-                </div>
-              </template>
-            </template>
-
-            <!-- ===== 单模型视图（卡片化显示） ===== -->
-            <template v-else-if="!log?.urlQuestion">
-              <div
-                v-if="log && (log.isModelCalling || log.modelResponse || log.reasoningContent || log.streamingReasoning)"
-                class="model-response-card"
-                :class="{
-                  'is-loading': !!log.isModelCalling,
-                  'is-summary': !!(log.modelInfo && log.modelInfo.modelName.startsWith('总结:')),
-                  'is-failed': !log.isModelCalling && isModelResponseErrorText(log.modelResponse)
-                }">
-                <div class="model-response-card-header">
-                  <div class="model-response-card-title">
-                    <div
-                      v-if="log.modelInfo && log.modelInfo.modelName.startsWith('总结:')"
-                      class="summary-result-icon"
-                      title="最终总结答案">
-                      <svg width="14" height="14" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
-                        <path
-                          d="M303.146667 375.04A128.042667 128.042667 0 0 0 426.666667 469.333333h170.666666a213.418667 213.418667 0 0 1 210.218667 176.896A128.042667 128.042667 0 0 1 768 896a128 128 0 0 1-47.146667-247.04A128.042667 128.042667 0 0 0 597.333333 554.666667h-170.666666a212.394667 212.394667 0 0 1-128-42.666667v135.253333a128.042667 128.042667 0 1 1-85.333334 0V376.746667a128.042667 128.042667 0 1 1 89.813334-1.706667zM256 298.666667a42.666667 42.666667 0 1 0 0-85.333334 42.666667 42.666667 0 0 0 0 85.333334z m0 512a42.666667 42.666667 0 1 0 0-85.333334 42.666667 42.666667 0 0 0 0 85.333334z m512 0a42.666667 42.666667 0 1 0 0-85.333334 42.666667 42.666667 0 0 0 0 85.333334z"
-                          fill="currentColor"></path>
-                      </svg>
-                    </div>
-
-                    <span class="card-model-name">{{ log.modelInfo?.modelName || 'AI 模型响应' }}</span>
-                    <span v-if="log.modelInfo?.platformName" class="card-platform-name">{{ log.modelInfo.platformName }}</span>
-                    <span
-                      v-if="log.modelInfo && log.modelInfo.modelName.startsWith('总结:')"
-                      class="summary-tag">最终答案</span>
-                  </div>
-                  <div v-if="log.isModelCalling" class="card-loading-badge">
-                    <div class="loading-spinner-sm"></div>
-                    <span>响应中</span>
-                  </div>
-                  <div v-else-if="isModelResponseErrorText(log.modelResponse)" class="card-failed-badge">✗ 失败</div>
-                  <div v-else class="card-done-badge">✓ 完成</div>
-                </div>
-                <div class="model-response-card-body">
-                  <div v-if="log.reasoningContent || log.streamingReasoning || log.modelResponse" class="content-stack-wrapper">
-                    <AIOutputRender 
-                      :reasoning-content="log.reasoningContent" 
-                      :streaming-reasoning="log.streamingReasoning" 
-                      :response="log.modelResponse" 
-                      :is-loading="log.isModelCalling" 
+                    <AIOutputRender
+                      v-if="selectedAnswerModel.reasoningContent || selectedAnswerModel.streamingReasoning || selectedAnswerModel.response"
+                      :reasoning-content="selectedAnswerModel.reasoningContent"
+                      :streaming-reasoning="selectedAnswerModel.streamingReasoning"
+                      :response="selectedAnswerModel.response"
+                      :is-loading="selectedAnswerModel.isLoading"
                     />
+                    <p v-else class="process-note">{{ selectedAnswerModel.isLoading ? '等待模型响应…' : '暂无响应内容' }}</p>
                   </div>
-                  <div v-else-if="log.isModelCalling" class="card-waiting">
-                    <div class="loading-dots"><span></span><span></span><span></span></div>
-                  </div>
-                  <div v-else class="no-data"><span class="no-data-text">暂无响应</span></div>
                 </div>
+                <p v-else-if="!log.urlQuestion" class="process-note">
+                  {{ log.status ? '本次请求没有 AI 处理记录' : '等待 AI 处理…' }}
+                </p>
+              </section>
 
-              </div>
-              <div v-else class="no-data">
-                <span class="no-data-text">
-                  <span v-if="log && !log.status">等待AI模型响应...</span>
-                  <span v-else>暂无AI模型响应数据</span>
-                </span>
-              </div>
+              <section v-else-if="activeTab === 'summary'" class="detail-section process-step">
+                <div v-for="model in summaryModels" :key="model.modelId" class="model-response-card is-summary"
+                  :class="{ 'is-failed': !model.isLoading && isModelResponseErrorText(model.response) }">
+                  <div class="model-response-card-header">
+                    <span class="card-model-name">{{ model.modelName }}</span>
+                    <span v-if="model.isLoading" class="card-loading-badge">总结中…</span>
+                    <span v-else-if="isModelResponseErrorText(model.response)" class="card-failed-badge">失败</span>
+                    <span v-else class="card-done-badge">完成</span>
+                  </div>
+                  <div class="model-response-card-body">
+                    <AIOutputRender
+                      v-if="model.reasoningContent || model.streamingReasoning || model.response"
+                      :reasoning-content="model.reasoningContent"
+                      :streaming-reasoning="model.streamingReasoning"
+                      :response="model.response"
+                      :is-loading="model.isLoading"
+                    />
+                    <p v-else class="process-note">{{ model.isLoading ? '等待总结模型响应…' : '暂无总结内容' }}</p>
+                  </div>
+                </div>
+                <p v-if="!summaryModels.length" class="process-note">暂无总结模型记录</p>
+              </section>
             </template>
-
-          </div>
           </div>
           <div class="custom-scrollbar" :class="{ 'is-visible': visible, 'has-overflow': enabled }"
 
@@ -322,7 +275,7 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import AIOutputRender from '../../components/agent/AIOutputRender.vue'
 import { useCustomScrollbar } from '../../composables/useCustomScrollbar'
 import JsonCodeViewer from './JsonCodeViewer.vue'
@@ -330,10 +283,10 @@ import HomeSearchTraces from './HomeSearchTraces.vue'
 import {
   formatJSON,
   formatTime,
-  getStatusClass,
+  getQueryResult,
   isModelResponseErrorText,
 } from './requestLogDisplay'
-import type { RequestLog } from './types'
+import type { MultiModelResponse, RequestLog } from './types'
 
 const props = defineProps<{
   log: RequestLog
@@ -345,28 +298,126 @@ defineEmits<{
   'retry-url-analysis': [requestId: string]
 }>()
 
-const activeTab = ref('basic')
-const activeModelTab = ref(props.log.multiModelResponses?.[0]?.modelId || '')
+const activeModelTab = ref('')
 const overlayWidth = ref(600)
 const isResizing = ref(false)
 
 const { contentRef, barRef, thumbRef, visible, enabled, onMousedown, bind, update } = useCustomScrollbar()
 
-watch(() => props.log.urlQuestion, (q) => {
-  if (q) activeTab.value = 'modelResponse'
+const modelResponses = computed<MultiModelResponse[]>(() => {
+  const log = props.log
+  if (log.multiModelResponses?.length) return log.multiModelResponses
+  if (log.urlQuestion || !(log.isModelCalling || log.modelResponse || log.reasoningContent || log.streamingReasoning)) {
+    return []
+  }
+  return [{
+    modelId: log.modelInfo?.modelId || '',
+    modelName: log.modelInfo?.modelName || 'AI 模型响应',
+    platformName: log.modelInfo?.platformName || '',
+    response: log.modelResponse || '',
+    reasoningContent: log.reasoningContent,
+    streamingReasoning: log.streamingReasoning,
+    isLoading: !!log.isModelCalling,
+  }]
 })
-
-watch(() => props.log.id, (id) => {
-  activeModelTab.value = props.log.multiModelResponses?.[0]?.modelId || ''
-  void id
-})
-
-watch(
-  () => props.log.multiModelResponses?.[0]?.modelId,
-  (modelId) => {
-    if (modelId && !activeModelTab.value) activeModelTab.value = modelId
-  },
+const isSummaryModel = (model: MultiModelResponse) => model.modelId.startsWith('summary:') || model.modelName.startsWith('总结:')
+const answerModels = computed(() => modelResponses.value.filter(model => !isSummaryModel(model)))
+const summaryModels = computed(() => modelResponses.value.filter(isSummaryModel))
+const selectedAnswerModel = computed(() =>
+  answerModels.value.find(model => model.modelId === activeModelTab.value) ?? answerModels.value[0],
 )
+const getHeaderValue = (headers: RequestLog['headers'], name: string) =>
+  Object.entries(headers ?? {}).find(([key]) => key.toLowerCase() === name)?.[1]
+
+const requestUrl = computed(() => {
+  const target = props.log.requestTarget ?? props.log.path
+  const host = getHeaderValue(props.log.headers, 'host')
+  return host ? `http://${host}${target}` : target
+})
+const referrerPolicy = computed(() => getHeaderValue(props.log.responseHeaders, 'referrer-policy'))
+const queryResult = computed(() => props.log.path === '/query' ? getQueryResult(props.log.responseBody) : undefined)
+
+const similarLocalQuestions = computed(() => props.log.localMatches?.filter(match => match.similarity > 0) ?? [])
+const localMatchLabels = { similar: '仅相似', candidate: '已送判断', used: '已采用' }
+const similarityPercent = new Intl.NumberFormat('zh-CN', { style: 'percent', maximumFractionDigits: 1 })
+const formatSimilarity = (score: number) => {
+  if (score < 0.001) return '<0.1%'
+  if (score < 1 && score >= 0.9995) return '>99.9%'
+  return similarityPercent.format(score)
+}
+
+const localSearchText = computed(() => {
+  const log = props.log
+  if (log.path !== '/query') return '本次请求不查询本地题库'
+  const hasSimilar = similarLocalQuestions.value.length > 0
+  switch (log.localSearch) {
+    case 'hit': return '命中本地题库'
+    case 'miss': return hasSimilar ? '找到相似题，未命中本地答案' : '本地题库未命中'
+    case 'failed': return '本地题库查询失败'
+    case 'unconfirmed': return '未能确认是否命中本地题库'
+    default: return hasSimilar ? '已找到相似题' : log.status ? '暂无题库查询记录' : '等待题库查询结果…'
+  }
+})
+
+type StepState = 'idle' | 'running' | 'completed' | 'failed' | 'skipped' | 'no-result'
+
+const stepStateLabels: Record<StepState, string> = {
+  idle: '暂无记录',
+  running: '进行中',
+  completed: '已完成',
+  failed: '失败',
+  skipped: '已跳过',
+  'no-result': '无结果',
+}
+
+const modelStepState = (models: MultiModelResponse[], emptyState: StepState): StepState => {
+  if (!models.length) return emptyState
+  if (models.some(model => model.isLoading)) return 'running'
+  return models.every(model => isModelResponseErrorText(model.response)) ? 'failed' : 'completed'
+}
+
+const processSteps = computed(() => {
+  const { localSearch, path, status, searchTraces = [], urlQuestion } = props.log
+  const unusedStep: StepState = status == null ? 'idle' : 'skipped'
+  const local: StepState = path !== '/query' ? 'skipped'
+    : localSearch === 'failed' ? 'failed'
+    : localSearch === 'hit' || similarLocalQuestions.value.length > 0 ? 'completed'
+    : localSearch === 'miss' ? 'no-result'
+    : status == null && !localSearch ? 'running' : 'idle'
+  const web: StepState = searchTraces.some(trace => trace.status === 'searching') ? 'running'
+    : searchTraces.some(trace => trace.status === 'success' && trace.results.length > 0) ? 'completed'
+    : searchTraces.some(trace => trace.status === 'success') ? 'no-result'
+    : searchTraces.length ? 'failed' : unusedStep
+  const ai: StepState = web === 'running' ? 'idle'
+    : urlQuestion?.analyzing ? 'running'
+    : urlQuestion?.analysisError ? 'failed'
+    : urlQuestion?.analysisResult ? 'completed' : modelStepState(answerModels.value, unusedStep)
+  const summary = modelStepState(summaryModels.value, unusedStep)
+  const returnState: StepState = status == null ? 'idle' : status >= 400 ? 'failed' : 'completed'
+
+  return [
+    { id: 'receive', label: '接收', state: 'completed' },
+    { id: 'local', label: '本地搜索', state: local },
+    { id: 'web', label: '联网搜索', state: web },
+    { id: 'ai', label: 'AI 处理', state: ai },
+    { id: 'summary', label: '总结', state: summary },
+    { id: 'return', label: '返回', state: returnState },
+  ] as const
+})
+
+type ProcessStepId = typeof processSteps.value[number]['id']
+const activeTab = ref<ProcessStepId>('receive')
+const isReceive = computed(() => activeTab.value === 'receive')
+const exchangeBody = computed(() => isReceive.value ? props.log.requestBody : props.log.responseBody)
+const exchangeHeaders = computed(() => {
+  const headers = isReceive.value ? props.log.headers : props.log.responseHeaders
+  return Object.entries(headers ?? {}).sort(([left], [right]) => left.localeCompare(right))
+})
+
+watch(() => props.log.id, () => {
+  activeModelTab.value = ''
+  activeTab.value = 'receive'
+})
 
 const bindScroll = async () => {
   await nextTick()
@@ -377,6 +428,10 @@ const bindScroll = async () => {
 onMounted(() => {
   void bindScroll()
 })
+
+watch([activeTab, () => props.log.id], () => {
+  if (contentRef.value) contentRef.value.scrollTop = 0
+}, { flush: 'post' })
 
 watch([activeTab, activeModelTab, overlayWidth, () => props.log.id], () => {
   void bindScroll()

@@ -9,6 +9,7 @@ import * as acorn from 'acorn'
 import { modelHasVision, type AIModel, type ThinkingEffort, type ThinkingOffResponsesEffort } from '../../../services/model/config'
 import { buildPresetProcessModelJsCode, normalizeApiProtocol, readModelIdFromJsCode, resolveExecutableModelJsCode } from '../../../services/model/protocol'
 import { useExclusiveMenu } from '../../../composables/useExclusiveMenu'
+import { resolveModelOutputLimit } from '../../../services/model/contextBudget'
 
 export interface Props {
   show: boolean
@@ -232,6 +233,7 @@ export function useModelConfigDialog(props: Props, emit: Emits) {
 
   const formData = ref({
     displayName: '',
+    maxTokensOverride: '' as number | '',
     hasVision: false,
     jsCode: '',
     modelId: '',
@@ -648,7 +650,7 @@ export function useModelConfigDialog(props: Props, emit: Emits) {
     return 'minimal'
   }
 
-  const createDialogFormData = (model?: AIModel | null) => {
+  const createDialogFormData = (model?: AIModel | null): typeof formData.value => {
     const protocol = normalizeApiProtocol(props.platformApiProtocol || model?.apiProtocol)
     // 统一展示 modelId（服务端/同步保证有值；缺省用目录 id）
     const modelId = model?.modelId?.trim() || model?.id || readModelIdFromJsCode(model?.jsCode) || ''
@@ -661,6 +663,7 @@ export function useModelConfigDialog(props: Props, emit: Emits) {
 
     return {
       displayName: model?.displayName || '',
+      maxTokensOverride: model?.maxTokensOverride ?? '',
       hasVision,
       jsCode: protocol === 'custom'
         ? (model?.jsCode || (hasVision ? DEFAULT_VISION_JS_CODE : DEFAULT_JS_CODE))
@@ -1066,8 +1069,14 @@ export function useModelConfigDialog(props: Props, emit: Emits) {
       return
     }
 
+    const maxTokensOverride = formData.value.maxTokensOverride
+    if (maxTokensOverride !== '' && (!Number.isSafeInteger(maxTokensOverride) || maxTokensOverride < 1)) {
+      alert('最大输出长度必须是正整数')
+      return
+    }
     const modelData: Partial<AIModel> = {
       displayName: formData.value.displayName.trim(),
+      maxTokensOverride: maxTokensOverride === '' ? undefined : maxTokensOverride,
       category: 'text',
       hasVision: formData.value.hasVision,
       modelId: formData.value.modelId.trim(),
@@ -1223,6 +1232,7 @@ export function useModelConfigDialog(props: Props, emit: Emits) {
       }
       const config = {
         apiKey: props.platformApiKey,
+        maxTokens: resolveModelOutputLimit({ maxTokens: props.model?.maxTokens, maxTokensOverride: Number(formData.value.maxTokensOverride) }),
         baseUrl: normalizeBaseUrl(props.platformBaseUrl),
         model: runtimeModelId,
         modelId: runtimeModelId

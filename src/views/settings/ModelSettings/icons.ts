@@ -1,11 +1,12 @@
+import { ZERROR_OPEN_ORIGIN } from '../../../services/app/openApi'
 /** 平台 / 模型图标。加载、映射、透明底检测都在这里。 */
 import { fetchRemoteModelsCatalog } from '../../../services/model/config'
 import type { AIModel, AIPlatform } from '../../../services/model/config'
 import { getPlatformIconDisplayUrl, resolvePlatformIconUrl } from '../../../services/app/iconCache'
 import type { ModelSettingsState } from './state'
 
-export const PROD_REMOTE_MODEL_ICON_BASE_URL = 'https://webapi.zaizhexue.top/models/'
-export const DEV_REMOTE_MODEL_ICON_BASE_URL = 'https://webapi.zaizhexue.top/models/'
+export const PROD_REMOTE_MODEL_ICON_BASE_URL = `${ZERROR_OPEN_ORIGIN}/models/`
+export const DEV_REMOTE_MODEL_ICON_BASE_URL = `${ZERROR_OPEN_ORIGIN}/models/`
 
 export const bindModelIcons = (
   state: ModelSettingsState,

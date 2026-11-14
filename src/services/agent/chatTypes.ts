@@ -16,6 +16,19 @@ export interface AgentQuizAttempt {
   kind?: 'submit' | 'note'
 }
 
+export interface AgentQuizAttemptRef {
+  messageId: string
+  stepId: string
+  uid: string
+}
+
+export interface AgentQuizOptionQuote extends AgentQuizAttemptRef {
+  question_id?: number
+  question: string
+  key: string
+  text: string
+}
+
 export interface AgentStudyEvalNote {
   status: 'running' | 'done' | 'empty' | 'failed'
   text: string
@@ -59,6 +72,9 @@ export interface AgentChatMessage {
   id: string
   role: 'user' | 'assistant'
   content: string
+  /** Redacted reasoning text returned by the model provider, for display. */
+  reasoning?: string
+  reasoningDurationMs?: number
   kind?: 'watch'
   /** 发给模型的用户正文；监控钩子的展示文案和模型文案不同时才写 */
   modelContent?: string
@@ -68,6 +84,8 @@ export interface AgentChatMessage {
   transcript?: AgentTranscriptItem[]
   todos?: AgentTodoItem[]
   quizAttempts?: AgentQuizAttempt[]
+  quizAttemptRef?: AgentQuizAttemptRef
+  quizOptionQuotes?: AgentQuizOptionQuote[]
   quizReported?: boolean
   studyEval?: AgentStudyEvalNote
   status: 'streaming' | 'done' | 'failed' | 'stopped'

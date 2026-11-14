@@ -38,7 +38,7 @@
       <div v-show="showBrowserChrome" class="browser-tabs" role="tablist" aria-label="浏览器标签页" :inert="!canInteract" :aria-disabled="!canInteract">
         <div v-for="tab in currentAgentBrowsers" :key="tab.id" class="browser-tab" :class="{ 'is-selected': tab.id === currentAgentBrowser?.id }">
           <button type="button" role="tab" :disabled="!canInteract" :aria-selected="tab.id === currentAgentBrowser?.id" :title="tab.title || tab.url" @click="selectTab(tab.id)">{{ tab.title || hostnameOf(tab.url) }}</button>
-          <button class="browser-tab-close" type="button" :disabled="!canInteract" :aria-label="`关闭 ${tab.title || '标签页'}`" @click="closeTab(tab.id)"><Icon icon="lucide:x" width="12" height="12" /></button>
+          <button class="browser-tab-close" type="button" :disabled="!canInteract || !!closingTabId" :aria-label="`关闭 ${tab.title || '标签页'}`" @click="closeTab(tab.id)"><Icon icon="lucide:x" width="12" height="12" /></button>
         </div>
         <button class="browser-icon-button" type="button" title="新建标签页" aria-label="新建标签页" :disabled="!canInteract || currentAgentBrowsers.length >= 16" @click="newTab"><Icon icon="lucide:plus" width="15" height="15" /></button>
       </div>
@@ -78,13 +78,14 @@ import { Icon } from '@iconify/vue/offline'
 import '../../utils/ui/agentIcons'
 import BrowserAgentWatchBar from '../../components/browser/BrowserAgentWatchBar.vue'
 import AgentTaskHistory from './AgentTaskHistory.vue'
-import { activeChat, activeChatId, createChat, patchSession } from '../../services/agent/chatStore'
+import { activeChat, activeChatId, ensureNewChatDraft, patchSession } from '../../services/agent/chatStore'
 import {
-  agentBrowserExpanded, bindChatBrowser, browserIdsForChat, currentAgentBrowser, currentAgentBrowsers,
-  ensureAgentBrowser, refreshAgentBrowsers, startAgentBrowserWorkspace,
+  agentBrowserExpanded, agentBrowserHasTasks, bindChatBrowser, browserIdsForChat, closeAgentBrowser, createChatBrowserTab,
+  currentAgentBrowser, currentAgentBrowserOpen, currentAgentBrowsers, ensureAgentBrowser,
+  refreshAgentBrowsers, startAgentBrowserWorkspace, suspendAgentBrowsers,
 } from '../../services/agent/agentBrowser'
 import {
-  browserAudioMuted, browserHomeUrl, closeBrowserView, createAppBrowser, goBackBrowserView,
+  browserAudioMuted, browserHomeUrl, goBackBrowserView,
   goForwardBrowserView, hideAllBrowserViews, hostBounds, hostnameOf, isBrowserHome, isCefEngine, listenBrowserLoad,
   navigateBrowserView, normalizeBrowserUrl, patchAppBrowser, reloadBrowserView, removeAppBrowser,
   setBrowserAudioMuted, setBrowserBounds, setBrowserZoom, showBrowserView,
@@ -92,7 +93,12 @@ import {
 import { isTauriEnvironment } from '../../services/app/environmentDetector'
 import { setBrowserControl, userControlsBrowser } from '../../services/browser/control'
 
-const props = withDefaults(defineProps<{ active?: boolean; obscured?: boolean }>(), { active: true, obscured: false })
+const props = withDefaults(defineProps<{
+  active?: boolean
+  obscured?: boolean
+  dismissed?: boolean
+  previewRequest?: number
+}>(), { active: true, obscured: false, dismissed: false, previewRequest: 0 })
 const isMacOS = /mac/i.test(navigator.platform || navigator.userAgent)
 const browserInsets = { paddingRatio: 0.07, paddingMin: 16, paddingMax: 144, compactBreakpoint: 760, compactPadding: 12 }
 // Mirrors the collapsed pane's CSS widths and horizontal padding at each breakpoint.
@@ -115,6 +121,7 @@ const audioBusy = ref(false)
 const loading = ref(false)
 const showBrowserChrome = ref(false)
 const controlBusy = ref(false)
+const closingTabId = ref('')
 const userInControl = computed(() => userControlsBrowser(activeChatId.value || ''))
 const canInteract = computed(() => agentBrowserExpanded.value && userInControl.value && !controlBusy.value)
 // 按钮立即显示目标状态；实际操作权仍由原生切换和页面同步完成后确认。
@@ -123,7 +130,7 @@ const displayedUserControl = computed(() => controlTarget.value?.sessionId === a
   ? controlTarget.value.owner === 'user' : userInControl.value)
 const paneEntering = ref(false)
 const visible = computed(() => props.active && !props.obscured && !paneEntering.value
-  && (agentBrowserExpanded.value || Boolean(currentAgentBrowser.value)))
+  && (agentBrowserExpanded.value || currentAgentBrowserOpen.value))
 const muted = computed(() => browserAudioMuted.value[currentAgentBrowser.value?.id || ''] ?? true)
 const zoomPercent = computed(() => Math.round((currentAgentBrowser.value?.zoom || 1) * 100))
 const working = computed(() => Boolean(activeChat.value?.messages.some(message => message.status === 'streaming'
@@ -139,7 +146,7 @@ let shownId = ''
 let takeFlight: Promise<void> | undefined
 
 const showError = (value: unknown) => { error.value = value instanceof Error ? value.message : String(value) }
-const requireSession = () => activeChatId.value || createChat().id
+const requireSession = () => activeChatId.value || ensureNewChatDraft().id
 const takeControl = async () => {
   if (userInControl.value) return takeFlight
   if (takeFlight) return takeFlight
@@ -174,24 +181,28 @@ const newTab = async () => {
   if (currentAgentBrowsers.value.length >= 16) return
   try {
     requireUserControl()
-    const tab = createAppBrowser({ url: browserHomeUrl(), title: '导航' })
-    bindChatBrowser(requireSession(), tab.id)
+    createChatBrowserTab(requireSession(), { url: browserHomeUrl(), title: '导航' })
   } catch (value) { showError(value) }
 }
 const closeTab = async (id: string) => {
   const session = activeChat.value
-  if (!session) return
+  if (!session || closingTabId.value) return
   try {
     requireUserControl()
-    await closeBrowserView(id)
+    closingTabId.value = id
+    await closeAgentBrowser(id)
     removeAppBrowser(id)
     patchSession(session.id, current => {
       const ids = browserIdsForChat(current).filter(item => item !== id)
       return { ...current, browserIds: ids, browserId: current.browserId === id ? ids.at(-1) : current.browserId }
     })
     refreshAgentBrowsers()
-    if (!currentAgentBrowsers.value.length) newTab()
+    if (activeChat.value?.id === session.id && !currentAgentBrowsers.value.length) collapseBrowser()
   } catch (value) { showError(value) }
+  finally {
+    closingTabId.value = ''
+    void nextTick(syncView)
+  }
 }
 const syncAddress = () => {
   if (!addressFocused.value) address.value = isBrowserHome(currentAgentBrowser.value?.url || '') ? '' : currentAgentBrowser.value?.url || ''
@@ -264,7 +275,9 @@ const syncView = () => {
       if (!isTauriEnvironment()) { error.value = '请在桌面端使用浏览器'; continue }
       const sessionId = requireSession()
       const expanded = agentBrowserExpanded.value
-      const initializing = shownId !== currentAgentBrowser.value?.id
+      const currentId = currentAgentBrowser.value?.id
+      if (currentId && closingTabId.value === currentId) continue
+      const initializing = shownId !== currentId
       if (initializing) busy.value = true
       try {
         if (shownId && shownId !== currentAgentBrowser.value?.id) {
@@ -272,7 +285,7 @@ const syncView = () => {
           shownId = ''
           shownKey = ''
         }
-        const id = shownId || await ensureAgentBrowser(sessionId)
+        const id = currentId && shownId === currentId ? currentId : await ensureAgentBrowser(sessionId)
         if (initializing) await nextTick()
         if (disposed || !visible.value || activeChatId.value !== sessionId || currentAgentBrowser.value?.id !== id || agentBrowserExpanded.value !== expanded) { syncAgain = true; continue }
         const bounds = hostBounds(expanded ? hostRef.value : previewHostRef.value)
@@ -318,6 +331,14 @@ const onKey = (event: KeyboardEvent) => {
   if (event.key === 'Escape' && agentBrowserExpanded.value && visible.value && !(event.target instanceof HTMLInputElement)) collapseBrowser()
 }
 watch([visible, agentBrowserExpanded, () => currentAgentBrowser.value?.id, activeChatId], () => { shownKey = ''; error.value = ''; void nextTick(syncView) })
+watch([() => props.dismissed, agentBrowserHasTasks], () => {
+  suspendAgentBrowsers(() => props.dismissed)
+})
+watch(() => props.previewRequest, () => {
+  const sessionId = activeChatId.value
+  if (!props.active || !sessionId || !currentAgentBrowser.value || !isTauriEnvironment()) return
+  void ensureAgentBrowser(sessionId).catch(showError)
+})
 watch(() => currentAgentBrowser.value?.url, syncAddress, { immediate: true })
 watch(() => currentAgentBrowser.value?.id, () => { addressFocused.value = false; syncAddress() })
 watch([hostRef, previewHostRef], () => {
@@ -392,7 +413,7 @@ onUnmounted(() => {
 .browser-icon-button { width: 28px; height: 28px; padding: 0; flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; border: none; border-radius: 6px; color: var(--text-secondary, #718096); background: transparent; cursor: pointer; transition: background 140ms ease, transform 140ms cubic-bezier(.23, 1, .32, 1); }
 .browser-icon-button:active { transform: scale(.96); }
 .browser-icon-button:disabled { opacity: .4; cursor: default; }
-button:focus-visible, input:focus-visible { outline: 2px solid var(--color-primary, #2563eb); outline-offset: 2px; }
+button:focus-visible { outline: 2px solid var(--color-primary, #2563eb); outline-offset: 2px; }
 .browser-preview { display: flex; flex-shrink: 0; flex-direction: column; gap: 9px; padding: 0; border: none; background: transparent; color: inherit; text-align: left; cursor: pointer; }
 .browser-preview-screen { position: relative; width: 100%; aspect-ratio: 16 / 9; display: grid; place-items: center; overflow: hidden; border-radius: 12px; border: 1px solid color-mix(in srgb, var(--border-primary, #e2e8f0) 55%, transparent); background: var(--bg-tertiary, #f1f2f4); box-shadow: 0 2px 7px #00000005; transition: box-shadow 160ms ease; }
 .browser-preview-placeholder { display: flex; flex-direction: column; align-items: center; gap: 12px; color: var(--text-secondary, #718096); font-size: 12px; }
@@ -416,9 +437,10 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--color-prima
 .browser-tab { display: flex; align-items: center; flex: 0 1 160px; min-width: 75px; border-radius: 7px; }
 .browser-tab.is-selected { background: var(--bg-secondary, #fff); box-shadow: 0 1px 4px #0000000a; }
 .browser-tab > button:first-child { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 7px 8px; border: none; background: transparent; color: var(--text-primary, #2d3748); text-align: left; font-size: 12px; cursor: pointer; }
-.browser-tab-close { width: 23px; height: 24px; display: grid; place-items: center; border: none; border-radius: 5px; background: transparent; color: var(--text-secondary, #718096); cursor: pointer; }
+.browser-tab-close { width: 23px; height: 24px; margin-inline-end: 4px; padding: 0; flex: 0 0 auto; display: flex; align-items: center; justify-content: center; border: none; border-radius: 5px; background: transparent; color: var(--text-secondary, #718096); cursor: pointer; }
 .browser-toolbar { display: flex; align-items: center; gap: 3px; padding: 7px 8px; }
 .browser-address { flex: 1; min-width: 0; height: 29px; padding: 0 10px; border: 1px solid color-mix(in srgb, var(--border-primary, #e2e8f0) 65%, transparent); border-radius: 7px; background: var(--bg-primary, #f5f5f7); color: var(--text-primary, #2d3748); font-size: 12px; }
+.browser-address:focus { outline: none; border-color: color-mix(in srgb, var(--text-primary, #2d3748) 28%, var(--border-primary, #e2e8f0)); }
 .browser-zoom { height: 28px; padding: 0 5px; border: none; border-radius: 5px; background: transparent; color: var(--text-secondary, #718096); font-size: 11px; cursor: pointer; }
 .browser-host { flex: 1; min-height: 0; position: relative; overflow: hidden; background: var(--bg-primary, #f5f5f7); }
 .browser-opening { position: absolute; inset: 0; display: grid; place-items: center; font-size: 12px; color: var(--text-secondary, #718096); }

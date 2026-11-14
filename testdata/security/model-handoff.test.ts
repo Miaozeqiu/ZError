@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const state = vi.hoisted(() => ({ fetch: vi.fn(), model: { id: 'secure-model' } }))
 vi.mock('../../src/services/model/config', () => ({ modelConfigManager: {
   ready: Promise.resolve(), getSelectedTextModel: () => state.model, getSelectedAgentModel: () => state.model,
+  getPlatformApiKey: (platform: { apiKey: string }) => platform.apiKey,
   getSettings: () => ({ platforms: [{ apiKey: 'synthetic-key', baseUrl: 'https://model.test', models: [state.model] }] }),
 }, modelHasVision: () => false }))
 vi.mock('../../src/services/model/protocol', () => ({ resolveRuntimeModelId: () => 'secure-model',

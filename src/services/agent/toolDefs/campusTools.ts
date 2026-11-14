@@ -25,13 +25,54 @@ export const CAMPUS_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'create_campus_course',
+      description: '用应用内校园题库接口为当前绑定学校新建课程。用户明确要求新建课程时使用。未提供课名时先询问，不自行命名。需要登录、绑定学校并完成认证。接口报错时说明原因，不改用浏览器。',
+      parameters: {
+        type: 'object',
+        properties: { name: { type: 'string', description: '用户提供或确认的课程名称' } },
+        required: ['name'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'rename_campus_course',
+      description: '通过校园题库改课程名称。先确认现有 course_id 和用户指定的新名称。若结果待审核，说明改名申请已提交。',
+      parameters: {
+        type: 'object',
+        properties: { course_id: { type: 'integer' }, name: { type: 'string', description: '新的课程名称' } },
+        required: ['course_id', 'name'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'list_campus_papers',
-      description: '列出某门校园课下的试卷/文件夹。必须用 course_id 或 course_name。',
+      description: '列出某门校园课下的试卷/文件夹。必须用 course_id 或 course_name。include_archived=true 时同时列出已归档试卷。',
       parameters: {
         type: 'object',
         properties: {
           course_id: { type: 'integer' },
           course_name: { type: 'string' },
+          include_archived: { type: 'boolean' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_campus_uncategorized_questions',
+      description: '按页查看校园课程下尚未放进试卷的题目。用 course_id 或 course_name。',
+      parameters: {
+        type: 'object',
+        properties: {
+          course_id: { type: 'integer' },
+          course_name: { type: 'string' },
+          page: { type: 'integer', description: '页码，从 1 开始' },
+          page_size: { type: 'integer', description: '每页数量，默认 20，最多 40' },
         },
       },
     },
@@ -68,6 +109,21 @@ export const CAMPUS_TOOLS = [
           page_size: { type: 'integer' },
         },
         required: ['keyword'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'check_campus_question_duplicate',
+      description: '按完整题干查重。忽略大小写与空白。选择题有选项时一并提供；只给题干只能判断题干是否一致，不能保证整题相同。',
+      parameters: {
+        type: 'object',
+        properties: {
+          question: { type: 'string', description: '完整题干' },
+          options: { type: 'array', items: { type: 'string' }, description: '可选。按原顺序提供选项' },
+        },
+        required: ['question'],
       },
     },
   },
@@ -124,8 +180,42 @@ export const CAMPUS_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'set_campus_paper_archived',
+      description: '归档或取消归档指定校园试卷。先从 list_campus_papers 获取 course_id 和 paper_id；找已归档试卷时用 include_archived=true。只有用户明确同意发起投票时才传 allow_vote=true。',
+      parameters: {
+        type: 'object',
+        properties: {
+          course_id: { type: 'integer' },
+          paper_id: { type: 'integer' },
+          archived: { type: 'boolean', description: 'true 归档，false 取消归档' },
+          allow_vote: { type: 'boolean', description: '是否获用户明确同意，在无法直接修改时发起投票' },
+          remark: { type: 'string', description: '用户提供的投票理由，可省略' },
+        },
+        required: ['course_id', 'paper_id', 'archived'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'reorder_campus_paper_questions',
+      description: '保存校园试卷顶层题目的完整新顺序。先读完 list_campus_questions 的所有分页，只传该试卷的 campus_question_id，每道题恰好一次。子题顺序保持原样。',
+      parameters: {
+        type: 'object',
+        properties: {
+          course_id: { type: 'integer' },
+          paper_id: { type: 'integer' },
+          campus_question_ids: { type: 'array', items: { type: 'integer' }, description: '按新顺序列出全部顶层校园题 ID' },
+        },
+        required: ['course_id', 'paper_id', 'campus_question_ids'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'save_campus_questions',
-      description: '把题目上传到校园试卷。用户要求上传、收录到校园题库时调用，不要用 save_questions。必须已认证。必须指定课程和试卷。可手写题目，或用本地 question_ids 复制已有本地题。一次最多 20 道。',
+      description: '把题目上传到校园试卷。用户要求上传、收录到校园题库时调用，不要用 save_questions。必须已认证并开启上传权限。必须指定课程和试卷。新建试卷还需开启修改权限。可手写题目，或用本地 question_ids 复制已有本地题。一次最多 20 道。',
       parameters: {
         type: 'object',
         properties: {

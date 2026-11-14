@@ -5,6 +5,7 @@
         v-if="visible"
         ref="menuRef"
         class="context-menu"
+        :class="menuClass"
         :style="menuStyle"
         @click.stop
         @pointerdown.stop
@@ -159,6 +160,7 @@ interface Props {
   menuItems: MenuItem[];
   header?: string;
   maxHeight?: number;
+  menuClass?: string;
   /** 稳定互斥键；同键视为同一菜单，不同键同时只保留一个 */
   exclusiveKey?: string;
 }

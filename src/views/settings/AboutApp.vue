@@ -711,7 +711,7 @@ const checkForUpdatesManually = async () => {
       return
     }
 
-    updateStatus.value = '当前已是最新版本'
+    updateStatus.value = '当前没有可用更新'
     updateStatusType.value = 'success'
   } catch (error) {
     console.error('手动检查更新失败:', error)

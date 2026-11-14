@@ -54,7 +54,7 @@ export const bindQuestionListIo = (ctx: QuestionListCtx) => {
       return
     }
     if (!modelConfigManager.getSelectedTextModel() && !modelConfigManager.getSelectedModel()) {
-      alert('请先在设置里选择一个文本模型，再使用 AI 识别导入')
+      alert('请先在设置里选择一个答题模型，再使用 AI 识别导入')
       return
     }
     try {
@@ -138,7 +138,11 @@ export const bindQuestionListIo = (ctx: QuestionListCtx) => {
 
   const getExportQuestions = async () => {
     if (ctx.isSearchMode.value) {
-      return sortQuestionListByCreateTime(ctx.questions.value, ctx.createTimeSortOrder.value)
+      const folder = ctx.props.selectedFolderId
+      const pendingOnly = folder === PENDING_CORRECTION_FOLDER_ID
+      const folderId = folder && !pendingOnly ? parseFolderId(folder) ?? undefined : undefined
+      const matches = await databaseService.searchQuestionsByTitle(ctx.searchTerm.value.trim(), folderId, pendingOnly)
+      return sortQuestionListByCreateTime(matches, ctx.createTimeSortOrder.value)
     }
     if (ctx.props.selectedFolderId === PENDING_CORRECTION_FOLDER_ID) {
       return sortQuestionListByCreateTime(await databaseService.getPendingCorrectionQuestions(), ctx.createTimeSortOrder.value)

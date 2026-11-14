@@ -585,6 +585,11 @@
   background-color: var(--ql-row-selected-bg);
 }
 
+.question-table tbody tr.is-cut {
+  filter: grayscale(1);
+  opacity: 0.52;
+}
+
 .question-table td {
   padding: 12px 8px;
   vertical-align: middle;
@@ -809,6 +814,14 @@
   overflow: visible;
 }
 
+.question-checkbox-hit-area {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+
 /* 复选框样式 */
 .col-checkbox input[type="checkbox"] {
   width: 16px !important;
@@ -834,7 +847,8 @@
   padding: 0;
 }
 
-.col-checkbox input[type="checkbox"]:hover {
+.col-checkbox input[type="checkbox"]:hover,
+.question-checkbox-hit-area:hover input[type="checkbox"] {
   background-color: var(--ql-checkbox-hover-bg);
   border-color: var(--ql-checkbox-hover-border);
 }

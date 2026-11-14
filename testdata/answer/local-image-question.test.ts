@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-vi.mock('../../src/services/model/config', () => ({ fetchRemoteModelsCatalog: vi.fn().mockResolvedValue({}) }))
+vi.mock('../../src/services/app/openApi', () => ({ fetchOpenApiJson: vi.fn().mockResolvedValue({}) }))
 import { findQuestionImageMatches } from '../../src/utils/question/questionImage'
 import { createImageQuestionPreparer, restorePreparedImageAnswer } from '../../src/utils/answer/imageQuestion'
 import { buildMultimodalContentFromPlaceholders } from '../../src/utils/answer/imagePlaceholders'

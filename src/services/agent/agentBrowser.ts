@@ -1,16 +1,18 @@
-/** 统一 Agent 的浏览器工作区。会话拥有标签，收起预览不会关闭网页。 */
-import { computed, ref } from 'vue'
+/** Agent 的浏览器工作区。会话保留标签，原生网页按需打开。 */
+import { computed, ref, shallowReactive } from 'vue'
 import {
   browserHomeUrl, createAppBrowser, listAppBrowsers,
   listenBrowserOpened, listenBrowserState, openBrowserView, patchAppBrowser,
-  closeBrowserView, removeAppBrowser, setSelectedBrowserId, type AppBrowser,
+  closeBrowserView, removeAppBrowser, setBrowserZoom, setSelectedBrowserId, type AppBrowser,
 } from '../browser/appBrowser'
-import { activeChat, chatStoreReady, createChat, liveSession, patchSession, sessions } from './chatStore'
+import { activeChat, chatStoreReady, createChat, isChatBusy, liveSession, newChatDraft, patchSession, sessions } from './chatStore'
 import { listenBrowserControl, registerBrowserControl } from '../browser/control'
+import { agentWatchBusy } from '../platform/panelAccess'
 
 export const agentBrowserTabs = ref<AppBrowser[]>(listAppBrowsers())
 export const agentBrowserExpanded = ref(false)
-const opening = new Map<string, Promise<void>>()
+const opening = shallowReactive(new Map<string, Promise<void>>())
+const closing = shallowReactive(new Map<string, Promise<boolean>>())
 let listeners: Promise<void> | undefined
 const unlisteners: Array<() => void> = []
 
@@ -26,6 +28,14 @@ export const currentAgentBrowser = computed(() => (
   agentBrowserTabs.value.find(tab => tab.id === activeChat.value?.browserId) || null
 ))
 
+export const currentAgentBrowserOpen = computed(() => {
+  const id = currentAgentBrowser.value?.id
+  return Boolean(id && opening.has(id) && !closing.has(id))
+})
+export const agentBrowserHasTasks = computed(() =>
+  isChatBusy.value || [...opening.keys()].some(id => agentWatchBusy(id)),
+)
+
 export const bindChatBrowser = (sessionId: string, browserId: string) => {
   patchSession(sessionId, session => ({
     ...session, browserId: browserId || undefined,
@@ -35,13 +45,47 @@ export const bindChatBrowser = (sessionId: string, browserId: string) => {
   refreshAgentBrowsers()
 }
 
+export const createChatBrowserTab = (sessionId: string, input: Parameters<typeof createAppBrowser>[0]) => {
+  const tab = createAppBrowser(input, newChatDraft.value?.id === sessionId)
+  bindChatBrowser(sessionId, tab.id)
+  return tab
+}
+
+const closeAgentBrowserWhen = (id: string, shouldClose: () => boolean) => {
+  const pending = closing.get(id)
+  if (pending) return pending
+  const flight = (async () => {
+    await opening.get(id)?.catch(() => undefined)
+    if (!shouldClose()) return false
+    await closeBrowserView(id)
+    opening.delete(id)
+    return true
+  })().finally(() => { closing.delete(id) })
+  closing.set(id, flight)
+  return flight
+}
+
+export const closeAgentBrowser = async (id: string) => {
+  const shouldClose = () => true
+  if (!await closeAgentBrowserWhen(id, shouldClose)) {
+    await closeAgentBrowserWhen(id, shouldClose)
+  }
+}
+
+/** 释放原生网页，保留会话里的标签和地址供下次按需恢复。 */
+export const suspendAgentBrowsers = (workspaceDismissed: () => boolean) => {
+  const shouldClose = () => workspaceDismissed() && !agentBrowserHasTasks.value
+  if (!shouldClose()) return
+  for (const id of opening.keys()) {
+    void closeAgentBrowserWhen(id, shouldClose).catch(error => console.error('[agent browser suspend]', error))
+  }
+}
+
 export const releaseChatBrowsers = async (ids: string[]) => {
   for (const id of ids) {
     if (sessions.value.some(session => browserIdsForChat(session).includes(id))) continue
     removeAppBrowser(id)
-    await opening.get(id)?.catch(() => undefined)
-    opening.delete(id)
-    await closeBrowserView(id).catch(() => undefined)
+    await closeAgentBrowser(id).catch(() => undefined)
   }
   refreshAgentBrowsers()
 }
@@ -52,19 +96,23 @@ export const ensureChatBrowserTab = (sessionId: string) => {
   if (!session) throw new Error('对话已不存在')
   const existing = listAppBrowsers().find(tab => tab.id === session.browserId)
   if (existing) return existing
-  const tab = createAppBrowser({ url: browserHomeUrl(), title: '导航' })
-  bindChatBrowser(sessionId, tab.id)
-  return tab
+  return createChatBrowserTab(sessionId, { url: browserHomeUrl(), title: '导航' })
 }
 
 /** 原生视图首次在后台创建；已经打开的标签不重复 open，避免抢显示和改变网址。 */
 export const ensureAgentBrowser = async (sessionId: string): Promise<string> => {
   const tab = ensureChatBrowserTab(sessionId)
+  const pendingClose = closing.get(tab.id)
+  if (pendingClose) {
+    await pendingClose
+    return ensureAgentBrowser(sessionId)
+  }
   let flight = opening.get(tab.id)
   if (!flight) {
     flight = (async () => {
       await registerBrowserControl(tab.id, sessionId)
       await openBrowserView(tab.id, tab.url, { x: 0, y: 0, width: 960, height: 540 }, true)
+      if (tab.zoom !== 1) await setBrowserZoom(tab.id, tab.zoom).catch(() => undefined)
     })().catch(error => { opening.delete(tab.id); throw error })
     opening.set(tab.id, flight)
   }
@@ -92,7 +140,7 @@ export const startAgentBrowserWorkspace = () => {
       }))
     }
     // 旧浏览器页的未归属标签保留到一个对话中，升级时不删除历史记录。
-    const owned = new Set(sessions.value.flatMap(browserIdsForChat))
+    const owned = new Set([...sessions.value.flatMap(browserIdsForChat), ...browserIdsForChat(newChatDraft.value)])
     const legacy = listAppBrowsers().filter(tab => !owned.has(tab.id))
     if (legacy.length) {
       const session = createChat({ title: '浏览器', browserId: legacy[0].id, activate: false })
@@ -105,12 +153,12 @@ export const startAgentBrowserWorkspace = () => {
     }))
     unlisteners.push(await listenBrowserControl())
     unlisteners.push(await listenBrowserOpened(state => {
+      if (state.openerId && closing.has(state.openerId)) return
       const owner = state.openerId
-        ? sessions.value.find(session => !session.parentId && browserIdsForChat(session).includes(state.openerId!))
+        ? [...sessions.value, newChatDraft.value].find(session => session && !session.parentId && browserIdsForChat(session).includes(state.openerId!))
         : activeChat.value
       if (!owner) return
-      const tab = createAppBrowser({ id: state.id, url: state.url, title: state.title })
-      bindChatBrowser(owner.id, tab.id)
+      createChatBrowserTab(owner.id, { id: state.id, url: state.url, title: state.title })
       void ensureAgentBrowser(owner.id).catch(error => console.error('[agent browser popup]', error))
     }))
   })().catch(error => {

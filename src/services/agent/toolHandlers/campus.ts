@@ -1,7 +1,8 @@
-import { isLoggedIn } from '../../app/auth'
+import { authUser, isLoggedIn } from '../../app/auth'
 import {
   campusApiType,
   campusQuestionTypeLabel,
+  createCampusCourse,
   createCampusPaper,
   createCampusQuestion,
   encodeCampusAnswer,
@@ -11,7 +12,13 @@ import {
   listCampusCourses,
   listCampusTags,
   listFolderQuestions,
+  listUncategorizedQuestions,
+  parseCampusOptions,
+  renameCampusCourse,
+  reorderCampusPaperQuestions,
   searchCampusQuestions,
+  searchCampusQuestionsExact,
+  setCampusPaperArchived,
   updateCampusPaper,
   updateCampusQuestion,
   withFolderQuestionCounts,
@@ -38,8 +45,14 @@ import {
   rememberCampusQuestions,
   resolveCampusWriteTarget,
 } from '../campusSession'
+import { assertCampusWriteAllowed, campusWriteDenial } from '../campusPolicy'
 import type { ChatToolHandler } from '../toolContext'
 import { clipToolResult, notifyCampusUpdated, parseQuestionIds } from '../toolShared'
+
+const isCampusId = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value > 0
+
+const compactQuestionText = (text: string) => text.replace(/\s+/gu, '').toLowerCase()
 
 export const campusToolHandlers: Record<string, ChatToolHandler> = {
   get_campus_status: async () => {
@@ -92,6 +105,53 @@ export const campusToolHandlers: Record<string, ChatToolHandler> = {
     }
   },
 
+  create_campus_course: async ({ args, ctx }) => {
+    const name = typeof args.name === 'string' ? args.name.trim() : ''
+    if (!name) return JSON.stringify({ error: '请先向用户询问课程名称。' })
+    const campus = await loadCampusContext({ requireVerified: true })
+    if ('error' in campus) return JSON.stringify(campus)
+    ctx.abort.throwIfAborted()
+    try {
+      assertCampusWriteAllowed('create_campus_course')
+      const course = await createCampusCourse(campus.identity.campus!.id, name, ctx.abort)
+      notifyCampusUpdated({ courseListChanged: true })
+      return JSON.stringify({
+        ...summarizeCampusCourse(course),
+        status: course.status,
+        message: course.status === 'pending'
+          ? `课程「${course.name}」已提交审核。`
+          : `课程「${course.name}」已创建。`,
+      })
+    } catch (err) {
+      ctx.abort.throwIfAborted()
+      return JSON.stringify({ error: campusFail(err, '创建校园课程失败') })
+    }
+  },
+
+  rename_campus_course: async ({ args, ctx }) => {
+    const { course_id: courseId } = args
+    const name = typeof args.name === 'string' ? args.name.trim() : ''
+    if (!isCampusId(courseId) || !name) return JSON.stringify({ error: '请确认课程 ID 和新课名。' })
+    const campus = await loadCampusContext({ requireVerified: true })
+    if ('error' in campus) return JSON.stringify(campus)
+    try {
+      assertCampusWriteAllowed('rename_campus_course')
+      const course = await renameCampusCourse(courseId, name, ctx.abort)
+      notifyCampusUpdated({ courseListChanged: true })
+      return JSON.stringify({
+        course_id: courseId,
+        name: course.name,
+        status: course.status,
+        message: course.status === 'pending'
+          ? `已提交课程改名申请，新名称「${course.name}」待审核。`
+          : `课程已改名为「${course.name}」。`,
+      })
+    } catch (err) {
+      ctx.abort.throwIfAborted()
+      return JSON.stringify({ error: campusFail(err, '校园课程改名失败') })
+    }
+  },
+
   list_campus_papers: async ({ args, ctx }) => {
     const campus = await loadCampusContext()
     if ('error' in campus) return JSON.stringify(campus)
@@ -103,7 +163,9 @@ export const campusToolHandlers: Record<string, ChatToolHandler> = {
       )
       if (!course) return JSON.stringify({ error: '请提供 course_id 或 course_name' })
       const detail = await getCampusCourse(course.id)
-      const papers = await withFolderQuestionCounts(detail.folders.filter((item) => !item.archived))
+      const papers = await withFolderQuestionCounts(
+        detail.folders.filter(item => args.include_archived === true || !item.archived),
+      )
       rememberCampusPapers(ctx.sessionId, papers.map((item) => ({
         id: item.id,
         name: item.name,
@@ -122,6 +184,42 @@ export const campusToolHandlers: Record<string, ChatToolHandler> = {
       }))
     } catch (err) {
       return JSON.stringify({ error: campusFail(err, '查看校园试卷失败') })
+    }
+  },
+
+  list_campus_uncategorized_questions: async ({ call, args, ctx }) => {
+    const campus = await loadCampusContext()
+    if ('error' in campus) return JSON.stringify(campus)
+    try {
+      const course = await resolveCampusCourse(
+        campus.identity.campus!.id,
+        Number(args.course_id) || undefined,
+        String(args.course_name || '').trim() || undefined,
+      )
+      if (!course) return JSON.stringify({ error: '请提供 course_id 或 course_name。' })
+      const page = Number.isSafeInteger(args.page) ? Math.max(1, args.page) : 1
+      const pageSize = Number.isSafeInteger(args.page_size) ? Math.min(40, Math.max(1, args.page_size)) : 20
+      const questions = await listUncategorizedQuestions(course.id, page, pageSize)
+      rememberCampusQuestions(ctx.sessionId, questions)
+      const title = `${course.name} · 未分类题目`
+      const cards = publishCampusQuestionCards(call.id, questions, title)
+      return JSON.stringify({
+        course: course.name,
+        course_id: course.id,
+        page,
+        page_size: pageSize,
+        next_page: questions.length === pageSize ? page + 1 : undefined,
+        count: questions.length,
+        title: cards.length ? title : undefined,
+        questions: questions.map(item => ({
+          campus_question_id: item.id,
+          question: item.content.slice(0, 80),
+          question_type: campusQuestionTypeLabel(item.type),
+        })),
+        message: cards.length ? `已在右侧显示 ${cards.length} 道题的预览。` : '这一页没有未分类题目。',
+      })
+    } catch (err) {
+      return JSON.stringify({ error: campusFail(err, '查看未分类题目失败') })
     }
   },
 
@@ -228,6 +326,42 @@ export const campusToolHandlers: Record<string, ChatToolHandler> = {
     }
   },
 
+  check_campus_question_duplicate: async ({ args, ctx }) => {
+    const question = typeof args.question === 'string' ? args.question.trim() : ''
+    if (!question) return JSON.stringify({ error: '请提供完整题干。' })
+    const campus = await loadCampusContext()
+    if ('error' in campus) return JSON.stringify(campus)
+    try {
+      const options = parseCampusOptions(args.options).map(compactQuestionText)
+      const matches = await searchCampusQuestionsExact(question)
+      const stem = compactQuestionText(question)
+      const sameStem = matches.filter(item => compactQuestionText(item.content) === stem)
+      const duplicates = options.length ? sameStem.filter(item => {
+        const existing = parseCampusOptions(item.options).map(compactQuestionText)
+        return existing.length === options.length && existing.every((option, index) => option === options[index])
+      }) : sameStem
+      rememberCampusQuestions(ctx.sessionId, duplicates)
+      return JSON.stringify({
+        found: duplicates.length > 0,
+        compared_options: options.length > 0,
+        count: duplicates.length,
+        same_stem_count: sameStem.length,
+        questions: duplicates.map(item => ({
+          campus_question_id: item.id,
+          question: item.content.slice(0, 160),
+          course: item.course_name,
+          paper: item.paper_name,
+          paper_id: item.question_bank_id,
+        })),
+        message: duplicates.length
+          ? options.length ? '查到题干及选项顺序一致的题目。' : '查到题干一致的题目，选项尚未核对。'
+          : '本次返回的候选中未找到一致的题目。',
+      })
+    } catch (err) {
+      return JSON.stringify({ error: campusFail(err, '校园题目查重失败') })
+    }
+  },
+
   list_campus_tags: async () => {
     try {
       const tags = await listCampusTags()
@@ -255,6 +389,7 @@ export const campusToolHandlers: Record<string, ChatToolHandler> = {
       if (!String(args.name || '').trim() && tagId == null) {
         return JSON.stringify({ error: '请提供要改的试卷名 name，或平台 tag（如智慧树、学习通）' })
       }
+      assertCampusWriteAllowed('update_campus_paper')
       const paper = await updateCampusPaper(target.paper.id, {
         name: nextName,
         tag_id: tagId,
@@ -322,6 +457,7 @@ export const campusToolHandlers: Record<string, ChatToolHandler> = {
         Number(args.tag_id) || undefined,
         campusTagArg(args) || undefined,
       )
+      assertCampusWriteAllowed('create_campus_paper')
       const paper = await createCampusPaper(course.id, name, tagId)
       rememberCampusPapers(ctx.sessionId, [{
         id: paper.id,
@@ -341,6 +477,76 @@ export const campusToolHandlers: Record<string, ChatToolHandler> = {
       })
     } catch (err) {
       return JSON.stringify({ error: campusFail(err, '创建校园试卷失败') })
+    }
+  },
+
+  set_campus_paper_archived: async ({ args, ctx }) => {
+    const { course_id: courseId, paper_id: paperId, archived } = args
+    if (!isCampusId(courseId) || !isCampusId(paperId) || typeof archived !== 'boolean') {
+      return JSON.stringify({ error: '请确认 course_id、paper_id 和归档状态 archived。' })
+    }
+    const campus = await loadCampusContext({ requireVerified: true })
+    if ('error' in campus) return JSON.stringify(campus)
+    const action = archived ? '归档' : '取消归档'
+    try {
+      const { paper } = await resolveCampusPaper(courseId, paperId, undefined, true)
+      if (Boolean(paper.archived) === archived) {
+        return JSON.stringify({ paper_id: paperId, paper: paper.name, archived, already: true, message: `试卷已是所请求的${action}状态。` })
+      }
+      const isCreator = paper.creator_id != null && paper.creator_id === Number(authUser.value?.id)
+      const canChangeDirectly = campus.identity.is_trusted || isCreator
+      if (!canChangeDirectly && args.allow_vote !== true) {
+        return JSON.stringify({ error: `无法直接${action}，需要发起投票。请先征求用户同意。`, requires_vote: true })
+      }
+      assertCampusWriteAllowed('set_campus_paper_archived')
+      const result = await setCampusPaperArchived(paperId, archived, String(args.remark || '').trim(), ctx.abort)
+      if (!result.voteStarted) notifyCampusUpdated({ courseId })
+      return JSON.stringify({
+        paper_id: paperId,
+        paper: paper.name,
+        archived: result.voteStarted ? Boolean(paper.archived) : archived,
+        vote_started: result.voteStarted,
+        vote_id: result.voteId || undefined,
+        message: result.voteStarted ? `已发起${action}投票，等待投票结果。` : `已${action}试卷「${paper.name}」。`,
+      })
+    } catch (err) {
+      ctx.abort.throwIfAborted()
+      return JSON.stringify({ error: campusFail(err, `${action}试卷失败`) })
+    }
+  },
+
+  reorder_campus_paper_questions: async ({ args, ctx }) => {
+    const { course_id: courseId, paper_id: paperId, campus_question_ids: ids } = args
+    if (!isCampusId(courseId) || !isCampusId(paperId) || !Array.isArray(ids)
+      || !ids.length || !ids.every(isCampusId) || new Set(ids).size !== ids.length) {
+      return JSON.stringify({ error: '请提供课程 ID、试卷 ID，以及无重复的校园题 ID 顺序。' })
+    }
+    const campus = await loadCampusContext({ requireVerified: true })
+    if ('error' in campus) return JSON.stringify(campus)
+    try {
+      const { paper } = await resolveCampusPaper(courseId, paperId)
+      const questions = await listFolderQuestions(paperId)
+      const current = questions.filter(item => !item.parent_id).map(item => item.id)
+      const members = new Set(current)
+      if (ids.length !== current.length || !ids.every(id => members.has(id))) {
+        return JSON.stringify({ error: '题目顺序必须包含这份试卷的全部顶层题目，每题一次。请重新读取所有分页。', expected_count: current.length })
+      }
+      const already = ids.every((id, index) => id === current[index])
+      if (!already) {
+        assertCampusWriteAllowed('reorder_campus_paper_questions')
+        await reorderCampusPaperQuestions(paperId, ids, ctx.abort)
+        notifyCampusUpdated({ courseId })
+        const saved = await listFolderQuestions(paperId).catch(() => null)
+        if (!saved) return JSON.stringify({ error: '排序已提交，暂时无法核对结果。请先刷新试卷。' })
+        const savedOrder = saved.filter(item => !item.parent_id).map(item => item.id)
+        if (savedOrder.length !== ids.length || ids.some((id, index) => id !== savedOrder[index])) {
+          return JSON.stringify({ error: '排序已提交，但读取到的顺序与请求不一致。请先刷新试卷核对。' })
+        }
+      }
+      return JSON.stringify({ paper_id: paperId, paper: paper.name, count: ids.length, already, message: already ? '试卷题目已是所请求的顺序。' : `已保存 ${ids.length} 道题的顺序。` })
+    } catch (err) {
+      ctx.abort.throwIfAborted()
+      return JSON.stringify({ error: campusFail(err, '校园试卷题目排序失败') })
     }
   },
 
@@ -370,6 +576,11 @@ export const campusToolHandlers: Record<string, ChatToolHandler> = {
       const created: CampusQuestion[] = []
       const failed: Array<{ question: string; error: string }> = []
       for (const item of pending) {
+        const denied = campusWriteDenial('save_campus_questions')
+        if (denied) {
+          failed.push({ question: item.question.slice(0, 80), error: denied })
+          break
+        }
         const type = campusApiType(item.question_type, item.options)
         const options = encodeCampusOptions(item.options)
         const answer = encodeCampusAnswer(item.answer, item.options, type)
@@ -485,6 +696,11 @@ export const campusToolHandlers: Record<string, ChatToolHandler> = {
         if (!item.question && !nextOptions && !nextAnswer && !nextType && paperId === current?.question_bank_id) {
           failed.push({ campus_question_id: item.campus_question_id, error: '没有要改的字段' })
           continue
+        }
+        const denied = campusWriteDenial('update_campus_question')
+        if (denied) {
+          failed.push({ campus_question_id: item.campus_question_id, error: denied })
+          break
         }
         try {
           const saved = await updateCampusQuestion(item.campus_question_id, {

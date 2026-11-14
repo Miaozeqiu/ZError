@@ -19,12 +19,18 @@ pub(crate) fn map_request_log_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<R
         path: row.get(3)?,
         status: row.get(4)?,
         response_time: row.get(5)?,
+        request_target: None,
+        remote_address: None,
+        http_status: None,
         request_body: row.get(6)?,
         response_body: row.get(7)?,
+        response_headers: None,
         headers,
         ip: row.get(9)?,
         user_agent: row.get(10)?,
         stage: row.get(11)?,
+        local_search: None,
+        local_matches: Vec::new(),
     })
 }
 

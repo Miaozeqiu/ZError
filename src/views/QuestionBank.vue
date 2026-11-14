@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import FileTree from "./questions/FileTree.vue";
 import QuestionList from "./questions/QuestionList.vue";
 import type { AIResponse } from "../services/app/database";
 import { useSettingsManager } from "../composables/useSettingsManager";
 import { startFolderOrganizeChat } from "../services/agent/chat";
 import { modelConfigManager } from "../services/model/config";
+import { isTauriEnvironment } from '../services/app/environmentDetector';
+import { PENDING_CORRECTION_FOLDER_ID } from './questions/questionList/types';
 
 // 接收来自顶层 App 的折叠触发器，用于在切换 tab 时收起题目详情
 const props = defineProps<{
@@ -341,13 +344,28 @@ const handleQuestionsImported = (event: Event) => {
   }
 };
 
+let stopCorrectionListener: UnlistenFn | undefined;
+let mounted = false;
+
 onMounted(() => {
+  mounted = true;
   initCustomScrollbars();
   window.addEventListener('resize', handleWindowResize);
   window.addEventListener('questions-imported', handleQuestionsImported);
+  if (isTauriEnvironment()) {
+    void listen('question-correction-marked', () => {
+      fileTreeRef.value?.refreshData();
+      if (selectedFolderId.value === PENDING_CORRECTION_FOLDER_ID) questionListRef.value?.refreshData();
+    }).then(unlisten => {
+      if (mounted) stopCorrectionListener = unlisten;
+      else unlisten();
+    }).catch(error => console.error('监听待修正状态失败:', error));
+  }
 });
 
 onUnmounted(() => {
+  mounted = false;
+  stopCorrectionListener?.();
   window.removeEventListener('resize', handleWindowResize);
   window.removeEventListener('questions-imported', handleQuestionsImported);
   paneCleanupMap.forEach(cleanup => cleanup());

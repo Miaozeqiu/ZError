@@ -1,10 +1,11 @@
 import { mergeToolCalls } from '../../../services/model/toolCallMerge'
 import { createBuiltinProvider } from '../../../services/model/providers'
+import { resolveModelOutputLimit } from '../../../services/model/contextBudget'
 /** 模型连通性测试。设置页其它逻辑不要堆进这里。 */
 import type { Ref } from 'vue'
 import { secureFetch } from '../../../services/security/secureFetch'
 import type { AIModel, AIPlatform } from '../../../services/model/config'
-import { modelHasVision } from '../../../services/model/config'
+import { modelConfigManager, modelHasVision } from '../../../services/model/config'
 import { resolveExecutableModelJsCode, resolveRuntimeModelId } from '../../../services/model/protocol'
 
 export type ModelTestState = {
@@ -315,7 +316,8 @@ export const bindModelTest = (state: ModelTestState) => {
       // 构建配置对象
       const config = {
         ...model,
-        apiKey: selectedPlatform.value.apiKey,
+        maxTokens: resolveModelOutputLimit(model),
+        apiKey: modelConfigManager.getPlatformApiKey(selectedPlatform.value),
         customHeaders: selectedPlatform.value.customHeaders,
         baseUrl: selectedPlatform.value.baseUrl,
         model: runtimeModelId,

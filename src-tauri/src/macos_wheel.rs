@@ -18,7 +18,7 @@ use objc2_core_graphics::{CGEvent, CGEventField, CGEventType, CGScrollEventUnit}
 use objc2_foundation::{NSPoint, NSRunLoop, NSRunLoopCommonModes, NSTimer};
 
 // Applied only after precise/gesture input has already passed through.
-const COARSE_WHEEL_SPEED: f64 = 1.3;
+const COARSE_WHEEL_SPEED: f64 = 2.6;
 
 /// Integrate remaining distance using elapsed time, not the number of callbacks.
 /// Reversing direction drops only the old tail; it never moves against new input.

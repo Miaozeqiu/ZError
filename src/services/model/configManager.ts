@@ -1,8 +1,11 @@
 /** 模型配置单例：本地存储、选中态、增删改平台/模型。远程拉取走 configRemote.ts。 */
 import { reactive, watch } from 'vue'
 import { readSecureDocument, writeSecureDocument } from '../security/secureStore'
-import type { AIModel, AIPlatform, ModelSettings } from './configTypes'
-import { inferPlatformApiProtocol, modelHasVision, resolveRemoteHasVision } from './configTypes'
+import { settingsManager } from '../app/settings'
+import type { SearchSettings } from '../searchProviders'
+import { DEFAULT_MODEL_OUTPUT_TOKENS } from './contextBudget'
+import type { AIModel, AIPlatform, ApiProtocol, ModelSettings } from './configTypes'
+import { inferPlatformApiProtocol, isBuiltinApiProtocol, MAX_ANSWER_MODELS, modelHasVision, resolveRemoteHasVision } from './configTypes'
 import {
   REMOTE_MODELS_REQUEST_COOLDOWN_MS,
   dedupeModelsById,
@@ -18,7 +21,6 @@ const DEFAULT_MODEL_SETTINGS: ModelSettings = {
   selectedTextModels: [],
   selectedSummaryModel: null,
   selectedSummaryModels: [],
-  selectedVisionModel: null,
   selectedAgentModel: null,
   platforms: [],
   globalSettings: {
@@ -32,6 +34,16 @@ const DEFAULT_MODEL_SETTINGS: ModelSettings = {
 
 // 模型配置存储键
 const MODEL_SETTINGS_STORAGE_KEY = 'model_settings'
+
+const usesSharedDeepSeekKey = (platform: Pick<AIPlatform, 'baseUrl' | 'isRemote'>): boolean => {
+  if (!platform.isRemote) return false
+  try {
+    const url = new URL(platform.baseUrl)
+    return url.origin === 'https://api.deepseek.com' && !url.username && !url.password
+  } catch {
+    return false
+  }
+}
 
 /**
  * 模型配置管理器类
@@ -61,12 +73,16 @@ class ModelConfigManager {
 
   private async hydrate(): Promise<void> {
     try {
+      await settingsManager.ready
       const saved = await readSecureDocument<ModelSettings>('model_settings', MODEL_SETTINGS_STORAGE_KEY)
       if (saved) {
         Object.assign(this.settings, { ...DEFAULT_MODEL_SETTINGS, ...saved,
           platforms: sanitizeStoredPlatforms(saved.platforms || []) })
         this.normalizeSelectedModels()
       }
+      this.settings.deepseekApiKey ??= this.settings.platforms
+        .find(platform => usesSharedDeepSeekKey(platform) && platform.apiKey)?.apiKey
+        || settingsManager.getSettings().search.deepseekApiKey || ''
       this.hydrated = true
     } catch { /* secureStorageState reports the failure; never overwrite unread data */ }
   }
@@ -114,17 +130,20 @@ class ModelConfigManager {
     const enabledPlatforms = this.settings.platforms.filter(platform => platform.enabled !== false)
     const allModels = enabledPlatforms.flatMap(platform => platform.models || [])
     const enabledModels = allModels.filter(model => model.enabled !== false)
-    const textModelIds = new Set(enabledModels.map(model => model.id))
-    const summaryModelIds = new Set(enabledModels.map(model => model.id))
-    const visionModelIds = new Set(enabledModels.filter(model => modelHasVision(model)).map(model => model.id))
+    const enabledModelIds = new Set(enabledModels.map(model => model.id))
+    const legacyVisionId = this.settings.selectedVisionModel
+    const legacyVision = legacyVisionId
+      ? enabledModels.find(model => model.id === legacyVisionId && modelHasVision(model))
+      : undefined
 
-    const normalizedTextModels = this.dedupeAndFilterModelIds(
+    const normalizedAnswerModels = this.dedupeAndFilterModelIds(
       [
         ...(this.settings.selectedTextModels || []),
-        ...(this.settings.selectedTextModel ? [this.settings.selectedTextModel] : [])
+        this.settings.selectedTextModel,
+        legacyVision?.id,
       ],
-      textModelIds,
-      5
+      enabledModelIds,
+      MAX_ANSWER_MODELS
     )
 
     const normalizedSummaryModels = this.dedupeAndFilterModelIds(
@@ -132,19 +151,16 @@ class ModelConfigManager {
         ...(this.settings.selectedSummaryModels || []),
         ...(this.settings.selectedSummaryModel ? [this.settings.selectedSummaryModel] : [])
       ],
-      summaryModelIds,
+      enabledModelIds,
       1
     )
 
-    this.settings.selectedTextModels = normalizedTextModels
-    this.settings.selectedTextModel = normalizedTextModels[0] || null
+    this.settings.selectedTextModels = normalizedAnswerModels
+    this.settings.selectedTextModel = normalizedAnswerModels[0] || null
     this.settings.selectedSummaryModels = normalizedSummaryModels
     this.settings.selectedSummaryModel = normalizedSummaryModels[0] || null
-    this.settings.selectedVisionModel = this.settings.selectedVisionModel && visionModelIds.has(this.settings.selectedVisionModel)
-      ? this.settings.selectedVisionModel
-      : null
-    const agentModelIds = new Set(enabledModels.map((model) => model.id))
-    this.settings.selectedAgentModel = this.settings.selectedAgentModel && agentModelIds.has(this.settings.selectedAgentModel)
+    delete this.settings.selectedVisionModel
+    this.settings.selectedAgentModel = this.settings.selectedAgentModel && enabledModelIds.has(this.settings.selectedAgentModel)
       ? this.settings.selectedAgentModel
       : null
   }
@@ -165,9 +181,6 @@ class ModelConfigManager {
       this.settings.selectedSummaryModel = this.settings.selectedSummaryModels[0] || null
     }
 
-    if (this.settings.selectedVisionModel && platformModelIds.has(this.settings.selectedVisionModel)) {
-      this.settings.selectedVisionModel = null
-    }
     if (this.settings.selectedAgentModel && platformModelIds.has(this.settings.selectedAgentModel)) {
       this.settings.selectedAgentModel = null
     }
@@ -224,8 +237,9 @@ class ModelConfigManager {
 
   /**
    * 从远程同步平台和模型数据（每次启动时调用）
-   * - 远程平台/模型标记 isRemote: true，禁止编辑/删除
+   * - 远程平台/模型标记 isRemote: true
    * - 保留用户的 apiKey、enabled 状态
+   * - 保留本地修改的地址和协议，同时更新远程默认设置
    * - 远程已删除的平台/模型：若其模型被选中，自动替换为同平台同类型的另一个模型
    */
   private async performRemotePlatformsSync(): Promise<boolean> {
@@ -238,6 +252,7 @@ class ModelConfigManager {
       return false
     }
 
+    await this.ready
     const remotePlatformIds = new Set(remotePlatforms.map(p => p.id))
     const existingPlatformsById = this.settings.platforms.reduce<Map<string, AIPlatform[]>>((map, platform) => {
       const existingPlatforms = map.get(platform.id)
@@ -259,6 +274,10 @@ class ModelConfigManager {
           this._replaceSelectedModel(model.id, localPlatform.id)
         }
         localPlatform.isRemote = false
+        delete localPlatform.remoteBaseUrl
+        delete localPlatform.baseUrlOverride
+        delete localPlatform.remoteApiProtocol
+        delete localPlatform.apiProtocolOverride
         localPlatform.models = userModels
       } else {
         for (const model of localPlatform.models) {
@@ -279,8 +298,13 @@ class ModelConfigManager {
       const preservedApiKey = getPlatformApiKey(existingPlatforms, existing)
         || this.findLocalPlatformWithSameRemoteModelId(rp)?.apiKey
         || ''
+      const remoteBaseUrl = rp.baseUrl || ''
+      const baseUrlOverride = existing?.baseUrlOverride
+      const baseUrl = baseUrlOverride ?? remoteBaseUrl
       const inferredProtocol = inferPlatformApiProtocol(rp)
-      const platformProtocol = inferredProtocol === 'custom' ? 'openai-chat' : inferredProtocol
+      const remoteApiProtocol = isBuiltinApiProtocol(inferredProtocol) ? inferredProtocol : 'openai-chat'
+      const apiProtocolOverride = existing?.apiProtocolOverride
+      const platformProtocol = apiProtocolOverride ?? remoteApiProtocol
 
       const remoteModels: AIModel[] = (rp.models || []).map(rm => {
         // 自动检测思考模型：根据模型名称/ID 包含关键词时默认开启思考
@@ -301,7 +325,7 @@ class ModelConfigManager {
         // 保留用户已有的设置，否则按自动检测
         const existingModel = existingPlatforms.flatMap(p => p.models || []).find(m => m.id === rm.id)
         // 远程不再下发/使用 jsCode、pricing；调用只认 modelId（或 id）+ 协议预设
-        // 协议跟远控。思考开关以本机已保存的值为准，没有才用远控缺省。
+        // 思考开关优先使用本机已保存的值。
         const {
           jsCode: _ignoredRemoteJsCode,
           pricing: _ignoredRemotePricing,
@@ -319,7 +343,8 @@ class ModelConfigManager {
           modelId: rm.modelId?.trim() || rm.id,
           apiProtocol: platformProtocol,
           enabled: rm.enabled ?? true,
-          maxTokens: rm.maxTokens ?? 4096,
+          maxTokens: rm.maxTokens ?? DEFAULT_MODEL_OUTPUT_TOKENS,
+          maxTokensOverride: existingModel?.maxTokensOverride,
           contextWindow: Number(rm.contextWindow ?? (rm as any).context_window ?? (rm as any).context_length ?? (rm as any).contextLength) || existingModel?.contextWindow,
           temperature: rm.temperature ?? 0.7,
           topP: rm.topP ?? 0.9,
@@ -367,8 +392,12 @@ class ModelConfigManager {
         id: rp.id,
         name: rp.name || rp.displayName || rp.id,
         displayName: rp.displayName || rp.name || rp.id,
-        baseUrl: rp.baseUrl || '',
+        baseUrl,
+        remoteBaseUrl,
+        baseUrlOverride,
         apiProtocol: platformProtocol,
+        remoteApiProtocol,
+        apiProtocolOverride,
         description: rp.description,
         icon: rp.icon,
         url: rp.url,
@@ -376,7 +405,7 @@ class ModelConfigManager {
         inviteText: String(rp.inviteText || '').trim(),
         inviteCode: String(rp.inviteCode || '').trim(),
         isRemote: true,
-        apiKey: preservedApiKey,
+        apiKey: usesSharedDeepSeekKey({ baseUrl, isRemote: true }) ? '' : preservedApiKey,
         enabled: existing?.enabled ?? true,
         customHeaders: existing?.customHeaders,
         models,
@@ -423,17 +452,18 @@ class ModelConfigManager {
     platformId: string,
     candidateModels?: AIModel[]
   ): void {
-    const pool = candidateModels
-      ?? this.settings.platforms.find(p => p.id === platformId)?.models ?? []
-    const findReplacement = (visionOnly = false): AIModel | undefined =>
+    const platformModels = this.settings.platforms.find(p => p.id === platformId)?.models ?? []
+    const pool = candidateModels ?? platformModels
+    const findReplacement = (requiresVision = false): AIModel | undefined =>
       pool.find((model) =>
         model.id !== modelId
         && model.enabled !== false
-        && (!visionOnly || modelHasVision(model))
+        && (!requiresVision || modelHasVision(model))
       )
 
     if (this.settings.selectedTextModels?.includes(modelId)) {
-      const replacement = findReplacement()
+      const removed = platformModels.find(model => model.id === modelId)
+      const replacement = findReplacement(modelHasVision(removed)) ?? findReplacement()
       this.settings.selectedTextModels = this.settings.selectedTextModels.filter(id => id !== modelId)
       if (replacement && !this.settings.selectedTextModels.includes(replacement.id)) {
         this.settings.selectedTextModels.push(replacement.id)
@@ -448,9 +478,6 @@ class ModelConfigManager {
       }
       this.settings.selectedSummaryModel = this.settings.selectedSummaryModels[0] || null
     }
-    if (this.settings.selectedVisionModel === modelId) {
-      this.settings.selectedVisionModel = findReplacement(true)?.id || null
-    }
     if (this.settings.selectedAgentModel === modelId) {
       this.settings.selectedAgentModel = findReplacement()?.id || null
     }
@@ -464,6 +491,9 @@ class ModelConfigManager {
     const snapshot = JSON.parse(JSON.stringify(this.settings)) as ModelSettings
     this.notifyListeners()
     void writeSecureDocument('model_settings', snapshot).then(saved => {
+      if (this.settings.deepseekApiKey === snapshot.deepseekApiKey && this.settings.deepseekApiKey !== saved.deepseekApiKey) {
+        this.settings.deepseekApiKey = saved.deepseekApiKey
+      }
       for (const next of saved.platforms || []) {
         const current = this.settings.platforms.find(platform => platform.id === next.id)
         const submitted = snapshot.platforms.find(platform => platform.id === next.id)
@@ -513,6 +543,14 @@ class ModelConfigManager {
     return this.settings.platforms
   }
 
+  getPlatformApiKey(platform: AIPlatform): string {
+    return usesSharedDeepSeekKey(platform) ? this.settings.deepseekApiKey || '' : platform.apiKey
+  }
+
+  setDeepSeekApiKey(key: string): void {
+    this.settings.deepseekApiKey = key
+  }
+
   /**
    * 获取启用的平台
    */
@@ -552,7 +590,7 @@ class ModelConfigManager {
   }
 
   /**
-   * 获取所有选中的文本模型
+   * 获取所有选中的答题模型。
    */
   getSelectedTextModels(): AIModel[] {
     // 如果新字段有数据，直接返回
@@ -568,7 +606,7 @@ class ModelConfigManager {
   }
 
   /**
-   * 切换文本模型选中状态（最多5个）
+   * 切换答题模型选中状态。
    */
   toggleSelectedTextModel(modelId: string): void {
     this.normalizeSelectedModels()
@@ -577,7 +615,7 @@ class ModelConfigManager {
     if (idx !== -1) {
       this.settings.selectedTextModels.splice(idx, 1)
     } else {
-      if (this.settings.selectedTextModels.length >= 5) return
+      if (this.settings.selectedTextModels.length >= MAX_ANSWER_MODELS) return
       this.settings.selectedTextModels.push(modelId)
     }
     this.settings.selectedTextModel = this.settings.selectedTextModels[0] || null
@@ -652,29 +690,22 @@ class ModelConfigManager {
   }
 
   /**
-   * 获取当前选中的视觉模型
+   * 从答题模型中选择第一个支持视觉的模型。
    */
   getSelectedVisionModel(): AIModel | null {
-    if (!this.settings.selectedVisionModel) return null
-    
-    const allModels = this.settings.platforms.flatMap(p => p.models)
-    return allModels.find(m => m.id === this.settings.selectedVisionModel && modelHasVision(m)) || null
+    return this.getSelectedTextModels().find(modelHasVision) || null
   }
 
   /**
    * 获取当前选中的模型（文本模型或视觉模型）
    */
   getSelectedModel(): AIModel | null {
-    // 优先返回总结模型，然后文本模型，如果没有则返回视觉模型
+    // 优先返回总结模型，然后是第一个答题模型。
     const summaryModel = this.getSelectedSummaryModel()
     if (summaryModel) {
       return summaryModel
     }
-    const textModel = this.getSelectedTextModel()
-    if (textModel) {
-      return textModel
-    }
-    return this.getSelectedVisionModel()
+    return this.getSelectedTextModel()
   }
 
   /**
@@ -691,32 +722,6 @@ class ModelConfigManager {
   setSelectedSummaryModel(modelId: string | null): void {
     this.settings.selectedSummaryModel = modelId
     this.settings.selectedSummaryModels = modelId ? [modelId] : []
-  }
-
-  /**
-   * 设置选中的视觉模型
-   */
-  setSelectedVisionModel(modelId: string | null): void {
-    this.settings.selectedVisionModel = modelId
-    // 移除互斥逻辑，允许同时选择文本和视觉模型
-  }
-
-  /**
-   * 切换视觉模型选中状态（再点一次取消选择）
-   */
-  toggleSelectedVisionModel(modelId: string): void {
-    if (this.settings.selectedVisionModel === modelId) {
-      this.settings.selectedVisionModel = null
-    } else {
-      this.settings.selectedVisionModel = modelId
-    }
-  }
-
-  /**
-   * 判断视觉模型是否被选中
-   */
-  isVisionModelSelected(modelId: string): boolean {
-    return this.settings.selectedVisionModel === modelId
   }
 
   getSelectedAgentModel(): AIModel | null {
@@ -768,14 +773,48 @@ class ModelConfigManager {
     return id
   }
 
-  /**
-   * 更新平台配置
-   */
+  setPlatformApiProtocol(platformId: string, protocol: ApiProtocol): void {
+    const platform = this.settings.platforms.find(item => item.id === platformId)
+    if (!platform) return
+    if (!platform.isRemote) {
+      this.updatePlatform(platformId, { apiProtocol: protocol })
+      return
+    }
+    if (!isBuiltinApiProtocol(protocol)) return
+
+    const remoteApiProtocol = platform.remoteApiProtocol ?? 'openai-chat'
+    const apiProtocolOverride = protocol === remoteApiProtocol ? undefined : protocol
+    this.updatePlatform(platformId, {
+      remoteApiProtocol,
+      apiProtocolOverride,
+      apiProtocol: protocol,
+    })
+  }
+
+  resetPlatformConnection(platformId: string): void {
+    const platform = this.settings.platforms.find(item => item.id === platformId)
+    if (!platform?.isRemote || platform.remoteBaseUrl === undefined) return
+
+    this.updatePlatform(platformId, {
+      baseUrl: platform.remoteBaseUrl,
+      apiProtocol: platform.remoteApiProtocol ?? 'openai-chat',
+      apiProtocolOverride: undefined,
+    })
+  }
+
+  /** 更新平台配置。 */
   updatePlatform(platformId: string, updates: Partial<AIPlatform>): void {
     const platform = this.settings.platforms.find(p => p.id === platformId)
     if (platform) {
+      if (updates.apiKey !== undefined && usesSharedDeepSeekKey({ ...platform, ...updates })) {
+        this.setDeepSeekApiKey(updates.apiKey)
+        updates = { ...updates, apiKey: '' }
+      }
       const wasEnabled = platform.enabled !== false
       Object.assign(platform, updates)
+      if (platform.isRemote && updates.baseUrl !== undefined) {
+        platform.baseUrlOverride = platform.baseUrl === platform.remoteBaseUrl ? undefined : platform.baseUrl
+      }
       if (updates.name) {
         platform.displayName = updates.name
       }
@@ -809,9 +848,6 @@ class ModelConfigManager {
     }
     if (this.settings.selectedSummaryModel && duplicatedModelIds.has(this.settings.selectedSummaryModel)) {
       this.settings.selectedSummaryModel = null
-    }
-    if (this.settings.selectedVisionModel && duplicatedModelIds.has(this.settings.selectedVisionModel)) {
-      this.settings.selectedVisionModel = null
     }
     if (this.settings.selectedAgentModel && duplicatedModelIds.has(this.settings.selectedAgentModel)) {
       this.settings.selectedAgentModel = null
@@ -882,14 +918,14 @@ class ModelConfigManager {
    * 重置配置
    */
   reset(): void {
-    Object.assign(this.settings, DEFAULT_MODEL_SETTINGS)
+    Object.assign(this.settings, DEFAULT_MODEL_SETTINGS, { deepseekApiKey: '' })
   }
 
   /**
    * 导出配置
    */
   export(): string {
-    return JSON.stringify({ ...this.settings, platforms: this.settings.platforms.map(platform => ({ ...platform, apiKey: '', customHeaders: {} })) }, null, 2)
+    return JSON.stringify({ ...this.settings, deepseekApiKey: '', platforms: this.settings.platforms.map(platform => ({ ...platform, apiKey: '', customHeaders: {} })) }, null, 2)
   }
 
   /**
@@ -902,6 +938,7 @@ class ModelConfigManager {
         Object.assign(this.settings, {
           ...DEFAULT_MODEL_SETTINGS,
           ...importedSettings,
+          deepseekApiKey: this.settings.deepseekApiKey,
           platforms: sanitizeStoredPlatforms(importedSettings.platforms || []),
         })
         this.normalizeSelectedModels()
@@ -945,3 +982,8 @@ class ModelConfigManager {
 
 export type { ModelConfigManager }
 export const modelConfigManager = new ModelConfigManager()
+
+export const withConfiguredDeepSeekKey = (search: SearchSettings): SearchSettings => {
+  if (search.provider !== 'deepseek') return search
+  return { ...search, deepseekApiKey: modelConfigManager.getSettings().deepseekApiKey || '' }
+}

@@ -9,7 +9,7 @@ export const PROTECT_CREDENTIALS_TOOL = {
       account: { type: 'string', description: '从指定用户消息精确识别的账号，不得包含周围说明文字。' },
       password: { type: 'string', description: '精确密码，保留特殊字符与空格。' },
       api_key: { type: 'string', description: '用户提供的 API Key。' },
-      provider_id: { type: 'string', description: '已配置的模型平台 ID，或 search/exa、search/deepseek。API Key 不允许用于浏览器输入。' },
+      provider_id: { type: 'string', description: '已配置的模型平台 ID，或 search/exa、search/deepseek、search/tavily、search/brave、search/you。API Key 不允许用于浏览器输入。' },
     } },
   },
 }

@@ -17,7 +17,7 @@ import {
   indentOnInput,
   syntaxHighlighting,
 } from '@codemirror/language'
-import { EditorSelection, EditorState } from '@codemirror/state'
+import { Compartment, EditorSelection, EditorState } from '@codemirror/state'
 import { oneDark } from '@codemirror/theme-one-dark'
 import {
   drawSelection,
@@ -47,6 +47,11 @@ const emit = defineEmits<{
 }>()
 
 const containerRef = ref<HTMLElement | null>(null)
+const editability = new Compartment()
+const editabilityExtensions = () => [
+  EditorState.readOnly.of(Boolean(props.readonly)),
+  EditorView.editable.of(!props.readonly),
+]
 let view: EditorView | null = null
 let themeObserver: MutationObserver | null = null
 let syncingFromProp = false
@@ -207,7 +212,6 @@ const roundedRectPath = (rect: SelectionRect, radius = 4) => {
     return `M ${rect.left} ${rect.top} L ${rect.right} ${rect.top} L ${rect.right} ${rect.bottom} L ${rect.left} ${rect.bottom} Z`
   }
   return [
-    EditorState.readOnly.of(Boolean(props.readonly)),
     `M ${rect.left + rad} ${rect.top}`,
     `L ${rect.right - rad} ${rect.top}`,
     `Q ${rect.right} ${rect.top} ${rect.right} ${rect.top + rad}`,
@@ -548,6 +552,7 @@ const buildExtensions = () => {
     : [syntaxHighlighting(defaultHighlightStyle, { fallback: true }), codeHighlightStyle]
 
   return [
+    editability.of(editabilityExtensions()),
     lineNumbers(),
     foldGutter({
       markerDOM: (open) => {
@@ -620,9 +625,13 @@ watch(() => props.modelValue, (value) => {
   setDoc(value ?? '')
 })
 
-watch(() => [props.language, props.readonly], () => {
+watch(() => props.language, () => {
   const text = view?.state.doc.toString() ?? props.modelValue
   createEditor(text)
+})
+
+watch(() => props.readonly, () => {
+  view?.dispatch({ effects: editability.reconfigure(editabilityExtensions()) })
 })
 
 onMounted(() => {

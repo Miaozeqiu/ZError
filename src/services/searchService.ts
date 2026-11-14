@@ -1,4 +1,4 @@
-import type { SearchSettings } from './app/settings'
+import { getSearchProvider, normalizeSearchSettings, type SearchProvider, type SearchSettings } from './searchProviders'
 
 export interface SearchResultItem {
   title: string
@@ -52,13 +52,6 @@ const isTauriEnvironment = (): boolean => {
     window.location.protocol === 'tauri:'
   )
 }
-
-const normalizeConfig = (config: SearchSettings): SearchSettings => ({
-  enabled: config.enabled === true,
-  apiKey: typeof config.apiKey === 'string' ? config.apiKey.trim() : '',
-  provider: config.provider === 'deepseek' ? 'deepseek' : 'exa',
-  deepseekApiKey: typeof config.deepseekApiKey === 'string' ? config.deepseekApiKey.trim() : '',
-})
 
 const getFetchImpl = async (): Promise<typeof fetch> => (await import('./security/secureFetch')).secureFetch
 
@@ -428,8 +421,8 @@ const parseSearchResults = (text: string, maxResults: number): SearchResultItem[
   return parseStructuredSearchText(trimmed, maxResults)
 }
 
-const buildCacheKey = (query: string, config: SearchSettings): string =>
-  JSON.stringify([config.provider, config.provider === 'deepseek' ? config.deepseekApiKey : config.apiKey, query])
+const buildCacheKey = (query: string, provider: SearchProvider, key: string): string =>
+  JSON.stringify([provider.id, key, query])
 
 const cloneOutcome = (outcome: WebSearchOutcome): WebSearchOutcome => ({
   ...outcome,
@@ -472,6 +465,74 @@ const callDeepSeekSearch = async (query: string, config: SearchSettings, signal:
   return { text, results }
 }
 
+type RestSearchProvider = Exclude<SearchProvider, { id: 'exa' | 'deepseek' }>
+
+const callRestSearch = async (query: string, provider: RestSearchProvider, key: string, signal: AbortSignal) => {
+  if (!key) throw new Error(`请先填写 ${provider.name} API Key`)
+
+  let endpoint: string
+  let init: RequestInit
+  switch (provider.id) {
+    case 'tavily':
+      endpoint = 'https://api.tavily.com/search'
+      init = {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query, search_depth: 'basic', max_results: MAX_RESULTS }),
+      }
+      break
+    case 'brave': {
+      const url = new URL('https://api.search.brave.com/res/v1/web/search')
+      url.search = new URLSearchParams({
+        q: query, count: String(MAX_RESULTS), result_filter: 'web', text_decorations: 'false',
+      }).toString()
+      endpoint = url.href
+      init = { headers: { Accept: 'application/json', 'X-Subscription-Token': key } }
+      break
+    }
+    case 'you':
+      endpoint = 'https://ydc-index.io/v1/search'
+      init = {
+        method: 'POST',
+        headers: { 'X-API-Key': key, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query, count: MAX_RESULTS }),
+      }
+      break
+  }
+
+  const fetchImpl = await getFetchImpl()
+  const response = await abortable(fetchImpl(endpoint, { ...init, signal }), signal)
+  if (!response.ok) throw new Error(`${provider.name} 搜索失败（HTTP ${response.status}）`)
+  const text = await abortable(response.text(), signal)
+  let payload: any
+  try { payload = JSON.parse(text) } catch {
+    throw new Error(`${provider.name} 搜索返回无效响应`)
+  }
+
+  const rows = provider.id === 'tavily' ? payload?.results
+    : provider.id === 'brave' ? payload?.web?.results ?? (payload?.type === 'search' ? [] : undefined)
+    : payload?.results?.web
+  if (!Array.isArray(rows)) throw new Error(`${provider.name} 搜索响应缺少结果列表`)
+
+  const results: SearchResultItem[] = []
+  for (const item of rows) {
+    if (!item || typeof item.title !== 'string' || typeof item.url !== 'string' || !/^https?:\/\//i.test(item.url)) continue
+    const excerpts = Array.isArray(item.snippets)
+      ? item.snippets.filter((part: unknown) => typeof part === 'string').join(' ')
+      : ''
+    const snippet = provider.id === 'tavily' ? item.content : excerpts || item.description
+    const published = item.published_date ?? item.page_age
+    results.push({
+      title: item.title,
+      url: item.url,
+      snippet: typeof snippet === 'string' ? snippet.slice(0, 1200) : '',
+      ...(typeof published === 'string' ? { published } : {}),
+    })
+    if (results.length >= MAX_RESULTS) break
+  }
+  return { text: results.length ? text : '', results }
+}
+
 /**
  * 执行一次联网搜索。
  * 失败会抛出 Error，调用方决定是否继续答题。
@@ -482,7 +543,7 @@ export const performWebSearch = async (
   options: { signal?: AbortSignal; force?: boolean } = {}
 ): Promise<WebSearchOutcome> => {
   if (options.signal?.aborted) throw abortReason(options.signal)
-  const config = normalizeConfig(settings)
+  const config = normalizeSearchSettings({ ...settings, enabled: settings.enabled === true })
   if (!config.enabled) {
     throw new Error('联网搜索未启用')
   }
@@ -492,7 +553,9 @@ export const performWebSearch = async (
     throw new Error('搜索关键词为空')
   }
 
-  const cacheKey = buildCacheKey(effectiveQuery, config)
+  const provider = getSearchProvider(config.provider)
+  const key = config[provider.key] || ''
+  const cacheKey = buildCacheKey(effectiveQuery, provider, key)
   if (!options.force) {
     const cached = searchCache.get(cacheKey)
     if (cached && Date.now() - cached.at < SEARCH_CACHE_TTL_MS) {
@@ -509,16 +572,17 @@ export const performWebSearch = async (
     controller.abort(new DOMException('搜索超时（30 秒）', 'TimeoutError'))
   }, timeoutMs)
   try {
-    const deepseek = config.provider === 'deepseek'
-    const operation: Promise<{ text: string; results?: SearchResultItem[] }> = deepseek
-      ? callDeepSeekSearch(effectiveQuery, config, controller.signal)
-      : callRemoteMcp(effectiveQuery, config, controller.signal)
+    const operation: Promise<{ text: string; results?: SearchResultItem[] }> = provider.id === 'exa'
+      ? callRemoteMcp(effectiveQuery, config, controller.signal)
+      : provider.id === 'deepseek'
+        ? callDeepSeekSearch(effectiveQuery, config, controller.signal)
+        : callRestSearch(effectiveQuery, provider, key, controller.signal)
     const response = await abortable(operation, controller.signal)
     const { text } = response
     const results = response.results ?? parseSearchResults(text, MAX_RESULTS)
     const outcome: WebSearchOutcome = {
       query: effectiveQuery,
-      toolName: deepseek ? 'deepseek_search' : EXA_TOOL_NAME,
+      toolName: provider.toolName,
       mode: 'remote',
       durationMs: Date.now() - startedAt,
       results,

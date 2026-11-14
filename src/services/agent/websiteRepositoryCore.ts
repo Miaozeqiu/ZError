@@ -1,22 +1,21 @@
-/** A local copy-on-write repository, independent of git executables and UI. */
-import { validateSkillMarkdown } from './skillFormat'
+/** Cached cloud experience with separately stored local additions. */
+import { parseSkillFrontmatter, validateSkillMarkdown } from './skillFormat'
 import { websiteManifest, type WebsiteManifest, type WebsiteRepositoryIcon } from './websiteRepositoryManifest'
 export type WebsiteSnapshot = { revision: string; files: Record<string, string>; etag?: string; checkedAt: number; website?: WebsiteManifest; icon?: WebsiteRepositoryIcon }
-export type WebsiteFork = {
-  id: string; parentRevision: string; updatedAt: number
-  files: Record<string, string>; bases: Record<string, string | null>; conflicts: string[]
-}
-export type WebsiteLocalCommit = {
-  id: string; parent: string; upstreamRevision: string; createdAt: number
-  kind: 'write' | 'migrate' | 'reset' | 'resolve-local' | 'resolve-upstream' | 'update'
-  paths: string[]
-}
+type GraphRecord = Record<string, unknown>
+type GraphDelta = { nodes: Record<string, GraphRecord>; edges: GraphRecord[] }
 export type WebsiteRepositoryDocument = {
-  version: 1; generation: number; upstream: WebsiteSnapshot; fork?: WebsiteFork
-  migrated?: boolean; history?: WebsiteLocalCommit[]; historyTruncated?: boolean
-  selection?: { id: string; snapshot: WebsiteSnapshot }
-  checkpoints?: Record<string, WebsiteSnapshot>
+  version: 3; generation: number; upstream: WebsiteSnapshot
+  supplement: string; graph?: GraphDelta; migrated?: boolean
 }
+export type LegacyWebsiteRepositoryDocument = {
+  version: 1; generation: number; upstream: WebsiteSnapshot; migrated?: boolean
+  fork?: { files: Record<string, string>; bases: Record<string, string | null> }
+}
+type MultiFileWebsiteRepositoryDocument = Omit<WebsiteRepositoryDocument, 'version' | 'supplement'> & {
+  version: 2; supplements: Record<string, string>
+}
+export type StoredWebsiteRepositoryDocument = WebsiteRepositoryDocument | LegacyWebsiteRepositoryDocument | MultiFileWebsiteRepositoryDocument
 export const repositoryPath = (path: string) => /^(?:SKILL\.md|site-graph\.json|references\/[a-z0-9][a-z0-9-]*\.md)$/.test(path)
 const copy = <T>(value: T): T => JSON.parse(JSON.stringify(value))
 const own = (value: object, key: string) => Object.prototype.hasOwnProperty.call(value, key)
@@ -54,19 +53,108 @@ export const validateWebsiteSnapshot = (snapshot: WebsiteSnapshot, identity?: { 
   if (graph.edges.some((edge: any) => !ids.has(edge.from) || !ids.has(edge.to) || typeof edge.label !== 'string')) throw new Error('网站图谱连接无效')
 }
 
+const supplementHeading = '## 本地补充经验'
+const normalize = (text: string) => text.replace(/\r\n/g, '\n').replace(/^(?:[ \t]*\n)+/, '').trimEnd()
+const blocks = (text: string) => {
+  const result: string[] = []
+  let block: string[] = [], fence = ''
+  for (const line of normalize(text).split('\n')) {
+    const marker = line.match(/^ {0,3}(`{3,}|~{3,})/)?.[1]
+    if (!line.trim() && !fence) {
+      if (block.length) result.push(block.join('\n'))
+      block = []
+      continue
+    }
+    block.push(line)
+    if (marker && !fence) fence = marker
+    else if (marker && marker[0] === fence[0] && marker.length >= fence.length && line.trim() === marker) fence = ''
+  }
+  if (block.length) result.push(block.join('\n'))
+  return result
+}
+const markdownBody = (path: string, text: string) => path === 'SKILL.md' ? parseSkillFrontmatter(text).rawBody : text
+const extraMarkdown = (path: string, cloud: string, edited: string) => {
+  const base = normalize(markdownBody(path, cloud)), body = normalize(markdownBody(path, edited))
+  const baseline = new Set(blocks(base))
+  const candidate = base && body.startsWith(base + '\n') ? body.slice(base.length) : body
+  return blocks(candidate).filter(block => block !== supplementHeading && !baseline.has(block)).join('\n\n')
+}
+const combineMarkdown = (path: string, cloud: string | undefined, supplement: string | undefined) => {
+  if (!supplement) return cloud
+  if (cloud === undefined) return supplement + '\n'
+  const remaining = extraMarkdown(path, cloud, supplement)
+  return remaining ? `${cloud.trimEnd()}\n\n${supplementHeading}\n\n${remaining}\n` : cloud
+}
+const equal = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
+const graphOf = (raw: string) => JSON.parse(raw) as { nodes: GraphRecord[]; edges: GraphRecord[] }
+const edgeKey = (edge: GraphRecord) => JSON.stringify([edge.from, edge.to, edge.label])
+const graphDelta = (base: string, text: string): GraphDelta | undefined => {
+  const cloud = graphOf(base), edited = graphOf(text)
+  const cloudNodes = new Map(cloud.nodes.map(node => [node.id, node]))
+  const nodes = Object.fromEntries(edited.nodes.flatMap(node => {
+    const original = cloudNodes.get(node.id)
+    const changes = Object.fromEntries(Object.entries(node).filter(([key, value]) => key !== 'id' && !equal(original?.[key], value)))
+    return Object.keys(changes).length ? [[String(node.id), changes]] : []
+  }))
+  const cloudEdges = new Set(cloud.edges.map(edgeKey))
+  const edges = edited.edges.filter(edge => !cloudEdges.has(edgeKey(edge)))
+  return Object.keys(nodes).length || edges.length ? { nodes, edges } : undefined
+}
+const combineGraph = (base: string, delta: GraphDelta) => {
+  const graph = graphOf(base)
+  const nodes = new Map(graph.nodes.map(node => [String(node.id), node]))
+  for (const [id, fields] of Object.entries(delta.nodes)) {
+    const cloud = nodes.get(id)
+    // A patch for a cloud node can become orphaned when the node is removed.
+    if (cloud || Array.isArray(fields.patterns) && typeof fields.title === 'string' && typeof fields.path === 'string'
+      && typeof fields.summary === 'string' && Number.isFinite(fields.row) && Number.isFinite(fields.col)) {
+      nodes.set(id, { ...cloud, ...fields, id })
+    }
+  }
+  const edges = new Map(graph.edges.map(edge => [edgeKey(edge), edge]))
+  for (const edge of delta.edges) {
+    if (nodes.has(String(edge.from)) && nodes.has(String(edge.to))) edges.set(edgeKey(edge), edge)
+  }
+  return JSON.stringify({ ...graph, nodes: [...nodes.values()], edges: [...edges.values()] }, null, 2) + '\n'
+}
+const experiencePath = 'SKILL.md'
+const graphPath = 'site-graph.json'
+const effectiveFile = (document: WebsiteRepositoryDocument, path: string) => {
+  const base = document.upstream.files[path]
+  if (path === graphPath && document.graph) return combineGraph(base, document.graph)
+  return path === experiencePath ? combineMarkdown(path, base, document.supplement) : base
+}
+const collectLegacyNotes = (files: Record<string, string>) => {
+  const notes = [files[experiencePath]]
+  for (const path of Object.keys(files).sort()) {
+    if (path !== experiencePath && files[path].trim()) {
+      notes.push(`### ${path.split('/').at(-1)!.replace(/\.md$/, '')}\n\n${normalize(files[path])}`)
+    }
+  }
+  return notes.filter(Boolean).join('\n\n')
+}
+
 export const createWebsiteRepository = (deps: {
   fallback: WebsiteSnapshot
-  load: () => Promise<WebsiteRepositoryDocument | null>
+  load: () => Promise<StoredWebsiteRepositoryDocument | null>
   save: (document: WebsiteRepositoryDocument) => Promise<unknown>
   download: (previous: WebsiteSnapshot) => Promise<WebsiteSnapshot>
   legacy?: () => Promise<Record<string, string>>
   changed?: (document: WebsiteRepositoryDocument) => void
-  now?: () => number
 }) => {
-  const now = deps.now || Date.now
   const identity = JSON.parse(deps.fallback.files['site-graph.json']) as { id: string; host: string }
   const validate = (snapshot: WebsiteSnapshot) => validateWebsiteSnapshot(snapshot, identity)
-  let document: WebsiteRepositoryDocument = { version: 1, generation: 0, upstream: copy(deps.fallback) }
+  const validateDocument = (next: WebsiteRepositoryDocument) => {
+    // Notes are separate from the cloud package's file budget. Older installs
+    // can have notes spread over several reference files.
+    if (next.supplement.includes('\0') || new TextEncoder().encode(next.supplement).length > 4 * 1024 * 1024) {
+      throw new Error('本地经验过长或包含无效字符，现有内容已保留')
+    }
+    validate(next.graph
+      ? { ...next.upstream, files: { ...next.upstream.files, [graphPath]: effectiveFile(next, graphPath)! } }
+      : next.upstream)
+  }
+  let document: WebsiteRepositoryDocument = { version: 3, generation: 0, upstream: copy(deps.fallback), supplement: '' }
   let loaded: Promise<void> | undefined
   let queue: Promise<unknown> = Promise.resolve()
   let refreshing: Promise<void> | undefined
@@ -75,220 +163,134 @@ export const createWebsiteRepository = (deps: {
     queue = next
     return next
   }
-  const workingSnapshot = () => ({ ...document.upstream, files: { ...document.upstream.files, ...document.fork?.files } })
-  const activeSnapshot = () => document.selection?.snapshot ?? workingSnapshot()
-  const latestCheckpoint = () => {
-    const entry = document.history?.at(-1)
-    return entry?.upstreamRevision === document.upstream.revision ? entry.id : undefined
-  }
-  const workingId = () => Object.keys(document.fork?.files || {}).length
-    ? latestCheckpoint() ?? document.upstream.revision : document.upstream.revision
-  const requireWorkingVersion = () => {
-    if (document.selection) throw new Error('正在使用历史版本，请先回到工作版本再编辑。')
-  }
+  const version = () => `${identity.host}:${document.upstream.revision}:${document.generation}`
   const publish = () => deps.changed?.(copy(document))
-  const commit = async (next: WebsiteRepositoryDocument, kind?: WebsiteLocalCommit['kind'], paths?: string[]) => {
-    const workingChanged = next.upstream.revision !== document.upstream.revision
-      || JSON.stringify(next.upstream.files) !== JSON.stringify(document.upstream.files) || JSON.stringify(next.fork) !== JSON.stringify(document.fork)
-    const changed = workingChanged || next.selection?.id !== document.selection?.id
+  const commit = async (next: WebsiteRepositoryDocument) => {
+    const changed = next.upstream.revision !== document.upstream.revision || !equal(next.upstream.files, document.upstream.files)
+      || next.supplement !== document.supplement || !equal(next.graph, document.graph)
     next.generation = document.generation + Number(changed)
-    validate({ ...next.upstream, files: { ...next.upstream.files, ...next.fork?.files } })
-    if (workingChanged && kind) {
-      const entry = { parent: document.history?.at(-1)?.id || document.fork?.parentRevision || document.upstream.revision,
-        upstreamRevision: next.upstream.revision, createdAt: now(), kind,
-        paths: [...new Set(paths || [])].sort() }
-      // A local revision identifier, not a fabricated upstream Git commit SHA.
-      const bytes = new TextEncoder().encode(JSON.stringify({ host: identity.host, ...entry, generation: next.generation,
-        files: { ...next.upstream.files, ...next.fork?.files }, conflicts: next.fork?.conflicts || [] }))
-      const id = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(byte => byte.toString(16).padStart(2, '0')).join('')
-      next.history = [...(document.history || []), { id, ...entry }]
-      if (next.history.length > 200) { next.history = next.history.slice(-200); next.historyTruncated = true }
-    }
-    const checkpoint = latestCheckpoint()
-    if (workingChanged && checkpoint && !next.checkpoints?.[checkpoint]) {
-      next.checkpoints = { ...next.checkpoints, [checkpoint]: workingSnapshot() }
-    }
-    if (workingChanged && next.checkpoints) {
-      const ids = Object.keys(next.checkpoints)
-      while (ids.length > 8 || new TextEncoder().encode(JSON.stringify(next.checkpoints)).length > 4 * 1024 * 1024) {
-        delete next.checkpoints[ids.shift()!]
-      }
-    }
+    validateDocument(next)
     await deps.save(copy(next))
     document = next
     publish()
   }
-  const setFile = (next: WebsiteRepositoryDocument, path: string, content: string) => {
-    if (content === next.upstream.files[path]) {
-      if (next.fork) { delete next.fork.files[path]; delete next.fork.bases[path]; next.fork.conflicts = next.fork.conflicts.filter(value => value !== path) }
-      return
-    }
-    next.fork ||= { id: `local-${now().toString(36)}`, parentRevision: next.upstream.revision, updatedAt: now(), files: {}, bases: {}, conflicts: [] }
-    if (!own(next.fork.files, path) || next.fork.conflicts.includes(path)) next.fork.bases[path] = next.upstream.files[path] ?? null
-    next.fork.files[path] = content
-    next.fork.conflicts = next.fork.conflicts.filter(value => value !== path)
-    next.fork.updatedAt = now()
+  const setGraph = (next: WebsiteRepositoryDocument, text: string, base = next.upstream.files[graphPath]) => {
+    validate({ ...next.upstream, files: { ...next.upstream.files, [graphPath]: text } })
+    const delta = graphDelta(base, text)
+    if (delta) next.graph = delta
+    else delete next.graph
   }
   const ready = async () => {
     loaded ||= mutate(async () => {
       const stored = await deps.load()
+      const next = copy(document)
+      const oldNotes: Record<string, string> = {}
       if (stored) {
-        if (stored.version !== 1 || !Number.isSafeInteger(stored.generation) || stored.generation < 0) throw new Error('网站仓库缓存版本无效')
+        if (![1, 2, 3].includes(stored.version) || !Number.isSafeInteger(stored.generation) || stored.generation < 0) throw new Error('网站经验缓存无效')
         validate(stored.upstream)
-        if (stored.fork) {
-          const fork = stored.fork
-          if (typeof fork.id !== 'string' || typeof fork.parentRevision !== 'string' || !fork.files || !fork.bases || !Array.isArray(fork.conflicts)
-            || Object.keys(fork.files).some(path => !repositoryPath(path) || !own(fork.bases, path)
-              || (fork.bases[path] !== null && typeof fork.bases[path] !== 'string'))
-            || fork.conflicts.some(path => !own(fork.files, path))) throw new Error('本地网站分支无效，已保留原数据')
-          validate({ ...stored.upstream, files: { ...stored.upstream.files, ...fork.files } })
-        }
-        if (stored.history !== undefined && (!Array.isArray(stored.history) || stored.history.length > 200
-          || stored.history.some(entry => !entry || !/^[a-f0-9]{64}$/.test(entry.id) || typeof entry.parent !== 'string'
-            || typeof entry.upstreamRevision !== 'string' || !Number.isFinite(entry.createdAt)
-            || !['write', 'migrate', 'reset', 'resolve-local', 'resolve-upstream', 'update'].includes(entry.kind)
-            || !Array.isArray(entry.paths) || entry.paths.length > 64 || entry.paths.some(path => !repositoryPath(path)))
-          || new Set(stored.history.map(entry => entry.id)).size !== stored.history.length)) throw new Error('本地提交历史无效，已保留原数据')
-        if (stored.selection) {
-          const { id, snapshot } = stored.selection
-          validate(snapshot)
-          const valid = /^[a-f0-9]{40}$/.test(id)
-            ? id === snapshot.revision
-            : stored.history?.some(entry => entry.id === id && entry.upstreamRevision === snapshot.revision)
-          if (!valid) throw new Error('选中的网站版本无效，已保留原数据')
-        }
-        if (stored.checkpoints) {
-          const entries = Object.entries(stored.checkpoints)
-          if (entries.length > 8) throw new Error('本地网站快照无效，已保留原数据')
-          for (const [id, snapshot] of entries) {
-            if (!/^[a-f0-9]{64}$/.test(id)) throw new Error('本地网站快照无效，已保留原数据')
-            validate(snapshot)
+        next.generation = stored.generation
+        next.upstream = copy(stored.upstream)
+        next.migrated = stored.migrated
+        if (stored.version === 1) {
+          for (const [path, text] of Object.entries(stored.fork?.files || {})) {
+            if (!repositoryPath(path) || typeof text !== 'string') throw new Error('旧的本地经验无效，已保留原数据')
+            const base = stored.fork?.bases?.[path]
+            if (path === graphPath) setGraph(next, text, base ?? undefined)
+            else oldNotes[path] = extraMarkdown(path, base === null ? '' : base ?? stored.upstream.files[path] ?? '', text)
+          }
+        } else {
+          next.graph = stored.graph && copy(stored.graph)
+          if (stored.version === 2) {
+            if (!stored.supplements || typeof stored.supplements !== 'object' || Array.isArray(stored.supplements)
+              || Object.entries(stored.supplements).some(([path, text]) => !repositoryPath(path) || path === graphPath || typeof text !== 'string')) {
+              throw new Error('本地补充无效，已保留原数据')
+            }
+            Object.assign(oldNotes, stored.supplements)
+          } else {
+            if (typeof stored.supplement !== 'string') throw new Error('本地补充无效，已保留原数据')
+            next.supplement = stored.supplement
           }
         }
-        document = copy(stored)
       }
-      // Older versions only retained the current fork. Record a checkpoint without inventing its earlier edits.
-      if (!document.history && Object.keys(document.fork?.files || {}).length) {
-        const next = copy(document)
-        const entry = { parent: next.fork!.parentRevision, upstreamRevision: next.upstream.revision,
-          createdAt: Number.isFinite(next.fork!.updatedAt) ? next.fork!.updatedAt : now(), kind: 'migrate' as const, paths: Object.keys(next.fork!.files).sort() }
-        const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify({ host: identity.host, ...entry, files: next.fork!.files })))
-        next.history = [{ id: [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join(''), ...entry }]
-        await commit(next)
-      }
-      if (!document.migrated && deps.legacy) {
-        const legacy = await deps.legacy()
-        const next = copy(document)
-        for (const [path, content] of Object.entries(legacy)) {
-          if (!repositoryPath(path)) continue
-          if (own(next.fork?.files || {}, path)) continue
-          setFile(next, path, content)
+      const needsLegacy = !next.migrated && Boolean(deps.legacy)
+      if (needsLegacy) {
+        for (const [path, text] of Object.entries(await deps.legacy!())) {
+          if (!repositoryPath(path) || own(oldNotes, path) || (path === graphPath && next.graph)) continue
+          if (path === graphPath) setGraph(next, text)
+          else oldNotes[path] = extraMarkdown(path, next.upstream.files[path] ?? '', text)
         }
         next.migrated = true
-        await commit(next, 'migrate', Object.keys(next.fork?.files || {}))
       }
+      next.supplement = [next.supplement, collectLegacyNotes(oldNotes)].filter(Boolean).join('\n\n')
+      validateDocument(next)
+      if ((stored && stored.version !== 3) || needsLegacy) {
+        next.generation++
+        await deps.save(copy(next))
+      }
+      document = next
       publish()
     }).catch(error => { loaded = undefined; throw error })
     await loaded
   }
-  const inspect = () => copy(document)
-  const version = () => `${identity.host}:${document.upstream.revision}:${document.generation}`
   const read = async (path: string) => {
-    if (!repositoryPath(path)) throw new Error('无效的网站仓库文件路径')
+    if (!repositoryPath(path)) throw new Error('无效的网站经验文件路径')
     await ready()
-    return { content: activeSnapshot().files[path] ?? null, version: version(), readonly: Boolean(document.selection) }
+    return { content: effectiveFile(document, path) ?? null, supplement: path === experiencePath ? document.supplement : '', version: version() }
   }
   return {
-    ready, inspect, read,
-    versionSelection: () => {
-      const working = workingId()
-      const restorable = Object.keys(document.checkpoints || {})
-      const latest = latestCheckpoint()
-      if (latest && !restorable.includes(latest)) restorable.push(latest)
-      return { currentId: document.selection?.id ?? working, workingId: working, pinned: Boolean(document.selection), restorable }
-    },
-    selectVersion: async (id: string | null, downloaded?: WebsiteSnapshot) => {
-      await ready()
-      await mutate(async () => {
-        if (id === workingId()) id = null
-        if (id === (document.selection?.id ?? null)) return
-        const next = copy(document)
-        if (id === null) delete next.selection
-        else {
-          const local = document.history?.find(entry => entry.id === id)
-          const snapshot = local
-            ? document.checkpoints?.[id] ?? (id === latestCheckpoint() ? workingSnapshot() : undefined)
-            : downloaded ?? (document.upstream.revision === id ? document.upstream : undefined)
-          if (!snapshot) throw new Error('该历史版本没有可恢复的快照。')
-          if (snapshot.revision !== (local?.upstreamRevision ?? id)) throw new Error('下载的网站版本与所选提交不一致。')
-          validate(snapshot)
-          next.selection = { id, snapshot: copy(snapshot) }
-        }
-        await commit(next)
-      })
-    },
-    list: async () => { await ready(); return Object.keys(activeSnapshot().files).sort() },
+    ready, read, inspect: () => copy(document),
+    list: async () => { await ready(); return Object.keys(document.upstream.files).sort() },
     write: async (path: string, content: string, expectedVersion?: string) => {
-      if (!repositoryPath(path)) throw new Error('无效的网站仓库文件路径')
+      if (!repositoryPath(path)) throw new Error('无效的网站经验文件路径')
+      if (path !== experiencePath && path !== graphPath) throw new Error('云端参考文件为只读。请在网站 SKILL.md 中添加简短的本地补充。')
       await ready()
       const expected = expectedVersion || version()
-      await mutate(async () => {
-        requireWorkingVersion()
-        if (expected !== version()) throw new Error('网站经验版本已更新，请重新读取原文并合并后保存；未覆盖现有内容')
-        if ((document.fork?.files[path] ?? document.upstream.files[path]) === content) return
+      return mutate(async () => {
+        if (expected !== version()) throw new Error('网站经验已更新，请重新读取后保存，现有内容已保留')
+        if (effectiveFile(document, path)?.trim() === content.trim()) return false
         const next = copy(document)
-        setFile(next, path, content)
-        await commit(next, 'write', [path])
+        if (path === graphPath) setGraph(next, content)
+        else {
+          const base = document.upstream.files[experiencePath]
+          // Notes already shown by the cloud still belong to the local note.
+          const cloudBlocks = new Set(blocks(markdownBody(experiencePath, base)))
+          const hiddenNotes = blocks(document.supplement).filter(block => cloudBlocks.has(block))
+          next.supplement = [...hiddenNotes, extraMarkdown(experiencePath, base, content)].filter(Boolean).join('\n\n')
+        }
+        if (next.supplement === document.supplement && equal(next.graph, document.graph)) return false
+        await commit(next)
+        return true
+      })
+    },
+    writeSupplement: async (content: string, previous: string) => {
+      await ready()
+      await mutate(async () => {
+        const current = document.supplement
+        const text = normalize(content)
+        if (current === text) return
+        if (current !== previous) throw new Error('本地补充已在别处修改，请复制当前草稿后重新打开。')
+        const next = copy(document)
+        next.supplement = text
+        await commit(next)
       })
     },
     reset: async (path?: string) => {
       await ready()
       await mutate(async () => {
-        requireWorkingVersion()
         const next = copy(document)
-        if (!path) delete next.fork
-        else {
-          if (!repositoryPath(path)) throw new Error('无效的网站仓库文件路径')
-          if (next.fork) { delete next.fork.files[path]; delete next.fork.bases[path]; next.fork.conflicts = next.fork.conflicts.filter(value => value !== path) }
-        }
-        await commit(next, 'reset', path ? [path] : Object.keys(document.fork?.files || {}))
-      })
-    },
-    resolve: async (path: string, choice: 'local' | 'upstream') => {
-      await ready()
-      await mutate(async () => {
-        const next = copy(document)
-        requireWorkingVersion()
-        if (!next.fork?.conflicts.includes(path)) throw new Error('该文件没有待处理的冲突')
-        if (choice === 'upstream') { delete next.fork.files[path]; delete next.fork.bases[path] }
-        else if (choice === 'local') next.fork.bases[path] = next.upstream.files[path] ?? null
-        else throw new Error('无效的冲突处理方式')
-        next.fork.conflicts = next.fork.conflicts.filter(value => value !== path)
-        await commit(next, choice === 'local' ? 'resolve-local' : 'resolve-upstream', [path])
+        if (path && !repositoryPath(path)) throw new Error('无效的网站经验文件路径')
+        if (!path || path === experiencePath) next.supplement = ''
+        if (!path || path === graphPath) delete next.graph
+        await commit(next)
       })
     },
     refresh: async () => {
       await ready()
-      if (document.selection) return
       if (refreshing) return refreshing
       refreshing = (async () => {
         const snapshot = await deps.download(copy(document.upstream))
         validate(snapshot)
-        await mutate(async () => {
-          if (document.selection) return
-          // Download is outside the write queue: rebase the latest local edits,
-          // including writes made while the network request was in progress.
-          const next = copy(document)
-          next.upstream = copy(snapshot)
-          if (next.fork) for (const [path, local] of Object.entries(next.fork.files)) {
-            const remote = snapshot.files[path] ?? null
-            if (local === remote) { delete next.fork.files[path]; delete next.fork.bases[path]; next.fork.conflicts = next.fork.conflicts.filter(value => value !== path) }
-            else if (next.fork.bases[path] !== remote && !next.fork.conflicts.includes(path)) next.fork.conflicts.push(path)
-          }
-          const paths = [...new Set([...Object.keys(document.upstream.files), ...Object.keys(snapshot.files)])]
-            .filter(path => document.upstream.files[path] !== snapshot.files[path])
-          await commit(next, document.fork && Object.keys(document.fork.files).length ? 'update' : undefined, paths)
-        })
+        await mutate(() => commit({ ...document, upstream: snapshot }))
       })().finally(() => { refreshing = undefined })
       return refreshing
     },

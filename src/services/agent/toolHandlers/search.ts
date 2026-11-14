@@ -1,5 +1,6 @@
 import { useSettings } from '../../app/settings'
 import { formatSearchContextForModel, performWebSearch } from '../../searchService'
+import { modelConfigManager, withConfiguredDeepSeekKey } from '../../model/configManager'
 import type { ChatToolHandler } from '../toolContext'
 
 export const searchToolHandlers: Record<string, ChatToolHandler> = {
@@ -10,7 +11,8 @@ export const searchToolHandlers: Record<string, ChatToolHandler> = {
 
     try {
       const settings = useSettings().settings.search
-      const outcome = await performWebSearch(query, settings, { signal: ctx.abort })
+      if (settings.provider === 'deepseek') await modelConfigManager.ready
+      const outcome = await performWebSearch(query, withConfiguredDeepSeekKey(settings), { signal: ctx.abort })
       return JSON.stringify({
         query: outcome.query,
         durationMs: outcome.durationMs,

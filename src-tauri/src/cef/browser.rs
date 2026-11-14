@@ -74,6 +74,7 @@ struct Tab {
   /// CEF 的父舞台。小窗和展开态共用网页渲染尺寸。
   stage: ViewPtr,
   browser_id: i32,
+  close_waiters: Vec<tokio::sync::oneshot::Sender<()>>,
   /// 原生 Browser 对应的 DevTools target，独立于网址、跳转和 WebSocket 会话。
   target_id: String,
   url: String,
@@ -102,8 +103,11 @@ fn cdp() -> &'static Mutex<Option<CdpConn>> {
   C.get_or_init(|| Mutex::new(None))
 }
 
-fn retain_client(client: &Client) {
-  std::mem::forget(client.clone());
+fn remove_wrapper(wrapper: ViewPtr) {
+  unsafe {
+    (*wrapper_view(wrapper)).removeFromSuperview();
+    drop(Retained::from_raw(wrapper.0 as *mut NSView));
+  }
 }
 
 fn remember_handle(app: &AppHandle) {
@@ -730,8 +734,15 @@ wrap_life_span_handler! {
           let id = tab.id.clone();
           let wrapper = tab.wrapper;
           let stage = tab.stage;
+          let closing = !tab.close_waiters.is_empty();
           reg.by_browser.insert(bid, id);
           drop(reg);
+          if closing {
+            if let Some(host) = browser.host() {
+              host.close_browser(1);
+            }
+            return;
+          }
           bind_hole_browser(wrapper, bid);
           stretch_wrapper_children(wrapper, stage);
           notify_browser_resized(bid);
@@ -798,15 +809,38 @@ wrap_life_span_handler! {
       1
     }
 
+    fn do_close(&self, browser: Option<&mut Browser>) -> i32 {
+      let Some(browser) = browser else { return 1 };
+      let bid = browser.identifier();
+      let app = app_handle().lock().ok().and_then(|handle| handle.clone());
+      if let Some(app) = app {
+        // 默认 macOS 通知会关掉承载网页的主窗口。下一次主线程调度只移除 CEF 的子视图。
+        tauri::async_runtime::spawn(async move {
+          let _ = on_main(&app, move || {
+            let Some(host) = browser_by_id(bid).and_then(|browser| browser.host()) else { return };
+            let view = host.window_handle().cast::<NSView>();
+            if !view.is_null() {
+              unsafe { let _: () = msg_send![view, removeFromSuperview]; }
+            }
+          });
+        });
+      }
+      1
+    }
+
     fn on_before_close(&self, browser: Option<&mut Browser>) {
       let Some(browser) = browser else { return };
       let bid = browser.identifier();
       let closed = if let Ok(mut reg) = registry().lock() {
-        let id = reg.by_browser.remove(&bid);
-        if let Some(id) = id.as_ref() { reg.tabs.remove(id); }
-        id
+        reg.by_browser.remove(&bid).and_then(|id| reg.tabs.remove(&id))
       } else { None };
-      if let Some(id) = closed { forget_target(&id); }
+      if let Some(tab) = closed {
+        forget_target(&tab.id);
+        remove_wrapper(tab.wrapper);
+        for waiter in tab.close_waiters {
+          let _ = waiter.send(());
+        }
+      }
     }
   }
 }
@@ -1675,7 +1709,6 @@ pub async fn open(
     let mut info = WindowInfo::default().set_as_child(parent_handle, &bounds);
     info.runtime_style = RuntimeStyle::ALLOY;
     let mut client = make_client(&id2);
-    retain_client(&client);
     let mut settings = BrowserSettings::default();
     settings.background_color = 0xFFFF_FFFF;
     let cef_url = CefString::from(target.as_str());
@@ -1687,6 +1720,7 @@ pub async fn open(
           wrapper: views.hole,
           stage: views.stage,
           browser_id: 0,
+          close_waiters: Vec::new(),
           target_id: String::new(),
           url: target.clone(),
           title: String::new(),
@@ -1705,6 +1739,10 @@ pub async fn open(
       None,
     );
     if created != 1 {
+      if let Ok(mut reg) = registry().lock() {
+        reg.tabs.remove(&id2);
+      }
+      remove_wrapper(views.hole);
       return Err("创建 CEF 浏览器失败".into());
     }
     // 预热时少泵几圈，剩下交给常驻消息泵，避免启动后首页跟着卡。
@@ -1827,21 +1865,33 @@ pub fn hide_all(app: AppHandle) -> Result<(), String> {
   })?
 }
 
-pub fn close(app: AppHandle, id: String) -> Result<(), String> {
+pub async fn close(app: AppHandle, id: String) -> Result<(), String> {
   crate::macos_video_overlay::hide_tab(&app, &id);
-  on_main(&app, move || {
-    if let Ok(mut reg) = registry().lock() {
-      if let Some(tab) = reg.tabs.remove(&id) {
-        reg.by_browser.remove(&tab.browser_id);
-        unsafe {
-          (*wrapper_view(tab.wrapper)).removeFromSuperview();
-          let _ = Retained::from_raw(tab.wrapper.0 as *mut NSView);
-        }
+  let closed = on_main(&app, move || -> Result<_, String> {
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    let (browser_id, first_close) = {
+      let mut reg = registry().lock().map_err(|_| "浏览器注册表不可用".to_string())?;
+      let Some(tab) = reg.tabs.get_mut(&id) else { return Ok(None) };
+      let first_close = tab.close_waiters.is_empty();
+      tab.close_waiters.push(sender);
+      set_wrapper_hidden(tab.wrapper, true);
+      tab.hidden = true;
+      (tab.browser_id, first_close)
+    };
+    // 尚未完成创建的实例由 on_after_created 负责关闭。
+    if first_close && browser_id != 0 {
+      if let Some(host) = browser_by_id(browser_id).and_then(|browser| browser.host()) {
+        host.close_browser(1);
       }
     }
-    forget_target(&id);
-    Ok(())
-  })?
+    Ok(Some(receiver))
+  })??;
+  if let Some(closed) = closed {
+    tokio::time::timeout(Duration::from_secs(8), closed).await
+      .map_err(|_| "关闭 CEF 浏览器超时".to_string())?
+      .map_err(|_| "浏览器关闭回调未完成".to_string())?;
+  }
+  Ok(())
 }
 
 fn navigate_tab(id: &str, url: &str) {

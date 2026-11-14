@@ -3,7 +3,7 @@ import { nextTick } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { databaseService } from '../../../services/app/database'
 import { PENDING_CORRECTION_FOLDER_ID, type QuestionListCtx } from './types'
-import { hasSelectedFolder, parseFolderId, sortQuestionListByCreateTime } from './format'
+import { hasSelectedFolder, parseFolderId } from './format'
 
 export const bindQuestionListSearch = (ctx: QuestionListCtx) => {
   const openSearch = async () => {
@@ -28,45 +28,41 @@ export const bindQuestionListSearch = (ctx: QuestionListCtx) => {
     void ctx.ops.loadQuestions(ctx.props.selectedFolderId, ctx.pageBeforeSearch.value || 1)
   }
 
-  const performSearch = async () => {
-    if (!ctx.searchTerm.value.trim()) {
+  const performSearch = async (page = 1) => {
+    const keyword = ctx.searchTerm.value.trim()
+    if (!keyword) {
       clearSearch()
       return
     }
     const generation = ++ctx.loadGeneration.value
+    const folder = ctx.props.selectedFolderId
+    const pendingCorrectionOnly = folder === PENDING_CORRECTION_FOLDER_ID
+    const folderId = hasSelectedFolder(folder) && !pendingCorrectionOnly
+      ? parseFolderId(folder || '') ?? undefined
+      : undefined
+
+    if (!ctx.isSearchMode.value) ctx.pageBeforeSearch.value = ctx.currentPage.value
+    ctx.listTransitionName.value = 'list-fade'
+    ctx.isSearchMode.value = true
     try {
-      if (!ctx.isSearchMode.value) ctx.pageBeforeSearch.value = ctx.currentPage.value
-      ctx.listTransitionName.value = 'list-fade'
-      ctx.isSearchMode.value = true
-      ctx.currentPage.value = 1
-      const parsedFolderId = hasSelectedFolder(ctx.props.selectedFolderId)
-        && ctx.props.selectedFolderId !== PENDING_CORRECTION_FOLDER_ID
-        ? parseFolderId(ctx.props.selectedFolderId || '')
-        : null
-      const currentFolderId = parsedFolderId ?? undefined
-      try {
-        const segments = await invoke<string[]>('segment_text', { text: ctx.searchTerm.value.trim() })
-        ctx.highlightTerms.value = segments?.length
-          ? segments
-          : ctx.searchTerm.value.trim().split(/\s+/).filter((item) => item.length > 0)
-      } catch {
-        ctx.highlightTerms.value = ctx.searchTerm.value.trim().split(/\s+/).filter((item) => item.length > 0)
+      const [results, segments] = await Promise.all([
+        databaseService.searchQuestionsPage({
+          keyword, folderId, pendingCorrectionOnly, page,
+          pageSize: ctx.pageSize.value, sortOrder: ctx.createTimeSortOrder.value,
+        }),
+        invoke<string[]>('segment_text', { text: keyword }).catch(() => []),
+      ])
+      if (generation !== ctx.loadGeneration.value || keyword !== ctx.searchTerm.value.trim()) return
+      const lastPage = Math.max(1, Math.ceil(results.total / ctx.pageSize.value))
+      if (page > lastPage) {
+        await performSearch(lastPage)
+        return
       }
-      if (ctx.props.selectedFolderId === PENDING_CORRECTION_FOLDER_ID) {
-        const keyword = ctx.searchTerm.value.trim().toLowerCase()
-        const pendingQuestions = await databaseService.getPendingCorrectionQuestions()
-        if (generation !== ctx.loadGeneration.value) return
-        ctx.questions.value = sortQuestionListByCreateTime(
-          pendingQuestions.filter((question) => question.question.toLowerCase().includes(keyword)),
-          ctx.createTimeSortOrder.value,
-        )
-      } else {
-        const searchResults = await databaseService.searchQuestionsByTitle(ctx.searchTerm.value.trim(), currentFolderId)
-        if (generation !== ctx.loadGeneration.value) return
-        ctx.questions.value = sortQuestionListByCreateTime(searchResults, ctx.createTimeSortOrder.value)
-      }
-      ctx.totalQuestions.value = ctx.questions.value.length
-      ctx.listContentKey.value = `search:${ctx.searchTerm.value}`
+      ctx.highlightTerms.value = segments
+      ctx.currentPage.value = page
+      ctx.questions.value = results.items
+      ctx.totalQuestions.value = results.total
+      ctx.listContentKey.value = `search:${keyword}:${page}`
     } catch (error) {
       if (generation !== ctx.loadGeneration.value) return
       console.error('搜索失败:', error)
@@ -74,8 +70,10 @@ export const bindQuestionListSearch = (ctx: QuestionListCtx) => {
   }
 
   const handleSearch = () => {
+    ++ctx.loadGeneration.value
     if (ctx.searchDebounceTimer.value) clearTimeout(ctx.searchDebounceTimer.value)
     ctx.searchDebounceTimer.value = setTimeout(() => {
+      ctx.searchDebounceTimer.value = null
       void performSearch()
     }, 300) as unknown as number
   }

@@ -10,7 +10,7 @@ import { logAgentDebug } from '../agent/debugLog'
 import { takeToolImages, visionAttachParts } from './toolImages'
 import { mergeToolArgs, mergeToolCalls } from './toolCallMerge'
 import { estimateRequestTextTokens, compactAgentRequestMessages } from './agentRequestContext'
-import { resolveContextBudget, estimateContextTokens, ContextCapacityError } from './contextBudget'
+import { resolveContextBudget, resolveModelOutputLimit, estimateContextTokens, ContextCapacityError } from './contextBudget'
 import { compactExecutionContext, isContextOverflow, isPinnedContextMessage } from './contextCompaction'
 import { SUMMARY_SYSTEM, summarizeRecord } from './contextSummary'
 import { redactReplayMessages, replayAsBackground, thinkingBlocksOf, type ThinkingBlock } from './replayState'
@@ -27,6 +27,7 @@ export type ModelRunEvent =
   | { type: 'usage'; outputTokens: number }
   | { type: 'context_compacted'; beforeTokens: number; afterTokens: number }
   | { type: 'text'; text: string }
+  | { type: 'reasoning'; text: string; durationMs: number }
   | { type: 'tool_pending'; name?: string }
   | { type: 'tool_start'; id: string; name: string; arguments: string }
   | { type: 'tool_end'; id: string; name: string; result: string; error?: string }
@@ -273,7 +274,7 @@ export async function runTextModel(
         ? '请先在模型设置里选择一个能看图的模型'
         : options?.useAgentModel
           ? '请先在模型设置的 agent 里选择一个模型'
-          : '请先在设置里选择一个文本模型',
+          : '请先在设置里选择一个答题模型',
     )
   }
 
@@ -283,7 +284,8 @@ export async function runTextModel(
   if (!platform) {
     throw new Error('未找到模型所属平台')
   }
-  if (!platform.apiKey?.trim()) {
+  const apiKey = modelConfigManager.getPlatformApiKey(platform)
+  if (!apiKey?.trim()) {
     throw new Error('当前平台还没有填写 API Key')
   }
 
@@ -364,13 +366,20 @@ export async function runTextModel(
     tools: options?.tools || [],
   }
   const redactMessages = (items: any[]) => redactReplayMessages(items, value => redactNative(redactObject(value)))
+  const reportReasoning = async (text: string, durationMs: number) => {
+    if (!text.trim() || !options?.onEvent) return
+    const visible = await redactNative(redactText(text)).catch(() => '')
+    if (visible.trim()) options.onEvent({ type: 'reasoning', text: visible, durationMs })
+  }
   const config = {
     ...model,
-    apiKey: platform.apiKey,
+    apiKey,
     customHeaders: platform.customHeaders,
     baseUrl: platform.baseUrl,
     model: runtimeModelId,
     modelId: runtimeModelId,
+    maxTokens: resolveModelOutputLimit(model),
+    maxTokensOverride: undefined,
   }
   if (options?.outputTokenLimit) config.maxTokens = Math.min(Number(config.maxTokens) || options.outputTokenLimit, options.outputTokenLimit)
   const contextBudget = resolveContextBudget(config)
@@ -593,6 +602,7 @@ export async function runTextModel(
       options?.onEvent?.({ type: 'request', inputTokens: requestTokens })
       let result: any
       let responseRetries = 0
+      let requestStartedAt = 0
       const retryResponse = async () => {
         await waitMs(networkBackoffMs(responseRetries++))
         throwIfStopped()
@@ -601,6 +611,7 @@ export async function runTextModel(
       const requestModel = async () => {
         for (;;) {
           requestReturnedResponse = false
+          requestStartedAt = performance.now()
           try {
             return await processModel(requestInput, config, tauriFetch, abortController.signal)
           } catch (error) {
@@ -627,6 +638,8 @@ export async function runTextModel(
           input.messages.push({ role: 'system', content: REPEAT_NUDGE })
           continue
         }
+        if (error instanceof Error && error.name === 'ModelOutputLimitError' && 'providerReasoning' in error
+          && typeof error.providerReasoning === 'string') await reportReasoning(error.providerReasoning, performance.now() - requestStartedAt)
         throw error
       }
       throwIfStopped()
@@ -638,6 +651,8 @@ export async function runTextModel(
       let toolPendingSent = false
       let roundUsage: Record<string, unknown> | undefined
       let reasoning = ''
+      // Measure from the request through the last reasoning chunk, before answer streaming completes.
+      let reasoningDurationMs = 0
       let thinkingBlocks: ThinkingBlock[] = []
       const reportRoundUsage = () => options?.onEvent?.({ type: 'usage', outputTokens: Number(roundUsage?.output_tokens ?? roundUsage?.completion_tokens)
         || estimateRequestTextTokens(fullResponse + reasoning + (toolCalls.length ? JSON.stringify(toolCalls) : '')) })
@@ -649,7 +664,11 @@ export async function runTextModel(
             for await (const chunk of result) {
               throwIfStopped()
               if (chunk?.usage && typeof chunk.usage === 'object') roundUsage = { ...roundUsage, ...chunk.usage }
-              if (typeof chunk?.reasoning_content === 'string') { reasoning += chunk.reasoning_content; armTimeout() }
+              if (typeof chunk?.reasoning_content === 'string' && chunk.reasoning_content) {
+                reasoning += chunk.reasoning_content
+                reasoningDurationMs = performance.now() - requestStartedAt
+                armTimeout()
+              }
               if (Array.isArray(chunk?.thinking_blocks)) thinkingBlocks = thinkingBlocksOf(chunk.thinking_blocks)
               if (chunk?.tool_calls) {
                 mergeToolCalls(toolCalls, chunk.tool_calls, 'delta')
@@ -671,6 +690,7 @@ export async function runTextModel(
           } else {
             if (result?.usage && typeof result.usage === 'object') roundUsage = result.usage
             reasoning = typeof result?.reasoning_content === 'string' ? result.reasoning_content : ''
+            if (reasoning) reasoningDurationMs = performance.now() - requestStartedAt
             thinkingBlocks = thinkingBlocksOf(result?.thinking_blocks)
             mergeToolCalls(toolCalls, normalizeToolCalls(result), 'snapshot')
             const response = collectContent(result)
@@ -688,15 +708,20 @@ export async function runTextModel(
           // JSON, provider filtering, cancellation or an already shown answer.
           reportRoundUsage()
           if (!streamed || fullResponse.trim() || responseRetries >= MAX_STREAM_NETWORK_RETRIES
-            || !isRetryableNetworkError(error, abortController.signal.aborted)) throw error
+            || !isRetryableNetworkError(error, abortController.signal.aborted)) {
+            await reportReasoning(reasoning, reasoningDurationMs)
+            throw error
+          }
           toolCalls = []; toolPendingSent = false; roundUsage = undefined
           fullResponse = ''; reasoning = ''; thinkingBlocks = []
+          reasoningDurationMs = 0
           logModelIo({ kind: 'stream_retry', hop: responseRetries + 1 })
           await retryResponse()
           result = await requestModel()
         }
       }
       reportRoundUsage()
+      await reportReasoning(reasoning, reasoningDurationMs)
       toolCalls = finalizeToolCalls(toolCalls)
       const replayState = { ...(reasoning ? { reasoning_content: reasoning } : {}), ...(thinkingBlocks.length ? { thinking_blocks: thinkingBlocks } : {}) }
       logModelIo({

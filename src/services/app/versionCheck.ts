@@ -3,71 +3,41 @@
  * 负责检查软件更新和版本比较
  */
 
+import { invoke } from '@tauri-apps/api/core';
+import appConfig from '../../../src-tauri/tauri.conf.json';
 import { environmentDetector } from './environmentDetector';
+import { ZERROR_OPEN_ORIGIN } from './openApi';
 
 export interface VersionInfo {
   version: string;
   changelog: string;
   downloadUrl: string;
-  /** macOS 安装包（可选；缺省回退 downloadUrl） */
-  downloadUrlMac?: string;
-  downloadUrlDarwin?: string;
-  /** Windows 安装包（可选；缺省回退 downloadUrl） */
-  downloadUrlWin?: string;
-  downloadUrlWindows?: string;
   releaseDate?: string;
-  /** Tauri Updater 字段（与 changelog 并存时可写 notes） */
-  notes?: string;
-  pub_date?: string;
-  platforms?: Record<string, { url: string; signature: string }>;
 }
 
 export class VersionCheckService {
-  private static readonly API_URL = 'https://webapi.zaizhexue.top/live/latest_version.json';
-  private static readonly CURRENT_VERSION = '2.2.8'; // 当前软件版本
+  private static readonly CURRENT_VERSION = appConfig.version;
 
-  private static getApiUrls(): string[] {
-    return [VersionCheckService.API_URL];
-  }
-
-  /**
-   * 获取最新版本信息
-   */
   public static async getLatestVersion(): Promise<VersionInfo | null> {
-    const urls = VersionCheckService.getApiUrls();
-    let lastError: unknown = null;
+    const native = environmentDetector.isTauriEnvironment();
+    const fetchRelease = native ? (await import('@tauri-apps/plugin-http')).fetch : fetch;
+    const response = await fetchRelease(ZERROR_OPEN_ORIGIN + '/v1/app-updates/latest', {
+      signal: AbortSignal.timeout(12000),
+    });
+    if (response.status === 204) return null;
+    if (!response.ok) throw new Error(`更新服务暂不可用（HTTP ${response.status}）`);
 
-    for (const url of urls) {
-      try {
-        let response: Response;
-
-        if (environmentDetector.isTauriEnvironment()) {
-          const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http');
-          response = await tauriFetch(url);
-        } else {
-          response = await fetch(url);
-        }
-
-        if (!response.ok) {
-          lastError = new Error(`HTTP error! status: ${response.status} (${url})`);
-          continue;
-        }
-
-        const data = await response.json();
-        const info = data as VersionInfo;
-        // 兼容 Tauri 清单用 notes 字段
-        if (!info.changelog && info.notes) {
-          info.changelog = info.notes;
-        }
-        return info;
-      } catch (error) {
-        lastError = error;
-        console.warn(`获取版本信息失败 (${url}):`, error);
-      }
-    }
-
-    console.error('获取版本信息失败:', lastError);
-    return null;
+    const release = await response.json() as Omit<VersionInfo, 'downloadUrl'> & {
+      installers: Record<string, string>;
+    };
+    if (!/^\d+\.\d+\.\d+$/.test(release.version) || !release.installers) throw new Error('更新信息无效');
+    const target = native ? await invoke<string | null>('app_update_target') : null;
+    return {
+      version: release.version,
+      changelog: release.changelog || '',
+      releaseDate: release.releaseDate,
+      downloadUrl: target ? release.installers[target] || '' : '',
+    };
   }
 
   /**
@@ -114,32 +84,12 @@ export class VersionCheckService {
     versionInfo?: VersionInfo;
     currentVersion: string;
   }> {
-    try {
-      const latestVersionInfo = await this.getLatestVersion();
-
-      if (!latestVersionInfo) {
-        return {
-          needsUpdate: false,
-          currentVersion: this.CURRENT_VERSION
-        };
-      }
-
-      const needsUpdate = this.compareVersions(this.CURRENT_VERSION, latestVersionInfo.version);
-
-      console.log(`版本检查结果: 当前版本 ${this.CURRENT_VERSION}, 最新版本 ${latestVersionInfo.version}, 需要更新: ${needsUpdate}`);
-
-      return {
-        needsUpdate,
-        versionInfo: latestVersionInfo,
-        currentVersion: this.CURRENT_VERSION
-      };
-    } catch (error) {
-      console.error('检查更新失败:', error);
-      return {
-        needsUpdate: false,
-        currentVersion: this.CURRENT_VERSION
-      };
-    }
+    const versionInfo = await this.getLatestVersion();
+    return {
+      needsUpdate: Boolean(versionInfo?.downloadUrl && this.compareVersions(this.CURRENT_VERSION, versionInfo.version)),
+      versionInfo: versionInfo ?? undefined,
+      currentVersion: this.CURRENT_VERSION,
+    };
   }
 
   /**

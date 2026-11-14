@@ -1,10 +1,6 @@
-Adapted graph swimlane layout and SVG geometry from Microsoft Visual Studio Code
-Source: https://github.com/microsoft/vscode/blob/main/src/vs/workbench/contrib/scm/browser/scmHistory.ts
-Adapted to pure render data and software-managed local history; no VS Code runtime dependencies.
-
 MIT License
 
-Copyright (c) 2015 - present Microsoft Corporation
+Copyright (c) 2023 LobeHub
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

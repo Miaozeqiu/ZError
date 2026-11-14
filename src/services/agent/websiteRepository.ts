@@ -3,24 +3,25 @@ import { readSecureDocument, writeSecureDocument, redactNative, isNativeSecureSt
 import { redactObject } from '../security/secretRedaction'
 import { listBundledSkillFiles, readBundledSkillFile } from './skills/builtinSkillAssets'
 import { normalizeLegacySkillMarkdown, parseSkillFrontmatter } from './skillFormat'
-import { createWebsiteRepository, repositoryPath, validateWebsiteSnapshot, type WebsiteRepositoryDocument, type WebsiteSnapshot } from './websiteRepositoryCore'
-import { CHAOXING_REPOSITORY, ZJOOC_REPOSITORY, downloadWebsiteRepository, discoverWebsiteRepositories, downloadWebsiteCommitHistory, downloadWebsiteHistoryHead, WebsiteRepositoryHttpError, type WebsiteRepositoryCandidate } from './websiteRepositoryGitHub'
+import { createWebsiteRepository, repositoryPath, validateWebsiteSnapshot, type StoredWebsiteRepositoryDocument, type WebsiteRepositoryDocument, type WebsiteSnapshot } from './websiteRepositoryCore'
+import { CHAOXING_REPOSITORY, ZJOOC_REPOSITORY, ZHIHUISHU_REPOSITORY, downloadWebsiteRepository, discoverWebsiteRepositories, WebsiteRepositoryHttpError, type WebsiteRepositoryCandidate } from './websiteRepositoryGitHub'
+import { downloadOpenWebsiteExperience } from './websiteRepositoryOpen'
 import { parseGitHubWebsiteUrl, type GitHubWebsiteSource } from './websiteRepositoryManifest'
 export { CHAOXING_REPOSITORY, ZJOOC_REPOSITORY }
 export type { WebsiteRepositoryCandidate }
 type Configuration = { id: string; name: string; host: string; source: GitHubWebsiteSource }
-type RegistryEntry = { configuration: Configuration; document: WebsiteRepositoryDocument }
-type CommitPage = Awaited<ReturnType<typeof downloadWebsiteCommitHistory>>
-type Registry = { version: 2; entries: Record<string, RegistryEntry>; commitHistory?: Record<string, CommitPage>; historyHeads?: Record<string, { revision: string; localRevision: string }> }
+type RegistryEntry = { configuration: Configuration; document: StoredWebsiteRepositoryDocument }
+type Registry = { version: 2; entries: Record<string, RegistryEntry> }
 const defaults: Configuration[] = [
   { id: 'chaoxing', name: '学习通', host: 'chaoxing.com', source: CHAOXING_REPOSITORY },
   { id: 'zjooc', name: '在浙学', host: 'zjooc.cn', source: ZJOOC_REPOSITORY },
+  { id: 'zhihuishu', name: '智慧树', host: 'zhihuishu.com', source: ZHIHUISHU_REPOSITORY },
 ]
 const configurations = new Map(defaults.map(value => [value.host, value]))
 const OFFLINE_REVISION = 'bundled:1', CACHE_TTL = 6 * 60 * 60 * 1000
 const initialState = () => ({ ready: false, refreshing: false, revision: '', version: '', checkedAt: 0,
-  source: 'offline' as 'offline' | 'repository', hasFork: false, pinned: false, changedPaths: [] as string[], conflicts: [] as string[], error: '', retryAt: 0, iconUrl: '' })
-export const websiteRepositoryStates = reactive<Record<string, ReturnType<typeof initialState>>>({ 'chaoxing.com': initialState(), 'zjooc.cn': initialState() })
+  source: 'offline' as 'offline' | 'repository', changedPaths: [] as string[], error: '', retryAt: 0, iconUrl: '' })
+export const websiteRepositoryStates = reactive<Record<string, ReturnType<typeof initialState>>>(Object.fromEntries(defaults.map(({ host }) => [host, initialState()])))
 export const websiteRepositoryState = websiteRepositoryStates['chaoxing.com']
 export const repositoryRegistryState = reactive({ revision: 0 })
 const listeners = new Set<(host: string) => void>()
@@ -33,9 +34,14 @@ const validConfiguration = (value: Configuration) => {
   if (parsed.owner !== source.owner || parsed.name !== source.name || typeof source.branch !== 'string' || !source.branch || source.branch.length > 200
     || (source.root && !/^(?:skills|\.agents\/skills)\/[a-z0-9]+(?:-[a-z0-9]+)*$/.test(source.root))) throw new Error('网站仓库来源无效')
 }
+const sameSource = (first: GitHubWebsiteSource, second: GitHubWebsiteSource) =>
+  first.owner.toLowerCase() === second.owner.toLowerCase() && first.name.toLowerCase() === second.name.toLowerCase()
+  && first.branch === second.branch && first.root === second.root
+const usesOpenExperience = (configuration: Configuration) =>
+  defaults.some(official => official.host === configuration.host && sameSource(official.source, configuration.source))
 const loadRegistry = async () => {
   loading ||= (async () => {
-    const stored = await readSecureDocument<Registry | WebsiteRepositoryDocument>('website_repositories')
+    const stored = await readSecureDocument<Registry | Extract<StoredWebsiteRepositoryDocument, { version: 1 }>>('website_repositories')
     const next: Registry = stored?.version === 1 ? { version: 2, entries: { 'chaoxing.com': { configuration: defaults[0], document: stored } } }
       : stored ?? { version: 2, entries: {} }
     if (next.version !== 2 || !next.entries || Array.isArray(next.entries) || Object.keys(next.entries).length > 64) throw new Error('网站仓库索引无效，已保留原数据')
@@ -46,7 +52,7 @@ const loadRegistry = async () => {
       validateWebsiteSnapshot(entry.document.upstream, entry.configuration)
       ids.set(entry.configuration.id, host)
     }
-    registry = clone(next)
+    registry = clone({ version: 2, entries: next.entries })
     for (const [host, entry] of Object.entries(registry.entries)) { configurations.set(host, entry.configuration); websiteRepositoryStates[host] ||= initialState() }
     repositoryRegistryState.revision++
   })().catch(error => { loading = undefined; throw error })
@@ -127,15 +133,20 @@ export const repositoryForHost = (host: string) => {
     save: document => saveEntry(configurations.get(host)!, document),
     legacy: () => legacyFiles(configurations.get(host)!, fallback),
     download: async previous => {
-      const snapshot = await downloadWebsiteRepository(configurations.get(host)!.source, previous, await request(), configurations.get(host)!)
+      const configuration = configurations.get(host)!
+      const fetch = await request()
+      const snapshot = usesOpenExperience(configuration)
+        ? await downloadOpenWebsiteExperience(configuration, previous, fetch)
+        : await downloadWebsiteRepository(configuration.source, previous, fetch, configuration)
       await verifyIcon(snapshot.icon?.dataUrl)
       return snapshot
     },
     changed: document => {
       Object.assign(websiteRepositoryStates[host] ||= initialState(), { ready: true, revision: document.upstream.revision,
-        version: `${host}:${document.upstream.revision}:${document.generation}`, checkedAt: document.upstream.checkedAt, pinned: Boolean(document.selection),
-        source: document.upstream.revision === OFFLINE_REVISION ? 'offline' : 'repository', hasFork: Boolean(Object.keys(document.fork?.files || {}).length),
-        changedPaths: Object.keys(document.fork?.files || {}), conflicts: [...(document.fork?.conflicts || [])], iconUrl: document.selection?.snapshot.icon?.dataUrl ?? document.upstream.icon?.dataUrl ?? '' })
+        version: `${host}:${document.upstream.revision}:${document.generation}`, checkedAt: document.upstream.checkedAt,
+        source: document.upstream.revision === OFFLINE_REVISION ? 'offline' : 'repository',
+        changedPaths: [...(document.supplement ? ['SKILL.md'] : []), ...(document.graph ? ['site-graph.json'] : [])],
+        iconUrl: document.upstream.icon?.dataUrl ?? '' })
       for (const listener of listeners) queueMicrotask(() => listener(host))
     },
   })
@@ -148,15 +159,11 @@ export const repositorySourceFor = (host: string) => configurations.get(host)?.s
 export const websiteRepositoryHosts = async () => { await loadRegistry(); return [...configurations.keys()] }
 const pending = new Map<string, Promise<void>>()
 export const refreshWebsiteRepository = async (host: string, force = false) => {
-  if (pending.has(host)) return pending.get(host)
   const repository = repositoryForHost(host)
   await repository.ready()
+  if (pending.has(host)) return pending.get(host)
   const state = websiteRepositoryStates[host], now = Date.now()
-  const { upstream: cached, selection } = repository.inspect()
-  if (selection) {
-    if (force) throw new Error('正在使用历史版本，请先回到工作版本再更新。')
-    return
-  }
+  const cached = repository.inspect().upstream
   if (now < state.retryAt || (!force && cached.website && cached.icon && now - cached.checkedAt < CACHE_TTL)) return
   state.refreshing = true
   const refresh = repository.refresh().then(() => { state.error = ''; state.retryAt = 0 }).catch(error => {
@@ -166,10 +173,10 @@ export const refreshWebsiteRepository = async (host: string, force = false) => {
   pending.set(host, refresh)
   return refresh
 }
-export const ensureWebsiteRepository = async (host: string) => {
+export const ensureWebsiteRepository = async (host: string, checkOnOpen = false) => {
   await loadRegistry()
   await repositoryForHost(host).ready()
-  if (isNativeSecureStore()) void refreshWebsiteRepository(host).catch(error => { websiteRepositoryStates[host].error = error instanceof Error ? error.message : '网站仓库无法加载' })
+  if (isNativeSecureStore()) void refreshWebsiteRepository(host, checkOnOpen).catch(error => { websiteRepositoryStates[host].error = error instanceof Error ? error.message : '网站仓库无法加载' })
 }
 export const readWebsiteRepositoryFile = async (host: string, path: string) => { await ensureWebsiteRepository(host); return repositoryForHost(host).read(path) }
 export const listWebsiteRepositoryFiles = async (host: string) => { await ensureWebsiteRepository(host); return repositoryForHost(host).list() }
@@ -177,97 +184,11 @@ export const writeWebsiteRepositoryFile = async (host: string, path: string, con
   await ensureWebsiteRepository(host)
   const configuration = configurations.get(host)!
   const text = path === 'SKILL.md' ? normalizeLegacySkillMarkdown(content, configuration.id, { name: configuration.name, description: `${configuration.name}操作经验` }) : content
-  await repositoryForHost(host).write(path, String(await redactNative(redactObject(text))), version)
+  return repositoryForHost(host).write(path, String(await redactNative(redactObject(text))), version)
 }
-export const readWebsiteLocalHistory = async (host: string) => {
-  await loadRegistry()
-  const repository = repositoryForHost(host)
-  await repository.ready()
-  const document = repository.inspect()
-  return { commits: [...(document.history || [])].reverse(), truncated: Boolean(document.historyTruncated),
-    ...repository.versionSelection(), revision: document.upstream.revision, forkId: document.fork?.id || '', hasFork: Boolean(Object.keys(document.fork?.files || {}).length) }
-}
-const selectRepositoryVersion = async (host: string, id: string | null) => {
-  await loadRegistry()
-  const repository = repositoryForHost(host)
-  await repository.ready()
-  if (id === null || /^[a-f0-9]{64}$/.test(id)) return repository.selectVersion(id)
-  if (!/^[a-f0-9]{40}$/.test(id)) throw new Error('无效的网站提交版本。')
-  const { upstream, selection } = repository.inspect()
-  if (selection?.id === id || upstream.revision === id) return repository.selectVersion(id, upstream)
-  const configuration = configurations.get(host)!
-  const snapshot = await downloadWebsiteRepository(
-    { ...configuration.source, branch: id }, { revision: '', files: {}, checkedAt: 0 }, await request(), configuration, undefined, { allowLegacy: true },
-  )
-  await verifyIcon(snapshot.icon?.dataUrl)
-  await repository.selectVersion(id, snapshot)
-}
-const switchingVersions = new Set<string>()
-export const selectWebsiteRepositoryVersion = async (host: string, id: string | null) => {
-  if (switchingVersions.has(host)) throw new Error('该网站正在切换版本。')
-  switchingVersions.add(host)
-  try { await selectRepositoryVersion(host, id) }
-  finally { switchingVersions.delete(host) }
-}
-const commitPages = new Map<string, CommitPage>()
-const pendingCommitPages = new Map<string, Promise<CommitPage>>()
-export const readWebsiteGitHistoryRevision = async (host: string, fallback: string) => {
-  await loadRegistry()
-  const head = registry.historyHeads?.[JSON.stringify(configurations.get(host)?.source)]
-  return head?.localRevision === fallback && /^[a-f0-9]{40}$/.test(head.revision) ? head.revision : fallback
-}
-export const readWebsiteGitHistory = async (host: string, revision: string, page = 1) => {
-  await loadRegistry()
-  const source = configurations.get(host)?.source
-  if (!source) throw new Error('该网站尚未关联仓库')
-  const key = JSON.stringify([source, revision, page])
-  const cached = commitPages.get(key) ?? registry.commitHistory?.[key]
-  if (Array.isArray(cached?.commits) && typeof cached.hasMore === 'boolean') return clone(cached)
-  let pending = pendingCommitPages.get(key)
-  if (!pending) {
-    pending = (async () => {
-      const result = await downloadWebsiteCommitHistory(source, revision, page, await request())
-      if (commitPages.size >= 100) commitPages.delete(commitPages.keys().next().value!)
-      commitPages.set(key, result)
-      // A page is pinned to a commit SHA. Fetch again when the revision changes or the page was evicted.
-      await saveRegistry(next => {
-        const pages = { ...next.commitHistory, [key]: result }
-        const keys = Object.keys(pages)
-        while (keys.length > 32 || JSON.stringify(pages).length > 512 * 1024) delete pages[keys.shift()!]
-        next.commitHistory = pages
-      }).catch(() => undefined) // A disk failure still allows this session to display the fetched page.
-      return result
-    })().finally(() => pendingCommitPages.delete(key))
-    pendingCommitPages.set(key, pending)
-  }
-  return clone(await pending)
-}
-const pendingHistoryRefresh = new Map<string, Promise<CommitPage & { revision: string }>>()
-export const refreshWebsiteGitHistory = async (host: string) => {
-  await loadRegistry()
-  const source = configurations.get(host)?.source
-  if (!source) throw new Error('该网站尚未关联仓库')
-  const key = JSON.stringify(source)
-  let pending = pendingHistoryRefresh.get(key)
-  if (!pending) {
-    pending = (async () => {
-      const { revision: localRevision } = await readWebsiteLocalHistory(host)
-      const revision = await downloadWebsiteHistoryHead(source, await request())
-      const page = await readWebsiteGitHistory(host, revision)
-      // Refresh only the history reference. Website snapshots, forks and
-      // conflicts remain untouched until the user updates the website itself.
-      await saveRegistry(next => {
-        const heads = { ...next.historyHeads }
-        delete heads[key]
-        heads[key] = { revision, localRevision }
-        while (Object.keys(heads).length > 64) delete heads[Object.keys(heads)[0]]
-        next.historyHeads = heads
-      })
-      return { ...page, revision }
-    })().finally(() => pendingHistoryRefresh.delete(key))
-    pendingHistoryRefresh.set(key, pending)
-  }
-  return clone(await pending)
+export const writeWebsiteRepositorySupplement = async (host: string, content: string, previous: string) => {
+  await ensureWebsiteRepository(host)
+  await repositoryForHost(host).writeSupplement(String(await redactNative(redactObject(content))), previous)
 }
 export const ensureChaoxingRepository = () => ensureWebsiteRepository('chaoxing.com')
 export const refreshChaoxingRepository = (force = false) => refreshWebsiteRepository('chaoxing.com', force)
@@ -284,9 +205,7 @@ export const importWebsiteRepository = async (candidate: WebsiteRepositoryCandid
   const { website, source } = candidate
   const previous = configurations.get(website.host)
   if (previous) {
-    const original = previous.source
-    if (original.owner.toLowerCase() !== source.owner.toLowerCase() || original.name.toLowerCase() !== source.name.toLowerCase()
-      || original.branch !== source.branch || original.root !== source.root) throw new Error('该网站已关联另一仓库，未替换原来源、账号或本地经验')
+    if (!sameSource(previous.source, source)) throw new Error('该网站已关联另一仓库，未替换原来源、账号或本地经验')
     await refreshWebsiteRepository(website.host, true)
     if (websiteRepositoryStates[website.host].error) throw new Error(websiteRepositoryStates[website.host].error)
     return website.host

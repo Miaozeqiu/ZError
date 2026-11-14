@@ -1,7 +1,7 @@
 import { computed, ref } from 'vue'
 import { MODEL_REQUEST_CANCELLED_MESSAGE } from './errors'
 import { buildQuestionImagePreview } from './imageQuestion'
-import type { RequestLog } from './types'
+import type { LocalQuestionSearch, RequestLog } from './types'
 
 export const MAX_REQUEST_LOGS = 100
 
@@ -69,6 +69,7 @@ export const releaseRequestLogPayload = (log: RequestLog) => {
   log.streamingReasoning = undefined
   log.reasoningContent = undefined
   log.multiModelResponses = undefined
+  log.localMatches = undefined
   log.searchTraces = undefined
   log.modelInfo = undefined
   log.headers = {}
@@ -309,8 +310,11 @@ export const applyLocalRequestCompletion = (
 export const applyRequestLogCompletePayload = (payload: {
   id?: string
   status?: number
+  http_status?: number
   response_time?: number
   response_body?: string
+  response_headers?: Record<string, string>
+  local_search?: LocalQuestionSearch
   stage?: string
 }) => {
   const id = String(payload?.id || '')
@@ -318,8 +322,11 @@ export const applyRequestLogCompletePayload = (payload: {
   const existingLog = requestLogs.value.find(log => log.id === id)
   if (!existingLog) return
   if (typeof payload.status === 'number') existingLog.status = payload.status
+  if (typeof payload.http_status === 'number') existingLog.httpStatus = payload.http_status
   if (typeof payload.response_time === 'number') existingLog.responseTime = payload.response_time
   if (typeof payload.response_body === 'string') existingLog.responseBody = payload.response_body
+  if (payload.response_headers) existingLog.responseHeaders = payload.response_headers
+  if (payload.local_search) existingLog.localSearch = payload.local_search
   existingLog.stage = payload.stage || 'completed'
   existingLog.isModelCalling = false
 }

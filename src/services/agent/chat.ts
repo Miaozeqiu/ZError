@@ -6,6 +6,8 @@ export type {
   AgentContextSummary,
   AgentContextUsage,
   AgentQuizAttempt,
+  AgentQuizAttemptRef,
+  AgentQuizOptionQuote,
   AgentStudyEvalNote,
   AgentSubagentJob,
   AgentSubagentKind,
@@ -21,7 +23,8 @@ export {
   parseMessageParts,
 } from './folderTokens'
 export type { AgentMessagePart } from './folderTokens'
-export { formatQuizAttempt, hydrateQuizCards } from './quizTools'
+export { formatQuizAttempt } from './quizAttemptText'
+export { hydrateQuizCards } from './quizTools'
 export {
   AGENT_CONTEXT_COMPACT_AT,
   AGENT_CONTEXT_LIMIT,
@@ -43,6 +46,7 @@ export {
   createChat,
   ensureBrowserChat,
   isChatBusy,
+  newChatSelected,
   recordQuizAttempt,
   removeChat,
   removeComposerAttachment,
@@ -64,6 +68,6 @@ export { sendChatMessage } from './chatLoop'
 export {
   startFileImportChat,
   startFolderOrganizeChat,
-  startStudyGraphChat,
+  draftStudyGraphChat,
   startStudySubjectChat,
 } from './chatStarters'

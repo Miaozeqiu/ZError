@@ -6,7 +6,7 @@
     </button>
     <Teleport to="body">
       <Transition name="settings-select-pop" @before-leave="retireMenu">
-        <div v-if="open" ref="menuRef" :id="`${id}-options`" class="select-menu" :class="{ 'opens-above': above }" :style="menuStyle" role="listbox" :aria-label="label" @keydown="onMenuKey">
+        <div v-if="open" ref="menuRef" :id="`${id}-options`" class="select-menu settings-popup" :class="{ 'opens-above': above }" :style="menuStyle" role="listbox" :aria-label="label" @keydown="onMenuKey">
           <button v-for="(option, index) in options" :key="option.value" type="button" class="select-option" :class="{ selected: option.value === modelValue }" role="option" :aria-selected="option.value === modelValue" :tabindex="index === focusedIndex ? 0 : -1" @focus="focusedIndex = index" @click="select(option.value)">
             <span>{{ option.label }}</span>
             <Icon v-if="option.value === modelValue" icon="lucide:check" width="14" height="14" aria-hidden="true" />

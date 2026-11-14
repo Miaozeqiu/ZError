@@ -138,6 +138,18 @@
   opacity: 0.85;
 }
 
+/* --- 表单弹窗布局 --- */
+.account-dialog { width: 440px; max-width: calc(100vw - 32px); }
+.account-dialog-footer { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding-top: 4px; }
+.account-dialog-cancel { border: none; border-radius: 999px; padding: 6px 14px; font-size: 14px; font-weight: 500; background: color-mix(in srgb, var(--text-primary) 10%, var(--platform-config-dialog-bg)); color: var(--text-primary); cursor: pointer; transition: background-color 150ms ease; }
+.account-dialog-cancel:focus-visible { outline: 2px solid var(--color-primary, #3b82f6); outline-offset: 2px; }
+@media (hover: hover) and (pointer: fine) {
+  .account-dialog-cancel:hover { background: color-mix(in srgb, var(--text-primary) 15%, var(--platform-config-dialog-bg)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .account-dialog-cancel { transition: none; }
+}
+
 /* ============================================================
  * 表单样式
  * ============================================================ */

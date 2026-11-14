@@ -375,6 +375,8 @@ const NAV_EVAL_TOOLS = new Set([
   'list_campus_courses',
   'list_campus_papers',
   'list_campus_questions',
+  'list_campus_uncategorized_questions',
+  'check_campus_question_duplicate',
   'search_campus_questions',
   'list_campus_tags',
 ])

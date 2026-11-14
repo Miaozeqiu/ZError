@@ -9,10 +9,10 @@ export type ProviderConfig = { baseUrl: string; apiKey: string; modelId?: string
 export type ProviderChunk = { content?: string; reasoning_content?: string; tool_calls?: unknown[]; thinking_blocks?: unknown[]; usage?: Record<string, unknown> }
 export type ProviderFetch = (url: string, init: RequestInit) => Promise<Response>
 export type ProviderAdapter = (input: ProviderRequest, config: ProviderConfig, fetch: ProviderFetch, abortSignal: AbortSignal) => Promise<ProviderChunk | AsyncIterable<ProviderChunk>>
-const incompleteOutputError = (reason: string, config: ProviderConfig) => Object.assign(new Error(reason === 'content_filter'
+const incompleteOutputError = (reason: string, config: ProviderConfig, providerReasoning?: string) => Object.assign(new Error(reason === 'content_filter'
   ? '模型服务端过滤了输出（content_filter），响应未完成。'
   : `模型输出达到长度上限（${config.maxTokens || '服务端默认'} token，${reason}），响应未完成。请在模型设置中增加最大输出长度；思考内容也可能占用该额度。`),
-  { name: reason === 'content_filter' ? 'ModelContentFilterError' : 'ModelOutputLimitError' })
+  { name: reason === 'content_filter' ? 'ModelContentFilterError' : 'ModelOutputLimitError', providerReasoning })
 const helpersFor = (input: ProviderRequest, config: ProviderConfig, modelId: string, thinking: ReturnType<typeof normalizeThinkingOptions>) => {
 
 
@@ -105,7 +105,11 @@ const helpersFor = (input: ProviderRequest, config: ProviderConfig, modelId: str
         const payload = JSON.parse(text);
         if (payload?.error || payload?.success === false || ['failed', 'incomplete'].includes(payload?.status)) throw new Error('模型响应失败：' + JSON.stringify(payload.error || payload.incomplete_details || payload.status));
         const reason = payload?.choices?.[0]?.finish_reason || payload?.stop_reason;
-        if (['length', 'content_filter', 'max_tokens'].includes(reason)) throw incompleteOutputError(reason, config);
+        if (reason === 'length' || reason === 'max_tokens') {
+          const reasoning = pickFirstString(normalizeOpenAIChunk(payload)?.reasoning_content, normalizeAnthropicPayload(payload)?.reasoning_content);
+          throw incompleteOutputError(reason, config, reasoning);
+        }
+        if (reason === 'content_filter') throw incompleteOutputError(reason, config);
         return payload;
       } catch (error) {
         if (!(error instanceof SyntaxError)) throw error;
@@ -127,7 +131,11 @@ const helpersFor = (input: ProviderRequest, config: ProviderConfig, modelId: str
         try { payload = JSON.parse(data); } catch { throw new Error('模型流式响应包含无效 JSON，响应未完成。'); }
         if (payload?.error || ['error', 'response.failed', 'response.incomplete'].includes(payload?.type)) throw new Error('模型流式响应失败：' + JSON.stringify(payload.error || payload.response?.error || payload.response?.incomplete_details || payload.type));
         const reason = payload.choices?.[0]?.finish_reason;
-        if (reason === 'length' || reason === 'content_filter' || payload.delta?.stop_reason === 'max_tokens') throw incompleteOutputError(reason || payload.delta.stop_reason, config);
+        if (reason === 'content_filter') throw incompleteOutputError(reason, config);
+        if (reason === 'length' || payload.delta?.stop_reason === 'max_tokens') {
+          yield payload;
+          throw incompleteOutputError(reason || payload.delta.stop_reason, config);
+        }
         if ((protocol === 'chat' && reason != null) || (protocol === 'responses' && payload.type === 'response.completed') || (protocol === 'anthropic' && payload.type === 'message_stop')) completed = true;
         yield payload;
       }

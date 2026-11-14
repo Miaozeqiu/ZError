@@ -4,7 +4,7 @@ import { BUILTIN_WEBSITES, normalizeWebsiteHost, websiteAccountId, websitePrimar
 import { createSkillMarkdown } from './skillFormat'
 import { migrateWebsiteSkillOverrides } from './websiteDataMigration'
 import { builtinWebsiteIcons } from './websiteIcons'
-import { hasWebsiteRepository, repositorySourceFor, websiteRepositoryStates } from './websiteRepository'
+import { hasWebsiteRepository, websiteRepositoryStates } from './websiteRepository'
 
 export type WebsiteSettingsItem = {
   id: string
@@ -18,7 +18,6 @@ export type WebsiteSettingsItem = {
   loginHosts: string[]
   iconUrl?: string
   repositoryHost?: string
-  repositoryUrl?: string
 }
 
 /** Join by website identity; credentials stay in their existing store, never in public Skill files. */
@@ -33,7 +32,7 @@ export const listWebsiteSettings = async (): Promise<WebsiteSettingsItem[]> => {
       ...site, name: websiteIdentityForHost(site.host)?.name || site.name, loginHosts: [...(websiteIdentityForHost(site.host)?.loginHosts || [])], builtin: true, skillId: site.id === 'chaoxing' ? 'chaoxing' : 'site-learn',
       siteHost: site.id === 'chaoxing' ? undefined : site.host,
       iconUrl: websiteIdentityForHost(site.host)?.iconDataUrl || websiteRepositoryStates[site.host]?.iconUrl || builtinWebsiteIcons[site.host],
-      ...(hasWebsiteRepository(site.host) ? { repositoryHost: site.host, repositoryUrl: repositorySourceFor(site.host)?.url } : {}),
+      ...(hasWebsiteRepository(site.host) ? { repositoryHost: site.host } : {}),
       files: site.id === 'chaoxing' ? chaoxingFiles : learnedFiles.filter(path => path.startsWith(`sites/${site.host}/`)),
       enabled: site.id === 'chaoxing' ? (agentSkillsState.items.find(item => item.id === site.id)?.enabled ?? true) : enabled,
     })
@@ -55,7 +54,7 @@ export const listWebsiteSettings = async (): Promise<WebsiteSettingsItem[]> => {
     const name = identity?.name !== host ? identity?.name || host : recordedName || host
     rows.set(id, { id, name, host, skillId: 'site-learn', siteHost: host, files, builtin: false, enabled, loginHosts: [...(identity?.loginHosts || [])],
       iconUrl: identity?.iconDataUrl || websiteRepositoryStates[host]?.iconUrl || identity?.iconUrl,
-      ...(hasWebsiteRepository(host) ? { repositoryHost: host, repositoryUrl: repositorySourceFor(host)?.url } : {}) })
+      ...(hasWebsiteRepository(host) ? { repositoryHost: host } : {}) })
   }
   return [...rows.values()]
 }

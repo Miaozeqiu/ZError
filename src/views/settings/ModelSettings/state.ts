@@ -1,20 +1,15 @@
 /** 模型设置页的 ref 袋。滚动条、测连通、图标、平台操作都改这里的状态。 */
 import { computed, ref } from 'vue'
-import type { AIModel, AIPlatform, RemoteModelIconMapping } from '../../../services/model/config'
-import { modelHasVision } from '../../../services/model/config'
+import type { AIModel, AIPlatform, ModelSelectionCategory, RemoteModelIconMapping } from '../../../services/model/config'
 import type { ModelConfigApi } from './types'
 
 export const createModelSettingsState = (config: ModelConfigApi) => {
   const {
-    selectedTextModel: globalSelectedTextModel,
-    selectedTextModels: globalSelectedTextModels,
-    selectedSummaryModel: globalSelectedSummaryModel,
+    selectedTextModels: answerModels,
     selectedSummaryModels: globalSelectedSummaryModels,
-    selectedVisionModel: globalSelectedVisionModel,
     selectedAgentModel: globalSelectedAgentModel,
     isTextModelSelected,
     isSummaryModelSelected,
-    isVisionModelSelected,
     isAgentModelSelected,
   } = config
 
@@ -25,20 +20,16 @@ export const createModelSettingsState = (config: ModelConfigApi) => {
   const editingModel = ref<AIModel | null>(null)
   const selectedPlatform = ref<AIPlatform | null>(null)
   const selectedModel = ref<AIModel | null>(null)
-  const currentVisionModel = ref<AIModel | null>(null)
   const showApiKey = ref(false)
-  const selectedCategory = ref<'summary' | 'text' | 'vision' | 'agent'>('text')
+  const selectedCategory = ref<ModelSelectionCategory>('answer')
 
   const currentMultiModels = computed(() => {
-    if (selectedCategory.value === 'text') return globalSelectedTextModels.value
+    if (selectedCategory.value === 'answer') return answerModels.value
     if (selectedCategory.value === 'summary') return globalSelectedSummaryModels.value
     return []
   })
 
   const getPlatformSelectedCount = (platform: AIPlatform): number => {
-    if (selectedCategory.value === 'vision') {
-      return globalSelectedVisionModel.value?.platformId === platform.id ? 1 : 0
-    }
     if (selectedCategory.value === 'agent') {
       return globalSelectedAgentModel.value?.platformId === platform.id ? 1 : 0
     }
@@ -46,27 +37,7 @@ export const createModelSettingsState = (config: ModelConfigApi) => {
     return platform.models.filter((model) => ids.includes(model.id)).length
   }
 
-  const isPlatformSelectedForCategory = (
-    platform: AIPlatform,
-    category: 'summary' | 'text' | 'vision' | 'agent',
-  ) => {
-    if (category === 'text') {
-      return globalSelectedTextModels.value.some((model) => model.platformId === platform.id)
-    }
-    if (category === 'summary') {
-      return globalSelectedSummaryModels.value.some((model) => model.platformId === platform.id)
-    }
-    if (category === 'vision') {
-      return globalSelectedVisionModel.value?.platformId === platform.id
-    }
-    if (category === 'agent') {
-      return globalSelectedAgentModel.value?.platformId === platform.id
-    }
-    return false
-  }
-
   const isCurrentCategoryModelSelected = (model: AIModel) => {
-    if (selectedCategory.value === 'vision') return isVisionModelSelected(model.id)
     if (selectedCategory.value === 'summary') return isSummaryModelSelected(model.id)
     if (selectedCategory.value === 'agent') return isAgentModelSelected(model.id)
     return isTextModelSelected(model.id)
@@ -77,18 +48,7 @@ export const createModelSettingsState = (config: ModelConfigApi) => {
     return selectedPlatform.value.models || []
   })
 
-  const isVisionUnavailable = (model: AIModel) => (
-    selectedCategory.value === 'vision' && !modelHasVision(model)
-  )
-
   const isSelectedPlatformDisabled = computed(() => selectedPlatform.value?.enabled === false)
-
-  const currentModel = computed(() => {
-    if (selectedCategory.value === 'text') return globalSelectedTextModel.value
-    if (selectedCategory.value === 'summary') return globalSelectedSummaryModel.value
-    if (selectedCategory.value === 'agent') return globalSelectedAgentModel.value
-    return currentVisionModel.value
-  })
 
   const testingModelId = ref<string | null>(null)
   const testResults = ref<{ [key: string]: any }>({})
@@ -132,17 +92,13 @@ export const createModelSettingsState = (config: ModelConfigApi) => {
     editingModel,
     selectedPlatform,
     selectedModel,
-    currentVisionModel,
     showApiKey,
     selectedCategory,
     currentMultiModels,
     getPlatformSelectedCount,
-    isPlatformSelectedForCategory,
     isCurrentCategoryModelSelected,
     filteredModels,
-    isVisionUnavailable,
     isSelectedPlatformDisabled,
-    currentModel,
     testingModelId,
     testResults,
     testErrors,

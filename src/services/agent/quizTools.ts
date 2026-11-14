@@ -1,9 +1,9 @@
-import type { AgentQuizAttempt } from './chatTypes'
 import { databaseService } from '../app/database'
-import { parseQuizCards, type QuizCard } from '../../utils/question/quizPractice'
+import { parseOptions, parseQuizCards, quizKind, type QuizCard } from '../../utils/question/quizPractice'
 import { associateQuestionsToKnowledge } from '../study/questionKnowledge'
 import { normalizeType, type ExtractedQuestion } from './import'
 import { listedQuestionsOf, parseQuestionIds } from './toolShared'
+import { normalizeLocalSearchText } from '../../utils/question/localSearchText'
 
 const isChoiceType = (type?: string) => {
   const text = String(type || '')
@@ -35,19 +35,25 @@ export const hydrateQuizCards = async (cards: QuizCard[]) => {
       next.push(card)
       continue
     }
-    const keyword = card.question.replace(/\s+/g, '').slice(0, 24)
+    const comparable = (text: string) => /(?:https?:\/\/|data:image\/|\[图片)/.test(text) ? text : normalizeLocalSearchText(text)
+    const keyword = comparable(card.question)
     if (!keyword) {
       if (card.options) next.push(card)
       continue
     }
     try {
-      const found = await databaseService.searchQuestionsByTitle(card.question.slice(0, 40))
-      const compact = (value: string) => value.replace(/\s+/g, '')
-      const match = found.find((item) => {
-        const left = compact(item.question || '')
-        const right = compact(card.question)
-        return left.includes(right.slice(0, 16)) || right.includes(left.slice(0, 16))
-      })
+      const found = await databaseService.searchQuestionsByTitle(card.question)
+      const normalizeOptions = (options?: string) =>
+        parseOptions(options).map(option => comparable(option.text))
+      const expectedOptions = JSON.stringify(normalizeOptions(card.options))
+      const matches = found.filter(item =>
+        !item.is_pending_correction && item.answer?.trim()
+        && comparable(item.question) === keyword
+        && quizKind(item.question_type, item.options) === quizKind(card.question_type, card.options)
+        && JSON.stringify(normalizeOptions(item.options)) === expectedOptions,
+      )
+      const answers = new Set(matches.map(item => normalizeLocalSearchText(item.answer || '')))
+      const match = answers.size === 1 ? matches[0] : undefined
       if (match) {
         next.push({
           ...card,
@@ -182,26 +188,4 @@ export const saveQuestions = async (items: ExtractedQuestion[], folderId: number
     questionIds: created.map((item) => item.id),
     association,
   }
-}
-
-export const formatQuizAttempt = (attempt: AgentQuizAttempt) => {
-  const n = attempt.index && attempt.total ? `第 ${attempt.index}/${attempt.total} 题` : '这道练习'
-  const id = attempt.question_id ? ` #${attempt.question_id}` : ''
-  const result = attempt.correct == null ? '已作答' : attempt.correct ? '答对了' : '答错了'
-  const last = Boolean(attempt.index && attempt.total && attempt.index >= attempt.total)
-  const lines = [
-    `${n}${id}`,
-    '',
-    attempt.question,
-  ]
-  if (attempt.options) lines.push('', attempt.options)
-  lines.push('', `我选：${attempt.selected || '未选'}`, `对错：${result}`)
-  if (attempt.answer) lines.push(`参考答案：${attempt.answer}`)
-  if (attempt.explanation) lines.push(`题库解析：${attempt.explanation}`)
-  if (attempt.note) lines.push(`备注：${attempt.note}`)
-  lines.push('')
-  lines.push(last
-    ? '这是本轮最后一题。请针对我这一题的选择做评判和解析，可以一句话小结本轮，不要再出新题。'
-    : '请针对我这一题的选择做评判和解析。不要出新题，我还在右侧继续做。')
-  return lines.join('\n')
 }

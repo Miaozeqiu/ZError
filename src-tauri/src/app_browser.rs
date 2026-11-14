@@ -1136,7 +1136,7 @@ pub async fn browser_hide_all(app: AppHandle) -> Result<(), String> {
 pub async fn browser_close(app: AppHandle, id: String) -> Result<(), String> {
   #[cfg(target_os = "macos")]
   if crate::cef_runtime::cef_enabled() {
-    return crate::cef::close(app, id);
+    return crate::cef::close(app, id).await;
   }
   {
   #[cfg(target_os = "macos")]

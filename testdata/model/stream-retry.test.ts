@@ -3,6 +3,7 @@ const api = vi.hoisted(() => ({ fetch: vi.fn(), model: { id: 'stream-test', maxT
 vi.mock('../../src/services/model/providers', () => ({ createBuiltinProvider: () => null }))
 vi.mock('../../src/services/model/config', () => ({ modelHasVision: () => true, modelConfigManager: {
   ready: Promise.resolve(), getSelectedTextModel: () => api.model, getSelectedAgentModel: () => api.model,
+  getPlatformApiKey: (platform: { apiKey: string }) => platform.apiKey,
   getSettings: () => ({ platforms: [{ apiKey: 'synthetic', baseUrl: 'https://model.test', models: [api.model] }] }),
 } }))
 vi.mock('../../src/services/model/protocol', () => ({ resolveRuntimeModelId: () => 'stream-test',
@@ -13,6 +14,26 @@ vi.mock('../../src/services/app/settings', () => ({ settingsManager: { get: () =
 import { runTextModel } from '../../src/services/model/runner'
 beforeEach(() => { api.fetch.mockReset() })
 const network = () => new Error('NetworkError: 读取服务响应失败')
+
+it('measures reasoning through the last reasoning chunk without counting the rest of the answer', async () => {
+  let elapsed = 0
+  const clock = vi.spyOn(performance, 'now').mockImplementation(() => elapsed)
+  const onEvent = vi.fn()
+  api.fetch.mockResolvedValueOnce((async function* () {
+    elapsed = 3_000
+    yield { reasoning_content: '开始' }
+    elapsed = 12_000
+    yield { reasoning_content: '完成' }
+    elapsed = 24_000
+    yield { content: '答案' }
+  })())
+  try {
+    expect(await runTextModel('核对', undefined, { onEvent })).toBe('答案')
+    expect(onEvent).toHaveBeenCalledWith({ type: 'reasoning', text: '开始完成', durationMs: 12_000 })
+  } finally {
+    clock.mockRestore()
+  }
+})
 
 it('retries only the interrupted response, discarding partial calls and keeping a prior dispatched click exactly once', async () => {
   const requests: any[] = [], events: any[] = []

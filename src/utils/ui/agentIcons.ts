@@ -1,4 +1,4 @@
-/** Agent 活动 / 快捷卡片图标：只用 lucide 子集，离线挂进 Iconify。 */
+/** 注册应用使用的 Lucide 图标，供 Iconify 离线渲染。 */
 import { addCollection } from '@iconify/vue/offline'
 import type { IconifyJSON } from '@iconify/types'
 import lucide from '@iconify-json/lucide/icons.json'
@@ -6,25 +6,22 @@ import lucide from '@iconify-json/lucide/icons.json'
 const NEEDED = [
   'globe',
   'github',
-  'cloud',
-  'git-fork',
-  'git-commit-horizontal',
-  'history',
-  'list-filter',
-  'file-text',
-  'external-link',
   'settings-2',
   'square-pen',
   'key-round',
+  'external-link',
   'trash',
   'monitor',
   'maximize-2',
   'minimize-2',
   'x',
   'plus',
+  'paperclip',
+  'folder-plus',
   'search',
   'eye',
   'copy',
+  'quote',
   'eye-off',
   'volume-2',
   'volume-x',
@@ -46,6 +43,7 @@ const NEEDED = [
   'check',
   'play',
   'book-open',
+  'notebook-pen',
   'shield',
   'circle-dot',
   'circle-check',

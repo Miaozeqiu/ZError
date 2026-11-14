@@ -12,6 +12,7 @@ import { searchToolHandlers } from './toolHandlers/search'
 import { parseToolArgs } from './toolArgs'
 import type { ChatToolContext, ChatToolHandler } from './toolContext'
 import { getAgentPolicy } from './agentPolicy'
+import { campusWriteDenial } from './campusPolicy'
 import { requestAgentApproval } from './agentApproval'
 import { noteFailAttempt, shouldBlockRepeatFail } from './failGate'
 import { collectFinishEvidence, judgeFinish } from './finishGate'
@@ -97,6 +98,8 @@ export const executeChatTool = async (input: {
   if (aliased !== call.name) {
     return executeChatTool({ call: { ...call, name: aliased }, ctx })
   }
+  const denied = campusWriteDenial(call.name)
+  if (denied) return JSON.stringify({ ok: false, denied: true, error: denied })
   const args = parseToolArgs(call.arguments)
   if (call.name === 'search_conversation_history' || call.name === 'read_conversation_history') {
     const { liveSession } = await import('./chatStore')
@@ -169,12 +172,15 @@ export const executeChatTool = async (input: {
     if (!content) {
       const repository = websiteRepositoryTarget(id, path)
       if (repository) {
+        if (repository.path.startsWith('references/')) {
+          return JSON.stringify({ ok: false, id, path, error: '云端没有这份参考文件。本站补充经验请读取 SKILL.md。' })
+        }
         const { repositoryPath } = await import('./websiteRepositoryCore')
         if (repositoryPath(repository.path)) {
           const { readWebsiteRepositoryFile } = await import('./websiteRepository')
           const missing = await readWebsiteRepositoryFile(repository.host, repository.path)
           return JSON.stringify({ ok: true, id, path, exists: false, content: '', repository_version: missing.version,
-            hint: '该文件尚不存在；创建时将 repository_version 放入 base_version，修改只保存在本地分支。' })
+            hint: '该文件尚不存在；创建时将 repository_version 放入 base_version，新增经验只保存在本机。' })
         }
       }
       if (id === 'site-learn' && /^sites\/[^/]+\/SKILL\.md$/.test(path)) {
@@ -227,7 +233,7 @@ export const executeChatTool = async (input: {
     }
     const repository = websiteRepositoryTarget(id, path)
     if (repository && !String(args.base_version || '').trim()) return JSON.stringify({ ok: false, id, path,
-      error: '先读取仓库文件原文，并将返回的 repository_version 填入 base_version；未修改本地或官方版本。' })
+      error: '先读取仓库文件原文，并将返回的 repository_version 填入 base_version；现有经验已保留。' })
     const approved = await ensureApproved(
       ctx,
       'write_skill',

@@ -17,6 +17,8 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 
+defineOptions({ inheritAttrs: false })
+
 interface Props {
   modelValue: boolean
   disabled?: boolean

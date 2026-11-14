@@ -193,6 +193,8 @@ pub fn init_database_schema(db_path: &str) -> Result<(), String> {
         &["UPDATE AIResponses SET Difficulty = 0 WHERE Difficulty IS NULL"],
     )?;
 
+    super::question_search::init_index(&conn).map_err(|e| e.to_string())?;
+
     conn.execute(
         "CREATE TABLE IF NOT EXISTS QuestionPracticeHistory (
           Id INTEGER PRIMARY KEY AUTOINCREMENT,

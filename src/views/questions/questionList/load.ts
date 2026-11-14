@@ -36,6 +36,11 @@ export const bindQuestionListLoad = (ctx: QuestionListCtx) => {
   const loadQuestions = async (folderId?: string | null, requestedPage = 1) => {
     const generation = ++ctx.loadGeneration.value
     try {
+      if (ctx.searchDebounceTimer.value) {
+        clearTimeout(ctx.searchDebounceTimer.value)
+        ctx.searchDebounceTimer.value = null
+        ctx.searchTerm.value = ''
+      }
       if (ctx.isSearchMode.value) {
         ctx.searchTerm.value = ''
         ctx.isSearchMode.value = false
@@ -92,7 +97,7 @@ export const bindQuestionListLoad = (ctx: QuestionListCtx) => {
   const refreshData = async () => {
     try {
       if (ctx.isSearchMode.value && ctx.searchTerm.value.trim()) {
-        await ctx.ops.performSearch()
+        await ctx.ops.performSearch(ctx.currentPage.value)
         return
       }
       await loadQuestions(ctx.props.selectedFolderId, ctx.currentPage.value)
@@ -101,31 +106,23 @@ export const bindQuestionListLoad = (ctx: QuestionListCtx) => {
     }
   }
 
-  const goToPreviousPage = () => {
-    if (!ctx.isSearchMode.value && ctx.currentPage.value > 1) {
-      ctx.listTransitionName.value = 'list-prev'
-      void loadQuestions(ctx.props.selectedFolderId, ctx.currentPage.value - 1)
-    }
-  }
-
-  const goToNextPage = () => {
-    if (!ctx.isSearchMode.value && ctx.currentPage.value < ctx.totalPages.value) {
-      ctx.listTransitionName.value = 'list-next'
-      void loadQuestions(ctx.props.selectedFolderId, ctx.currentPage.value + 1)
-    }
-  }
-
   const goToPage = (page: number) => {
-    if (!ctx.isSearchMode.value && page >= 1 && page <= ctx.totalPages.value && page !== ctx.currentPage.value) {
+    if (page < 1 || page > ctx.totalPages.value || page === ctx.currentPage.value) return
+    if (ctx.isSearchMode.value) {
+      void ctx.ops.performSearch(page)
+    } else {
       ctx.listTransitionName.value = page > ctx.currentPage.value ? 'list-next' : 'list-prev'
       void loadQuestions(ctx.props.selectedFolderId, page)
     }
   }
+  const goToPreviousPage = () => goToPage(ctx.currentPage.value - 1)
+  const goToNextPage = () => goToPage(ctx.currentPage.value + 1)
 
   const toggleCreateTimeSort = () => {
     ctx.createTimeSortOrder.value = ctx.createTimeSortOrder.value === 'desc' ? 'asc' : 'desc'
-    applyCreateTimeSort()
-    if (!ctx.isSearchMode.value) {
+    if (ctx.isSearchMode.value) {
+      void ctx.ops.performSearch()
+    } else {
       void loadQuestions(ctx.props.selectedFolderId, ctx.currentPage.value)
     }
   }

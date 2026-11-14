@@ -164,20 +164,20 @@ describe('Skill storage and installation', () => {
     expect(skill?.content).toContain('# 学习通')
   })
 
-  it('migrates old overrides into an encrypted local branch without changing the originals', async () => {
+  it('migrates old overrides into encrypted local notes without changing the originals', async () => {
     io.native = true
     const path = base + 'chaoxing/SKILL.md'
     const original = '---\nname: 我的学习通\ndescription: 旧说明\n---\n\n用户正文\n'
     io.files.set(path, original)
     const mod = await load()
     const doc = await mod.getSkillDocument('chaoxing')
-    expect(doc?.name).toBe('我的学习通')
+    expect(doc?.name).toBe('学习通')
     expect(doc?.markdown).toContain('name: chaoxing')
     expect(io.files.get(path)).toBe(original)
     await mod.saveSkillDocument('chaoxing', doc!.markdown)
     expect(io.files.get(path)).toBe(original)
     const { chaoxingRepository } = await import('../../src/services/agent/websiteRepository')
-    expect(chaoxingRepository.inspect().fork?.files['SKILL.md']).toContain('display-name: 我的学习通')
+    expect(chaoxingRepository.inspect().supplement).toBe('用户正文')
     expect((await mod.getSkillDocument('chaoxing'))?.markdown).toContain('\n\n用户正文\n')
   })
 

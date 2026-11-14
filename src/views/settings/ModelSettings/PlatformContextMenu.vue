@@ -5,6 +5,7 @@
     :y="y"
     :menu-items="menuItems"
     exclusive-key="platform-context-menu"
+    menu-class="settings-popup"
     @item-click="handleItemClick"
     @close="$emit('close')"
   />

@@ -5,7 +5,7 @@ import { createApp, h, nextTick, type App } from 'vue'
 const state = vi.hoisted(() => ({} as Record<string, any>))
 const actions = vi.hoisted(() => ({ policy: vi.fn(), save: vi.fn() }))
 vi.mock('../../src/services/agent/agentPolicy', async () => {
-  state.policy = (await import('vue')).reactive({ permissionMode: 'strict', writeSkills: 'ask', submit: 'ask' })
+  state.policy = (await import('vue')).reactive({ permissionMode: 'strict', writeSkills: 'ask', submit: 'ask', campusUpload: false, campusEdit: false })
   return { agentPolicyState: state.policy, setAgentPolicy: actions.policy }
 })
 vi.mock('../../src/services/agent/agentProfiles', async () => {
@@ -32,7 +32,7 @@ const change = async (id: string, value: string) => {
 }
 beforeEach(() => {
   vi.clearAllMocks()
-  Object.assign(state.policy, { permissionMode: 'strict', writeSkills: 'ask', submit: 'ask' })
+  Object.assign(state.policy, { permissionMode: 'strict', writeSkills: 'ask', submit: 'ask', campusUpload: false, campusEdit: false })
   state.profiles.defaultId = 'agent'
   state.profiles.profiles = [{ id: 'agent', name: 'Agent', preset: 'agent', systemOverlay: '原规则' }]
   actions.policy.mockImplementation(patch => Object.assign(state.policy, patch))
@@ -50,6 +50,20 @@ describe('merged Agent behavior settings', () => {
     expect(actions.policy.mock.calls).toEqual([[{ submit: 'allow' }], [{ writeSkills: 'deny' }]])
     expect(actions.save).not.toHaveBeenCalled()
     expect(state.profiles.profiles[0].systemOverlay).toBe('原规则')
+  })
+  it('toggles campus upload and editing independently', async () => {
+    const upload = root.querySelector<HTMLInputElement>('input[aria-labelledby="agent-campus-upload-label"]')!
+    const edit = root.querySelector<HTMLInputElement>('input[aria-labelledby="agent-campus-edit-label"]')!
+    expect(upload.checked).toBe(false)
+    expect(edit.checked).toBe(false)
+    upload.click()
+    await nextTick()
+    expect(upload.checked).toBe(true)
+    expect(edit.checked).toBe(false)
+    edit.click()
+    await nextTick()
+    expect(edit.checked).toBe(true)
+    expect(actions.policy.mock.calls).toEqual([[{ campusUpload: true }], [{ campusEdit: true }]])
   })
   it('edits the active prompt directly without configuration controls or permission changes', async () => {
     expect(root.querySelector('#agent-rule-profile')).toBeNull()

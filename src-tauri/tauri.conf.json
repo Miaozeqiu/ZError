@@ -31,6 +31,8 @@
       "icons/icon.png"
     ],
     "resources": {
+      "../public/browser-home.html": "browser-home.html",
+      "../public/browser-home": "browser-home",
       "infoplist/zh-Hans.lproj/InfoPlist.strings": "zh-Hans.lproj/InfoPlist.strings",
       "infoplist/zh_CN.lproj/InfoPlist.strings": "zh_CN.lproj/InfoPlist.strings"
     },
@@ -58,7 +60,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEUzNEExNjk0RUExNEEyQzkKUldUSm9oVHFsQlpLNDd3L1M3amw5QmdnZUV0bURqekhZdHhoV1drQk51TEJvQS96aytDSGVXalYK",
       "endpoints": [
-        "https://webapi.zaizhexue.top/live/update.json"
+        "https://open.zerrorai.com/v1/app-updates/native/{{target}}/{{arch}}"
       ],
       "windows": {
         "installMode": "passive"

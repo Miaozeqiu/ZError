@@ -28,6 +28,7 @@ export const buildSameQuestionCheckPrompt = (payload: SameQuestionCheckPayload):
 
   return [
     '你是题目判重助手。请判断「新题目」是否与下列候选中的某一道是同一道题（允许措辞略有差异，但题意与考点必须一致）。',
+    '题型、否定词、关键数字、条件、公式、选项含义或已标明的填空位置不同，判为不同题。选项顺序变化可以忽略，但选项内容必须一致。',
     '只输出一个 JSON 对象，不要代码块，不要其他文字。',
     '若是同一题：{"same":true,"matched_id":<候选id>}',
     '若都不是：{"same":false}',

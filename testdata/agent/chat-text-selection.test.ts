@@ -2,9 +2,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, h, nextTick, type App } from 'vue'
 import { readThreadSelection } from '../../src/utils/ui/threadSelection'
+import { formatQuizAttempt } from '../../src/services/agent/quizAttemptText'
 
 const state = vi.hoisted(() => ({} as Record<string, any>))
 const clipboard = vi.hoisted(() => vi.fn())
+const openReview = vi.hoisted(() => vi.fn())
 vi.mock('@tauri-apps/plugin-clipboard-manager', () => ({ writeText: clipboard }))
 vi.mock('../../src/services/agent/chat', async () => {
   const { ref } = await import('vue')
@@ -14,6 +16,7 @@ vi.mock('../../src/services/agent/chat', async () => {
 })
 vi.mock('../../src/views/agentChat/useAgentChatPanes', async () => ({
   openedWriteStepId: (await import('vue')).ref(null), fallbackQuizCards: () => [], isQuizOpen: () => false, openWrite: vi.fn(), toggleQuiz: vi.fn(),
+  openQuizReview: openReview, quizCardForReview: () => ({ uid: 'q-1' }),
 }))
 vi.mock('../../src/views/agentChat/AgentChatFeatureCards.vue', () => ({ default: { render: () => null } }))
 vi.mock('../../src/composables/useTheme', () => ({ themeState: { isDark: false } }))
@@ -139,4 +142,72 @@ it('folds consecutive tool calls under the first row and keeps search results an
   expect(thread().textContent).not.toContain('读取网页')
   expect(thread().textContent).not.toContain('Example result')
   expect(thread().textContent).toContain('确认结果')
+})
+
+it('shows collapsible reasoning with elapsed time and supports older messages without timing', async () => {
+  state.chat.value = { messages: [
+    { id: 'earlier', role: 'assistant', content: '答复', status: 'done', steps: [], reasoning: '旧记录' },
+    { id: 'short', role: 'assistant', content: '答复', status: 'done', steps: [], reasoning: '简短思考', reasoningDurationMs: 12_500 },
+    { id: 'long', role: 'assistant', content: '答复', status: 'done', steps: [], reasoning: '较长思考', reasoningDurationMs: 125_000 },
+  ] }
+  await nextTick()
+  const toggles = [...root.querySelectorAll<HTMLButtonElement>('.reasoning-toggle')]
+  expect(toggles.map(item => item.querySelector('span')?.textContent)).toEqual([
+    '思考过程', '思考了 12s', '思考了 2 分 5 秒',
+  ])
+  expect(toggles.every(item => item.getAttribute('aria-expanded') === 'false')).toBe(true)
+  const toggle = toggles[2]
+  const panel = document.getElementById(toggle.getAttribute('aria-controls')!)!
+  expect(panel.hasAttribute('inert')).toBe(true)
+  toggle.click()
+  await nextTick()
+  expect(toggle.getAttribute('aria-expanded')).toBe('true')
+  expect(panel.classList.contains('is-open')).toBe(true)
+  expect(panel.hasAttribute('inert')).toBe(false)
+  toggle.click()
+  await nextTick()
+  expect(toggle.getAttribute('aria-expanded')).toBe('false')
+  expect(panel.classList.contains('is-open')).toBe(false)
+  expect(panel.hasAttribute('inert')).toBe(true)
+})
+
+it('shows concise cards for both saved and newly linked quiz answers', async () => {
+  const attempt = {
+    stepId: 'practice', uid: 'q-1', index: 1, total: 10, question: '下列哪一项正确？',
+    options: 'A. 选项一\nB. 选项二', selected: 'A. 选项一', answer: 'B. 选项二', correct: false,
+  }
+  const target = { messageId: 'questions', stepId: attempt.stepId, uid: attempt.uid }
+  const content = formatQuizAttempt(attempt)
+  state.chat.value = { messages: [
+    { id: 'questions', role: 'assistant', content: '', status: 'done', steps: [], quizAttempts: [attempt] },
+    { id: 'old-review', role: 'user', content, status: 'done', steps: [] },
+    { id: 'new-review', role: 'user', content, status: 'done', steps: [], quizAttemptRef: target },
+  ] }
+  await nextTick()
+  const cards = root.querySelectorAll<HTMLButtonElement>('button.quiz-review')
+  expect(cards).toHaveLength(2)
+  for (const card of cards) {
+    expect(card.textContent).toContain('回答错误')
+    expect(card.textContent).toContain('参考答案')
+    expect(card.textContent).not.toContain('请针对我这一题')
+    expect(card.textContent).not.toContain('返回题目')
+    card.querySelector<HTMLElement>('.quiz-review-question')!.click()
+    expect(openReview).toHaveBeenLastCalledWith(target, attempt)
+  }
+  expect(openReview).toHaveBeenCalledTimes(2)
+})
+
+it('renders an option quote without a text bubble and opens its source question', async () => {
+  const quote = {
+    messageId: 'questions', stepId: 'practice', uid: 'q-1', key: 'B', text: '选项正文', question: '原题题干',
+  }
+  state.chat.value = { messages: [
+    { id: 'quoted-option', role: 'user', content: '', status: 'done', steps: [], quizOptionQuotes: [quote] },
+  ] }
+  await nextTick()
+  expect(root.querySelector('.user-bubble')).toBeNull()
+  const reference = root.querySelector<HTMLButtonElement>('.quiz-option-reference-main')!
+  expect(reference.textContent).toContain('选项 B')
+  reference.click()
+  expect(openReview).toHaveBeenCalledExactlyOnceWith(quote, quote)
 })

@@ -3,7 +3,7 @@
 <title>WKWebView 聊天滚动验证</title>
 <style>
 html,body{margin:0;height:100%;font:14px system-ui;background:#fff;color:#222}
-#app{display:flex;flex-direction:column;height:calc(100% - 100px);--chat-gutter:24px;--chat-max-width:720px}
+#app{position:relative;display:flex;flex-direction:column;height:calc(100% - 100px);--chat-gutter:24px;--chat-max-width:720px}
 #tools{height:32px;display:flex;gap:12px;align-items:center;padding:0 12px;background:#eef1f4}
 #status{height:68px;padding:8px 12px;box-sizing:border-box;font:12px monospace;overflow:hidden;background:#eef1f4}
 </style>
@@ -13,6 +13,7 @@ html,body{margin:0;height:100%;font:14px system-ui;background:#fff;color:#222}
 // Only memory refs are changed. No conversation persistence or model calls.
 import {createApp,h,ref,nextTick} from 'vue';
 import Thread from '/src/views/agentChat/AgentChatThread.vue';
+import Composer from '/src/views/agentChat/AgentChatComposer.vue';
 import {sessions,activeId} from '/src/services/agent/chatStore.ts';
 import '/src/styles/themes.css';
 // Match AgentChat.vue: omitting the renderer CSS hides its offscreen sizing behavior.
@@ -29,12 +30,18 @@ const makeLongSession=(id)=>{
  return session;
 };
 sessions.value=[makeLongSession('scroll-test-a'),makeSession('scroll-test-b',60)];activeId.value='scroll-test-a';
-const pinned=ref(true),thread=ref(null), transitions=[];
+const pinned=ref(true),thread=ref(null),composerHeight=ref(108),transitions=[];
 const native=typeof window.__TAURI_INTERNALS__ !== 'undefined';
 let diagnostics={},streaming=true;
 document.querySelector('#engine').textContent=native?'Tauri · WKWebView 原生窗口':'浏览器预览（不能验证 macOS 原生适配）';
 if(native){const {invoke}=await import('@tauri-apps/api/core');setInterval(async()=>{diagnostics=await invoke('scroll_smoke_diagnostics').catch(error=>({error:String(error)}));},200);}
-createApp({setup(){return()=>h(Thread,{ref:thread,pinned:pinned.value,'onUpdate:pinned':v=>{pinned.value=v;transitions.push({at:performance.now(),following:v,top:document.querySelector('.chat-thread')?.scrollTop})},showFeatureCards:false,fileManagerLabel:'访达'})}}).mount('#app');
+createApp({setup(){return()=>[
+ h(Thread,{ref:thread,pinned:pinned.value,'onUpdate:pinned':v=>{pinned.value=v;transitions.push({at:performance.now(),following:v,top:document.querySelector('.chat-thread')?.scrollTop})},showFeatureCards:false,fileManagerLabel:'访达'}),
+ h(Composer,{draft:'',threadPinned:pinned.value,composerFiles:[],composerImages:[],sending:false,canSubmit:false,agentHasVision:false,agentModelLabel:'模型',composerPlaceholder:'问问题',contextUsagePercent:0,contextCompacting:false,contextUsageLabel:'',contextRingDash:'0 45',contextUsageRows:[],contextTipNote:'',fileManagerLabel:'访达',
+   onHeightChange:height=>{composerHeight.value=height;document.querySelector('#app').style.setProperty('--chat-composer-height',height+'px')},
+   onJumpThread:()=>thread.value.jumpThreadToBottom(),
+ }),
+]}}).mount('#app');
 await nextTick();
 const pane=document.querySelector('.chat-thread');
 let events=0,prevented=0;const samples=[],deltas=[];
@@ -55,6 +62,19 @@ if(native && new URLSearchParams(location.search).has('autorun')) {
     await wait(1800);
     streaming=false;
     check('initial follow',pinned.value && pane.scrollHeight-pane.clientHeight-pane.scrollTop<2);
+    const bottom = pane.scrollHeight - pane.clientHeight;
+    const initialComposerHeight = composerHeight.value;
+    pane.dispatchEvent(new WheelEvent('wheel',{deltaY:-12}));
+    pane.scrollTop = bottom - 12;
+    await wait(200);
+    const jumpButton = document.querySelector('.thread-jump');
+    check('return button does not change the scroll limit',!!jumpButton && composerHeight.value===initialComposerHeight && pane.scrollHeight-pane.clientHeight===bottom,
+        { composerHeight: composerHeight.value, initialComposerHeight, bottom, max: pane.scrollHeight-pane.clientHeight });
+    pane.dispatchEvent(new WheelEvent('wheel',{deltaY:12}));
+    pane.scrollTop = bottom;
+    await wait(200);
+    check('downward return keeps the same bottom',atBottom() && !document.querySelector('.thread-jump') && Math.abs(pane.scrollTop-bottom)<1,
+        { bottom, top: pane.scrollTop, max: pane.scrollHeight-pane.clientHeight });
     const staticTrack=[];
     const staticSample=setInterval(()=>staticTrack.push({top:pane.scrollTop,height:pane.scrollHeight,pinned:pinned.value}),8);
     for(let i=0;i<32;i++){await invoke('scroll_smoke_input',{y:8,precise:false});await wait(35)}
@@ -81,7 +101,7 @@ if(native && new URLSearchParams(location.search).has('autorun')) {
     nativeInfo=await invoke('scroll_smoke_input',{y:3,precise:false});
     await wait(650);clearInterval(sample);
     const after=pane.scrollTop;
-    check('small native coarse wheel escapes bottom',after<before-5 && after>before-60,{before,after,track});
+    check('small native coarse wheel escapes bottom',before-after>60 && before-after<100,{before,after,track});
     check('coarse wheel delivered over multiple frames',events>2,{events,deltas:deltas.slice()});
     check('upward input releases follow',!pinned.value);
     // Background WKWebViews throttle interval callbacks. Force a known-size

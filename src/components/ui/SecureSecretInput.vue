@@ -4,7 +4,7 @@
       <input
         :id="id" ref="input" class="form-input" :class="[inputClass, { 'is-saved-hidden': saved && !visible }]"
         :value="displayValue" :type="visible || kind === 'account' ? 'text' : 'password'"
-        :placeholder="saved ? '••••••••' : placeholder"
+        :placeholder="saved ? savedMask : placeholder"
         :aria-label="label" :autocomplete="autocomplete" :required="required && !saved"
         spellcheck="false" @focus="onFocus" @blur="onBlur" @input="onInput"
       />
@@ -36,6 +36,8 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
 const input = ref<HTMLInputElement | null>(null)
 const saved = computed(() => isSecretReference(props.modelValue))
+const keyLength = ref<number>()
+const savedMask = computed(() => '•'.repeat(keyLength.value ?? 8))
 const revealed = ref(''), visible = ref(false), busy = ref(false), copied = ref(false), error = ref('')
 const editing = ref(false), dirty = ref(false), draft = ref('')
 let generation = 0, hideTimer: ReturnType<typeof setTimeout> | undefined, copyTimer: ReturnType<typeof setTimeout> | undefined
@@ -80,6 +82,19 @@ const copy = async () => {
   if (saved.value) return action('copy') // Verification and clipboard write both stay native.
   try { await writeText(props.modelValue); markCopied() } catch { error.value = '无法写入剪贴板' }
 }
+watch(() => props.kind === 'api' && isSecretReference(props.modelValue) ? props.modelValue : null, async (reference, _, onCleanup) => {
+  keyLength.value = undefined
+  if (!reference) return
+
+  let current = true
+  onCleanup(() => { current = false })
+  try {
+    const length = await invoke<number>('secure_api_key_length', { reference })
+    if (current && Number.isSafeInteger(length) && length > 0) keyLength.value = length
+  } catch {
+    // Keep the saved-value placeholder when the vault cannot be read.
+  }
+}, { immediate: true })
 watch(() => props.modelValue, value => {
   if (editing.value && dirty.value && (value === draft.value || isSecretReference(value))) return
   reset(); if (!editing.value) { dirty.value = false; draft.value = '' }

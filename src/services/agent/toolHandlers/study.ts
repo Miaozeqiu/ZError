@@ -6,6 +6,7 @@ import {
   KEEP_GRAPH_HINT,
   WRITE_GRAPH_HINT,
   graphBuildMessage,
+  graphSubjectHint,
   notifyStudyGraph,
   openStudyGraphPane,
   pickSubjectRef,
@@ -165,7 +166,7 @@ export const studyToolHandlers: Record<string, ChatToolHandler> = {
         ...summarizeGraph(payload),
         message: payload.nodes.length
           ? KEEP_GRAPH_HINT
-          : `图谱为空。${WRITE_GRAPH_HINT}`,
+          : `图谱为空。${WRITE_GRAPH_HINT}\n${graphSubjectHint(subject.name)}`,
       })
     } catch (error) {
       const subjects = await databaseService.listStudySubjects().catch(() => [])

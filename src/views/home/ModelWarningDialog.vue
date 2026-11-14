@@ -17,7 +17,7 @@
       <div class="dialog-body">
         <div class="model-warning__message">
           <p>未选择 AI 模型，将无法调用 AI，只能搜索题库中已有的题目。</p>
-          <p>请选择一个文本模型以正常使用 AI 功能。</p>
+          <p>请先选择一个答题模型。</p>
         </div>
 
         <label class="model-warning__checkbox">

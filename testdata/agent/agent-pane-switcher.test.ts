@@ -21,12 +21,12 @@ vi.mock('../../src/views/agentChat/threadDisplay', () => ({
 }))
 import {
   availableGraphSubjectId, availableQuizKey, availableWriteStepId, bindAgentChatPanes,
-  openGraphPane, openedGraphSubjectId, openedQuizKey, openedWriteStepId,
+  openGraphPane, openedGraphSubjectId, openedQuizKey, openedWriteStepId, openQuizReview, paneQuiz,
   selectAgentPane, selectedAgentPane, toggleQuiz,
 } from '../../src/views/agentChat/useAgentChatPanes'
 
 const chat = (id: string) => ({ id, messages: [{ id: 'message', role: 'assistant', status: 'done', content: '', steps: [
-  { id: 'first', name: 'present_quiz', cards: [{}] },
+  { id: 'first', name: 'present_quiz', cards: [{ uid: 'first-question' }, { uid: 'second-question' }] },
   { id: 'latest', name: 'present_quiz', cards: [{}] },
   { id: 'saved', name: 'save_questions', preview: [{}] },
 ] }] })
@@ -40,6 +40,17 @@ beforeEach(() => {
 afterEach(() => scope.stop())
 
 describe('Agent header panel switching', () => {
+  it('reopens the original quiz at the reviewed question, including when already open', () => {
+    openQuizReview({ messageId: 'message', stepId: 'first', uid: 'second-question' },
+      { stepId: 'first', uid: 'second-question', question: '第二题', selected: 'B', answer: 'B' })
+    expect(paneQuiz.value).toMatchObject({ stepId: 'first', focus: { uid: 'second-question' } })
+    openQuizReview({ messageId: 'message', stepId: 'first', uid: 'first-question' },
+      { stepId: 'first', uid: 'first-question', question: '第一题', selected: 'A', answer: 'A' })
+    expect(paneQuiz.value).toMatchObject({ stepId: 'first', focus: { uid: 'first-question' } })
+    toggleQuiz('message', 'latest')
+    expect(paneQuiz.value?.focus).toBeNull()
+  })
+
   it('returns to the selected older quiz after showing the browser', () => {
     toggleQuiz('message', 'first')
     selectAgentPane('browser')

@@ -60,7 +60,7 @@ const mergeHeaders = (init?: RequestInit, withAuth = true) => {
   const headers: Record<string, string> = {
     Accept: 'application/json',
   }
-  if (init?.body) headers['Content-Type'] = 'application/json'
+  if (init?.body && !(init.body instanceof FormData)) headers['Content-Type'] = 'application/json'
   if (init?.headers) {
     new Headers(init.headers).forEach((value, key) => {
       headers[key] = value
@@ -88,37 +88,6 @@ export async function remoteJson<T = any>(url: string, init: RequestInit = {}, w
     throw new RemoteApiError(res.status, messageFrom(data, res.statusText || '请求失败'), data)
   }
   return data as T
-}
-
-export async function remoteUpload(url: string, file: File, field = 'image') {
-  const { fetch } = await import('@tauri-apps/plugin-http')
-  const boundary = `----zerror${Math.random().toString(16).slice(2)}`
-  const bytes = new Uint8Array(await file.arrayBuffer())
-  const encoder = new TextEncoder()
-  const filename = (file.name || 'avatar.webp').replace(/"/g, '')
-  const type = file.type || 'application/octet-stream'
-  const head = encoder.encode(
-    `--${boundary}\r\nContent-Disposition: form-data; name="${field}"; filename="${filename}"\r\nContent-Type: ${type}\r\n\r\n`,
-  )
-  const tail = encoder.encode(`\r\n--${boundary}--\r\n`)
-  const body = new Uint8Array(head.length + bytes.length + tail.length)
-  body.set(head, 0)
-  body.set(bytes, head.length)
-  body.set(tail, head.length + bytes.length)
-
-  const headers: Record<string, string> = {
-    Accept: 'application/json',
-    'Content-Type': `multipart/form-data; boundary=${boundary}`,
-  }
-  const token = readStoredAuthToken()
-  if (token) headers.Authorization = `Bearer ${token}`
-
-  const res = await fetch(url, { method: 'POST', headers, body } as any)
-  const data = await readJson(res)
-  if (!res.ok) {
-    throw new RemoteApiError(res.status, messageFrom(data, res.statusText || '上传失败'), data)
-  }
-  return data
 }
 
 export function pickField<T = any>(source: unknown, ...keys: string[]): T | undefined {

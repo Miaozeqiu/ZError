@@ -6,7 +6,7 @@ export const notifyFoldersChanged = (folderId?: number) => {
   window.dispatchEvent(new CustomEvent('questions-imported', { detail: { folderId } }))
 }
 
-export const notifyCampusUpdated = (detail?: { courseId?: number; paperId?: number }) => {
+export const notifyCampusUpdated = (detail?: { courseId?: number; paperId?: number; courseListChanged?: boolean }) => {
   window.dispatchEvent(new CustomEvent('campus-updated', { detail: detail || {} }))
 }
 

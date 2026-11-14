@@ -12,7 +12,7 @@ import UpdateDialog from "./components/ui/UpdateDialog.vue";
 import Home from "./views/Home.vue";
 import Settings from "./views/Settings.vue";
 import QuestionBank from "./views/QuestionBank.vue";
-import CampusBank from "./views/CampusBank.vue";
+import CampusWorkspace from "./views/campus/CampusWorkspace.vue";
 import Study from "./views/Study.vue";
 import Agent from "./views/Agent.vue";
 import LoginDialog from "./components/ui/LoginDialog.vue";
@@ -489,7 +489,10 @@ onUnmounted(() => {
         </div>
 
         <div v-show="activeTab === 'campus'" class="content-view">
-          <CampusBank />
+          <CampusWorkspace
+            :active="activeTab === 'campus'"
+            :obscured="loginDialogVisible || showUpdateDialog || Boolean(secureStorageState.error)"
+          />
         </div>
 
         <div v-show="activeTab === 'study'" class="content-view">

@@ -172,6 +172,10 @@ impl<'de> Deserialize<'de> for QueryResponse {
 pub struct QueryData {
     pub id: i64,
     pub question: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub question_text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub correction_path: Option<String>,
     pub answer: String,
     pub is_ai: bool,
     pub is_pending_correction: bool,
