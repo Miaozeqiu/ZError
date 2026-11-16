@@ -12,7 +12,7 @@ export const inspectEvalScript = (script: string, policy: BrowserEvalPolicy): st
     return '跳转用 browser_navigate / click；课表页签用 click_text。eval 不要改 location 或 iframe.src。'
   }
   if (FRAME_DOM_RE.test(raw)) {
-    return '指定框用 frame 参数；默认只跑顶层。eval 不要碰 iframe.contentDocument / contentWindow。'
+    return '脚本未执行：请用 browser_get_page 定位子框，将该框的 frameId 和 loaderId 传给 browser_eval，脚本直接读取该框的 document。禁止通过 iframe.contentDocument / contentWindow 跨框读取。'
   }
   if (policy === 'deny') {
     return '当前是播放页。当前看得见的视频只是其中一条。用快照里那一条的 ref 点页签再播放。'

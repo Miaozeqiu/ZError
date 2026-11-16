@@ -1,4 +1,5 @@
 import { loadWebsiteIdentities, normalizeWebsiteHost, saveWebsiteIdentity, websitePrimaryHost } from './websiteIdentity'
+import { hasWebsiteRepository, websiteRepositoryHosts } from './websiteRepository'
 import type { ChatToolHandler } from './toolContext'
 
 const MAX_ICON_BYTES = 256 * 1024
@@ -10,6 +11,9 @@ export const websiteIconTool: ChatToolHandler = async ({ args, ctx }) => {
   const requestedHost = String(args.website || pageUrl || '').trim()
   const host = websitePrimaryHost(requestedHost)
   if (!host || !normalizeWebsiteHost(host)) return JSON.stringify({ ok: false, error: '请提供网站域名，或先打开该网站。' })
+  await websiteRepositoryHosts()
+  const readonly = { ok: false, host, error: '此网站使用仓库或自定义 HTTP 接口提供的图标，只可编辑本站「本地经验」。' }
+  if (hasWebsiteRepository(host)) return JSON.stringify(readonly)
   let url: URL
   try {
     url = new URL(String(args.icon_url || ''))
@@ -59,6 +63,7 @@ export const websiteIconTool: ChatToolHandler = async ({ args, ctx }) => {
       image.decode().then(resolve, reject).finally(() => abort.signal.removeEventListener('abort', stopped))
     })
     if (abort.signal.aborted) throw new DOMException('已停止', 'AbortError')
+    if (hasWebsiteRepository(host)) return JSON.stringify(readonly)
     await saveWebsiteIdentity(host, '', undefined, { url: url.href, dataUrl })
     return JSON.stringify({ ok: true, host, icon_url: url.href, cached: true, bytes: size })
   } catch (error) {

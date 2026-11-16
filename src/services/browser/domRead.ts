@@ -13,7 +13,7 @@ export const parseHtml = (html: string) => {
 
 export const readFrameHtml = async (id: string, frame = 'main') => {
   const key = String(id || '').trim()
-  if (!key) return { ok: false, html: '', url: '' }
+  if (!key) return { ok: false, html: '', url: '', frameId: '' }
   try {
     const { callProtocol } = await import('./protocol')
     const raw = asObject(await callProtocol(key, 'dom_html', { frame }))
@@ -21,8 +21,9 @@ export const readFrameHtml = async (id: string, frame = 'main') => {
       ok: Boolean(raw.ok && raw.html),
       html: String(raw.html || ''),
       url: String(raw.url || ''),
+      frameId: String(raw.frameId || ''),
     }
   } catch {
-    return { ok: false, html: '', url: '' }
+    return { ok: false, html: '', url: '', frameId: '' }
   }
 }

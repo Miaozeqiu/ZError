@@ -2,7 +2,7 @@
 import { peekAppBrowserUrl } from '../browser/appBrowser'
 import { pendingTodos } from './browserTodo'
 import { classifyBrowserPage, type BrowserPageKind } from './browserLoop'
-import { browserTaskIntent, browserTaskTargets, specifiedChapterTargets, type BrowserTaskIntent } from './browserTask'
+import { browserTaskIntent, browserTaskTargets, isWholeCourseScope, specifiedChapterTargets, type BrowserTaskIntent } from './browserTask'
 import { scopedCompletionEvidence, type ScopedCompletionProof, type ScopedCompletionEvidence } from './scopedCompletionEvidence'
 import type { AgentSubagentKind } from './chatTypes'
 import type { AgentTodoItem } from './chatTypes'
@@ -13,6 +13,8 @@ import { coursePlanFor, courseProgress } from '../browser/coursePlan'
 import { courseCompletionEvidence, type CourseCompletionEvidence } from './courseCompletionEvidence'
 import type { ImportTaskStep } from '../app/importTasks'
 import { isReadOnlyReviewGoal, reviewObservationId } from './observationReview'
+import { readStudentChapter, studentChapterUrl } from '../chaoxing/host/chapterTasks'
+import { pendingHomeworkReview } from './homeworkAnswerEvidence'
 
 export type FinishStatus = 'done' | 'blocked' | 'watching'
 
@@ -41,6 +43,8 @@ export type FinishEvidence = {
   scopedCompletion?: ScopedCompletionEvidence
   reviewObservationId?: string
   reviewRequested?: boolean
+  homeworkNavigation?: boolean
+  homeworkReviewPending?: boolean
 }
 
 export const isMultiStepIntent = (intent?: BrowserTaskIntent, extras?: {
@@ -50,6 +54,24 @@ export const isMultiStepIntent = (intent?: BrowserTaskIntent, extras?: {
   if (intent === 'homework') return true
   if (intent === 'play') return true
   return Boolean((extras?.leftJobs?.length || 0) > 1 || (extras?.unfinished || 0) > 1)
+}
+
+const homeworkNavigationSucceeded = (goal = '', steps: ImportTaskStep[] = [], browserId: string) => {
+  const active = goal.replace(/《[^》]*》|「[^」]*」|“[^”]*”/g, '')
+    .replace(/(?:不要|不要再|不用|无需|别)(?:答题|作答|填写|提交|保存|做题)/g, '')
+  if (!/作业/.test(goal) || /完成|写作业|做(?:完|题|作业|一下|下)|答题|作答|填写|提交|保存|解答|播放|视频|测验/.test(active)) return false
+  const listing = /作业(?:列表|清单)|(?:有哪些|有什么)作业/.test(active)
+  const opening = !listing && /打开|进入|点开/.test(active)
+  if (!opening && !listing && !/列出|读取|查看|看看|看下|有哪些|有什么/.test(active)) return false
+  const tool = opening ? 'browser_open_homework' : 'browser_list_homework'
+  const step = steps.filter(item => item.name === tool && item.status === 'done').at(-1)
+  if (!step) return false
+  try {
+    const result = JSON.parse(step.result || '{}')
+    return result.ok === true && (opening
+      ? result.opened === true && result.observed_browser_id === browserId && result.observation_id === step.id
+      : result.partial === false && Array.isArray(result.assignments))
+  } catch { return false }
 }
 
 export const collectFinishEvidence = async (
@@ -68,7 +90,23 @@ export const collectFinishEvidence = async (
   const panel = packAgentPanel(id)
   const plan = coursePlanFor(id)
   const progress = plan ? courseProgress(plan.items) : null
-  const leftJobs = Array.isArray(panel?.leftJobs) ? panel.leftJobs.map(String) : []
+  const targets = extras?.goalText != null ? specifiedChapterTargets(extras.goalText) : browserTaskTargets(sessionId)
+  const chapterIdentity = studentChapterUrl(url)
+  const chapterToolUsed = chapterIdentity && extras?.steps?.some(step =>
+    step.status === 'done' && ['browser_review_chapter', 'browser_complete_chapter', 'browser_start_chapter_tasks'].includes(step.name || ''))
+  const courseChapterFlow = extras?.steps?.some(step => {
+    if (step.status !== 'done') return false
+    if (step.name === 'browser_open_pending_chapter') return true
+    if (step.name !== 'browser_start_chapter_tasks') return false
+    try { return JSON.parse(step.result || '{}').scope === 'course' } catch { return false }
+  })
+  const chapter = chapterToolUsed && !courseChapterFlow && await readStudentChapter(id).catch(() => null)
+  const chapterVerified = chapter && chapter.identity.key === chapterIdentity?.key && chapter.header.remaining === 0
+  const chapterJobsDone = chapterToolUsed || courseChapterFlow
+    ? Boolean(chapterVerified && !isWholeCourseScope(extras?.goalText || '')
+      && (!targets.length || (targets.length === 1 && targets[0] === chapter.header.number)))
+    : panel?.event === 'chapter_jobs_done' || (Boolean(panel?.thisSection) && !panel?.leftJobs?.length)
+  const leftJobs = !chapterVerified && Array.isArray(panel?.leftJobs) ? panel.leftJobs.map(String) : []
   const unfinished = Array.isArray(panel?.unfinishedSections) ? panel.unfinishedSections.length : 0
   return {
     url,
@@ -84,17 +122,18 @@ export const collectFinishEvidence = async (
     watching: Boolean(watch?.sessionId === sessionId && (watch.status === 'watching' || watch.status === 'paused' || watch.status === 'stalled')),
     watchStatus: watch?.sessionId === sessionId ? String(watch.status) : '',
     leftJobs,
-    chapterJobsDone: panel?.event === 'chapter_jobs_done' || (Boolean(panel?.thisSection) && leftJobs.length === 0),
+    chapterJobsDone,
     pageSummary: Boolean(url),
     multiStep: isMultiStepIntent(intent, { leftJobs, unfinished }),
     planDone: progress?.done,
     planTotal: progress?.total,
     planComplete: progress?.complete,
     courseCompletion: kind === 'course' ? courseCompletionEvidence(extras?.steps || [], url) : undefined,
-    scopedCompletion: scopedCompletionEvidence(extras?.steps || [], id, url || '', extras?.goalText != null
-      ? specifiedChapterTargets(extras.goalText) : browserTaskTargets(sessionId), extras?.completion),
+    scopedCompletion: scopedCompletionEvidence(extras?.steps || [], id, url || '', targets, extras?.completion),
     reviewObservationId: reviewObservationId(extras?.goalText, extras?.steps || [], id, url || ''),
     reviewRequested: Boolean(extras?.goalText && isReadOnlyReviewGoal(extras.goalText)),
+    homeworkNavigation: homeworkNavigationSucceeded(extras?.goalText, extras?.steps, id),
+    homeworkReviewPending: pendingHomeworkReview(extras?.steps || []),
   }
 }
 
@@ -115,6 +154,9 @@ export const judgeFinish = (
     return { ok: true, status: want, summary: text }
   }
 
+  if (want === 'done' && evidence.homeworkReviewPending) {
+    return { ok: false, error: '课程作业还没有复核完。用 browser_review_homework 逐批核对实际填写和漏题，补填后重新复核；确实无法核对时说明阻塞。' }
+  }
   const role = evidence.role || 'parent'
   const pending = pendingTodos(evidence.todos)
   if (want === 'done' && role !== 'explore' && pending.length) {
@@ -124,6 +166,10 @@ export const judgeFinish = (
     }
   }
   if (want === 'done' && evidence.reviewObservationId && !evidence.playing && !evidence.watching
+    && (!(evidence.planTotal || 0) || evidence.planComplete)) {
+    return { ok: true, status: want, summary: text }
+  }
+  if (want === 'done' && evidence.homeworkNavigation && !evidence.playing && !evidence.watching
     && (!(evidence.planTotal || 0) || evidence.planComplete)) {
     return { ok: true, status: want, summary: text }
   }
@@ -181,7 +227,7 @@ export const judgeFinish = (
       && evidence.courseCompletion.completed === evidence.courseCompletion.total) {
       return { ok: true, status: 'done', summary: text }
     }
-    if (evidence.chapterJobsDone && !evidence.leftJobs?.length) {
+    if (evidence.chapterJobsDone && !evidence.leftJobs?.length && !evidence.watching) {
       return { ok: true, status: 'done', summary: text }
     }
     if (evidence.hasVideo && evidence.paused !== false) {

@@ -1252,6 +1252,32 @@ mod local_question_matches_tests {
     }
 
     #[test]
+    fn homework_bank_only_admits_reviewable_exact_text_and_current_options() {
+        use super::exact_homework_bank_rows;
+        use crate::server::QuestionKind;
+
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE AIResponses (
+                Id INTEGER, Question TEXT, Options TEXT, Answer TEXT,
+                IsAi INTEGER, IsPendingCorrection INTEGER, QuestionType TEXT
+             );
+             INSERT INTO AIResponses VALUES
+                (1, '正确的是（ ）', 'A. 甲' || char(10) || 'B. 乙', 'A', 0, 0, '单选'),
+                (2, '正确的是（ ）', 'A. 甲' || char(10) || 'B. 乙', 'B', 1, 0, '单选'),
+                (3, '正确的是（ ）', 'A. 甲' || char(10) || 'B. 乙', 'B', 0, 1, '单选'),
+                (4, '不正确的是（ ）', 'A. 甲' || char(10) || 'B. 乙', 'A', 0, 0, '单选'),
+                (5, '正确的是（ ）', 'A. 甲' || char(10) || 'B. 丙', 'A', 0, 0, '单选'),
+                (6, '正确的是（ ）', 'A. 甲' || char(10) || 'B. 乙', 'B', 0, 0, '单选'),
+                (7, '选出一项', 'A. 甲' || char(10) || 'B. 以上都对', 'B', 0, 0, '单选');",
+        ).unwrap();
+        let rows = exact_homework_bank_rows(&conn, "正确的是 ( )", Some("A. 乙\nB. 甲"), QuestionKind::Single, false).unwrap();
+        assert_eq!(rows.iter().map(|row| row.id).collect::<Vec<_>>(), [1, 6]);
+        assert!(exact_homework_bank_rows(&conn, "正确的是", Some("A. 乙\nB. 甲"), QuestionKind::Single, false).unwrap().is_empty());
+        assert!(exact_homework_bank_rows(&conn, "选出一项", Some("A. 以上都对\nB. 甲"), QuestionKind::Single, false).unwrap().is_empty());
+    }
+
+    #[test]
     fn spacing_variants_hit_the_bank_but_omitted_blank_needs_confirmation() {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(
@@ -1302,6 +1328,68 @@ pub async fn query_database_for_request(
         Ok(classify_request_matches(&title, options.as_deref(), query_type.as_deref(), limit, matches, similar))
     })
     .await?
+}
+
+/// The homework worker never promotes a fuzzy candidate to an answer.
+pub(crate) async fn exact_homework_bank_matches(
+    title: String,
+    options: Option<String>,
+    kind: crate::server::QuestionKind,
+) -> Result<Vec<QuestionMatch>, Box<dyn std::error::Error + Send + Sync>> {
+    tokio::task::spawn_blocking(move || {
+        let conn = get_conn()?;
+        exact_homework_bank_rows(&conn, &title, options.as_deref(), kind, true)
+    }).await?
+}
+
+fn exact_homework_bank_rows(
+    conn: &Connection,
+    title: &str,
+    options: Option<&str>,
+    kind: crate::server::QuestionKind,
+    indexed: bool,
+) -> Result<Vec<QuestionMatch>, Box<dyn std::error::Error + Send + Sync>> {
+    use crate::server::{detect_question_kind, QuestionKind};
+    let normalized = QueryMatchText::new(title).compact;
+    if normalized.is_empty() || title.contains("[图片") || !extract_urls(title).is_empty() {
+        return Ok(Vec::new());
+    }
+    let query = if indexed {
+        super::question_search::candidate_query(conn, &normalized)?
+    } else {
+        super::question_search::CandidateQuery::default()
+    };
+    let sql = format!("SELECT {MATCH_COLUMNS} FROM AIResponses {}", query.filter);
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(rusqlite::params_from_iter(query.params), read_match_row)?;
+    let mut matches = Vec::new();
+    for row in rows {
+        let matched = row?;
+        if matched.is_pending_correction || matched.is_ai || matched.answer.trim().is_empty()
+            || matched.question_type.as_deref().and_then(detect_question_kind) != Some(kind)
+            || matched.question.contains("[图片") || !extract_urls(&matched.question).is_empty()
+            || QueryMatchText::new(&matched.question).compact != normalized {
+            continue;
+        }
+        let provided = options.filter(|s| !s.trim().is_empty());
+        let stored = matched.options.as_deref().filter(|s| !s.trim().is_empty());
+        let same = match (provided, stored) {
+            (Some(a), Some(b)) if ![a,b].iter().any(|text| text.contains("[图片") || !extract_urls(text).is_empty()) => {
+                exact_query_options_match(a, b) || (same_query_options_unordered(a, b)
+                    && !["以上", "上述", "以下", "前两项", "后两项", "全部选项", "其他选项", "A和B", "A与B", "A、B", "A项", "B项"]
+                        .iter().any(|part| title.contains(part) || b.contains(part)))
+            }
+            (_, None) if kind == QuestionKind::Judgement => true,
+            (None, None) => kind == QuestionKind::Completion,
+            _ => false,
+        };
+        if same {
+            matches.push(matched);
+            // Too many duplicates are not safely resolvable within the script budget.
+            if matches.len() > 24 { break; }
+        }
+    }
+    Ok(matches)
 }
 
 fn classify_request_matches(

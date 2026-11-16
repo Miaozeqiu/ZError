@@ -17,7 +17,7 @@ export const READ_AGENT_SKILL_FILE_TOOL = {
   type: 'function' as const,
   function: {
     name: 'read_agent_skill_file',
-    description: '读取 Skill 文件原文。本站经验使用 skill_id=site-learn、path=sites/<主网站域名>/SKILL.md；首次创建返回 exists=false，不是失败。读取总说明不等于读取本站文件，更新前本轮必须读取本站文件。',
+    description: '读取 Skill 文件原文与编辑范围。本站经验使用 skill_id=site-learn、path=sites/<主网站域名>/SKILL.md。使用仓库或自定义 HTTP 接口时，content 供查阅，local_experience 是本站可编辑的笔记，可能为空。应用内站点首次创建返回 exists=false。更新前本轮须读取本站文件。',
     parameters: {
       type: 'object',
       properties: {
@@ -42,14 +42,14 @@ export const WRITE_AGENT_SKILL_FILE_TOOL = {
   type: 'function' as const,
   function: {
     name: 'write_agent_skill_file',
-    description: '写入 Skill 文件并保存完整正文。本站经验统一使用 skill_id=site-learn、path=sites/<主网站域名>/SKILL.md；必须先读这个文件，exists=false 时可首次创建，存在时保留原文合并增量。以结果的 id/path 为准，ok=true 且非 unchanged 才算实际更新。图谱用 browser_site_graph 保存。',
+    description: '按读取结果的 write_scope 保存网站经验。local_experience 只写本站本地笔记，来源正文、参考文件和图谱只读。website_files 可写应用内站点的完整文件，图谱用 browser_site_graph。本站 SKILL.md 须先读取，ok=true 且非 unchanged 才算实际更新。',
     parameters: {
       type: 'object',
       properties: {
         skill_id: { type: 'string', description: 'Skill id' },
         path: { type: 'string', description: '相对路径' },
-        content: { type: 'string', description: '完整文件内容' },
-        base_version: { type: 'string', description: '仓库管理的网站文件必须填写读取结果中的 repository_version。已验证的新经验用几条要点补充到本站 SKILL.md，云端参考文件只读。' },
+        content: { type: 'string', description: '更新后的完整本地笔记（local_experience）或自建网站的完整文件（website_files）' },
+        base_version: { type: 'string', description: 'write_scope=local_experience 时填写读取结果的 repository_version' },
       },
       required: ['skill_id', 'path', 'content'],
     },
@@ -60,7 +60,7 @@ export const RESET_AGENT_SKILL_FILE_TOOL = {
   type: 'function' as const,
   function: {
     name: 'reset_agent_skill_file',
-    description: '把内置 Skill 的某个文件恢复为默认。path 省略或 SKILL.md 时恢复该 Skill 的主文档。',
+    description: '把可编辑的内置 Skill 文件恢复为默认。使用仓库或自定义 HTTP 接口的网站不支持此操作。',
     parameters: {
       type: 'object',
       properties: {

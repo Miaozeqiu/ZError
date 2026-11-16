@@ -10,6 +10,8 @@ import {
   CX_SPACE,
   isChaoxingTeacherCourseUrl,
 } from '../platform/chaoxing/fallback'
+import { studentChapterUrl } from '../chaoxing/host/chapterTasks'
+import { studentHomeworkUrl } from '../platform/chaoxing/studentHomework'
 import { formatLessonsNudge } from './agentLessons'
 import { coursePlanFor, coursePlanSummary } from '../browser/coursePlan'
 import { formatTodoNudge, toolRoundsWithoutTodoOf } from './browserTodo'
@@ -80,6 +82,7 @@ export const classifyBrowserPage = (url: string, nodeId = ''): BrowserPageKind =
   const href = String(url || '')
   if (isHomeUrl(href)) return 'home'
   if (isChaoxingTeacherCourseUrl(href)) return 'unknown'
+  if (studentHomeworkUrl(href)?.kind === 'dowork') return 'homework-do'
   const fromGraph = kindFromNode(href, nodeId)
   if (fromGraph) return fromGraph
   const site = siteGraphForUrl(href)
@@ -143,10 +146,9 @@ export const displaySiteName = (
   site?: { id?: string; name?: string; host?: string } | null,
 ) => String(site?.name || '').trim()
 
+const homeworkAnswerRecipe = '建议：已在学习通课程作答页。看题、选项或当前答案，先用 browser_review_homework；用户要求作答，先用可用的 browser_answer_homework。指定第 1–5 题时传 question_range={"start":1,"end":5}，续批沿用范围。专用工具报错或标明题目需进一步识别时，再用通用网页工具补查。'
+
 const homeworkRecipe = (kind: BrowserPageKind) => {
-  if (kind === 'homework-do') {
-    return '建议：已在作答页。用快照读取完整题干和选项，用 ref 作答；按用户目标保存或提交，以页面回执核对结果。'
-  }
   if (kind === 'homework-list') return '建议：在作业列表。用快照 ref 打开用户点名的那一份。'
   if (kind === 'course') return '建议：课程壳。点侧栏「作业」进入作业列表。步骤见 chaoxing Skill。'
   if (kind === 'space') return '建议：已在空间。先确认当前选中「我学的课」，未选中就用快照 ref 点击该页签并核对结果，再在这份课表中打开课名进入作业。不要从「我教的课」或首页推荐课程进课。步骤见 chaoxing Skill。'
@@ -232,6 +234,7 @@ export const recipeForPage = (input: {
   if (!chaoxing) {
     return cardRecipe({ id: input.siteId, name: input.siteName, host: input.host }, input.kind, intent)
   }
+  if (input.kind === 'homework-do' && intent !== 'play') return homeworkAnswerRecipe
   if (intent === 'homework') return homeworkRecipe(input.kind)
   if (intent === 'play') return playRecipe(input.kind, input.panel, input.focus, input.tab)
   return EXPLORE_RECIPE
@@ -268,7 +271,9 @@ export const readBrowserLoop = (input: {
     ? intent === 'play' || intent === 'homework'
       ? '建议：当前是「我教的课」的教师课程页，不是学生学习入口。停止点章节、编辑或发布；返回课程列表，确认选中「我学的课」后重新查找目标课程，并核对学生课程落点。列表没有该课时如实报告，不改 URL 猜学生入口，也不把教师视角当成学习完成。'
       : '建议：当前是「我教的课」的教师课程页。先对照用户目标确认角色；刷课或学生作业需返回「我学的课」，不能从教师目录推断学生任务状态。'
-    : recipeForPage({
+    : intent === 'play' && studentChapterUrl(url)
+      ? '建议：已在学习通学生章节页。完成章节任务优先用可用的 browser_start_chapter_tasks，由软件直接启动任务点。只读核对用 browser_review_chapter。'
+      : recipeForPage({
     kind,
     intent,
     panel: input.panel,
@@ -328,6 +333,7 @@ export const formatBrowserLiveContext = (input: {
   role?: 'parent' | 'explore' | 'execute'
   /** 当前页可点项（瘦）。登录/无卡时由调用方快照后传入。 */
   refs?: PageRef[] | null
+  liveChapter?: string
 }) => {
   const snap = readBrowserLoop({
     url: input.url,
@@ -372,6 +378,7 @@ export const formatBrowserLiveContext = (input: {
     snap.line,
     goal ? `【目标】${goal}` : '',
     evidence ? `【证据】${evidence}` : '',
+    input.liveChapter || '',
     refsLine,
     `【建议】${recipe}`,
     `\n【任务清单】${formatTodoNudge(todos, { mustSet })}`,

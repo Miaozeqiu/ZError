@@ -25,7 +25,7 @@ metadata:
 
 1. `list_agent_skills` 确认 skill_id 和 path
 2. `read_agent_skill_file` 读出全文
-3. 只改用户要改的部分，`write_agent_skill_file` 写回完整正文
+3. 只改用户要改的部分，按 `write_scope` 写回完整本地笔记或完整文件
 4. 用户要还原内置内容：`reset_agent_skill_file`
 
 ## 专项

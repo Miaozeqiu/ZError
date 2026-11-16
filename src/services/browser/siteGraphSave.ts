@@ -5,8 +5,13 @@ import {
   type SiteGraphPatchResult,
 } from './siteGraphCore'
 import { websitePrimaryHost, websiteIdentityForHost, websiteAccountId, websiteHostPattern } from '../agent/websiteIdentity'
+import { hasWebsiteRepository } from '../agent/websiteRepository'
+import { WEBSITE_REPOSITORY_READ_ONLY } from '../agent/websiteRepositoryTarget'
 
 const GRAPH_FILE_RE = /(^|\/)site-graph\.json$/i
+
+export const isOnlineSiteGraph = (site: Pick<SiteGraphData, 'id' | 'host'>) =>
+  hasWebsiteRepository(websitePrimaryHost(site.host || site.id))
 
 export const siteGraphWriteBlocked = (path: string) => {
   const rel = String(path || '').replace(/\\/g, '/').trim()
@@ -68,7 +73,7 @@ export const persistSiteGraph = async (site: SiteGraphData) => {
   if (!target.path) throw new Error('图谱缺少 host，无法保存')
   const text = `${JSON.stringify(serializeSiteGraph(site), null, 2)}\n`
   const { saveSkillFileContent } = await import('../agent/agentSkills')
-  await saveSkillFileContent(target.skillId, target.path, text)
+  await saveSkillFileContent(target.skillId, target.path, text, { agentWrite: true })
   return target
 }
 
@@ -104,9 +109,15 @@ export const presentSiteGraphPatch = (
     }
   }
   if (READ_ACTIONS.has(action) || !result.persist) {
+    const withEditScope = (site: SiteGraphData) => ({ ...site, editable: !isOnlineSiteGraph(site) })
+    const site = result.site && withEditScope(result.site)
     return {
       ...result,
-      hint: [result.hint, '改节点/边用 upsert_*，每次自动保存。不要 write_agent_skill_file 写 site-graph.json。'].filter(Boolean).join(' '),
+      site,
+      sites: result.sites?.map(withEditScope),
+      hint: [result.hint, action === 'list'
+        ? 'editable 表示 Agent 能否修改该站点图谱。'
+        : site?.editable === false ? WEBSITE_REPOSITORY_READ_ONLY : '改节点或边用 upsert_*，每次自动保存。'].filter(Boolean).join(' '),
     }
   }
   return {

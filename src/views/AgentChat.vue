@@ -78,7 +78,7 @@
       />
       <AgentBrowserPane
         :active="active && (selectedAgentPane === 'browser' || agentBrowserExpanded)"
-        :dismissed="!active || (!browserPaneVisible && !agentBrowserExpanded)"
+        :dismissed="!active || (!browserPaneVisible && !agentBrowserExpanded && paneQuiz?.mode !== 'homework')"
         :preview-request="browserPreviewRequest"
         :obscured="browserObscured || showModelSelector || folderPickerVisible || !!previewImage"
       />
@@ -181,7 +181,9 @@ import AgentChatSidebar from './agentChat/AgentChatSidebar.vue'
 import AgentChatThread from './agentChat/AgentChatThread.vue'
 import AgentChatWritePane from './agentChat/AgentChatWritePane.vue'
 import AgentBrowserPane from './agentChat/AgentBrowserPane.vue'
-import { agentBrowserExpanded } from '../services/agent/agentBrowser'
+import { agentBrowserExpanded, agentBrowserRevealRequest, currentAgentBrowser, currentAgentBrowserOpen } from '../services/agent/agentBrowser'
+import { watchBrowserChapters } from '../services/agent/browserChapterProgress'
+import { watchBrowserHomework } from '../services/agent/browserHomeworkProgress'
 import AgentD2Block from '../components/agent/AgentD2Block.vue'
 import AgentHtmlBlock from '../components/agent/AgentHtmlBlock.vue'
 import AgentCodeBlock from '../components/agent/AgentCodeBlock.vue'
@@ -194,11 +196,13 @@ import {
   onGraphSelect,
   onOpenStudyGraph,
   onStudyGraphUpdated,
+  openHomeworkPane,
   openedQuizKey,
   openedWriteStep,
   openedWriteStepId,
   paneGraphView,
   paneQuiz,
+  revealBrowserPane,
   selectedAgentPane,
 } from './agentChat/useAgentChatPanes'
 import '../services/model/markstream'
@@ -227,7 +231,11 @@ setCustomComponents('agent-chat', {
 defineEmits<{
   'open-folder': [folderId: number]
 }>()
-withDefaults(defineProps<{ active?: boolean; browserObscured?: boolean }>(), { active: true, browserObscured: false })
+const props = withDefaults(defineProps<{ active?: boolean; browserObscured?: boolean }>(), { active: true, browserObscured: false })
+
+watch(agentBrowserRevealRequest, request => {
+  if (props.active && request?.sessionId === activeChatId.value && !agentBrowserExpanded.value) revealBrowserPane()
+})
 
 const {
   availableModels,
@@ -355,8 +363,10 @@ const folderPickerInitialId = computed(() => {
   return tokens.at(-1)?.folderId ?? null
 })
 const showFeatureCards = computed(() => !(activeChat.value?.messages.length))
-watch([paneQuiz, openedWriteStep, paneGraphView], ([quiz, write, graph]) => {
-  if (quiz) browserPaneVisible.value = false
+watch([() => paneQuiz.value?.mode, () => !!openedWriteStep.value, () => !!paneGraphView.value], ([quiz, write, graph]) => {
+  if (quiz === 'homework') {
+    if (agentBrowserExpanded.value) browserPaneVisible.value = true
+  } else if (quiz) browserPaneVisible.value = false
   if (quiz || write || graph) agentBrowserExpanded.value = false
 })
 const approvalPending = computed(() => (
@@ -693,6 +703,17 @@ watch(activeChatId, () => {
 })
 
 bindAgentChatPanes()
+if (isTauriEnvironment()) {
+  const browserSource = () => {
+    const browser = currentAgentBrowser.value
+    const sessionId = activeChatId.value
+    return props.active && sessionId && browser && currentAgentBrowserOpen.value
+      ? { sessionId, browserId: browser.id, url: browser.url }
+      : null
+  }
+  watchBrowserHomework(browserSource, openHomeworkPane)
+  watchBrowserChapters(browserSource)
+}
 
 onMounted(() => {
   document.addEventListener('keydown', onPreviewKeydown)

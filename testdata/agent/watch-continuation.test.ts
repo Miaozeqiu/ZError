@@ -3,13 +3,17 @@ vi.mock('../../src/services/model/providers', () => ({ createBuiltinProvider: ()
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const api = vi.hoisted(() => ({
-  read: vi.fn(), write: vi.fn(), redact: vi.fn(), subjects: vi.fn(), run: vi.fn(), claim: vi.fn(), fetch: vi.fn(), tick: vi.fn(), watchRead: vi.fn(), bind: vi.fn(), flush: vi.fn(), drop: vi.fn(), stopWatch: vi.fn(), execute: vi.fn(),
+  read: vi.fn(), write: vi.fn(), redact: vi.fn(), subjects: vi.fn(), run: vi.fn(), claim: vi.fn(), fetch: vi.fn(), tick: vi.fn(), watchRead: vi.fn(), bind: vi.fn(), flush: vi.fn(), drop: vi.fn(), stopWatch: vi.fn(), execute: vi.fn(), recoverPause: vi.fn(), pageUrl: vi.fn(),
 }))
 vi.mock('../../src/services/security/secureStore', () => ({
   readSecureDocument: api.read, writeSecureDocument: api.write, redactNative: api.redact,
 }))
 vi.mock('../../src/services/app/database', () => ({ databaseService: { listStudySubjects: api.subjects } }))
-vi.mock('../../src/services/browser/appBrowser', () => ({ peekAppBrowserUrl: () => '' }))
+vi.mock('../../src/services/browser/appBrowser', () => ({ peekAppBrowserUrl: api.pageUrl }))
+vi.mock('../../src/services/agent/agentBrowser', () => ({
+  ensureAgentBrowser: async () => 'watched-video',
+  requestAgentBrowserReveal: vi.fn(),
+}))
 vi.mock('../../src/services/browser/control', async () => {
   const state: Record<string, any> = (await import('vue')).reactive({})
   return { browserControlState: state, claimBrowserForNewMessage: api.claim, browserControlRevision: () => 0,
@@ -43,9 +47,10 @@ vi.mock('../../src/services/agent/siteLearningReview', () => ({ createLearningCo
 vi.mock('../../src/utils/question/quizPractice', () => ({ getQuizCards: () => [], parseQuizCards: () => [], resolveQuizTitle: () => '', saveQuizTitle: vi.fn() }))
 vi.mock('../../src/services/agent/executeChatTool', () => ({ executeChatTool: async ({ call, ctx }: any) => {
   if (api.execute.getMockImplementation()) return api.execute(call, ctx)
-  if (call.name === 'browser_watch') {
+  if (['browser_watch', 'browser_complete_chapter', 'browser_start_chapter_tasks'].includes(call.name)) {
     const { startChaoxingWatch } = await import('../../src/services/chaoxing/browser/watch')
-    startChaoxingWatch('watched-video', ctx.sessionId, { current: 10, duration: 7200, paused: false, mid: 'm2' })
+    startChaoxingWatch('watched-video', ctx.sessionId, { current: 10, duration: 7200, paused: false, mid: 'm2' },
+      call.name === 'browser_watch' ? undefined : { recoverPause: api.recoverPause })
     return JSON.stringify({ ok: true, watching: true })
   }
   const status = JSON.parse(call.arguments).status
@@ -99,6 +104,7 @@ beforeEach(async () => {
   api.redact.mockImplementation(async value => value)
   api.subjects.mockResolvedValue([])
   api.claim.mockResolvedValue(false)
+  api.pageUrl.mockReturnValue('')
   api.fetch.mockReset(); api.execute.mockReset(); api.tick.mockResolvedValue(null)
   store = await import('../../src/services/agent/chatStore')
   const agent = await import('../../src/services/chaoxing/browser/watchAgent')
@@ -289,6 +295,79 @@ describe('same task video waiting with the actual model runner and watch event c
     expect(api.fetch).toHaveBeenCalledTimes(4)
     expect(store.activeChat.value!.messages.at(-1)!.content).toContain('后续任务已核对完毕')
   })
+  it.each(['browser_complete_chapter', 'browser_start_chapter_tasks'])('%s waits inside the tool and resumes without an extra model call', async (name) => {
+    hydration.resolve(null); await store.chatStoreReady
+    store.createChat({ browserId: 'watched-video' })
+    api.fetch.mockResolvedValueOnce(tool(name, 'chapter-watch', { chapter_key: '3:4:5' }))
+      .mockResolvedValueOnce(tool('browser_finish', 'chapter-done', { status: 'done', summary: '任务点已经核对' }))
+      .mockResolvedValueOnce({ content: '视频任务已完成。' })
+    const pending = send('完成当前章节')
+    await vi.advanceTimersByTimeAsync(0)
+    await vi.waitFor(() => expect(store.activeChat.value!.messages.at(-1)).toMatchObject({ awaitingVideo: true, run: { status: 'waiting_video' } }))
+    expect(api.fetch).toHaveBeenCalledOnce()
+    const { dispatchTickEvent } = await import('../../src/services/browser/pushEvents')
+    const tick = { current: 24, duration: 7200, paused: true, ended: false, mid: 'm2', visible: true, hasVideo: true }
+    api.recoverPause.mockResolvedValueOnce({ ...tick, paused: false })
+    dispatchTickEvent({ id: 'watched-video', tick })
+    await vi.advanceTimersByTimeAsync(1600)
+    expect(api.recoverPause).toHaveBeenCalledOnce()
+    expect(api.fetch).toHaveBeenCalledOnce()
+    expect(api.watchRead('watched-video')).toMatchObject({ status: 'watching', paused: false })
+    await endVideo()
+    await pending
+    const message = store.activeChat.value!.messages.at(-1)!
+    expect(message.status).toBe('done')
+    expect(JSON.parse(message.steps.find(step => step.id === 'chapter-watch')!.result!)).toMatchObject({ status: 'video_event', watching: false })
+    expect(api.fetch).toHaveBeenCalledTimes(3)
+  })
+
+  it('resumes the previously verified video locally before the first model request', async () => {
+    hydration.resolve(null); await store.chatStoreReady
+    const session = store.createChat({ browserId: 'watched-video' })
+    api.pageUrl.mockReturnValue('https://mooc1.chaoxing.com/mycourse/studentstudy?courseId=3&clazzid=4&chapterId=5')
+    const { newRun } = await import('../../src/services/agent/core/run')
+    const now = Date.now()
+    const op = { id: 'old-play', tool: 'browser_click', browserId: 'watched-video', state: 'dispatched' as const, at: now - 50, sequence: 5 }
+    const previous = {
+      id: 'old', role: 'assistant' as const, status: 'stopped' as const, content: '',
+      run: { ...newRun('old'), browserId: 'watched-video', status: 'interrupted' as const, operations: [op], goalMessageId: 'goal' },
+      steps: [
+        { id: 'page', kind: 'tool' as const, name: 'browser_get_page', label: '', status: 'done' as const, startedAt: now - 100,
+          result: JSON.stringify({ snapshot: '- button "播放视频" [ref=e7]' }) },
+        { id: 'click', kind: 'tool' as const, name: 'browser_click', label: '', status: 'done' as const, startedAt: now - 60, finishedAt: now - 40,
+          arguments: '{"ref":"e7"}', result: '{"ok":true}' },
+        { id: 'watch', kind: 'tool' as const, name: 'browser_watch', label: '', status: 'done' as const, startedAt: now - 30,
+          result: '{"watching":true,"video":{"mid":"m2"}}' },
+      ],
+    }
+    store.patchSession(session.id, current => ({ ...current, messages: [
+      { id: 'goal', role: 'user', content: '完成当前章节', status: 'done', steps: [] }, previous,
+    ] }))
+    api.execute.mockImplementation(async (call, ctx) => {
+      if (call.name === 'browser_review_chapter') return '{"ok":true,"chapterKey":"3:4:5","videoMid":"m2","videoJobDone":false}'
+      if (call.name === 'browser_complete_chapter') {
+        const { startChaoxingWatch } = await import('../../src/services/chaoxing/browser/watch')
+        startChaoxingWatch('watched-video', ctx.sessionId, { current: 10, duration: 7200, paused: false, mid: 'm2' })
+        return '{"ok":true,"watching":true,"videoMid":"m2"}'
+      }
+      return '{"ok":true,"status":"done","finished":true}'
+    })
+    api.fetch.mockResolvedValueOnce(tool('browser_finish', 'done-local', { status: 'done', summary: '原视频已完成' }))
+      .mockResolvedValueOnce({ content: '原视频已完成。' })
+    const pending = send('继续')
+    await vi.advanceTimersByTimeAsync(0)
+    await vi.waitFor(() => expect(store.activeChat.value!.messages.at(-1)).toMatchObject({ awaitingVideo: true }))
+    expect(api.fetch).not.toHaveBeenCalled()
+    expect(api.execute.mock.calls.map(call => call[0].name)).toEqual(['browser_review_chapter', 'browser_complete_chapter'])
+    expect(JSON.parse(api.execute.mock.calls[1][0].arguments)).toMatchObject({ video_mid: 'm2', chapter_key: '3:4:5' })
+    const verification = store.activeChat.value!.messages.at(-1)!.steps.find(step => step.name === 'browser_verify_operation')
+    expect(JSON.parse(verification?.arguments || '{}')).toMatchObject({ operation_id: 'old-play', outcome: 'completed' })
+    expect(JSON.parse(verification?.result || '{}')).toMatchObject({ ok: true, outcome: 'completed' })
+    await endVideo()
+    await pending
+    expect(api.fetch).toHaveBeenCalledTimes(2)
+  })
+
   it('prevents a plain final reply from ending the task while its video is still monitored', async () => {
     const run = await start(true)
     expect(store.activeChat.value!.messages.at(-1)!.status).toBe('streaming')

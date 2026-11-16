@@ -36,6 +36,7 @@ describe('browser task intent', () => {
 
   it('写作业 → homework', () => {
     expect(intentFromText('把高等数学作业写了')).toBe('homework')
+    expect(intentFromText('你帮我完成下1-5题')).toBe('homework')
   })
 
   it('课名不带说话的语气词', () => {
@@ -74,6 +75,15 @@ describe('browser task intent', () => {
 })
 
 describe('browser page loop', () => {
+  it('gives the current student homework page the specialized tools before generic reads', () => {
+    const url = 'https://mooc1.chaoxing.com/mooc-ans/mooc2/work/dowork?courseId=42&classId=7&workId=11'
+    const context = formatBrowserLiveContext({ url, sessionId: 'homework-recipe' })
+    expect(classifyBrowserPage(url)).toBe('homework-do')
+    expect(context).toContain('先用 browser_review_homework')
+    expect(context).toContain('先用可用的 browser_answer_homework')
+    expect(context).toContain('question_range={"start":1,"end":5}')
+  })
+
   it('认登录 / 空间 / 课程 / 播放 / 导航', () => {
     expect(classifyBrowserPage(login)).toBe('login')
     expect(classifyBrowserPage(space)).toBe('space')

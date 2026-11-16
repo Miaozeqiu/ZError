@@ -14,7 +14,7 @@ metadata:
 
 本站步骤按主网站归档到 `site-learn` 的 `sites/<主网站域名>/SKILL.md`。例如 zjooc.cn 对应 `sites/zjooc.cn/SKILL.md`。关联登录域名属于同一网站，统一使用主网站的账号配置、操作经验和导航图谱，不另建网站；以工具返回的归档路径和收尾检查提示为准。未确认的跨域跳转不能自行认定为同一网站。
 
-网站图标：从当前网页的 `link[rel~="icon"]`、`apple-touch-icon` 或真实品牌 logo 读取图片地址，用 `new URL(href, document.baseURI).href` 转为完整地址，再调用 `set_website_icon(icon_url=完整地址)` 保存。宿主会下载验证并缓存到本站配置，登录域名共用主网站图标。不要猜路径，也不要把图片或 Base64 写进操作经验。
+自建网站图标：从当前网页的 `link[rel~="icon"]`、`apple-touch-icon` 或真实品牌 logo 读取图片地址，用 `new URL(href, document.baseURI).href` 转为完整地址，再调用 `set_website_icon(icon_url=完整地址)` 保存。登录域名共用主网站图标。在线网站使用仓库提供的图标。
 
 写法见 [references/workflow.md](references/workflow.md)。
 
@@ -22,8 +22,8 @@ metadata:
 
 1. `get_state` 看网址、图谱节点、已有经验和快照。
 2. 用快照里的 ref 或 `click_text` 点。点中并确认页面变了，再写下这一步。
-3. 本轮先用 `read_agent_skill_file(skill_id=site-learn)` 读取 `sites/<主网站域名>/SKILL.md`。`exists=false` 表示本站尚无经验，可以首次创建，不是读取失败；只读本篇总说明不算读取本站文件。然后用 `write_agent_skill_file(skill_id=site-learn)` 保存完整正文，不要写入 `chaoxing`；已有原文需保留并合并。每条写：哪一页、点哪个字、在哪个框、坑在哪。登录服务作为本站登录步骤记录，以工具结果的 `id/path` 为准。
-4. 图谱用 `browser_site_graph` 一条条改（`upsert_site` / `upsert_node` / `upsert_edge`），会自动保存。
+3. 本轮用 `read_agent_skill_file(skill_id=site-learn)` 读取 `sites/<主网站域名>/SKILL.md`，按返回的 `write_scope` 保存。使用在线仓库或自定义 HTTP 接口时，只允许编辑 `local_experience`，把完整的本地笔记传给 `content`，并在 `base_version` 中传入 `repository_version`。使用应用内经验的自建网站可更新完整文件，`exists=false` 时可首次创建。登录经验归入主网站，以工具结果的 `id/path` 为准。
+4. `editable=true` 的图谱用 `browser_site_graph` 逐条修改，修改自动保存。仓库或自定义 HTTP 接口中的参考文件和图谱只读，导航补充可写入「本地经验」。
 5. 视频播起来之后 `browser_watch`。
 
 ## 任务收尾

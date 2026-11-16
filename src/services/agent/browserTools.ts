@@ -23,7 +23,7 @@ import { asObject, evalBrowserFrames, evalBrowserViewMain, isEvalActBusy, waitMs
 import { notePageProbe, resetPageProbe } from './pageProbe'
 
 const wait = waitMs
-import { clickByLocator, cssSelectorFromArgs, fillByLocator, listCachedPageRefs, looksLikeCssSelector, observeAfterClick, pageHostMatches, pageHostOf, readPageSnapshot, resolveRefLocator } from '../browser/engine'
+import { actOnceOnBrowser, clickByLocator, cssSelectorFromArgs, fillByLocator, listCachedPageRefs, looksLikeCssSelector, observeAfterClick, pageHostMatches, pageHostOf, readPageSnapshot, resolveRefLocator } from '../browser/engine'
 import { callProtocol, evaluate } from '../browser/protocol'
 import { rememberLoginTyped } from './siteAccounts'
 import { browserTaskIntent } from './browserTask'
@@ -171,10 +171,12 @@ export const executeBrowserTool = async (input: {
   browserId: string
   sessionId: string
   wait: (ms: number) => Promise<void>
+  onNavigation?: () => void
+  onHomeworkProgress?: (update: import('./homeworkProgress').HomeworkProgressUpdate) => void
   role?: 'parent' | 'explore' | 'execute'
   jobId?: string
 }): Promise<string> => {
-  const { name, args, browserId, sessionId, wait, role } = input
+  const { name, args, browserId, sessionId, wait, role, onNavigation, onHomeworkProgress } = input
   const { packAgentPanel } = await import('../platform/panelAccess')
   const loop = readBrowserLoop({
     url: await liveHref(browserId),
@@ -202,14 +204,14 @@ export const executeBrowserTool = async (input: {
   }
 
   const toolCtx = {
-    name, args, browserId, sessionId, wait, role, loop, policy, failWithCard, platformTool: null,
+    name, args, browserId, sessionId, wait, role, loop, policy, failWithCard, platformTool: null, onNavigation, onHomeworkProgress,
     currentUrl, graphUrlOf, liveHref, resetPageProbe,
     notePageProbe, readBrowserPage, getBrowserState, peekAppBrowserUrl, emptyPageSnaps, callProtocol,
     graphNodeId, siteGraphNodeForUrl, isShellNode, SPACE_HINT, COURSE_HW_HINT,
     browserTaskIntent, resolveChaoxingLoginUrl, sameChaoxingCourse, isChaoxingIframeNavUrl, isSpaceListTopUrl,
     IFRAME_NAV_HINT, navigateBrowserView, evalBrowserView, pageHostMatches, pageHostOf, reloadBrowserView,
     goBackBrowserView, goForwardBrowserView, formatMissRefsHint, cssSelectorFromArgs, looksLikeCssSelector,
-    resolveRefLocator, clickByLocator, clickBrowserElement, clickBrowserText, observeAfterClick, asObject,
+    resolveRefLocator, actOnceOnBrowser, clickByLocator, clickBrowserElement, clickBrowserText, observeAfterClick, asObject,
     rememberLoginTyped, typeBrowserElement, fillByLocator, waitMs, listAppBrowsers, readChaoxingSpaceContext,
     readPageSnapshot, isEvalActBusy, displaySiteName, missingHostNeeds, missingNeedsNote, nextStep,
     screenshotBrowserView, collectPageCaptchaHits, materializeCaptchaImages, captchaScreenshotHint,
@@ -225,6 +227,30 @@ export const executeBrowserTool = async (input: {
 
 /** 四个处理器都没认领，才是未知工具。测试用这份，不打真实页面。 */
 export const dispatchBrowserTool = async (ctx: Record<string, any>): Promise<string> => {
+  if (ctx.name === 'browser_list_courses' || ctx.name === 'browser_open_course') {
+    const { handleWebsiteCourseTools } = await import('./tools/websiteCourses')
+    return (await handleWebsiteCourseTools(ctx as Parameters<typeof handleWebsiteCourseTools>[0]))!
+  }
+  if (ctx.name === 'browser_list_homework' || ctx.name === 'browser_open_homework') {
+    const { handleWebsiteHomeworkTools } = await import('./tools/websiteHomework')
+    return (await handleWebsiteHomeworkTools(ctx as Parameters<typeof handleWebsiteHomeworkTools>[0]))!
+  }
+  if (ctx.name === 'browser_answer_homework' || ctx.name === 'browser_review_homework') {
+    const { handleWebsiteHomeworkAnswerTools } = await import('./tools/websiteHomeworkAnswers')
+    return handleWebsiteHomeworkAnswerTools(ctx as Parameters<typeof handleWebsiteHomeworkAnswerTools>[0])
+  }
+  if (ctx.name === 'browser_start_chapter_tasks') {
+    const { startWebsiteChapterTasks } = await import('./tools/websiteChapterStart')
+    return startWebsiteChapterTasks(ctx as Parameters<typeof startWebsiteChapterTasks>[0])
+  }
+  if (ctx.name === 'browser_open_pending_chapter') {
+    const { openNextWebsiteChapter } = await import('./tools/websiteChapterDirectory')
+    return openNextWebsiteChapter(ctx as Parameters<typeof openNextWebsiteChapter>[0])
+  }
+  if (ctx.name === 'browser_review_chapter' || ctx.name === 'browser_complete_chapter') {
+    const { handleWebsiteChapterTools } = await import('./tools/websiteChapters')
+    return handleWebsiteChapterTools(ctx as Parameters<typeof handleWebsiteChapterTools>[0])
+  }
   const coursed = await handleCourseTools(ctx)
   if (coursed != null) return coursed
   const navved = await handleNavTools(ctx)

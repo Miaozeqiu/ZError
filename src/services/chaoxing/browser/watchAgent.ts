@@ -360,7 +360,12 @@ const enqueueWatchCheck = (check: VideoWatchCheck) => {
     return
   }
   if (check.kind === 'stalled' || check.kind === 'lost') {
-    void recoverPlayback(check)
+    if (check.status.chapterTask) {
+      notifyWatch(check.sessionId, formatWatchDisplay(check),
+        '当前章节视频仍暂停或无法推进。用 browser_review_chapter 核对当前任务点，保持页面在前台；专用恢复失败时报告具体状态。')
+    } else {
+      void recoverPlayback(check)
+    }
     return
   }
 }

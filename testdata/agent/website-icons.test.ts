@@ -75,6 +75,12 @@ describe('verified website icons', () => {
     expect(await pending).toMatchObject({ ok: false })
     expect(io.files.size).toBe(0)
   })
+  it('uses the repository icon for an online website', async () => {
+    expect(await run({ website: 'mooc1.chaoxing.com', icon_url: 'https://cdn.example.com/replacement.png' }))
+      .toMatchObject({ ok: false, host: 'chaoxing.com', error: expect.stringContaining('提供的图标') })
+    expect(io.fetch).not.toHaveBeenCalled()
+    expect(io.files.size).toBe(0)
+  })
   it('is available to normal and browser agents, but not read-only exploration', async () => {
     const { assembleAgentTools, assembleBrowserTools } = await import('../../src/services/agent/tools')
     expect(assembleAgentTools().filter(t => t.function.name === 'set_website_icon')).toHaveLength(1)

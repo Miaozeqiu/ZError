@@ -1,14 +1,17 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-const api = vi.hoisted(() => ({ steps: [] as any[], read: vi.fn(), write: vi.fn(), approve: vi.fn(), policy: 'ask' }))
+const api = vi.hoisted(() => ({ steps: [] as any[], read: vi.fn(), write: vi.fn(), saveFile: vi.fn(), approve: vi.fn(), policy: 'ask' }))
 vi.mock('../../src/services/agent/browserTools', () => ({ executeBrowserTool: vi.fn() }))
 vi.mock('../../src/services/agent/chatStore', () => ({ liveSession: () => ({ messages: [{ id: 'answer', steps: api.steps }] }) }))
-vi.mock('../../src/services/browser/appBrowser', () => ({ peekAppBrowserUrl: () => 'https://www.zjooc.cn/work' }))
-vi.mock('../../src/services/browser/siteGraphSave', () => ({ siteGraphWriteBlocked: () => '' }))
+vi.mock('../../src/services/browser/appBrowser', () => ({
+  peekAppBrowserUrl: () => 'https://www.zjooc.cn/work',
+  getBrowserState: async () => ({ url: 'https://www.zjooc.cn/work' }),
+}))
 vi.mock('../../src/services/agent/agentSkills', () => ({
   isSkillEditable: (id: string) => ['site-learn', 'chaoxing'].includes(id),
   skillFileWriteError: (_id: string, path: string) => path.includes('fixtures/') ? '网站不保存测试页面，请在真实网页验证' : null,
   placeSiteLearnPath: (path: string) => ({ path }), readAgentSkillFileContent: api.read, writeAgentSkillFileContent: api.write,
+  saveSkillFileContent: api.saveFile,
 }))
 vi.mock('../../src/services/agent/agentPolicy', () => ({ getAgentPolicy: () => ({ writeSkills: api.policy }) }))
 vi.mock('../../src/services/agent/agentApproval', () => ({ requestAgentApproval: api.approve }))
@@ -29,7 +32,7 @@ describe('站点 Skill 写入的真实工具入口', () => {
   beforeEach(() => {
     vi.clearAllMocks(); api.policy = 'ask'
     api.steps = [{ id: 'read', name: 'read_agent_skill_file', status: 'done', arguments: JSON.stringify({ skill_id: 'site-learn', path }), result: JSON.stringify({ content: '# 原有步骤' }) }]
-    api.read.mockResolvedValue({ content: '# 原有步骤' })
+    api.read.mockResolvedValue({ content: '# 在线步骤\n\n## 本地补充经验\n\n# 原有步骤', local_experience: '# 原有步骤', repository_version: 'revision:1' })
     api.write.mockResolvedValue({ ok: true })
     api.approve.mockResolvedValue(true)
   })
@@ -80,11 +83,11 @@ describe('站点 Skill 写入的真实工具入口', () => {
     expect(api.write).not.toHaveBeenCalled()
     expect(api.approve).not.toHaveBeenCalled()
   })
-  it('学习通的站点别名统一到仓库文件，写入必须携带读取版本', async () => {
+  it('学习通的站点别名统一到仓库文件，保存本地笔记必须携带读取版本', async () => {
     const args = { skill_id: 'site-learn', path: 'sites/chaoxing.com/SKILL.md', content: '# 原有步骤\n\n## 新经验' }
     api.steps = [{ id: 'repo-read', name: 'read_agent_skill_file', status: 'done',
       arguments: JSON.stringify({ skill_id: 'site-learn', path: args.path }),
-      result: JSON.stringify({ id: 'chaoxing', path: 'SKILL.md', content: '# 原有步骤', repository_version: 'revision:1' }) }]
+      result: JSON.stringify({ id: 'chaoxing', path: 'SKILL.md', content: '# 在线步骤', local_experience: '# 原有步骤', repository_version: 'revision:1' }) }]
     const write = async (extra = {}) => JSON.parse(await executeChatTool({
       call: { id: 'repo-write', name: 'write_agent_skill_file', arguments: JSON.stringify({ ...args, ...extra }) },
       ctx: { sessionId: 'chat', assistantId: 'answer', browserId: () => 'tab', abort: new AbortController().signal } as any,
@@ -117,6 +120,21 @@ describe('站点 Skill 写入的真实工具入口', () => {
     expect(await run('# 原有步骤\n')).toMatchObject({ ok: true, unchanged: true, path })
     expect(api.write).not.toHaveBeenCalled()
     expect(api.approve).not.toHaveBeenCalled()
+  })
+  it('在线图谱可读，但拒绝改节点或换主机，自建图谱可以保存', async () => {
+    const call = async (args: object) => JSON.parse(await executeChatTool({
+      call: { id: 'graph', name: 'browser_site_graph', arguments: JSON.stringify(args) },
+      ctx: { sessionId: 'chat', assistantId: 'answer', browserId: () => 'tab', abort: new AbortController().signal } as any,
+    }))
+    const original = await call({ action: 'get', siteId: 'chaoxing' })
+    expect(original).toMatchObject({ ok: true, site: { id: 'chaoxing', editable: false } })
+    expect(await call({ action: 'upsert_node', siteId: 'chaoxing', id: 'new' })).toMatchObject({ ok: false, error: expect.stringContaining('只读') })
+    expect(await call({ action: 'upsert_site', siteId: 'cloud-copy', host: 'zjooc.cn' })).toMatchObject({ ok: false, error: expect.stringContaining('只读') })
+    expect(await call({ action: 'get', siteId: 'chaoxing' })).toEqual(original)
+    expect(api.saveFile).not.toHaveBeenCalled()
+    expect(await call({ action: 'upsert_site', host: 'custom.example.com' })).toMatchObject({ ok: true, saved: true })
+    expect(await call({ action: 'upsert_node', siteId: 'custom.example.com', id: 'entry', patterns: ['course'] })).toMatchObject({ ok: true, saved: true })
+    expect(api.saveFile).toHaveBeenLastCalledWith('site-learn', 'sites/custom.example.com/site-graph.json', expect.stringContaining('entry'), { agentWrite: true })
   })
   it('有增量时沿用已有授权流程并持久化完整正文', async () => {
     expect(await run('# 原有步骤\n\n## 新的分组方法')).toMatchObject({ ok: true, id: 'site-learn', path })

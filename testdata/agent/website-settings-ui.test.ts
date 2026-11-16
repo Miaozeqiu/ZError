@@ -3,9 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, h, nextTick, type App } from 'vue'
 
 const state = vi.hoisted(() => ({} as Record<string, any>))
-const actions = vi.hoisted(() => ({ remember: vi.fn(), forget: vi.fn(), website: vi.fn(), native: vi.fn(), preview: vi.fn(), importRepository: vi.fn() }))
+const actions = vi.hoisted(() => ({ remember: vi.fn(), forget: vi.fn(), website: vi.fn(), native: vi.fn(), preview: vi.fn(), importRepository: vi.fn(), saveExperienceUrl: vi.fn() }))
 vi.mock('../../src/services/agent/websiteRepository', async original => ({
-  ...await original<typeof import('../../src/services/agent/websiteRepository')>(), previewWebsiteRepository: actions.preview, importWebsiteRepository: actions.importRepository,
+  ...await original<typeof import('../../src/services/agent/websiteRepository')>(), previewWebsiteRepository: actions.preview, importWebsiteRepository: actions.importRepository, setWebsiteExperienceUrl: actions.saveExperienceUrl,
 }))
 vi.mock('@tauri-apps/api/core', () => ({ invoke: actions.native }))
 vi.mock('../../src/services/agent/agentSkills', () => ({ agentSkillsState: { items: [] } }))
@@ -122,6 +122,20 @@ describe('one settings card per website', () => {
     await nextTick()
     document.querySelector<HTMLButtonElement>('.account-dialog .btn-confirm')!.click()
     await vi.waitFor(() => expect(actions.website).toHaveBeenCalledWith('menhu.haou.edu.cn', '河南开放大学·云上河开', ['authserver.open.ha.cn', 'login.example.com'], true))
+  })
+
+  it('saves a custom HTTP website experience URL', async () => {
+    const url = 'http://127.0.0.1:8123/experience.json'
+    site('chaoxing').querySelector<HTMLButtonElement>('[aria-label="网站设置"]')!.click()
+    await nextTick()
+    const dialog = document.querySelector('[aria-labelledby="website-dialog-title"]')!
+    const input = dialog.querySelector<HTMLInputElement>('#website-experience-url')!
+    input.value = url
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+    dialog.querySelector<HTMLButtonElement>('button[type="submit"]')!.click()
+    await vi.waitFor(() => expect(actions.saveExperienceUrl).toHaveBeenCalledWith('chaoxing.com', url))
+    expect(actions.website).not.toHaveBeenCalled()
   })
 
   it('edits credentials for the clicked website, with no cross-platform selector or password in the card', async () => {

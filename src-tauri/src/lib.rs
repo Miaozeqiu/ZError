@@ -274,6 +274,7 @@ pub fn run() {
             stop_server,
             get_server_status,
             get_request_logs,
+            crate::server::lookup_homework_bank_answers,
             get_daily_request_counts,
             clear_request_logs,
             open_devtools,

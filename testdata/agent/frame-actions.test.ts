@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 vi.mock('../../src/services/browser/engine', () => ({ observedJson: async (_id: string, body: unknown) => JSON.stringify(body) }))
 import { handleActTools } from '../../src/services/agent/tools/act'
+import { inspectEvalScript } from '../../src/services/agent/browserEvalGuard'
+import { createRunController } from '../../src/services/agent/core/controller'
+import { newRun } from '../../src/services/agent/core/run'
 import { cssSelectorFromArgs, looksLikeCssSelector } from '../../src/services/browser/engine/refs'
 import { locatorFromCache, rememberPageRefs } from '../../src/services/browser/engine/refs'
 import { cachedPageSnap, rememberPageSnap } from '../../src/services/browser/engine/pageSnap'
@@ -13,6 +16,39 @@ const base = () => ({
 })
 
 describe('Agent frame 动作', () => {
+  it('拒绝跨框脚本后，允许用正确的 frame 参数再次执行，无需核对未发出的操作', async () => {
+    let run = newRun('frame-retry')
+    const controller = createRunController({
+      run,
+      changed: value => { run = value },
+      checkpoint: async () => undefined,
+      browserId: () => 'frames-b',
+      signal: new AbortController().signal,
+    })
+    controller.state('running')
+    const evaluate = vi.fn(async () => ({ hasLoginForm: false }))
+    const call = async (id: string, args: { script: string; frameId?: string; loaderId?: string }) => {
+      const name = 'browser_eval'
+      return JSON.parse(await controller.execute({ id, name, arguments: JSON.stringify(args) }, async () => (
+        await handleActTools({ ...base(), name, args, loop: { evalPolicy: 'full' }, inspectEvalScript, evaluate })
+      )!))
+    }
+
+    const blocked = await call('unsafe', {
+      script: '(() => { const doc = document.querySelector("iframe").contentDocument; return doc.querySelector("h1") })()',
+    })
+    expect(blocked).toMatchObject({ ok: false, reason: 'invalid' })
+    expect(blocked.resultUncertain).toBeUndefined()
+    expect(blocked.error).toContain('frameId 和 loaderId')
+    expect(run.operations).toMatchObject([{ tool: 'browser_eval', state: 'not_completed' }])
+    expect(evaluate).not.toHaveBeenCalled()
+
+    const script = 'document.body.innerText.includes("登录")'
+    expect(await call('scoped', { script, frameId: 'course-frame', loaderId: 'doc-1' })).toMatchObject({ ok: true })
+    expect(evaluate).toHaveBeenCalledWith('frames-b', script, { frameId: 'course-frame', loaderId: 'doc-1' })
+    expect(run.operations.some(operation => operation.state === 'uncertain')).toBe(false)
+  })
+
   it.each(['browser_click', 'browser_click_text'])('文案点击 %s 优先使用快照中的唯一 DOM 控件，不要求它同时出现在 AX 树', async name => {
     const locator = { by: 'css', value: '.chapter-title', frame: 'frame_content-zj', frameId: 'course-frame', loaderId: 'course-doc' }
     const click = vi.fn(async () => ({ ok: true }))

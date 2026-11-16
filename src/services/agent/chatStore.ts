@@ -18,6 +18,7 @@ import type {
 } from './chatTypes'
 import { writeBrowserTranscript } from './debugLog'
 import { isFileAttachment, isFolderAttachment, isImageAttachment } from './folderTokens'
+import { mergeHomeworkProgress, type HomeworkProgressUpdate } from './homeworkProgress'
 
 const STORAGE_KEY = 'zerror-agent-chat-sessions'
 const CHAT_LIST_COLLAPSED_KEY = 'zerror-chat-list-collapsed'
@@ -231,6 +232,23 @@ export const patchMessage = (sessionId: string, messageId: string, patch: Partia
   Object.assign(message, patch)
   session.updatedAt = Date.now()
   persistSoon()
+}
+
+export const recordHomeworkProgress = (sessionId: string, messageId: string | undefined, update: HomeworkProgressUpdate) => {
+  const session = liveSession(sessionId)
+  if (!session) return
+  const list = session.homework || []
+  const previous = list.find(item => item.assignmentId === update.assignmentId)
+  if (messageId) {
+    const messageIndex = session.messages.findIndex(message => message.id === messageId && message.role === 'assistant')
+    if (messageIndex < 0 || (previous?.messageId && session.messages.findIndex(message => message.id === previous.messageId) > messageIndex)) return
+  }
+  const progress = mergeHomeworkProgress(previous, messageId, update)
+  session.homework = previous && previous.messageId === progress.messageId
+    ? list.map(item => item === previous ? progress : item)
+    : [...list.filter(item => item !== previous), progress]
+  session.updatedAt = Date.now()
+  if (session !== newChatDraft.value) persistSoon()
 }
 
 export const addStep = (sessionId: string, messageId: string, step: ImportTaskStep) => {

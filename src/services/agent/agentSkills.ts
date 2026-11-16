@@ -7,8 +7,8 @@ import { isBuiltinRuntimeSkillFile, WEBSITE_RUNTIME_FILE_HINT } from './skillRun
 import { resolveWebsiteSkillTarget } from './websiteSkillTarget'
 import { chaoxingRepository, ensureChaoxingRepository, listChaoxingRepositoryFiles, readChaoxingRepositoryFile,
   writeChaoxingRepositoryFile, websiteRepositoryState, onWebsiteRepositoryChanged, CHAOXING_REPOSITORY,
-  websiteRepositoryHosts, listWebsiteRepositoryFiles, readWebsiteRepositoryFile, writeWebsiteRepositoryFile, repositoryForHost, websiteRepositoryStates, repositorySourceFor } from './websiteRepository'
-import { websiteRepositoryTarget } from './websiteRepositoryTarget'
+  websiteRepositoryHosts, listWebsiteRepositoryFiles, readWebsiteRepositoryFile, writeWebsiteRepositoryFile, writeWebsiteRepositorySupplement, repositoryForHost, websiteRepositoryStates, repositorySourceFor } from './websiteRepository'
+import { WEBSITE_REPOSITORY_READ_ONLY, websiteRepositoryTarget } from './websiteRepositoryTarget'
 import { repositoryPath as isRepositoryPath } from './websiteRepositoryCore'
 export { parseSkillFrontmatter } from './skillFormat'
 import {
@@ -308,7 +308,7 @@ export const skillFileWriteError = (id: string, relativePath: string): string | 
   if (BUILTIN_SKILLS[id] && !isBuiltinRuntimeSkillFile(relativePath)) return WEBSITE_RUNTIME_FILE_HINT
   const path = normalizeSkillRelativePath(relativePath)
   if (path && websiteRepositoryTarget(id, path)?.path.startsWith('references/')) {
-    return '云端参考文件为只读。请在本站 SKILL.md 中补充几条已验证的要点。'
+    return WEBSITE_REPOSITORY_READ_ONLY
   }
   return null
 }
@@ -780,7 +780,7 @@ const nextSkillHint = (id: string, files: string[]) => {
     return '写文件细则：read_agent_skill_file(skill-edit, references/edit.md)。'
   }
   if (id === 'chaoxing') {
-    return '按任务读 files 里 references/login.md、study.md 或 homework.md。'
+    return '按任务读 files 里的 references/login.md、study.md 或 homework.md。保存经验时先读取 SKILL.md 的 local_experience。'
   }
   if (files.some((file) => file === 'references/workflow.md')) {
     return '细则：read_agent_skill_file 读 references/workflow.md。'
@@ -859,10 +859,16 @@ export const readAgentSkillFileContent = async (id: string, relativePath: string
   if (repository) {
     if (!isRepositoryPath(repository.path)) return null
     const file = await readWebsiteRepositoryFile(repository.host, repository.path)
-    return file.content == null ? null : { id, path, content: file.content, repository_version: file.version,
-      hint: repository.path.startsWith('references/')
-        ? '云端参考文件为只读。本站的新经验统一在 SKILL.md 中补充。'
-        : `保留已有经验，仅补充几条本轮验证过、云端尚未覆盖的要点；将 repository_version 原样放入 write_agent_skill_file 的 base_version。新增经验保存到本站唯一的本地笔记。${nextSkillFileHint(id, path, []) || ''}` }
+    if (file.content == null) return null
+    const main = repository.path === SKILL_MAIN_FILE
+    const experienceSource = websiteRepositoryStates[repository.host]?.customUrl ? 'http' as const : 'online' as const
+    return { id, path, content: file.content, repository_version: file.version,
+      experience_source: experienceSource,
+      write_scope: main ? 'local_experience' as const : 'read_only' as const,
+      local_experience: main ? file.supplement : undefined,
+      hint: main
+        ? 'content 用于查阅来源文件与本地补充。编辑时仅在 local_experience 中合并已验证的增量，将更新后的本地笔记作为 content 写回此路径，并把 repository_version 填入 base_version。来源正文、参考文件和图谱只读。'
+        : WEBSITE_REPOSITORY_READ_ONLY }
   }
   // Website creation needs a definitive absence check. Directory enumeration and
   // optional overrides deliberately tolerate errors elsewhere; neither can be
@@ -877,7 +883,7 @@ export const readAgentSkillFileContent = async (id: string, relativePath: string
       if (!/ENOENT|No such file or directory|not found|os error 2\b/i.test(message)) throw error
       content = readBuiltinSkillFileRaw(id, path)
     }
-    return content == null ? null : { id, path, content, hint: nextSkillFileHint(id, path, [path]) }
+    return content == null ? null : { id, path, content, write_scope: 'website_files' as const, hint: nextSkillFileHint(id, path, [path]) }
   }
   const files = await listSkillFiles(id)
   if (!files.includes(path)) return null
@@ -891,7 +897,9 @@ export const readAgentSkillFileContent = async (id: string, relativePath: string
     content = await readInstalledSkillFile(id, path)
   }
   if (content == null) return null
-  return { id: item.id, path, content, hint: nextSkillFileHint(id, path, files) }
+  return { id: item.id, path, content,
+    write_scope: id === 'site-learn' && path.startsWith('sites/') ? 'website_files' as const : undefined,
+    hint: nextSkillFileHint(id, path, files) }
 }
 
 export const listAgentSkillsForAgent = async () => {
@@ -935,14 +943,14 @@ export const writeAgentSkillFileContent = async (id: string, relativePath: strin
     return { error: `文件超过 ${MAX_SKILL_FILE_BYTES} 字节` }
   }
   try {
-    const changed = await saveSkillFileContent(id, path, text, { repositoryVersion })
+    const changed = await saveSkillFileContent(id, path, text, { repositoryVersion, agentWrite: true })
     if (changed === false) return { ok: true, id, path, unchanged: true, hint: '没有新增本地经验；收尾使用 covered。' }
     const files = await listSkillFiles(id)
     return {
       ok: true,
       id,
       path,
-      hint: websiteRepositoryTarget(id, path) ? '已保存本地补充。图谱会热加载。' : '已写入。图谱会热加载。站点步骤写在 SKILL.md。',
+      hint: websiteRepositoryTarget(id, path) ? '已保存本站的「本地经验」。' : '已保存文件。',
       files,
     }
   } catch (error) {
@@ -956,20 +964,23 @@ export const writeAgentSkillFileContent = async (id: string, relativePath: strin
 }
 
 export const resetAgentSkillFile = async (id: string, relativePath?: string) => {
+  const target = resolveWebsiteSkillTarget(id, relativePath || SKILL_MAIN_FILE)
+  id = target.skillId
   const item = skillItemOf(id)
   if (!item) return { error: `Skill "${id}" 不存在` }
   if (!item.builtin) return { error: '只有内置 Skill 能恢复默认' }
   if (!isSkillEditable(id)) return { error: '此内置 Skill 为只读，不能恢复' }
-  const path = normalizeSkillRelativePath(relativePath || SKILL_MAIN_FILE) || SKILL_MAIN_FILE
+  const path = normalizeSkillRelativePath(target.path)
+  if (!path) return { error: '无效的文件路径' }
   try {
-    await resetSkillFileContent(id, path)
+    await resetSkillFileContent(id, path, { agentWrite: true })
     const file = await readAgentSkillFileContent(id, path)
     return {
       ok: true,
       id,
       path,
       content: file?.content || '',
-      hint: id === 'chaoxing' ? '已恢复为当前仓库缓存版本' : '已恢复为内置默认',
+      hint: '已恢复为内置默认',
       files: await listSkillFiles(id),
     }
   } catch (error) {
@@ -1034,7 +1045,7 @@ export const getSkillFileContent = async (id: string, relativePath: string): Pro
   }
 }
 
-export const saveSkillFileContent = async (id: string, relativePath: string, content: string, options?: { repositoryVersion?: string }) => {
+export const saveSkillFileContent = async (id: string, relativePath: string, content: string, options?: { repositoryVersion?: string; agentWrite?: boolean }) => {
   const item = skillItemOf(id)
   if (!item) throw new Error('Skill 不存在')
   assertSkillEditable(id)
@@ -1047,9 +1058,17 @@ export const saveSkillFileContent = async (id: string, relativePath: string, con
   if (writeError) throw new Error(writeError)
   if (isParserScriptPath(path)) throw new Error('不要写解析脚本。把步骤写进 sites/<主网站域名>/SKILL.md。')
   const text = String(await redactNative(redactObject(String(content ?? ''))))
-  if (!text.trim() && path === SKILL_MAIN_FILE) throw new Error('Skill 内容不能为空')
   await websiteRepositoryHosts()
   const repository = websiteRepositoryTarget(id, path)
+  if (repository && options?.agentWrite) {
+    if (repository.path !== SKILL_MAIN_FILE) throw new Error(WEBSITE_REPOSITORY_READ_ONLY)
+    if (!options.repositoryVersion) throw new Error('请先读取本站 SKILL.md，并将 repository_version 填入 base_version。')
+    const changed = await writeWebsiteRepositorySupplement(repository.host, text, { version: options.repositoryVersion })
+    promptCache.delete(id)
+    if (changed) await syncState()
+    return changed
+  }
+  if (!text.trim() && path === SKILL_MAIN_FILE) throw new Error('Skill 内容不能为空')
   if (repository && id !== 'chaoxing') {
     const changed = await writeWebsiteRepositoryFile(repository.host, repository.path, text.endsWith('\n') ? text : `${text}\n`, options?.repositoryVersion)
     promptCache.delete(id)
@@ -1163,7 +1182,7 @@ export const resetSkillDocument = async (id: string) => {
   }
 }
 
-export const resetSkillFileContent = async (id: string, relativePath: string) => {
+export const resetSkillFileContent = async (id: string, relativePath: string, options?: { agentWrite?: boolean }) => {
   const item = skillItemOf(id)
   if (!item?.builtin) return
   assertSkillEditable(id)
@@ -1173,6 +1192,7 @@ export const resetSkillFileContent = async (id: string, relativePath: string) =>
   if (writeError) throw new Error(writeError)
   await websiteRepositoryHosts()
   const repository = websiteRepositoryTarget(id, path)
+  if (repository && options?.agentWrite) throw new Error(WEBSITE_REPOSITORY_READ_ONLY)
   if (repository && id !== 'chaoxing') {
     await repositoryForHost(repository.host).reset(repository.path)
     await syncState()

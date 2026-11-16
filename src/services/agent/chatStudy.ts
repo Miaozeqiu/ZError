@@ -129,7 +129,19 @@ export const browserStatePrefix = async (sessionId: string) => {
       const node = siteGraphNodeForUrl(url)?.id || ''
       const section = node ? text.split(/^## /m).find((part) => part.startsWith(node)) : ''
       const body = (section ? `## ${section}` : text).trim().slice(0, 900)
-      if (body) skillLine = `【经验】\n${experienceStatus(latestExperience(sessions.value.flatMap(session => session.messages), `sites/${host}/SKILL.md`))}\n${body}`
+      const scope = file?.write_scope === 'local_experience'
+        ? `${file.experience_source === 'http' ? '本站从自定义 HTTP 接口读取。' : ''}仅可编辑本站「本地经验」。来源正文、参考文件和图谱只读。`
+        : file?.write_scope === 'website_files' ? '本站经验、参考文件和图谱均可编辑。' : ''
+      const local = file?.local_experience?.trim().slice(0, 600)
+      if (body) {
+        skillLine = [
+          '【经验】',
+          experienceStatus(latestExperience(sessions.value.flatMap(session => session.messages), `sites/${host}/SKILL.md`)),
+          scope,
+          body,
+          local && !body.includes(local) ? `【本地经验】\n${local}` : '',
+        ].filter(Boolean).join('\n')
+      }
     } catch {
       skillLine = ''
     }

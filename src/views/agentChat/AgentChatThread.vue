@@ -269,6 +269,21 @@
                 </template>
 
                 <div
+                  v-for="homework in homeworkByMessage.get(message.id)"
+                  :key="homework.assignmentId"
+                  class="write-block is-quiz"
+                  :class="{ 'is-open': openedQuizKey === homeworkPaneKey(homework.assignmentId) }"
+                >
+                  <button class="write-head" type="button" @click="openHomeworkPane(homework.assignmentId)">
+                    <span class="write-file">
+                      <Icon icon="lucide:list-checks" width="14" height="14" aria-hidden="true" />
+                      <span class="write-file-name">{{ homework.title || '课程作业' }}</span>
+                    </span>
+                    <span class="write-stat">{{ homework.total }} 题</span>
+                  </button>
+                </div>
+
+                <div
                   v-if="fallbackQuizCards(message).length"
                   class="write-block is-quiz"
                   :class="{ 'is-open': isQuizOpen(message.id, `${message.id}-md`) }"
@@ -331,6 +346,7 @@ import { createThreadScroll } from '../../utils/ui/threadScroll'
 import { readThreadSelection, clearThreadSelection } from '../../utils/ui/threadSelection'
 import { hljs } from '../../utils/ui/highlightSetup'
 import { activityIconName } from '../../utils/ui/agentIcons'
+import type { HomeworkProgress } from '../../services/agent/homeworkProgress'
 import { fileTypeLabel, fileTypeOf } from '../../utils/ui/fileKind'
 import { parseOptions } from '../../utils/question/quizPractice'
 import UnifiedContextMenu, { type MenuItem } from '../../components/ui/UnifiedContextMenu.vue'
@@ -357,7 +373,10 @@ import {
 } from './threadDisplay'
 import {
   fallbackQuizCards,
+  homeworkPaneKey,
   isQuizOpen,
+  openedQuizKey,
+  openHomeworkPane,
   openWrite,
   openedWriteStepId,
   toggleQuiz,
@@ -370,6 +389,16 @@ defineProps<{
 
 const threadPinned = defineModel<boolean>('pinned', { default: true })
 const quizReviews = computed(() => quizReviewsFor(activeChat.value?.messages || []))
+const homeworkByMessage = computed(() => {
+  const reports = new Map<string, HomeworkProgress[]>()
+  for (const report of activeChat.value?.homework || []) {
+    if (!report.messageId) continue
+    const group = reports.get(report.messageId)
+    if (group) group.push(report)
+    else reports.set(report.messageId, [report])
+  }
+  return reports
+})
 
 const emit = defineEmits<{
   import: []

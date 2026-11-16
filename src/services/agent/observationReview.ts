@@ -1,3 +1,4 @@
+import { studentChapterUrl } from '../chaoxing/host/chapterTasks'
 import type { ImportTaskStep } from '../app/importTasks'
 
 /** Explicit current-user review requests, never inferred from an Agent summary. */
@@ -15,17 +16,18 @@ export const isReadOnlyReviewGoal = (goal: string): boolean => {
 export const reviewObservationId = (goal: string | undefined, steps: ImportTaskStep[], browserId: string, url: string,
   now = Date.now()): string | undefined => {
   if (!goal || !isReadOnlyReviewGoal(goal) || !browserId || !url) return
-  const allowed = /^(?:read_agent_skill|read_agent_skill_file|list_agent_skills|search_conversation_history|read_conversation_history|browser_get_page|browser_screenshot|browser_get_state|browser_find|browser_eval|browser_decode_chaoxing_font|browser_scroll)$/
+  const allowed = /^(?:read_agent_skill|read_agent_skill_file|list_agent_skills|search_conversation_history|read_conversation_history|browser_get_page|browser_screenshot|browser_get_state|browser_find|browser_eval|browser_decode_chaoxing_font|browser_review_homework|browser_review_chapter|browser_scroll)$/
   const tools = steps.filter(step => step.kind === 'tool' && step.name !== 'browser_finish')
   if (tools.some(step => !allowed.test(step.name || '') || step.status !== 'done')) return
   // Scrolling is part of looking at a page, but needs a new observation of the
   // resulting viewport. Other read tools can inspect that observed document.
   let lastScroll = -1
   tools.forEach((step, index) => { if (step.name === 'browser_scroll') lastScroll = index })
-  const latest = tools.slice(lastScroll + 1).filter(step => ['browser_get_page', 'browser_screenshot'].includes(step.name || '')).at(-1)
+  const latest = tools.slice(lastScroll + 1).filter(step => ['browser_get_page', 'browser_screenshot', 'browser_review_chapter'].includes(step.name || '')).at(-1)
   if (!latest) return
   try {
     const result = JSON.parse(latest.result || '{}')
+    if (latest.name === 'browser_review_chapter' && studentChapterUrl(url)?.key !== result.chapterKey) return
     if (result.ok === false || result.error || result.snapshotStale || result.empty
       || result.observation_id !== latest.id || result.observed_browser_id !== browserId
       || !Number.isFinite(result.observed_at) || now - result.observed_at > 120_000 || result.observed_at > now

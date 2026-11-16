@@ -30,6 +30,7 @@ export type VideoWatchState = {
   videoCount: number
   videoIndex: number
   mid: string
+  chapterTask?: boolean
   status: 'watching' | 'paused' | 'stalled' | 'done' | 'quiz' | 'lost' | 'captcha'
   sampledAt: number
   sampledCurrent: number
@@ -46,6 +47,10 @@ export type VideoWatchCheck = {
 }
 
 export const browserVideoWatches = ref<Record<string, VideoWatchState>>({})
+
+type PauseRecovery = (isActive: () => boolean) => Promise<ChaoxingVideoTick | null>
+const pauseRecoveries = new Map<string, { run: PauseRecovery; attempted: boolean; timer?: number }>()
+const PAUSE_RECOVERY_DELAY_MS = 1500
 
 const LIVE_MS = 200
 const FALLBACK_MS = 8000
@@ -214,6 +219,9 @@ const clearTimers = (browserId: string) => {
   tickUnsub.get(browserId)?.()
   tickUnsub.delete(browserId)
   inFlight.delete(browserId)
+  const recovery = pauseRecoveries.get(browserId)
+  if (recovery?.timer != null) window.clearTimeout(recovery.timer)
+  pauseRecoveries.delete(browserId)
 }
 
 export const stopChaoxingWatch = (browserId?: string, opts?: { keep?: boolean }) => {
@@ -263,9 +271,8 @@ const emitMarks = (state: VideoWatchState, done: boolean) => {
 
 const applyTick = (browserId: string, tick: ChaoxingVideoTick | null, meta?: Partial<VideoWatchState>) => {
   const watch = browserVideoWatches.value[browserId]
-  if (!watch) return
-  if (!tick) return
-  if (!videoTickHasPlayer(tick)) {
+  if (!watch || !tick) return
+  if (!videoTickHasPlayer(tick) || (watch.chapterTask && tick.mid !== watch.mid)) {
     const last = lastSeenAt.get(browserId) || watch.startedAt
     if (Date.now() - last >= LOST_MS) {
       const next = patchWatch(browserId, { status: 'lost' })
@@ -300,9 +307,39 @@ const applyTick = (browserId: string, tick: ChaoxingVideoTick | null, meta?: Par
   }
   const pausedLong = Boolean(tick.paused && !done && Date.now() - (pausedAt.get(browserId) || Date.now()) >= STALL_MS)
   const stalled = !tick.paused && !done && Date.now() - (lastProgressAt.get(browserId) || watch.startedAt) >= STALL_MS
+  const recovery = pauseRecoveries.get(browserId)
+  if (recovery && !recovery.attempted && tick.paused && !done && recovery.timer == null) {
+    const isActive = () => pauseRecoveries.get(browserId) === recovery
+    recovery.timer = window.setTimeout(() => {
+      if (!isActive()) return
+      const live = browserVideoWatches.value[browserId]
+      if (!live?.paused || live.ended) { recovery.timer = undefined; return }
+      recovery.attempted = true
+      void recovery.run(isActive).catch(() => null).then(tick => {
+        if (!isActive()) return
+        recovery.timer = undefined
+        const current = browserVideoWatches.value[browserId]
+        if (!current?.paused || current.ended) return
+        if (tick && !tick.paused) {
+          lastProgressAt.set(browserId, Date.now())
+          applyTick(browserId, tick)
+        } else {
+          const failed = patchWatch(browserId, { status: 'stalled' })
+          if (failed && !stallNotified.has(browserId)) {
+            stallNotified.add(browserId)
+            emit('stalled', failed)
+          }
+        }
+      })
+    }, PAUSE_RECOVERY_DELAY_MS)
+  } else if (recovery?.timer != null && !recovery.attempted && !tick.paused) {
+    window.clearTimeout(recovery.timer)
+    recovery.timer = undefined
+  }
+  const heldForRecovery = recovery?.timer != null
   const status = done
     ? 'done'
-    : pausedLong || stalled
+    : (pausedLong && !heldForRecovery) || stalled
       ? 'stalled'
       : tick.paused
         ? 'paused'
@@ -320,7 +357,7 @@ const applyTick = (browserId: string, tick: ChaoxingVideoTick | null, meta?: Par
     mid,
   })
   if (!next) return
-  if ((pausedLong || stalled) && !done && !stallNotified.has(browserId)) {
+  if (status === 'stalled' && !done && !stallNotified.has(browserId)) {
     stallNotified.add(browserId)
     emit('stalled', next)
   }
@@ -440,7 +477,7 @@ export const startChaoxingWatch = (
     videoIndex?: number
     mid?: string
   },
-  opts?: { resume?: boolean },
+  opts?: { resume?: boolean; recoverPause?: PauseRecovery },
 ) => {
   const id = String(browserId || '').trim()
   const sid = String(sessionId || '').trim()
@@ -476,6 +513,7 @@ export const startChaoxingWatch = (
     videoCount: Number(seed?.videoCount) || prev?.videoCount || 0,
     videoIndex: Number(seed?.videoIndex) || prev?.videoIndex || 0,
     mid: String(seed?.mid || prev?.mid || ''),
+    chapterTask: Boolean(opts?.recoverPause),
     status: done ? 'done' : seed?.paused ? 'paused' : 'watching',
     sampledAt: now,
     sampledCurrent: current,
@@ -483,6 +521,7 @@ export const startChaoxingWatch = (
     updatedAt: now,
   }
   browserVideoWatches.value = { ...browserVideoWatches.value, [id]: state }
+  if (opts?.recoverPause) pauseRecoveries.set(id, { run: opts.recoverPause, attempted: false })
   // 本地读进度条即可；不设 heartbeat，避免定时叫醒 Agent
   lastInspectAt.set(id, now)
   lastPushAt.set(id, now)
@@ -490,7 +529,7 @@ export const startChaoxingWatch = (
   tickUnsub.set(id, onBrowserTick(id, (tick) => {
     // 叠着的多视频页每条都会推；只认监测中的那条 mid，否则视频 1 的 pause 会把视频 2 标成暂停
     const watch = browserVideoWatches.value[id]
-    if (!watch || !tickMatchesMid(tick, watch.mid)) return
+    if (!watch || (watch.chapterTask ? tick.mid !== watch.mid : !tickMatchesMid(tick, watch.mid))) return
     if (!watch.mid && tick.mid && !tick.visible && tick.paused) return
     lastPushAt.set(id, Date.now())
     applyTick(id, tick)

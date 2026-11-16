@@ -361,7 +361,7 @@ onMounted(async () => {
     if (disposed) { off?.(); return }
     unlistenLoad = off
   }
-  resizeObserver = new ResizeObserver(() => { void syncView() })
+  resizeObserver = new ResizeObserver(updateBounds)
   if (hostRef.value) resizeObserver.observe(hostRef.value)
   if (previewHostRef.value) resizeObserver.observe(previewHostRef.value)
   window.addEventListener('resize', updateBounds)

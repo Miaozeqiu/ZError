@@ -9,6 +9,7 @@ export type ChatToolContext = {
   abort: AbortSignal
   browserId: () => string
   ensureBrowser?: () => Promise<string>
+  onBrowserNavigation?: () => void
   browserEpoch?: number
   attachment: () => AgentChatAttachment | null
   folders: () => AgentChatAttachment[]

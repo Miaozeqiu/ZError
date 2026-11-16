@@ -1,7 +1,7 @@
 import { homeworkCaptureScript } from '../chaoxing/host/homeworkHost'
 import '../chaoxing/host'
 import { listBundledSkillFiles, readBundledSkillFile } from './skills/builtinSkillAssets'
-import { readChaoxingRepositoryFile, onWebsiteRepositoryChanged, websiteRepositoryHosts, readWebsiteRepositoryFile } from './websiteRepository'
+import { hasWebsiteRepository, repositoryForHost, readChaoxingRepositoryFile, onWebsiteRepositoryChanged, websiteRepositoryHosts, readWebsiteRepositoryFile } from './websiteRepository'
 
 import type { SiteGraphData } from '../browser/siteGraphCore'
 
@@ -143,8 +143,21 @@ export const reloadChaoxingImpl = async (path?: string) => {
 
 void reloadChaoxingImpl()
 onWebsiteRepositoryChanged(host => {
-  if (host === 'chaoxing.com') void reloadChaoxingImpl(SITE_GRAPH_PATH)
-  else void readWebsiteRepositoryFile(host, SITE_GRAPH_PATH).then(file => { if (file.content) applyLearnedSiteGraphContent(file.content) }).catch(() => undefined)
+  const update = async () => {
+    if (hasWebsiteRepository(host)) {
+      const file = await repositoryForHost(host).read(SITE_GRAPH_PATH)
+      if (host === 'chaoxing.com') applyGraphSource(file.content, true)
+      else if (file.content) applyLearnedSiteGraphContent(file.content)
+      return
+    }
+    const { readTextFile, BaseDirectory } = await import('@tauri-apps/plugin-fs')
+    const raw = await readTextFile(`${LEARNED_SITES_DIR}/${host}/${SITE_GRAPH_PATH}`, { baseDir: BaseDirectory.Home }).catch(() => '')
+    if (hasWebsiteRepository(host)) return
+    const { liveSiteGraphs } = await import('../browser/siteGraphCore')
+    liveSiteGraphs.value = liveSiteGraphs.value.filter(site => site.host !== host)
+    applyLearnedSiteGraphContent(raw)
+  }
+  void update().catch(() => undefined)
 })
 try { seedBundledLearnedSites() } catch (error) {
   console.warn('[site-learn] 内置站点解析器加载失败', error)

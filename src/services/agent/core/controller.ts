@@ -76,7 +76,7 @@ export const createRunController = (input: {
         return JSON.stringify({ ok: true, outcome: args.outcome, hint: args.outcome === 'completed' ? '不要重复已完成的操作。' : '页面证据已核对；仅在用户授权范围内重试。' })
       }
       const mutates = browserMutation(call.name) || (call.name === 'browser_eval' && !isReadOnlyBrowserScript(String(object(call.arguments).script || '')))
-      if ((mutates || call.name === 'browser_watch' || call.name === 'browser_course_plan' || (call.name === 'browser_finish' && object(call.arguments).status === 'done')) && run.needsObservation) return blocked('任务恢复后必须先 browser_get_page 或 browser_screenshot 读取当前页面，旧 ref 不可重放。')
+      if ((mutates || call.name === 'browser_watch' || call.name === 'browser_course_plan' || (call.name === 'browser_finish' && object(call.arguments).status === 'done')) && run.needsObservation) return blocked('任务恢复后先读取当前页面或截图。学习通章节页可以用 browser_review_chapter。')
       if ((mutates || (call.name === 'browser_finish' && object(call.arguments).status === 'done')) && run.operations.some(op => op.state === 'uncertain' || op.state === 'pending')) return blocked('存在结果不确定的网页操作。先观察原标签中的页面回执，再 browser_verify_operation；不可直接重试或声明完成。')
       if (mutates) {
         browserId = input.prepareBrowser ? await input.prepareBrowser() : browserId
@@ -128,7 +128,12 @@ export const createRunController = (input: {
         recentSnapshot = snap
       }
       if (failed) traceRun(run, 'failure', { tool: call.name, code: classifyFailure(result.error) })
-      const hasObservation = call.name === 'browser_get_page' ? typeof result.snapshot === 'string' && Boolean(result.snapshot.trim()) && !result.empty : typeof result.image === 'string' && result.image.startsWith('data:image/')
+      const hasObservation = call.name === 'browser_screenshot'
+        ? typeof result.image === 'string' && result.image.startsWith('data:image/')
+        : call.name === 'browser_review_chapter'
+          ? result.ok === true && typeof result.chapterKey === 'string'
+          : typeof result.snapshot === 'string' && Boolean(result.snapshot.trim()) && !result.empty
+          && (!(call.name === 'browser_open_course' || call.name === 'browser_open_homework') || result.opened === true)
       if (!failed && observationTool(call.name) && hasObservation && browserId === input.browserId()) {
         run.needsObservation = false
         run.observation = { id: call.id, browserId: input.browserId(), at: Date.now(), sequence: run.sequence + 1 }

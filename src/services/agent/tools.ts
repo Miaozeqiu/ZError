@@ -14,9 +14,10 @@ export type { BrowserToolRole } from './subagent/tools'
 export const BROWSER_TOOLS = [...BROWSER_PRIMITIVE_TOOLS, ...WEB_SEARCH_TOOLS]
 
 /** 工具表与当前设置一致，关闭的能力不让模型继续尝试。 */
-export const availableAgentTools = <T extends Array<{ function: { name: string } }>>(tools: T, search: { enabled: boolean }) => (
+export const availableAgentTools = <T extends Array<{ function: { name: string } }>>(tools: T, search: { enabled: boolean }, websiteScriptsEnabled = true) => (
   tools.filter(({ function: { name } }) =>
-    (search.enabled || name !== 'web_search') && !campusWriteDenial(name),
+    (search.enabled || name !== 'web_search') && !campusWriteDenial(name)
+      && (websiteScriptsEnabled || !/^browser_(list_courses|open_course|list_homework|open_homework|answer_homework|start_chapter_tasks|complete_chapter)$/.test(name)),
   )
 )
 

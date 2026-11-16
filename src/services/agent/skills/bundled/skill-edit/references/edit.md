@@ -8,7 +8,7 @@
 - 细则：`references/*.md`
 - 站点步骤：`sites/<主机>/SKILL.md` 是附属文档，不是独立 Skill，无须套用根目录的命名规则。不要创建解析器。图谱用 `browser_site_graph`，不要整文件写 `site-graph.json`。
 
-`write_agent_skill_file` 的 `content` 必须是**完整文件**，不能只传片段。
+`write_agent_skill_file` 的 `content` 须包含完整的编辑内容。在线网站的 `write_scope=local_experience` 时，写回完整本地笔记并传入 `base_version`；自建网站写回完整文件。
 
 ## 新建
 
@@ -18,10 +18,10 @@
 
 ## 内置 vs 安装
 
-- 具体站点内置 Skill（`chaoxing`）：可以在设置页编辑，写入会存到覆盖目录，显示「已修改」。
+- 使用在线仓库或自定义 HTTP 接口的网站：主经验、参考文件及图谱只读，Agent 只可编辑本站「本地经验」。
 - 内部网站能力（`site-graph`、`site-learn`）：设置页隐藏。Agent 仍可使用图谱工具和站点经验写入流程。
 - 其他内置 Skill：只读，设置页隐藏，不能写入、新建附属文件或恢复。读取与使用不受影响；以 `list_agent_skills` 返回的 `editable` 为准。
-- `reset_agent_skill_file` 只对内置有效
+- `reset_agent_skill_file` 只对可编辑的内置文件有效
 - 从 GitHub 安装的 Skill：直接改安装目录里的文件
 
 ## 怎么做

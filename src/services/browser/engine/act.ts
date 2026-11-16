@@ -134,7 +134,8 @@ const fireBox = async (id: string, op: ActOp, found: Record<string, unknown>, te
   if (op === 'fill') {
     const backend = Number(found.backend)
     if (Number.isFinite(backend) && backend > 0) {
-      return asObject(await callProtocol(id, 'fill_node', { backend, session, text: text ?? '' }))
+      return asObject(await callProtocol(id, 'fill_node', { backend, session, text: text ?? '',
+        ...(found.frameId && found.loaderId ? { frameId: found.frameId, loaderId: found.loaderId } : {}) }))
     }
     // 没有节点身份时不能用全局焦点猜测输入目标。
     return { ok: false, reason: 'invalid', error: '输入目标缺少节点身份，请重新读取页面' }
@@ -270,6 +271,31 @@ export const actOnBrowser = async (
       return finish(asResult({ ok: false, reason: 'not_found', retry: true, error: String(err) }), locator)
     }
     return actByPolling(id, input.op, tried, locator, input.text, Math.min(ACT_MISS_TIMEOUT_MS, timeout))
+  }
+}
+
+/** Wait for a pinned node, then issue at most one action. The caller verifies
+ * the domain state before deciding whether another write is safe. */
+export const actOnceOnBrowser = async (
+  id: string, locator: BrowserLocator, op: 'click' | 'fill', text?: string,
+): Promise<ActResult & { dispatched: boolean }> => {
+  const target = normalizeLocator(locator)
+  let hit: Awaited<ReturnType<typeof locateOnce>>
+  try {
+    hit = await locateOnce(id, [target])
+    if (!hit.ready && hit.result.retry && isRetryableReason(hit.result.reason || 'not_found')) {
+      hit = await locateWait(id, [target], 1500)
+    }
+  } catch {
+    return { ok: false, reason: 'invalid', dispatched: false }
+  }
+  if (!hit.ready) return { ...finish(hit.result, target), dispatched: false }
+  if (!target.frameId || !target.loaderId || hit.found.frameId !== target.frameId || hit.found.loaderId !== target.loaderId
+    || !(Number(hit.found.backend) > 0)) return { ok: false, reason: 'invalid', dispatched: false }
+  try {
+    return { ...await fireReady(id, op, hit.found, text, target.value), dispatched: true }
+  } catch {
+    return { ok: false, reason: 'unstable', dispatched: true }
   }
 }
 

@@ -1,12 +1,26 @@
-// Runs at document start, only in the directly embedded campus website.
+// Syncs the desktop session and appearance in the directly embedded campus website.
 (() => {
   if (location.origin !== 'https://tiku.zerrorai.com' || window === window.top || parent !== top) return
   const channel = 'zerror-campus-auth-v1'
   let port = null
   let revision = -1
   let applying = false
+  let theme = null
+  const appearanceKey = 'ze-site-appearance'
   const keys = ['token', 'api_token', 'nickname', 'createdTime', 'user_id', 'userId', 'userStatus']
   const parentOrigins = new Set(['tauri://localhost', 'http://tauri.localhost', 'http://localhost:1420'])
+
+  const applyTheme = () => {
+    if (!theme) return
+    if (document.documentElement) document.documentElement.dataset.theme = theme
+    // Notify the site's reactive theme handler without overwriting its saved appearance.
+    window.dispatchEvent(new StorageEvent('storage', { key: appearanceKey, newValue: theme }))
+  }
+
+  window.addEventListener('DOMContentLoaded', applyTheme, { once: true })
+  window.addEventListener('storage', ({ isTrusted, key }) => {
+    if (isTrusted && (key === appearanceKey || key === null)) queueMicrotask(applyTheme)
+  })
 
   window.addEventListener('message', (event) => {
     if (event.source !== parent || !parentOrigins.has(event.origin)) return
@@ -15,7 +29,15 @@
     port = event.ports[0]
     const current = port
     current.onmessage = ({ data }) => {
-      if (port !== current || data?.type !== 'session' || !Number.isInteger(data.revision)) return
+      if (port !== current) return
+      if (data?.type === 'theme') {
+        if (data.theme === 'light' || data.theme === 'dark') {
+          theme = data.theme
+          applyTheme()
+        }
+        return
+      }
+      if (data?.type !== 'session' || !Number.isInteger(data.revision)) return
       if (data.revision < revision) return
       if (typeof data.token !== 'string') return
       revision = data.revision

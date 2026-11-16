@@ -279,6 +279,7 @@ const bumpGraphs = () => {
 
 export const replaceLiveSite = (data: SiteGraphData) => {
   const next = cloneGraph(data)
+  liveSiteGraphs.value = liveSiteGraphs.value.filter(item => item.id === next.id || item.host !== next.host)
   liveSiteGraphs.value = liveSiteGraphs.value.map((item) => (item.id === next.id ? next : item))
   if (!liveSiteGraphs.value.some((item) => item.id === next.id)) {
     liveSiteGraphs.value = [...liveSiteGraphs.value, next]
@@ -306,10 +307,11 @@ export type SiteGraphPatchResult = {
 
 export const applySiteGraphPatch = (
   args: Record<string, unknown>,
-  opts?: { url?: string },
+  opts?: { url?: string; readonlySite?: (site: Pick<SiteGraphData, 'id' | 'host'>) => boolean },
 ): SiteGraphPatchResult => {
   const action = String(args.action || '').trim()
   const site = findLiveSite(String(args.siteId || ''), opts?.url)
+  const readonly = { ok: false, error: '在线仓库或自定义 HTTP 接口中的图谱为只读；可在本站「本地经验」记录已验证的导航步骤。' }
   if (!site && action !== 'reset' && action !== 'list' && action !== 'upsert_site') {
     return { ok: false, error: '找不到站点图谱。可先 list，或 upsert_site 建新站点。' }
   }
@@ -320,7 +322,7 @@ export const applySiteGraphPatch = (
       ok: true,
       sites: liveSiteGraphs.value.map((item) => cloneGraph(item)),
       site: cloneGraph(site || liveSiteGraphs.value[0]),
-      hint: 'sites 是内存里全部站点。学习通用 chaoxing；其它站点用 upsert_site 再建节点。',
+      hint: 'sites 是内存里全部站点。',
     }
   }
 
@@ -330,13 +332,13 @@ export const applySiteGraphPatch = (
     return {
       ok: true,
       site: cloneGraph(target),
-      hint: '这是当前图谱。用 upsert_node / upsert_edge 增改，每次自动保存。不要整文件写 site-graph.json。',
     }
   }
 
   if (action === 'save') {
     const target = site || liveSiteGraphs.value[0]
     if (!target) return { ok: false, error: '还没有任何站点图谱' }
+    if (opts?.readonlySite?.(target)) return readonly
     return {
       ok: true,
       persist: true,
@@ -360,6 +362,7 @@ export const applySiteGraphPatch = (
     const existing = findLiveSite(siteId)
     const host = grouped ? identity!.host : String(args.host || existing?.host || hostRaw).trim().replace(/^www\./i, '').toLowerCase() || siteId
     if (siteId === 'chaoxing' && host !== 'chaoxing.com') return { ok: false, error: '其他网站的图谱不能归到学习通' }
+    if ((existing && opts?.readonlySite?.(existing)) || opts?.readonlySite?.({ id: siteId, host })) return readonly
     const escaped = host.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     const hostPattern = grouped ? websiteHostPattern(host) : String(args.hostPattern || existing?.hostPattern || escaped).trim() || escaped
     const name = grouped && hostRaw !== host ? existing?.name || identity!.name : String(args.name || existing?.name || identity?.name || host).trim().slice(0, 40) || host
@@ -385,6 +388,7 @@ export const applySiteGraphPatch = (
   if (action === 'reset') {
     const id = String(args.siteId || site?.id || 'chaoxing').trim() || 'chaoxing'
     if (id === 'chaoxing') {
+      if (opts?.readonlySite?.({ id, host: 'chaoxing.com' })) return readonly
       replaceLiveSite(getChaoxingSiteGraphSeed())
       return { ok: true, site: cloneGraph(findLiveSite('chaoxing')!), hint: '已从 Skill 的 site-graph.json 重新加载。' }
     }
@@ -392,6 +396,7 @@ export const applySiteGraphPatch = (
   }
 
   if (!site) return { ok: false, error: '找不到站点图谱' }
+  if (opts?.readonlySite?.(site)) return readonly
 
   if (action === 'set_notes') {
     const notes = Array.isArray(args.notes)

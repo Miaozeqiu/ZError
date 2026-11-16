@@ -41,6 +41,30 @@ describe('Skill storage and installation', () => {
     await expect(mod.readAgentSkillFileContent('site-learn', target)).rejects.toThrow('permission denied')
     expect(io.files.get(base + 'site-learn/' + target)).toBe('# Existing portal instructions')
   })
+  it('exposes and saves only the local note for online websites, with version checks', async () => {
+    const mod = await load()
+    const { repositoryForHost } = await import('../../src/services/agent/websiteRepository')
+    const repository = repositoryForHost('chaoxing.com')
+    const original = await mod.readAgentSkillFileContent('site-learn', 'sites/chaoxing.com/SKILL.md')
+    expect(original).toMatchObject({ write_scope: 'local_experience', local_experience: '' })
+    const upstream = repository.inspect().upstream
+    expect(await mod.writeAgentSkillFileContent('chaoxing', 'SKILL.md', '验证过的本地导航', original?.repository_version))
+      .toMatchObject({ ok: true })
+    const file = await mod.readAgentSkillFileContent('chaoxing', 'SKILL.md')
+    expect(file).toMatchObject({ write_scope: 'local_experience', local_experience: '验证过的本地导航' })
+    expect(file?.content).toContain('验证过的本地导航')
+    expect(await mod.writeAgentSkillFileContent('chaoxing', 'SKILL.md', '过期笔记', original?.repository_version))
+      .toHaveProperty('error', expect.stringContaining('重新读取'))
+    expect(await mod.resetAgentSkillFile('site-learn', 'sites/chaoxing.com/SKILL.md'))
+      .toHaveProperty('error', expect.stringContaining('只可修改'))
+    expect(await mod.writeAgentSkillFileContent('site-learn', 'sites//chaoxing.com/./references/study.md', '覆盖', file?.repository_version))
+      .toHaveProperty('error', expect.stringContaining('只可修改'))
+    expect(repository.inspect()).toMatchObject({ upstream, supplement: '验证过的本地导航' })
+
+    const path = 'sites/custom.example.com/references/guide.md'
+    expect(await mod.writeAgentSkillFileContent('site-learn', path, '# 自建参考文件')).toMatchObject({ ok: true })
+    expect(io.files.get(base + 'site-learn/' + path)).toBe('# 自建参考文件\n')
+  })
   it('ignores local legacy artifacts and rejects their mutation without deleting the stored files', async () => {
     const mod = await load()
     const legacy = ['sites/zjooc.cn/fixtures/page.html', 'sites/zjooc.cn/parsers/study/see.json', 'sites/zjooc.cn/schema.json']

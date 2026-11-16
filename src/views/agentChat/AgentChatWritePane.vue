@@ -3,21 +3,38 @@
     <aside v-if="quiz" class="write-pane is-quiz" :class="{ 'is-resizing': paneResizing }" :style="writePaneStyle">
       <div class="write-pane-resizer" title="拖动调节宽度" @pointerdown.stop="startPaneResize" />
       <div class="write-pane-inner">
-        <div class="write-pane-head">
+        <div class="write-pane-head" :class="{ 'is-homework-head': quiz.mode === 'homework' }">
           <div class="write-file">
             <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
               <circle cx="12" cy="12" r="9" />
               <path d="M9.5 9.5a2.5 2.5 0 1 1 3.6 2.25c-.7.4-1.1.9-1.1 1.75" />
               <path d="M12 17h.01" />
             </svg>
-            <span class="write-file-name">{{ quiz.title }}</span>
+            <span class="write-file-name" :title="quiz.title">{{ quiz.title }}</span>
           </div>
-          <span class="write-stat">{{ quiz.stat }}</span>
+          <AgentHomeworkQuestionIndex
+            v-if="quiz.mode === 'homework'"
+            :key="quiz.homework.assignmentId"
+            :model-value="homeworkOrder"
+            :total="quiz.homework.total"
+            :summary="quiz.stat"
+            @update:model-value="goToHomeworkOrder"
+          />
+          <span v-else class="write-stat">{{ quiz.stat }}</span>
           <button class="header-action" type="button" @click="emit('close-quiz')">关闭</button>
         </div>
         <div class="write-pane-body-wrap">
-          <div ref="writePaneBodyRef" class="write-pane-body is-quiz-page">
+          <div
+            ref="writePaneBodyRef"
+            class="write-pane-body"
+            :class="quiz.mode === 'homework' ? 'is-homework-page' : 'is-quiz-page'"
+            @scroll.passive="trackHomeworkOrder"
+            @wheel.passive="interruptHomeworkScroll"
+            @pointerdown="interruptHomeworkScroll"
+          >
+            <AgentHomeworkProgress v-if="quiz.mode === 'homework'" :key="quiz.homework.assignmentId" :homework="quiz.homework" />
             <AgentQuizBlock
+              v-else
               :key="quiz.stepId"
               layout="pane"
               :mode="quiz.mode"
@@ -34,6 +51,7 @@
             class="custom-scrollbar"
             :class="{ 'is-visible': writeScroll.visible }"
             ref="writeBarRef"
+            @pointerdown="interruptHomeworkScroll"
             @mousedown="writeScroll.onMousedown"
           >
             <div class="custom-scrollbar-thumb" ref="writeThumbRef"></div>
@@ -143,9 +161,12 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import AgentQuizBlock from '../../components/agent/AgentQuizBlock.vue'
+import AgentHomeworkProgress from './AgentHomeworkProgress.vue'
+import AgentHomeworkQuestionIndex from './AgentHomeworkQuestionIndex.vue'
 import StudyMermaidGraph from '../../components/study/StudyMermaidGraph.vue'
 import { useCustomScrollbar } from '../../composables/useCustomScrollbar'
 import type { AgentQuizAttempt, AgentQuizOptionQuote } from '../../services/agent/chat'
+import type { HomeworkProgress } from '../../services/agent/homeworkProgress'
 import type { ImportTaskStep } from '../../services/app/importTasks'
 import { parseOptions, type QuizCard } from '../../utils/question/quizPractice'
 import type { StudyGraphNode } from '../../utils/study/studyGraph'
@@ -158,6 +179,11 @@ export type AgentChatPaneQuiz = {
   mode: 'browse' | 'practice'
   stat: string
   focus?: { uid: string } | null
+} | {
+  mode: 'homework'
+  homework: HomeworkProgress
+  title: string
+  stat: string
 }
 
 export type AgentChatPaneGraph = {
@@ -192,6 +218,99 @@ const writeScroll = useCustomScrollbar()
 const writePaneBodyRef = writeScroll.contentRef
 const writeBarRef = writeScroll.barRef
 const writeThumbRef = writeScroll.thumbRef
+
+const homework = computed(() => props.quiz?.mode === 'homework' ? props.quiz.homework : undefined)
+const homeworkOrder = ref(1)
+let pendingHomeworkOrder: number | null = null
+let pinnedHomeworkScroll: number | null = null
+let homeworkScrollFrame: number | null = null
+
+const homeworkScrollTop = (body: HTMLElement) =>
+  body.getBoundingClientRect().top + (Number.parseFloat(getComputedStyle(body).scrollPaddingTop) || 0)
+
+const stopHomeworkScroll = () => {
+  if (homeworkScrollFrame === null) return
+  cancelAnimationFrame(homeworkScrollFrame)
+  homeworkScrollFrame = null
+}
+
+const goToHomeworkOrder = (order: number) => {
+  const body = writePaneBodyRef.value
+  if (!homework.value || !body) return
+  stopHomeworkScroll()
+  homeworkOrder.value = order
+  const row = body.querySelector<HTMLElement>(`[data-homework-order="${order}"]`)
+  if (!row) {
+    pendingHomeworkOrder = order
+    return
+  }
+  pendingHomeworkOrder = null
+  const from = body.scrollTop
+  const offset = row.getBoundingClientRect().top - homeworkScrollTop(body)
+  const target = Math.max(0, Math.min(body.scrollHeight - body.clientHeight, from + offset))
+  const write = (top: number) => {
+    body.scrollTop = top
+    pinnedHomeworkScroll = body.scrollTop
+  }
+  pinnedHomeworkScroll = from
+  if (Math.abs(target - from) < 1 || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+    write(target)
+    return
+  }
+
+  const started = performance.now()
+  const tick = (now: number) => {
+    homeworkScrollFrame = null
+    if (body.scrollTop !== pinnedHomeworkScroll) {
+      trackHomeworkOrder()
+      return
+    }
+    const progress = Math.min(1, Math.max(0, (now - started) / 140))
+    write(from + (target - from) * (1 - (1 - progress) ** 3))
+    if (progress < 1) homeworkScrollFrame = requestAnimationFrame(tick)
+  }
+  homeworkScrollFrame = requestAnimationFrame(tick)
+}
+
+const trackHomeworkOrder = () => {
+  const body = writePaneBodyRef.value
+  if (!homework.value || !body || body.scrollTop === pinnedHomeworkScroll) return
+  stopHomeworkScroll()
+  pinnedHomeworkScroll = null
+  const rows = body.querySelectorAll<HTMLElement>('[data-homework-order]')
+  if (!rows.length) return
+  const top = homeworkScrollTop(body)
+  let start = 0
+  let end = rows.length - 1
+  const atBottom = body.scrollTop > 0 && body.scrollTop + body.clientHeight >= body.scrollHeight - 1
+  if (atBottom) start = end
+  while (start < end) {
+    const middle = Math.floor((start + end) / 2)
+    if (rows[middle].getBoundingClientRect().bottom <= top) start = middle + 1
+    else end = middle
+  }
+  pendingHomeworkOrder = null
+  homeworkOrder.value = Number(rows[start].dataset.homeworkOrder)
+}
+
+const interruptHomeworkScroll = () => {
+  if (homeworkScrollFrame === null && pendingHomeworkOrder === null) return
+  stopHomeworkScroll()
+  pinnedHomeworkScroll = null
+  trackHomeworkOrder()
+}
+
+watch(() => homework.value?.assignmentId, () => {
+  stopHomeworkScroll()
+  homeworkOrder.value = homework.value?.questions[0]?.order ?? 1
+  pendingHomeworkOrder = null
+  pinnedHomeworkScroll = null
+}, { immediate: true })
+
+watch(() => homework.value?.questions, (questions) => {
+  const pending = pendingHomeworkOrder
+  if (pending !== null && questions?.some(row => row.order === pending)) goToHomeworkOrder(pending)
+}, { flush: 'post' })
 
 const typeTagKind = (type?: string) => {
   const text = String(type || '').replace(/\s/g, '')
@@ -259,18 +378,20 @@ const startPaneResize = (event: PointerEvent) => {
   window.addEventListener('pointercancel', onUp)
 }
 
-watch([() => props.writeStep, () => props.quiz], async ([write, quiz]) => {
+watch([() => props.writeStep, () => props.quiz?.mode === 'homework' ? props.quiz.homework.assignmentId : props.quiz?.stepId], async ([write, quiz]) => {
   await nextTick()
+  if (props.quiz?.mode === 'homework' && writePaneBodyRef.value) writePaneBodyRef.value.scrollTop = 0
   if (write || quiz) writeScroll.bind()
 })
 
-watch(() => props.quiz?.focus, (focus) => {
+watch(() => props.quiz?.mode === 'homework' ? undefined : props.quiz?.focus, (focus) => {
   if (focus && writePaneBodyRef.value) writePaneBodyRef.value.scrollTop = 0
 }, { flush: 'post' })
 
 watch(paneWidth, () => emit('width-change'))
 
 onUnmounted(() => {
+  stopHomeworkScroll()
   stopPaneResize?.()
 })
 </script>
@@ -427,9 +548,37 @@ onUnmounted(() => {
   flex: 1;
 }
 
+.write-pane-head.is-homework-head {
+  height: 40px;
+  min-height: 40px;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.is-homework-head .write-file {
+  font-size: inherit;
+  font-weight: 600;
+}
+
+.is-homework-head .write-file svg {
+  width: 14px;
+  height: 14px;
+}
+
+.is-homework-head .header-action {
+  flex-shrink: 0;
+  color: var(--text-primary, #1d1d1f);
+  font-size: inherit;
+  font-weight: 500;
+}
+
 .write-pane-body.is-quiz-page {
   display: flex;
   overflow: hidden;
+}
+
+.write-pane-body.is-homework-page {
+  scroll-padding-top: 12px;
 }
 
 .write-pane-body.is-graph-page {

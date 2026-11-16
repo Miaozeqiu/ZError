@@ -2184,6 +2184,10 @@ async fn dispatch_browser_protocol(
     "fill_node" => {
       #[cfg(target_os = "macos")]
       if crate::cef_runtime::cef_enabled() {
+        if let Err(error) = crate::cef::frames::verify_action_node(&id, &args).await {
+          return Ok(serde_json::json!({ "ok": false, "reason": "invalid", "retry": false,
+            "requiresRefresh": true, "error": error }));
+        }
         return crate::cef::cdp_fill_node(
           id, args.get("backend").and_then(|v| v.as_i64()).unwrap_or(0),
           protocol_arg_str(&args, "session"), protocol_arg_str(&args, "text").unwrap_or_default(),

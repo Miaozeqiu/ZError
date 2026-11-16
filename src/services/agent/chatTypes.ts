@@ -1,4 +1,5 @@
 import type { ImportTaskStep } from '../app/importTasks'
+import type { HomeworkProgress } from './homeworkProgress'
 
 export interface AgentQuizAttempt {
   stepId: string
@@ -138,6 +139,7 @@ export interface AgentChatSession {
   role?: 'parent' | AgentSubagentKind
   todos?: AgentTodoItem[]
   jobs?: AgentSubagentJob[]
+  homework?: HomeworkProgress[]
   contextSummary?: AgentContextSummary
   createdAt: number
   updatedAt: number

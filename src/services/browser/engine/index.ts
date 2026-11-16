@@ -1,4 +1,4 @@
-export { actOnBrowser, clickByLocator, clickByLocators, fillByLocator, fillByLocators, probeOnBrowser } from './act'
+export { actOnBrowser, actOnceOnBrowser, clickByLocator, clickByLocators, fillByLocator, fillByLocators, probeOnBrowser } from './act'
 export { buildControlScript, controlOnBrowser, type ControlOp } from './control'
 export { clickLabelMatches, siteSelectorsForText } from './clickFind'
 export { buildLocateBoxScript, buildLocatedActionScript, isRetryableReason, locatorsToTry } from './locate'

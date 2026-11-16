@@ -765,6 +765,115 @@ fn answer_for_local_match(matched: &QuestionMatch, request: &QueryRequest) -> Op
     Some(parts.join("###"))
 }
 
+#[derive(serde::Serialize)]
+pub struct HomeworkBankAnswer {
+    id: i64,
+    answer: String,
+}
+
+/// Read-only lookup for the course homework worker. This never uses the /query
+/// route, so an absent or uncertain bank answer cannot invoke a model or write to the bank.
+#[tauri::command]
+pub async fn lookup_homework_bank_answers(
+    questions: Vec<QueryRequest>,
+) -> Result<Vec<Vec<HomeworkBankAnswer>>, String> {
+    if questions.len() > 10 || questions.iter().any(|question| {
+        let kind = question.query_type.as_deref().and_then(detect_question_kind);
+        question.title.trim().is_empty()
+            || question.title.len() > 12_000
+            || question.images.is_some()
+            || kind.is_none()
+            || question.options.as_ref().is_some_and(|options| options.len() > 32_000)
+            || (kind.is_some_and(QuestionKind::requires_options)
+                && question.options.as_ref().is_none_or(|options| options.trim().is_empty()))
+    }) {
+        return Err("作业题库查询超出范围或缺少题型、题干或选项。".into());
+    }
+    let mut results = Vec::with_capacity(questions.len());
+    for question in questions {
+        let kind = question.query_type.as_deref().and_then(detect_question_kind).ok_or("题型不受支持。")?;
+        let matches = crate::database::questions::exact_homework_bank_matches(
+            question.title.clone(), question.options.clone(), kind,
+        ).await.map_err(|_| "无法读取本地题库。".to_owned())?;
+        results.push(homework_bank_candidates(&question, matches));
+    }
+    Ok(results)
+}
+
+fn homework_bank_candidates(question: &QueryRequest, matches: Vec<QuestionMatch>) -> Vec<HomeworkBankAnswer> {
+    // Even exact hits can have incompatible stored answers. Keep every eligible
+    // hit so the resolver can report disagreement instead of taking the first row.
+    let too_many = matches.len() > 24;
+    matches.into_iter().take(24).map(|matched| {
+        let answer = if too_many || matched.answer.len() > 8000 {
+            String::new()
+        } else {
+            homework_bank_answer(&matched, question).unwrap_or_default()
+        };
+        HomeworkBankAnswer { id: matched.id, answer }
+    }).collect()
+}
+
+fn homework_bank_answer(matched: &QuestionMatch, question: &QueryRequest) -> Option<String> {
+    use crate::database::query_match::{labeled_options, nonempty_option_lines, same_option_text};
+
+    let kind = question.query_type.as_deref().and_then(detect_question_kind)?;
+    if kind == QuestionKind::Completion {
+        return Some(matched.answer.trim().to_string());
+    }
+    let stored = matched.options.as_deref().unwrap_or("");
+    let stored_labels = labeled_options(stored).unwrap_or_default();
+    let texts: Vec<_> = if stored_labels.is_empty() {
+        nonempty_option_lines(stored).collect()
+    } else {
+        stored_labels.iter().map(|(_, text)| text.as_str()).collect()
+    };
+    let direct = |part: &str| {
+        let mut same = texts.iter().copied().filter(|text| same_option_text(part, text));
+        match (same.next(), same.next()) {
+            (value, None) => Some(value),
+            _ => None,
+        }
+    };
+    let mut resolved = Vec::new();
+    for part in matched.answer.split("###").map(str::trim) {
+        if part.is_empty() { return None; }
+        let exact_text = direct(part)?;
+        let labels = part.trim().to_ascii_uppercase();
+        let label_texts = (!labels.is_empty() && labels.len() <= stored_labels.len()
+            && (kind == QuestionKind::Multiple || labels.len() == 1))
+            .then(|| labels.chars().map(|letter| {
+                stored_labels.iter().find_map(|(key, text)| (*key == letter).then_some(text.as_str()))
+            }).collect::<Option<Vec<_>>>()).flatten();
+        if let Some(text) = exact_text {
+            if label_texts.as_ref().is_some_and(|positions| positions.len() != 1 || positions[0] != text) {
+                // For example the stored answer "B" could be an option's text
+                // or the stored second option. Never guess which was intended.
+                return None;
+            }
+            resolved.push(text);
+        } else if let Some(positions) = label_texts {
+            resolved.extend(positions);
+        } else if kind == QuestionKind::Judgement {
+            // The site's displayed judgement labels are interpreted by the worker.
+            resolved.push(part);
+        } else {
+            return None;
+        }
+    }
+    let options = question.options.as_deref().unwrap_or("");
+    let current = labeled_options(options).unwrap_or_default();
+    let values: Option<Vec<_>> = resolved.into_iter().map(|part| {
+        let mut same = current.iter().filter(|(_, text)| same_option_text(part, text));
+        match (same.next(), same.next()) {
+            (Some((_, text)), None) => Some(text.as_str()),
+            (None, None) if kind == QuestionKind::Judgement => Some(part),
+            _ => None,
+        }
+    }).collect();
+    Some(values?.join("###"))
+}
+
 async fn resolve_query_with_same_question_check(
     logger: &crate::logger::RequestLogger,
     app: Option<&AppHandle>,
@@ -1993,6 +2102,21 @@ mod same_question_tests {
         assert_eq!(parse_same_question_result(r#"{"same":false}"#), None);
         assert_eq!(parse_same_question_result("错误: 未选择模型"), None);
         assert_eq!(parse_same_question_result(""), None);
+    }
+
+    #[test]
+    fn homework_bank_binds_stored_labels_to_current_text_and_rejects_ambiguity() {
+        let mut row = super::QuestionMatch {
+            id: 1, question: "请选择".into(), options: Some("A. 甲\nB. 乙 选项".into()),
+            answer: "B".into(), question_type: Some("single".into()), is_ai: false,
+            is_pending_correction: false, score: 1.0, title_similarity: 1.0,
+        };
+        let request: super::QueryRequest = serde_json::from_value(serde_json::json!({
+            "title": "请选择", "options": "A. 乙选项\nB. 甲", "type": "single"
+        })).unwrap();
+        assert_eq!(super::homework_bank_answer(&row, &request).as_deref(), Some("乙选项"));
+        row.options = Some("A. B\nB. 乙 选项".into());
+        assert_eq!(super::homework_bank_answer(&row, &request), None);
     }
 
     #[test]

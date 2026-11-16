@@ -21,6 +21,12 @@ export type WebsiteSettingsItem = {
 }
 
 /** Join by website identity; credentials stay in their existing store, never in public Skill files. */
+const websiteIcon = (host: string, fallback?: string) => {
+  const state = websiteRepositoryStates[host]
+  const identity = websiteIdentityForHost(host)
+  return (state?.customUrl ? state.iconUrl : identity?.iconDataUrl || state?.iconUrl) || fallback || identity?.iconUrl
+}
+
 export const listWebsiteSettings = async (): Promise<WebsiteSettingsItem[]> => {
   await loadWebsiteIdentities()
   await migrateWebsiteSkillOverrides()
@@ -31,7 +37,7 @@ export const listWebsiteSettings = async (): Promise<WebsiteSettingsItem[]> => {
     rows.set(site.id, {
       ...site, name: websiteIdentityForHost(site.host)?.name || site.name, loginHosts: [...(websiteIdentityForHost(site.host)?.loginHosts || [])], builtin: true, skillId: site.id === 'chaoxing' ? 'chaoxing' : 'site-learn',
       siteHost: site.id === 'chaoxing' ? undefined : site.host,
-      iconUrl: websiteIdentityForHost(site.host)?.iconDataUrl || websiteRepositoryStates[site.host]?.iconUrl || builtinWebsiteIcons[site.host],
+      iconUrl: websiteIcon(site.host, builtinWebsiteIcons[site.host]),
       ...(hasWebsiteRepository(site.host) ? { repositoryHost: site.host } : {}),
       files: site.id === 'chaoxing' ? chaoxingFiles : learnedFiles.filter(path => path.startsWith(`sites/${site.host}/`)),
       enabled: site.id === 'chaoxing' ? (agentSkillsState.items.find(item => item.id === site.id)?.enabled ?? true) : enabled,
@@ -53,7 +59,7 @@ export const listWebsiteSettings = async (): Promise<WebsiteSettingsItem[]> => {
     const recordedName = main ? parseSkillFrontmatter(main.content).displayName : ''
     const name = identity?.name !== host ? identity?.name || host : recordedName || host
     rows.set(id, { id, name, host, skillId: 'site-learn', siteHost: host, files, builtin: false, enabled, loginHosts: [...(identity?.loginHosts || [])],
-      iconUrl: identity?.iconDataUrl || websiteRepositoryStates[host]?.iconUrl || identity?.iconUrl,
+      iconUrl: websiteIcon(host),
       ...(hasWebsiteRepository(host) ? { repositoryHost: host } : {}) })
   }
   return [...rows.values()]

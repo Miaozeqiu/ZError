@@ -1,12 +1,13 @@
 /** Cached cloud experience with separately stored local additions. */
 import { parseSkillFrontmatter, validateSkillMarkdown } from './skillFormat'
 import { websiteManifest, type WebsiteManifest, type WebsiteRepositoryIcon } from './websiteRepositoryManifest'
-export type WebsiteSnapshot = { revision: string; files: Record<string, string>; etag?: string; checkedAt: number; website?: WebsiteManifest; icon?: WebsiteRepositoryIcon }
+export type WebsiteSnapshot = { revision: string; files: Record<string, string>; etag?: string; checkedAt: number; website?: WebsiteManifest; icon?: WebsiteRepositoryIcon; scriptManifest?: string }
 type GraphRecord = Record<string, unknown>
 type GraphDelta = { nodes: Record<string, GraphRecord>; edges: GraphRecord[] }
 export type WebsiteRepositoryDocument = {
   version: 3; generation: number; upstream: WebsiteSnapshot
   supplement: string; graph?: GraphDelta; migrated?: boolean
+  customSource?: { url: string; snapshot: WebsiteSnapshot; scriptsEnabled?: boolean }
 }
 export type LegacyWebsiteRepositoryDocument = {
   version: 1; generation: number; upstream: WebsiteSnapshot; migrated?: boolean
@@ -119,9 +120,10 @@ const combineGraph = (base: string, delta: GraphDelta) => {
 }
 const experiencePath = 'SKILL.md'
 const graphPath = 'site-graph.json'
+const activeSnapshot = (document: WebsiteRepositoryDocument) => document.customSource?.snapshot ?? document.upstream
 const effectiveFile = (document: WebsiteRepositoryDocument, path: string) => {
-  const base = document.upstream.files[path]
-  if (path === graphPath && document.graph) return combineGraph(base, document.graph)
+  const base = activeSnapshot(document).files[path]
+  if (path === graphPath && document.graph && !document.customSource) return combineGraph(base, document.graph)
   return path === experiencePath ? combineMarkdown(path, base, document.supplement) : base
 }
 const collectLegacyNotes = (files: Record<string, string>) => {
@@ -140,6 +142,7 @@ export const createWebsiteRepository = (deps: {
   save: (document: WebsiteRepositoryDocument) => Promise<unknown>
   download: (previous: WebsiteSnapshot) => Promise<WebsiteSnapshot>
   legacy?: () => Promise<Record<string, string>>
+  readCustomSource?: (url: string, previous: WebsiteSnapshot) => Promise<WebsiteSnapshot>
   changed?: (document: WebsiteRepositoryDocument) => void
 }) => {
   const identity = JSON.parse(deps.fallback.files['site-graph.json']) as { id: string; host: string }
@@ -151,23 +154,28 @@ export const createWebsiteRepository = (deps: {
       throw new Error('本地经验过长或包含无效字符，现有内容已保留')
     }
     validate(next.graph
-      ? { ...next.upstream, files: { ...next.upstream.files, [graphPath]: effectiveFile(next, graphPath)! } }
+      ? { ...next.upstream, files: { ...next.upstream.files, [graphPath]: combineGraph(next.upstream.files[graphPath], next.graph) } }
       : next.upstream)
+    if (next.customSource) {
+      if (typeof next.customSource.url !== 'string' || !next.customSource.url.trim()) throw new Error('网站经验自定义地址无效')
+      validate(next.customSource.snapshot)
+    }
   }
   let document: WebsiteRepositoryDocument = { version: 3, generation: 0, upstream: copy(deps.fallback), supplement: '' }
   let loaded: Promise<void> | undefined
   let queue: Promise<unknown> = Promise.resolve()
-  let refreshing: Promise<void> | undefined
+  let refreshing: { revision: number; task: Promise<void> } | undefined
+  let sourceRevision = 0
   const mutate = <T>(fn: () => Promise<T>) => {
     const next = queue.catch(() => undefined).then(fn)
     queue = next
     return next
   }
-  const version = () => `${identity.host}:${document.upstream.revision}:${document.generation}`
+  const version = () => `${identity.host}:${activeSnapshot(document).revision}:${document.generation}`
   const publish = () => deps.changed?.(copy(document))
   const commit = async (next: WebsiteRepositoryDocument) => {
     const changed = next.upstream.revision !== document.upstream.revision || !equal(next.upstream.files, document.upstream.files)
-      || next.supplement !== document.supplement || !equal(next.graph, document.graph)
+      || next.supplement !== document.supplement || !equal(next.graph, document.graph) || !equal(next.customSource, document.customSource)
     next.generation = document.generation + Number(changed)
     validateDocument(next)
     await deps.save(copy(next))
@@ -209,6 +217,7 @@ export const createWebsiteRepository = (deps: {
           } else {
             if (typeof stored.supplement !== 'string') throw new Error('本地补充无效，已保留原数据')
             next.supplement = stored.supplement
+            next.customSource = stored.customSource && copy(stored.customSource)
           }
         }
       }
@@ -239,7 +248,15 @@ export const createWebsiteRepository = (deps: {
   }
   return {
     ready, read, inspect: () => copy(document),
-    list: async () => { await ready(); return Object.keys(document.upstream.files).sort() },
+    list: async () => { await ready(); return Object.keys(activeSnapshot(document).files).sort() },
+    setCustomSource: async (customSource: WebsiteRepositoryDocument['customSource']) => {
+      await ready()
+      await mutate(async () => {
+        if (!customSource && !document.customSource) return
+        await commit({ ...document, customSource })
+        sourceRevision++
+      })
+    },
     write: async (path: string, content: string, expectedVersion?: string) => {
       if (!repositoryPath(path)) throw new Error('无效的网站经验文件路径')
       if (path !== experiencePath && path !== graphPath) throw new Error('云端参考文件为只读。请在网站 SKILL.md 中添加简短的本地补充。')
@@ -247,6 +264,7 @@ export const createWebsiteRepository = (deps: {
       const expected = expectedVersion || version()
       return mutate(async () => {
         if (expected !== version()) throw new Error('网站经验已更新，请重新读取后保存，现有内容已保留')
+        if (document.customSource) throw new Error('自定义 HTTP 来源的文件为只读，应用内可保存「本地经验」。')
         if (effectiveFile(document, path)?.trim() === content.trim()) return false
         const next = copy(document)
         if (path === graphPath) setGraph(next, content)
@@ -262,22 +280,27 @@ export const createWebsiteRepository = (deps: {
         return true
       })
     },
-    writeSupplement: async (content: string, previous: string) => {
+    writeSupplement: async (content: string, expected: string | { version: string }) => {
       await ready()
-      await mutate(async () => {
+      return mutate(async () => {
         const current = document.supplement
         const text = normalize(content)
-        if (current === text) return
-        if (current !== previous) throw new Error('本地补充已在别处修改，请复制当前草稿后重新打开。')
+        if (typeof expected !== 'string' && expected.version !== version()) {
+          throw new Error('网站经验已更新，请重新读取后保存，现有内容已保留')
+        }
+        if (current === text) return false
+        if (typeof expected === 'string' && current !== expected) throw new Error('本地补充已在别处修改，请复制当前草稿后重新打开。')
         const next = copy(document)
         next.supplement = text
         await commit(next)
+        return true
       })
     },
     reset: async (path?: string) => {
       await ready()
       await mutate(async () => {
         const next = copy(document)
+        if (document.customSource) throw new Error('自定义 HTTP 来源的文件为只读。')
         if (path && !repositoryPath(path)) throw new Error('无效的网站经验文件路径')
         if (!path || path === experiencePath) next.supplement = ''
         if (!path || path === graphPath) delete next.graph
@@ -286,13 +309,29 @@ export const createWebsiteRepository = (deps: {
     },
     refresh: async () => {
       await ready()
-      if (refreshing) return refreshing
-      refreshing = (async () => {
+      const revision = sourceRevision
+      if (refreshing?.revision === revision) return refreshing.task
+      const task = (async () => {
+        const customSource = document.customSource
+        if (customSource) {
+          if (!deps.readCustomSource) throw new Error('此环境无法读取自定义网站经验')
+          const snapshot = await deps.readCustomSource(customSource.url, customSource.snapshot)
+          validate(snapshot)
+          await mutate(async () => {
+            if (revision !== sourceRevision) return
+            if (equal({ ...customSource.snapshot, checkedAt: 0 }, { ...snapshot, checkedAt: 0 })) return
+            await commit({ ...document, customSource: { ...customSource, snapshot } })
+          })
+          return
+        }
         const snapshot = await deps.download(copy(document.upstream))
         validate(snapshot)
-        await mutate(() => commit({ ...document, upstream: snapshot }))
-      })().finally(() => { refreshing = undefined })
-      return refreshing
+        await mutate(async () => {
+          if (revision === sourceRevision) await commit({ ...document, upstream: snapshot })
+        })
+      })().finally(() => { if (refreshing?.task === task) refreshing = undefined })
+      refreshing = { revision, task }
+      return task
     },
   }
 }

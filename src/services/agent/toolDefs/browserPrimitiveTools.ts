@@ -9,9 +9,65 @@ import {
   WRITE_AGENT_SKILL_FILE_TOOL,
 } from '../skillTools'
 
+const homeworkQuestionRange = {
+  type: 'object', description: '用户指定的网页题号范围（含起止），如第 1–5 题传 {"start":1,"end":5}。只处理一题时两个值相同。',
+  properties: { start: { type: 'integer', minimum: 1 }, end: { type: 'integer', minimum: 1 } }, required: ['start', 'end'],
+}
+
 export const BROWSER_PRIMITIVE_TOOLS = [
   ...HISTORY_TOOLS,
   WEBSITE_ICON_TOOL,
+  { type: 'function', function: { name: 'browser_list_courses', description: '用已启用的学习通网站脚本打开「我学的课」并列出学生课程。可按课名过滤，nextOffset 可翻看已采集的下一批。', parameters: {
+    type: 'object', properties: { course_name: { type: 'string', description: '可选的课程名称筛选' }, offset: { type: 'integer', minimum: 0 } },
+  } } },
+  { type: 'function', function: { name: 'browser_open_course', description: '根据用户指定的名称直接进入学习通学生课程。打开唯一匹配后核对落地页，并返回可用的页面快照与 ref。重名时返回候选，请用户确认。', parameters: {
+    type: 'object', properties: { course_name: { type: 'string', description: '用户提供的学习通课程名' }, teacher: { type: 'string', description: '用户提供的授课教师，可用于区分重名课程' } }, required: ['course_name'],
+  } } },
+  { type: 'function', function: { name: 'browser_list_homework', description: '读取学习通学生课程的作业列表与状态，自动处理网页分页。可筛选作业名；未给课名时使用当前课程。nextOffset 用于继续查看结果。', parameters: {
+    type: 'object', properties: { course_name: { type: 'string' }, teacher: { type: 'string' }, homework_name: { type: 'string' }, offset: { type: 'integer', minimum: 0 } },
+  } } },
+  { type: 'function', function: { name: 'browser_open_homework', description: '根据用户指定的作业名在当前学习通课程中直接打开作业。可同时传课名；匹配唯一后返回落地页快照和 ref。仅打开页面。', parameters: {
+    type: 'object', properties: { course_name: { type: 'string' }, teacher: { type: 'string' }, homework_name: { type: 'string' } }, required: ['homework_name'],
+  } } },
+  { type: 'function', function: { name: 'browser_answer_homework', description: '学习通课程作答页上，用户要求完成指定题目时优先用此工具。用本地题库精确答案逐批填写并回读，最多八题。无可靠答案的题供 Agent 检查，核实后可用 answers 补填。保留已有冲突答案。不保存、不交卷。', parameters: {
+    type: 'object', properties: {
+      assignment_id: { type: 'string', description: '同一作业续批或补填时，使用前次填答或复核返回的值；补填必填' },
+      question_range: homeworkQuestionRange,
+      offset: { type: 'integer', minimum: 0, description: '当前范围的分页游标，首批省略；后续传 nextOffset 并保留同一范围。' },
+      answers: { type: 'array', minItems: 1, maxItems: 8, description: '仅提交已核实的漏题答案；传入后只补填这些题',
+        items: { type: 'object', required: ['question_id'], properties: {
+          question_id: { type: 'string' }, choices: { type: 'array', items: { type: 'string' }, description: '当前页面选项字母；单选、判断传一个' },
+          blanks: { type: 'array', items: { type: 'string' }, description: '按当前页面填空次序提供每空的正文' },
+        } } },
+    },
+  } } },
+  { type: 'function', function: { name: 'browser_review_homework', description: '优先用此工具只读查看学习通课程作答页的题干、选项、实际作答、空白项和需辨认的题。填写后也用它复核。用 question_range 限定题号；有 nextOffset 时沿用同一范围继续。', parameters: {
+    type: 'object', properties: { assignment_id: { type: 'string' }, question_range: homeworkQuestionRange, offset: { type: 'integer', minimum: 0 } },
+  } } },
+  { type: 'function', function: {
+    name: 'browser_start_chapter_tasks',
+    description: '学习通章节执行首选。用户要求完成课程的章节任务时，传 course_name 即可查找学生课程、打开章节目录、进入待完成小节并直接启动任务，播放器在同一次调用内等待就绪。继续整门课时可以在同一课程省略 course_name；只完成当前小节时从该小节调用并传 current_only=true。视频启动后主 Agent 自动等待事件，测验或文档返回给 Agent 继续处理。',
+    parameters: { type: 'object', properties: {
+      course_name: { type: 'string', description: '用户提供的课程名，支持唯一匹配' },
+      teacher: { type: 'string', description: '重名时用户提供的授课教师' },
+      current_only: { type: 'boolean', description: '用户只指定当前小节时使用，不与 course_name 同时传入' },
+      video_only: { type: 'boolean', description: '用户只要求视频任务时传 true' },
+    } },
+  } },
+  { type: 'function', function: { name: 'browser_open_pending_chapter', description: '用户要求完成学习通整门课的章节任务或按目录继续时，在已确认是目标学生课程的「章节」目录或小节调用。从目录直接找出尚有待完成任务点的小节并打开。当前小节未完成时返回当前小节。无需逐个探查目录或手工建立整课计划。指定某几个小节时按用户点名定位。', parameters: {
+    type: 'object', properties: {},
+  } } },
+  { type: 'function', function: { name: 'browser_review_chapter', description: '在学习通学生端章节学习页只读核对当前小节、任务点、可用页签及目录待完成数。返回 chapterKey，完成本章时先用这个工具确认目标。', parameters: {
+    type: 'object', properties: { chapter_key: { type: 'string', description: '可选。用上一次返回的 chapterKey 核对仍在同一个章节' }, video_mid: { type: 'string', description: '核对已有回执中原视频的标识' } },
+  } } },
+  { type: 'function', function: { name: 'browser_complete_chapter', description: '学习通学生端完成当前章节的专用工具。每次处理一个任务点或切换同章页签。视频成功播放后主 Agent 自动等待事件。返回 video_event 时重新复核，仍返回 watching=true 时用 browser_finish(watching)。测验或文档返回当前任务和网页后续处理提示。依据目录任务点数或明确的已完成标记核对章节完成。', parameters: {
+    type: 'object', properties: {
+      chapter_key: { type: 'string', description: 'browser_review_chapter 刚核对的 chapterKey' },
+      video_only: { type: 'boolean', description: '用户只要求处理视频时传 true' },
+      video_mid: { type: 'string', description: '继续已有播放回执中的原视频时传入，限定为该视频' },
+      tab: { type: 'integer', minimum: 1, description: '可选。当需要核对其他页签时，传复核返回的页签编号。省略时按任务点和页签顺序处理。' },
+    }, required: ['chapter_key'],
+  } } },
   { type: 'function', function: { name: 'browser_select_tab', description: '切换到当前对话拥有的已有标签，不新建或导航。browser_run_status 返回 tabs ID；切换后重新读取页面，不复用旧 ref。', parameters: { type: 'object', properties: { browser_id: { type: 'string' } }, required: ['browser_id'] } } },
   { type: 'function', function: { name: 'browser_run_status', description: '查看当前运行状态、预算、故障码和不含敏感正文的诊断轨迹。', parameters: { type: 'object', properties: {} } } },
   { type: 'function', function: { name: 'browser_verify_operation', description: '网页操作返回结果不确定时，先在原标签读取新页面或截图，核对实际回执后登记结果。不能用旧快照，也不能以点击成功代替提交成功。', parameters: {
@@ -54,7 +110,7 @@ export const BROWSER_PRIMITIVE_TOOLS = [
     type: 'function',
     function: {
       name: 'browser_site_graph',
-      description: '查看或增量修改当前网站图谱。新站点 upsert_site，再 upsert_node/upsert_edge。每次增改会自动保存。整张图用这个工具一条条改。',
+      description: '查看网站图谱。应用内自建网站的图谱可增量修改，upsert_site 后用 upsert_node/upsert_edge 自动保存。仓库或自定义 HTTP 接口的图谱只读，导航补充写入本站本地经验。',
       parameters: {
         type: 'object',
         properties: {
@@ -251,7 +307,7 @@ export const BROWSER_PRIMITIVE_TOOLS = [
     function: {
       name: 'browser_eval',
       description:
-        '只读检查快照缺失的结构、题干与选项关联或实际控件状态；按需一次返回结构化结果，避免反复探测同一结构。有序内容按 DOM 顺序返回数组，每项绑定页面显示序号、原文和元素 ID/ref；数字键对象会重排，不得按 ID 大小推断题号。仅读取已渲染页面，不用它改值、勾选、点击、播放或调用隐藏接口。嵌套 iframe 优先传快照中的 frameId 和 loaderId；frame 仅作兼容定位。定位失败先读新快照，不能原样重试。all 默认 false。',
+        '只读检查快照缺失的结构、题干与选项关联或实际控件状态。读取子框时，先用 browser_get_page 找到 frames 中对应的 frameId 和 loaderId，再作为工具参数传入。脚本直接读取目标框的 document，禁止使用 iframe.contentDocument 或 contentWindow；frame 仅作兼容定位，all 默认 false。框失效时重新读取快照。按需一次返回结构化结果；有序内容按 DOM 顺序返回数组，每项绑定页面显示序号、原文和元素 ID/ref，不能按数字键排序推断题号。仅读取已渲染页面，不改值、勾选、点击、播放或调用隐藏接口。',
       parameters: {
         type: 'object',
         properties: {

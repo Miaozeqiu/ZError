@@ -16,7 +16,7 @@
 | `save` | 把当前内存图谱写回文件 |
 | `reset` | 从 Skill 的 `site-graph.json` 重新加载 |
 
-`siteId` 学习通用 `chaoxing`。不传则按当前 URL 的 `hostPattern` 找。新站点先 `upsert_site`。`list` 返回内存里全部站点。
+`siteId` 学习通用 `chaoxing`。不传则按当前 URL 的 `hostPattern` 找。`list` 返回内存里全部站点，`editable` 表示 Agent 能否修改图谱。自建网站首次建图用 `upsert_site`。
 
 一次只改一个节点或一条边。整张图用 `browser_site_graph` 一条条改。
 

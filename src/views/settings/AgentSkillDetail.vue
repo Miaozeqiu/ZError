@@ -12,7 +12,7 @@
       </div>
       <div class="header-actions">
         <button
-          v-if="!readingRepositoryMarkdown && !editingSupplement"
+          v-if="!readingRepositoryMarkdown && !editingSupplement && !readingCustomFile"
           type="button"
           class="action-btn primary"
           :disabled="!dirty || !canSave || saving"
@@ -48,7 +48,7 @@
         >
           {{ isRepositorySkill ? '清除图谱的本地补充' : '恢复默认' }}
         </button>
-        <span v-if="websiteRepositoryState" class="skill-badge repository-status" role="status" :title="websiteRepositoryState.error || '打开详情时自动检查云端经验'">
+        <span v-if="websiteRepositoryState" class="skill-badge repository-status" role="status" :title="websiteRepositoryState.error || '打开详情时自动检查网站经验'">
           {{ repositoryStatusLabel }}
         </span>
       </div>
@@ -102,7 +102,7 @@
           />
           <div v-else-if="editingSupplement" class="local-note-empty">
             <strong>还没有本地经验</strong>
-            <p>可以补充云端经验里缺少的步骤，供 Agent 下次参考。</p>
+            <p>可以补充当前经验里缺少的步骤，供 Agent 下次参考。</p>
           </div>
           <div v-else class="skill-preview-empty">没有正文内容</div>
         </div>
@@ -111,13 +111,14 @@
           v-else-if="panelMode === 'source' || !canPreview"
           class="skill-file-body skill-edit-body"
         >
-          <p v-if="isRepositorySkill && isSiteGraphFile" class="panel-hint">图谱保存本地新增的节点、连接和字段改动。删除云端内容的操作不会保存。</p>
+          <p v-if="readingCustomFile" class="panel-hint">此文件由自定义 HTTP 接口提供。</p>
+          <p v-else-if="isRepositorySkill && isSiteGraphFile" class="panel-hint">图谱保存本地新增的节点、连接和字段改动。删除云端内容的操作不会保存。</p>
           <SkillMarkdownEditor
             :key="`${currentPath}-source-${editorKey}`"
             ref="editorRef"
             v-model="markdown"
             :language="editingSupplement ? 'plain' : editorLanguage"
-            :readonly="editingSupplement && saving"
+            :readonly="readingCustomFile || (editingSupplement && saving)"
             :autofocus="panelMode === 'source'"
             :placeholder="editingSupplement ? '在此补充已验证的步骤或例外…' : isMarkdownFile ? '在此编辑 Markdown…' : '在此编辑文件…'"
           />
@@ -155,7 +156,7 @@ import SkillUnsavedDialog from '../../components/settings/SkillUnsavedDialog.vue
 import SkillFileTree from '../../components/settings/SkillFileTree.vue'
 import BrowserSiteGraphPanel from '../../components/browser/BrowserSiteGraphPanel.vue'
 import { SITE_GRAPH_PATH } from '../../services/agent/skillRuntime'
-import { ensureWebsiteRepository, repositoryForHost, readWebsiteRepositoryFile, websiteRepositoryStates, writeWebsiteRepositorySupplement } from '../../services/agent/websiteRepository'
+import { ensureWebsiteRepository, refreshWebsiteRepository, repositoryForHost, readWebsiteRepositoryFile, websiteRepositoryStates, writeWebsiteRepositorySupplement } from '../../services/agent/websiteRepository'
 import { websiteRepositoryTarget } from '../../services/agent/websiteRepositoryTarget'
 import type { SiteGraphData } from '../../services/browser/siteGraph'
 import {
@@ -215,6 +216,7 @@ const isRepositorySkill = computed(() => Boolean(repository.value))
 const websiteRepositoryState = computed(() => repository.value ? websiteRepositoryStates[repository.value.host] : undefined)
 const repositoryStatusLabel = computed(() => {
   const state = websiteRepositoryState.value
+  if (state?.customUrl) return state.error ? 'HTTP 接口不可用 · 使用缓存' : '自定义 HTTP'
   if (state?.refreshing) return '正在同步…'
   if (state?.error) return '同步失败 · 离线可用'
   return state?.source === 'repository' ? '云端经验 · 已同步' : '离线资料'
@@ -258,11 +260,12 @@ const siteGraphPreview = computed(() => {
 })
 const dirty = computed(() => markdown.value !== loadedMarkdown.value)
 const editingSupplement = computed(() => isRepositorySkill.value && currentPath.value === LOCAL_EXPERIENCE_PATH)
-const readingRepositoryMarkdown = computed(() => isRepositorySkill.value && isMarkdownFile.value && !editingSupplement.value)
-const canSave = computed(() => !readingRepositoryMarkdown.value
+const readingCustomFile = computed(() => Boolean(websiteRepositoryState.value?.customUrl) && !editingSupplement.value)
+const readingRepositoryMarkdown = computed(() => isRepositorySkill.value && !readingCustomFile.value && isMarkdownFile.value && !editingSupplement.value)
+const canSave = computed(() => !readingCustomFile.value && !readingRepositoryMarkdown.value
   && (editingSupplement.value || currentPath.value !== 'SKILL.md' || Boolean(markdown.value.trim())))
 const canReset = computed(() => isRepositorySkill.value
-  ? isSiteGraphFile.value && Boolean(websiteRepositoryState.value?.changedPaths.includes('site-graph.json'))
+  ? !readingCustomFile.value && isSiteGraphFile.value && Boolean(websiteRepositoryState.value?.changedPaths.includes('site-graph.json'))
   : Boolean(skillDoc.value?.customized && skillDoc.value.builtin))
 
 const previewParts = computed(() => parseSkillFrontmatter(markdown.value))
@@ -353,6 +356,12 @@ watch(() => websiteRepositoryState.value?.version, async () => {
   if (!isRepositorySkill.value || !skillDoc.value || dirty.value || saving.value) return
   try { await loadSkill() } catch (error) { loadError.value = errorMessage(error, '读取网站仓库失败') }
 })
+watch(() => websiteRepositoryState.value?.customUrl, (customUrl, _, onCleanup) => {
+  if (!customUrl || !repository.value) return
+  const { host } = repository.value
+  const timer = setInterval(() => { if (!document.hidden) void refreshWebsiteRepository(host).catch(() => undefined) }, 3000)
+  onCleanup(() => clearInterval(timer))
+}, { immediate: true })
 
 type LeaveIntent = { kind: 'back' } | { kind: 'file'; path: string }
 

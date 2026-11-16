@@ -42,7 +42,7 @@ describe('skill 渐进披露', () => {
     const text = readFileSync(resolve(bundled, 'site-learn/SKILL.md'), 'utf8')
     expect(text).toContain('sites/<主网站域名>/SKILL.md')
     expect(text).toContain('关联登录域名属于同一网站')
-    expect(text).toContain('不要写入 `chaoxing`')
+    expect(text).toContain('只允许编辑 `local_experience`')
     expect(text).toContain('references/workflow.md')
     expect(text).not.toContain('zhihuishu.com/parsers')
     expect(text).not.toContain('## 不要做')

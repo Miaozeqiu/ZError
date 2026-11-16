@@ -22,7 +22,8 @@ import { reviewSiteLearning, siteSkillReadIndex } from './siteLearningReview'
 import { websitePrimaryHost } from './websiteIdentity'
 import { resolveWebsiteSkillTarget } from './websiteSkillTarget'
 import { canonicalSkillToolName } from './skillToolNames'
-import { websiteRepositoryTarget } from './websiteRepositoryTarget'
+import { WEBSITE_REPOSITORY_READ_ONLY, websiteRepositoryTarget } from './websiteRepositoryTarget'
+import { websiteRepositoryHosts } from './websiteRepository'
 
 const ensureApproved = async (
   ctx: ChatToolContext,
@@ -172,20 +173,11 @@ export const executeChatTool = async (input: {
     if (!content) {
       const repository = websiteRepositoryTarget(id, path)
       if (repository) {
-        if (repository.path.startsWith('references/')) {
-          return JSON.stringify({ ok: false, id, path, error: '云端没有这份参考文件。本站补充经验请读取 SKILL.md。' })
-        }
-        const { repositoryPath } = await import('./websiteRepositoryCore')
-        if (repositoryPath(repository.path)) {
-          const { readWebsiteRepositoryFile } = await import('./websiteRepository')
-          const missing = await readWebsiteRepositoryFile(repository.host, repository.path)
-          return JSON.stringify({ ok: true, id, path, exists: false, content: '', repository_version: missing.version,
-            hint: '该文件尚不存在；创建时将 repository_version 放入 base_version，新增经验只保存在本机。' })
-        }
+        return JSON.stringify({ ok: false, id, path, error: '当前网站经验来源没有该文件。', write_scope: 'read_only', hint: WEBSITE_REPOSITORY_READ_ONLY })
       }
       if (id === 'site-learn' && /^sites\/[^/]+\/SKILL\.md$/.test(path)) {
         return JSON.stringify({
-          ok: true, id, path, exists: false, content: '',
+          ok: true, id, path, exists: false, content: '', write_scope: 'website_files',
           hint: '本站尚未创建经验文件，已确认原文不存在。将本轮验证过的经验写入这个路径，成功后使用 updated；不能声明 covered。',
         })
       }
@@ -213,9 +205,14 @@ export const executeChatTool = async (input: {
       if (placed.error) return JSON.stringify({ ok: false, error: placed.error, path: placed.path })
       path = placed.path
     }
+    await websiteRepositoryHosts()
     const { skillFileWriteError } = await import('./agentSkills')
     const writeError = skillFileWriteError(id, path)
     if (writeError) return JSON.stringify({ error: writeError, id, path })
+    const repository = websiteRepositoryTarget(id, path)
+    if (repository && repository.path !== 'SKILL.md') {
+      return JSON.stringify({ ok: false, id, path, error: WEBSITE_REPOSITORY_READ_ONLY })
+    }
     const { siteGraphWriteBlocked } = await import('../browser/siteGraphSave')
     const blocked = siteGraphWriteBlocked(path)
     if (blocked) return JSON.stringify({ ok: false, error: blocked })
@@ -223,21 +220,23 @@ export const executeChatTool = async (input: {
       const { liveSession } = await import('./chatStore')
       const steps = liveSession(ctx.sessionId)?.messages.find(message => message.id === ctx.assistantId)?.steps || []
       if (siteSkillReadIndex(steps, id === 'chaoxing' ? 'sites/chaoxing.com/SKILL.md' : path) < 0) {
-        return JSON.stringify({ error: '先 read_agent_skill_file 读取本站原文，再合并增量；不要覆盖未读取的站点文件。', id, path })
+        return JSON.stringify({ error: '先用 read_agent_skill_file 读取本站原文，再按返回的编辑范围合并增量。', id, path })
       }
       const { readAgentSkillFileContent } = await import('./agentSkills')
       const original = await readAgentSkillFileContent(id, path)
-      if (original?.content.trim() === String(args.content || '').trim()) {
+      const originalText = repository
+        ? (args.base_version && args.base_version === original?.repository_version ? original.local_experience : undefined)
+        : original?.content
+      if (originalText?.trim() === String(args.content ?? '').trim()) {
         return JSON.stringify({ ok: true, id, path, unchanged: true, hint: '内容与已有文件一致，无需写入或申请授权；收尾使用 covered。' })
       }
     }
-    const repository = websiteRepositoryTarget(id, path)
     if (repository && !String(args.base_version || '').trim()) return JSON.stringify({ ok: false, id, path,
-      error: '先读取仓库文件原文，并将返回的 repository_version 填入 base_version；现有经验已保留。' })
+      error: '请读取本站 SKILL.md 的 local_experience，并将 repository_version 填入 base_version；现有经验已保留。' })
     const approved = await ensureApproved(
       ctx,
       'write_skill',
-      '写入 Skill 文件',
+      repository ? '保存网站本地经验' : '写入 Skill 文件',
       `${id} / ${path || 'SKILL.md'}`,
     )
     if (!approved.ok) return JSON.stringify({ ...parseToolArgs(approved.result), id, path })
@@ -258,12 +257,13 @@ export const executeChatTool = async (input: {
   }
 
   if (browserId && call.name === 'browser_site_graph') {
-    const { applySiteGraphPatch } = await import('../browser/siteGraph')
-    const { persistSiteGraph, presentSiteGraphPatch } = await import('../browser/siteGraphSave')
+    const { applySiteGraphPatch } = await import('../browser/siteGraphCore')
+    const { isOnlineSiteGraph, persistSiteGraph, presentSiteGraphPatch } = await import('../browser/siteGraphSave')
+    await websiteRepositoryHosts()
     const state = await import('../browser/appBrowser').then((mod) => mod.getBrowserState(browserId).catch(() => null))
     const url = String(state?.url || '')
     const action = String(args.action || '').trim()
-    const result = applySiteGraphPatch(args, { url })
+    const result = applySiteGraphPatch(args, { url, readonlySite: isOnlineSiteGraph })
     let saved: { skillId: string; path: string } | undefined
     let saveError = ''
     if (result.ok && result.persist && result.site) {
@@ -353,6 +353,22 @@ export const executeChatTool = async (input: {
         return JSON.stringify({ ok: true, finished: judged.status !== 'watching', status: judged.status, summary: judged.summary, learning,
           ...(judged.status === 'watching' ? { awaitingVideo: true, taskComplete: false } : {}) })
       }
+      const homeworkTool = call.name === 'browser_answer_homework' || call.name === 'browser_review_homework'
+      const homeworkStore = homeworkTool ? await import('./chatStore') : undefined
+      if (homeworkStore) {
+        const session = homeworkStore.liveSession(gateSession)
+        const current = session?.messages.find(message => message.id === (ctx.parentAssistantId || ctx.assistantId))
+        const goal = session?.messages.find(message => message.role === 'user' && message.id === current?.run?.goalMessageId)
+        if (call.name === 'browser_answer_homework') {
+          const { permitsHomeworkAnswers } = await import('./homeworkAnswerEvidence')
+          if (!goal || !permitsHomeworkAnswers(goal.content)) {
+            return JSON.stringify({ ok: false, reason: 'invalid', error: '当前用户请求只允许查看或未要求填写作业。可用 browser_review_homework 查看。' })
+          }
+        }
+        const { requestedHomeworkQuestionRange } = await import('./homeworkQuestionRange')
+        const range = goal && requestedHomeworkQuestionRange(goal.content)
+        if (range) args.question_range = range
+      }
       const blocked = shouldBlockRepeatFail(gateSession, call.name, args)
       if (blocked.block) {
         return JSON.stringify({ ok: false, error: blocked.hint, failGate: true })
@@ -363,6 +379,8 @@ export const executeChatTool = async (input: {
         browserId,
         sessionId: gateSession,
         wait: waitWithAbort(ctx.abort),
+        onNavigation: ctx.onBrowserNavigation,
+        onHomeworkProgress: homeworkStore && (update => homeworkStore.recordHomeworkProgress(gateSession, ctx.parentAssistantId || ctx.assistantId, update)),
         role: ctx.role,
         jobId: ctx.jobId,
       })

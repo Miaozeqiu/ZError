@@ -127,11 +127,12 @@ export const handlePageTools = async (ctx: Record<string, any>): Promise<string 
           hint: '这段视频已经结束。',
         })
       }
-      if (fast === 'already') {
+      if (fast === 'already' && existing?.status !== 'stalled') {
         return JSON.stringify({
           watching: true,
           already: true,
           title: existing?.title || '',
+          videoMid: existing?.mid || '',
           panel: compactStudyPanel(panelNow),
           hint: watchFollowHint(browserId, true),
         })
@@ -149,10 +150,10 @@ export const handlePageTools = async (ctx: Record<string, any>): Promise<string 
           hint: '视频没有在播。先点播放，确认在播后再 browser_watch。',
         })
       }
-      startChaoxingWatch(browserId, sessionId, {
-        ...tick,
-        title: existing?.title || '',
-      })
+      const { watchExistingChapterVideo } = await import('../../platform/chaoxing/chapterPlayback')
+      if (!await watchExistingChapterVideo(browserId, sessionId, tick)) {
+        startChaoxingWatch(browserId, sessionId, { ...tick, title: existing?.title || '' })
+      }
       return JSON.stringify({
         watching: true,
         title: existing?.title || '',

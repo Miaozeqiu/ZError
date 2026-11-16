@@ -2,7 +2,7 @@ import { estimateContextTokens, estimateTextTokens } from './contextBudget'
 import { projectToolResult } from './toolResultProjection'
 /** 只裁剪发给模型的副本，完整工具文字记录仍用于对话展示与加密落盘。 */
 export const AGENT_REQUEST_TOKEN_BUDGET = 24 * 1024
-const PAGE_TOOLS = new Set(['browser_get_page', 'browser_click', 'browser_click_text', 'browser_type', 'browser_reload', 'browser_find', 'browser_navigate'])
+const PAGE_TOOLS = new Set(['browser_get_page', 'browser_click', 'browser_click_text', 'browser_type', 'browser_reload', 'browser_find', 'browser_navigate', 'browser_open_course', 'browser_open_homework'])
 
 export const estimateRequestTextTokens = estimateTextTokens
 export const isToolImageMessage = (message: any) => message?.__agentToolImage === true
@@ -27,7 +27,7 @@ const pageContent = (text: string, old: boolean) => {
   if (Array.isArray(next.frames)) next.frames = next.frames.map(frameMeta)
   if (next.preferredFrame) next.preferredFrame = frameMeta(next.preferredFrame)
   if (old) {
-    const summary = Object.fromEntries(['ok', 'error', 'reason', 'url', 'title', 'navigated', 'frame', 'empty', 'captcha', 'observation_id', 'operation_id', 'resultUncertain', 'pendingOperations'].filter(key => next[key] !== undefined).map(key => [key, next[key]]))
+    const summary = Object.fromEntries(['ok', 'error', 'reason', 'url', 'title', 'navigated', 'opened', 'course', 'assignment', 'path', 'frame', 'empty', 'captcha', 'observation_id', 'operation_id', 'resultUncertain', 'pendingOperations'].filter(key => next[key] !== undefined).map(key => [key, next[key]]))
     return JSON.stringify({ ...summary, history: '旧页面快照已省略，定位使用最新快照；需要旧内容时重新读取。' })
   }
   return JSON.stringify(next)

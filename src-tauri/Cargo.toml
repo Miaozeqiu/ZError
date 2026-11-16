@@ -69,7 +69,7 @@ objc2 = "0.6"
 block2 = "0.6"
 objc2-foundation = { version = "0.3", features = ["NSProcessInfo", "NSString", "NSObject", "NSUserDefaults", "NSArray", "NSGeometry"] }
 objc2-app-kit = { version = "0.3", features = ["NSView", "NSWindow", "NSGraphics"] }
-objc2-quartz-core = { version = "0.3.2", default-features = false, features = ["CALayer", "objc2-core-foundation"] }
+objc2-quartz-core = { version = "0.3.2", default-features = false, features = ["CALayer", "CATransaction", "objc2-core-foundation"] }
 objc2-av-foundation = { version = "0.3.2", features = ["AVPlayer", "AVPlayerItem", "AVAsset", "objc2-core-media"] }
 objc2-av-kit = { version = "0.3.2", features = ["AVPlayerView"] }
 objc2-core-media = { version = "0.3.2", features = ["CMTime"] }

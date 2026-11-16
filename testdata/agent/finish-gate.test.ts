@@ -5,8 +5,52 @@ import * as appBrowser from '../../src/services/browser/appBrowser'
 import { lastHomeworkCard } from '../../src/services/browser/abstractions'
 import { clearBrowserTaskIntent, rememberBrowserTaskIntent, setBrowserTaskIntent } from '../../src/services/agent/browserTask'
 import * as study from '../../src/services/chaoxing/study'
+import * as chapters from '../../src/services/chaoxing/host/chapterTasks'
 
 describe('finishGate', () => {
+  it('accepts 给我下作业列表 with a complete list receipt and no todo', async () => {
+    setBrowserTaskIntent('list-homework', 'homework')
+    const steps = [{ id: 'listed', kind: 'tool' as const, name: 'browser_list_homework', label: '读取作业', status: 'done' as const,
+      result: JSON.stringify({ ok: true, partial: false, assignments: [{ title: '练习一', status: '未交' }] }) }]
+    try {
+      const evidence = await collectFinishEvidence('tab', 'list-homework', { goalText: '给我下作业列表', steps })
+      expect(judgeFinish('done', '已读取作业列表', evidence).ok).toBe(true)
+      const mixed = await collectFinishEvidence('tab', 'list-homework', { goalText: '给我下作业列表，再完成未交作业', steps })
+      expect(judgeFinish('done', '已读取作业列表', mixed).ok).toBe(false)
+      steps[0].result = JSON.stringify({ ok: true, partial: true, assignments: [{ title: '练习一' }] })
+      const partial = await collectFinishEvidence('tab', 'list-homework', { goalText: '给我下作业列表', steps })
+      expect(judgeFinish('done', '已读取作业列表', partial).ok).toBe(false)
+    } finally { clearBrowserTaskIntent('list-homework') }
+  })
+  it('can finish a verified homework navigation without treating it as an answer task', async () => {
+    const peek = vi.spyOn(appBrowser, 'peekAppBrowserUrl').mockReturnValue('https://mooc1.chaoxing.com/mooc2/work/task')
+    setBrowserTaskIntent('open-homework', 'homework')
+    const steps = [{ id: 'opened', kind: 'tool' as const, name: 'browser_open_homework', label: '打开作业', status: 'done' as const,
+      result: JSON.stringify({ ok: true, opened: true, observed_browser_id: 'tab', observation_id: 'opened' }) }]
+    try {
+      const navigation = await collectFinishEvidence('tab', 'open-homework', { goalText: '打开练习一作业', steps })
+      expect(judgeFinish('done', '已打开练习一', navigation).ok).toBe(true)
+      const answering = await collectFinishEvidence('tab', 'open-homework', { goalText: '打开练习一作业并答题', steps })
+      expect(judgeFinish('done', '已打开练习一', answering).ok).toBe(false)
+    } finally { peek.mockRestore(); clearBrowserTaskIntent('open-homework') }
+  })
+  it('uses the live chapter counter only for the verified chapter target', async () => {
+    const url = 'https://mooc1.chaoxing.com/mycourse/studentstudy?chapterId=2&courseId=4&clazzid=8'
+    const peek = vi.spyOn(appBrowser, 'peekAppBrowserUrl').mockReturnValue(url)
+    const video = vi.spyOn(study, 'readChaoxingVideoTick').mockResolvedValue(null)
+    const header = { title: '函数', number: '2.1', remaining: 0, tab: 1, cards: null, tabs: [] }
+    const chapter = vi.spyOn(chapters, 'readStudentChapter').mockResolvedValue({
+      identity: chapters.studentChapterUrl(url)!, frameId: 'root', header,
+    })
+    const steps = [{ id: 'verify-chapter', kind: 'tool' as const, name: 'browser_review_chapter', label: '复核章节', status: 'done' as const }]
+    try {
+      expect((await collectFinishEvidence('tab', 'chapter', { steps, goalText: '完成 2.1 章节' })).chapterJobsDone).toBe(true)
+      expect((await collectFinishEvidence('tab', 'chapter', { steps, goalText: '完成 2.2 章节' })).chapterJobsDone).toBe(false)
+      expect((await collectFinishEvidence('tab', 'chapter', { steps, goalText: '完成整门课程' })).chapterJobsDone).toBe(false)
+      header.remaining = 1
+      expect((await collectFinishEvidence('tab', 'chapter', { steps, goalText: '完成 2.1 章节' })).chapterJobsDone).toBe(false)
+    } finally { peek.mockRestore(); video.mockRestore(); chapter.mockRestore() }
+  })
   it('当前用户的只读复核有新页面证据时，不要求完成当前页面的整门课程', async () => {
     const url = 'https://mooc1.chaoxing.com/mycourse/studentstudy?chapterId=2'
     const peek = vi.spyOn(appBrowser, 'peekAppBrowserUrl').mockReturnValue(url)

@@ -148,6 +148,18 @@
               <input id="website-login-hosts" v-model="websiteForm.loginHosts" class="form-input" placeholder="可选，多个域名用逗号分隔" :disabled="savingWebsite">
               <p class="group-hint">仅填写这个网站使用的登录域名，账号和操作经验会统一归到本站。</p>
             </div>
+            <div class="form-group">
+              <label class="form-label" for="website-experience-url">网站经验 HTTP 地址</label>
+              <div class="website-source-input">
+                <input id="website-experience-url" v-model="websiteForm.customUrl" type="url" class="form-input" placeholder="http://127.0.0.1:8817/experience.json" :disabled="savingWebsite" autocomplete="off" spellcheck="false" aria-describedby="website-experience-url-help" @input="websiteForm.scriptsEnabled = false">
+                <button v-if="websiteForm.customUrl" type="button" class="account-dialog-cancel" :disabled="savingWebsite" @click="websiteForm.customUrl = ''; websiteForm.scriptsEnabled = false">恢复默认</button>
+              </div>
+              <p id="website-experience-url-help" class="group-hint">填写返回网站经验 JSON 的完整 HTTP 或 HTTPS 地址。留空{{ websiteForm.defaultSource }}。</p>
+              <label v-if="websiteForm.customUrl.trim()" class="website-script-option">
+                <input v-model="websiteForm.scriptsEnabled" type="checkbox" :disabled="savingWebsite">
+                启用此来源的网站脚本
+              </label>
+            </div>
             <p v-if="websiteSaveError" class="install-error" role="alert">{{ websiteSaveError }}</p>
           </div>
         </form>
@@ -201,7 +213,7 @@ import { isNativeSecureStore, isSecretReference } from '../../services/security/
 import { forgetSiteAccount, rememberSiteAccount, siteAccountsState, refreshSiteAccounts } from '../../services/agent/siteAccounts'
 import { addWebsiteSettings, listWebsiteSettings, type WebsiteSettingsItem } from '../../services/agent/websiteSettings'
 import { websiteIdentityState } from '../../services/agent/websiteIdentity'
-import { websiteRepositoryStates, repositoryRegistryState, previewWebsiteRepository, importWebsiteRepository, type WebsiteRepositoryCandidate } from '../../services/agent/websiteRepository'
+import { websiteRepositoryStates, repositoryRegistryState, previewWebsiteRepository, importWebsiteRepository, setWebsiteExperienceUrl, repositorySourceFor, type WebsiteRepositoryCandidate } from '../../services/agent/websiteRepository'
 
 const emit = defineEmits<{ 'skill-detail-change': [open: boolean] }>()
 const websites = ref<WebsiteSettingsItem[]>([])
@@ -213,6 +225,7 @@ const hasLocalExperience = (site: WebsiteSettingsItem) => repositoryState(site)?
 const experienceStatus = (site: WebsiteSettingsItem) => {
   if (!site.repositoryHost) return site.files.includes(siteMainPath(site)) ? '已记录' : '尚未记录'
   const state = repositoryState(site)
+  if (state?.customUrl) return '自定义 HTTP'
   if (state?.refreshing) return '同步中…'
   return state?.source === 'repository' ? '已同步' : '离线资料'
 }
@@ -340,10 +353,12 @@ const clearAccount = () => {
 
 const websiteDialogOpen = ref(false)
 const savingWebsite = ref(false)
-const websiteForm = reactive({ host: '', name: '', loginHosts: '' })
+const websiteForm = reactive({ host: '', name: '', loginHosts: '', customUrl: '', defaultSource: '', scriptsEnabled: false })
 const websiteSaveError = ref('')
 const editWebsite = (site: WebsiteSettingsItem) => {
-  Object.assign(websiteForm, { host: site.host, name: site.name, loginHosts: (site.loginHosts || []).join(', ') })
+  Object.assign(websiteForm, { host: site.host, name: site.name, loginHosts: (site.loginHosts || []).join(', '),
+    customUrl: repositoryState(site)?.customUrl ?? '', scriptsEnabled: repositoryState(site)?.scriptsEnabled === true,
+    defaultSource: repositorySourceFor(site.host) ? '恢复默认仓库' : '使用应用中的网站经验' })
   websiteSaveError.value = ''
   websiteDialogOpen.value = true
 }
@@ -353,8 +368,16 @@ const submitWebsite = async () => {
   savingWebsite.value = true
   websiteSaveError.value = ''
   try {
-    await addWebsiteSettings(websiteForm.host, websiteForm.name,
-      websiteForm.loginHosts.split(/[\s,，;；]+/).filter(Boolean), true)
+    const site = websites.value.find(row => row.host === websiteForm.host)
+    const loginHosts = websiteForm.loginHosts.split(/[\s,，;；]+/).filter(Boolean)
+    const source = websiteRepositoryStates[websiteForm.host]
+    if (websiteForm.customUrl.trim() !== (source?.customUrl ?? '') || websiteForm.scriptsEnabled !== Boolean(source?.scriptsEnabled)) {
+      if (websiteForm.scriptsEnabled) await setWebsiteExperienceUrl(websiteForm.host, websiteForm.customUrl, true)
+      else await setWebsiteExperienceUrl(websiteForm.host, websiteForm.customUrl)
+    }
+    if (websiteForm.name.trim() !== site?.name || loginHosts.join(',') !== (site?.loginHosts ?? []).join(',')) {
+      await addWebsiteSettings(websiteForm.host, websiteForm.name, loginHosts, true)
+    }
     await refreshWebsites()
     websiteDialogOpen.value = false
   } catch (error) {
@@ -383,6 +406,10 @@ const submitWebsite = async () => {
 .repository-candidate > span { display: flex; flex-direction: column; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
 .repository-candidate > span > span { color: var(--text-secondary); font-size: 12px; }
 .group-hint { margin: 0; font-size: 12px; line-height: 1.5; color: var(--text-secondary); }
+.website-source-input { display: flex; align-items: center; gap: 6px; }
+.website-source-input .form-input { flex: 1; min-width: 0; }
+.website-source-input button { flex-shrink: 0; white-space: nowrap; }
+.website-script-option { display: flex; align-items: center; gap: 7px; font-size: 13px; }
 .network-group { position: relative; background: var(--network-group-bg); border: 1px solid var(--border-color); border-radius: 14px; padding: 0 12px; margin: 8px 0; box-shadow: 0 2px 12px rgba(0, 0, 0, 0.05); }
 .website-row { position: relative; }
 .website-row + .website-row { border-top: 1px solid var(--border-color); }

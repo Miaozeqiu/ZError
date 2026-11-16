@@ -8,6 +8,8 @@ import { finishStudyGraphStream, studyGraphStream } from '../study/graphStream'
 import { finalizeStudySessionSummary } from '../study/timelineSummary'
 import { getActiveAgentProfile } from './agentProfiles'
 import { getEnabledSkillCatalog } from './agentSkills'
+import { browserChapterContext } from './browserChapterProgress'
+import { chapterResumePlan } from './chapterResume'
 import { formatBrowserLiveContext } from './browserLoop'
 import { rememberBrowserTaskIntent } from './browserTask'
 import { bindAllWatchAgents, flushAllWatchAfterTurn } from '../platform'
@@ -52,6 +54,7 @@ import { runAgentTurnLoop } from './subagent/runtime'
 import { assembleAgentTools, availableAgentTools } from './tools'
 import { useSettings } from '../app/settings'
 import { claimBrowserForNewMessage } from '../browser/control'
+import { websiteRepositoryHosts, websiteRepositoryState } from './websiteRepository'
 
 const matchSubjectInText = <T extends { id: number; name: string }>(text: string, subjects: T[]) => {
   const raw = String(text || '')
@@ -207,10 +210,11 @@ export const sendChatMessage = async (
     const skillCatalog = getEnabledSkillCatalog()
     const baseSystemPrompt = buildAgentSystemPrompt({ catalog: skillCatalog })
     const overlay = String(profile.systemOverlay || '').trim()
-    const prefixes = await prepareTurn(abort.signal, () => Promise.all([
+    const [studyPrefix, browserPrefix] = await prepareTurn(abort.signal, () => Promise.all([
       studyStatePrefix(sessionId), isBrowserChat ? browserStatePrefix(sessionId) : Promise.resolve(''),
+      websiteRepositoryHosts().catch(() => undefined),
     ]))
-    const envBlock = prefixes.filter(Boolean).join('\n').trim()
+    const envBlock = [studyPrefix, browserPrefix].filter(Boolean).join('\n').trim()
     const promptFolders = (() => {
       const seen = new Set<number>()
       const folders: AgentChatAttachment[] = []
@@ -247,7 +251,7 @@ export const sendChatMessage = async (
       : undefined
 
     const liveBrowserId = () => String(sessions.value.find(item => item.id === sessionId)?.browserId || '').trim()
-    const currentTools = () => availableAgentTools(assembleAgentTools(peekAppBrowserUrl(liveBrowserId())), useSettings().settings.search)
+    const currentTools = () => availableAgentTools(assembleAgentTools(peekAppBrowserUrl(liveBrowserId())), useSettings().settings.search, websiteRepositoryState.scriptsEnabled)
     const loop = await runAgentTurnLoop({
       sessionId,
       assistantId,
@@ -257,6 +261,9 @@ export const sendChatMessage = async (
       history,
       systemPrompt: turnSystemPrompt,
       tools: currentTools(),
+      chapterResume: !attachments?.length && !quizOptionQuotes?.length && !options?.kind && !modelFacing
+        ? chapterResumePlan({ command: content, browserId, url: peekAppBrowserUrl(browserId), previous: recoveryMessage, current: assistantMessage })
+        : undefined,
       liveTools: currentTools,
       liveContext: async () => {
         const current = sessions.value.find(item => item.id === sessionId)
@@ -272,6 +279,7 @@ export const sendChatMessage = async (
           browserId: id,
           role: 'parent',
           refs,
+          liveChapter: browserChapterContext(sessionId, id, url),
         })
       },
       maxRounds: 80,

@@ -418,16 +418,20 @@ export const readBrowserPage = async (id: string, opts: ReadPageOptions = {}) =>
       maxFrames: opts.acted ? 2 : (opts.maxFrames ?? 8),
     }, opts.controlEpoch == null ? undefined : { expectedEpoch: opts.controlEpoch }))
     const refs = (Array.isArray(cdp.refs) ? cdp.refs : []) as PageRef[]
-    const frames = (Array.isArray(cdp.frames) ? cdp.frames : []).map((item) => {
+    const readFrame = (item: unknown) => {
       const row = asObject(item)
       return {
+        frameId: typeof row.frameId === 'string' ? row.frameId : undefined,
+        loaderId: typeof row.loaderId === 'string' ? row.loaderId : undefined,
         url: String(row.url || ''),
         priority: Number(row.priority) || 0,
         snapshot: String(row.snapshot || ''),
         refCount: Number(row.refCount) || 0,
       }
-    }).filter((item) => item.url || item.snapshot)
-    const preferred = asObject(cdp.preferredFrame)
+    }
+    const frames = (Array.isArray(cdp.frames) ? cdp.frames : []).map(readFrame)
+      .filter((item) => item.url || item.snapshot)
+    const preferred = readFrame(cdp.preferredFrame)
     const page = {
       url: String(cdp.url || ''),
       title: String(cdp.title || ''),
@@ -440,14 +444,7 @@ export const readBrowserPage = async (id: string, opts: ReadPageOptions = {}) =>
         return { id: String(row.id || ''), src: String(row.src || '') }
       }).filter((item) => item.src),
       frames,
-      preferredFrame: preferred.url
-        ? {
-          url: String(preferred.url || ''),
-          priority: Number(preferred.priority) || 0,
-          snapshot: String(preferred.snapshot || ''),
-          refCount: Number(preferred.refCount) || 0,
-        }
-        : null,
+      preferredFrame: preferred.url ? preferred : null,
       framesCapped: Boolean(cdp.framesCapped),
     }
     if (!rememberPageSnap(id, {

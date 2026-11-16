@@ -21,6 +21,7 @@ use objc2_app_kit::{
   NSAutoresizingMaskOptions, NSBorderType, NSClipView, NSColor, NSScrollElasticity, NSScrollView, NSView,
 };
 use objc2_foundation::{ns_string, NSArray, NSNumber, NSPoint, NSRect, NSRunLoopCommonModes, NSSize};
+use objc2_quartz_core::CATransaction;
 use std::cell::Cell;
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use serde_json::{json, Value};
@@ -55,8 +56,10 @@ fn page_fit(w: f64, h: f64) -> f64 {
   (w / PAGE_W).min(h / PAGE_H)
 }
 
-fn renderer_size(hole: NSSize, preview: bool, expanded: Option<(f64, f64)>, current: (f64, f64)) -> (f64, f64) {
-  if preview {
+fn renderer_size(hole: NSSize, preview: bool, live_resize: bool, expanded: Option<(f64, f64)>, current: (f64, f64)) -> (f64, f64) {
+  if live_resize {
+    current
+  } else if preview {
     expanded.map(|(width, height)| stage_points(width, height)).unwrap_or(current)
   } else {
     stage_points(hole.width, hole.height)
@@ -154,6 +157,7 @@ struct ZeCefHoleIvars {
   stage_h: Cell<f64>,
   layout: Cell<Option<AnchoredBrowserGeometry>>,
   preview: Cell<bool>,
+  live_resize: Cell<bool>,
   preview_renderer_size: Cell<Option<(f64, f64)>>,
   presentation_dirty: Cell<bool>,
 }
@@ -189,16 +193,29 @@ define_class!(
       self.ivars().last_w.set(size.width);
       self.ivars().last_h.set(size.height);
       let changed = (size.width - prev_w).abs() >= 0.5 || (size.height - prev_h).abs() >= 0.5;
-      // 舞台还没挂上（initWithFrame）时不要排刷新。下一圈再改舞台，避免和 AppKit 布局重入。
+      // 舞台挂载前不更新。拖动时只合成图层，其余情况下一圈再改 CEF 子视图。
       if changed && !self.ivars().stage.get().0.is_null() {
-        schedule_was_resized(self, self.ivars().browser_id.get());
+        update_hole_presentation(self);
       }
+    }
+
+    #[unsafe(method(viewWillStartLiveResize))]
+    fn view_will_start_live_resize(&self) {
+      let _: () = unsafe { msg_send![super(self), viewWillStartLiveResize] };
+      self.ivars().live_resize.set(true);
+    }
+
+    #[unsafe(method(viewDidEndLiveResize))]
+    fn view_did_end_live_resize(&self) {
+      let _: () = unsafe { msg_send![super(self), viewDidEndLiveResize] };
+      self.ivars().live_resize.set(false);
+      if !self.isHidden() { schedule_hole_layout(self); }
     }
 
     #[unsafe(method(resizeWithOldSuperviewSize:))]
     fn resize_with_old_superview_size(&self, old_superview_size: NSSize) {
       // 直接在 AppKit 的 autoresize 回调计算洞口，避开 DOM/IPC 的一帧往返。
-      // 只设置洞口 frame；舞台与 CEF 重绘仍排到 CommonModes 的下一圈，禁止同步重入。
+      // 只设置洞口 frame，Chromium 布局留到鼠标松手后的下一圈。
       if let Some(layout) = self.ivars().layout.get() {
         let view: &NSView = self;
         if let Some(parent) = unsafe { view.superview() } {
@@ -214,8 +231,8 @@ define_class!(
       hole_size_tick(self);
     }
 
-    #[unsafe(method(zeFlushWasResized))]
-    fn ze_flush_was_resized(&self) {
+    #[unsafe(method(zeFlushLayout))]
+    fn ze_flush_layout(&self) {
       self.ivars().pending.set(false);
       let ns: &NSView = self;
       let iv = self.ivars();
@@ -225,18 +242,18 @@ define_class!(
       }
       let size = ns.bounds().size;
       let preview = iv.preview.get();
-      let (w, h) = renderer_size(size, preview, iv.preview_renderer_size.get(), (iv.stage_w.get(), iv.stage_h.get()));
+      let live_resize = iv.live_resize.get();
+      let (w, h) = renderer_size(size, preview, live_resize, iv.preview_renderer_size.get(), (iv.stage_w.get(), iv.stage_h.get()));
       let renderer_fit = page_fit(w, h);
-      let layer_fit = if preview { (size.width / w).min(size.height / h) } else { 1.0 };
       let resized = (w - iv.stage_w.get()).abs() >= 0.5 || (h - iv.stage_h.get()).abs() >= 0.5;
       iv.stage_w.set(w);
       iv.stage_h.set(h);
-      iv.fit.set(renderer_fit * layer_fit);
-      resize_stage(iv.stage.get(), w, h);
-      present_stage_layer(iv.stage.get(), preview, size.width, size.height, layer_fit);
+      if !live_resize {
+        resize_stage(iv.stage.get(), w, h);
+      }
+      present_hole_stage(iv, size, preview || live_resize);
       let bid = iv.browser_id.get();
       if bid > 0 && resized {
-        notify_browser_resized(bid);
         apply_browser_zoom(bid, iv.user_zoom.get() * renderer_fit);
       }
     }
@@ -324,6 +341,7 @@ impl ZeCefHoleView {
       stage_h: Cell::new(0.0),
       layout: Cell::new(None),
       preview: Cell::new(false),
+      live_resize: Cell::new(false),
       preview_renderer_size: Cell::new(None),
       presentation_dirty: Cell::new(false),
     });
@@ -345,26 +363,40 @@ fn hole_size_tick(view: &ZeCefHoleView) {
     view.ivars().last_w.set(size.width);
     view.ivars().last_h.set(size.height);
   }
-  let bid = view.ivars().browser_id.get();
   view.ivars().ticking.set(false);
-  // 禁止在 setFrameSize 里同步 was_resized / 改子 view：会和 AppKit、CEF 布局重入，整窗卡死。
-  if changed && bid > 0 {
-    schedule_was_resized(view, bid);
+  if changed && !view.ivars().stage.get().0.is_null() {
+    update_hole_presentation(view);
   }
 }
 
-fn schedule_was_resized(view: &ZeCefHoleView, _bid: i32) {
+fn update_hole_presentation(view: &ZeCefHoleView) {
+  if !view.ivars().live_resize.get() {
+    schedule_hole_layout(view);
+  } else if !view.isHidden() {
+    // AppKit 已经更新了洞口。拖动时只改图层，不修改 CEF 子视图或页面 zoom。
+    present_hole_stage(view.ivars(), view.bounds().size, true);
+  }
+}
+
+fn present_hole_stage(iv: &ZeCefHoleIvars, hole: NSSize, scaled: bool) {
+  let (w, h) = (iv.stage_w.get(), iv.stage_h.get());
+  let layer_fit = if scaled { (hole.width / w).min(hole.height / h) } else { 1.0 };
+  iv.fit.set(page_fit(w, h) * layer_fit);
+  present_stage_layer(iv.stage.get(), scaled, hole.width, hole.height, layer_fit);
+}
+
+fn schedule_hole_layout(view: &ZeCefHoleView) {
   if view.ivars().pending.replace(true) {
     return;
   }
-  // 已在主线程。不要 run_on_main_thread，下一圈再 was_resized，避免和 AppKit 布局重入。
+  // 下一圈再改 CEF 子视图，避免和 AppKit 布局重入。
   // 拖窗口时 RunLoop 在事件跟踪模式，默认模式的 afterDelay 要等松手才跑。
   // CommonModes 同时覆盖默认模式和拖动模式，所以缩放能跟着边沿走。
   unsafe {
     let modes = NSArray::arrayWithObject(NSRunLoopCommonModes);
     let _: () = msg_send![
       view,
-      performSelector: sel!(zeFlushWasResized),
+      performSelector: sel!(zeFlushLayout),
       withObject: std::ptr::null::<objc2::runtime::AnyObject>(),
       afterDelay: 0.0f64,
       inModes: &*modes,
@@ -386,27 +418,31 @@ struct WrapperViews {
   stage: ViewPtr,
 }
 
+fn is_view_descendant(owner: &objc2::runtime::AnyObject, view: &NSView) -> bool {
+  let is_view: bool = unsafe { msg_send![owner, isKindOfClass: objc2::class!(NSView)] };
+  is_view && unsafe { (&*(owner as *const _ as *const NSView)).isDescendantOf(view) }
+}
+
+fn native_tracking_event_targets_view(event: &objc2_app_kit::NSEvent, view: &NSView) -> bool {
+  use objc2_app_kit::NSEventType;
+  matches!(event.r#type(), NSEventType::MouseEntered | NSEventType::MouseExited | NSEventType::CursorUpdate)
+    && event.trackingArea().and_then(|area| area.owner()).is_some_and(|owner| is_view_descendant(&owner, view))
+}
+
 // AppKit 本地事件在发送给 CEF 子视图之前到达；CDP 的 Input.* 不经过这里。
 pub(crate) fn native_event_targets_view(event: &objc2_app_kit::NSEvent, view: &NSView) -> bool {
   use objc2_app_kit::NSEventType;
   let Some(mtm) = MainThreadMarker::new() else { return false };
   let Some(window) = event.window(mtm) else { return false };
   if view.window().map(|window| window.windowNumber()) != Some(window.windowNumber()) { return false; }
-  let descendant = |owner: &objc2::runtime::AnyObject| {
-    let is_view: bool = unsafe { msg_send![owner, isKindOfClass: objc2::class!(NSView)] };
-    is_view && unsafe { (&*(owner as *const _ as *const NSView)).isDescendantOf(view) }
-  };
   if matches!(event.r#type(), NSEventType::KeyDown | NSEventType::KeyUp | NSEventType::FlagsChanged) {
-    return window.firstResponder().map(|responder| descendant(&responder)).unwrap_or(false);
+    return window.firstResponder().is_some_and(|responder| is_view_descendant(&responder, view));
   }
   let point = view.convertPoint_fromView(event.locationInWindow(), None);
   let bounds = view.bounds();
   if point.x >= bounds.origin.x && point.y >= bounds.origin.y
     && point.x < bounds.origin.x + bounds.size.width && point.y < bounds.origin.y + bounds.size.height { return true; }
-  if matches!(event.r#type(), NSEventType::MouseEntered | NSEventType::MouseExited | NSEventType::CursorUpdate) {
-    return event.trackingArea().and_then(|area| area.owner()).map(|owner| descendant(&owner)).unwrap_or(false);
-  }
-  false
+  native_tracking_event_targets_view(event, view)
 }
 
 pub(crate) fn install_user_input_monitor() {
@@ -424,19 +460,23 @@ pub(crate) fn install_user_input_monitor() {
     | NSEventMask::Pressure | NSEventMask::TabletPoint | NSEventMask::TabletProximity | NSEventMask::DirectTouch;
   let block = block2::RcBlock::new(move |raw: NonNull<NSEvent>| -> *mut NSEvent {
     let event = unsafe { raw.as_ref() };
-    let id = (|| {
+    let target = (|| {
       let reg = registry().lock().ok()?;
       for tab in reg.tabs.values() {
         if tab.hidden || tab.wrapper.0.is_null() { continue; }
-        // A click on the live miniature expands it; it is not a user takeover.
-        if unsafe { (*(tab.wrapper.0 as *const ZeCefHoleView)).ivars().preview.get() } { continue; }
         let view = unsafe { &*wrapper_view(tab.wrapper) };
-        if native_event_targets_view(event, view) { return Some(tab.id.clone()); }
+        if unsafe { (*(tab.wrapper.0 as *const ZeCefHoleView)).ivars().preview.get() } {
+          // CEF tracking areas can receive exit events even when the preview's
+          // hit test lets the click through to the WKWebView underneath.
+          if native_tracking_event_targets_view(event, view) { return Some((tab.id.clone(), true)); }
+          continue;
+        }
+        if native_event_targets_view(event, view) { return Some((tab.id.clone(), false)); }
       }
       None
-    })().or_else(|| crate::app_browser::fallback_user_input_target(event));
-    if let Some(id) = id {
-      if !crate::browser_control::user_input_allowed(&id) { return std::ptr::null_mut(); }
+    })().or_else(|| crate::app_browser::fallback_user_input_target(event).map(|id| (id, false)));
+    if let Some((id, preview_tracking)) = target {
+      if preview_tracking || !crate::browser_control::user_input_allowed(&id) { return std::ptr::null_mut(); }
     }
     raw.as_ptr()
   });
@@ -595,24 +635,27 @@ fn resize_stage(stage: ViewPtr, w: f64, h: f64) {
 // Core Animation changes only presentation. Unlike NSView/NSScrollView bounds
 // magnification, Chromium does not reinterpret it as a renderer viewport resize.
 // The miniature is read-only, so AppKit hit testing is passed to the expand button.
-fn present_stage_layer(stage: ViewPtr, preview: bool, width: f64, height: f64, fit: f64) {
+fn present_stage_layer(stage: ViewPtr, scaled: bool, width: f64, height: f64, fit: f64) {
   if stage.0.is_null() {
     return;
   }
   unsafe {
     let view = &*wrapper_view(stage);
-    view.setWantsLayer(true);
+    if !view.wantsLayer() { view.setWantsLayer(true); }
     if let Some(layer) = view.layer() {
+      CATransaction::begin();
+      CATransaction::setDisableActions(true);
       // NSView-backed layers default to a top-left (0,0) anchor, not CALayer's
       // usual (0.5,0.5). Keep the anchor explicit in both presentation modes.
       layer.setAnchorPoint(NSPoint::new(0.0, 0.0));
-      let scale = NSNumber::numberWithDouble(if preview { fit } else { 1.0 });
+      let scale = NSNumber::numberWithDouble(if scaled { fit } else { 1.0 });
       let _: () = msg_send![&*layer,setValue:&*scale,forKeyPath:ns_string!("transform.scale")];
       let f = view.frame();
+      let clip_origin = view.superview().map(|clip| clip.bounds().origin).unwrap_or(f.origin);
       let (x, y) = stage_layer_origin(
-        preview,
-        f.origin.x,
-        f.origin.y,
+        scaled,
+        f.origin,
+        clip_origin,
         f.size.width,
         f.size.height,
         width,
@@ -620,24 +663,25 @@ fn present_stage_layer(stage: ViewPtr, preview: bool, width: f64, height: f64, f
         fit,
       );
       layer.setPosition(NSPoint::new(x, y));
+      CATransaction::commit();
     }
   }
 }
 
 fn stage_layer_origin(
-  preview: bool,
-  x: f64,
-  y: f64,
+  scaled: bool,
+  frame_origin: NSPoint,
+  clip_origin: NSPoint,
   w: f64,
   h: f64,
   hole_w: f64,
   hole_h: f64,
   fit: f64,
 ) -> (f64, f64) {
-  if preview {
-    (x + (hole_w - w * fit) / 2.0, y + (hole_h - h * fit) / 2.0)
+  if scaled {
+    (clip_origin.x + (hole_w - w * fit) / 2.0, clip_origin.y + (hole_h - h * fit) / 2.0)
   } else {
-    (x, y)
+    (frame_origin.x, frame_origin.y)
   }
 }
 
@@ -694,24 +738,13 @@ fn apply_wrapper_bounds_ex(ptr: ViewPtr, x: f64, y: f64, w: f64, h: f64, raise: 
   }
 }
 
-fn notify_browser_resized(browser_id: i32) {
-  if browser_id <= 0 {
-    return;
-  }
-  if let Some(browser) = browser_by_id(browser_id) {
-    if let Some(host) = browser.host() {
-      host.was_resized();
-    }
-  }
-}
-
 fn set_wrapper_hidden(ptr: ViewPtr, hidden: bool) {
   unsafe {
     let view = &*wrapper_view(ptr);
     view.setHidden(hidden);
     if !hidden {
       let hole = &*(ptr.0 as *const ZeCefHoleView);
-      schedule_was_resized(hole, hole.ivars().browser_id.get());
+      schedule_hole_layout(hole);
     }
     // 切走浏览页只藏起来，z-order 还在最上面。回来时不要 addSubview，否则整窗会卡一下。
   }
@@ -745,7 +778,6 @@ wrap_life_span_handler! {
           }
           bind_hole_browser(wrapper, bid);
           stretch_wrapper_children(wrapper, stage);
-          notify_browser_resized(bid);
           apply_browser_zoom(bid, hole_renderer_zoom(wrapper));
           return;
         }
@@ -1777,7 +1809,7 @@ fn show_at(app: &AppHandle, id: &str, x: f64, y: f64, w: f64, h: f64) -> Result<
       tab.hidden = false;
       tab.wrapper
     };
-    // 尺寸变化由 setFrameSize 排到下一圈刷新舞台。这里不要直接 was_resized，否则会按洞口重排网页。
+    // 尺寸变化由 setFrameSize 排到下一圈刷新舞台；CEF 子视图接收 AppKit 原生尺寸变化。
     apply_wrapper_bounds_ex(wrapper, x, y, w, h, true);
     set_wrapper_hidden(wrapper, false);
     Ok(())
@@ -1803,23 +1835,22 @@ pub fn set_bounds(
     })() else {
       return Ok(());
     };
-    unsafe {
-      let hole = &*(wrapper.0 as *const ZeCefHoleView);
-      let previous_preview = hole.ivars().preview.get();
-      let entering_preview = preview && !previous_preview;
-      if previous_preview != preview { hole.ivars().presentation_dirty.set(true); }
-      hole.ivars().preview.set(preview);
-      hole.ivars().preview_renderer_size.set(layout.and_then(|rule| rule.preview?.renderer_size()));
-      hole.ivars().layout.set(
-        layout.and_then(|rule| AnchoredBrowserGeometry::new(rule, x, y, width, height)),
-      );
-      // A hidden caret must not keep accepting keyboard input after collapse.
-      if entering_preview { clear_focus_in_hole(hole); }
-    }
-    // 先放手再 setFrame。hole_size_tick / was_resized 不能再抢同一把锁。
+    let hole = unsafe { &*(wrapper.0 as *const ZeCefHoleView) };
+    let previous_preview = hole.ivars().preview.get();
+    if previous_preview != preview { hole.ivars().presentation_dirty.set(true); }
+    hole.ivars().preview.set(preview);
+    hole.ivars().preview_renderer_size.set(layout.and_then(|rule| rule.preview?.renderer_size()));
+    hole.ivars().layout.set(
+      layout.and_then(|rule| AnchoredBrowserGeometry::new(rule, x, y, width, height)),
+    );
+    // A hidden caret must not keep accepting keyboard input after collapse.
+    if preview && !previous_preview { clear_focus_in_hole(hole); }
+    // 在 registry 锁之外调整视图。
     // 下一圈统一更新舞台/图层，禁止在 setFrameSize 回调里同步刷新 Chromium。
     apply_wrapper_bounds_ex(wrapper, x, y, width, height, false);
-    unsafe { schedule_was_resized(&*(wrapper.0 as *const ZeCefHoleView),0); }
+    if !hole.ivars().live_resize.get() || preview != previous_preview {
+      update_hole_presentation(hole);
+    }
     // 位置同步不能唤醒已收起的网页，显示由 browser_show 单独控制。
     Ok(())
   })?
@@ -5083,29 +5114,49 @@ mod tests {
     for (width, height) in [(777.0, 654.0), (1280.0, 800.0), (3840.0, 2160.0)] {
       let expanded = NSSize::new(width, height);
       let warm_stage = (960.0, 540.0);
-      let preview = renderer_size(miniature, true, Some((width, height)), warm_stage);
-      let large = renderer_size(expanded, false, None, preview);
+      let preview = renderer_size(miniature, true, false, Some((width, height)), warm_stage);
+      let large = renderer_size(expanded, false, false, None, preview);
       assert_eq!(preview, large);
-      assert_eq!(renderer_size(miniature, true, None, large), large);
+      assert_eq!(renderer_size(miniature, true, false, None, large), large);
+    }
+  }
+
+  #[test]
+  fn live_resize_holds_the_renderer_while_dragging_and_resolves_the_final_size() {
+    let current = (960.0, 540.0);
+    for (w, h) in [(1300.0, 800.0), (700.0, 500.0), (1480.0, 600.0)] {
+      let hole = NSSize::new(w, h);
+      for preview in [false, true] {
+        assert_eq!(renderer_size(hole, preview, true, Some((w, h)), current), current);
+      }
+      let settled = renderer_size(hole, false, false, None, current);
+      assert_eq!(settled, stage_points(w, h));
+      assert_ne!(settled, current);
     }
   }
 
   #[test]
   fn native_layer_origin_does_not_add_half_a_window_when_expanded() {
+    let zero = NSPoint::new(0.0, 0.0);
     assert_eq!(
-      stage_layer_origin(false, 0.0, 0.0, 960.0, 540.0, 960.0, 540.0, 0.5),
+      stage_layer_origin(false, zero, zero, 960.0, 540.0, 960.0, 540.0, 0.5),
       (0.0, 0.0)
     );
     assert_eq!(
-      stage_layer_origin(false, 7.0, 9.0, 1280.0, 720.0, 1280.0, 800.0, 0.5),
+      stage_layer_origin(false, NSPoint::new(7.0, 9.0), zero, 1280.0, 720.0, 1280.0, 800.0, 0.5),
       (7.0, 9.0)
     );
     assert_eq!(
-      stage_layer_origin(true, 0.0, 0.0, 1920.0, 1080.0, 224.0, 126.0, 224.0 / 1920.0),
+      stage_layer_origin(true, zero, zero, 1920.0, 1080.0, 224.0, 126.0, 224.0 / 1920.0),
       (0.0, 0.0)
     );
-    let (_, y) = stage_layer_origin(true, 0.0, 0.0, 1920.0, 1080.0, 224.0, 140.0, 224.0 / 1920.0);
+    let (_, y) = stage_layer_origin(true, zero, zero, 1920.0, 1080.0, 224.0, 140.0, 224.0 / 1920.0);
     assert!((y - 7.0).abs() < 0.001);
+    // AppKit has already centered the unscaled document when the hole grows.
+    let clip_origin = NSPoint::new(-160.0, -130.0);
+    let (x, y) = stage_layer_origin(true, zero, clip_origin, 960.0, 540.0, 1280.0, 800.0, 1280.0 / 960.0);
+    assert!((x - clip_origin.x).abs() < 0.001);
+    assert!((y - clip_origin.y - 40.0).abs() < 0.001);
   }
 
   #[test]

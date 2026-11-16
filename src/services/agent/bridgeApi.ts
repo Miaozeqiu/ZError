@@ -251,7 +251,7 @@ export const runBridgeAction = async (cmd: BridgeCmd) => {
       await repositories.importWebsiteRepository(selected)
     }
     const hosts = await repositories.websiteRepositoryHosts()
-    return { ok: true, id, action, repositories: hosts.map(host => ({ host, ...repositories.websiteRepositoryStates[host], iconUrl: undefined, hasIcon: Boolean(repositories.websiteRepositoryStates[host]?.iconUrl) })) }
+    return { ok: true, id, action, repositories: hosts.map(host => ({ host, ...repositories.websiteRepositoryStates[host], customUrl: undefined, iconUrl: undefined, hasIcon: Boolean(repositories.websiteRepositoryStates[host]?.iconUrl) })) }
   }
 
   if (action === 'list') {

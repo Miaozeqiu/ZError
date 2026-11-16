@@ -1,6 +1,6 @@
 # 网站云端经验与本地补充
 
-学习通、在浙学和智慧树默认通过 `open.zerrorai.com` 获取云端网站经验。Open 分别从 `Miaozeqiu/ZError-chaoxing`、`Miaozeqiu/ZError-zjooc`、`Miaozeqiu/ZError-zhihuishu` 同步公开资料。用户可在设置页导入其他公开 GitHub 网站仓库，客户端直接从对应仓库读取。每个网站独立保存来源、云端缓存和本地补充。
+`open.zerrorai.com` 的公开网站经验目录提供学习通经验，由 `Miaozeqiu/ZError-chaoxing` 同步。客户端从各自的 GitHub 仓库读取在浙学、智慧树和用户在设置页导入的其他公开经验。每个网站独立保存来源、云端缓存和本地补充。
 
 ## 导入格式
 
@@ -22,6 +22,34 @@ Open 以提交为单位同步官方仓库并校验 Git blob 哈希。客户端�
 
 快照最多 32 文件、每文件 512 KiB、合计 2 MiB。原生客户端优先使用已经完整加载的缓存，后台最多每六小时检查一次，使用 ETag 减少重复下载；用户可以手动检查更新。超时、限流或断网时保留完整缓存，遵守服务返回的重试时间，不循环重试。首次离线且没有远端缓存时使用随应用附带的离线副本，设置中明确显示来源。
 
+## 用 HTTP 接口调试
+
+在「设置 → Agent → 网站 → 网站设置」填写「网站经验 HTTP 地址」。使用完整的 HTTP 或 HTTPS 地址，例如 `http://127.0.0.1:8080/experience.json`。客户端向该地址发送 GET 请求，验证整个快照后启用自定义来源。清空地址并保存即可恢复默认来源。
+
+接口使用与 Open 相同的 JSON 结构。
+
+| 字段 | 内容 |
+| --- | --- |
+| `website` | `website.json` 的内容，`id` 和 `host` 必须对应当前网站 |
+| `files` | 以相对文件名为键、文件的 UTF-8 文本为值的对象，至少包含 `SKILL.md` 和 `site-graph.json` |
+| `icon` | `{ "path": "assets/icon.png", "dataUrl": "…" }`。`path` 与 `website.icon` 一致，`dataUrl` 包含图片的 Base64 数据 |
+| `revision` | 可选的版本字符串，开发服务器也可以使用固定值。软件比较快照内容以识别改动 |
+| `scriptManifest` | 可选的同源脚本清单地址，例如 `./script-manifest.json` |
+
+静态 JSON 文件和动态接口均可使用。打开经验详情时，客户端会自动检查自定义来源的更新。接口不可用时继续使用该地址的最后一份有效快照。本地补充单独保存，切换地址时保留。
+
+### 网站脚本
+
+在自定义 HTTP 来源的设置中，勾选「启用此来源的网站脚本」。学习通使用 [ZError-chaoxing 的开发服务](https://github.com/Miaozeqiu/ZError-chaoxing)，默认接口为 `http://127.0.0.1:8817/experience.json`。从网站仓库运行 `npm ci` 和 `npm run dev` 即可监听 TypeScript 变化。
+
+脚本清单包含 `apiVersion: 1`、`siteId`、`revision` 和 `bundles`。每个脚本条目包含 `url` 和 `sha256`。客户端在工具调用前用 ETag 检查新版本，并校验与已配置源同源的 JS 产物。新版本验证失败时，可使用当前进程中上次成功执行的版本。
+
+学习通脚本提供 `browser_list_courses`、`browser_open_course`、`browser_list_homework` 和 `browser_open_homework`。脚本在独立的 QuickJS 运行时处理名称和临时索引。ZError 从真实课表及分页的作业列表采集数据，唯一匹配后打开页面，并返回核对过的落地页快照。
+
+课程作业进入「开始作答／继续作答」后的页面后，查看题目和当前作答用 `browser_review_homework`，填写用 `browser_answer_homework`，每批最多八题。两者都接受 `question_range: {"start":1,"end":5}`，按网页显示题号限定范围，续批的 `nextOffset` 相对于该范围。宿主只从本地题库查精确且未待修正的非 AI 答案，验证脚本映射后填写并读回。缺题、冲突、图片、字体混淆及不支持的控件交给 Agent。Agent 核实后可用 `answers` 补填范围内的指定题，已有冲突答案会保留。保存和提交走原有授权流程。
+
+ZError 的宿主回调 `onHomeworkProgress(update)` 自动接收作答和复核进度。`update` 包含 `assignmentId`、`total`、`phase`（`read` 或 `result`）和本次更新的 `questions`，每题带网页实填值 `actual` 和处理状态 `status`。在应用内浏览器打开课程作答页时，宿主也会只读采集题目和当前作答，并在浏览器有输入变化时同步。Agent 的「题目」面板在首次收到题目时打开，同一作业的后续更新按题合并。网站脚本的输入输出协议无需变化。
+
 ## 本地补充
 
 软件把云端正文与本地补充组合成一份经验，预览和 Agent 读取的都是组合后的内容。每个网站只有一份简短的 Markdown 补充笔记，通过「本地经验」编辑。旧的本地参考笔记按原文件名归入同一份笔记。导航图谱在云端图谱上加入本地节点、节点字段和连接。同步刷新云端缓存，本地补充留在当前设备。
@@ -29,3 +57,7 @@ Open 以提交为单位同步官方仓库并校验 Git blob 哈希。客户端�
 两类数据仍保存在系统密钥保护的 `website_repositories` 加密文档中。升级会将旧的本地改动与其保存的基准比较，提取新增或改写的正文、节点和连接。旧的本地覆盖文件首次迁移后保留原文件，迁移标记防止清除补充后再次导入。
 
 Agent 写入时传入读取结果中的 `repository_version`，用于避免并发覆盖。`site-learn/sites/chaoxing.com/...` 仍指向同一个学习通经验文件。下载与本地写入可以并行，保存云端缓存时会保留当时最新的本地补充。
+
+在学习通学生端打开目标小节后，`browser_review_chapter` 读取当前章节、页签和任务点。`browser_complete_chapter` 使用 `chapters` 脚本按网页顺序选择下一项，宿主核对章节及控件后执行。视频由原页面播放器和监控处理，主 Agent 会直接等待视频事件。遇到测验或文档，Agent 从当前网页继续操作并复核。脚本只收到任务类型和进度，不读取题目正文，目录待完成数为 0 或显示「已完成」时可核对本章完成。整门课的章节任务用 `browser_open_pending_chapter` 直接定位待完成小节。
+
+学习通章节任务优先用 `browser_start_chapter_tasks`。传入课名后，工具会在一次调用中打开学生课程、选出待完成小节并启动页面播放器。已在目标小节时可传 `current_only=true`。

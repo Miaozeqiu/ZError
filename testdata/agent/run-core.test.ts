@@ -11,6 +11,16 @@ const setup = (previous?: ReturnType<typeof newRun>) => {
 }
 const call = (id: string, name: string, args = {}) => ({ id, name, arguments: JSON.stringify(args) })
 describe('durable task lifecycle', () => {
+  it('records the course landing snapshot as a current-tab observation only after verified entry', async () => {
+    const test = setup()
+    const open = (id: string, opened: boolean) => test.controller.execute(call(id, 'browser_open_course'), async () => JSON.stringify({
+      ok: true, opened, snapshot: '- link "章节" [ref=e1]',
+    }))
+    expect(JSON.parse(await open('unverified', false)).observation_id).toBeUndefined()
+    expect(test.read().observation).toBeUndefined()
+    expect(JSON.parse(await open('verified', true))).toMatchObject({ observation_id: 'verified', observed_browser_id: 'tab' })
+    expect(JSON.parse(await test.controller.execute(call('finish', 'browser_finish', { status: 'done' }), async () => '{"ok":true}')).ok).toBe(true)
+  })
   it.each(['completed', 'blocked'] as const)('failed %s checkpoint can transition to failure and be resumed', async status => {
     const test = setup()
     test.checkpoint.mockRejectedValueOnce(new Error('storage locked'))

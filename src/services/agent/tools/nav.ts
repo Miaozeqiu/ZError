@@ -3,7 +3,7 @@ import { cachedPageSnap, findInSnapshot, observedJson, pageSnapAge, PAGE_SNAP_FR
 
 export const handleNavTools = async (ctx: Record<string, any>): Promise<string | null> => {
   const {
-    name, args, browserId, sessionId, wait, role, loop, policy, failWithCard, platformTool,
+    name, args, browserId, sessionId, wait, role, loop, policy, failWithCard, platformTool, onNavigation,
     currentUrl, graphUrlOf, liveHref,
     notePageProbe, readBrowserPage, getBrowserState, peekAppBrowserUrl, emptyPageSnaps, callProtocol,
     graphNodeId, siteGraphNodeForUrl, isShellNode, SPACE_HINT, COURSE_HW_HINT,
@@ -24,6 +24,8 @@ export const handleNavTools = async (ctx: Record<string, any>): Promise<string |
     const url = String(state?.url || item?.url || '')
     const graphUrl = await graphUrlOf(browserId, url)
     const { siteGraphAgentSnap } = await import('../../browser/siteGraph')
+    const { websiteRepositoryHosts } = await import('../websiteRepository')
+    await websiteRepositoryHosts().catch(() => undefined)
     const { coursePlanFor, coursePlanSummary } = await import('../../browser/coursePlan')
     const snap = siteGraphAgentSnap(graphUrl || url)
     const summary = coursePlanSummary(coursePlanFor(browserId))
@@ -150,6 +152,7 @@ export const handleNavTools = async (ctx: Record<string, any>): Promise<string |
     const target = resolveChaoxingLoginUrl(url)
     const from = await liveHref(browserId).catch(() => currentUrl(browserId))
     await navigateBrowserView(browserId, target)
+    onNavigation?.()
     let landed = ''
     for (let i = 0; i < 20; i++) {
       await wait(400)

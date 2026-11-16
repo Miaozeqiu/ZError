@@ -1,4 +1,5 @@
 import { onMounted, onUnmounted, ref, watch, type Ref } from 'vue'
+import { themeState } from '../../composables/useTheme'
 import {
   acceptCampusWebSession, authReady, authRevision, authToken, authUser, clearAuthSession,
 } from './auth'
@@ -11,6 +12,10 @@ export function useCampusWebAuth(frame: Ref<HTMLIFrameElement | null>) {
   const error = ref('')
   let port: MessagePort | null = null
   let proposal = 0
+
+  const publishTheme = () => {
+    port?.postMessage({ type: 'theme', theme: themeState.value.effective })
+  }
 
   const publish = () => {
     if (!authReady.value || !port) return
@@ -61,6 +66,7 @@ export function useCampusWebAuth(frame: Ref<HTMLIFrameElement | null>) {
       if (port === current && proposal === request) publish()
     }
     target.postMessage({ channel: CHANNEL, type: 'connect' }, CAMPUS_ORIGIN, [channel.port2])
+    publishTheme()
     publish()
   }
 
@@ -69,6 +75,7 @@ export function useCampusWebAuth(frame: Ref<HTMLIFrameElement | null>) {
     if (event.data?.channel === CHANNEL && event.data?.type === 'ready') connect()
   }
 
+  watch(() => themeState.value.effective, publishTheme)
   watch([authReady, authRevision, authToken, authUser], publish)
   onMounted(() => window.addEventListener('message', onMessage))
   onUnmounted(() => {

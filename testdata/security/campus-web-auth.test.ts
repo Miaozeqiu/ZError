@@ -106,6 +106,48 @@ it.each(['tauri://localhost', 'http://tauri.localhost'])('iframe accepts its des
   expect(parent.postMessage).toHaveBeenCalledExactlyOnceWith({ channel: 'zerror-campus-auth-v1', type: 'ready' }, '*')
 })
 
+it('applies desktop theme changes to the embedded site without saving or reloading', () => {
+  const parent = { postMessage: vi.fn() }
+  const listeners = new Map<string, (event: any) => void>()
+  const window = {
+    top: parent,
+    addEventListener: (type: string, callback: (event: any) => void) => listeners.set(type, callback),
+    dispatchEvent: vi.fn(),
+  }
+  const document = { documentElement: { dataset: { theme: 'light' } } }
+  const localStorage = storage()
+  localStorage.setItem('ze-site-appearance', 'light')
+  const location = { origin: 'https://tiku.zerrorai.com', reload: vi.fn() }
+  const StorageEvent = vi.fn(function (type, init) { return { type, ...init } })
+  runInNewContext(readFileSync('src-tauri/src/campus_auth.js', 'utf8'), {
+    window, parent, top: parent, document, location, localStorage, StorageEvent, queueMicrotask,
+  })
+  const connect = () => {
+    const port = { onmessage: null as any, close: vi.fn() }
+    listeners.get('message')!({
+      origin: 'http://localhost:1420', source: parent, ports: [port],
+      data: { channel: 'zerror-campus-auth-v1', type: 'connect' },
+    })
+    return port
+  }
+
+  const port = connect()
+  port.onmessage({ data: { type: 'theme', theme: 'dark' } })
+  expect(document.documentElement.dataset.theme).toBe('dark')
+  expect(window.dispatchEvent).toHaveBeenLastCalledWith({
+    type: 'storage', key: 'ze-site-appearance', newValue: 'dark',
+  })
+  port.onmessage({ data: { type: 'theme', theme: 'auto' } })
+  expect(document.documentElement.dataset.theme).toBe('dark')
+
+  const current = connect()
+  current.onmessage({ data: { type: 'theme', theme: 'light' } })
+  port.onmessage({ data: { type: 'theme', theme: 'dark' } })
+  expect(document.documentElement.dataset.theme).toBe('light')
+  expect(localStorage.getItem('ze-site-appearance')).toBe('light')
+  expect(location.reload).not.toHaveBeenCalled()
+})
+
 it('embeds the same origin as the native authentication script', async () => {
   const { CAMPUS_ORIGIN, CAMPUS_WORKSPACE_URL } = await import('../../src/services/app/campusWebAuth')
   expect(CAMPUS_WORKSPACE_URL).toBe('https://tiku.zerrorai.com/campus?embed=1')

@@ -195,31 +195,27 @@ export const handleActTools = async (ctx: Record<string, any>): Promise<string |
     return JSON.stringify(await scrollBrowserView(browserId, Number.isFinite(amount) ? amount : 600))
   }
   if (name === 'browser_eval') {
+    // Validation runs before native dispatch. Returning an explicit rejection
+    // lets the run journal distinguish it from a lost execution receipt.
+    const reject = (error: string, hint?: string) => JSON.stringify({ ok: false, reason: 'invalid', error, hint })
     const script = String(args.script || '').trim()
-    if (!script) return JSON.stringify({ error: '缺少 script' })
+    if (!script) return reject('缺少 script')
     if (script.length > 20_000) {
-      return JSON.stringify({ error: '脚本过长（上限 20000 字）', hint: '只读必要 DOM，不要整页 innerHTML。' })
+      return reject('脚本过长（上限 20000 字）', '只读必要 DOM，不要整页 innerHTML。')
     }
     const blocked = inspectEvalScript(script, role === 'explore' ? 'read' : loop.evalPolicy)
     if (blocked) {
-      return JSON.stringify({
-        ok: false,
-        error: blocked,
-        hint: loop.recipe,
-      })
+      return reject(blocked, loop.recipe)
     }
     if (/\.src\s*=/.test(script) && isSpaceListTopUrl(script)) {
-      return JSON.stringify({
-        ok: false,
-        error: '切课表用 click_text「我学的课」点页签，不要改 iframe src。',
-      })
+      return reject('切课表用 click_text「我学的课」点页签，不要改 iframe src。')
     }
     const frame = String(args.frame || '').trim()
     const frameId = String(args.frameId || '').trim()
     const loaderId = String(args.loaderId || '').trim()
     const all = args.all === true
-    if (all && (frame || frameId || loaderId)) return JSON.stringify({ ok: false, error: 'all 不能与指定 frame 同时使用' })
-    if (loaderId && !frameId) return JSON.stringify({ ok: false, error: 'loaderId 必须与 frameId 一起使用' })
+    if (all && (frame || frameId || loaderId)) return reject('all 不能与指定 frame 同时使用')
+    if (loaderId && !frameId) return reject('loaderId 必须与 frameId 一起使用')
     try {
       if (all) {
         const report = await evalBrowserFrames(browserId, script)

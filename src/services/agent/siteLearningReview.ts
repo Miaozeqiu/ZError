@@ -10,7 +10,7 @@ const object = (value: unknown): Record<string, any> => {
     return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
   } catch { return {} }
 }
-const observation = /^(browser_select_tab|browser_run_status|browser_verify_operation|browser_get_state|browser_get_page|browser_find|browser_screenshot|browser_decode_chaoxing_font|browser_wait|browser_todo|browser_finish|browser_watch)$/
+const observation = /^(browser_select_tab|browser_run_status|browser_verify_operation|browser_get_state|browser_get_page|browser_find|browser_review_chapter|browser_screenshot|browser_decode_chaoxing_font|browser_wait|browser_todo|browser_finish|browser_watch)$/
 const matchesSiteFile = (step: Step, path: string) => {
   const args = object(step.arguments)
   const result = object(step.result)
@@ -52,7 +52,7 @@ export const reviewSiteLearning = (input: {
   const review = object(input.learning)
   const reason = String(review.reason || '').trim()
   const reject = (error: string) => ({ ...base, ok: false, error,
-    hint: `网页任务本身已完成，无需重做。先 read_agent_skill_file(skill_id=site-learn, path=${path})；exists=false 表示首次创建，可直接写入本轮验证的经验，不是读取失败。读取总说明不算读取本站原文。有增量时保留原文并用 write_agent_skill_file 更新完整正文。随后 browser_finish 带 learning={decision:updated|covered|no_new|deferred,reason:具体理由}。不要写账号、密码、验证码、临时 ref、具体题目答案或未验证猜测；拒绝/失败只报告暂未保存，不能反复申请。`,
+    hint: `网页任务本身已完成，无需重做。先 read_agent_skill_file(skill_id=site-learn, path=${path})。有增量时按 write_scope 写入。local_experience 保存本地笔记并附带 base_version，website_files 保存完整文件，exists=false 时可首次创建。随后 browser_finish 带 learning={decision:updated|covered|no_new|deferred,reason:具体理由}。不要写账号、密码、验证码、临时 ref、具体题目答案或未验证猜测；拒绝/失败只报告暂未保存，不能反复申请。`,
   })
   if (!reason || !['updated', 'covered', 'no_new', 'deferred'].includes(review.decision)) {
     return reject('网页任务已完成，但还缺本轮站点经验检查。无需重做网页任务。')

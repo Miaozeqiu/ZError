@@ -62,8 +62,8 @@ export const assertBudget = (run: RunCheckpoint, limits: RunLimits = DEFAULT_RUN
   const u = run.usage
   if (u.requests >= limits.requests || u.inputTokens >= limits.inputTokens || u.outputTokens >= limits.outputTokens || u.tools >= limits.tools || u.failures >= limits.consecutiveFailures || (u.noProgress || 0) >= limits.noProgressActions) throw new RunBudgetError()
 }
-export const browserMutation = (name: string) => /^browser_(click|click_text|set_checked|type|press|navigate|reload|go_back|go_forward)$/.test(name)
-export const observationTool = (name: string) => /^(browser_get_page|browser_screenshot)$/.test(name)
+export const browserMutation = (name: string) => /^browser_(click|click_text|set_checked|type|press|navigate|reload|go_back|go_forward|list_courses|open_course|list_homework|open_homework|answer_homework|start_chapter_tasks|open_pending_chapter|complete_chapter)$/.test(name)
+export const observationTool = (name: string) => /^(browser_get_page|browser_screenshot|browser_open_course|browser_open_homework|browser_review_chapter)$/.test(name)
 export const verifyOperation = (run: RunCheckpoint, id: string, browserId: string, outcome: string, evidenceId: string) => {
   const op = run.operations.find(item => item.id === id && (item.state === 'pending' || item.state === 'uncertain'))
   const seen = run.observation

@@ -1,5 +1,6 @@
 import { computed, ref, watch } from 'vue'
 import { activeChat, hydrateQuizCards, isChatBusy, type AgentQuizAttempt, type AgentQuizAttemptRef } from '../../services/agent/chat'
+import { hasHomeworkAnswer } from '../../services/agent/homeworkProgress'
 import { databaseService } from '../../services/app/database'
 import { finishStudyGraphStream, studyGraphStream } from '../../services/study/graphStream'
 import { graphFromPayload, type StudyGraphNode } from '../../utils/study/studyGraph'
@@ -44,16 +45,29 @@ const lastGraphFocus = new Map<number, string>()
 export const isQuizOpen = (messageId: string, stepId: string) =>
   openedQuizKey.value === quizKeyOf(messageId, stepId)
 
+export const homeworkPaneKey = (assignmentId: string) => quizKeyOf('', `homework:${assignmentId}`)
+const homeworkForKey = (key: string | null) => activeChat.value?.homework?.find(item => homeworkPaneKey(item.assignmentId) === key)
+export const openHomeworkPane = (assignmentId: string) => {
+  const key = homeworkPaneKey(assignmentId)
+  if (!homeworkForKey(key)) return
+  openedWriteStepId.value = null
+  openedGraphSubjectId.value = null
+  openedQuizKey.value = key
+}
+
 export const latestQuizKey = computed(() => {
+  const homework = [...(activeChat.value?.homework || [])].reverse()
   const messages = [...(activeChat.value?.messages || [])].reverse()
   for (const message of messages) {
     if (message.role !== 'assistant') continue
+    const report = homework.find(item => item.messageId === message.id)
+    if (report) return homeworkPaneKey(report.assignmentId)
     for (const step of [...(message.steps || [])].reverse()) {
       if (isQuizStep(step)) return quizKeyOf(message.id, step.id)
     }
     if (fallbackQuizCards(message).length) return quizKeyOf(message.id, `${message.id}-md`)
   }
-  return null
+  return homework.length ? homeworkPaneKey(homework[0].assignmentId) : null
 })
 
 const quizFor = (messageId: string, stepId: string) => {
@@ -99,6 +113,13 @@ export const openQuizReview = (target: AgentQuizAttemptRef, attempt: Pick<AgentQ
 }
 
 export const paneQuiz = computed(() => {
+  const homework = homeworkForKey(openedQuizKey.value)
+  if (homework) return {
+    mode: 'homework' as const,
+    homework,
+    title: homework.title || '课程作业',
+    stat: `有作答 ${homework.questions.filter(hasHomeworkAnswer).length} / ${homework.total}`,
+  }
   const quiz = openedQuiz.value
   if (!quiz) return null
   return {
@@ -232,9 +253,9 @@ export const availableQuizKey = computed(() => {
   const key = rememberedPane.value.quiz
   const [messageId, stepId] = key?.split('\t') || []
   const message = activeChat.value?.messages.find(item => item.id === messageId)
-  const exists = message && stepId && (stepId.endsWith('-md')
+  const exists = (key && homeworkForKey(key)) || (message && stepId && (stepId.endsWith('-md')
     ? fallbackQuizCards(message).length
-    : message.steps.some(step => step.id === stepId && isQuizStep(step)))
+    : message.steps.some(step => step.id === stepId && isQuizStep(step))))
   return exists ? key! : latestQuizKey.value
 })
 export const availableWriteStepId = computed(() => {
@@ -272,6 +293,10 @@ export const selectAgentPane = (pane: AgentPane) => {
   openedGraphSubjectId.value = null
   openedQuizKey.value = quiz
   openedWriteStepId.value = write
+}
+
+export const revealBrowserPane = () => {
+  if (selectedAgentPane.value !== 'browser') selectAgentPane('browser')
 }
 
 export const bindAgentChatPanes = () => {

@@ -7,6 +7,7 @@ import {
   type BrowserAbstractionId,
 } from './abstractions'
 import chaoxingBundledGraph from '../agent/skills/bundled/chaoxing/site-graph.json'
+import { isOnlineSiteGraph } from './siteGraphSave'
 import {
   activeFrameOf,
   hydrateSite,
@@ -553,7 +554,7 @@ export const siteGraphAgentSnap = (url: string) => {
     stays: current?.loops || [],
     sketch: current ? sketchOf(current) : undefined,
     note: (view.site.notes || []).filter(Boolean).join(' '),
-    editable: true,
+    editable: !isOnlineSiteGraph(view.site),
   }
 }
 

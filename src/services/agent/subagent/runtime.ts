@@ -1,3 +1,5 @@
+import { runChapterResume, type chapterResumePlan } from '../chapterResume'
+import { toolRegistry } from '../core/tools'
 import { websitePrimaryHost } from '../websiteIdentity'
 import { watch } from 'vue'
 import { agentApprovalState } from '../agentApproval'
@@ -61,6 +63,7 @@ export type RunAgentTurnLoopInput = {
   parentStepId?: string
   jobId?: string
   streamSubjectId?: number
+  chapterResume?: ReturnType<typeof chapterResumePlan>
   onDrawingGraph?: () => void
 }
 
@@ -96,6 +99,14 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
   } = input
 
   const controlGate = createBrowserControlGate(parentSessionId || sessionId, abort.signal)
+  let browserRevealRequested = false
+  const onBrowserNavigation = () => {
+    if (browserRevealRequested || parentSessionId || role !== 'parent' || abort.signal.aborted) return
+    browserRevealRequested = true
+    void import('../agentBrowser').then(({ requestAgentBrowserReveal }) => {
+      if (!abort.signal.aborted) requestAgentBrowserReveal(sessionId)
+    })
+  }
   const debug = (entry: Record<string, unknown>) =>
     logAgentDebug(parentSessionId || sessionId, { kind: isBrowserChat ? 'browser' : 'study', ...entry })
 
@@ -241,7 +252,7 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
   const continueVideo = role === 'parent' ? createWatchContinuation({
     sessionId, signal: abort.signal,
     browserId: () => liveSession(sessionId)?.browserId || '',
-    expectedWatch: () => [...(liveMessage()?.steps || [])].reverse().find(step => step.name === 'browser_watch'
+    expectedWatch: () => [...(liveMessage()?.steps || [])].reverse().find(step => ['browser_watch', 'browser_complete_chapter', 'browser_start_chapter_tasks'].includes(step.name || '')
       && step.status === 'done' && parseToolArgs(step.result || '').watching === true)?.id,
     canFinish: () => Boolean(completion.terminal()),
     waiting: value => {
@@ -256,10 +267,8 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
 
   try {
     await flushChatCheckpoint()
-    const finalText = await runTextModel(modelPrompt, (delta) => {
-      if (abort.signal.aborted || liveMessage()?.status !== 'streaming') return
-      streamText(delta)
-    }, {
+    let startupContext = ''
+    const modelOptions: RunTextModelOptions = {
       timeoutMs,
       validateTools: true,
       compactBrowserContext: isBrowserChat,
@@ -271,7 +280,7 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
       useAgentModel: true,
       history,
       maxRounds,
-      liveContext: () => controlGate.liveContext(async () => [await liveContext?.() || '', run.context(), taskStateContext(liveSession(sessionId), assistantId)].join('\n')),
+      liveContext: () => controlGate.liveContext(async () => [startupContext, await liveContext?.() || '', run.context(), taskStateContext(liveSession(sessionId), assistantId)].join('\n')),
       beforeComplete: async remaining => {
         const recovery = !completion.terminal() ? run.beforeComplete() : undefined
         if (recovery) return recovery
@@ -302,6 +311,7 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
             parentAssistantId,
             parentStepId,
             jobId,
+            onBrowserNavigation,
             ensureBrowser: async () => {
               const { ensureAgentBrowser } = await import('../agentBrowser')
               const target = parentSessionId || sessionId
@@ -343,6 +353,15 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
             },
           },
         })))
+        if (role === 'parent' && ['browser_complete_chapter', 'browser_start_chapter_tasks'].includes(call.name)) {
+          const chapter = parseToolArgs(result)
+          if (chapter.ok === true && chapter.watching === true) {
+            // Preserve the verified playback receipt even if the wait is interrupted.
+            patchStep(sessionId, assistantId, call.id, { result: projectToolResult(result, TOOL_RESULT_KEEP, call.id) })
+            const continuation = await continueVideo()
+            if (continuation) return JSON.stringify({ ...chapter, watching: false, status: 'video_event', hint: continuation })
+          }
+        }
         const finished = call.name === 'browser_finish' ? parseToolArgs(result) : null
         if (role === 'parent' && finished?.ok === true && finished.status === 'watching') {
           const continuation = await continueVideo()
@@ -477,7 +496,14 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
           waitForFirstToken(false)
         }
       },
-    })
+    }
+    if (role === 'parent' && input.chapterResume && toolRegistry(tools).has('browser_complete_chapter')) {
+      startupContext = await runChapterResume(input.chapterResume, modelOptions, assistantId)
+    }
+    const finalText = await runTextModel(modelPrompt, (delta) => {
+      if (abort.signal.aborted || liveMessage()?.status !== 'streaming') return
+      streamText(delta)
+    }, modelOptions)
 
     if (abort.signal.aborted) {
       return { text: liveContent(), aborted: true }

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { BROWSER_PRIMITIVE_TOOLS } from '../../src/services/agent/toolDefs/browserPrimitiveTools'
 import { dispatchBrowserTool } from '../../src/services/agent/browserTools'
 
@@ -57,6 +57,31 @@ const mockCtx = (name: string) => {
 }
 
 describe('浏览器工具都能分发', () => {
+  it('导航交给浏览器后立即通知工作区，失败时不通知', async () => {
+    const url = 'https://example.com/next'
+    const navigate = vi.fn().mockResolvedValue(undefined)
+    const onNavigation = vi.fn()
+    const ctx = Object.assign(mockCtx('browser_navigate'), {
+      args: { url },
+      sameChaoxingCourse: () => false,
+      isChaoxingIframeNavUrl: () => false,
+      isSpaceListTopUrl: () => false,
+      resolveChaoxingLoginUrl: (target: string) => target,
+      navigateBrowserView: navigate,
+      evalBrowserView: async () => url,
+      onNavigation,
+      wait: async () => { expect(onNavigation).toHaveBeenCalledOnce() },
+    })
+    expect(JSON.parse(await dispatchBrowserTool(ctx))).toMatchObject({ ok: true, url })
+    expect(navigate).toHaveBeenCalledWith('b1', url)
+    expect(onNavigation).toHaveBeenCalledOnce()
+
+    onNavigation.mockClear()
+    navigate.mockRejectedValueOnce(new Error('无法打开网页'))
+    await expect(dispatchBrowserTool(ctx)).rejects.toThrow('无法打开网页')
+    expect(onNavigation).not.toHaveBeenCalled()
+  })
+
   it('注册过的 browser_* 不会回未知工具', async () => {
     const names = BROWSER_PRIMITIVE_TOOLS
       .map((tool) => tool.function.name)

@@ -11,6 +11,10 @@ import { agentWatchBusy } from '../platform/panelAccess'
 
 export const agentBrowserTabs = ref<AppBrowser[]>(listAppBrowsers())
 export const agentBrowserExpanded = ref(false)
+export const agentBrowserRevealRequest = ref<{ sessionId: string }>()
+export const requestAgentBrowserReveal = (sessionId: string) => {
+  agentBrowserRevealRequest.value = { sessionId }
+}
 const opening = shallowReactive(new Map<string, Promise<void>>())
 const closing = shallowReactive(new Map<string, Promise<boolean>>())
 let listeners: Promise<void> | undefined
