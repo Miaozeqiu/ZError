@@ -31,7 +31,7 @@ const localPath = ref('')
 const errorMessage = ref('')
 const tipVisible = ref(false)
 const showUpdateDialog = ref(false)
-/** true = 官方 updater 原地安装（Mac 无需拖 DMG） */
+/** 当前版本提示关联签名更新包 */
 const nativeUpdater = ref(false)
 /** 当前下载的文件名（如 ZError_x.app.tar.gz / .dmg），便于确认下的是哪一种包 */
 const downloadFileName = ref('')
@@ -173,8 +173,8 @@ const tipTitle = computed(() => {
     return '点击重启以完成更新'
   }
   if (status.value === 'done') return '打开已下载的安装包'
-  if (status.value === 'error') return '点击重试下载'
-  if (status.value === 'available') return '点击开始更新'
+  if (status.value === 'error') return '点击重试更新'
+  if (status.value === 'available') return nativeUpdater.value ? '点击更新并重启' : '点击下载安装包'
   return '软件更新'
 })
 
@@ -298,7 +298,7 @@ async function startAutoDownload(force = false) {
   if (previewMode) return
   const info = updateInfo.value
   if (!info) return
-  if (downloadPromise && !force) return downloadPromise
+  if (downloadPromise) return downloadPromise
 
   if (!force && localStorage.getItem(AUTO_DL_KEY) === info.version && status.value === 'ready-relaunch') {
     return
@@ -306,7 +306,7 @@ async function startAutoDownload(force = false) {
 
   downloadPromise = (async () => {
     try {
-      // 优先：原生 updater（Mac 原地替换 .app，无需拖拽）
+      // 优先安装签名更新包
       const native = await tryNativeUpdaterCheck()
       if (native?.error && !info.downloadUrl) {
         status.value = 'error'
@@ -359,7 +359,7 @@ async function startAutoDownload(force = false) {
     } catch (err: any) {
       console.error('自动更新失败:', err)
       status.value = 'error'
-      errorMessage.value = err?.message || String(err)
+      errorMessage.value = humanizeUpdaterError(err)
     } finally {
       downloadPromise = null
     }
@@ -398,6 +398,7 @@ async function checkForUpdates(options?: { forceDialog?: boolean }) {
 
     const native = await tryNativeUpdaterCheck()
     if (native?.available && native.version) {
+      nativeUpdater.value = true
       updateInfo.value = {
         version: native.version,
         changelog: native.notes || '',
@@ -485,49 +486,14 @@ async function handleTipClick() {
   // available：不弹窗，仅从「检查更新」按钮打开详情
   if (status.value === 'available') {
     tipVisible.value = true
-    void startAutoDownload()
+    await startAutoDownload()
   }
 }
 
 async function handleDialogDownload() {
   if (previewMode) return
-  tipVisible.value = true
   markDialogSkipped()
-  if (status.value === 'ready-relaunch' || (status.value === 'done' && nativeUpdater.value)) {
-    await relaunchApp()
-    return
-  }
-  if (status.value === 'done' && localPath.value) {
-    // 仅打开真正的安装包；.app.tar.gz 不能当 DMG 打开
-    await openDownloadedUpdate(localPath.value)
-    return
-  }
-
-  // 优先再试原生 updater（Mac 原地替换，无需拖拽）
-  const native = await tryNativeUpdaterCheck()
-  if (native?.available && native.update) {
-    try {
-      await startNativeInstall(native.update)
-      await finishNativeUpdateAndRelaunch()
-      return
-    } catch (err: any) {
-      console.error('对话框原生安装失败:', err)
-      status.value = 'error'
-      errorMessage.value = humanizeUpdaterError(err)
-      tipVisible.value = true
-      openUpdateDialog({ force: true })
-      return
-    }
-  }
-
-  await startAutoDownload(true)
-  const nextStatus = status.value as HeaderUpdateStatus
-  if (nextStatus === 'ready-relaunch') {
-    await finishNativeUpdateAndRelaunch()
-  } else if (nextStatus === 'done' && localPath.value) {
-    // 回退安装包：已下载，显示已就绪，等用户点顶部提示打开
-    tipVisible.value = true
-  }
+  await handleTipClick()
 }
 
 function handleLater() {

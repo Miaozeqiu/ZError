@@ -6,6 +6,8 @@ on:
     branches: [dev-improvements]
     paths:
       - '.github/workflows/build-desktop.yml'
+      - 'src/composables/useAppUpdate.ts'
+      - 'src/components/ui/UpdateDialog.vue'
 
 permissions:
   contents: read

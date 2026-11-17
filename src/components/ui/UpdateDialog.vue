@@ -8,7 +8,7 @@
           </svg>
         </button>
         <h3 class="dialog-title">发现新版本</h3>
-        <button class="btn-confirm" type="button" @click="handleDownload">立即下载</button>
+        <button class="btn-confirm" type="button" @click="handleDownload">{{ nativeUpdater ? '更新并重启' : '下载安装包' }}</button>
       </div>
 
       <div class="dialog-body">
