@@ -54,6 +54,6 @@ tmp/
 src-tauri/keys/*.key
 !src-tauri/keys/*.key.pub
 
-# 本地拷来的 Markstream 技能，不进仓库
-.agents/skills/markstream-*/
+# 本地开发助手 Skill，不进仓库
+/.agents/skills/
 skills-lock.json
