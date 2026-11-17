@@ -51,6 +51,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
+import { type QuestionMetricValue } from '../../utils/question/questionMetrics';
 
 interface Props {
   visible: boolean;
@@ -67,6 +68,9 @@ const emit = defineEmits<{
     answer: string;
     question_type?: string;
     folderId: string | null;
+    importance: QuestionMetricValue;
+    mastery: QuestionMetricValue;
+    difficulty: QuestionMetricValue;
   }];
 }>();
 
@@ -83,6 +87,9 @@ const formData = ref({
   options: '',
   answer: '',
   questionType: '' as string,
+  importance: 0 as QuestionMetricValue,
+  mastery: 0 as QuestionMetricValue,
+  difficulty: 0 as QuestionMetricValue,
 });
 
 // 表单验证
@@ -97,6 +104,9 @@ const resetForm = () => {
     options: '',
     answer: '',
     questionType: '',
+    importance: 0,
+    mastery: 0,
+    difficulty: 0,
   };
 };
 
@@ -110,6 +120,9 @@ const handleSubmit = () => {
     answer: formData.value.answer.trim(),
     question_type: formData.value.questionType || undefined,
     folderId: props.selectedFolderId || '0',
+    importance: formData.value.importance,
+    mastery: formData.value.mastery,
+    difficulty: formData.value.difficulty,
   });
 
   resetForm();

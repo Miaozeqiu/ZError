@@ -19,7 +19,6 @@ use std::fs;
 use std::fs::File;
 use std::hash::{Hash, Hasher};
 use std::io::Write as _;
-#[cfg(target_os = "windows")]
 use std::path::PathBuf;
 use std::process::Command;
 #[cfg(target_os = "windows")]
@@ -29,6 +28,11 @@ use urlencoding;
 use zip::ZipArchive;
 
 static JIEBA: OnceLock<Jieba> = OnceLock::new();
+
+#[tauri::command]
+pub fn app_update_target() -> Option<String> {
+    tauri_plugin_updater::target()
+}
 
 /// macOS 原地更新只能替换 `.app` 包；`tauri:dev` 的 debug 二进制会误把 `target/debug` 整目录当目标。
 #[tauri::command]
@@ -43,6 +47,45 @@ pub fn can_native_updater_install() -> bool {
     #[cfg(not(target_os = "macos"))]
     {
         true
+    }
+}
+
+/// 清除 macOS 隔离属性。未公证的 adhoc 签名 App 带 quarantine 时，系统会误报「已损坏」。
+/// 若 path 为 .dmg 且内容实际是 gzip（.app.tar.gz 误命名），则返回错误，避免打开时报「已损坏」。
+#[tauri::command]
+pub fn clear_macos_quarantine(path: String) -> Result<(), String> {
+    if path.trim().is_empty() {
+        return Err("path 为空".into());
+    }
+
+    if path.to_lowercase().ends_with(".dmg") {
+        let mut file = File::open(&path).map_err(|e| format!("无法打开文件: {e}"))?;
+        let mut magic = [0u8; 2];
+        use std::io::Read;
+        file.read_exact(&mut magic)
+            .map_err(|e| format!("无法读取文件头: {e}"))?;
+        if magic == [0x1f, 0x8b] {
+            return Err(
+                "下载到的不是 DMG（实际是 .tar.gz 更新包）。请使用应用内更新，或更换为真正的 .dmg 下载地址。"
+                    .into(),
+            );
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let status = Command::new("xattr")
+            .args(["-cr", &path])
+            .status()
+            .map_err(|e| format!("xattr 执行失败: {e}"))?;
+        if !status.success() {
+            return Err(format!("xattr 退出码: {:?}", status.code()));
+        }
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(())
     }
 }
 
@@ -444,6 +487,12 @@ pub async fn read_file_bytes(path: String) -> Result<String, String> {
         Ok(bytes) => Ok(general_purpose::STANDARD.encode(&bytes)),
         Err(e) => Err(format!("读取二进制失败: {}", e)),
     }
+}
+
+#[tauri::command]
+pub async fn stat_local_file(path: String) -> Result<serde_json::Value, String> {
+    let meta = fs::metadata(&path).map_err(|e| format!("读取文件信息失败: {}", e))?;
+    Ok(serde_json::json!({ "size": meta.len() }))
 }
 
 #[tauri::command]
@@ -948,7 +997,10 @@ pub async fn clear_request_logs(state: State<'_, ServerState>) -> Result<String,
 
 #[tauri::command]
 pub async fn open_devtools(app: tauri::AppHandle) -> Result<String, String> {
-    if let Some(window) = app.get_webview_window("main") {
+    if let Some(webview) = app.get_webview("main") {
+        webview.open_devtools();
+        Ok("开发者工具已打开".to_string())
+    } else if let Some(window) = app.get_webview_window("main") {
         window.open_devtools();
         Ok("开发者工具已打开".to_string())
     } else {
@@ -982,38 +1034,63 @@ fn get_config_path() -> std::path::PathBuf {
 
 /// 读取配置文件
 #[tauri::command]
-pub fn read_config() -> Result<String, String> {
-    let path = get_config_path();
-    if path.exists() {
-        std::fs::read_to_string(&path).map_err(|e| e.to_string())
-    } else {
-        Ok(String::new())
-    }
+pub async fn read_config(window: tauri::WebviewWindow) -> Result<String,String> {
+    crate::secret_vault::trusted_window(&window)?;
+    let value=crate::secret_vault::secure_document_read(window,"app_settings".into(),None).await?;
+    Ok(if value.is_null() {String::new()} else {value.to_string()})
 }
 
 /// 写入配置文件
 #[tauri::command]
-pub fn write_config(content: String) -> Result<(), String> {
-    let path = get_config_path();
-    std::fs::write(&path, content).map_err(|e| e.to_string())
+pub async fn write_config(window: tauri::WebviewWindow, content:String) -> Result<(),String> {
+    crate::secret_vault::trusted_window(&window)?;
+    let data=if content.trim().is_empty() {serde_json::json!({})} else {serde_json::from_str(&content).map_err(|_|"配置格式错误")?};
+    crate::secret_vault::secure_document_write(window,"app_settings".into(),data).await.map(|_|())
 }
 
 /// 读取模型配置文件
 #[tauri::command]
-pub fn read_model_config() -> Result<String, String> {
-    let path = get_exe_dir().join("model_config.json");
-    if path.exists() {
-        std::fs::read_to_string(&path).map_err(|e| e.to_string())
-    } else {
-        Ok(String::new())
-    }
+pub async fn read_model_config(window: tauri::WebviewWindow) -> Result<String,String> {
+    crate::secret_vault::trusted_window(&window)?;
+    let value=crate::secret_vault::secure_document_read(window,"model_settings".into(),None).await?;
+    Ok(if value.is_null() {String::new()} else {value.to_string()})
 }
 
 /// 写入模型配置文件
 #[tauri::command]
-pub fn write_model_config(content: String) -> Result<(), String> {
-    let path = get_exe_dir().join("model_config.json");
-    std::fs::write(&path, content).map_err(|e| e.to_string())
+pub async fn write_model_config(window: tauri::WebviewWindow, content:String) -> Result<(),String> {
+    crate::secret_vault::trusted_window(&window)?;
+    let data=if content.trim().is_empty() {serde_json::json!({})} else {serde_json::from_str(&content).map_err(|_|"配置格式错误")?};
+    crate::secret_vault::secure_document_write(window,"model_settings".into(),data).await.map(|_|())
+}
+
+fn get_app_data_dir() -> std::path::PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        let username = crate::database::get_username().unwrap_or_else(|_| "Administrator".to_string());
+        std::path::PathBuf::from(format!("C:\\Users\\{}\\AppData\\Local\\ZError", username))
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+        std::path::PathBuf::from(format!("{}/.local/share/zerror", home))
+    }
+}
+
+/// 读取登录会话（用户数据目录 auth.json）
+#[tauri::command]
+pub async fn read_auth(window: tauri::WebviewWindow) -> Result<String,String> {
+    crate::secret_vault::trusted_window(&window)?;
+    let value=crate::secret_vault::secure_document_read(window,"auth".into(),None).await?;
+    Ok(if value.is_null() {String::new()} else {value.to_string()})
+}
+
+/// 写入登录会话
+#[tauri::command]
+pub async fn write_auth(window: tauri::WebviewWindow, content:String) -> Result<(),String> {
+    crate::secret_vault::trusted_window(&window)?;
+    let data=if content.trim().is_empty() {serde_json::json!({})} else {serde_json::from_str(&content).map_err(|_|"配置格式错误")?};
+    crate::secret_vault::secure_document_write(window,"auth".into(),data).await.map(|_|())
 }
 
 #[tauri::command]
@@ -1043,4 +1120,237 @@ pub async fn open_cache_dir(app: tauri::AppHandle) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+/// 在访达 / 资源管理器中显示文件或文件夹。
+#[tauri::command]
+pub fn reveal_in_file_manager(path: String) -> Result<(), String> {
+    let path = path.trim();
+    if path.is_empty() {
+        return Err("path 为空".into());
+    }
+    if !std::path::Path::new(path).exists() {
+        return Err("文件不存在".into());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .args(["-R", path])
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("explorer")
+            .args(["/select,", path])
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let parent = std::path::Path::new(path)
+            .parent()
+            .and_then(|p| p.to_str())
+            .unwrap_or(path);
+        Command::new("xdg-open")
+            .arg(parent)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
+}
+
+#[derive(Clone, serde::Serialize)]
+pub struct SystemCjkFont {
+    pub family: String,
+    pub data: String,
+}
+
+static CJK_SYSTEM_FONT: OnceLock<SystemCjkFont> = OnceLock::new();
+
+fn read_u16(data: &[u8], offset: usize) -> Result<u16, String> {
+    data.get(offset..offset + 2)
+        .and_then(|bytes| bytes.try_into().ok())
+        .map(u16::from_be_bytes)
+        .ok_or_else(|| "字体数据不完整".into())
+}
+
+fn read_u32(data: &[u8], offset: usize) -> Result<u32, String> {
+    data.get(offset..offset + 4)
+        .and_then(|bytes| bytes.try_into().ok())
+        .map(u32::from_be_bytes)
+        .ok_or_else(|| "字体数据不完整".into())
+}
+
+fn is_truetype_sfnt(tag: &[u8]) -> bool {
+    tag == [0x00, 0x01, 0x00, 0x00] || tag == b"true"
+}
+
+fn extract_ttf_face(data: &[u8], index: usize) -> Result<Vec<u8>, String> {
+    if data.len() < 12 {
+        return Err("字体文件过小".into());
+    }
+
+    if &data[0..4] != b"ttcf" {
+        if is_truetype_sfnt(&data[0..4]) {
+            return Ok(data.to_vec());
+        }
+        return Err("不是可用的 TrueType 字体".into());
+    }
+
+    let num_fonts = read_u32(data, 8)? as usize;
+    if index >= num_fonts {
+        return Err("字体索引超出范围".into());
+    }
+
+    let sfnt_offset = read_u32(data, 12 + index * 4)? as usize;
+    if sfnt_offset + 12 > data.len() {
+        return Err("无效的字体集合偏移".into());
+    }
+    if !is_truetype_sfnt(&data[sfnt_offset..sfnt_offset + 4]) {
+        return Err("该字重不是 TrueType".into());
+    }
+
+    let num_tables = read_u16(data, sfnt_offset + 4)? as usize;
+    let table_dir_start = sfnt_offset + 12;
+    let header_size = 12 + num_tables * 16;
+    if table_dir_start + num_tables * 16 > data.len() {
+        return Err("无效的表目录".into());
+    }
+
+    let mut out = Vec::new();
+    out.extend_from_slice(&data[sfnt_offset..sfnt_offset + header_size]);
+
+    let mut has_glyf = false;
+    for i in 0..num_tables {
+        let rec = table_dir_start + i * 16;
+        let tag = &data[rec..rec + 4];
+        if tag == b"glyf" {
+            has_glyf = true;
+        }
+        let table_offset = read_u32(data, rec + 8)? as usize;
+        let table_length = read_u32(data, rec + 12)? as usize;
+        if table_offset.checked_add(table_length).map(|end| end > data.len()).unwrap_or(true) {
+            return Err(format!("字体表 {} 越界", String::from_utf8_lossy(tag)));
+        }
+
+        let out_rec = 12 + i * 16;
+        let current = out.len() as u32;
+        out[out_rec + 8..out_rec + 12].copy_from_slice(&current.to_be_bytes());
+        out.extend_from_slice(&data[table_offset..table_offset + table_length]);
+        let pad = (4 - (table_length % 4)) % 4;
+        out.extend(std::iter::repeat(0u8).take(pad));
+    }
+
+    if !has_glyf {
+        return Err("字体没有 glyf 表".into());
+    }
+    Ok(out)
+}
+
+fn first_usable_ttf(data: &[u8]) -> Result<Vec<u8>, String> {
+    if data.len() < 4 {
+        return Err("字体文件过小".into());
+    }
+    if &data[0..4] != b"ttcf" {
+        return extract_ttf_face(data, 0);
+    }
+
+    let num_fonts = read_u32(data, 8)? as usize;
+    let mut last_err = "字体集合中没有可用的 TrueType 字重".to_string();
+    for index in 0..num_fonts {
+        match extract_ttf_face(data, index) {
+            Ok(ttf) => return Ok(ttf),
+            Err(err) => last_err = err,
+        }
+    }
+    Err(last_err)
+}
+
+fn cjk_font_candidates() -> Vec<PathBuf> {
+    #[cfg(target_os = "macos")]
+    {
+        return vec![
+            PathBuf::from("/System/Library/Fonts/Supplemental/Songti.ttc"),
+            PathBuf::from("/System/Library/Fonts/Supplemental/Arial Unicode.ttf"),
+            PathBuf::from("/Library/Fonts/Arial Unicode.ttf"),
+            PathBuf::from("/System/Library/Fonts/STHeiti Light.ttc"),
+        ];
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let fonts = std::env::var_os("WINDIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(r"C:\Windows"))
+            .join("Fonts");
+        return ["simhei.ttf", "simkai.ttf", "simfang.ttf", "simsun.ttc", "msyh.ttf", "msyh.ttc"]
+            .into_iter()
+            .map(|name| fonts.join(name))
+            .collect();
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        return [
+            "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
+            "/usr/share/fonts/truetype/droid/DroidSansFallback.ttf",
+            "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+            "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+            "/usr/share/fonts/truetype/arphic/uming.ttc",
+            "/usr/share/fonts/truetype/noto/NotoSansSC-Regular.ttf",
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+        ]
+        .into_iter()
+        .map(PathBuf::from)
+        .collect();
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+    {
+        Vec::new()
+    }
+}
+
+fn load_cjk_system_font_inner() -> Result<SystemCjkFont, String> {
+    let mut last_err = "未找到系统中文字体".to_string();
+    for path in cjk_font_candidates() {
+        let bytes = match fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(err) => {
+                last_err = format!("读取 {} 失败: {err}", path.display());
+                continue;
+            }
+        };
+        match first_usable_ttf(&bytes) {
+            Ok(ttf) => {
+                println!(
+                    "[zerror] PDF 使用系统字体: {} ({} bytes)",
+                    path.display(),
+                    ttf.len()
+                );
+                return Ok(SystemCjkFont {
+                    family: "SystemCJK".into(),
+                    data: general_purpose::STANDARD.encode(ttf),
+                });
+            }
+            Err(err) => {
+                last_err = format!("{}: {err}", path.display());
+            }
+        }
+    }
+    Err(last_err)
+}
+
+/// 读取系统自带的中文 TrueType 字体，供 PDF 导出嵌入。集合字体（.ttc）会抽出第一个可用字重。
+#[tauri::command]
+pub fn load_cjk_system_font() -> Result<SystemCjkFont, String> {
+    if let Some(font) = CJK_SYSTEM_FONT.get() {
+        return Ok(font.clone());
+    }
+    let font = load_cjk_system_font_inner()?;
+    Ok(CJK_SYSTEM_FONT.get_or_init(|| font.clone()).clone())
 }

@@ -3,7 +3,9 @@
        class="question-detail-overlay" 
        :class="{ show }" 
        :style="{ width: width + 'px' }">
-    <div class="resizer" 
+    <div
+         v-if="!readonly"
+         class="resizer" 
          :class="{ active: isResizing }"
          @mousedown="$emit('resize-start', $event)"
          @mouseover="$emit('resize-over')"
@@ -14,7 +16,7 @@
         <svg t="1760584170728" class="icon" viewBox="0 0 1536 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="13220" width="20" height="20"><path d="M981.418667 71.893333A60.245333 60.245333 0 0 1 1070.506667 152.746667l-3.925334 4.309333L711.594667 512l354.986666 354.944c22.186667 22.144 23.466667 57.216 3.925334 80.896l-3.925334 4.266667a60.245333 60.245333 0 0 1-80.896 3.925333l-4.266666-3.925333-368.298667-368.213334a101.632 101.632 0 0 1-4.565333-138.88l4.565333-4.864 368.298667-368.256z" fill="#838B9F" opacity=".25" p-id="13221"></path><path d="M469.418667 71.893333A60.245333 60.245333 0 0 1 558.506667 152.746667l-3.925334 4.309333L199.594667 512l354.986666 354.944c22.186667 22.144 23.466667 57.216 3.925334 80.896l-3.925334 4.266667a60.245333 60.245333 0 0 1-80.896 3.925333l-4.266666-3.925333-368.298667-368.213334a101.632 101.632 0 0 1-4.565333-138.88l4.565333-4.864 368.298667-368.256z" fill="#838B9F" p-id="13222"></path></svg>
       </button>
       <h4>题目详情</h4>
-      <button class="edit-btn" @click="$emit('toggle-edit')" :title="isEditMode ? '取消编辑' : '编辑题目'">
+      <button v-if="!readonly" class="edit-btn" @click="$emit('toggle-edit')" :title="isEditMode ? '取消编辑' : '编辑题目'">
         <svg v-if="!isEditMode" width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
           <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
           <path d="m18.5 2.5 3 3L12 15l-4 1 1-4 9.5-9.5z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -94,6 +96,48 @@
             </div>
           </div>
         </div>
+        <div class="detail-item">
+          <label>知识点:</label>
+          <div class="knowledge-box">
+            <div class="knowledge-chips">
+              <button
+                v-for="link in knowledgeLinks"
+                :key="link.node_id"
+                class="knowledge-chip"
+                type="button"
+                :title="`${link.subject_name} · ${link.node_name}`"
+                @click="openKnowledge(link)"
+              >
+                <span>{{ link.node_name }}</span>
+                <span class="knowledge-chip-x" title="取消关联" @click.stop="unlinkKnowledge(link)">×</span>
+              </button>
+              <button type="button" class="knowledge-add" @click="pickerOpen = !pickerOpen">
+                {{ pickerOpen ? '收起' : '关联知识点' }}
+              </button>
+            </div>
+            <KnowledgeNodePicker
+              v-if="pickerOpen"
+              class="knowledge-picker"
+              @pick="linkKnowledge"
+            />
+          </div>
+        </div>
+        <div class="detail-item">
+          <label>练习记录:</label>
+          <div v-if="!practiceHistory.length" class="detail-value practice-empty">暂无作答记录</div>
+          <div v-else class="practice-list">
+            <div v-for="item in practiceHistory" :key="item.id" class="practice-item">
+              <div class="practice-item-top">
+                <span class="practice-flag" :class="item.is_correct ? 'is-ok' : 'is-bad'">
+                  {{ item.user_answer ? (item.is_correct ? '答对' : '答错') : '备注' }}
+                </span>
+                <span v-if="item.user_answer" class="practice-answer">{{ item.user_answer }}</span>
+                <span class="practice-time">{{ formatCompactTime(item.create_time) }}</span>
+              </div>
+              <div v-if="item.note" class="practice-note">{{ item.note }}</div>
+            </div>
+          </div>
+        </div>
       </div>
       <div v-else class="edit-form">
         <div class="form-group">
@@ -102,8 +146,8 @@
             :value="editQuestion"
             @input="onQuestionInput"
             ref="questionTextarea"
-            class="edit-textarea"
-            rows="4"
+            class="edit-textarea is-compact"
+            rows="1"
             placeholder="请输入题目内容..."
           ></textarea>
         </div>
@@ -113,8 +157,8 @@
             :value="editOptions"
             @input="onOptionsInput"
             ref="optionsTextarea"
-            class="edit-textarea"
-            rows="4"
+            class="edit-textarea is-compact"
+            rows="1"
             placeholder="请输入选项..."
           ></textarea>
         </div>
@@ -124,8 +168,8 @@
             :value="editAnswer"
             @input="onAnswerInput"
             ref="answerTextarea"
-            class="edit-textarea"
-            rows="6"
+            class="edit-textarea is-compact"
+            rows="1"
             placeholder="请输入答案..."
           ></textarea>
         </div>
@@ -155,9 +199,11 @@
 
 <script setup lang="ts">
 import { computed, ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
-import type { AIResponse } from '../../services/database'
-import { splitQuestionImageParts, fetchQuestionImageBase64, shouldInvertTransparentDarkImage } from '../../utils/questionImage'
-import type { QuestionImagePart as Part } from '../../utils/questionImage'
+import { databaseService, type AIResponse, type PracticeRecord, type QuestionKnowledgeLink } from '../../services/app/database'
+import KnowledgeNodePicker, { type KnowledgePick } from '../../components/study/KnowledgeNodePicker.vue'
+import { notifyQuestionKnowledgeUpdated, openKnowledgeInStudy } from '../../services/study/questionKnowledge'
+import { splitQuestionImageParts, fetchQuestionImageBase64, shouldInvertTransparentDarkImage } from '../../utils/question/questionImage'
+import type { QuestionImagePart as Part } from '../../utils/question/questionImage'
 
 interface Props {
   question: AIResponse | null
@@ -172,6 +218,7 @@ interface Props {
   isSavingEdit: boolean
   isResizing: boolean
   formatTime: (t?: string) => string
+  readonly?: boolean
 }
 
 const props = defineProps<Props>()
@@ -189,8 +236,66 @@ const emit = defineEmits<{
   (e: 'update:editAnswer', v: string): void
   (e: 'update:editType', v: string): void
 }>()
+
 const imageSrcMap = ref<Record<string, string>>({})
 const blackOnlyMap = ref<Record<string, boolean>>({})
+
+const practiceHistory = ref<PracticeRecord[]>([])
+const knowledgeLinks = ref<QuestionKnowledgeLink[]>([])
+const pickerOpen = ref(false)
+
+const openKnowledge = (link: QuestionKnowledgeLink) => {
+  openKnowledgeInStudy(link)
+}
+
+const linkKnowledge = async (node: KnowledgePick) => {
+  const id = props.question?.id
+  if (!id) return
+  await databaseService.linkQuestionsToNode([id], node.id)
+  pickerOpen.value = false
+  notifyQuestionKnowledgeUpdated({ subjectId: node.subjectId, nodeId: node.id, questionId: id })
+  await loadKnowledgeLinks()
+}
+
+const unlinkKnowledge = async (link: QuestionKnowledgeLink) => {
+  const id = props.question?.id
+  if (!id) return
+  await databaseService.unlinkQuestionKnowledge(id, link.node_id)
+  notifyQuestionKnowledgeUpdated({ subjectId: link.subject_id, nodeId: link.node_id, questionId: id })
+  await loadKnowledgeLinks()
+}
+
+const loadKnowledgeLinks = async () => {
+  const id = props.question?.id
+  if (!id) {
+    knowledgeLinks.value = []
+    return
+  }
+  try {
+    knowledgeLinks.value = await databaseService.listQuestionKnowledge([id])
+  } catch {
+    knowledgeLinks.value = []
+  }
+}
+
+const loadPracticeHistory = async () => {
+  const id = props.question?.id
+  if (!id) {
+    practiceHistory.value = []
+    return
+  }
+  try {
+    practiceHistory.value = await databaseService.getPracticeHistory(id, 20)
+  } catch {
+    practiceHistory.value = []
+  }
+}
+
+watch(() => props.question?.id, () => {
+  pickerOpen.value = false
+  void loadPracticeHistory()
+  void loadKnowledgeLinks()
+}, { immediate: true })
 
 const contentParts = computed<Part[]>(() => splitQuestionImageParts(props.question?.question || ''))
 const optionsParts = computed<Part[]>(() => splitQuestionImageParts(props.question?.options || ''))
@@ -373,8 +478,8 @@ const initCustomScrollbar = async () => {
 }
 
 const autoResize = (el: HTMLTextAreaElement) => {
-  el.style.height = 'auto'
-  el.style.height = el.scrollHeight + 'px'
+  el.style.height = '0px'
+  el.style.height = `${el.scrollHeight}px`
   requestAnimationFrame(() => updateScrollbarThumb())
 }
 
@@ -674,6 +779,55 @@ onUnmounted(() => {
   border-color: var(--form-input-hover-border, transparent);
 }
 
+.practice-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.practice-item {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background-color: var(--form-input-bg, #F7F7F7);
+}
+
+.practice-item-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.practice-flag.is-ok {
+  color: #15803d;
+}
+
+.practice-flag.is-bad {
+  color: #b91c1c;
+}
+
+.practice-answer {
+  color: var(--text-primary);
+}
+
+.practice-time {
+  margin-left: auto;
+  color: var(--text-secondary, #718096);
+  font-size: 12px;
+}
+
+.practice-note {
+  margin-top: 6px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-secondary, #4a5568);
+  white-space: pre-wrap;
+}
+
+.practice-empty {
+  color: var(--text-secondary, #718096);
+}
+
 .detail-meta-strip {
   display: flex;
   flex-wrap: wrap;
@@ -690,6 +844,48 @@ onUnmounted(() => {
   padding: 0;
   border: none;
   background: transparent;
+}
+
+.knowledge-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.knowledge-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.knowledge-chip,
+.knowledge-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border: none;
+  border-radius: 6px;
+  background: color-mix(in srgb, #2F6F78 10%, transparent);
+  color: #1F4F56;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.knowledge-chip-x {
+  color: var(--text-secondary, #94a3b8);
+}
+
+.knowledge-add {
+  background: color-mix(in srgb, var(--text-primary, #2d3748) 6%, transparent);
+  color: var(--text-secondary, #718096);
+}
+
+.knowledge-picker {
+  padding: 8px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text-primary, #2d3748) 4%, transparent);
 }
 
 .meta-pill-folder {
@@ -784,8 +980,13 @@ onUnmounted(() => {
 .edit-textarea {
   min-height: 96px;
   height: auto;
+  line-height: 1.5;
   overflow-y: hidden;
   resize: none;
+}
+
+.edit-textarea.is-compact {
+  min-height: 0;
 }
 
 .edit-input:hover,

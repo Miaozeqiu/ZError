@@ -1,0 +1,48 @@
+name: Build Windows installer
+
+on:
+  workflow_call:
+  workflow_dispatch:
+  push:
+    branches: [dev-improvements]
+    paths:
+      - '.github/workflows/build-desktop.yml'
+      - 'src/composables/useAppUpdate.ts'
+      - 'src/components/ui/UpdateDialog.vue'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: windows-x64
+    runs-on: windows-2025
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+      - run: npm ci
+
+      - name: Configure installer build
+        run: |
+          node -e 'require("node:fs").writeFileSync(".tauri-ci.json", JSON.stringify({ bundle: { createUpdaterArtifacts: false } }))'
+
+      - name: Build Windows NSIS installer
+        run: npm exec -- tauri build --ci --target x86_64-pc-windows-msvc --bundles nsis --config .tauri-ci.json -- --locked
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: ZError-windows-x64-${{ github.run_number }}
+          path: src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+          if-no-files-found: error
+          retention-days: 14

@@ -1,0 +1,33 @@
+---
+description: 题库列表和模型设置按职责开文件，不要打开编排层改搜索或测连通
+globs: src/views/questions/**/*.ts,src/views/questions/**/*.vue,src/views/settings/**/*.ts,src/views/settings/**/*.vue
+alwaysApply: false
+---
+
+# 题库 / 模型设置
+
+两个页面都是「状态袋 + bind* 操作 + 薄编排」。Vue 仍调用原来的 `useQuestionList` / `useModelSettings`。
+
+## 题库列表
+
+- 编排、watch：`src/views/questions/useQuestionList.ts`
+- 状态：`questionList/state.ts`
+- 加载 / 分页 / 排序：`load.ts`
+- 搜索高亮：`search.ts`
+- 导入导出：`io.ts`
+- 详情、编辑、图片：`detail.ts`
+- 多选、右键、复制剪切：`clipboard.ts`
+- 详情栏拖宽：`resize.ts`
+
+## 模型设置
+
+- 编排、watch：`src/views/settings/useModelSettings.ts`
+- 状态：`ModelSettings/state.ts`
+- 自定义滚动条：`scroll.ts`
+- 测连通：`testModel.ts`
+- 图标：`icons.ts`
+- 平台 / 模型增删改、菜单、协议：`platform.ts`
+- 配置弹窗：`useModelConfigDialog.ts`
+- 配置数据：`src/services/model/config.ts`（类型 / 远程 / 单例分文件）
+
+不要把新逻辑写回编排文件。模块之间通过 `ctx.ops` 或后绑定 hook 互相调用，避免循环 import。

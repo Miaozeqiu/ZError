@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- 开发态导航页在 localhost；带 Referer 打开学习通会被拒：localhost 该域名未授权 -->
+  <meta name="referrer" content="no-referrer" />
+  <title>导航</title>
+  <link rel="stylesheet" href="browser-home/launcher.css" />
+  <script src="browser-home/launcher.js" defer></script>
+</head>
+<body>
+  <main class="wrap">
+    <h1>导航</h1>
+    <p id="launcher-hint">点击打开网站，拖动图标调整顺序</p>
+    <nav class="grid" aria-label="网站快捷入口" aria-describedby="launcher-hint">
+      <a class="site" href="https://t.zerror.cc/" rel="noreferrer" referrerpolicy="no-referrer" draggable="false" title="t.zerror.cc">
+        <span class="mark ze" aria-hidden="true">
+          <span>Z</span>
+          <img src="browser-home/icons/zerror.png" alt="" draggable="false" />
+        </span>
+        <span class="name">ZError</span>
+      </a>
+      <a class="site" href="https://www.doubao.com/" rel="noreferrer" referrerpolicy="no-referrer" draggable="false" title="doubao.com">
+        <span class="mark db" aria-hidden="true">
+          <span>豆</span>
+          <img src="browser-home/icons/doubao.png" alt="" draggable="false" />
+        </span>
+        <span class="name">豆包</span>
+      </a>
+      <a class="site" href="https://chat.deepseek.com/" rel="noreferrer" referrerpolicy="no-referrer" draggable="false" title="chat.deepseek.com">
+        <span class="mark ds" aria-hidden="true">
+          <span>D</span>
+          <img src="browser-home/icons/deepseek.svg" alt="" draggable="false" />
+        </span>
+        <span class="name">DeepSeek</span>
+      </a>
+      <a class="site" href="https://www.qianwen.com/" rel="noreferrer" referrerpolicy="no-referrer" draggable="false" title="qianwen.com">
+        <span class="mark qw" aria-hidden="true">
+          <span>千</span>
+          <img src="browser-home/icons/qianwen.png" alt="" draggable="false" />
+        </span>
+        <span class="name">千问</span>
+      </a>
+      <a class="site" href="https://chatgpt.com/" rel="noreferrer" referrerpolicy="no-referrer" draggable="false" title="chatgpt.com">
+        <span class="mark gpt" aria-hidden="true">
+          <span>G</span>
+          <img src="browser-home/icons/chatgpt.png" alt="" draggable="false" />
+        </span>
+        <span class="name">ChatGPT</span>
+      </a>
+      <a class="site" href="https://gemini.google.com/" rel="noreferrer" referrerpolicy="no-referrer" draggable="false" title="gemini.google.com">
+        <span class="mark gm" aria-hidden="true">
+          <span>星</span>
+          <img src="browser-home/icons/gemini.png" alt="" draggable="false" />
+        </span>
+        <span class="name">Gemini</span>
+      </a>
+      <a class="site" href="https://passport2.chaoxing.com/login?fid=&newversion=true&refer=https%3A%2F%2Fi.chaoxing.com" rel="noreferrer" referrerpolicy="no-referrer" draggable="false" title="passport2.chaoxing.com">
+        <span class="mark cx" aria-hidden="true">
+          <span>学</span>
+          <img src="browser-home/icons/chaoxing.png" alt="" draggable="false" />
+        </span>
+        <span class="name">学习通</span>
+      </a>
+      <a class="site" href="https://www.zhihuishu.com/" rel="noreferrer" referrerpolicy="no-referrer" draggable="false" title="zhihuishu.com">
+        <span class="mark zs" aria-hidden="true">
+          <span>智</span>
+          <img src="browser-home/icons/zhihuishu.ico" alt="" draggable="false" />
+        </span>
+        <span class="name">智慧树</span>
+      </a>
+      <a class="site" href="https://www.zjooc.cn/" rel="noreferrer" referrerpolicy="no-referrer" draggable="false" title="zjooc.cn">
+        <span class="mark zj" aria-hidden="true">
+          <span>之</span>
+          <img src="browser-home/icons/zjooc.ico" alt="" draggable="false" />
+        </span>
+        <span class="name">之江在线</span>
+      </a>
+    </nav>
+    <div class="sr-only" role="status"></div>
+  </main>
+  <script>
+    (function () {
+      document.addEventListener('click', function (event) {
+        if (event.defaultPrevented || event.button) return
+        if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+        var link = event.target && event.target.closest ? event.target.closest('a.site') : null
+        var href = link && link.href
+        if (!href) return
+        event.preventDefault()
+        try { document.title = 'ZRNAV:' + href } catch (e) {}
+        document.documentElement.style.background = '#fff'
+        document.body.replaceChildren()
+        document.body.style.cssText = 'margin:0;background:#fff;min-height:100vh'
+        var meta = document.querySelector('meta[name="referrer"]')
+        if (!meta) {
+          meta = document.createElement('meta')
+          meta.name = 'referrer'
+          document.head.appendChild(meta)
+        }
+        meta.content = 'no-referrer'
+        location.replace(href)
+      })
+    })()
+  </script>
+</body>
+</html>

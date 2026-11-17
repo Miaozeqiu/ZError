@@ -1,6 +1,7 @@
 <template>
-  <div v-if="show" class="dialog-overlay" @click="handleOverlayClick">
-    <div class="dialog-panel model-config-panel" :class="{ 'model-config-panel--compact': !showAdvancedCode }" @click.stop>
+  <Transition name="dialog-fade" :duration="180" @after-leave="onDialogAfterLeave">
+    <div v-if="show" key="model-config-dialog" class="dialog-overlay dialog-overlay--vue" @click="handleOverlayClick">
+      <div class="dialog-panel model-config-panel" :class="{ 'model-config-panel--compact': !showAdvancedCode }" @click.stop>
       <div class="dialog-header">
         <button class="btn-back" type="button" @click="$emit('close')" title="取消">
           <svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" width="18" height="18">
@@ -8,9 +9,23 @@
           </svg>
         </button>
         <span class="dialog-title">{{ dialogTitle }}</span>
-        <button class="btn-confirm" type="button" :disabled="isRemote ? false : !isFormValid" @click="handlePrimaryAction">
-          {{ isRemote ? '关闭' : (isEditing ? '完成' : '完成') }}
-        </button>
+        <div class="dialog-header-actions">
+          <button
+            type="button"
+            class="model-test-card"
+            :class="modelTestCardClass"
+            :disabled="isTestingModel || !canTestModel"
+            :title="modelTestTooltip"
+            @click="testModelAvailability"
+          >
+            <span v-if="isTestingModel" class="model-test-spinner" aria-hidden="true" />
+            <span class="model-test-title">{{ modelTestTitle }}</span>
+            <span v-if="modelTestMeta" class="model-test-meta">{{ modelTestMeta }}</span>
+          </button>
+          <button class="btn-confirm" type="button" :disabled="!isFormValid" @click="handlePrimaryAction">
+            完成
+          </button>
+        </div>
       </div>
       <div class="dialog-body">
         <div class="split-container" :class="{ 'split-container--compact': !showAdvancedCode }">
@@ -64,7 +79,7 @@
                 <div
                   v-if="showModelDropdown && fetchedModelList.length > 0"
                   ref="modelDropdownRef"
-                  class="qa-dropdown"
+                  class="qa-dropdown settings-popup"
                   :style="modelDropdownStyle"
                   @mousedown.prevent
                 >
@@ -89,7 +104,7 @@
             </Teleport>
 
             <div class="form-group">
-              <label class="form-label">名称</label>
+              <label class="form-label">显示名</label>
               <input
                 v-model="formData.displayName"
                 type="text"
@@ -102,69 +117,37 @@
             </div>
 
             <div class="form-group">
-              <label class="form-label">API 协议</label>
-              <div ref="protocolSelectRef" class="protocol-select-wrap">
-                <button
-                  type="button"
-                  class="protocol-select-trigger"
-                  :class="{ open: showProtocolDropdown }"
-                  :disabled="isRemote"
-                  @mousedown.prevent="toggleProtocolDropdown"
-                >
-                  <span class="protocol-select-text">
-                    {{ currentProtocolOption.label }} - {{ currentProtocolOption.endpoint }}
-                  </span>
-                  <span class="protocol-select-arrow" aria-hidden="true">
-                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <path d="M4 6L8 10L12 6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
-                    </svg>
-                  </span>
-                </button>
-              </div>
-              <Teleport to="body">
-                <Transition name="dropdown-pop">
-                  <div
-                    v-if="showProtocolDropdown"
-                    ref="protocolDropdownRef"
-                    class="protocol-dropdown"
-                    :style="protocolDropdownStyle"
-                    @mousedown.prevent
-                  >
-                    <button
-                      v-for="option in availableProtocolOptions"
-                      :key="option.value"
-                      type="button"
-                      class="protocol-dropdown-item"
-                      :class="{ active: formData.apiProtocol === option.value }"
-                      @mousedown.prevent="selectProtocol(option.value)"
-                    >
-                      <span class="protocol-dropdown-label">{{ option.label }}</span>
-                      <span class="protocol-dropdown-endpoint">{{ option.endpoint }}</span>
-                    </button>
-                  </div>
-                </Transition>
-              </Teleport>
-            </div>
-
-            <div v-if="showCategorySelect" class="form-group qa-form-row">
-              <label class="form-label">模型类型</label>
-              <div class="qa-category-switch">
-                <ModelCategorySwitch v-model="formData.category" :show-summary="false" />
-              </div>
+              <label class="form-label" for="model-max-output-tokens">最大输出长度</label>
+              <input id="model-max-output-tokens" v-model.number="formData.maxTokensOverride" type="number"
+                class="form-input" min="1" step="1" :placeholder="String(defaultOutputTokens)">
+              <p class="form-hint">单位为 token，留空使用默认值。部分模型的思考会占用这项额度，实际请求还受上下文窗口和服务端限制。</p>
             </div>
 
             <div class="form-group">
               <label class="form-label form-label--row">
-                <span>启用思考</span>
+                <span>视觉能力</span>
                 <label class="switch-toggle" :class="{ disabled: isRemote }">
-                  <input type="checkbox" v-model="formData.enableThinking" :disabled="isRemote" />
+                  <input type="checkbox" v-model="formData.hasVision" :disabled="isRemote" />
                   <span class="switch-slider"></span>
                 </label>
               </label>
               <p class="form-hint">
                 {{ isRemote
-                  ? '远程模型的思考配置由管理员下发，本地不可修改。'
-                  : '开启后，模型会输出思考过程，但响应时间可能明显变长。部分模型/API服务不支持此功能。' }}
+                  ? '远程模型的视觉能力由管理员下发，本地不可修改。'
+                  : '开启后，该模型会出现在视觉模型列表中，可用于图片理解。' }}
+              </p>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label form-label--row">
+                <span>启用思考</span>
+                <label class="switch-toggle">
+                  <input type="checkbox" v-model="formData.enableThinking" />
+                  <span class="switch-slider"></span>
+                </label>
+              </label>
+              <p class="form-hint">
+                可在本机开关，同步远控模型时会保留。开启后模型会输出思考过程，响应时间可能明显变长。部分模型不支持。
               </p>
 
               <!-- 关闭思考：按协议展示可选参数 -->
@@ -172,12 +155,12 @@
                 <p class="thinking-options-title">关闭时发送的参数</p>
 
                 <template v-if="isChatProtocol">
-                  <label class="thinking-check" :class="{ disabled: isRemote }">
-                    <input type="checkbox" v-model="formData.thinkingOffEnableThinkingFalse" :disabled="isRemote" />
+                  <label class="thinking-check">
+                    <input type="checkbox" v-model="formData.thinkingOffEnableThinkingFalse" />
                     <code>enable_thinking: false</code>
                   </label>
-                  <label class="thinking-check" :class="{ disabled: isRemote }">
-                    <input type="checkbox" v-model="formData.thinkingOffThinkingTypeDisabled" :disabled="isRemote" />
+                  <label class="thinking-check">
+                    <input type="checkbox" v-model="formData.thinkingOffThinkingTypeDisabled" />
                     <code>thinking: &#123; type: "disabled" &#125;</code>
                   </label>
                 </template>
@@ -189,7 +172,6 @@
                       name="thinking-off-responses-effort"
                       value="none"
                       v-model="formData.thinkingOffResponsesEffort"
-                      :disabled="isRemote"
                     />
                     <code>reasoning.effort: "none"</code>
                   </label>
@@ -199,7 +181,6 @@
                       name="thinking-off-responses-effort"
                       value="minimal"
                       v-model="formData.thinkingOffResponsesEffort"
-                      :disabled="isRemote"
                     />
                     <code>reasoning.effort: "minimal"</code>
                   </label>
@@ -219,16 +200,55 @@
                   <code v-if="isChatProtocol">reasoning_effort</code>
                   <code v-else>reasoning.effort</code>
                 </p>
-                <div class="thinking-effort-switch">
-                  <button
-                    v-for="opt in thinkingEffortOptions"
-                    :key="opt.value"
-                    type="button"
-                    class="thinking-effort-btn"
-                    :class="{ active: formData.thinkingEffort === opt.value }"
-                    :disabled="isRemote"
-                    @click="!isRemote && (formData.thinkingEffort = opt.value)"
-                  >{{ opt.label }}</button>
+                <div
+                  class="thinking-effort-slider"
+                  :class="{ 'is-max': isMaxEffort, 'is-dragging': isDraggingEffort }"
+                >
+                  <div
+                    ref="effortBarRef"
+                    class="thinking-effort-bar"
+                    role="slider"
+                    :aria-valuemin="0"
+                    :aria-valuemax="effortMaxIndex"
+                    :aria-valuenow="effortIndex"
+                    aria-label="思考强度"
+                    :tabindex="0"
+                    @pointerdown="onEffortPointerDown"
+                    @pointermove="onEffortPointerMove"
+                    @pointerup="onEffortPointerUp"
+                    @pointercancel="onEffortPointerUp"
+                    @keydown="onEffortKeydown"
+                  >
+                    <div class="thinking-effort-fill" :style="{ width: effortFillWidth }">
+                      <canvas
+                        v-if="isMaxEffort"
+                        class="thinking-effort-matrix"
+                        aria-hidden="true"
+                        :ref="bindEffortMatrix"
+                      />
+                    </div>
+                    <div class="thinking-effort-dots" aria-hidden="true">
+                      <span
+                        v-for="(opt, index) in thinkingEffortOptions"
+                        v-show="index > 0 && index < thinkingEffortOptions.length - 1"
+                        :key="opt.value"
+                        class="thinking-effort-dot"
+                        :class="{ passed: effortSlide >= index }"
+                        :style="{ left: effortStopLeft(index) }"
+                      />
+                    </div>
+                    <div class="thinking-effort-thumb" :style="{ left: effortThumbLeft }" />
+                  </div>
+                  <div class="thinking-effort-labels">
+                    <button
+                      v-for="(opt, index) in thinkingEffortOptions"
+                      :key="opt.value"
+                      type="button"
+                      class="thinking-effort-label"
+                      :class="{ active: formData.thinkingEffort === opt.value }"
+                      @click="formData.thinkingEffort = opt.value"
+                    >{{ opt.label }}</button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -237,898 +257,53 @@
         </div>
       </div>
     </div>
-  </div>
+    </div>
+  </Transition>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
-import { EditorState } from '@codemirror/state'
-import { EditorView, lineNumbers } from '@codemirror/view'
-import { javascript } from '@codemirror/lang-javascript'
-import { defaultHighlightStyle, syntaxHighlighting } from '@codemirror/language'
-import { oneDark } from '@codemirror/theme-one-dark'
-import { linter, lintGutter } from '@codemirror/lint'
-import * as acorn from 'acorn'
-import { type AIModel, type ThinkingEffort, type ThinkingOffResponsesEffort } from '../../../services/modelConfig'
-import { buildPresetProcessModelJsCode, normalizeApiProtocol, readModelIdFromJsCode } from '../../../services/modelProtocol'
-import { useExclusiveMenu } from '../../../composables/useExclusiveMenu'
-import ModelCategorySwitch from './ModelCategorySwitch.vue'
-
-const thinkingEffortOptions: { value: ThinkingEffort; label: string }[] = [
-  { value: 'low', label: 'low' },
-  { value: 'medium', label: 'medium' },
-  { value: 'high', label: 'high' },
-  { value: 'max', label: 'max' },
-]
-
-interface Props {
-  show: boolean
-  model?: AIModel | null
-  platformBaseUrl?: string
-  platformApiKey?: string
-}
-
-interface Emits {
-  (e: 'close'): void
-  (e: 'save', model: Partial<AIModel>): void
-}
+import { computed } from 'vue'
+import { useModelConfigDialog, Props, Emits } from './useModelConfigDialog'
+import { resolveModelOutputLimit } from '../../../services/model/contextBudget'
 
 const props = defineProps<Props>()
 const emit = defineEmits<Emits>()
+const defaultOutputTokens = computed(() => resolveModelOutputLimit({ maxTokens: props.model?.maxTokens }))
 
-const protocolOptions = [
-  { value: 'openai-chat', label: 'OpenAI Chat', endpoint: '/v1/chat/completions' },
-  { value: 'openai-response', label: 'OpenAI Responses', endpoint: '/v1/responses' },
-  { value: 'anthropic', label: 'Anthropic', endpoint: '/v1/messages' },
-  { value: 'custom', label: '自定义', endpoint: 'jsCode' }
-] as const
-const protocolSelectRef = ref<HTMLElement | null>(null)
-const protocolDropdownRef = ref<HTMLElement | null>(null)
-const protocolDropdownStyle = ref<Record<string, string>>({})
-const showProtocolDropdown = ref(false)
-useExclusiveMenu('model-config-protocol-dropdown', showProtocolDropdown)
-const modelDropdownAnchorRef = ref<HTMLElement | null>(null)
-const modelIdInputRef = ref<HTMLInputElement | null>(null)
-const modelDropdownRef = ref<HTMLElement | null>(null)
-const modelDropdownStyle = ref<Record<string, string>>({})
-const isFetchingModels = ref(false)
-const showModelDropdown = ref(false)
-useExclusiveMenu('model-config-model-dropdown', showModelDropdown)
+const {
+  thinkingEffortOptions, effortMatrixRaf, effortMatrixStop, effortMatrixIo, effortMatrixRo, stopEffortMatrixFx, startEffortMatrixFx, bindEffortMatrix, modelDropdownAnchorRef, modelIdInputRef, modelDropdownRef, modelDropdownStyle, isFetchingModels, showModelDropdown, fetchedModelList, formData, isEditing, isRemote, effortMaxIndex, EFFORT_THUMB_PX, effortBarRef, effortSlide, isDraggingEffort, effortIndex, isMaxEffort, effortThumbOffset, effortFillWidth, effortStopLeft, effortThumbLeft, snapEffortValue, applyEffortMagnet, slideEffortFromClientX, suppressEffortSelectStart, lockEffortTextSelect, onEffortPointerDown, onEffortPointerMove, onEffortPointerUp, onEffortKeydown, dialogTitle, requiresModelId, isChatProtocol, isResponsesProtocol, isMessagesProtocol, isFormValid, filteredFetchedModels, groupedFetchedModels, updateModelDropdownPosition, modelDropdownBlurTimer, clearModelDropdownBlurTimer, openModelDropdown, closeModelDropdown, normalizeBaseUrl, modelsCacheByBaseUrl, fetchModelsGeneration, tauriFetchPromise, getTauriFetch, applyFetchedModels, restoreModelsFromCache, handleModelIdFocus, toggleModelDropdown, handleModelIdBlur, handleModelIdInput, handleModelDropdownOutsideClick, handleModelDropdownViewportChange, parseModelsResponse, fetchModels, selectFetchedModel, DEFAULT_JS_CODE, DEFAULT_VISION_JS_CODE, thinkingPresetOptions, buildCurrentPresetJsCode, syncPresetJsCode, EFFORT_VALUES, normalizeEffort, normalizeOffResponsesEffort, createDialogFormData, readEnableThinkingFromJsCode, applyEnableThinkingToJsCode, deriveEnableThinking, showAdvancedCode, applyModelIdToJsCode, onDialogAfterLeave, cmContainerRef, cmView, themeObserver, rebuildEditorWithDoc, jsSyntaxLinter, initCodeMirror, setEditorDoc, handleOverlayClick, handlePrimaryAction, handleSubmit, isTestingModel, modelTestStatus, modelTestMessage, modelTestElapsedMs, modelTestAbort, canTestModel, modelTestCardClass, modelTestTitle, modelTestTooltip, modelTestMeta, resetModelTestState, isAbortError, collectProcessModelOutput, testModelAvailability
+} = useModelConfigDialog(props, emit)
 
-type FetchedModelItem = {
-  id: string
-  name?: string
-  ownedBy?: string
-}
-
-const fetchedModelList = ref<FetchedModelItem[]>([])
-
-const formData = ref({
-  displayName: '',
-  category: 'text' as 'text' | 'vision' | 'summary',
-  jsCode: '',
-  modelId: '',
-  enableThinking: false,
-  thinkingOffEnableThinkingFalse: true,
-  thinkingOffThinkingTypeDisabled: false,
-  thinkingOffResponsesEffort: 'minimal' as ThinkingOffResponsesEffort,
-  thinkingEffort: 'medium' as ThinkingEffort,
-  apiProtocol: 'openai-chat' as AIModel['apiProtocol']
-})
-
-const isEditing = computed(() => !!props.model)
-const isRemote = computed(() => !!props.model?.isRemote)
-const dialogTitle = computed(() => {
-  if (isRemote.value) return '查看模型'
-  return isEditing.value ? '编辑模型' : '添加模型'
-})
-const showCategorySelect = computed(() => !isEditing.value)
-const requiresModelId = computed(() => formData.value.apiProtocol !== 'custom')
-const isChatProtocol = computed(() => formData.value.apiProtocol === 'openai-chat' || formData.value.apiProtocol === 'custom')
-const isResponsesProtocol = computed(() => formData.value.apiProtocol === 'openai-response')
-const isMessagesProtocol = computed(() => formData.value.apiProtocol === 'anthropic')
-const isFormValid = computed(() => {
-  if (!formData.value.displayName.trim()) return false
-  if (requiresModelId.value && !formData.value.modelId.trim()) return false
-  return true
-})
-const availableProtocolOptions = computed(() => {
-  if (isRemote.value) {
-    return protocolOptions.filter(option => option.value !== 'custom')
-  }
-  return protocolOptions
-})
-const currentProtocolOption = computed(() => {
-  return availableProtocolOptions.value.find(option => option.value === formData.value.apiProtocol)
-    ?? availableProtocolOptions.value[0]
-    ?? protocolOptions[0]
-})
-const filteredFetchedModels = computed(() => {
-  const q = formData.value.modelId.trim().toLowerCase()
-  if (!q) return fetchedModelList.value
-  return fetchedModelList.value.filter(m =>
-    m.id.toLowerCase().includes(q) ||
-    (m.ownedBy || '').toLowerCase().includes(q)
-  )
-})
-const groupedFetchedModels = computed(() => {
-  const groups = new Map<string, FetchedModelItem[]>()
-  for (const model of filteredFetchedModels.value) {
-    const owner = model.ownedBy || '未分类'
-    if (!groups.has(owner)) groups.set(owner, [])
-    groups.get(owner)!.push(model)
-  }
-  return Array.from(groups.entries()).map(([owner, models]) => ({ owner, models }))
-})
-
-const updateProtocolDropdownPosition = () => {
-  if (!protocolSelectRef.value) return
-  const triggerRect = protocolSelectRef.value.getBoundingClientRect()
-  const dropdownWidth = triggerRect.width
-  const estimatedHeight = protocolDropdownRef.value?.getBoundingClientRect().height || 220
-  const spaceBelow = window.innerHeight - triggerRect.bottom
-  const showAbove = spaceBelow < estimatedHeight + 12 && triggerRect.top > estimatedHeight + 12
-
-  protocolDropdownStyle.value = {
-    position: 'fixed',
-    left: `${Math.max(8, Math.min(triggerRect.left, window.innerWidth - dropdownWidth - 8))}px`,
-    top: showAbove ? `${Math.max(8, triggerRect.top - estimatedHeight - 6)}px` : `${triggerRect.bottom + 6}px`,
-    width: `${dropdownWidth}px`,
-    zIndex: '2000'
-  }
-}
-
-const toggleProtocolDropdown = async () => {
-  if (isRemote.value) return
-  const next = !showProtocolDropdown.value
-  if (next) closeModelDropdown()
-  showProtocolDropdown.value = next
-  if (showProtocolDropdown.value) {
-    await nextTick()
-    await nextTick()
-    updateProtocolDropdownPosition()
-  }
-}
-
-const selectProtocol = (protocol: AIModel['apiProtocol']) => {
-  if (isRemote.value) return
-  formData.value.apiProtocol = protocol
-  showProtocolDropdown.value = false
-}
-
-const handleProtocolOutsideClick = (event: Event) => {
-  if (!showProtocolDropdown.value) return
-  const target = event.target as Node | null
-  if (
-    target &&
-    (
-      protocolSelectRef.value?.contains(target) ||
-      protocolDropdownRef.value?.contains(target)
-    )
-  ) {
-    return
-  }
-  showProtocolDropdown.value = false
-}
-
-const handleProtocolViewportChange = () => {
-  if (showProtocolDropdown.value) {
-    updateProtocolDropdownPosition()
-  }
-}
-
-const updateModelDropdownPosition = () => {
-  if (!modelDropdownAnchorRef.value) return
-  const anchorRect = modelDropdownAnchorRef.value.getBoundingClientRect()
-  const dropdownWidth = anchorRect.width
-  const estimatedHeight = modelDropdownRef.value?.getBoundingClientRect().height || 260
-  const spaceBelow = window.innerHeight - anchorRect.bottom
-  const showAbove = spaceBelow < estimatedHeight + 12 && anchorRect.top > estimatedHeight + 12
-
-  modelDropdownStyle.value = {
-    position: 'fixed',
-    left: `${Math.max(8, Math.min(anchorRect.left, window.innerWidth - dropdownWidth - 8))}px`,
-    top: showAbove ? `${Math.max(8, anchorRect.top - estimatedHeight - 6)}px` : `${anchorRect.bottom + 6}px`,
-    width: `${dropdownWidth}px`,
-    zIndex: '2000'
-  }
-}
-
-let modelDropdownBlurTimer: ReturnType<typeof setTimeout> | null = null
-
-const clearModelDropdownBlurTimer = () => {
-  if (modelDropdownBlurTimer != null) {
-    clearTimeout(modelDropdownBlurTimer)
-    modelDropdownBlurTimer = null
-  }
-}
-
-const openModelDropdown = async () => {
-  clearModelDropdownBlurTimer()
-  showProtocolDropdown.value = false
-  showModelDropdown.value = true
-  await nextTick()
-  await nextTick()
-  updateModelDropdownPosition()
-}
-
-const closeModelDropdown = () => {
-  clearModelDropdownBlurTimer()
-  showModelDropdown.value = false
-}
-
-const normalizeBaseUrl = (url?: string) => (url || '').trim().replace(/\/+$/, '')
-
-const modelsCacheByBaseUrl = new Map<string, FetchedModelItem[]>()
-let fetchModelsGeneration = 0
-let tauriFetchPromise: Promise<typeof import('@tauri-apps/plugin-http').fetch> | null = null
-
-const getTauriFetch = () => {
-  if (!tauriFetchPromise) {
-    tauriFetchPromise = import('@tauri-apps/plugin-http').then(m => m.fetch)
-  }
-  return tauriFetchPromise
-}
-
-const applyFetchedModels = async (models: FetchedModelItem[]) => {
-  fetchedModelList.value = models
-  if (document.activeElement === modelIdInputRef.value && models.length > 0) {
-    await openModelDropdown()
-  }
-}
-
-const restoreModelsFromCache = () => {
-  const baseUrl = normalizeBaseUrl(props.platformBaseUrl)
-  const cached = baseUrl ? modelsCacheByBaseUrl.get(baseUrl) : undefined
-  fetchedModelList.value = cached ? [...cached] : []
-}
-
-const handleModelIdFocus = async () => {
-  if (isRemote.value) return
-  if (fetchedModelList.value.length > 0) {
-    await openModelDropdown()
-    return
-  }
-  // 兜底：若打开弹窗时未拉到列表，聚焦时再触发一次
-  if (!isFetchingModels.value) {
-    void fetchModels()
-  }
-}
-
-const toggleModelDropdown = async () => {
-  if (isRemote.value) return
-  if (fetchedModelList.value.length === 0) {
-    if (!isFetchingModels.value) void fetchModels()
-    return
-  }
-  if (showModelDropdown.value) {
-    closeModelDropdown()
-    return
-  }
-  await openModelDropdown()
-  modelIdInputRef.value?.focus()
-}
-
-const handleModelIdBlur = () => {
-  clearModelDropdownBlurTimer()
-  // 延迟关闭，避免点击下拉项时因 blur 先触发而收起导致点选失效
-  modelDropdownBlurTimer = setTimeout(() => {
-    modelDropdownBlurTimer = null
-    const active = document.activeElement
-    if (
-      modelIdInputRef.value === active ||
-      modelDropdownRef.value?.contains(active)
-    ) {
-      return
-    }
-    closeModelDropdown()
-  }, 150)
-}
-
-const handleModelIdInput = async () => {
-  if (fetchedModelList.value.length > 0) {
-    await openModelDropdown()
-  }
-}
-
-const handleModelDropdownOutsideClick = (event: Event) => {
-  if (!showModelDropdown.value) return
-  const target = event.target as Node | null
-  if (
-    target &&
-    (
-      modelDropdownAnchorRef.value?.contains(target) ||
-      modelDropdownRef.value?.contains(target)
-    )
-  ) {
-    return
-  }
-  closeModelDropdown()
-}
-
-const handleModelDropdownViewportChange = () => {
-  if (showModelDropdown.value) {
-    updateModelDropdownPosition()
-  }
-}
-
-const parseModelsResponse = (data: any): FetchedModelItem[] => {
-  if (data?.data && Array.isArray(data.data)) {
-    return data.data.map((m: any) => ({
-      id: m.id,
-      name: m.id,
-      ownedBy: m.owned_by || m.ownedBy || m.owner || ''
-    }))
-  }
-  if (Array.isArray(data)) {
-    return data.map((m: any) => ({
-      id: m.id || m.name,
-      name: m.name || m.id,
-      ownedBy: m.owned_by || m.ownedBy || m.owner || ''
-    }))
-  }
-  if (data?.models && Array.isArray(data.models)) {
-    return data.models.map((m: any) => ({
-      id: m.id || m.name,
-      name: m.name || m.id,
-      ownedBy: m.owned_by || m.ownedBy || m.owner || ''
-    }))
-  }
-  return []
-}
-
-const fetchModels = async () => {
-  const baseUrl = normalizeBaseUrl(props.platformBaseUrl)
-  if (!baseUrl) return
-
-  const cached = modelsCacheByBaseUrl.get(baseUrl)
-  if (cached?.length) {
-    await applyFetchedModels(cached)
-  }
-
-  const generation = ++fetchModelsGeneration
-  isFetchingModels.value = true
-
-  try {
-    const endpoints = [`${baseUrl}/models`, `${baseUrl}/v1/models`]
-    let models: FetchedModelItem[] = []
-    let lastErr = ''
-    let unauthorized = false
-    const tauriFetch = await getTauriFetch()
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-    if (props.platformApiKey) headers['Authorization'] = `Bearer ${props.platformApiKey}`
-
-    for (const url of endpoints) {
-      try {
-        const res = await tauriFetch(url, { method: 'GET', headers })
-        if (res.status === 401) { unauthorized = true; lastErr = 'HTTP 401'; continue }
-        if (!res.ok) { lastErr = `HTTP ${res.status}`; continue }
-        const data = await res.json()
-        models = parseModelsResponse(data)
-        if (models.length > 0) break
-        lastErr = '无法解析响应格式'
-      } catch (error: any) {
-        lastErr = error?.message || String(error)
-      }
-    }
-
-    if (generation !== fetchModelsGeneration) return
-
-    if (models.length === 0) {
-      console.warn('获取模型列表失败:', unauthorized ? 'HTTP 401' : lastErr)
-      return
-    }
-
-    const seen = new Set<string>()
-    const uniqueModels = models
-      .filter(m => {
-        if (!m.id || seen.has(m.id)) return false
-        seen.add(m.id)
-        return true
-      })
-      .sort((a, b) => {
-        const ownerCompare = (a.ownedBy || '未分类').localeCompare(b.ownedBy || '未分类')
-        if (ownerCompare !== 0) return ownerCompare
-        return a.id.localeCompare(b.id)
-      })
-
-    modelsCacheByBaseUrl.set(baseUrl, uniqueModels)
-    await applyFetchedModels(uniqueModels)
-  } catch (error: any) {
-    if (generation === fetchModelsGeneration) {
-      console.warn('获取模型列表失败:', error?.message || String(error))
-    }
-  } finally {
-    if (generation === fetchModelsGeneration) {
-      isFetchingModels.value = false
-    }
-  }
-}
-
-const selectFetchedModel = (modelId: string) => {
-  clearModelDropdownBlurTimer()
-  formData.value.modelId = modelId
-  if (!formData.value.displayName.trim()) {
-    formData.value.displayName = modelId
-  }
-  closeModelDropdown()
-}
-
-const DEFAULT_JS_CODE = buildPresetProcessModelJsCode({ protocol: 'openai-chat', modelId: '' })
-const DEFAULT_VISION_JS_CODE = DEFAULT_JS_CODE
-
-const thinkingPresetOptions = () => ({
-  enableThinking: formData.value.enableThinking,
-  thinkingOffEnableThinkingFalse: formData.value.thinkingOffEnableThinkingFalse,
-  thinkingOffThinkingTypeDisabled: formData.value.thinkingOffThinkingTypeDisabled,
-  thinkingOffResponsesEffort: formData.value.thinkingOffResponsesEffort,
-  thinkingEffort: formData.value.thinkingEffort,
-})
-
-const buildCurrentPresetJsCode = () => buildPresetProcessModelJsCode({
-  protocol: formData.value.apiProtocol,
-  modelId: formData.value.modelId,
-  ...thinkingPresetOptions()
-})
-
-const syncPresetJsCode = () => {
-  if (formData.value.apiProtocol === 'custom') return
-  const nextCode = buildCurrentPresetJsCode()
-  if (nextCode !== formData.value.jsCode) {
-    formData.value.jsCode = nextCode
-  }
-}
-
-const EFFORT_VALUES: ThinkingEffort[] = ['low', 'medium', 'high', 'max']
-const normalizeEffort = (effort?: AIModel['thinkingEffort']): ThinkingEffort =>
-  effort && EFFORT_VALUES.includes(effort) ? effort : 'medium'
-
-const normalizeOffResponsesEffort = (
-  model?: AIModel | null
-): ThinkingOffResponsesEffort => {
-  if (model?.thinkingOffResponsesEffort === 'none' || model?.thinkingOffResponsesEffort === 'minimal') {
-    return model.thinkingOffResponsesEffort
-  }
-  return 'minimal'
-}
-
-const createDialogFormData = (model?: AIModel | null) => {
-  const protocol = normalizeApiProtocol(model?.apiProtocol)
-  // 统一展示 modelId（服务端/同步保证有值；缺省用目录 id）
-  const modelId = model?.modelId?.trim() || model?.id || readModelIdFromJsCode(model?.jsCode) || ''
-  const category = model?.category || 'text'
-  const enableThinking = deriveEnableThinking(model)
-  const thinkingOffEnableThinkingFalse = model?.thinkingOffEnableThinkingFalse !== false
-  const thinkingOffThinkingTypeDisabled = model?.thinkingOffThinkingTypeDisabled === true
-  const thinkingOffResponsesEffort = normalizeOffResponsesEffort(model)
-  const thinkingEffort = normalizeEffort(model?.thinkingEffort)
-
-  return {
-    displayName: model?.displayName || '',
-    category,
-    jsCode: protocol === 'custom'
-      ? (model?.jsCode || (category === 'vision' ? DEFAULT_VISION_JS_CODE : DEFAULT_JS_CODE))
-      : buildPresetProcessModelJsCode({
-        protocol,
-        modelId,
-        enableThinking,
-        thinkingOffEnableThinkingFalse,
-        thinkingOffThinkingTypeDisabled,
-        thinkingOffResponsesEffort,
-        thinkingEffort,
-      }),
-    modelId,
-    enableThinking,
-    thinkingOffEnableThinkingFalse,
-    thinkingOffThinkingTypeDisabled,
-    thinkingOffResponsesEffort,
-    thinkingEffort,
-    apiProtocol: protocol
-  }
-}
-
-// 监听模型变化，更新表单数据
-watch(() => props.model, (newModel) => {
-  if (newModel) {
-    formData.value = createDialogFormData(newModel)
-    // 若编辑器已存在，确保文档与最新模型代码同步
-    nextTick(() => {
-      if (cmView) {
-        setEditorDoc(formData.value.jsCode)
-      }
-    })
-  } else {
-    // 重置表单为默认值
-    formData.value = createDialogFormData(null)
-    // 清空到默认模板，避免残留旧代码
-    nextTick(() => {
-      if (cmView) {
-        setEditorDoc(DEFAULT_JS_CODE)
-      }
-    })
-  }
-}, { immediate: true, deep: true })
-
-// 监听类别切换自动替换模板
-watch(() => formData.value.category, (newCategory) => {
-  if (formData.value.apiProtocol !== 'custom') {
-    syncPresetJsCode()
-    return
-  }
-  if (!isEditing.value && (!formData.value.jsCode || formData.value.jsCode === DEFAULT_JS_CODE || formData.value.jsCode === DEFAULT_VISION_JS_CODE)) {
-    formData.value.jsCode = newCategory === 'vision' ? DEFAULT_VISION_JS_CODE : DEFAULT_JS_CODE;
-    nextTick(() => {
-      if (cmView) {
-        setEditorDoc(formData.value.jsCode);
-      }
-    })
-  }
-});
-
-// ===== 思考开关与 jsCode 中 enable_thinking 字面量双向同步 =====
-
-// 读取 jsCode 里 enable_thinking 的布尔字面量；不存在则返回 null
-function readEnableThinkingFromJsCode(code: string | undefined | null): boolean | null {
-  if (!code) return null
-  const m = code.match(/enable_thinking\s*:\s*(true|false)\b/)
-  return m ? m[1] === 'true' : null
-}
-
-// 将 jsCode 中 enable_thinking 字面量改写为目标值；不存在则原样返回
-// （不向不支持该参数的模板注入，避免污染 OpenAI 等协议的请求体）
-const applyEnableThinkingToJsCode = (code: string, enabled: boolean): string => {
-  if (!code) return code
-  return code.replace(/enable_thinking\s*:\s*(true|false)\b/, `enable_thinking: ${enabled}`)
-}
-
-// 加载模型时推导开关初始状态：优先以 jsCode 里的字面量为准，其次回退到存储字段
-function deriveEnableThinking(model: AIModel | null | undefined): boolean {
-  const fromCode = readEnableThinkingFromJsCode(model?.jsCode)
-  if (fromCode !== null) return fromCode
-  return model?.enableThinking === true
-}
-
-// 开关 / 关闭参数 / 强度变化 → 同步预设协议代码
-watch(
-  () => [
-    formData.value.enableThinking,
-    formData.value.thinkingOffEnableThinkingFalse,
-    formData.value.thinkingOffThinkingTypeDisabled,
-    formData.value.thinkingOffResponsesEffort,
-    formData.value.thinkingEffort,
-    formData.value.apiProtocol,
-  ],
-  () => {
-    if (formData.value.apiProtocol !== 'custom') {
-      syncPresetJsCode()
-      return
-    }
-    if (readEnableThinkingFromJsCode(formData.value.jsCode) === null) return
-    const updated = applyEnableThinkingToJsCode(formData.value.jsCode, formData.value.enableThinking)
-    if (updated !== formData.value.jsCode) {
-      formData.value.jsCode = updated
-      nextTick(() => { if (cmView) setEditorDoc(updated) })
-    }
-  }
-)
-
-// 刚开启思考时，若强度非法则落到默认 medium
-watch(() => formData.value.enableThinking, (enabled, wasEnabled) => {
-  if (enabled && !wasEnabled) {
-    formData.value.thinkingEffort = normalizeEffort(formData.value.thinkingEffort) || 'medium'
-  }
-})
-
-// jsCode 变化（用户在编辑器中手改）→ 回写开关
-watch(() => formData.value.jsCode, (code) => {
-  const inCode = readEnableThinkingFromJsCode(code)
-  if (inCode === null) return
-  if (formData.value.enableThinking !== inCode) {
-    formData.value.enableThinking = inCode
-  }
-})
-
-// ===== 模型 ID 与 jsCode 中 model 字面量双向同步 =====
-
-// 仅当协议为“自定义”时显示 JavaScript 编辑器
-const showAdvancedCode = computed(() => formData.value.apiProtocol === 'custom')
-
-// 将模型 ID 写入 jsCode：已有 model 字面量则替换其值（保留原引号风格）；
-// 默认模板无 model 字面量时，在 `...context.request,` 之后注入；都不命中则原样返回
-const applyModelIdToJsCode = (code: string, id: string): string => {
-  if (!code) return code
-  const trimmed = id.trim()
-  if (/model\s*:\s*(['"`])[^'"`\n]*?\1/.test(code)) {
-    return code.replace(/(model\s*:\s*)(['"`])([^'"`\n]*?)\2/, (_m, p1: string, q: string) => `${p1}${q}${trimmed}${q}`)
-  }
-  if (!trimmed) return code
-  if (/...\s*context\.request\s*,/.test(code)) {
-    return code.replace(/(...\s*context\.request\s*,)/, `$1\n    model: '${trimmed}',`)
-  }
-  return code
-}
-
-// 加载模型时推导模型 ID：以 jsCode 里 model 字面量为准，无则空串
-// 模型 ID 变化 → 同步写入 jsCode
-watch(() => formData.value.modelId, (id) => {
-  if (formData.value.apiProtocol !== 'custom') {
-    syncPresetJsCode()
-    return
-  }
-  if (!id) return
-  const updated = applyModelIdToJsCode(formData.value.jsCode, id)
-  if (updated !== formData.value.jsCode) {
-    formData.value.jsCode = updated
-    nextTick(() => { if (cmView) setEditorDoc(updated) })
-  }
-})
-
-// jsCode 变化 → 回写模型 ID（与上面的 enableThinking 回写共用同一 jsCode 源）
-watch(() => formData.value.jsCode, (code) => {
-  const inCode = readModelIdFromJsCode(code)
-  if (inCode === null) return
-  if (formData.value.modelId !== inCode) {
-    formData.value.modelId = inCode
-  }
-})
-
-// 自定义协议显示编辑器时（重新）初始化编辑器，确保在可见容器中正确测量尺寸
-watch(showAdvancedCode, async (visible) => {
-  if (!visible) return
-  await nextTick()
-  if (cmView) {
-    cmView.destroy()
-    cmView = null
-  }
-  await rebuildEditorWithDoc(formData.value.jsCode)
-})
-
-// 监听弹窗显示状态，打开时初始化，关闭时销毁以避免视图挂载丢失
-watch(() => props.show, async (visible) => {
-  showProtocolDropdown.value = false
-  showModelDropdown.value = false
-  if (visible) {
-    // 弹窗一打开就预拉 /models，避免聚焦输入框时再等网络
-    restoreModelsFromCache()
-    void fetchModels()
-
-    await nextTick()
-    formData.value = createDialogFormData(props.model)
-
-    // 仅在自定义协议下初始化编辑器，避免在隐藏容器中测量尺寸异常
-    if (showAdvancedCode.value) {
-      await rebuildEditorWithDoc(formData.value.jsCode)
-    }
-  } else {
-    fetchModelsGeneration += 1
-    isFetchingModels.value = false
-    fetchedModelList.value = []
-    // 隐藏时销毁实例，防止持有已移除的 DOM 引用导致下次无法显示
-    if (cmView) {
-      cmView.destroy()
-      cmView = null
-    }
-  }
-})
-
-// ===== JavaScript 高亮 =====
-const cmContainerRef = ref<HTMLElement | null>(null)
-let cmView: EditorView | null = null
-let themeObserver: MutationObserver | null = null
-
-// 统一的编辑器重建方法：在容器真正挂载后再初始化，避免弹窗复用时出现空白编辑器
-const rebuildEditorWithDoc = async (text: string, retries = 6): Promise<void> => {
-  for (let i = 0; i < retries; i++) {
-    await nextTick()
-
-    if (!cmContainerRef.value) {
-      continue
-    }
-
-    if (cmView) {
-      cmView.destroy()
-      cmView = null
-    }
-
-    initCodeMirror()
-    if (cmView) {
-      setEditorDoc(text ?? '')
-      return
-    }
-  }
-
-  console.warn('ModelConfigDialog: CodeMirror 初始化失败，cmContainerRef 未就绪')
-}
-
-// 轻量语法检查：仅捕获语法错误（不做风格检查）
-const jsSyntaxLinter = linter((view) => {
-  const diagnostics = [] as any[]
-  const code = view.state.doc.toString()
-  try {
-    acorn.parse(code, {
-      ecmaVersion: 'latest',
-      sourceType: 'script',
-      allowHashBang: true
-    })
-  } catch (err: any) {
-    const pos = typeof err?.pos === 'number' ? err.pos : 0
-    diagnostics.push({
-      from: Math.max(0, Math.min(pos, view.state.doc.length)),
-      to: Math.max(0, Math.min(pos + 1, view.state.doc.length)),
-      severity: 'error',
-      message: err?.message || 'Syntax error'
-    })
-  }
-  return diagnostics
-})
-
-const initCodeMirror = () => {
-  if (!cmContainerRef.value || cmView) return
-  const isDarkTheme = document.documentElement.getAttribute('data-theme') === 'dark'
-  const baseExtensions = [
-    lineNumbers(),
-    javascript(),
-    jsSyntaxLinter,
-    lintGutter(),
-    EditorView.updateListener.of((update) => {
-      if (update.docChanged) {
-        formData.value.jsCode = update.state.doc.toString()
-      }
-    }),
-    EditorView.theme({
-      '.cm-content': {
-        fontFamily: "'Consolas','Monaco','Courier New',monospace",
-        fontSize: '13px',
-        lineHeight: '20px'
-      },
-      '&.cm-editor': { height: '100%' }
-    })
-  ]
-  const themeExtensions = isDarkTheme
-    ? [oneDark]
-    : [syntaxHighlighting(defaultHighlightStyle, { fallback: true })]
-
-  const state = EditorState.create({
-    doc: formData.value.jsCode ?? '',
-    extensions: [...baseExtensions, ...themeExtensions]
-  })
-  cmView = new EditorView({ state, parent: cmContainerRef.value })
-}
-
-const setEditorDoc = (text: string) => {
-  if (!cmView) return
-  const state = cmView.state
-  cmView.dispatch(state.update({ changes: { from: 0, to: state.doc.length, insert: text ?? '' } }))
-}
-
-onMounted(() => {
-  // 捕获阶段监听，确保点外部时可靠关闭（含 Teleport 到 body 的菜单）
-  document.addEventListener('mousedown', handleProtocolOutsideClick, true)
-  document.addEventListener('mousedown', handleModelDropdownOutsideClick, true)
-  window.addEventListener('resize', handleProtocolViewportChange)
-  window.addEventListener('resize', handleModelDropdownViewportChange)
-  window.addEventListener('scroll', handleProtocolViewportChange, true)
-  window.addEventListener('scroll', handleModelDropdownViewportChange, true)
-  // 监听主题变化：当 data-theme 改变且弹窗可见时，重建编辑器以应用新主题
-  themeObserver = new MutationObserver((mutations) => {
-    for (const m of mutations) {
-      if (m.type === 'attributes' && m.attributeName === 'data-theme') {
-        if (props.show) {
-          const currentText = cmView ? cmView.state.doc.toString() : formData.value.jsCode
-          if (cmView) {
-            cmView.destroy()
-            cmView = null
-          }
-          void rebuildEditorWithDoc(currentText ?? '')
-        }
-      }
-    }
-  })
-  themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
-})
-
-onUnmounted(() => {
-  clearModelDropdownBlurTimer()
-  document.removeEventListener('mousedown', handleProtocolOutsideClick, true)
-  document.removeEventListener('mousedown', handleModelDropdownOutsideClick, true)
-  window.removeEventListener('resize', handleProtocolViewportChange)
-  window.removeEventListener('resize', handleModelDropdownViewportChange)
-  window.removeEventListener('scroll', handleProtocolViewportChange, true)
-  window.removeEventListener('scroll', handleModelDropdownViewportChange, true)
-  if (cmView) {
-    cmView.destroy()
-    cmView = null
-  }
-  if (themeObserver) {
-    themeObserver.disconnect()
-    themeObserver = null
-  }
-})
-
-const handleOverlayClick = (event: MouseEvent) => {
-  // 检查点击是否来自输入框或其相关操作
-  const target = event.target as HTMLElement
-  if (
-    target.tagName === 'INPUT' ||
-    target.tagName === 'TEXTAREA' ||
-    target.closest('input') ||
-    target.closest('textarea') ||
-    target.closest('.code-editable') ||
-    target.closest('.cm-editor') ||
-    target.closest('.cm-content') ||
-    target.closest('.cm-gutters')
-  ) {
-    return
-  }
-  
-  // 使用 setTimeout 延迟检查文本选择状态，避免时序问题
-  setTimeout(() => {
-    const selection = window.getSelection()
-    if (selection && selection.toString().length > 0) {
-      return
-    }
-    
-    // 检查是否有任何输入框处于焦点状态
-    const activeElement = document.activeElement
-    if (activeElement && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA')) {
-      return
-    }
-    
-    emit('close')
-  }, 0)
-}
-
-const handlePrimaryAction = () => {
-  if (isRemote.value) {
-    emit('close')
-    return
-  }
-  handleSubmit()
-}
-
-const handleSubmit = () => {
-  if (isRemote.value) {
-    emit('close')
-    return
-  }
-  if (!formData.value.displayName.trim()) {
-    alert('请输入模型名称')
-    return
-  }
-  if (requiresModelId.value && !formData.value.modelId.trim()) {
-    alert('请输入模型 ID')
-    return
-  }
-
-  const modelData: Partial<AIModel> = {
-    displayName: formData.value.displayName.trim(),
-    category: formData.value.category,
-    modelId: formData.value.modelId.trim(),
-    jsCode: formData.value.apiProtocol === 'custom' ? formData.value.jsCode : buildCurrentPresetJsCode(),
-    enableThinking: formData.value.enableThinking,
-    thinkingOffEnableThinkingFalse: formData.value.thinkingOffEnableThinkingFalse,
-    thinkingOffThinkingTypeDisabled: formData.value.thinkingOffThinkingTypeDisabled,
-    thinkingOffResponsesEffort: formData.value.thinkingOffResponsesEffort,
-    thinkingEffort: formData.value.thinkingEffort,
-    apiProtocol: formData.value.apiProtocol
-  }
-
-  // 如果是编辑模式，保留原有的id
-  if (isEditing.value && props.model) {
-    modelData.id = props.model.id
-  }
-
-  emit('save', modelData)
-}
 </script>
 
 <style>
 @import '../../../styles/dialog.css';
 
+/* 弹窗进出场：必须用 keyframes。进场 animation:both 会锁住 opacity/transform，CSS transition 关不掉（尤其 WebKit）。 */
+.dialog-overlay.dialog-overlay--vue {
+  animation: none;
+}
+.dialog-overlay.dialog-overlay--vue .dialog-panel {
+  animation: none;
+}
+.dialog-overlay.dialog-overlay--vue.dialog-fade-enter-active {
+  animation: overlay-fade-in 180ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+.dialog-overlay.dialog-overlay--vue.dialog-fade-leave-active {
+  animation: overlay-fade-in 180ms cubic-bezier(0.2, 0.7, 0.2, 1) reverse both;
+  pointer-events: none;
+}
+.dialog-overlay.dialog-overlay--vue.dialog-fade-enter-active .dialog-panel {
+  animation: popup-in 180ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+.dialog-overlay.dialog-overlay--vue.dialog-fade-leave-active .dialog-panel {
+  animation: popup-in 180ms cubic-bezier(0.2, 0.7, 0.2, 1) reverse both;
+}
+
 /* Teleport 到 body 的下拉：用非 scoped，保证进出场动画生效 */
 .dropdown-pop-enter-active,
 .dropdown-pop-leave-active {
-  transition: opacity 0.16s ease, transform 0.16s ease;
+  transition: opacity 0.14s ease, transform 0.16s cubic-bezier(0.2, 0.8, 0.2, 1);
   transform-origin: top center;
   will-change: opacity, transform;
 }
@@ -1136,7 +311,7 @@ const handleSubmit = () => {
 .dropdown-pop-enter-from,
 .dropdown-pop-leave-to {
   opacity: 0;
-  transform: translateY(-6px) scale(0.98);
+  transform: translateY(-4px) scale(0.96);
 }
 
 .dropdown-pop-enter-to,
@@ -1377,16 +552,19 @@ const handleSubmit = () => {
 .qa-dropdown {
   position: fixed;
   box-sizing: border-box;
-  border: 1px solid var(--platform-config-form-input-border, #e2e8f0);
-  border-radius: 10px;
-  background: var(--form-input-bg, #F7F7F7);
-  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.12);
+  background: var(--context-menu-bg, rgba(255, 255, 255, 0.4));
+  backdrop-filter: blur(40px) saturate(180%);
+  -webkit-backdrop-filter: blur(40px) saturate(180%);
+  border: 1px solid var(--context-menu-border, rgba(255, 255, 255, 0.55));
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.22), 0 4px 12px rgba(0, 0, 0, 0.12), inset 0 0.5px 0 rgba(255, 255, 255, 0.5);
   max-height: 320px;
   display: flex;
   flex-direction: column;
   overflow-x: hidden;
   overflow-y: auto;
-  padding: 6px;
+  padding: 8px;
+  font-size: 14px;
 }
 
 .qa-dropdown-list {
@@ -1413,17 +591,20 @@ const handleSubmit = () => {
 
 .qa-dropdown-item {
   box-sizing: border-box;
-  padding: 10px 12px;
+  padding: 4px 8px;
+  min-height: 32px;
   border-radius: 8px;
   cursor: pointer;
   background: transparent;
-  color: var(--text-primary);
-  font-size: 13px;
+  color: var(--context-menu-item-text, #2d3748);
+  font-size: 14px;
+  display: flex;
+  align-items: center;
   transition: background-color 0.2s ease;
 }
 
 .qa-dropdown-item:hover {
-  background: var(--form-input-hover-bg, #f0f0f0);
+  background-color: var(--context-menu-item-hover-bg, rgba(0, 0, 0, 0.06));
 }
 
 .qa-dropdown-item-id {
@@ -1436,6 +617,14 @@ const handleSubmit = () => {
   text-align: center;
   font-size: 12px;
   color: var(--text-secondary);
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .qa-dropdown {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    background: #ffffff;
+  }
 }
 
 .qa-form-row {
@@ -1595,6 +784,7 @@ const handleSubmit = () => {
 
 
 </style>
+
 <style scoped>
 /* 切换开关样式 */
 .form-label--row {
@@ -1609,133 +799,6 @@ const handleSubmit = () => {
   color: var(--text-secondary, #718096);
   margin: 4px 0 0 0;
   line-height: 1.4;
-}
-
-.protocol-select-wrap {
-  position: relative;
-}
-
-.protocol-select-trigger {
-  box-sizing: border-box;
-  width: 100%;
-  min-height: 42px;
-  padding: 10px 12px;
-  padding-right: 40px;
-  border-radius: 8px;
-  border: 1px solid transparent;
-  background: var(--form-input-bg, #F7F7F7);
-  color: var(--text-primary);
-  font: inherit;
-  font-size: 13px;
-  text-align: left;
-  display: flex;
-  align-items: center;
-  cursor: pointer;
-  transition: border-color 0.2s ease, background-color 0.2s ease;
-}
-
-.protocol-select-trigger:hover,
-.protocol-select-trigger.open {
-  border-color: var(--form-input-hover-border, transparent);
-  background: var(--form-input-hover-bg, #f0f0f0);
-}
-
-.protocol-select-trigger:focus {
-  outline: none;
-  border-color: var(--form-input-focus-border, #3182ce);
-}
-
-.protocol-select-text {
-  display: block;
-  width: 100%;
-  padding-right: 8px;
-  line-height: 1.5;
-}
-
-.protocol-select-arrow {
-  position: absolute;
-  top: 50%;
-  right: 12px;
-  transform: translateY(-50%);
-  width: 14px;
-  height: 14px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-secondary, #718096);
-  pointer-events: none;
-  transition: transform 0.2s ease;
-}
-
-.protocol-select-trigger.open .protocol-select-arrow {
-  transform: translateY(-50%) rotate(180deg);
-}
-
-.protocol-dropdown {
-  position: fixed;
-  box-sizing: border-box;
-  max-height: min(320px, calc(100vh - 16px));
-  overflow-x: hidden;
-  overflow-y: auto;
-  padding: 6px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  border: 1px solid var(--platform-config-form-input-border, #e2e8f0);
-  border-radius: 10px;
-  background: var(--form-input-bg, #F7F7F7);
-  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.12);
-}
-
-.protocol-dropdown-item {
-  appearance: none;
-  -webkit-appearance: none;
-  box-sizing: border-box;
-  width: 100%;
-  padding: 10px 12px;
-  border: none;
-  border-radius: 8px;
-  background: transparent;
-  box-shadow: none;
-  outline: none;
-  color: var(--text-primary);
-  font: inherit;
-  font-size: 13px;
-  text-align: left;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  transition: background-color 0.2s ease, color 0.15s ease;
-}
-
-.protocol-dropdown-item:focus,
-.protocol-dropdown-item:focus-visible,
-.protocol-dropdown-item:active {
-  outline: none;
-  border: none;
-  box-shadow: none;
-}
-
-.protocol-dropdown-item:hover,
-.protocol-dropdown-item.active:hover {
-  background: var(--form-input-hover-bg, #f0f0f0);
-}
-
-.protocol-dropdown-item.active {
-  background: transparent;
-  color: var(--text-primary);
-}
-
-.protocol-dropdown-label {
-  font-weight: 500;
-}
-
-.protocol-dropdown-endpoint {
-  color: var(--text-secondary, #718096);
-  font-size: 11px;
-  flex-shrink: 0;
 }
 
 .switch-toggle {
@@ -1816,9 +879,7 @@ const handleSubmit = () => {
 
 .thinking-check.disabled,
 .thinking-check.disabled input,
-.switch-toggle.disabled,
-.thinking-effort-btn:disabled,
-.protocol-select-trigger:disabled {
+.switch-toggle.disabled {
   cursor: not-allowed;
 }
 
@@ -1858,36 +919,337 @@ const handleSubmit = () => {
   background: rgba(0, 0, 0, 0.05);
 }
 
-.thinking-effort-switch {
+.thinking-effort-slider {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 8px;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.thinking-effort-slider.disabled {
+  opacity: 0.65;
+}
+
+.thinking-effort-bar {
+  position: relative;
+  height: 28px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text-primary, #2d3748) 8%, transparent);
+  overflow: visible;
+  cursor: grab;
+  touch-action: none;
+  outline: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-user-drag: none;
+}
+
+.thinking-effort-bar:focus-visible {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary, #667eea) 35%, transparent);
+}
+
+.thinking-effort-slider.is-dragging .thinking-effort-bar,
+.thinking-effort-bar:active {
+  cursor: grabbing;
+}
+
+.thinking-effort-slider.disabled .thinking-effort-bar {
+  cursor: not-allowed;
+}
+
+.thinking-effort-fill {
+  position: relative;
+  height: 100%;
+  min-width: 0;
+  border-radius: 8px;
+  background: #e8c57a;
+  overflow: hidden;
+  transition: background-color 180ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.thinking-effort-slider.is-max .thinking-effort-fill {
+  background: #f5bc58;
+}
+
+.thinking-effort-matrix {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  pointer-events: none;
+}
+
+.thinking-effort-dots {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.thinking-effort-dot {
+  position: absolute;
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--text-primary, #2d3748) 28%, transparent);
+  transform: translate(-50%, -50%);
+  opacity: 1;
+  transition: opacity 140ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.thinking-effort-dot.passed {
+  opacity: 0;
+}
+
+.thinking-effort-thumb {
+  position: absolute;
+  top: 0;
+  box-sizing: border-box;
+  width: 28px;
+  height: 28px;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.16);
+  transform: translateX(-50%);
+  pointer-events: none;
+  z-index: 3;
+  transition: transform 120ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.thinking-effort-slider.is-dragging .thinking-effort-thumb {
+  transform: translateX(-50%) scale(0.86);
+}
+
+.thinking-effort-labels {
+  display: flex;
+  justify-content: space-between;
   gap: 6px;
 }
 
-.thinking-effort-btn {
+.thinking-effort-label {
   appearance: none;
-  border: 1px solid transparent;
-  background: var(--bg-secondary, #fff);
+  border: none;
+  background: transparent;
+  padding: 0;
   color: var(--text-secondary, #718096);
-  border-radius: 8px;
-  padding: 6px 10px;
   font: inherit;
   font-size: 12px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   cursor: pointer;
-  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
 
-.thinking-effort-btn:hover {
+.thinking-effort-label:hover:not(:disabled) {
   color: var(--text-primary);
-  background: var(--form-input-hover-bg, #f0f0f0);
 }
 
-.thinking-effort-btn.active {
-  color: var(--color-primary, #667eea);
-  border-color: rgba(102, 126, 234, 0.35);
-  background: rgba(102, 126, 234, 0.1);
+.thinking-effort-label.active {
+  color: var(--text-primary);
   font-weight: 600;
+}
+
+.thinking-effort-label:disabled {
+  cursor: not-allowed;
+}
+
+.model-config-panel > .dialog-header {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 8px;
+}
+
+.model-config-panel > .dialog-header .btn-back {
+  justify-self: start;
+  box-sizing: border-box;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--platform-config-toggle-button-border, #e2e8f0);
+  border-radius: 50%;
+  background: var(--form-input-bg, #F7F7F7);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+  color: #979797;
+  transition:
+    color 180ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    background-color 180ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    border-color 180ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    box-shadow 180ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.model-config-panel > .dialog-header .btn-back:hover {
+  color: var(--platform-config-dialog-title-text, #2d3748);
+  background: var(--form-input-bg, #F7F7F7);
+  border-color: var(--platform-config-toggle-button-hover-border, #cbd5e0);
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.1);
+}
+
+.model-config-panel > .dialog-header .btn-back svg {
+  width: 14px;
+  height: 14px;
+}
+
+.model-config-panel > .dialog-header .dialog-title {
+  justify-self: center;
+  font-weight: 400;
+}
+
+.dialog-header-actions {
+  justify-self: end;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.dialog-header-actions .btn-confirm,
+.model-test-card {
+  box-sizing: border-box;
+  height: 32px;
+  padding: 0 14px;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.dialog-header-actions .btn-confirm {
+  border: 1px solid color-mix(in srgb, #000 14%, #F8B62B);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+  transition:
+    opacity 0.15s ease,
+    border-color 180ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    box-shadow 180ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.dialog-header-actions .btn-confirm:hover:not(:disabled) {
+  opacity: 1;
+  border-color: color-mix(in srgb, #000 22%, #F8B62B);
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.12);
+}
+
+.model-test-card {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 1px solid var(--platform-config-toggle-button-border, #e2e8f0);
+  background: var(--form-input-bg, #F7F7F7);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+  color: var(--text-primary, #2d3748);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  gap: 6px;
+  cursor: pointer;
+  transition:
+    background-color 180ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    border-color 180ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    box-shadow 180ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    color 180ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    transform 120ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.model-test-card:hover:not(:disabled) {
+  border-color: var(--platform-config-toggle-button-hover-border, #cbd5e0);
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.1);
+}
+
+.model-test-card:active:not(:disabled) {
+  transform: scale(0.97);
+  box-shadow: 0 1px 1px rgba(15, 23, 42, 0.05);
+}
+
+.model-test-card:disabled {
+  cursor: default;
+}
+
+.model-test-card:disabled:not(.testing) {
+  opacity: 0.5;
+}
+
+.model-test-card.testing {
+  cursor: wait;
+}
+
+.model-test-card.success {
+  color: var(--color-success, #34c759);
+  background: color-mix(in srgb, var(--color-success, #34c759) 12%, var(--form-input-bg, #F7F7F7));
+  border-color: color-mix(in srgb, var(--color-success, #34c759) 38%, transparent);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--color-success, #34c759) 18%, transparent);
+}
+
+.model-test-card.success:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-success, #34c759) 12%, var(--form-input-bg, #F7F7F7));
+  border-color: color-mix(in srgb, var(--color-success, #34c759) 52%, transparent);
+  box-shadow: 0 2px 6px color-mix(in srgb, var(--color-success, #34c759) 22%, transparent);
+}
+
+.model-test-card.error {
+  color: var(--color-error, #ff3b30);
+  background: color-mix(in srgb, var(--color-error, #ff3b30) 12%, var(--form-input-bg, #F7F7F7));
+  border-color: color-mix(in srgb, var(--color-error, #ff3b30) 38%, transparent);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--color-error, #ff3b30) 18%, transparent);
+}
+
+.model-test-card.error:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-error, #ff3b30) 12%, var(--form-input-bg, #F7F7F7));
+  border-color: color-mix(in srgb, var(--color-error, #ff3b30) 52%, transparent);
+  box-shadow: 0 2px 6px color-mix(in srgb, var(--color-error, #ff3b30) 22%, transparent);
+}
+
+.model-test-title {
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.model-test-spinner {
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+  border: 1.5px solid color-mix(in srgb, currentColor 25%, transparent);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: model-test-spin 700ms linear infinite;
+}
+
+.model-test-meta {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 600;
+  opacity: 0.8;
+  white-space: nowrap;
+}
+
+@keyframes model-test-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .thinking-effort-fill {
+    transition: none;
+  }
+
+  .thinking-effort-thumb {
+    transition: none;
+  }
+
+  .model-test-card {
+    transition: none;
+  }
+
+  .model-test-card:active:not(:disabled) {
+    transform: none;
+  }
+
+  .model-test-spinner {
+    animation: none;
+    opacity: 0.55;
+  }
 }
 
 </style>

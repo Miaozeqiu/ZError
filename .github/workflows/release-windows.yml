@@ -1,0 +1,93 @@
+name: Build and publish release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag of the draft with signed Windows and local macOS assets
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  build-windows:
+    if: github.event_name == 'push'
+    uses: ./.github/workflows/build-desktop.yml
+
+  prepare-release:
+    name: Prepare release draft
+    needs: build-windows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: ZError-windows-x64-${{ github.run_number }}
+          path: installers
+      - name: Stage installer from master
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          git merge-base --is-ancestor HEAD origin/master
+          version="${TAG#v}"
+          test "$(jq -er .version src-tauri/tauri.conf.json)" = "$version"
+          installer="installers/ZError_${version}_x64-setup.exe"
+          test -s "$installer"
+          if draft=$(gh release view "$TAG" --json isDraft --jq .isDraft); then
+            test "$draft" = true
+            gh release upload "$TAG" "$installer"
+          else
+            gh release create "$TAG" "$installer" --draft --verify-tag --title "ZError $TAG" --generate-notes
+          fi
+
+  publish:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install signature verifier
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y minisign
+      - name: Verify release assets and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          git merge-base --is-ancestor "$TAG^{commit}" HEAD
+          version="${TAG#v}"
+          config=$(git show "$TAG:src-tauri/tauri.conf.json")
+          test "$(jq -er .version <<< "$config")" = "$version"
+          installer="ZError_${version}_x64-setup.exe"
+          dmg="ZError_${version}_aarch64.dmg"
+          release=$(gh release view "$TAG" --json isDraft,assets)
+          jq -e '.isDraft' <<< "$release"
+          for asset in "$installer" "$installer.sig" "$dmg"; do
+            jq -e --arg asset "$asset" 'any(.assets[]; .name == $asset and .size > 0)' <<< "$release"
+          done
+          check_dir=$(mktemp -d)
+          gh release download "$TAG" --pattern "$installer" --pattern "$installer.sig" --dir "$check_dir"
+          jq -er .plugins.updater.pubkey <<< "$config" | base64 --decode > "$check_dir/updater.pub"
+          base64 --decode "$check_dir/$installer.sig" > "$check_dir/updater.minisig"
+          minisign -Vm "$check_dir/$installer" -p "$check_dir/updater.pub" -x "$check_dir/updater.minisig"
+          gh release edit "$TAG" --draft=false --latest

@@ -5,6 +5,7 @@
     :y="y"
     :menu-items="menuItems"
     exclusive-key="platform-context-menu"
+    menu-class="settings-popup"
     @item-click="handleItemClick"
     @close="$emit('close')"
   />
@@ -12,8 +13,8 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import UnifiedContextMenu, { type MenuItem } from '../../../components/UnifiedContextMenu.vue'
-import type { AIPlatform } from '../../../services/modelConfig'
+import UnifiedContextMenu, { type MenuItem } from '../../../components/ui/UnifiedContextMenu.vue'
+import type { AIPlatform } from '../../../services/model/config'
 
 interface Props {
   visible: boolean

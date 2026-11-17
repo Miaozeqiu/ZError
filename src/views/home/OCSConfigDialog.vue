@@ -63,13 +63,16 @@ const ocsConfig = [{
   "name": "ZE题库(自建版)",
   "homepage": "http://app.zerror.cc",
   "url": "http://localhost:3002/query",
-  "method": "get",
+  "method": "post",
   "type": "GM_xmlhttpRequest",
   "contentType": "json",
   "data": {
     "title": "${title}",
     "options": "${options}",
-    "type": "${type}"
+    "type": "${type}",
+    "images": { "handler": "return (env)=>env.images" },
+    "suggestion_title": "${suggestion_title}",
+    "suggestion_options": "${suggestion_options}"
   },
   "handler": "return (res)=>res.code === 0 ? [res.message, undefined] : [res.data.question,res.data.answer,{ai: res.data.is_ai}]"
 }]

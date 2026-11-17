@@ -1,0 +1,1057 @@
+<!-- fixture: https://mooc1.chaoxing.com/mycourse/studentstudy?chapterId=1065429967&courseId=257080147&clazzid=131924538&cpi=473946848&enc=9cb58f5c443a67c73992501e0afee4c2&mooc2=1&hidetype=0&fanyaVersion=0&openc=0a728c08ea9d2dc7c25f06888cc454f4 -->
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd"><html xmlns="http://www.w3.org/1999/xhtml" style="font-size: 207.2px;"><head>
+	<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+	<meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
+	<title>学生学习页面</title>
+	<link href="//mooc1.chaoxing.com/mooc-ans/css/courselist/global.css?v=2025-0424-1038" rel="stylesheet" type="text/css">
+	<link href="//mooc1.chaoxing.com/mooc-ans/css/courselist/play.css?v=2022-0701-2024" rel="stylesheet" type="text/css">
+	<link rel="stylesheet" type="text/css" href="//mooc1.chaoxing.com/mooc-ans/css/courselist/face-collection-qr.css?v=2023-0518-1718">
+	
+	
+	
+	<link rel="stylesheet" href="//mooc1.chaoxing.com/mooc-ans/css/group/baguettebox.min.css">
+	<link href="//mooc1.chaoxing.com/mooc-ans/css/group/chapter_common.css" type="text/css" rel="stylesheet">
+	<link href="//mooc1.chaoxing.com/mooc-ans/css/group/chapter_student_common.css?v=1" type="text/css" rel="stylesheet">
+	<link rel="stylesheet" href="//mooc1.chaoxing.com/mooc-ans/css/uploadImg.css">
+	<link rel="stylesheet" type="text/css" href="//mooc1.chaoxing.com/mooc-ans/mooc2/css/common.css?v=2025-0424-1038">
+	<link rel="stylesheet" type="text/css" href="//mooc1.chaoxing.com/mooc-ans/mooc2/css/style.css?v=2025-0424-1038">
+	<link rel="stylesheet" type="text/css" href="//mooc1.chaoxing.com/mooc-ans/mooc2/css/knowledge/q_preview.css?v=2026-0709-1540">
+		
+	
+	
+	
+
+	
+	<link href="//mooc1.chaoxing.com/mooc-ans/js/webuploader-0.1.5/webuploader.css" type="text/css" rel="stylesheet">
+	
+	
+	
+	
+
+		<link rel="stylesheet" type="text/css" href="//mooc1.chaoxing.com/mooc-ans/css/courselist/studentStudy.css?v=2026-0708-1800">
+	
+	
+	<link href="//mooc1.chaoxing.com/mooc-ans/css/courselist/nodeToolBar.css" type="text/css" rel="stylesheet">
+	
+	
+	
+	
+				
+		<link href="//mooc1.chaoxing.com/mooc-ans/css/work/viewer.min.css" rel="stylesheet" type="text/css">
+	
+	
+	
+	
+	
+	
+	
+
+	
+
+<link rel="stylesheet" type="text/css" href="https://noteyd.chaoxing.com/res/plugin/ueditor/third-party/webuploader/webuploader.css?_t=20260723"><link rel="stylesheet" type="text/css" href="//noteyd.chaoxing.com/res/plugin/viewer/css/viewer.css"><link rel="stylesheet" type="text/css" href="//noteyd.chaoxing.com/res/plugin/viewer/css/viewer-button.css"><link href="https://noteyd.chaoxing.com/res/plugin/ueditor/themes/default/css/ueditor.css?_t=20200420" type="text/css" rel="stylesheet"></head>
+<body id="body-content">
+	<link rel="stylesheet" type="text/css" href="//mooc1.chaoxing.com/mooc-ans/mooc2/css/prompt.css?v=2023-0711-1500" class="clearfix">
+
+<div class="maskDiv" style="display:none;" id="workpop">
+	<div class="popDiv wid440 Marking">
+		<div class="popHead" id="workpopFocus" role="alertdialog" tabindex="0">
+			<a id="popCloseFocus" href="javascript:;" class="popClose fr" tabindex="-1"><img src="//mooc1.chaoxing.com/mooc-ans/images/popClose.png" id="popCloseFocusImg" role="button" tabindex="-1" aria-label="关闭"></a>
+			<p class="fl fs18 colorDeep" tabindex="0" role="option">提示</p>
+		</div>
+		<div class="het62"></div>
+		<p class="popWord fs16 colorIn" id="popcontent" tabindex="0"></p>
+
+		<div class="popBottom">
+			<a href="javascript:;" id="popok" class="jb_btn jb_btn_92 fr fs14" tabindex="0" role="button" aria-label="确定"></a>
+			<a href="javascript:;" id="popno" class="btnBlue btn_92_cancel fr fs14" tabindex="0" role="button" aria-label="取消"></a>
+		</div>
+		<div class="het72"></div>
+			</div>
+</div>
+
+<div class="mask-no-bg" style="display:none;" id="worktoast">
+	<div class="popDiv wid440 Marking" style="top: 30%;">
+		<div class="popHead">
+			<a href="javascript:;" class="popClose fr"><img src="//mooc1.chaoxing.com/mooc-ans/images/popClose.png"></a>
+			<p class="fl fs18 colorDeep">提示</p>
+		</div>
+		<div class="het62"></div>
+		<p class="popWord fs16 colorIn" id="toastcontent"></p>
+
+		<div class="popBottom">
+			<a href="javascript:;" id="toastok" class="jb_btn jb_btn_92 fr fs14"></a>
+			<a href="javascript:;" id="toastno" class="btnBlue btn_92_cancel fr fs14"></a>
+		</div>
+		<div class="het72"></div>
+	</div>
+</div>
+
+<div class="maskDiv" style="display:none;" id="hintPop">
+	<div class="popDiv wid440 Marking">
+		<div class="popHead">
+			<p class="fl fs18 colorDeep">提示</p>
+		</div>
+		<div class="het62"></div>
+		<p class="popWord fs16 colorIn" id="hintCon"></p>
+		<div class="popBottom">
+			<a href="javascript:;" id="hintOk" class="jb_btn jb_btn_92 fr fs14"></a>
+		</div>
+		<div class="het72"></div>
+	</div>
+</div>
+
+
+<div class="maskDiv preview-dialog code-preview-div" style="display: none;z-index: 1001">
+    <div class="popDiv wid840 Marking" style="left: 30%;top: 20%">
+        <div class="popHead">
+            <a href="javascript:void(0)" class="popClose fr" style="display: inline-block;width: 18px;height: 18px;margin-top: 19px;"><img src="../../images/popClose.png"></a>
+            <p class="fl fs18 colorDeep">预览网页</p>
+        </div>
+        <div class="het62"></div>
+        <div class="previewHtml  preview-render-div" style="height:470px; overflow: auto;"></div>
+        <div class="het72"></div>
+    </div>
+</div>
+
+<div class="bigImg"><img src=""></div>
+<div class="imgBg"></div>
+<a name="gotop"></a>
+	<input type="hidden" id="detectUrl" value="http://detect.chaoxing.com/api/passport2-onlineinfo.js?key=true&amp;refer=http://i.mooc.chaoxing.com&amp;fid=22706&amp;_v=">
+<input type="hidden" id="passSimulateValue" value="false">
+<input type="hidden" id="curCourseId" value="257080147">
+<input type="hidden" id="curChapterId" value="1065429967">
+<input type="hidden" id="curCpi" value="473946848">
+<input type="hidden" id="curClazzId" value="131924538">
+<input type="hidden" id="videoNoteMid" value="">
+<input type="hidden" id="isMicroCourse" value="false">
+<input type="hidden" id="tab" value="0">
+<input type="hidden" id="hideCatalog" value="0">
+
+<input type="hidden" name="videoRandomCollectTime" id="videoRandomCollectTime" value="">
+<input type="hidden" name="videoJobId" id="videoJobId" value="">
+<input type="hidden" name="chapterVideoObjectId" id="chapterVideoObjectId" value="">
+<input type="hidden" name="collectionTime" id="collectionTime" value="">
+<input type="hidden" name="mid" id="mid" value="">
+<input type="hidden" name="showKnowledgeSvg" id="showKnowledgeSvg" value="false">
+
+<div class="left">
+	<div class="content" style="background:none">
+									<div class="subNav z-index99">
+											<a href="https://mooc2-ans.chaoxing.com/mooc2-ans/mycourse/stu?courseid=257080147&amp;clazzid=131924538&amp;cpi=473946848&amp;enc=fdec2c5576dbe038f13a900e1c3203d2&amp;t=1789806699298&amp;pageHeader=1" id="contentFocus" class="subBack fl" tabindex="0"><i class="icon-BackIcon"></i>返回课程</a>
+										<h2>章节详情</h2>
+				</div>
+				<div style="height:40px;width:100%"></div>
+					
+					<div class="main prev_box  fanyaPreview_right  " id="mainid" style="margin-bottom:80px;width:auto;min-width:auto;box-shadow:none;">
+	<input type="hidden" id="stuMoocClassId" value="">
+	<input type="hidden" id="stuMoocCourseId" value="">
+	<input type="hidden" id="stuUserId" value="">
+	<input type="hidden" id="stuSchoolId" value="">
+	<input type="hidden" id="stuH5Page" value="false">
+	<input type="hidden" id="chapterId" value="1065429967">
+    <input type="hidden" name="chapterId" id="chapterIdid" value="1065429967">
+    
+	<div class="maskDiv jobFinishTip" style="display:none; z-index: 999">
+		<input type="hidden" id="delTopicId" value="">
+		<div class="popDiv wid440 popMove">
+			<div class="popHead" id="jobFinishTipFocus" tabindex="0" role="alertdialog">
+				<a id="popHeadFocus" href="javascript:" class="popClose fr" tabindex="-1">
+					<img id="popHeadFocusImg" role="button" tabindex="-1" aria-label="关闭" src="//mooc1.chaoxing.com/mooc-ans/mooc2/images/popClose.png">
+				</a>
+				<p class="fl fs18 colorDeep" style="font-weight:normal;" tabindex="0" role="option">提示</p>
+			</div>
+			<div class="het62"></div>
+			<p class="popWord2 fs16 colorIn jobLimitTip" tabindex="0" role="option">当前章节还有任务点未完成，是否去完成？</p>
+			<div class="popBottom">
+				<a href="javascript:" class="jb_btn jb_btn_92 fr fs14 preChapter" style="display: none">上一节</a>
+				<a href="javascript:" class="jb_btn jb_btn_92 fr fs14 nextChapter" style="display: none">下一节</a>
+				<a href="javascript:" class="btnBlue btn_92_cancel fr fs14 popMoveDele">去学习</a>
+			</div>
+			<div class="het72"></div>
+		</div>
+	</div>
+
+	<div style="width:578px;height:190px;display:none;padding:0" class="AlertCon02" id="jobFinishTip">
+		<h3 class="clearfix editDate">提示</h3>
+		<div class="con03">
+			<p>当前章节还有任务点未完成，是否去完成？</p>
+			<div class="marTop30">
+				<a class="bluebtn02 prebutton nextChapter" href="javascript:void(0)" style="display: none">下一节</a>
+				<a class="bluebtn02 prebutton preChapter" href="javascript:void(0)" style="display: none">上一节</a>
+				<a class="graybtn02 marleft10 nextbutton" href="javascript:void(0)">去学习</a>
+			</div>
+		</div>
+	</div>
+
+	<div class="maskDiv" style="display:none; z-index: 999" id="freezePage2">
+		<input type="hidden" id="delTopicId" value="">
+		<div class="popDiv wid440 popMove">
+			<div class="popHead" id="jobFinishTipFocus" tabindex="0">
+				<p class="fl fs18 colorDeep" style="font-weight:normal;" tabindex="0">提示</p>
+			</div>
+			<div class="het62"></div>
+			<p class="popWord2 fs16 colorIn jobLimitTip" tabindex="0" id="freezePageInfo"></p>
+			<div class="popBottom">
+				<a href="javascript:" class="jb_btn jb_btn_92 fr fs14">继续学习</a>
+			</div>
+			<div class="het72"></div>
+		</div>
+	</div>
+
+	<div style="width:578px;height:190px;display:none;padding:0" class="AlertCon02" id="freezePage">
+		<h3 class="clearfix editDate">提示</h3>
+		<div class="con03">
+			<p id="freezePageInfo"></p>
+			<div class="marTop30">
+				<a class="bluebtn02 marleft10 keepLearning" href="javascript:void(0)">继续学习</a>
+			</div>
+		</div>
+	</div>
+
+                
+    	                        
+            <div class="prev_title_pos" tabindex="0" role="option">
+                                    <div class="prev_title" title="高阶导数">
+                        高阶导数
+
+                        <span class="markTag" id="markTag_1065429967" style="display: none"></span>
+                    </div>
+                
+                            </div>
+                                        <div class="prev_list" id="prev_tab" style="display: none">
+                    <ul class="prev_ul clearfix">
+                                                    <li class="active" title="" cardid="1043998107" tabindex="0" role="option" id="dct1"><div class="prev_white" aria-hidden="true"><span class="num" style="margin-right:0;">1</span></div></li>
+                                            </ul>
+                </div>
+                            <div style="min-width: 1010px;" class="course_main" id="qqqq">
+            <iframe height="2754" id="iframe" info="card" frameborder="0" scrolling="no" src="/mooc-ans/knowledge/cards?clazzid=131924538&amp;courseid=257080147&amp;knowledgeid=1065429967&amp;num=0&amp;ut=s&amp;cpi=473946848&amp;v=2025-0424-1038-3&amp;mooc2=1&amp;isMicroCourse=false&amp;editorPreview=0" allowfullscreen="true" webkitallowfullscreen="true" mozallowfullscreen="true"></iframe>
+            <input id="cardcount" type="hidden" value="1">
+        </div>
+
+		    
+	<div id="prevNextFocus" class="clearfix" tabindex="-1">
+					<div id="prevNextFocusNext" class="jb_btn jb_btn_92 fs14 prev_next next fr btnWidAuto" tabindex="-1" role="button" style="display: block;">下一节</div>
+			<div id="prevNextFocusPrev" class="btnBlue btn_92 fs14 prev_next marginRight30 prev fr btnWidAuto" tabindex="-1" role="button" style="display: block;">上一节</div>
+			</div>
+
+<div class="iconBox ">
+	
+	
+			<div class="iconBg ewmBg">
+			<span class="ewm"></span>
+			<div class="ewmBox">
+				<img src="/mooc-ans/share/stu/qrcode?knowledgeId=1065429967&amp;courseId=257080147&amp;width=108&amp;height=108&amp;classId=131924538" width="108">
+				<p> 手机扫码直接学习  </p>
+			</div>
+		</div>
+	
+			<div class="discusBg" style="width:30px;">
+			<div class="clearfix disCOntent">
+				<span class="discusNew"></span>
+				<div class="discusFontBx" style="display:none">
+					<div class="textAreaBx">
+						<textarea id="discussTextArea" placeholder="发布提问或讨论…" contenteditable="true" class="textcon" style="height:20px;display:none"></textarea>
+					</div>
+				</div>
+			</div>
+			<p class="fabuBtn" style="display:none"><a href="javascript:;">发布</a></p>
+			<i class="disArr" style="display:none"></i>
+		</div>
+	
+	<div class="iconBg backBg" style="display: none;">
+		<span class="backTo"></span>
+	</div>
+</div>
+
+
+
+</div>
+				<div id="cardFocusEnd" tabindex="0" aria-label="正文结束"></div>
+	</div>
+</div>
+
+	<div class="posChapter posChapter_right" id="selector" style="height: 1268px;">
+            <div class="drag"><div class="drag_shizi"></div></div>
+        <div class="switchbtn"></div>
+            <div class="tabs">
+        <div class="tabCatalog">
+            <ul>
+                                    <li id="tit1" class="active" style="display: block;">目录</li>
+                                            <li id="tit2" class="">讨论<span class="discussNum"></span></li>
+                                                                <li id="tit3" class="">笔记</li>
+                                                                                    <li id="tit5" class="">标注</li>
+                                                </ul>
+            <div class="clear"></div>
+        </div>
+    
+		<div class="showcontent posChapter " style="background:#fff">
+		<div class="chapter" style="display: block; background: rgb(255, 255, 255); overflow: hidden visible; height: 1248px;" id="content1" tabindex="-1">
+			    <div class="dataSearch_chapter " style=" margin: 10px 20px 10px;">
+                    <div class="fl DySeleft">
+                                                     <a class="dataSearch_dele_chapter " href="javascript:" style="display: none;"></a>
+                                                <input tabindex="-1" type="text" id="searchChapterListByName" name="searchChapterListByName" value="" class="dataSearch_input_chapter fl " placeholder="搜索" style="">
+                        <input tabindex="-1" type="button" value="" class="dataSearch_bnt_chapter fl " style="top:18px">
+                    </div>
+                </div>
+			<div class="onetoone posCatalog " id="coursetree" style="overflow: hidden auto; height: 1147px;"><input type="hidden" id="_studystate" value="{nextChapterId:1065429912,unfinishCount:98}">
+<input type="hidden" id="countListSearchChapter" value="-1">
+
+<ul>
+									<li>
+				<div class="posCatalog_select firstLayer" id="1065429843"><span class="posCatalog_title posCatalog_rotate titleIcon" title="第1章   函数、极限与连续"><em class="posCatalog_sbar">1</em>  第1章   函数、极限与连续 </span></div>
+				
+									<div class="posCatalog_level" style="display: block;">
+						<ul>
+																					<li>
+									<div class="posCatalog_select" id="cur1065429912">
+										<span class="posCatalog_name" title="函数（一）"><em class="posCatalog_sbar">1.1</em>   函数（一） </span>
+																																														<input type="hidden" value="1" class="jobUnfinishCount">
+													<span class="catalog_points_yi prevTips"><span class="prevHoverTips">1个待完成任务点<i></i></span><span class="orangeNew">1</span></span>
+																																										</div>
+									
+																		
+								</li>
+																												<li>
+									<div class="posCatalog_select" id="cur1065429931">
+										<span class="posCatalog_name" title="函数（二）"><em class="posCatalog_sbar">1.2</em>   函数（二） </span>
+																																														<input type="hidden" value="1" class="jobUnfinishCount">
+													<span class="catalog_points_yi prevTips"><span class="prevHoverTips">1个待完成任务点<i></i></span><span class="orangeNew">1</span></span>
+																																										</div>
+									
+																		
+								</li>
+																												<li>
+									<div class="posCatalog_select" id="cur1065429952">
+										<span class="posCatalog_name" title="极限的概念"><em class="posCatalog_sbar">1.3</em>   极限的概念 </span>
+																																														<input type="hidden" value="1" class="jobUnfinishCount">
+													<span class="catalog_points_yi prevTips"><span class="prevHoverTips">1个待完成任务点<i></i></span><span class="orangeNew">1</span></span>
+																																										</div>
+									
+																		
+								</li>
+																												<li>
+									<div class="posCatalog_select" id="cur1065429962">
+										<span class="posCatalog_name" title="无穷大与无穷小"><em class="posCatalog_sbar">1.4</em>   无穷大与无穷小 </span>
+																																														<input type="hidden" value="1" class="jobUnfinishCount">
+													<span class="catalog_points_yi prevTips"><span class="prevHoverTips">1个待完成任务点<i></i></span><span class="orangeNew">1</span></span>
+																																										</div>
+									
+																		
+								</li>
+																												<li>
+									<div class="posCatalog_select" id="cur1065429971">
+										<span class="posCatalog_name" title="极限的四则运算法则"><em class="posCatalog_sbar">1.5</em>   极限的四则运算法则 </span>
+																																														<input type="hidden" value="1" class="jobUnfinishCount">
+													<span class="catalog_points_yi prevTips"><span class="prevHoverTips">1个待完成任务点<i></i></span><span class="orangeNew">1</span></span>
+																																										</div>
+									
+																		
+								</li>
+																												<li>
+									<div class="posCatalog_select" id="cur1065429991">
+										<span class="posCatalog_name" title="两个重要极限"><em class="posCatalog_sbar">1.6</em>   两个重要极限 </span>
+																																														<input type="hidden" value="1" class="jobUnfinishCount">
+													<span class="catalog_points_yi prevTips"><span class="prevHoverTips">1个待完成任务点<i></i></span><span class="orangeNew">1</span></span>
+																																										</div>
+									
+																		
+								</li>
+																												<li>
+									<div class="posCatalog_select" id="cur1065429993">
+										<span class="posCatalog_name" title="函数的连续性"><em class="posCatalog_sbar">1.7</em>   函数的连续性 </span>
+																																														<input type="hidden" value="3" class="jobUnfinishCount">
+													<span class="catalog_points_yi prevTips"><span class="prevHoverTips">3个待完成任务点<i></i></span><span class="orangeNew">3</span></span>
+																																										</div>
+									
+																		
+								</li>
+																			</ul>
+					</div>
+								
+			</li>
+											<li>
+				<div class="posCatalog_select firstLayer" id="1065429847"><span class="posCatalog_title posCatalog_rotate titleIcon" title="第2章 导数和微分"><em class="posCatalog_sbar">2</em>  第2章 导数和微分 </span></div>
+				
+									<div class="posCatalog_level" style="display: block;">
+						<ul>
+																					<li>
+									<div class="posCatalog_select" id="cur1065429853">
+										<span class="posCatalog_name" title="导数的概念"><em class="posCatalog_sbar">2.1</em>   导数的概念 </span>
+																																														<input type="hidden" value="5" class="jobUnfinishCount">
+													<span class="catalog_points_yi prevTips"><span class="prevHoverTips">5个待完成任务点<i></i></span><span class="orangeNew">5</span></span>
+																																										</div>
+									
+																		
+								</li>
+																												<li>
+									<div class="posCatalog_select" id="cur1065429928">
+										<span class="posCatalog_name" title="函数的和、差、积、商的求导法则"><em class="posCatalog_sbar">2.2</em>   函数的和、差、积、商的求导法则 </span>
+																																														<input type="hidden" value="1" class="jobUnfinishCount">
+													<span class="catalog_points_yi prevTips"><span class="prevHoverTips">1个待完成任务点<i></i></span><span class="orangeNew">1</span></span>
+																																										</div>
+									
+																		
+								</li>
+																												<li>
+									<div class="posCatalog_select" id="cur1065429937">
+										<span class="posCatalog_name" title="复合函数的导数"><em class="posCatalog_sbar">2.3</em>   复合函数的导数 </span>
+																																														<input type="hidden" value="2" class="jobUnfinishCount">
+													<span class="catalog_points_yi prevTips"><span class="prevHoverTips">2个待完成任务点<i></i></span><span class="orangeNew">2</span></span>
+																																										</div>
+									
+																		
+								</li>
+																												<li>
+									<div class="posCatalog_select" id="cur1065429956">
+										<span class="posCatalog_name" title="隐函数的导数"><em class="posCatalog_sbar">2.4</em>   隐函数的导数 </span>
+																																														<input type="hidden" value="1" class="jobUnfinishCount">
+													<span class="catalog_points_yi prevTips"><span class="prevHoverTips">1个待完成任务点<i></i></span><span class="orangeNew">1</span></span>
+																																										</div>
+									
+																		
+								</li>
+																												<li>
+									<div class="posCatalog_select" id="cur1065429965">
+										<span class="posCatalog_name" title="参数方程求导"><em class="posCatalog_sbar">2.5</em>   参数方程求导 </span>
+																																														<input type="hidden" value="1" class="jobUnfinishCount">
+													<span class="catalog_points_yi prevTips"><span class="prevHoverTips">1个待完成任务点<i></i></span><span class="orangeNew">1</span></span>
+																																										</div>
+									
+																		
+								</li>
+																												<li>
+									<div class="posCatalog_select posCatalog_active" id="cur1065429967">
+										<span class="posCatalog_name" title="高阶导数"><em class="posCatalog_sbar">2.6</em>   高阶导数 </span>
+																																														<input type="hidden" value="1" class="jobUnfinishCount">
+													<span class="catalog_points_yi prevTips"><span class="prevHoverTips">1个待完成任务点<i></i></span><span class="orangeNew">1</span></span>
+																																										</div>
+									
+																		
+								</li>
+																												<li>
+									<div class="posCatalog_select" id="cur1065429974">
+										<span class="posCatalog_name" title="函数的微分"><em class="posCatalog_sbar">2.7</em>   函数的微分 </span>
+																																														<input type="hidden" value="1" class="jobUnfinishCount">
+													<span class="catalog_points_yi prevTips"><span class="prevHoverTips">1个待完成任务点<i></i></span><span class="orangeNew">1</span></span>
+																																										</div>
+									
+																		
+								</li>
+																			</ul>
+					</div>
+								
+			</li>
+											<li>
+				<div class="posCatalog_select firstLayer" id="1065429848"><span class="posCatalog_title posCatalog_rotate titleIcon" title="第3章 导数的应用"><em class="posCatalog_sbar">3</em>  第3章 导数的应用 </span></div>
+				
+									<div class="posCatalog_level" style="display: block;">
+						<ul>
+																					<li>
+									<div class="posCatalog_select" id="cur1065429863">
+										<span class="posCatalog_name" title="微分中值定理"><em class="posCatalog_sbar">3.1</em>   微分中值定理 </span>
+																																														<input type="hidden" value="2" class="jobUnfinishCount">
+													<span class="catalog_points_yi prevTips"><span class="prevHoverTips">2个待完成任务点<i></i></span><span class="orangeNew">2</span></span>
+																																										</div>
+									
+																		
+								</li>
+																												<li>
+									<div class="posCatalog_select" id="cur1065429866">
+										<span class="posCatalog_name" title="洛必达法则的应用"><em class="posCatalog_sbar">3.2</em>   洛必达法则的应用 </span>
+																																														<input type="hidden" value="3" class="jobUnfinishCount">
+													<span class="catalog_points_yi prevTips"><span class="prevHoverTips">3个待完成任务点<i></i></span><span class="orangeNew">3</span></span>
+																																										</div>
+									
+																		
+								</li>
+																												<li>
+									<div class="posCatalog_select" id="cur1065429901">
+										<span class="posCatalog_name" title="函数的单调性"><em class="posCatalog_sbar">3.3</em>   函数的单调性 </span>
+																																														<input type="hidden" value="2" class="jobUnfinishCount">
+													<span class="catalog_points_yi prevTips"><span class="prevHoverTips">2个待完成任务点<i></i></span><span class="orangeNew">2</span></span>
+																																										</div>
+									
+																		
+								</li>
+																												<li>
+									<div class="posCatalog_select" id="cur1065429923">
+										<span class="posCatalog_name" title="函数的极值"><em class="posCatalog_sbar">3.4</em>   函数的极值 </span>
+																																														<input type="hidden" value="3" class="jobUnfinishCount">
+													<span class="catalog_points_yi prevTips"><span class="prevHoverTips">3个待完成任务点<i></i></span><span class="orangeNew">3</span></span>
+																																										</div>
+									
+																		
+								</li>
+																												<li>
+									<div class="posCatalog_select" id="cur1065429930">
+										<span class="posCatalog_name" title="函数的最值及最优化问题的求解"><em class="posCatalog_sbar">3.5</em>   函数的最值及最优化问题的求解 </span>
+																																														<input type="hidden" value="3" class="jobUnfinishCount">
+													<span class="catalog_points_yi prevTips"><span class="prevHoverTips">3个待完成任务点<i></i></span><span class="orangeNew">3</span></span>
+																																										</div>
+									
+																		
+								</li>
+																												<li>
+									<div class="posCatalog_select" id="cur1065429934">
+										<span class="posCatalog_name" title="曲线的凹凸性与拐点"><em class="posCatalog_sbar">3.6</em>   曲线的凹凸性与拐点 </span>
+																																														<input type="hidden" value="4" class="jobUnfinishCount">
+													<span class="catalog_points_yi prevTips"><span class="prevHoverTips">4个待完成任务点<i></i></span><span class="orangeNew">4</span></span>
+																																										</div>
+									
+																		
+								</li>
+																												<li>
+									<div class="posCatalog_select" id="cur1065429939">
+										<span class="posCatalog_name" title="曲率"><em class="posCatalog_sbar">3.7</em>   曲率 </span>
+																																														<input type="hidden" value="2" class="jobUnfinishCount">
+													<span class="catalog_points_yi prevTips"><span class="prevHoverTips">2个待完成任务点<i></i></span><span class="orangeNew">2</span></span>
+																																										</div>
+									
+																		
+								</li>
+																												<li>
+									<div class="posCatalog_select" id="cur1065429945">
+										<span class="posCatalog_name" title="期中测试"><em class="posCatalog_sbar">3.8</em>   期中测试 </span>
+																																														<input type="hidden" value="2" class="jobUnfinishCount">
+													<span class="catalog_points_yi prevTips"><span class="prevHoverTips">2个待完成任务点<i></i></span><span class="orangeNew">2</span></span>
+																																										</div>
+									
+																		
+								</li>
+																			</ul>
+					</div>
+								
+			</li>
+											<li>
+				<div class="posCatalog_select firstLayer" id="1065429849"><span class="posCatalog_title posCatalog_rotate titleIcon" title="第4章 不定积分"><em class="posCatalog_sbar">4</em>  第4章 不定积分 </span></div>
+				
+									<div class="posCatalog_level" style="display: block;">
+						<ul>
+																					<li>
+									<div class="posCatalog_select" id="cur1065429877">
+										<span class="posCatalog_name" title="不定积分的概念与性质"><em class="posCatalog_sbar">4.1</em>   不定积分的概念与性质 </span>
+																																														<input type="hidden" value="3" class="jobUnfinishCount">
+													<span class="catalog_points_yi prevTips"><span class="prevHoverTips">3个待完成任务点<i></i></span><span class="orangeNew">3</span></span>
+																																										</div>
+									
+																		
+								</li>
+																												<li>
+									<div class="posCatalog_select" id="cur1065429959">
+										<span class="posCatalog_name" title="直接积分法"><em class="posCatalog_sbar">4.2</em>   直接积分法 </span>
+																																														<input type="hidden" value="2" class="jobUnfinishCount">
+													<span class="catalog_points_yi prevTips"><span class="prevHoverTips">2个待完成任务点<i></i></span><span class="orangeNew">2</span></span>
+																																										</div>
+									
+																		
+								</li>
+																												<li>
+									<div class="posCatalog_select" id="cur1065429976">
+										<span class="posCatalog_name" title="第一换元积分法"><em class="posCatalog_sbar">4.3</em>   第一换元积分法 </span>
+																																														<input type="hidden" value="3" class="jobUnfinishCount">
+													<span class="catalog_points_yi prevTips"><span class="prevHoverTips">3个待完成任务点<i></i></span><span class="orangeNew">3</span></span>
+																																										</div>
+									
+																		
+								</li>
+																												<li>
+									<div class="posCatalog_select" id="cur1065429982">
+										<span class="posCatalog_name" title="第二换元积分法"><em class="posCatalog_sbar">4.4</em>   第二换元积分法 </span>
+																																														<span class="icon_Completed prevTips"><span class="prevHoverTips">已完成<i></i></span>
+																																										</span></div>
+									
+																			<ul>
+																																	<li>
+													<div class="posCatalog_select" id="cur1065430024">
+														<span class="posCatalog_name" title="三角代换"><em class="posCatalog_sbar">4.4.1</em>  三角代换 </span>
+																																																														<input type="hidden" value="2" class="jobUnfinishCount">
+																	<span class="catalog_points_yi prevTips"><span class="prevHoverTips">2个待完成任务点<i></i></span><span class="orangeNew">2</span></span>
+																																																										</div>
+													
+																										
+												</li>
+																																												<li>
+													<div class="posCatalog_select" id="cur1065430025">
+														<span class="posCatalog_name" title="简单根式代换"><em class="posCatalog_sbar">4.4.2</em>  简单根式代换 </span>
+																																																														<input type="hidden" value="2" class="jobUnfinishCount">
+																	<span class="catalog_points_yi prevTips"><span class="prevHoverTips">2个待完成任务点<i></i></span><span class="orangeNew">2</span></span>
+																																																										</div>
+													
+																										
+												</li>
+																															</ul>
+																		
+								</li>
+																												<li>
+									<div class="posCatalog_select" id="cur1065429983">
+										<span class="posCatalog_name" title="分部积分法"><em class="posCatalog_sbar">4.5</em>   分部积分法 </span>
+																																														<input type="hidden" value="3" class="jobUnfinishCount">
+													<span class="catalog_points_yi prevTips"><span class="prevHoverTips">3个待完成任务点<i></i></span><span class="orangeNew">3</span></span>
+																																										</div>
+									
+																		
+								</li>
+																												<li>
+									<div class="posCatalog_select" id="cur1065430002">
+										<span class="posCatalog_name" title="有理函数的积分"><em class="posCatalog_sbar">4.6</em>   有理函数的积分 </span>
+																																														<input type="hidden" value="3" class="jobUnfinishCount">
+													<span class="catalog_points_yi prevTips"><span class="prevHoverTips">3个待完成任务点<i></i></span><span class="orangeNew">3</span></span>
+																																										</div>
+									
+																		
+								</li>
+																												<li>
+									<div class="posCatalog_select" id="cur1065430006">
+										<span class="posCatalog_name" title="习题课"><em class="posCatalog_sbar">4.7</em>   习题课 </span>
+																																														<input type="hidden" value="1" class="jobUnfinishCount">
+													<span class="catalog_points_yi prevTips"><span class="prevHoverTips">1个待完成任务点<i></i></span><span class="orangeNew">1</span></span>
+																																										</div>
+									
+																		
+								</li>
+																			</ul>
+					</div>
+								
+			</li>
+											<li>
+				<div class="posCatalog_select firstLayer" id="1065429850"><span class="posCatalog_title posCatalog_rotate titleIcon" title="第5章 定积分及其应用"><em class="posCatalog_sbar">5</em>  第5章 定积分及其应用 </span></div>
+				
+									<div class="posCatalog_level" style="display: block;">
+						<ul>
+																					<li>
+									<div class="posCatalog_select" id="cur1065429890">
+										<span class="posCatalog_name" title="定积分的概念与性质"><em class="posCatalog_sbar">5.1</em>   定积分的概念与性质 </span>
+																																														<input type="hidden" value="3" class="jobUnfinishCount">
+													<span class="catalog_points_yi prevTips"><span class="prevHoverTips">3个待完成任务点<i></i></span><span class="orangeNew">3</span></span>
+																																										</div>
+									
+																		
+								</li>
+																												<li>
+									<div class="posCatalog_select" id="cur1065429946">
+										<span class="posCatalog_name" title="牛顿——莱布尼茨公式"><em class="posCatalog_sbar">5.2</em>   牛顿——莱布尼茨公式 </span>
+																																														<input type="hidden" value="3" class="jobUnfinishCount">
+													<span class="catalog_points_yi prevTips"><span class="prevHoverTips">3个待完成任务点<i></i></span><span class="orangeNew">3</span></span>
+																																										</div>
+									
+																		
+								</li>
+																												<li>
+									<div class="posCatalog_select" id="cur1065429968">
+										<span class="posCatalog_name" title="定积分的换元积分法"><em class="posCatalog_sbar">5.3</em>   定积分的换元积分法 </span>
+																																														<input type="hidden" value="2" class="jobUnfinishCount">
+													<span class="catalog_points_yi prevTips"><span class="prevHoverTips">2个待完成任务点<i></i></span><span class="orangeNew">2</span></span>
+																																										</div>
+									
+																		
+								</li>
+																												<li>
+									<div class="posCatalog_select" id="cur1065429980">
+										<span class="posCatalog_name" title="定积分的分部积分法"><em class="posCatalog_sbar">5.4</em>   定积分的分部积分法 </span>
+																																														<input type="hidden" value="2" class="jobUnfinishCount">
+													<span class="catalog_points_yi prevTips"><span class="prevHoverTips">2个待完成任务点<i></i></span><span class="orangeNew">2</span></span>
+																																										</div>
+									
+																		
+								</li>
+																												<li>
+									<div class="posCatalog_select" id="cur1065429986">
+										<span class="posCatalog_name" title="广义积分"><em class="posCatalog_sbar">5.5</em>   广义积分 </span>
+																																														<input type="hidden" value="2" class="jobUnfinishCount">
+													<span class="catalog_points_yi prevTips"><span class="prevHoverTips">2个待完成任务点<i></i></span><span class="orangeNew">2</span></span>
+																																										</div>
+									
+																		
+								</li>
+																												<li>
+									<div class="posCatalog_select" id="cur1065429989">
+										<span class="posCatalog_name" title="定积分的几何应用"><em class="posCatalog_sbar">5.6</em>   定积分的几何应用 </span>
+																																														<span class="icon_Completed prevTips"><span class="prevHoverTips">已完成<i></i></span>
+																																										</span></div>
+									
+																			<ul>
+																																	<li>
+													<div class="posCatalog_select" id="cur1065430021">
+														<span class="posCatalog_name" title="平面图形的面积"><em class="posCatalog_sbar">5.6.1</em>  平面图形的面积 </span>
+																																																														<input type="hidden" value="2" class="jobUnfinishCount">
+																	<span class="catalog_points_yi prevTips"><span class="prevHoverTips">2个待完成任务点<i></i></span><span class="orangeNew">2</span></span>
+																																																										</div>
+													
+																										
+												</li>
+																																												<li>
+													<div class="posCatalog_select" id="cur1065430022">
+														<span class="posCatalog_name" title="旋转体的体积"><em class="posCatalog_sbar">5.6.2</em>  旋转体的体积 </span>
+																																																														<input type="hidden" value="2" class="jobUnfinishCount">
+																	<span class="catalog_points_yi prevTips"><span class="prevHoverTips">2个待完成任务点<i></i></span><span class="orangeNew">2</span></span>
+																																																										</div>
+													
+																										
+												</li>
+																																												<li>
+													<div class="posCatalog_select" id="cur1065430023">
+														<span class="posCatalog_name" title="平面曲线的弧长"><em class="posCatalog_sbar">5.6.3</em>  平面曲线的弧长 </span>
+																																																														<input type="hidden" value="2" class="jobUnfinishCount">
+																	<span class="catalog_points_yi prevTips"><span class="prevHoverTips">2个待完成任务点<i></i></span><span class="orangeNew">2</span></span>
+																																																										</div>
+													
+																										
+												</li>
+																															</ul>
+																		
+								</li>
+																												<li>
+									<div class="posCatalog_select" id="cur1065429995">
+										<span class="posCatalog_name" title="定积分解决工程中的问题"><em class="posCatalog_sbar">5.7</em>   定积分解决工程中的问题 </span>
+																																														<input type="hidden" value="2" class="jobUnfinishCount">
+													<span class="catalog_points_yi prevTips"><span class="prevHoverTips">2个待完成任务点<i></i></span><span class="orangeNew">2</span></span>
+																																										</div>
+									
+																		
+								</li>
+																												<li>
+									<div class="posCatalog_select" id="cur1065429998">
+										<span class="posCatalog_name" title="定积分复习课"><em class="posCatalog_sbar">5.8</em>   定积分复习课 </span>
+																																														<input type="hidden" value="2" class="jobUnfinishCount">
+													<span class="catalog_points_yi prevTips"><span class="prevHoverTips">2个待完成任务点<i></i></span><span class="orangeNew">2</span></span>
+																																										</div>
+									
+																		
+								</li>
+																			</ul>
+					</div>
+								
+			</li>
+											<li>
+				<div class="posCatalog_select firstLayer" id="1065429851"><span class="posCatalog_title posCatalog_rotate titleIcon" title="第6章一元函数微积分问题的MATLAB操作"><em class="posCatalog_sbar">6</em>  第6章一元函数微积分问题的MATLAB操作 </span></div>
+				
+									<div class="posCatalog_level" style="display: block;">
+						<ul>
+																					<li>
+									<div class="posCatalog_select" id="cur1065430009">
+										<span class="posCatalog_name" title="Matlab基本操作"><em class="posCatalog_sbar">6.1</em>   Matlab基本操作 </span>
+																																														<input type="hidden" value="4" class="jobUnfinishCount">
+													<span class="catalog_points_yi prevTips"><span class="prevHoverTips">4个待完成任务点<i></i></span><span class="orangeNew">4</span></span>
+																																										</div>
+									
+																		
+								</li>
+																												<li>
+									<div class="posCatalog_select" id="cur1065430012">
+										<span class="posCatalog_name" title="一元函数微积分问题的MATLAB操作"><em class="posCatalog_sbar">6.2</em>   一元函数微积分问题的MATLAB操作 </span>
+																																														<input type="hidden" value="4" class="jobUnfinishCount">
+													<span class="catalog_points_yi prevTips"><span class="prevHoverTips">4个待完成任务点<i></i></span><span class="orangeNew">4</span></span>
+																																										</div>
+									
+																		
+								</li>
+																			</ul>
+					</div>
+								
+			</li>
+											<li>
+				<div class="posCatalog_select firstLayer" id="1065429852"><span class="posCatalog_title posCatalog_rotate titleIcon" title="常微分方程"><em class="posCatalog_sbar">7</em>  常微分方程 </span></div>
+				
+									<div class="posCatalog_level" style="display: block;">
+						<ul>
+																					<li>
+									<div class="posCatalog_select" id="cur1065430015">
+										<span class="posCatalog_name" title="常微分方程的基本概念"><em class="posCatalog_sbar">7.1</em>   常微分方程的基本概念 </span>
+																																														<input type="hidden" value="2" class="jobUnfinishCount">
+													<span class="catalog_points_yi prevTips"><span class="prevHoverTips">2个待完成任务点<i></i></span><span class="orangeNew">2</span></span>
+																																										</div>
+									
+																		
+								</li>
+																												<li>
+									<div class="posCatalog_select" id="cur1065430016">
+										<span class="posCatalog_name" title="可分离变量的微分方程"><em class="posCatalog_sbar">7.2</em>   可分离变量的微分方程 </span>
+																																														<input type="hidden" value="2" class="jobUnfinishCount">
+													<span class="catalog_points_yi prevTips"><span class="prevHoverTips">2个待完成任务点<i></i></span><span class="orangeNew">2</span></span>
+																																										</div>
+									
+																		
+								</li>
+																												<li>
+									<div class="posCatalog_select" id="cur1065430019">
+										<span class="posCatalog_name" title="一阶线性微分方程"><em class="posCatalog_sbar">7.3</em>   一阶线性微分方程 </span>
+																																														<input type="hidden" value="3" class="jobUnfinishCount">
+													<span class="catalog_points_yi prevTips"><span class="prevHoverTips">3个待完成任务点<i></i></span><span class="orangeNew">3</span></span>
+																																										</div>
+									
+																		
+								</li>
+																			</ul>
+					</div>
+								
+			</li>
+							
+</ul>
+</div>
+			</div>
+			<div class="thiscontent posCatalog" id="content2" style="display: none; height: 1147px;">
+				<input type="hidden" value="0" id="isDigitalTextbook">
+				<div class="newTopic1" style="display: none;">
+					<span class="newTopic_bnt"><i></i>新建话题</span>
+					<div class="formTopic" style="display:none;">
+						<div class="formTopic_padding" id="formTopicScroll">
+							<div class="formTopic_title"><input type="text" value="" placeholder="请输入标题…" id="toplevelTextCommentTitle" name="toplevelTextCommentTitle"></div>
+							<div class="formTopic_text">
+								<textarea class="formTopic_text_Scroll" id="toplevelTextCommentContent" name="toplevelTextCommentContent" placeholder="请输入话题正文…"></textarea>
+							</div>
+														<ul class="formTopic_pic" id="images_fileUploader_group"></ul>
+														<ul class="formTopic_docx" id="dataSource"></ul>
+						</div>
+						<div class="replyTopic">
+							<input type="hidden" id="resize" value="1">
+														<div class="imgUpload" id="fileUploader_group" style="width:24px;margin-right:20px"><input type="file" accept="image/*"></div>
+														<div class="fileUpload" id="addFileA" disable="false"><input type="file" accept="*" id="file" name="file" title="添加附件"></div>
+							<div class="jb_btn jb_btn_60 fr fs14">发布</div>
+							<div class="replyQuxiao fr">取消</div>
+						</div>
+					</div>
+				</div>
+				<div class="posDiscuss" id="posDiscussScroll" style="background: #fff;overflow: hidden;">
+				</div>
+			</div>
+			<div id="content3" class="thiscontent note" style="display: none; height: 1308px;">
+				<div class="newTopic1">
+					<span class="newTopic_bnt"><i></i>新建笔记</span>
+					<div class="formTopic" style="display:none;">
+						<input type="hidden" id="type" value="0">
+						<input type="hidden" id="noteVideoName" value="">
+						<input type="hidden" id="noteVideoTime" value="">
+						<input type="hidden" id="noteVideoJobId" value="">
+						<input type="hidden" id="noteVideoObjectId" value="">
+						<input type="hidden" id="videoNoteCid" value="">
+						<div class="Note_name"></div>
+						<div class="wrap formNote_padding">
+							<div class="multieditor" id="editor1"></div>
+							<div class="dotNote_box">
+								<div class="dotNote_dadian "></div>
+								<div class="dotNote_con">
+									<div class="dotNote_padd">
+										<div class="dotNote_text">点击“打点”可以继续插入当前视频播放时间点</div>
+										<div class="dotNote_bnt"><a class="dotNote_blue" href="javascript:;">知道了</a></div>
+									</div>
+								</div>
+							</div>
+						</div>
+						<div class="replyTopic">
+							<div class="jb_btn jb_btn_60 fr fs14 ">发布</div>
+							<div class="replyQuxiao fr">取消</div>
+						</div>
+					</div>
+				</div>
+				<div class="posDiscuss" id="posNoteScroll" tabindex="1" style="overflow: hidden; outline: none;">
+					<div class="tableDiscuss">
+					</div>
+				</div>
+				<div class="noTopic" style="display:none">暂无笔记, 新建一个吧～ </div>
+			</div>
+
+
+			<div id="content4" class="bookMakBx chapterlabellist" style="display:none">
+
+			</div>
+
+			<div id="content5" class="renderingMarkCls" style="display: none; height: 1173px;">
+				<div class="comment-list-box">
+					<div class="comment-list-item">
+						<ul class="comment-list-ul"><div class="noMark" style="display: block;">暂无标注</div></ul>
+					</div>
+				</div>
+			</div>
+		<div id="ascrail2000" class="nicescroll-rails nicescroll-rails-vr" style="width: 8px; z-index: 99; cursor: default; position: absolute; top: -1308px; left: -1130px; height: 0px; display: none;"><div class="nicescroll-cursors" style="position: relative; top: 0px; float: right; width: 8px; height: 0px; background-color: rgb(207, 216, 230); background-clip: padding-box; border-radius: 5px;"></div></div><div id="ascrail2000-hr" class="nicescroll-rails nicescroll-rails-hr" style="height: 8px; z-index: 99; top: -1316px; left: -1122px; position: absolute; cursor: default; display: none;"><div class="nicescroll-cursors" style="position: absolute; top: 0px; height: 8px; width: 0px; background-color: rgb(207, 216, 230); background-clip: padding-box; border-radius: 5px;"></div></div></div>
+	</div>
+		<div id="successTip" class="zad71">
+		已保存	</div>
+	<div id="errorTip" class="zad71">
+	</div>
+    <div class="DownloadaDiv" id="DownloadaDiv">
+
+    </div>
+	<a href="#" id="jobhint" class="jobhint" style="display:none;">
+		<span style="display:block;width:45px;height:45px;text-align:center;font-size:20px;line-height:45px;color:#fff;">0</span>
+	</a>
+</div>
+
+<div style="height: 100%;display:none;" id="messagedialogepar" class="bgmask">
+</div>
+<div style="margin-top: -255.5px;" class="mypop" id="messagedialoge"></div>
+<div class="AlertCon02" id="validate" style="width:368px;height:139px;display:none;" align="center">
+	<table class="zc_table">
+		<tbody><tr>
+			<td colspan="3">
+				<span class="sp_h2">请输入验证码：</span>
+			</td>
+		</tr>
+		<tr>
+			<td colspan="2">
+				<input class="zc_input32" name="code" id="code" type="text">
+			</td>
+			<td class="zc_vercode_ac">
+				<span class="zc_verify">
+				<img src="/mooc-ans/kaptcha-img/code" width="124" height="28" id="imgVerCode"></span>
+				<a href="javascript:void(0);" style="color:#02bffd">看不清</a>
+			</td>
+		</tr>
+		<tr>
+			<td colspan="2" style="text-align: left;">
+			<span class="zc_btn">
+				<a href="javascript:void(0);" id="sub">确定</a>
+			</span>
+			</td>
+			<td></td>
+		</tr>
+	</tbody></table>
+</div>
+<div class="bigImgDiv">
+	<div class="bigImgMask"></div>
+	<div class="bigImgClose"></div>
+</div>
+
+
+
+<div style="width:385px;height:auto;display:none;" class="AlertCon02" id="chapterVerificationCode">
+	<h3 class="clearfix"><a class="closed02 fr" href="javascript:void(0)"></a></h3>
+	<div class="con03">
+		<p style="margin-right: 78px;font-size: 15px;">为保障您的账号安全，请输入验证码</p>
+		<div class="marTop20"></div>
+		<div class="DySearch" style="width:303px;padding-left:16px;" id="randomIdentifyCodeInp">
+			<div class="DySeleft fl" style="border:none;">
+				<input type="text" class="Inp fl" id="identifyCodeRandom" name="identifyCodeRandom" style="width:138px;border:1px solid #ccc;border-radius:4px;" placeholder="请输入验证码" vlaue="" autofocus="autofocus">
+				<img src="/mooc-ans/verifyCode/studychapter" class="fl" width="93" height="28" name="chapterNumVerCode" style="display: block; position: absolute; left: 210px;">
+				<a href="javascript:" style="float:right; font-size: 9pt; color: #7b9e31; text-decoration: underline;line-height:30px;">看不清</a>
+			</div>
+		</div>
+		<div class="marTop30" id="startTestDiv">
+			<a class="bluebtn" href="javascript:void(0)">继续学习</a>
+		</div>
+	</div>
+</div>
+
+
+<div style="width:385px; height:144px;display:none;" class="AlertCon02" id="chapterVerificationCodeTip">
+	<h3 class="clearfix"><a class="closed02 fr" href="javascript:void(0)"></a></h3>
+	<div class="con03">
+		<p id="tipIdentifyCode">验证码不正确，请重新输入</p>
+		<div class="marTop30">
+			<a class="bluebtn" href="javascript:void(0)">确定</a>
+		</div>
+	</div>
+</div>
+<div class="maskDiv popDeleShowHide maskFadeOut" style="display: none" id="saveTips">
+	<div class="popDiv wid440 popMove">
+		<div class="popHead">
+			<a href="javascript:" class="popClose fr popMoveDele"><img src="//mooc1.chaoxing.com/mooc-ans/images/courselist/qr-fc-popClose.png"></a>
+			<p class="fl fs18 colorDeep">提示</p>
+		</div>
+		<div class="het62"></div>
+		<p class="popWord2 fs16 colorIn" id="noteSaveTips">您还有章节笔记未保存，是否保存？</p>
+		<div class="popBottom">
+			<a href="javascript:" class="jb_btn jb_btn_92 fr fs14" id="batchdelete">保存</a>
+			<a href="javascript:" class="btnBlue btn_92_cancel fr fs14 popMoveDele">不保存</a>
+		</div>
+		<div class="het72"></div>
+	</div>
+</div>
+<div id="cozeAskId"></div>
+
+<input type="hidden" name="jumpCount" id="jumpCount" value="0">
+<input type="hidden" name="jumpType" id="jumpType" value="0">
+<input type="hidden" name="curcount" id="curcount" value="0">
+<input type="hidden" name="currentTime" id="currentTime" value="1789806699298">
+<input type="hidden" name="uploadEnc" id="uploadEnc" value="1c5992434c2117f9764eb5429413f8a4">
+<input type="hidden" name="uploadUid" id="uploadUid" value="396107038">
+
+
+
+
+
+
+
+
+
+
+<link href="//mooc1.chaoxing.com/mooc-ans/css/courselist/popwin.css?v=2025-0424-1038" rel="stylesheet" type="text/css">
+<link href="//mooc1.chaoxing.com/mooc-ans/css/note/chapterNote.css" rel="stylesheet" type="text/css">
+
+
+<input type="hidden" id="currentTime" value="1789806699298">
+<input type="hidden" id="uploadEnc" value="1c5992434c2117f9764eb5429413f8a4">
+<input type="hidden" id="uploadUid" value="396107038">
+
+<div class="maskDiv jobCountDiv" style="display:none; z-index: 999">
+	<input type="hidden" id="delTopicId" value="">
+	<div class="popDiv wid440 popMove">
+		<div class="popHead">
+			<a href="javascript:" class="popClose fr">
+				<img src="//mooc1.chaoxing.com/mooc-ans/mooc2/images/popClose.png">
+			</a>
+			<p class="fl fs18 colorDeep" style="font-weight:normal;">提示</p>
+		</div>
+		<div class="het62"></div>
+		<p class="popWord2 fs16 colorIn jobLimitTip">今日视频任务点完成数已达上限，您可以观看视频，但无法完成任务点</p>
+		<p class="popWord2 fs16 colorIn videoLimitTip">今日视频观看时长已达上限，您可继续观看视频，但无法完成任务点</p>
+		<div class="popBottom">
+			<a href="javascript:" class="jb_btn jb_btn_92 fr fs14">知道了</a>
+		</div>
+		<div class="het72"></div>
+	</div>
+</div>
+<div class="maskDivReport " style="z-index:10000;display:none;">
+	<div class="popDiv wid640 popClass">
+		<div class="popHead">
+			<p class="fl">举报</p>
+			<a href="javascript:;" class="popClose fr"><img src="//mooc1.chaoxing.com/mooc-ans/images/courselist/qr-fc-popClose.png"></a>
+		</div>
+		<div class="het62">
+		</div>
+		<div class="perspective">
+			<div class="page" style="display: block;">
+				<div class="popMain" style="padding-top:0">
+					<form id="reportForm" method="post" target="reportFrame">
+						<input type="hidden" name="type" id="reportType" value="">
+						<input type="hidden" name="sourceIdstr" id="reportSourceIdstr" value="">
+						<input type="hidden" name="sourceContent" id="reportSourceContent" value="">
+					</form>
+					<iframe name="reportFrame" width="638px" height="420px;" src="" id="reportFrame" frameborder="0"></iframe>
+				</div>
+			</div>
+		</div>
+	</div>
+</div>
+			
+
+<div id="mobileBrowerLearnMask" style="display:none;z-index: 20000;">
+    <div class="popDiv">
+		<p class="popCenter padTop60">手机浏览器无法记录您的学习信息，为保证学习成绩，请使用学习通App进行学习</p>
+		<div class="Btmdiv">
+			<a href="javascript:;" class="cancle">取消</a>
+			<a href="javascript:;">打开学习通</a>
+		</div>
+	</div>		
+</div>	
+			
+
+<div class="customMaskDiv" style="z-index:10000;display:none">
+    <div class="popDiv2 wid640 customFrameDiv">
+        <iframe src="" id="popFrameId" style="width:640px; height:480px;"></iframe>
+    </div>
+</div>
+
+<div class="customMaskDiv2" style="z-index:10000;display:none">
+    <div class="popDiv3 wid640">
+        <iframe src="" id="hidePopFrameId" style="width:495px; height:375px;"></iframe>
+    </div>
+</div><div class="voteContainer">
+	<iframe width="100%" height="100%" src="" id="voteIframe" frameborder="0"></iframe>
+</div>
+<div id="aiAssistantId"></div>
+
+	
+
+	
+
+<div id="imgtoolWrap" style="display:none"><div class="inlineblock" id="imgpage"><div class="imgbtn" id="imgPrev"><div class="bntHoverTips">上一页<i></i></div></div><div class="imgtext" id="pagenum"><span id="nowImgIndex"></span>/<span id="imgTotalNum"></span></div><div class="imgbtn" id="imgNext"><div class="bntHoverTips">下一页<i></i></div></div><div class="split"></div></div> <div class="imgzoom"><div class="imgbtn" id="imgZoomOut"><div class="bntHoverTips">缩小<i></i></div></div><div class="imgtext" id="imgZoomNum"></div><div class="imgbtn" id="imgZoomIn"><div class="bntHoverTips">放大<i></i></div></div><div class="imgbtn" id="img1-1"><div class="bntHoverTips">1:1<i></i></div></div><div class="imgbtn hide" id="imgFit"><div class="bntHoverTips">适应页面<i></i></div></div></div><div class="imgbtn" id="imgDownload"><div class="bntHoverTips">下载<i></i></div></div><div class="split"></div><div class="imgbtn" id="imgEdit" style="display: none;"><div class="bntHoverTips">编辑<i></i></div></div><div class="inlineblock imgEditBtns"><div class="imgbtn" id="imgDrawRect"><div class="bntHoverTips">矩形<i></i></div></div><div class="imgbtn" id="imgDrawCircle"><div class="bntHoverTips">圆形<i></i></div></div><div class="imgbtn hide" id="imgDrawArrow"><div class="bntHoverTips">箭头<i></i></div></div><div class="imgbtn" id="imgDrawLine"><div class="bntHoverTips">画笔<i></i></div></div><div class="imgbtn hide" id="imgDrawMasic"><div class="bntHoverTips">马赛克<i></i></div></div><div class="imgbtn" id="imgDrawText"><div class="bntHoverTips">文字<i></i></div></div><div class="imgbtn" id="imgCrop"><div class="bntHoverTips">裁剪<i></i></div></div></div><div class="imgbtn" id="imgRotate"><div class="bntHoverTips">旋转<i></i></div></div><div class="inlineblock imgEditBtns"><div class="imgbtn disabled" id="imgUndo"><div class="bntHoverTips">撤回<i></i></div></div><div class="imgbtn disabled" id="imgRedo"><div class="bntHoverTips">后退<i></i></div></div><div class="imgbtn hide" id="imgCancle"><div class="bntHoverTips">取消<i></i></div></div><div class="imgbtn hide" id="imgApply"><div class="bntHoverTips">应用<i></i></div></div></div><div class="imgbtn" id="imgReport"><div class="bntHoverTips">举报<i></i></div></div> <div class="imgtext" id="imgCancleEdit"><p>取消</p></div> <div class="imgtext" id="imgSure"><p>确定</p><div class="surePop"><p id="imgCopy">复制</p><p id="imgForward">转发</p><p id="imgReplace">替换原图</p><p id="imgSaveCloud">保存到云盘</p></div></div><div id="editSubMenu"><div class="widthList"><p class="point active"></p><p class="point"></p><p class="point"></p></div><div class="fontWrap"><p class="fontText"><span id="fontSize">12px</span><i></i></p><div class="fontList"><p class="font">12px</p><p class="font">16px</p><p class="font">24px</p><p class="font">36px</p><p class="font active">48px</p><p class="font">60px</p><p class="font">78px</p><p class="font">96px</p></div></div><div class="split"></div><div class="colorList"><p class="color active"></p><p class="color"></p><p class="color"></p><p class="color"></p><p class="color"></p><p class="color"></p><p class="color"></p></div></div></div></body></html>

@@ -23,7 +23,7 @@
 .dialog-panel {
   background: var(--platform-config-dialog-bg);
   border: 1px solid var(--platform-config-dialog-border);
-  border-radius: 12px;
+  border-radius: 16px;
   width: 90%;
   max-width: 600px;
   max-height: 90vh;
@@ -138,6 +138,18 @@
   opacity: 0.85;
 }
 
+/* --- 表单弹窗布局 --- */
+.account-dialog { width: 440px; max-width: calc(100vw - 32px); }
+.account-dialog-footer { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding-top: 4px; }
+.account-dialog-cancel { border: none; border-radius: 999px; padding: 6px 14px; font-size: 14px; font-weight: 500; background: color-mix(in srgb, var(--text-primary) 10%, var(--platform-config-dialog-bg)); color: var(--text-primary); cursor: pointer; transition: background-color 150ms ease; }
+.account-dialog-cancel:focus-visible { outline: 2px solid var(--color-primary, #3b82f6); outline-offset: 2px; }
+@media (hover: hover) and (pointer: fine) {
+  .account-dialog-cancel:hover { background: color-mix(in srgb, var(--text-primary) 15%, var(--platform-config-dialog-bg)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .account-dialog-cancel { transition: none; }
+}
+
 /* ============================================================
  * 表单样式
  * ============================================================ */
@@ -207,7 +219,7 @@
 .marketplace-panel {
   background: var(--platform-config-dialog-bg);
   border: 1px solid var(--platform-config-dialog-border);
-  border-radius: 12px;
+  border-radius: 16px;
   box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
   width: 92vw;
   max-width: 1100px;
@@ -555,6 +567,38 @@
 @keyframes overlay-fade-in {
   from { opacity: 0; }
   to { opacity: 1; }
+}
+
+/* Vue Transition：用 keyframes 进出场（WebKit 里 animation fill 会锁住 transition） */
+.dialog-overlay.dialog-overlay--vue,
+.dialog-overlay.dialog-overlay--vue .dialog-panel {
+  animation: none;
+}
+
+.dialog-overlay.dialog-overlay--vue.dialog-fade-enter-active {
+  animation: overlay-fade-in 180ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+.dialog-overlay.dialog-overlay--vue.dialog-fade-leave-active {
+  animation: overlay-fade-in 180ms cubic-bezier(0.2, 0.7, 0.2, 1) reverse both;
+  pointer-events: none;
+}
+
+.dialog-overlay.dialog-overlay--vue.dialog-fade-enter-active .dialog-panel {
+  animation: popup-in 180ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+.dialog-overlay.dialog-overlay--vue.dialog-fade-leave-active .dialog-panel {
+  animation: popup-in 180ms cubic-bezier(0.2, 0.7, 0.2, 1) reverse both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dialog-overlay.dialog-overlay--vue.dialog-fade-enter-active,
+  .dialog-overlay.dialog-overlay--vue.dialog-fade-leave-active,
+  .dialog-overlay.dialog-overlay--vue.dialog-fade-enter-active .dialog-panel,
+  .dialog-overlay.dialog-overlay--vue.dialog-fade-leave-active .dialog-panel {
+    animation: none;
+  }
 }
 
 @keyframes picker-expand {

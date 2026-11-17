@@ -1,0 +1,697 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>解析器演示</title>
+<style>
+  :root {
+    --paper: #f3efe7;
+    --ink: #1f1a17;
+    --muted: #6f675f;
+    --line: #e4ddd2;
+    --card: #fffcf8;
+    --green: #1f6b4a;
+    --green-wash: #e5f2eb;
+    --amber: #8a5a12;
+    --amber-wash: #f8efd8;
+    --danger: #8d2f2f;
+    --danger-wash: #f8e8e4;
+    --shadow: 0 16px 40px rgba(48, 36, 24, 0.08);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font: 15px/1.5 "SF Pro Text", "PingFang SC", "Hiragino Sans GB", sans-serif;
+  }
+  button, input { font: inherit; color: inherit; }
+  button { cursor: pointer; }
+  button:active { transform: scale(0.98); }
+  button:focus-visible { outline: 2px solid var(--green); outline-offset: 3px; }
+
+  .wrap {
+    max-width: 1080px;
+    margin: 0 auto;
+    padding: 28px 24px 40px;
+  }
+
+  .kicker {
+    margin: 0 0 6px;
+    color: var(--muted);
+    font-size: 12px;
+    letter-spacing: 0.08em;
+  }
+  h1 {
+    margin: 0;
+    font-family: "Iowan Old Style", Palatino, "Songti SC", serif;
+    font-size: 32px;
+    font-weight: 560;
+    letter-spacing: -0.02em;
+    line-height: 1.2;
+  }
+  .lede { margin: 8px 0 0; color: var(--muted); max-width: 46em; }
+
+  .toolbar, .actions {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  .toolbar { justify-content: space-between; margin-top: 22px; }
+  .actions { gap: 14px; }
+  .steps { display: flex; gap: 6px; margin: 0; padding: 0; list-style: none; }
+  .steps button {
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--muted);
+    border-radius: 999px;
+    padding: 6px 10px;
+  }
+  .steps button.on {
+    background: var(--card);
+    color: var(--ink);
+    border-color: var(--line);
+  }
+  .steps button:disabled { opacity: 0.35; cursor: default; transform: none; }
+
+  .primary {
+    border: 0;
+    background: var(--ink);
+    color: #faf7f2;
+    border-radius: 999px;
+    padding: 8px 16px;
+  }
+  .ghost {
+    border: 0;
+    background: transparent;
+    color: var(--muted);
+    padding: 8px 0;
+  }
+  .ghost:hover { color: var(--ink); }
+
+  .stage {
+    display: grid;
+    grid-template-columns: minmax(0, 1.05fr) minmax(320px, 0.95fr);
+    gap: 16px;
+    margin-top: 18px;
+    align-items: start;
+  }
+
+  .browser, .side {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    box-shadow: var(--shadow);
+    overflow: hidden;
+  }
+
+  .chrome {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    background: #2a2622;
+    color: #f3efe7;
+  }
+  .dots { display: flex; gap: 5px; }
+  .dots i { width: 8px; height: 8px; border-radius: 50%; background: #6a635c; display: block; }
+  .url {
+    flex: 1;
+    background: #3a342f;
+    border-radius: 8px;
+    padding: 5px 10px;
+    font: 12px/1.4 ui-monospace, "SF Mono", Menlo, monospace;
+    color: #efe7dc;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .node {
+    font-size: 11px;
+    color: #c8bfb4;
+    white-space: nowrap;
+  }
+
+  .viewport { padding: 18px 18px 8px; }
+  .brand {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 18px;
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .brand b { color: var(--green); font-weight: 650; letter-spacing: 0.04em; }
+  .page-title { margin: 0 0 14px; font-size: 22px; font-weight: 640; }
+  .course-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+  .course-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 13px 14px;
+    border: 1px solid #efe8dc;
+    border-radius: 12px;
+    background: #fff;
+    transition: border-color 180ms ease-out, background 180ms ease-out, transform 180ms ease-out;
+  }
+  .course-name { color: inherit; text-decoration: none; font-weight: 620; }
+  .course-status {
+    font-size: 12px;
+    padding: 3px 8px;
+    border-radius: 999px;
+    background: var(--green-wash);
+    color: var(--green);
+    white-space: nowrap;
+  }
+  .course-status.wait { background: #f3efe7; color: var(--muted); }
+  .course-item.hit { border-color: #b7d7c8; background: #f4fbf7; }
+  .course-item.aim { border-color: var(--green); background: var(--green-wash); }
+  .demo-tag {
+    margin-left: auto;
+    font-size: 11px;
+    padding: 2px 7px;
+    border-radius: 999px;
+    background: var(--amber-wash);
+    color: var(--amber);
+  }
+
+  .chip {
+    display: inline-block;
+    margin: 14px 0 4px;
+    padding: 4px 8px;
+    border-radius: 8px;
+    background: #f7f3ec;
+    color: var(--muted);
+    font: 12px/1.4 ui-monospace, "SF Mono", Menlo, monospace;
+  }
+
+  .detail { padding: 8px 4px 12px; }
+  .detail .back { color: var(--green); text-decoration: none; font-size: 13px; }
+  .detail h2 { margin: 18px 0 8px; font-size: 28px; font-family: "Iowan Old Style", Palatino, "Songti SC", serif; font-weight: 560; }
+  .detail p { margin: 0; color: var(--muted); }
+
+  .side { display: flex; flex-direction: column; }
+  .side-body { padding: 16px; flex: 1; }
+  .side h2 { margin: 16px 0 8px; font-size: 13px; font-weight: 620; color: var(--muted); }
+  .side-body > h2:first-child { margin-top: 0; }
+  pre {
+    margin: 0;
+    padding: 12px;
+    background: #f7f3ec;
+    border-radius: 12px;
+    overflow: auto;
+    font: 12px/1.55 ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  .works { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+  .work {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    align-items: center;
+    padding: 8px 12px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+  }
+  .work small { color: var(--muted); margin-left: 8px; }
+  .tag {
+    font-size: 11px;
+    padding: 2px 7px;
+    border-radius: 999px;
+    background: var(--amber-wash);
+    color: var(--amber);
+    white-space: nowrap;
+  }
+  .tag.ok { background: var(--green-wash); color: var(--green); }
+  .tag.bad { background: var(--danger-wash); color: var(--danger); }
+  .queries { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 6px; }
+  .query {
+    display: grid;
+    grid-template-columns: 16px 36px minmax(0, 1fr) auto;
+    gap: 8px;
+    align-items: baseline;
+    padding: 8px 10px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    font: 12px/1.45 ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  .query.on { border-color: #b7d7c8; background: #f4fbf7; }
+  .query .by { color: var(--muted); }
+  .query .value { overflow-wrap: anywhere; }
+  .note { margin: 8px 0 0; color: var(--muted); font-size: 12px; }
+  .call {
+    margin: 0 0 12px;
+    padding: 10px 12px;
+    border-radius: 12px;
+    background: #241f1c;
+    color: #f3efe7;
+    font: 12px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
+    white-space: pre;
+  }
+  .issues { margin: 8px 0 0; padding: 0; list-style: none; color: var(--danger); font-size: 13px; }
+  .side-foot {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 16px 14px;
+  }
+  .foot {
+    margin: 14px 2px 0;
+    color: var(--muted);
+    font-size: 12px;
+  }
+
+  @media (max-width: 860px) {
+    .stage { grid-template-columns: 1fr; }
+    .toolbar { flex-direction: column; align-items: stretch; }
+    h1 { font-size: 26px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .course-item { transition: none; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <p class="kicker">ZError · 站点解析器</p>
+  <h1 id="headline"></h1>
+  <p class="lede" id="lede"></p>
+  <div class="toolbar">
+    <ol class="steps" id="steps"></ol>
+    <div class="actions">
+      <button class="ghost" id="miss" type="button" hidden>抄一句页面上没有的</button>
+      <button class="primary" id="next" type="button"></button>
+    </div>
+  </div>
+  <div class="stage">
+    <section class="browser" id="browser"></section>
+    <section class="side" id="side"></section>
+  </div>
+  <p class="foot">see.json → schema → 出卡时反推 card.locators → browser_invoke 按定位点。列表项不另写一份 locators.json。</p>
+</div>
+
+<template id="fixture">
+  <div class="portal">
+    <div class="brand"><b>智慧树</b><span>我的学习</span></div>
+    <h1 class="page-title">我的课程</h1>
+    <ul class="course-list">
+      <li class="course-item" data-course-id="1001">
+        <a class="course-name" href="/course/1001">高等数学（一）</a>
+        <span class="course-status">进行中</span>
+      </li>
+      <li class="course-item" data-course-id="1002">
+        <a class="course-name" href="/course/1002">线性代数</a>
+        <span class="course-status wait">未开始</span>
+      </li>
+      <li class="course-item" data-course-id="1003">
+        <a class="course-name" href="/course/1003">概率论与数理统计</a>
+        <span class="course-status">进行中</span>
+      </li>
+    </ul>
+  </div>
+</template>
+
+<script>
+const SAMPLE = ['高等数学（一）', '线性代数']
+const EXTRA = '概率论与数理统计'
+const STEPS = [
+  { id: 'see', label: '抄值' },
+  { id: 'induce', label: '归纳' },
+  { id: 'card', label: '出卡' },
+  { id: 'invoke', label: '点开' },
+]
+const COPY = {
+  see: ['从页面上抄两行原文', 'Agent 把看见的课名和状态写进 see.json。第三门课留在页面上，不写进样例。'],
+  induce: ['宿主对着 fixture 归纳', '找到原文所在的节点，升到有同类兄弟的那一行，编成 schema。点哪儿先不写，出卡时再反推 locators。'],
+  card: ['干跑读出整张表', '同一条选择器罩住三行。每一行附上 locators：先按序号点这行，课名文本是兜底。'],
+  invoke: ['按 locators 点开那门课', 'browser_invoke 只交 work handle。引擎按卡上的 locators 依次试，先命中的那条负责点。'],
+  miss: ['页面上没有这句原文', '归纳停住。改回页面上真实出现的句子，再继续。'],
+}
+
+const $ = (sel) => document.querySelector(sel)
+const fixtureHtml = $('#fixture').innerHTML
+let step = 'see'
+let broken = false
+let opened = false
+let timer = 0
+
+function el(tag, attrs, kids) {
+  const node = document.createElement(tag)
+  for (const [key, value] of Object.entries(attrs || {})) {
+    if (key === 'class') node.className = value
+    else if (key === 'text') node.textContent = value
+    else node.setAttribute(key, value)
+  }
+  for (const kid of kids || []) node.append(kid)
+  return node
+}
+
+function squash(value) {
+  return String(value ?? '').replace(/\s+/g, ' ').trim()
+}
+
+function seeDoc() {
+  const first = broken ? '量子力学' : '高等数学（一）'
+  return {
+    page: 'list',
+    see: {
+      title: '我的课程',
+      works: [
+        { title: first, status: '进行中' },
+        { title: '线性代数', status: '未开始' },
+      ],
+    },
+    click: { work: 'title' },
+  }
+}
+
+function findHits(scope, want) {
+  const target = squash(want)
+  const hits = []
+  for (const node of scope.querySelectorAll('*')) {
+    const text = squash(node.textContent)
+    if (text === target) hits.push({ el: node, score: 70 - node.querySelectorAll('*').length })
+    else if (target.length >= 4 && text.includes(target)) hits.push({ el: node, score: 40 - node.querySelectorAll('*').length })
+  }
+  hits.sort((a, b) => b.score - a.score)
+  return hits
+}
+
+function raiseToRepeating(node) {
+  let current = node
+  while (current.parentElement) {
+    const parent = current.parentElement
+    const classes = [...current.classList]
+    for (const name of classes) {
+      const sig = `${current.tagName.toLowerCase()}.${CSS.escape(name)}`
+      const similar = [...parent.children].filter((child) => child.matches?.(sig))
+      if (similar.length >= 2) return current
+    }
+    if (parent.tagName === 'BODY' || parent.tagName === 'HTML') return current
+    current = parent
+  }
+  return current
+}
+
+function coverRow(root, row) {
+  const hits = {}
+  for (const [name, value] of Object.entries(row)) {
+    const hit = findHits(root, value)[0]
+    if (!hit) return null
+    hits[name] = hit
+  }
+  return hits
+}
+
+function smallestCover(scope, row) {
+  const idHits = findHits(scope, row.title)
+  let best = null
+  for (const idHit of idHits) {
+    let node = idHit.el
+    while (node) {
+      if (coverRow(node, row)) {
+        const root = raiseToRepeating(node)
+        const size = squash(root.textContent).length
+        if (!best || size < best.size) best = { root, size }
+        break
+      }
+      node = node.parentElement
+    }
+  }
+  return best
+}
+
+function eachSelector(roots) {
+  const tags = new Set(roots.map((node) => node.tagName.toLowerCase()))
+  const sets = roots.map((node) => new Set(node.classList))
+  const shared = [...sets[0]].filter((name) => sets.every((set) => set.has(name)))
+  const tag = tags.size === 1 ? [...tags][0] : ''
+  const sig = `${tag}${shared.map((name) => `.${CSS.escape(name)}`).join('')}`
+  let parent = roots[0]
+  while (parent && !roots.every((node) => parent === node || parent.contains(node))) parent = parent.parentElement
+  if (parent && !roots.includes(parent) && parent.tagName !== 'BODY') {
+    const prefix = parent.id ? `#${CSS.escape(parent.id)}` : (parent.classList[0] ? `.${CSS.escape(parent.classList[0])}` : parent.tagName.toLowerCase())
+    const prefixed = `${prefix} ${sig}`
+    const hits = [...parent.ownerDocument.querySelectorAll(prefixed)]
+    if (roots.every((node) => hits.includes(node))) return prefixed
+  }
+  return sig
+}
+
+function rel(root, node) {
+  if (root === node) return '.'
+  for (const name of node.classList) {
+    const sel = `.${CSS.escape(name)}`
+    if (root.querySelectorAll(sel).length === 1) return sel
+  }
+  const tagged = node.tagName.toLowerCase() + [...node.classList].map((name) => `.${CSS.escape(name)}`).join('')
+  return tagged
+}
+
+function induce(doc, see) {
+  const ambiguous = []
+  const rows = see.see.works
+  const covers = []
+  for (let i = 0; i < rows.length; i++) {
+    if (!findHits(doc, rows[i].title).length) {
+      ambiguous.push(`works[${i}].title 页面上找不到「${rows[i].title}」`)
+      return { ok: false, ambiguous, schema: null, card: null }
+    }
+    const cover = smallestCover(doc, rows[i])
+    if (!cover) {
+      ambiguous.push(`works[${i}] 找不到同时包含课名和状态的一行`)
+      return { ok: false, ambiguous, schema: null, card: null }
+    }
+    covers.push(cover.root)
+  }
+  const each = eachSelector(covers)
+  const sample = covers[0]
+  const titleHit = findHits(sample, rows[0].title)[0]
+  const statusHit = findHits(sample, rows[0].status)[0]
+  const anchor = sample.querySelector('a[href]')
+  const fields = {
+    title: rel(sample, titleHit.el),
+    status: rel(sample, statusHit.el),
+  }
+  if (anchor) fields.href = `${rel(sample, anchor)}@href`
+  const titleExpr = rel(doc.documentElement, findHits(doc, see.see.title)[0].el)
+  const schema = {
+    pages: [{
+      page: see.page,
+      match: { text: see.see.title },
+      confidence: 0.9,
+      fields: {
+        title: titleExpr,
+        works: { each, click: see.click.work, fields, require: ['title'] },
+      },
+    }],
+  }
+  const card = applySchema(doc, schema)
+  return { ok: card.ok && !ambiguous.length, ambiguous, schema, card, each }
+}
+
+function readExpr(root, expr) {
+  const at = String(expr).split('@')
+  const sel = at[0] === '.' ? '' : at[0]
+  const node = sel ? root.querySelector(sel) : root
+  if (!node) return ''
+  const value = at[1] ? (node.getAttribute(at[1]) || '') : squash(node.textContent)
+  return value.trim()
+}
+
+function applySchema(doc, schema) {
+  const page = schema.pages[0]
+  const worksField = page.fields.works
+  const rows = [...doc.querySelectorAll(worksField.each)].map((node) => {
+    const row = {}
+    for (const [name, expr] of Object.entries(worksField.fields)) row[name] = readExpr(node, expr)
+    return row
+  }).filter((row) => row.title)
+  return {
+    ok: rows.length > 0,
+    page: page.page,
+    role: 'list',
+    confidence: page.confidence,
+    title: readExpr(doc.documentElement, page.fields.title),
+    works: rows,
+    handles: rows.map((row) => ({ kind: 'work', title: row.title })),
+    locators: rows.map((row, index) => ({
+      handle: { kind: 'work', title: row.title },
+      queries: [
+        { by: 'css', value: worksField.each, nth: index + 1 },
+        { by: 'text', value: row.title },
+      ],
+    })),
+  }
+}
+
+function queriesOf(title) {
+  return result.card?.locators?.find((item) => item.handle.title === title) || null
+}
+
+function queryList(locator, hit) {
+  return el('ol', { class: 'queries' }, locator.queries.map((query, index) => el('li', { class: hit === index ? 'query on' : 'query' }, [
+    el('span', { text: String(index + 1) }),
+    el('span', { class: 'by', text: query.by }),
+    el('span', { class: 'value', text: query.nth ? `${query.value} · nth ${query.nth}` : query.value }),
+    el('span', { class: 'by', text: hit === index ? '命中' : '' }),
+  ])))
+}
+
+function run() {
+  const doc = new DOMParser().parseFromString(`<body>${fixtureHtml}</body>`, 'text/html')
+  return induce(doc, seeDoc())
+}
+
+function go(next) {
+  window.clearTimeout(timer)
+  step = next
+  if (next !== 'invoke') opened = false
+  render()
+  if (next === 'invoke' && result.ok) {
+    const delay = matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 700
+    timer = window.setTimeout(() => { opened = true; render() }, delay)
+  }
+}
+
+function reset() {
+  broken = false
+  opened = false
+  go('see')
+}
+
+let result = run()
+
+function renderSteps() {
+  const list = $('#steps')
+  list.replaceChildren()
+  for (const item of STEPS) {
+    const late = item.id === 'card' || item.id === 'invoke'
+    const button = el('button', { type: 'button', class: item.id === step ? 'on' : '', text: item.label })
+    if (late && !result.ok) button.disabled = true
+    button.addEventListener('click', () => { if (!button.disabled) go(item.id) })
+    list.append(el('li', {}, [button]))
+  }
+}
+
+function renderBrowser() {
+  const url = opened ? 'online.zhihuishu.com/course/1003' : 'online.zhihuishu.com/student/course'
+  const chrome = el('div', { class: 'chrome' }, [
+    el('div', { class: 'dots' }, [el('i'), el('i'), el('i')]),
+    el('div', { class: 'url', text: url }),
+    el('div', { class: 'node', text: opened ? 'work' : 'course-list · list' }),
+  ])
+  const view = el('div', { class: 'viewport' })
+  if (opened) {
+    const back = el('a', { class: 'back', href: '#', text: '返回课程列表' })
+    back.addEventListener('click', (event) => {
+      event.preventDefault()
+      window.clearTimeout(timer)
+      opened = false
+      render()
+    })
+    view.append(el('div', { class: 'detail' }, [
+      back,
+      el('h2', { text: EXTRA }),
+      el('p', {}, [el('span', { class: 'course-status', text: '进行中' })]),
+    ]))
+  } else {
+    view.innerHTML = fixtureHtml
+    const aim = step === 'invoke'
+    for (const item of view.querySelectorAll('.course-item')) {
+      const title = squash(item.querySelector('.course-name').textContent)
+      const copied = seeDoc().see.works.some((row) => row.title === title)
+      if (aim && title === EXTRA) item.classList.add('aim')
+      else if (step === 'see' && copied) item.classList.add('hit')
+      else if (step === 'see' && !copied) item.querySelector('.course-status').before(el('span', { class: 'demo-tag', text: '未抄' }))
+      else if (result.ok) item.classList.add('hit')
+    }
+    if (step === 'see') view.append(el('p', { class: 'chip', text: '样例只抄前两行' }))
+    else if (result.each) view.append(el('p', { class: 'chip', text: result.each }))
+  }
+  $('#browser').replaceChildren(chrome, view)
+}
+
+function jsonBlock(value) {
+  return el('pre', { text: JSON.stringify(value, null, 2) })
+}
+
+function renderSide() {
+  const body = el('div', { class: 'side-body' })
+  const miss = $('#miss')
+  miss.hidden = broken || (step !== 'see' && step !== 'induce')
+  miss.textContent = '抄一句页面上没有的'
+
+  if (step === 'see') {
+    body.append(el('h2', { text: 'see.json' }), jsonBlock(seeDoc()))
+  } else if (step === 'induce') {
+    body.append(el('h2', { text: result.ok ? 'schema.json' : 'ambiguous' }))
+    if (result.ok) body.append(jsonBlock(result.schema))
+    else body.append(el('ul', { class: 'issues' }, result.ambiguous.map((item) => el('li', { text: item }))))
+  } else if (step === 'card') {
+    const seen = new Set(SAMPLE)
+    body.append(
+      el('h2', { text: 'get_state.card' }),
+      el('ul', { class: 'works' }, result.card.works.map((row) => el('li', { class: 'work' }, [
+        el('span', {}, [document.createTextNode(row.title), el('small', { text: row.status })]),
+        el('span', { class: seen.has(row.title) ? 'tag ok' : 'tag', text: seen.has(row.title) ? '样例' : '样例之外' }),
+      ]))),
+      el('div', { class: 'call', text: 'contract · list · ok · confidence 0.9' }),
+      el('h2', { text: 'card.locators · 概率论与数理统计' }),
+      queryList(queriesOf(EXTRA), -1),
+      el('p', { class: 'note', text: '另外两门同样各有一份。序号在前，课名文本在后。' }),
+    )
+  } else {
+    const locator = queriesOf(EXTRA)
+    body.append(
+      el('h2', { text: 'browser_invoke' }),
+      el('div', { class: 'call', text: 'browser_invoke({\n  kind: "work",\n  title: "概率论与数理统计"\n})' }),
+      el('h2', { text: 'locators' }),
+      queryList(locator, opened ? 0 : -1),
+      el('p', { class: 'note', text: opened ? '第 1 条命中第 3 个 .course-item，点开这一行。' : '先试第 1 条。' }),
+    )
+  }
+  $('#side').replaceChildren(body)
+}
+
+function render() {
+  result = run()
+  const miss = !result.ok && step === 'induce'
+  const [title, lede] = miss ? COPY.miss : COPY[step]
+  $('#headline').textContent = title
+  $('#lede').textContent = lede
+  const next = $('#next')
+  if (miss) next.textContent = '改回原文'
+  else if (step === 'see') next.textContent = '归纳'
+  else if (step === 'induce') next.textContent = '出卡'
+  else if (step === 'card' || (step === 'invoke' && !opened)) next.textContent = '点开概率论'
+  else next.textContent = '再看一遍'
+  next.disabled = false
+  renderSteps()
+  renderBrowser()
+  renderSide()
+}
+
+$('#miss').addEventListener('click', () => {
+  broken = true
+  opened = false
+  window.clearTimeout(timer)
+  result = run()
+  render()
+})
+
+$('#next').addEventListener('click', () => {
+  if (!result.ok && step === 'induce') { broken = false; result = run(); render(); return }
+  const order = STEPS.map((item) => item.id)
+  const index = order.indexOf(step)
+  if (step === 'invoke' && !opened) { opened = true; window.clearTimeout(timer); render(); return }
+  if (step === 'invoke') reset()
+  else go(order[index + 1])
+})
+
+render()
+</script>
+</body>
+</html>

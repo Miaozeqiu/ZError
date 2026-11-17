@@ -1,170 +1,29 @@
-# ZError 自动更新发布说明（Windows / macOS）
+# ZError 自动更新发布说明
 
-本文说明如何用 **Tauri Updater** 做应用内更新，以及 API / CDN 需要适配的内容。  
-目标：用户**不必每次拖 DMG**；Windows / Mac 分端下载对应安装包。
+桌面端通过 Open 检查更新。Open 从 [ZError 主仓库的最新正式 Release](https://github.com/Miaozeqiu/ZError/releases/latest) 读取版本号、发布说明和附件，缓存约 5 分钟。安装包由客户端直接从 GitHub 下载。
 
----
+| 接口 | 用途 |
+| --- | --- |
+| `https://open.zerrorai.com/v1/app-updates/native/<target>/<arch>` | Tauri Updater 清单。当前系统与架构没有签名更新包时返回 HTTP 204 |
+| `https://open.zerrorai.com/v1/app-updates/latest` | 版本号、发布说明和各平台安装包地址 |
 
-## 1. 远程地址（测试版 / 正式版统一）
+客户端优先使用 Tauri Updater。下载后由 Tauri 使用内置公钥验证签名并安装整包。仅有对应的普通安装包时，客户端提供下载安装包，供用户手动安装。
 
-| 资源 | URL（客户端优先用 /live） | 旧路径（易被 EdgeOne HIT） |
-|------|---------------------------|----------------------------|
-| 模型列表 | `https://webapi.zaizhexue.top/live/models.json` | `/models.json` |
-| 回退下载 | `https://webapi.zaizhexue.top/live/latest_version.json` | `/latest_version.json` |
-| Tauri Updater | `https://webapi.zaizhexue.top/live/update.json` | `/update.json` |
+## 发布附件
 
-测试版与正式版**都使用**上述地址。数据流：ze-admin → ze-admin-backend（Postgres `app_config`）→ csid_backend → EdgeOne → 客户端。
+| 平台 | 手动安装 | 应用内更新 |
+| --- | --- | --- |
+| Windows x64 | `ZError_2.2.9_x64-setup.exe` | 同一文件与 `ZError_2.2.9_x64-setup.exe.sig` |
+| macOS Apple Silicon | `ZError_2.2.9_aarch64.dmg` | `ZError_2.2.9_aarch64.app.tar.gz` 及其 `.sig` |
+| macOS Intel | `ZError_2.2.9_x64.dmg` | `ZError_2.2.9_x64.app.tar.gz` 及其 `.sig` |
 
-客户端：`src-tauri/tauri.conf.json` → `plugins.updater.endpoints` →  
-`https://webapi.zaizhexue.top/live/update.json`
+文件名应标明架构，macOS 通用包用 `universal`。旧格式的 `ZError_Setup_2.2.5.exe` 仍按 Windows x64 安装包处理。修改更新包文件名时，签名文件也改成与更新包同名再加 `.sig`。如果重新打包，需对最终文件重新签名。
 
-配置拆成两份：
+## 发版
 
-- `latest_version.json`：回退下载 `downloadUrl` / `downloadUrlMac` / `downloadUrlWin`
-- `update.json`：Tauri Updater 的 `platforms` + `signature`
+1. 将发布提交合入 `master`，推送与 `src-tauri/tauri.conf.json` 版本一致的标签，例如 `v2.2.9`。GitHub Actions 会构建 Windows x64 NSIS 安装包并创建 Release 草稿。
+2. 下载草稿中的 Windows 安装包，用现有 Tauri 私钥在本机签名，例如 `npm exec -- tauri signer sign --private-key-path src-tauri/keys/zerror.key --password= ZError_2.2.9_x64-setup.exe`。用本机带 H.264/AAC 的 CEF 构建同版本 Apple Silicon DMG，将 Windows 的 `.sig` 和 macOS DMG 上传到草稿。
+3. 在 GitHub Actions 运行 `Build and publish release`，选择 `master` 并填写标签，例如 `gh workflow run release-windows.yml --ref master -f tag=v2.2.9`。流程会检查三个附件、验证 Windows 更新签名，然后发布正式 Release。
+4. 检查 Open 返回的版本和各架构下载链接，再用较旧且已接入 Open 更新接口的客户端验证更新，确认重新打开后的版本。
 
-发版后若根路径仍滞后：在 EdgeOne 对旧 URL 清缓存，并对这些 JSON 设 **no-cache / 禁止强制缓存**。
-
----
-
-## 2. 更新方式概览
-
-| 方式 | 条件 | 行为 |
-|------|------|------|
-| **Tauri Updater（优先）** | JSON 含合法 `platforms.*.signature` | 应用内下载并**原地替换**整包（含 Rust 内核） |
-| **回退下载** | 无 `platforms` 或校验失败 | 按系统下载 DMG/EXE 到「下载」文件夹 |
-
-- 更新的是**整个 `.app` / 安装包**，不是只热更新前端。
-- 用户数据（题库、设置）一般在 Application Support，**不会被覆盖**。
-- Mac **首次**仍建议用 DMG 装到「应用程序」；之后有签名包即可走 Updater。
-
----
-
-## 3. 平台产物对照
-
-| 平台 | 架构 key | 首次安装（可选） | 应用内更新（`platforms`） |
-|------|----------|------------------|---------------------------|
-| macOS Apple Silicon | `darwin-aarch64` | `ZError_x.y.z.dmg` | `*.app.tar.gz` + `*.sig` |
-| macOS Intel | `darwin-x86_64` | 同上或单独包 | `*.app.tar.gz` + `*.sig` |
-| Windows x64 | `windows-x86_64` | `ZError_Setup_x.y.z.exe` | 同一个 `.exe` + `.exe.sig` |
-
-安装包文件本身可仍托管在任意 CDN（例如 `app.zerror.cc/apps/...`），只要写进 JSON 的 `url` / `downloadUrl*` 即可。
-
----
-
-## 4. 签名构建（发版机）
-
-私钥（**勿提交 Git**）：
-
-```text
-src-tauri/keys/zerror.key
-src-tauri/keys/zerror.key.pub
-```
-
-```bash
-export TAURI_SIGNING_PRIVATE_KEY="$PWD/src-tauri/keys/zerror.key"
-export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""
-npm run tauri:build:signed
-```
-
-Windows（推荐，空密码下避免自动签名挂起）：
-
-```bat
-:: 私钥放在 src-tauri/keys/zerror.key
-npm run tauri:build:win
-:: 或直接: scripts\build-windows.cmd
-```
-
-产物：`src-tauri/target/release/bundle/nsis/ZError_*_x64-setup.exe` + `.sig`  
-**私钥丢失后旧客户端无法再接受新签名更新，请离线备份。**
-
----
-
-## 5. API：`latest_version.json` 完整示例
-
-路径：`https://webapi.zaizhexue.top/latest_version.json`  
-模板：`tmp/latest_version.json.example`
-
-```json
-{
-  "version": "2.2.7",
-  "notes": "更新说明…",
-  "changelog": "更新说明…",
-  "pub_date": "2026-08-08T12:00:00Z",
-  "downloadUrl": "https://app.zerror.cc/apps/ZError_Setup_2.2.7.exe",
-  "downloadUrlMac": "https://app.zerror.cc/apps/ZError_2.2.7.dmg",
-  "downloadUrlWin": "https://app.zerror.cc/apps/ZError_Setup_2.2.7.exe",
-  "platforms": {
-    "darwin-aarch64": {
-      "url": "https://app.zerror.cc/apps/ZError_2.2.7_aarch64.app.tar.gz",
-      "signature": "<ZError.app.tar.gz.sig 文件全文>"
-    },
-    "darwin-x86_64": {
-      "url": "https://app.zerror.cc/apps/ZError_2.2.7_x64.app.tar.gz",
-      "signature": "<对应 .sig 全文>"
-    },
-    "windows-x86_64": {
-      "url": "https://app.zerror.cc/apps/ZError_Setup_2.2.7.exe",
-      "signature": "<对应 .exe.sig 全文>"
-    }
-  }
-}
-```
-
-### 字段说明
-
-| 字段 | 用途 |
-|------|------|
-| `version` | SemVer |
-| `notes` / `changelog` | 更新说明（二选一或都写） |
-| `downloadUrl` / `downloadUrlMac` / `downloadUrlWin` | 回退手动下载 |
-| `platforms.*.url` | Updater 下载直链 |
-| `platforms.*.signature` | **必须是 `.sig` 全文**，不能是 URL |
-
-当前线上若只有旧字段（无 `platforms`），客户端会走回退下载；补齐签名后才启用应用内原地更新。
-
----
-
-## 6. 接口要求
-
-- HTTPS
-- `Content-Type: application/json`
-- 安装包 URL 可直链下载
-- 允许跨域 GET
-- **发版顺序：** 先上传包与 `.sig` → 再改 `latest_version.json` 的 `version`
-
----
-
-## 7. 发版 Checklist
-
-1. Mac：签名构建 → 上传 `.app.tar.gz`、`.sig`，可选 `.dmg`
-2. Windows：签名构建 → 上传 `.exe`、`.exe.sig`
-3. 把各 `.sig` **全文**写入 `latest_version.json` → `platforms`
-4. 填写 `downloadUrlMac` / `downloadUrlWin`
-5. 更新 `version` / `notes` / `changelog`
-6. 部署到 `https://webapi.zaizhexue.top/latest_version.json`
-7. 旧客户端验证：标题栏提示 → 安装/下载 → 重启后版本正确
-
----
-
-## 8. 客户端行为
-
-1. 启动读 `https://webapi.zaizhexue.top/latest_version.json`
-2. 有合法 `platforms` → Tauri 原地更新 → 提示重启
-3. 否则用 `downloadUrl*` 按 Win/Mac 下载安装包
-4. 「一周后提醒」只抑制弹窗
-
-相关代码：`src/services/versionCheck.ts`、`src/services/modelConfig.ts`、`src/composables/useAppUpdate.ts`
-
----
-
-## 9. 常见问题
-
-**Q: 测试版和正式版配置不同吗？**  
-A: 不不同，都指向 `webapi.zaizhexue.top`。
-
-**Q: 只更新前端还是连 Rust？**  
-A: 整包替换，Rust 内核一起更新。
-
-**Q: signature 能写文件路径吗？**  
-A: 不能，必须是 `.sig` 文本内容。
+保管好现有私钥。替换密钥会使旧客户端无法验证新签名。旧客户端使用随安装包内置的更新地址，接入 Open 的版本需要先安装一次。

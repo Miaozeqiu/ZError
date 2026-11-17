@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>push fixture</title>
+  <style>
+    body { font: 16px/1.4 sans-serif; padding: 24px; }
+    video { width: 320px; background: #111; }
+    .questionLi { margin: 12px 0; }
+  </style>
+</head>
+<body>
+  <video id="v" controls playsinline>
+    <source src="/e2e/tiny.webm" type="video/webm" />
+  </video>
+  <div class="questionLi">
+    <label class="answerBg"><input type="radio" name="q1" value="A" /> A</label>
+    <label class="answerBg"><input type="radio" name="q1" value="B" /> B</label>
+  </div>
+  <div class="questionLi">
+    <label class="answerBg"><input type="radio" name="q2" value="A" /> A</label>
+    <label class="answerBg"><input type="radio" name="q2" value="B" /> B</label>
+  </div>
+  <script>
+    setTimeout(function () {
+      var btn = document.createElement('button')
+      btn.id = 'late'
+      btn.textContent = '稍后按钮'
+      document.body.appendChild(btn)
+    }, 2000)
+  </script>
+</body>
+</html>

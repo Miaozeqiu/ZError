@@ -191,10 +191,10 @@ import { computed, ref, onMounted } from 'vue'
 import { useSettingsManager } from '../../composables/useSettingsManager'
 
 import { useTheme } from '../../composables/useTheme'
-import { environmentDetector } from '../../services/environmentDetector'
+import { environmentDetector } from '../../services/app/environmentDetector'
 import ThemeSwitch from './GeneralSettings/ThemeSwitch.vue'
-import Toggle from '../../components/Toggle.vue'
-import FolderPickerDialog from '../../components/FolderPickerDialog.vue'
+import Toggle from '../../components/ui/Toggle.vue'
+import FolderPickerDialog from '../../components/ui/FolderPickerDialog.vue'
 
 const emit = defineEmits<{
   'open-question-folder': [folderId: number]
@@ -262,7 +262,7 @@ const { settings, saveSettings, setSetting } = useSettingsManager()
 const canOpenQuestionSaveFolder = computed(() => settings.value.questionSaveFolderId !== null && settings.value.questionSaveFolderId !== undefined)
 
 
-const handleSettingChange = (key: keyof import('../../services/settings').AppSettings, value: any) => {
+const handleSettingChange = (key: keyof import('../../services/app/settings').AppSettings, value: any) => {
   setSetting(key, value)
 }
 

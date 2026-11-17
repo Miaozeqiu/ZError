@@ -1,0 +1,22 @@
+---
+description: 改功能时按层找文件，不要搜同名函数的三处实现
+alwaysApply: true
+---
+
+# 去哪改
+
+同名函数常有三处。先定层，再开文件。
+
+- **播不了 / 切视频 / 任务点**：先读 `logs/agent-chat/cx-study-live.md`。CDP 动作在 `src/services/chaoxing/study/`（`video.ts` / `chapters.ts`）。面板状态和定时器在 `src/services/chaoxing/browser/`（`chapters.ts` / `panelStudy.ts` / `watch.ts`）。进度监控挂载在 `watch.ts` 和 `browser/videoWatch.ts`。不要从 `appBrowser.ts` 找学习通动作，也不要再加平台适配器。
+- **作业题卡**：`src/services/chaoxing/homework/`。面板 `panelHomework.ts`。
+- **新站经验**：人写步骤在 `site-learn/sites/<host>/SKILL.md`，自动轨迹在 `agentLessons.ts`，注入在 `chatStudy.ts` / `browserLoop.ts`。原则见 `parser-agent.mdc`。
+- **学习通点哪儿**：选择器在 `src/services/chaoxing/host/selectors.ts`，目录和任务点在 `host/catalog.ts`。iframe / 播放器 / 题盒 / 截题在 `src/services/chaoxing/host/`。fixture 在 `chaoxing/fixtures/`，测试 `testdata/chaoxing/study/fixture-schema.test.ts`。
+- **题库 SQL**：`src-tauri/src/database/questions.rs`，前端 `src/services/app/database/questions.ts`。
+- **知识图谱 SQL**：`src-tauri/src/database/study_graph.rs`，前端 `src/services/app/database/studyGraph.ts`。
+- **练习记录**：`src-tauri/src/database/practice.rs`，前端 `src/services/app/database/practice.ts`。
+- **对话循环**：对外 `src/services/agent/chat.ts`。状态 `chatStore.ts`，压缩/评估 `chatStudy.ts`，发送 `chatLoop.ts` → `subagent/runtime.ts`，拉起对话 `chatStarters.ts`。工具表 `tools.ts`，执行 `executeChatTool.ts`，刷课 `browserTools.ts`，子 Agent `subagent/task.ts`，停监控 `chatWatch.ts`。门闩 `finishGate.ts` / `failGate.ts`。
+- **浏览器内核 / 洞口**：`src-tauri/src/cef_browser.rs`，H.264 在 `cef_h264.rs`，尺寸见 `cef-resize.mdc`。标签开页是 `src/services/browser/appBrowser.ts`。通用手在 `src/services/browser/engine`。学习通页签/课表在 `src/services/platform/chaoxing`（`courseTab.ts` / `spaceTab.ts`），不要写回 engine。
+- **设置模型配置数据**：对外 `src/services/model/config.ts`。类型 `configTypes.ts`，远程目录 `configRemote.ts`，单例 `configManager.ts`。UI 编排 `useModelSettings.ts`，滚动 `ModelSettings/scroll.ts`，测连通 `testModel.ts`，图标 `icons.ts`，平台增删改 `platform.ts`。弹窗 `useModelConfigDialog.ts`。
+- **题库列表**：编排 `src/views/questions/useQuestionList.ts`。加载 `questionList/load.ts`，搜索 `search.ts`，导入导出 `io.ts`，详情 `detail.ts`，剪贴板 `clipboard.ts`。
+
+入口索引：`src/services/platform/index.ts`、`src/services/parser/sitePackages.ts`、`src/services/chaoxing/browser/index.ts`、`src/services/agent/index.ts`、`src/services/chaoxing/study/index.ts`、`src/services/chaoxing/homework/index.ts`。

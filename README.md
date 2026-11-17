@@ -39,6 +39,8 @@ https://www.bilibili.com/video/BV12PSQBLE5G
 2. 运行安装程序
 3. 运行软件
 
+开发时在仓库根跑 `npm run rust:check` / `npm run rust:test`（会补上 pip 的 cmake/ninja 和 `CEF_PATH`）。
+
 ## 许可证
 
 本项目采用MIT许可证

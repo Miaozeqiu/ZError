@@ -13,110 +13,74 @@
       </div>
       <div class="app-title">ZError</div>
     </div>
+    <ChatSidebarToggle
+      v-if="isAgentTab"
+      class="header-chat-sidebar-toggle"
+      :expanded="!chatListCollapsed"
+      @click="setChatListCollapsed(!chatListCollapsed)"
+    />
     
     <div class="header-center">
-      <div v-if="props.activeTab !== 'questions'" class="tutorial-stepper">
-        <div class="step" :class="{ completed: isStep1Completed, active: !isStep1Completed }" @click="$emit('guide-to', 'model-settings')">
-          <div class="step-indicator">
-            <svg v-if="isStep1Completed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="12" height="12"><polyline points="20 6 9 17 4 12"></polyline></svg>
-            <span v-else>1</span>
-          </div>
-          <span class="step-text">配置 AI 模型</span>
-          <div class="step-tooltip">
-            <strong>步骤 1：配置 AI 模型</strong><br>
-            前往"设置 &gt; 模型设置"，选择一个 AI 平台并填写您的 API Key。<br>
-            <a data-v-f7451f5a="" href="https://docs.zerror.cc/get-apiKey" target="_blank" rel="noopener noreferrer" class="api-doc-link">如何获取Api Key?</a><br><br>
-            <strong>必须完成：</strong><br>
-            • 在填写 API Key 的平台下，至少选择<strong>一个文本模型</strong>。<br>
-            • （可选）还可以选择一个视觉和总结模型。
-          </div>
-        </div>
-        <div class="step-connector" :class="{ completed: isStep1Completed }"></div>
-        <div class="step" :class="{ completed: isStep1Completed && isStep2Completed, active: isStep1Completed && !isStep2Completed }" @click="$emit('guide-to', 'home')">
-          <div class="step-indicator">
-            <svg v-if="isStep1Completed && isStep2Completed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="12" height="12"><polyline points="20 6 9 17 4 12"></polyline></svg>
-            <span v-else>2</span>
-          </div>
-          <span class="step-text">启动服务</span>
-          <div class="step-tooltip">
-            <strong>步骤 2：启动服务</strong><br>
-            在"首页"<br>启动本地服务器。
-          </div>
-        </div>
-        <div class="step-connector" :class="{ completed: isStep1Completed && isStep2Completed }"></div>
-        <div class="step" :class="{ completed: isStep1Completed && isStep2Completed && isStep3Completed, active: isStep1Completed && isStep2Completed && !isStep3Completed }" @click="$emit('guide-to', 'ocs-config')">
-          <div class="step-indicator">
-            <svg v-if="isStep1Completed && isStep2Completed && isStep3Completed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="12" height="12"><polyline points="20 6 9 17 4 12"></polyline></svg>
-            <span v-else>3</span>
-          </div>
-          <span class="step-text">让OCS连接题库</span>
-          <div class="step-tooltip">
-            <strong>步骤 3：让OCS连接题库</strong><br>
-            在OCS题库配置中，配置题库
-          </div>
-        </div>
-      </div>
+      <HeaderTutorialStepper
+        :active-tab="props.activeTab"
+        @guide-to="emit('guide-to', $event)"
+      />
       <button
         v-if="props.activeTab === 'questions'"
         class="campus-entry"
         type="button"
         title="打开校园题库"
-        @click="openCampusBank"
+        @click="$emit('navigate', 'campus')"
       >
-        <svg t="1774676033971" class="campus-entry-icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="13992" aria-hidden="true">
-          <path d="M711.64369225 373.38084187m-146.83947615 0a146.83947615 146.83947615 0 1 0 293.67895229 0 146.83947615 146.83947615 0 1 0-293.67895229 0Z" fill="#FED16C" p-id="13993"></path>
-          <path d="M952.5443192 863.53186765H470.7301199c-34.3829365 0-62.25434548-27.87140898-62.25434548-62.25434548v-95.0449999c0-69.4260875 56.27357867-125.69966617 125.69966617-125.69966617h354.89766716c69.4260875 0 125.69966617 56.27357867 125.69966617 125.69966617v95.0449999c0.02589076 34.3829365-27.84551822 62.25434548-62.22845472 62.25434548z" fill="#FED16C" p-id="13994"></path>
-          <path d="M392.26815525 295.72149097m-185.01540977 0a185.01540978 185.01540978 0 1 0 370.03081955 0 185.01540978 185.01540978 0 1 0-370.03081955 0Z" fill="#F9A214" p-id="13995"></path>
-          <path d="M676.21217975 913.30686419H108.32413076c-54.13759052 0-98.02243792-43.88484741-98.02243793-98.02243792v-80.89569658c0-98.11305561 79.53643141-177.66243239 177.66243241-177.66243241h408.63395081c98.11305561 0 177.66243239 79.53643141 177.6624324 177.66243241v80.89569658c-0.01294539 54.12464514-43.8977928 98.02243792-98.0483287 98.02243792z" fill="#F9A214" p-id="13996"></path>
-          <path d="M392.28110064 381.12218075c-42.991616 0-81.49118419-22.21427675-102.9805195-59.45814283-8.18148187-14.14930331-3.32696336-32.24694835 10.82233995-40.40253945 14.09752178-8.20737264 32.24694835-3.35285413 40.40253944 10.82233995 10.82233995 18.70607803 30.16274173 29.86499792 51.75564011 29.86499793 21.59289837 0 40.93330015-11.1589199 51.71680395-29.86499793 8.20737264-14.17519408 26.26618153-18.97793106 40.42843023-10.84823072 14.14930331 8.18148187 19.00382183 26.27912691 10.84823071 40.42843022-21.50228069 37.21797531-59.9889035 59.45814282-102.96757412 59.45814283h-0.02589077z" fill="#FFFFFF" p-id="13997"></path>
+        <svg class="campus-entry-icon" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <path d="M309.312 384a32 32 0 0 1 32-32h128a32 32 0 1 1 0 64h-128a32 32 0 0 1-32-32zM309.312 554.688a32 32 0 0 1 32-32h128a32 32 0 1 1 0 64h-128a32 32 0 0 1-32-32z" fill="currentColor"/>
+          <path d="M568.704 147.776L351.04 84.48C303.488 70.784 264.32 59.392 232.832 55.168c-32.96-4.416-64.192-1.92-90.88 19.008-26.368 20.8-36.736 50.688-41.408 84.16C96 190.656 96 232.64 96 284.096v622.592h-10.688a32 32 0 0 0 0 64h853.376a32 32 0 1 0 0-64H928V615.808c0-28.992 0-53.504-2.304-73.536-2.496-21.184-7.872-40.64-20.928-58.176-12.992-17.472-30.08-28.224-49.728-36.672-18.432-8-41.92-15.04-69.76-23.36l-70.592-21.184v-56.192c0-30.72 0-56.512-2.368-77.44-2.56-22.144-8-42.24-21.12-60.352-13.312-18.112-30.784-29.184-51.008-37.76-18.944-8.128-43.008-15.104-71.488-23.36z m145.92 321.92l50.56 15.104c30.016 9.024 49.92 15.04 64.512 21.376 13.888 5.952 19.904 10.944 23.744 16.128 3.84 5.184 6.912 12.352 8.64 27.392 1.92 15.872 1.92 36.608 1.92 67.968v289.024h-149.312V469.696z m-64 436.992H544v-97.92c0-18.496 0-35.392-1.856-49.216-2.048-15.104-6.848-31.168-20.032-44.352-13.184-13.184-29.184-17.984-44.352-20.032a395.904 395.904 0 0 0-49.216-1.856H382.08c-18.432 0-35.392 0-49.152 1.92-15.168 1.984-31.232 6.784-44.416 19.968-13.184 13.184-17.92 29.248-20.032 44.352-1.792 13.824-1.792 30.72-1.792 49.216v97.92H160V286.592c0-54.528 0.064-92.032 3.904-119.424 3.776-26.688 10.24-36.864 17.664-42.688 7.04-5.568 17.536-9.216 42.752-5.888 26.112 3.52 60.672 13.44 111.36 28.16l213.376 61.952c30.72 8.96 51.072 14.848 66.048 21.248 14.08 6.016 20.288 11.136 24.32 16.768 4.224 5.696 7.424 13.568 9.28 29.696 1.92 16.896 1.92 39.04 1.92 72.128v558.08z m-170.624 0H330.688v-96c0-21.056 0-33.6 1.28-42.56a30.08 30.08 0 0 1 1.536-7.104l0.192-0.32v-0.128l0.064-0.128h0.128a30.592 30.592 0 0 1 7.552-1.792c8.96-1.28 21.568-1.28 42.56-1.28h42.688c20.992 0 33.536 0 42.56 1.28a30.592 30.592 0 0 1 7.552 1.728l0.128 0.192 0.064 0.128 0.128 0.32a30.016 30.016 0 0 1 1.6 7.04c1.216 9.024 1.28 21.568 1.28 42.624v96z" fill="currentColor"/>
         </svg>
         <span class="campus-entry-text">想将题库分享给同学？试试校园题库吧</span>
       </button>
+
     </div>
 
     <div class="header-right" :class="{ 'header-right--macos': isMacOS }">
       <div
-        v-if="tipVisible && tipText"
-        class="update-tip"
-        :class="`update-tip--${status}`"
+        v-if="isAgentTab && linkedSubject"
+        class="study-status"
+        :class="{ 'is-evaluating': studyEvalRunning }"
         data-tauri-drag-region-exclude
       >
+        <div
+          class="study-status-main"
+          :title="studyEvalRunning
+            ? `正在评估 ${linkedSubject.name} 的学习效果`
+            : `正在学习 ${linkedSubject.name}，Agent 能看到掌握进度`"
+        >
+          <span class="study-status-kicker" :class="{ 'is-eval': studyEvalRunning }">
+            {{ studyEvalRunning ? '正在评估' : '正在学习' }}
+          </span>
+          <span class="study-status-name">{{ linkedSubject.name }}</span>
+          <span class="study-status-progress">{{ subjectProgress(linkedSubject) }}%</span>
+          <span class="study-status-bar" aria-hidden="true">
+            <span :style="{ width: `${subjectProgress(linkedSubject)}%`, background: barColor(linkedSubject.progress) }" />
+          </span>
+        </div>
         <button
           type="button"
-          class="update-tip-main"
-          :title="tipTitle"
-          @click="handleTipClick"
+          class="study-status-graph"
+          title="展开知识图谱"
+          @click="expandStudyGraph(linkedSubject.id)"
         >
-          <span
-            class="update-tip-icon-wrap"
-            :class="{ 'is-progress': status === 'downloading' || status === 'installing' }"
-            aria-hidden="true"
-          >
-            <svg
-              v-if="status === 'downloading' || status === 'installing'"
-              class="update-tip-ring"
-              viewBox="0 0 36 36"
-            >
-              <circle class="update-tip-ring-bg" cx="18" cy="18" r="15.5" />
-              <circle
-                class="update-tip-ring-fg"
-                cx="18"
-                cy="18"
-                r="15.5"
-                :style="ringStyle"
-              />
-            </svg>
-            <svg
-              class="update-tip-icon"
-              viewBox="0 0 1024 1024"
-              xmlns="http://www.w3.org/2000/svg"
-            >
-              <path d="M307.173388 679.532423c0 28.903692-22.882089 52.26751-51.183621 52.267509h-51.123405C101.174367 731.920364 13.800914 652.796507 1.456629 547.599112-10.82744 442.401716 55.771484 344.49046 156.57311 319.561025 177.046558 156.255165 301.69373 27.031576 461.266196 3.727974c159.452034-23.243386 314.568515 65.213955 378.939445 216.17553 121.997667 36.731775 199.074179 159.452034 180.828723 288.073463-18.245456 128.621429-126.212788 224.003613-253.449249 223.822965a51.725565 51.725565 0 0 1-51.123405-52.267509c0-28.903692 22.882089-52.26751 51.183621-52.26751 76.35392 0.180648 141.266795-57.024576 152.226111-134.281736 10.959317-77.196944-35.346807-150.901359-108.569493-172.880208l-45.764179-13.849685-19.08848-44.559859c-45.884611-107.846901-156.682097-171.073727-270.671032-154.51432-113.928719 16.619623-203.048436 108.930789-217.68093 225.56923L249.305788 404.224756l-68.525836 16.920703c-49.979301 12.826013-82.917466 61.600994-76.835648 113.92872 6.142035 52.387942 49.37714 91.829438 100.982274 92.190734h51.183621c28.241316 0 51.183621 23.424034 51.183621 52.26751z m385.743856 107.003876a53.050318 53.050318 0 0 1 0 73.885063l-145.000188 148.010989a50.461029 50.461029 0 0 1-72.379662 0L330.597422 860.421362a53.050318 53.050318 0 0 1 0.60216-73.222687 50.400813 50.400813 0 0 1 71.777502-0.662376l57.747168 59.011704V418.25509c0-28.903692 22.882089-52.26751 51.183621-52.26751 28.241316 0 51.123405 23.363818 51.123405 52.26751v427.112265l57.626736-58.831056a50.400813 50.400813 0 0 1 72.25923 0z" fill="currentColor"/>
-            </svg>
-          </span>
-          <span class="update-tip-text">{{ tipText }}</span>
+          <svg class="study-status-graph-icon" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
+            <path class="edge" d="M8.1 8.4 10.6 10.7M15.9 9.1 13.5 10.8M8.7 16.2 10.7 13.9M15.6 15.8 13.5 13.9" />
+            <circle class="node" cx="6.2" cy="6.8" r="2.35" />
+            <circle class="node" cx="17.8" cy="7.6" r="2.35" />
+            <circle class="node" cx="12" cy="12" r="2.55" />
+            <circle class="node" cx="7" cy="17.8" r="2.35" />
+            <circle class="node" cx="17.4" cy="17.4" r="2.35" />
+          </svg>
         </button>
       </div>
+
+      <AgentPaneSwitcher v-if="props.activeTab === 'agent'" />
 
       <template v-if="!isMacOS">
         <button
@@ -160,99 +124,64 @@
 
 <script setup lang="ts">
 import { ref, onMounted, computed, onUnmounted } from 'vue'
-import { useModelConfig } from '../services/modelConfig'
-import { serverRunning } from '../services/serverState'
-import { listen, UnlistenFn } from '@tauri-apps/api/event'
-import { useAppUpdate } from '../composables/useAppUpdate'
+import HeaderTutorialStepper from './appHeader/HeaderTutorialStepper.vue'
+import AgentPaneSwitcher from './agentChat/AgentPaneSwitcher.vue'
+import ChatSidebarToggle from './agentChat/ChatSidebarToggle.vue'
+import { activeChat, chatListCollapsed, setChatListCollapsed, studyEvalRunning } from '../services/agent/chat'
+import { databaseService, type StudySubject } from '../services/app/database'
+import { progressColor } from '../utils/study/studyGraph'
+
+const STUDY_STORAGE_KEY = 'zerror-study-subject'
 
 const props = defineProps<{
   activeTab?: string
 }>()
 
-const {
-  tipVisible,
-  tipText,
-  tipTitle,
-  status,
-  progress,
-  handleTipClick,
-} = useAppUpdate()
-
-const RING_C = 2 * Math.PI * 15.5
-const ringStyle = computed(() => {
-  const pct = Math.min(100, Math.max(status.value === 'installing' ? 100 : progress.value, 4))
-  const offset = RING_C * (1 - pct / 100)
-  return {
-    strokeDasharray: `${RING_C}`,
-    strokeDashoffset: `${offset}`,
-  }
-})
+const emit = defineEmits<{
+  'guide-to': [target: string]
+  navigate: [tab: string]
+}>()
 
 const isMaximized = ref(false)
 const isTauri = ref(false)
 const isMacOS = ref(false)
 
-const { settings: modelSettings, platforms: computedPlatforms, selectedTextModels, selectedTextModel } = useModelConfig()
+const studySubjects = ref<StudySubject[]>([])
+const isAgentTab = computed(() => props.activeTab === 'agent' || props.activeTab === 'import-tasks')
 
-// Tutorial Stepper Logic
-const isStep1Completed = computed(() => {
-  console.log('--- 开始计算 isStep1Completed ---')
-  if (!computedPlatforms.value || computedPlatforms.value.length === 0) {
-    console.log('computedPlatforms 为空')
-    return false;
-  }
-  
-  // 获取当前选中的所有文本模型ID（兼容不同的配置方式）
-  let selectedTextModelIds = new Set<string>();
-  if (selectedTextModels.value && selectedTextModels.value.length > 0) {
-    // selectedTextModels.value 是 AIModel 数组，取 id
-    selectedTextModels.value.forEach(m => selectedTextModelIds.add(m.id));
-  } else if (selectedTextModel.value) {
-    selectedTextModelIds.add(selectedTextModel.value.id);
-  }
-  
-  console.log('当前选中的文本模型 IDs:', Array.from(selectedTextModelIds));
-  
-  // 找到所有配置了有效 apiKey 的平台
-  const configuredPlatforms = computedPlatforms.value.filter(p => p.apiKey && p.apiKey.trim() !== '');
-  console.log('已配置 apiKey 的平台:', configuredPlatforms.map(p => p.id));
-  
-  // 判断：在这些配置了 apiKey 的平台中，是否至少有一个平台，其拥有的某个文本模型正处于被选中状态
-  const isCompleted = configuredPlatforms.some(platform => {
-    const hasSelectedTextModel = platform.models?.some(model => {
-      const isSelected = model.category === 'text' && selectedTextModelIds.has(model.id);
-      if (isSelected) {
-        console.log(`找到符合条件的文本模型：${model.id} (属于平台: ${platform.id})`);
-      }
-      return isSelected;
-    });
-    return hasSelectedTextModel;
-  });
-
-  console.log('步骤1 最终计算结果:', isCompleted);
-  console.log('--- 结束计算 ---')
-  return isCompleted;
+const linkedSubject = computed(() => {
+  const id = Number(activeChat.value?.studySubjectId)
+  if (!Number.isFinite(id) || id <= 0) return null
+  return studySubjects.value.find((item) => item.id === id) || null
 })
 
-const isStep2Completed = computed(() => {
-  return serverRunning.value
-})
+const subjectProgress = (subject: StudySubject) => Math.round((Number(subject.progress) || 0) * 100)
+const barColor = (progress: number) => progressColor(progress)
 
-// OCS Config step check (listen to HEAD request event from backend)
-const isStep3Completed = ref(false)
-let unlistenHeadEvent: UnlistenFn | null = null;
+const loadStudySubjects = async () => {
+  try {
+    studySubjects.value = await databaseService.listStudySubjects()
+  } catch {
+    studySubjects.value = []
+  }
+}
 
-onMounted(async () => {
-  unlistenHeadEvent = await listen('ocs-head-received', () => {
-    console.log('--- 接收到来自后端的 OCS HEAD 请求事件，步骤 3 已完成 ---');
-    isStep3Completed.value = true;
-  });
+const openStudyGraphPane = (id: number) => {
+  localStorage.setItem(STUDY_STORAGE_KEY, String(id))
+  window.dispatchEvent(new CustomEvent('open-study-graph', { detail: { subjectId: id, expand: true } }))
+}
+
+const expandStudyGraph = (id: number) => {
+  openStudyGraphPane(id)
+}
+
+onMounted(() => {
+  void loadStudySubjects()
+  window.addEventListener('study-graph-updated', loadStudySubjects)
 })
 
 onUnmounted(() => {
-  if (unlistenHeadEvent) {
-    unlistenHeadEvent();
-  }
+  window.removeEventListener('study-graph-updated', loadStudySubjects)
 })
 
 const minimizeWindow = async () => {
@@ -321,23 +250,6 @@ const closeWindow = async () => {
   }
 }
 
-const openCampusBank = async () => {
-  const url = 'https://tiku.zerror.cc/campus'
-
-  try {
-    if (isTauri.value) {
-      const { openUrl } = await import('@tauri-apps/plugin-opener')
-      await openUrl(url)
-      return
-    }
-
-    window.open(url, '_blank', 'noopener,noreferrer')
-  } catch (error) {
-    console.error('打开校园题库失败:', error)
-    window.open(url, '_blank', 'noopener,noreferrer')
-  }
-}
-
 // 检测是否在Tauri环境中运行
 const checkTauriEnvironment = () => {
   console.log('Checking Tauri environment...')
@@ -389,498 +301,4 @@ onMounted(async () => {
 })
 </script>
 
-<style scoped>
-.app-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  height: 40px;
-  background: var(--bg-primary, #f4f4f4);
-  color: var(--text-primary, #2d3748);
-  user-select: none;
-  position: relative;
-  z-index: 1000;
-}
-
-/* macOS 原生标题栏适配：stepper 与系统红绿灯同一行 */
-.app-header.macos-header {
-  height: 40px;
-  padding-left: 80px; /* 给 macOS 红绿灯按钮留空间 */
-}
-
-.header-left {
-  margin-left: 12px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex: 0 0 auto;
-  color:  #ffbd42;
-}
-
-.app-logo {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  flex: 0 0 auto;
-  overflow: visible;
-}
-
-.app-logo-img {
-  width: 20px;
-  height: 20px;
-  display: block;
-  object-fit: contain;
-}
-
-.app-logo svg {
-  color: rgba(255, 255, 255, 0.9);
-}
-
-.app-title {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--text-primary, #2d3748);
-}
-
-.header-center {
-  flex: 1;
-  display: flex;
-  justify-content: right;
-  align-items: center;
-  min-width: 0;
-  pointer-events: none;
-}
-
-.campus-entry {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  max-width: min(100%, 420px);
-  padding: 2px 8px;
-  border: none;
-  outline: none;
-  background: transparent;
-  box-shadow: none;
-  color: var(--text-primary, #2d3748);
-  cursor: pointer;
-  transition: color 0.2s ease, opacity 0.2s ease, transform 0.2s ease;
-  -webkit-app-region: no-drag;
-  pointer-events: auto;
-}
-
-.campus-entry:hover {
-  color: color-mix(in srgb, var(--text-primary, #2d3748) 75%, #f9a214);
-}
-
-.campus-entry:active {
-  transform: translateY(1px);
-}
-
-.campus-entry:focus-visible {
-  border-radius: 999px;
-  box-shadow: 0 0 0 2px color-mix(in srgb, #f9a214 45%, transparent);
-}
-
-.campus-entry-icon {
-  width: 18px;
-  height: 18px;
-  flex: 0 0 auto;
-  filter: drop-shadow(0 0 4px rgba(249, 162, 20, 0.55)) drop-shadow(0 0 10px rgba(254, 209, 108, 0.35));
-}
-
-.campus-entry:hover .campus-entry-icon {
-  filter: drop-shadow(0 0 6px rgba(249, 162, 20, 0.7)) drop-shadow(0 0 14px rgba(254, 209, 108, 0.45));
-}
-
-.campus-entry-text {
-  font-size: 12px;
-  line-height: 1;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.header-right {
-  display: flex;
-  align-items: center;
-  gap: 1px;
-  flex: 0 0 auto;
-  padding-right: 4px;
-  -webkit-app-region: no-drag;
-  pointer-events: auto;
-}
-
-.header-right--macos {
-  padding-right: 12px;
-}
-
-.update-tip {
-  display: inline-flex;
-  align-items: center;
-  max-width: min(360px, 42vw);
-  margin-right: 6px;
-  border-radius: 999px;
-  border: 1px solid color-mix(in srgb, #f59e0b 35%, var(--border-color, #e2e8f0));
-  background: color-mix(in srgb, #f59e0b 12%, var(--bg-primary, #fff));
-  overflow: hidden;
-}
-
-.update-tip--installing,
-.update-tip--downloading {
-  border-color: color-mix(in srgb, #3b82f6 40%, var(--border-color, #e2e8f0));
-  background: color-mix(in srgb, #3b82f6 10%, var(--bg-primary, #fff));
-}
-
-.update-tip--ready-relaunch,
-.update-tip--done {
-  border-color: color-mix(in srgb, #22c55e 40%, var(--border-color, #e2e8f0));
-  background: color-mix(in srgb, #22c55e 10%, var(--bg-primary, #fff));
-}
-
-.update-tip--error {
-  border-color: color-mix(in srgb, #ef4444 40%, var(--border-color, #e2e8f0));
-  background: color-mix(in srgb, #ef4444 10%, var(--bg-primary, #fff));
-}
-
-.update-tip-main {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  padding: 3px 10px 3px 6px;
-  border: none;
-  background: transparent;
-  color: var(--text-primary, #2d3748);
-  cursor: pointer;
-  -webkit-app-region: no-drag;
-}
-
-.update-tip-icon-wrap {
-  position: relative;
-  width: 22px;
-  height: 22px;
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: #575F76;
-}
-
-.update-tip-icon-wrap.is-progress {
-  width: 26px;
-  height: 26px;
-}
-
-.update-tip-icon {
-  width: 14px;
-  height: 14px;
-  display: block;
-  position: relative;
-  z-index: 1;
-}
-
-.update-tip-icon-wrap.is-progress .update-tip-icon {
-  width: 12px;
-  height: 12px;
-}
-
-.update-tip-ring {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  transform: rotate(-90deg);
-}
-
-.update-tip-ring-bg,
-.update-tip-ring-fg {
-  fill: none;
-  stroke-width: 2.5;
-}
-
-.update-tip-ring-bg {
-  stroke: color-mix(in srgb, #3b82f6 22%, transparent);
-}
-
-.update-tip-ring-fg {
-  stroke: #3b82f6;
-  stroke-linecap: round;
-  transition: stroke-dashoffset 0.2s ease;
-}
-
-.update-tip--available .update-tip-icon-wrap,
-.update-tip--idle .update-tip-icon-wrap {
-  color: #f59e0b;
-}
-
-.update-tip--downloading .update-tip-icon-wrap,
-.update-tip--installing .update-tip-icon-wrap {
-  color: #3b82f6;
-}
-
-.update-tip--done .update-tip-icon-wrap,
-.update-tip--ready-relaunch .update-tip-icon-wrap {
-  color: #22c55e;
-}
-
-.update-tip--error .update-tip-icon-wrap {
-  color: #ef4444;
-}
-
-.update-tip-text {
-  font-size: 12px;
-  line-height: 1.2;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.window-control {
-  border-radius: 0px;
-  height: 40px;
-  width: 46px;
-  border: none;
-  background: transparent;
-  color: var(--text-primary, #2d3748);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: background-color 0.2s ease;
-}
-
-.window-control-icon {
-  width: 16px;
-  height: 16px;
-  display: block;
-  flex: 0 0 auto;
-}
-
-.window-control:hover {
-  background-color: rgba(158, 158, 158, 0.1);
-}
-
-.window-control.close:hover {
-  background-color: #e74c3c;
-  color: white;
-}
-
-.window-control.minimize:hover,
-.window-control.maximize:hover {
-  background-color: var(--bg-secondary, #e2e8f0);
-}
-
-/* 确保拖拽区域不会被按钮阻挡 */
-.window-control {
-  -webkit-app-region: no-drag;
-}
-
-@media (max-width: 900px) {
-  .campus-entry {
-    max-width: 280px;
-    padding-left: 10px;
-    padding-right: 10px;
-  }
-
-  .campus-entry-text {
-    font-size: 11px;
-  }
-}
-
-/* Tutorial Stepper Styles */
-.tutorial-stepper {
-  /* --- Stepper CSS Variables (Restored original colors) --- */
-  --stepper-text-primary: var(--text-primary);
-  --stepper-text-secondary: var(--text-secondary);
-  --stepper-border: transparent;
-  --stepper-active-bg: transparent;
-  --stepper-active-text: var(--color-primary, #667eea);
-  --stepper-completed-bg: #48bb78;
-  --stepper-tooltip-bg: rgba(255, 255, 255, 0.45);
-  --stepper-tooltip-border: rgba(194, 194, 194, 0.6);
-  --stepper-tooltip-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
-  --stepper-pulse-start: rgba(102, 126, 234, 0.5);
-  --stepper-pulse-end: rgba(102, 126, 234, 0);
-  --stepper-link-color: #ff9800;
-  --stepper-link-hover: #e65100;
-  --stepper-connector-bg: var(--border-color);
-
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  pointer-events: auto;
-  margin: 0 auto;
-  padding: 2px 12px;
-  border-radius: 16px;
-}
-
-[data-theme='dark'] .tutorial-stepper {
-  /* --- Stepper CSS Variables (Restored original colors) --- */
-  --stepper-text-primary: var(--text-primary);
-  --stepper-text-secondary: var(--text-secondary);
-  --stepper-border: transparent;
-  --stepper-active-bg: transparent;
-  --stepper-active-text: var(--color-primary, #667eea);
-  --stepper-completed-bg: #48bb78;
-  --stepper-tooltip-bg: rgba(30, 30, 30, 0.45);
-  --stepper-tooltip-border: rgba(80, 80, 80, 0.6);
-  --stepper-tooltip-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
-  --stepper-pulse-start: rgba(102, 126, 234, 0.5);
-  --stepper-pulse-end: rgba(102, 126, 234, 0);
-  --stepper-link-color: #ff9800;
-  --stepper-link-hover: #e65100;
-  --stepper-connector-bg: #656565;
-}
-
-.step {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--stepper-text-secondary);
-  transition: all 0.3s ease;
-  cursor: help;
-}
-
-.step:not(.active):not(.completed) .step-indicator,
-.step:not(.active):not(.completed) .step-text {
-  opacity: 0.5;
-}
-
-@keyframes pulse-ring {
-  0% { box-shadow: 0 0 0 0 var(--stepper-pulse-start); }
-  70% { box-shadow: 0 0 0 5px var(--stepper-pulse-end); }
-  100% { box-shadow: 0 0 0 0 var(--stepper-pulse-end); }
-}
-
-.step.active {
-  background: var(--stepper-active-bg);
-  padding: 3px 8px;
-  border-radius: 12px;
-}
-
-.step.completed {
-  /* opacity: 0.8; */
-}
-
-.step-indicator {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: var(--stepper-border);
-  color: var(--stepper-text-secondary);
-  font-size: 10px;
-  font-weight: 600;
-  transition: all 0.3s ease;
-}
-
-.step.active .step-indicator {
-  background: var(--stepper-active-text);
-  color: white;
-  animation: pulse-ring 2s infinite;
-}
-
-.step.completed .step-indicator {
-  background: var(--stepper-completed-bg);
-  color: white;
-}
-
-.step-text {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--stepper-text-primary);
-  white-space: nowrap;
-}
-
-.step.active .step-text {
-  color: var(--stepper-active-text);
-}
-
-.step-tooltip {
-  position: absolute;
-  top: 130%;
-  left: 50%;
-  transform: translateX(-50%) translateY(10px);
-  background: var(--stepper-tooltip-bg);
-  backdrop-filter: blur(20px) saturate(120%);
-  -webkit-backdrop-filter: blur(20px) saturate(120%);
-  border: 1px solid var(--stepper-tooltip-border);
-  box-shadow: var(--stepper-tooltip-shadow);
-  padding: 10px 14px;
-  border-radius: 8px;
-  font-size: 12px;
-  color: var(--stepper-text-primary);
-  white-space: nowrap;
-  opacity: 0;
-  visibility: hidden;
-  transition: all 0.2s ease;
-  z-index: 100;
-  line-height: 1.6;
-  text-align: left;
-}
-
-.step-tooltip::before {
-  content: '';
-  position: absolute;
-  top: -5px;
-  left: 50%;
-  transform: translateX(-50%) rotate(45deg);
-  width: 8px;
-  height: 8px;
-  background: var(--stepper-tooltip-bg);
-  backdrop-filter: blur(20px) saturate(120%);
-  -webkit-backdrop-filter: blur(20px) saturate(120%);
-  border-left: 1px solid var(--stepper-tooltip-border);
-  border-top: 1px solid var(--stepper-tooltip-border);
-}
-
-.step-tooltip strong {
-  font-size: 13px;
-  color: var(--stepper-active-text);
-}
-
-.api-doc-link {
-  color: var(--stepper-link-color);
-  text-decoration: underline;
-  margin-top: 4px;
-  display: inline-block;
-  font-weight: 500;
-}
-
-.api-doc-link:hover {
-  color: var(--stepper-link-hover);
-}
-
-.step:hover .step-tooltip {
-  opacity: 1;
-  visibility: visible;
-  transform: translateX(-50%) translateY(0);
-}
-
-.step-connector {
-  width: 20px;
-  height: 2px;
-  background: var(--stepper-connector-bg);
-  border-radius: 1px;
-  transition: background 0.3s ease;
-}
-
-.step-connector.completed {
-  background: var(--stepper-completed-bg);
-}
-
-@media (max-width: 768px) {
-  .step-text {
-    display: none;
-  }
-  .step-connector {
-    width: 12px;
-  }
-}
-</style>
+<style scoped src="./AppHeader.css"></style>

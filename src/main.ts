@@ -2,6 +2,7 @@ import { createApp } from "vue";
 import "./styles/themes.css";
 import App from "./App.vue";
 import { initGlobalTheme } from "./composables/useTheme";
+import "./services/model/markstream";
 
 // 等待Tauri初始化完成
 async function initApp() {
@@ -52,6 +53,12 @@ async function initApp() {
   });
   
   createApp(App).mount("#app");
+
+  if (import.meta.env.DEV) {
+    void import("./services/agent/cursorBridge")
+      .then((mod) => mod.startCursorBridge())
+      .catch(() => {})
+  }
 }
 
 initApp();

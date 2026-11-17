@@ -1,5 +1,5 @@
 import { computed, ref, watch } from 'vue'
-import { settingsManager, type AppSettings } from '../services/settings'
+import { settingsManager, type AppSettings } from '../services/app/settings'
 
 /**
  * 设置管理组合式函数

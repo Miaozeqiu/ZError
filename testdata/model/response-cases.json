@@ -1,0 +1,86 @@
+[
+  {
+    "input": "错误: HTTP 401: Unauthorized",
+    "fails": true
+  },
+  {
+    "input": "[模型 A]\n错误: HTTP 401\n\n[模型 B]\n错误: quota exceeded",
+    "fails": true
+  },
+  {
+    "input": "HTTP 429: Too Many Requests",
+    "fails": true
+  },
+  {
+    "input": "HTTP error! status: 500",
+    "fails": true
+  },
+  {
+    "input": "Failed to fetch",
+    "fails": true
+  },
+  {
+    "input": "```json\n{\"error\":{\"message\":\"invalid API key\"}}\n```",
+    "fails": true
+  },
+  {
+    "input": "{\"code\":429,\"message\":\"quota exceeded\"}",
+    "fails": true
+  },
+  {
+    "input": "{\"success\":false,\"message\":\"request denied\"}",
+    "fails": true
+  },
+  {
+    "input": "{\"type\":\"error\",\"error\":{\"message\":\"stream failed\"}}",
+    "fails": true
+  },
+  {
+    "input": "{\"answer\":\"错误: API request failed\"}",
+    "fails": true
+  },
+  {
+    "input": "{\"content\":\"{\\\"error\\\":{\\\"message\\\":\\\"bad token\\\"}}\"}",
+    "fails": true
+  },
+  {
+    "input": "42",
+    "fails": false
+  },
+  {
+    "input": "错误处理是程序设计的一部分",
+    "fails": false
+  },
+  {
+    "input": "HTTP 200 表示请求成功",
+    "fails": false
+  },
+  {
+    "input": "{\"answer\":\"42\"}",
+    "fails": false
+  },
+  {
+    "input": "{\"same\":false}",
+    "fails": false
+  },
+  {
+    "input": "{\"answer\":\"甲######丙\"}",
+    "fails": false
+  },
+  {
+    "input": "[图片1]###[图片2]",
+    "fails": false
+  },
+  {
+    "input": "{\"error\":null,\"answer\":\"正确\"}",
+    "fails": false
+  },
+  {
+    "input": "\"Error: Unauthorized\"",
+    "fails": true
+  },
+  {
+    "input": "处理中\\n{\"error\": {\"message\": \"denied\"}}",
+    "fails": true
+  }
+]

@@ -1,0 +1,18 @@
+---
+description: 学习通改播放/切章/作业时只动对应层
+globs: src/services/chaoxing/**/*.ts,src/services/platform/**/*.ts,src/services/agent/browserTools.ts,src/services/agent/bridgeApi.ts,src/services/agent/chat.ts,src/services/agent/chatLoop.ts,src/services/agent/chatStore.ts,src/services/agent/chatWatch.ts,src/services/agent/agentWait.ts
+alwaysApply: false
+---
+
+# 学习通两层
+
+1. **study**（`chaoxing/study`）：CDP 动作。`openChaoxingChapter`、`playChaoxingVideo`、`readChaoxingVideoTick`。无 Vue ref，无 session。
+2. **browser**（`chaoxing/browser`）：面板状态。匹配 `chapterMatch.ts`，写入 `chapterSync.ts`，点播放 `chapterPlay.ts`。UI 只读 `browserChapterStates`。进度监控挂在 `watch.ts`。
+
+没有平台适配器。Agent 看网站地图和卡片，用 `browser_invoke` 做事，进度用 `browser_watch` 挂上。
+
+`agentWait` 读面板走 `platform/panelAccess.ts`（避免 watchAgent ↔ agentWait 成环）。
+
+新站不要抄 `chaoxing/`，走 `parser/` 的卡 + `browser_invoke`。不要在本目录再加「第二套 URL 判定」。原则见 `parser-agent.mdc`。
+
+切指定任务点必须带 `videoIndex` / `label` / `mid`。裸 `play` 只播当前看得见的那条。坑见 `chaoxing-study-player.mdc`。

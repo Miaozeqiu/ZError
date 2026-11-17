@@ -1,6 +1,6 @@
 [package]
 name = "zerror"
-version = "2.2.7"
+version = "2.2.8"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -18,11 +18,19 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2.0", features = [] }
 
 [dependencies]
-tauri = { version = "2.0", features = [ "macos-private-api", "devtools", "tray-icon", "webview-data-url", "image-png"] }
+tauri = { version = "2.0", features = [ "macos-private-api", "devtools", "tray-icon", "webview-data-url", "image-png", "unstable"] }
 tauri-plugin-opener = "2.0"
 # tauri-plugin-sql removed - using rusqlite directly
 # tauri-plugin-sql = { version = "2.0", features = ["sqlite"] }
-tauri-plugin-http = { version = "2.0", features = ["unsafe-headers"] }
+# 关掉 http2：rustls+h2 对部分国内 CDN/网关（如 EdgeOne）会偶发
+# “error sending request”，HTTP/1.1 更稳。其余沿用插件默认能力。
+tauri-plugin-http = { version = "2.0", default-features = false, features = [
+  "unsafe-headers",
+  "rustls-tls",
+  "charset",
+  "macos-system-configuration",
+  "cookies",
+] }
 tauri-plugin-fs = "2.0"
 tauri-plugin-dialog = "2.0"
 tauri-plugin-clipboard-manager = "2.0"
@@ -36,8 +44,10 @@ chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.18.1", features = ["v4"] }
 tokio-stream = { version = "0.1.17", features = ["sync"] }
 futures-util = "0.3.31"
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.32", features = ["bundled", "functions"] }
 regex = "1.0"
+ring = "0.17.14"
+zeroize = "1"
 reqwest = { version = "0.12", features = ["json"] }
 bytes = "1"
 base64 = "0.22"
@@ -51,12 +61,28 @@ strsim = "0.10"
 
 [target.'cfg(windows)'.dependencies]
 runas = "1.0"
-windows = { version = "0.56", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_Threading", "Win32_Security"] }
+windows = { version = "0.56", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_Threading", "Win32_Security", "Win32_Security_Cryptography", "Win32_System_Memory"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "2.11.1"
 objc2 = "0.6"
-objc2-foundation = { version = "0.3", features = ["NSProcessInfo", "NSString", "NSObject"] }
+block2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSProcessInfo", "NSString", "NSObject", "NSUserDefaults", "NSArray", "NSGeometry"] }
+objc2-app-kit = { version = "0.3", features = ["NSView", "NSWindow", "NSGraphics"] }
+objc2-quartz-core = { version = "0.3.2", default-features = false, features = ["CALayer", "CATransaction", "objc2-core-foundation"] }
+objc2-av-foundation = { version = "0.3.2", features = ["AVPlayer", "AVPlayerItem", "AVAsset", "objc2-core-media"] }
+objc2-av-kit = { version = "0.3.2", features = ["AVPlayerView"] }
+objc2-core-media = { version = "0.3.2", features = ["CMTime"] }
+objc2-core-graphics = { version = "0.3.2", default-features = false, features = ["std", "CGEvent", "CGEventTypes"] }
+raw-window-handle = "0.6"
+cef = "151.8.0"
+tokio-tungstenite = { version = "0.26", features = ["native-tls"] }
 
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-process = "2.0"
 tauri-plugin-updater = "2.0"
+
+# macOS 上子 webview 与宿主 webview 会互抢鼠标光标，链接和输入框上的指针持续闪烁。
+# 上游 https://github.com/tauri-apps/wry/issues/1763 尚未修复，这里用本地打过补丁的 wry。
+[patch.crates-io]
+wry = { path = "vendor/wry" }

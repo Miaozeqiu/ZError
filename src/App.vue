@@ -1,18 +1,30 @@
 <script setup lang="ts">
+import { secureStorageState, cleanupLegacySecrets, redactNative, authorizeSecureStorage } from './services/security/secureStore';
+import { sessions as agentSessions, chatStoreReady, persistSoon } from './services/agent/chatStore';
+import { siteAccountsReady } from './services/agent/siteAccounts';
+import { modelConfigManager } from './services/model/config';
+import { settingsManager } from './services/app/settings';
 import { ref, onMounted, onUnmounted, computed } from "vue";
 import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import AppHeader from "./views/AppHeader.vue";
 import Sidebar from "./views/Sidebar.vue";
-import UpdateDialog from "./components/UpdateDialog.vue";
+import UpdateDialog from "./components/ui/UpdateDialog.vue";
 import Home from "./views/Home.vue";
 import Settings from "./views/Settings.vue";
 import QuestionBank from "./views/QuestionBank.vue";
+import CampusWorkspace from "./views/campus/CampusWorkspace.vue";
+import Study from "./views/Study.vue";
+import Agent from "./views/Agent.vue";
+import LoginDialog from "./components/ui/LoginDialog.vue";
+import { restoreAuthSession } from "./services/app/auth";
 import FileTree from "./views/questions/FileTree.vue";
-import { databaseService } from "./services/database";
-import { initializationService } from "./services/initialization";
+import { databaseService } from "./services/app/database";
+import { parseDifficulty, parseImportance, parseMastery } from "./utils/question/questionMetrics";
+import { initializationService } from "./services/app/initialization";
 import { initGlobalTheme } from "./composables/useTheme";
 import { useAppUpdate } from "./composables/useAppUpdate";
 import { useExclusiveMenu } from "./composables/useExclusiveMenu";
+import { agentBrowserExpanded } from './services/agent/agentBrowser';
 
 // 当前活跃的页面
 const activeTab = ref('home');
@@ -20,6 +32,18 @@ const activeTab = ref('home');
 const collapseTrigger = ref(0);
 const questionBankFocusFolderId = ref<number | null>(null);
 const questionBankFocusRequestKey = ref(0);
+const loginDialogVisible = ref(false);
+const reloadSecureStore = async () => {
+  if (!secureStorageState.requiresAuthorization || await authorizeSecureStorage()) window.location.reload()
+}
+
+const openLoginDialog = () => {
+  loginDialogVisible.value = true
+}
+
+const closeLoginDialog = () => {
+  loginDialogVisible.value = false
+}
 
 const {
   showUpdateDialog,
@@ -35,8 +59,32 @@ const {
   handleWeekLater,
 } = useAppUpdate();
 
+const pinAppViewport = () => {
+  if (document.documentElement.scrollTop) document.documentElement.scrollTop = 0
+  if (document.documentElement.scrollLeft) document.documentElement.scrollLeft = 0
+  if (document.body.scrollTop) document.body.scrollTop = 0
+  if (document.body.scrollLeft) document.body.scrollLeft = 0
+  const app = document.getElementById('app')
+  if (app?.scrollTop) app.scrollTop = 0
+  if (app?.scrollLeft) app.scrollLeft = 0
+}
+
 // 暴露到全局 window，供开发者控制台调试
 onMounted(() => {
+  document.querySelectorAll('.assistant-text style, .agent-html style, .agent-html-preview style')
+    .forEach((el) => el.remove())
+  pinAppViewport()
+  void Promise.all([siteAccountsReady, modelConfigManager.ready, settingsManager.ready, chatStoreReady]).then(async () => {
+    const safe = await redactNative(JSON.parse(JSON.stringify(agentSessions.value)))
+    for (const session of agentSessions.value) {
+      const next = safe.find((item: { id: string }) => item.id === session.id)
+      if (next) Object.assign(session, next)
+    }
+    persistSoon(true)
+    await cleanupLegacySecrets()
+  }).catch(() => undefined)
+  document.addEventListener('scroll', pinAppViewport, true)
+
   ;(window as any).startTutorial = () => {
     localStorage.removeItem('tutorial_stepper_finished');
     window.dispatchEvent(new Event('start-tutorial'));
@@ -45,7 +93,21 @@ onMounted(() => {
 });
 
 // 导航处理函数
+const handleNavigateTab = (event: Event) => {
+  const tab = (event as CustomEvent<string>).detail
+  if (typeof tab === 'string' && tab) {
+    handleNavigate(tab)
+  }
+}
+
 const handleNavigate = (tab: string) => {
+  if (tab === 'browser') {
+    agentBrowserExpanded.value = true;
+    tab = 'agent';
+  }
+  if (tab === 'import-tasks') {
+    tab = 'agent'
+  }
   // 仅在实际切换到不同 tab 时触发折叠
   if (activeTab.value !== tab) {
     activeTab.value = tab;
@@ -279,7 +341,15 @@ const normalizeImportItems = (items: any): any[] => {
     const opts = x?.Options ?? x?.options ?? null;
     const ans = x?.Answer ?? x?.answer ?? "";
     const type = x?.QuestionType ?? x?.question_type ?? "";
-    return { content: String(q), options: Array.isArray(opts) ? opts : (typeof opts === "string" ? opts : null), answer: String(ans), question_type: String(type) };
+    return {
+      content: String(q),
+      options: Array.isArray(opts) ? opts : (typeof opts === "string" ? opts : null),
+      answer: String(ans),
+      question_type: String(type),
+      importance: parseImportance(x?.Importance ?? x?.importance),
+      mastery: parseMastery(x?.Mastery ?? x?.mastery),
+      difficulty: parseDifficulty(x?.Difficulty ?? x?.difficulty),
+    };
   });
 };
 
@@ -300,7 +370,16 @@ const handleFolderSelect = (folderId: number, folderName: string) => {
         if (!content) continue;
         const optionsStr = Array.isArray(item.options) ? item.options.join("\n") : (typeof item.options === "string" ? item.options : undefined);
         const answerStr = String(item.answer ?? "");
-        await databaseService.addQuestion({ content, options: optionsStr, answer: answerStr, folderId: selectedImportFolderId.value });
+        await databaseService.addQuestion({
+          content,
+          options: optionsStr,
+          answer: answerStr,
+          question_type: item.question_type,
+          folderId: selectedImportFolderId.value,
+          importance: item.importance,
+          mastery: item.mastery,
+          difficulty: item.difficulty,
+        });
         count++;
       }
       showImportDialog.value = false;
@@ -343,6 +422,8 @@ onMounted(async () => {
     console.error('监听事件失败:', error);
   }
   (window as any).__appImportDialogReady = true;
+  window.addEventListener('navigate-tab', handleNavigateTab as EventListener)
+  window.addEventListener('open-login', openLoginDialog)
   document.addEventListener('contextmenu', handleGlobalContextMenu, true)
   document.addEventListener('mousedown', handleGlobalPointerDown, true)
   document.addEventListener('keydown', handleGlobalKeydown, true)
@@ -356,9 +437,11 @@ onMounted(async () => {
     console.log('开始应用初始化...');
     await initGlobalTheme();
     console.log('主题系统初始化完成');
+    const authRestore = restoreAuthSession();
     await initializationService.initialize();
     console.log('应用初始化完成');
-    
+    await authRestore;
+
     await checkForUpdates();
   } catch (error) {
     console.error('应用初始化失败:', error);
@@ -366,11 +449,14 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+  window.removeEventListener('navigate-tab', handleNavigateTab as EventListener)
+  window.removeEventListener('open-login', openLoginDialog)
   document.removeEventListener('contextmenu', handleGlobalContextMenu, true)
   document.removeEventListener('mousedown', handleGlobalPointerDown, true)
   document.removeEventListener('keydown', handleGlobalKeydown, true)
   window.removeEventListener('resize', hideInputContextMenu)
   window.removeEventListener('blur', hideInputContextMenu)
+  document.removeEventListener('scroll', pinAppViewport, true)
 })
 
 
@@ -380,7 +466,7 @@ onUnmounted(() => {
 <template>
   <div class="app-container">
     <!-- 自定义Header -->
-    <AppHeader :active-tab="activeTab" @guide-to="handleGuideAction" />
+    <AppHeader :active-tab="activeTab" @guide-to="handleGuideAction" @navigate="handleNavigate" />
 
     
     <!-- 主要内容区域 -->
@@ -390,12 +476,10 @@ onUnmounted(() => {
       
       <!-- 内容区域 -->
       <div class="content-area">
-        <!-- 首页 -->
         <div v-show="activeTab === 'home'" class="content-view">
           <Home :collapse-trigger="collapseTrigger" @navigate="handleNavigate" />
         </div>
-        
-        <!-- 题库页面 -->
+
         <div v-show="activeTab === 'questions'" class="content-view">
           <QuestionBank
             :collapse-trigger="collapseTrigger"
@@ -403,14 +487,35 @@ onUnmounted(() => {
             :focus-folder-request-key="questionBankFocusRequestKey"
           />
         </div>
-        
-        <!-- 设置页面 -->
+
+        <div v-show="activeTab === 'campus'" class="content-view">
+          <CampusWorkspace
+            :active="activeTab === 'campus'"
+            :obscured="loginDialogVisible || showUpdateDialog || Boolean(secureStorageState.error)"
+          />
+        </div>
+
+        <div v-show="activeTab === 'study'" class="content-view">
+          <Study />
+        </div>
+
+        <div v-show="activeTab === 'agent' || activeTab === 'import-tasks'" class="content-view">
+          <Agent :active="activeTab === 'agent' || activeTab === 'import-tasks'" :browser-obscured="loginDialogVisible || showUpdateDialog" @open-folder="handleOpenQuestionFolder" />
+        </div>
+
         <div v-show="activeTab === 'settings'" class="content-view">
           <Settings @open-question-folder="handleOpenQuestionFolder" />
         </div>
       </div>
     </div>
     
+    <div v-if="secureStorageState.error" class="secure-storage-error" role="alert">{{ secureStorageState.error }} <button type="button" :disabled="secureStorageState.authorizing" @click="reloadSecureStore">{{ secureStorageState.requiresAuthorization ? '恢复授权并重新加载' : '重新加载' }}</button></div>
+    <LoginDialog
+      :visible="loginDialogVisible"
+      @close="closeLoginDialog"
+      @success="closeLoginDialog"
+    />
+
     <!-- 版本更新对话框 -->
     <UpdateDialog
       :visible="showUpdateDialog"
@@ -477,17 +582,22 @@ onUnmounted(() => {
 
 
 
+html,
 body {
   margin: 0;
   padding: 0;
+  max-width: none;
   background-color: var(--bg-tertiary, #f4f4f4);
   color: var(--text-primary, #2d3748);
   overflow: hidden;
+  overscroll-behavior: none;
+  overflow-anchor: none;
 }
 
 #app {
   height: 100vh;
   width: 100vw;
+  max-width: none;
   overflow: hidden;
   background-color: var(--bg-tertiary, #f4f4f4);
 }
@@ -497,12 +607,14 @@ body {
   flex-direction: column;
   height: 100%;
   width: 100%;
+  max-width: none;
   background-color: var(--bg-tertiary, #f4f4f4);
 }
 
 .main-content {
   display: flex;
   flex: 1;
+  min-width: 0;
   overflow: hidden;
   height: 100%;
   width: 100%;
@@ -510,7 +622,7 @@ body {
 
 .content-area {
   margin-bottom: 100px;
-  width: 100%;
+  min-width: 0;
   height: 100%;
   flex: 1;
   overflow: hidden;
@@ -526,11 +638,48 @@ body {
   width: 100%;
   height: 100%;
   overflow: auto;
+  overflow-anchor: none;
+}
+
+.content-view.is-fixed {
+  overflow: hidden;
 }
 
 .content-view > * {
   width: 100%;
   height: 100%;
+}
+
+.page-switch-enter-active,
+.page-switch-leave-active {
+  transition:
+    opacity 360ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    transform 360ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.page-switch-enter-active {
+  z-index: 1;
+}
+
+.page-switch-leave-active {
+  z-index: 0;
+  pointer-events: none;
+}
+
+.page-switch-enter-from {
+  opacity: 0;
+  transform: translateY(12px);
+}
+
+.page-switch-leave-to {
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page-switch-enter-active,
+  .page-switch-leave-active {
+    transition: none;
+  }
 }
 
 
@@ -550,13 +699,10 @@ body {
   -webkit-text-size-adjust: 100%;
 }
 
-.container {
-  margin: 0;
-  padding-top: 10vh;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  text-align: center;
+/* markstream-vue/index.css ships an unscoped Tailwind .container */
+#app .container,
+.app-container {
+  max-width: none;
 }
 
 .logo {
@@ -591,13 +737,16 @@ a:hover {
   min-width: 150px;
   padding: 6px;
   border-radius: 10px;
-  border: 1px solid var(--border-primary, #e2e8f0);
-  background: var(--bg-secondary, #ffffff);
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.16);
+  border: 1px solid var(--context-menu-border, rgba(255, 255, 255, 0.55));
+  background: var(--context-menu-bg, rgba(255, 255, 255, 0.42));
+  backdrop-filter: blur(40px) saturate(180%);
+  -webkit-backdrop-filter: blur(40px) saturate(180%);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.22), 0 4px 12px rgba(0, 0, 0, 0.12), inset 0 0.5px 0 rgba(255, 255, 255, 0.5);
   display: flex;
   flex-direction: column;
   gap: 4px;
   transform-origin: top left;
+  overflow: visible;
 }
 
 .context-menu-pop-enter-active,
@@ -635,6 +784,14 @@ a:hover {
 .global-input-context-menu-item:disabled {
   color: var(--text-disabled, #a0aec0);
   cursor: not-allowed;
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .global-input-context-menu {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    background: var(--bg-secondary, #ffffff);
+  }
 }
 
 h1 {
@@ -752,4 +909,8 @@ button {
   margin-left: 8px;
 }
 
+</style>
+
+<style scoped>
+.secure-storage-error { position: fixed; z-index: 20000; left: 50%; bottom: 20px; transform: translateX(-50%); max-width: calc(100vw - 40px); padding: 10px 16px; border-radius: 10px; background: var(--bg-secondary, #fff); color: var(--text-primary, #333); font-size: 13px; box-shadow: 0 4px 24px #0002; }
 </style>

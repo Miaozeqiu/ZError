@@ -6,7 +6,7 @@
       @click.stop="toggleSelector"
     >
       <span class="current-model-info">
-        <span class="model-name">{{ currentModel?.name || '选择模型' }}</span>
+        <span class="model-name">{{ currentModel?.displayName || '选择模型' }}</span>
         <span v-if="currentModel" class="platform-name">{{ currentPlatformName }}</span>
       </span>
       <svg class="dropdown-icon" :class="{ 'rotated': isOpen }" width="16" height="16" viewBox="0 0 16 16" fill="none">
@@ -109,8 +109,8 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
-import { useModelConfig } from '../../services/modelConfig'
-import type { AIPlatform, AIModel } from '../../services/modelConfig'
+import { useModelConfig } from '../../services/model/config'
+import type { AIPlatform, AIModel } from '../../services/model/config'
 
 interface Props {
   currentModel?: AIModel | null

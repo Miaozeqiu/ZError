@@ -51,6 +51,25 @@ mod macos {
     pub fn stop() {}
 }
 
+#[cfg(target_os = "macos")]
+pub fn prefer_chinese_system_dialogs() {
+    use objc2_foundation::{NSArray, NSString, NSUserDefaults};
+
+    let defaults = NSUserDefaults::standardUserDefaults();
+    let langs = NSArray::from_retained_slice(&[
+        NSString::from_str("zh-Hans"),
+        NSString::from_str("zh_CN"),
+    ]);
+    let key = NSString::from_str("AppleLanguages");
+    // SAFETY: 仅写入 AppleLanguages，供系统文件框使用简体中文
+    unsafe {
+        defaults.setObject_forKey(Some(&langs), &key);
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn prefer_chinese_system_dialogs() {}
+
 pub fn begin_server_activity() {
     macos::start("ZError HTTP server answering requests");
 }

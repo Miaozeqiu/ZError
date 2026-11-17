@@ -1,0 +1,395 @@
+import { reactive, watch } from 'vue'
+import { readSecureDocument, writeSecureDocument } from '../security/secureStore'
+import { environmentDetector } from './environmentDetector'
+import { DEFAULT_SEARCH_SETTINGS, normalizeSearchSettings, SEARCH_PROVIDERS, type SearchSettings } from '../searchProviders'
+
+export { DEFAULT_SEARCH_SETTINGS, normalizeSearchSettings, type SearchSettings } from '../searchProviders'
+
+// 设置接口定义
+export interface AppSettings {
+  // 常规设置
+  theme: 'light' | 'dark' | 'auto'
+  language: 'zh-CN' | 'en-US'
+  autoSave: boolean
+  
+  // 题库设置
+  autoAddToQuestionBank: boolean
+  // 文本模型最长响应时间（秒）
+  modelResponseTimeout: number
+  // 模型失败自动重试次数（仅单模型 / 总结模型 / 视觉模型）；0 表示不重试
+  modelRetryCount: number
+
+  
+  // 题目显示设置
+  defaultDifficulty: 'easy' | 'medium' | 'hard'
+  itemsPerPage: number
+  showExplanation: boolean
+  
+  // 网络设置
+  network: {
+    serverPort: number
+    enableLanAccess: boolean
+    bindAddress: string
+  }
+  
+  // 应用设置
+  windowSize: {
+    width: number
+    height: number
+  }
+  windowPosition: {
+    x: number
+    y: number
+  }
+  autoUpdate: boolean
+  enableNotifications: boolean
+  suppressNoModelWarning: boolean
+  questionSaveDir: string
+  questionSaveFolderId: number | null
+  algorithms: AlgorithmConfig[]
+  adminToken: string
+  multiUser: {
+    enabled: boolean
+    users: UserConfig[]
+  }
+  search: SearchSettings
+}
+
+export interface UserConfig {
+  id: string
+  name: string
+  token: string
+  createdAt: string
+}
+
+export interface AlgorithmConfig {
+  id: string
+  name: string
+  applicableType: string
+  code: string
+}
+
+// 默认设置
+const DEFAULT_SETTINGS: AppSettings = {
+  theme: 'light',
+  language: 'zh-CN',
+  autoSave: true,
+  autoAddToQuestionBank: true,
+  modelResponseTimeout: 40,
+  modelRetryCount: 2,
+
+  defaultDifficulty: 'medium',
+  itemsPerPage: 20,
+  showExplanation: true,
+  network: {
+    serverPort: 3000,
+    enableLanAccess: false,
+    bindAddress: '127.0.0.1'
+  },
+  windowSize: {
+    width: 1000,
+    height: 680
+  },
+  windowPosition: {
+    x: 100,
+    y: 100
+  },
+  autoUpdate: true,
+  enableNotifications: true
+  , suppressNoModelWarning: false
+  , questionSaveDir: ''
+  , questionSaveFolderId: null
+  , algorithms: []
+  , adminToken: ''
+  , multiUser: {
+    enabled: false
+    , users: []
+  }
+  , search: { ...DEFAULT_SEARCH_SETTINGS }
+}
+
+// 设置存储键
+const SETTINGS_STORAGE_KEY = 'app_settings'
+
+/**
+ * 设置管理器类
+ * 提供设置的读取、保存、重置等功能
+ */
+class SettingsManager {
+  readonly ready: Promise<void>
+  private hydrated = false
+  private settings: AppSettings
+  private listeners: Set<(settings: AppSettings) => void> = new Set()
+
+  constructor() {
+    this.settings = reactive(this.loadSettings())
+    this.setupAutoSave()
+    // 异步从文件加载设置并合并
+    this.ready = this.loadFromFile()
+  }
+
+  /**
+   * 从本地存储加载设置（同步，作为初始值）
+   */
+  private loadSettings(): AppSettings {
+    return JSON.parse(JSON.stringify(DEFAULT_SETTINGS))
+  }
+
+  /**
+   * 从 exe 同级目录的 config.json 异步加载设置
+   */
+  private async loadFromFile(): Promise<void> {
+    try {
+      const parsed = await readSecureDocument<Partial<AppSettings>>('app_settings', SETTINGS_STORAGE_KEY)
+      if (parsed) Object.assign(this.settings, {
+        ...DEFAULT_SETTINGS, ...parsed,
+        network: { ...DEFAULT_SETTINGS.network, ...(parsed.network || {}) },
+        search: normalizeSearchSettings(parsed.search),
+      })
+      this.hydrated = true
+    } catch { /* leave encrypted data intact on unlock failures */ }
+  }
+
+  private saveSettings(): void {
+    if (!this.hydrated) return
+    const snapshot = JSON.parse(JSON.stringify(this.settings)) as AppSettings
+    this.notifyListeners()
+    void writeSecureDocument('app_settings', snapshot).then(saved => {
+      for (const { key } of SEARCH_PROVIDERS) {
+        if (this.settings.search[key] === snapshot.search[key] && this.settings.search[key] !== saved.search[key]) this.settings.search[key] = saved.search[key]
+      }
+    }).catch(() => undefined)
+  }
+
+  /**
+   * 设置自动保存
+   */
+  private setupAutoSave(): void {
+    watch(
+      () => this.settings,
+      () => {
+        if (this.settings.autoSave) {
+          this.saveSettings()
+        }
+      },
+      { deep: true }
+    )
+  }
+
+  /**
+   * 通知监听器设置已更改
+   */
+  private notifyListeners(): void {
+    this.listeners.forEach(listener => {
+      try {
+        listener(this.settings)
+      } catch (error) {
+        console.error('设置监听器执行失败:', error)
+      }
+    })
+  }
+
+  /**
+   * 获取当前设置
+   */
+  getSettings(): AppSettings {
+    return this.settings
+  }
+
+  /**
+   * 获取特定设置项
+   */
+  get<K extends keyof AppSettings>(key: K): AppSettings[K] {
+    return this.settings[key]
+  }
+
+  /**
+   * 设置特定设置项
+   */
+  set<K extends keyof AppSettings>(key: K, value: AppSettings[K]): void {
+    this.settings[key] = value
+  }
+
+  /**
+   * 批量更新设置
+   */
+  update(newSettings: Partial<AppSettings>): void {
+    Object.assign(this.settings, newSettings)
+  }
+
+  /**
+   * 手动保存设置
+   */
+  save(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      try {
+        this.saveSettings()
+        resolve()
+      } catch (error) {
+        reject(error)
+      }
+    })
+  }
+
+  /**
+   * 重置设置为默认值
+   */
+  reset(): void {
+    Object.assign(this.settings, {
+      ...DEFAULT_SETTINGS,
+      network: { ...DEFAULT_SETTINGS.network },
+      search: { ...DEFAULT_SEARCH_SETTINGS }
+    })
+  }
+
+  /**
+   * 重置特定设置项
+   */
+  resetKey<K extends keyof AppSettings>(key: K): void {
+    if (key === 'search') {
+      this.settings.search = { ...DEFAULT_SEARCH_SETTINGS }
+      return
+    }
+    if (key === 'network') {
+      this.settings.network = { ...DEFAULT_SETTINGS.network }
+      return
+    }
+    this.settings[key] = DEFAULT_SETTINGS[key]
+  }
+
+  /**
+   * 添加设置变更监听器
+   */
+  addListener(listener: (settings: AppSettings) => void): () => void {
+    this.listeners.add(listener)
+    // 返回取消监听的函数
+    return () => {
+      this.listeners.delete(listener)
+    }
+  }
+
+  /**
+   * 移除设置变更监听器
+   */
+  removeListener(listener: (settings: AppSettings) => void): void {
+    this.listeners.delete(listener)
+  }
+
+  /**
+   * 导出设置为JSON
+   */
+  export(): string {
+    const search = { ...this.settings.search }
+    for (const { key } of SEARCH_PROVIDERS) {
+      if (key in search) search[key] = ''
+    }
+    return JSON.stringify({
+      ...this.settings,
+      adminToken: '',
+      multiUser: { ...this.settings.multiUser, users: this.settings.multiUser.users.map(user => ({ ...user, token: '' })) },
+      search,
+    }, null, 2)
+  }
+
+  /**
+   * 从JSON导入设置
+   */
+  import(jsonString: string): void {
+    try {
+      const importedSettings = JSON.parse(jsonString)
+      // 验证导入的设置格式
+      if (this.validateSettings(importedSettings)) {
+        this.update({
+          ...importedSettings,
+          search: normalizeSearchSettings(importedSettings.search)
+        })
+      } else {
+        throw new Error('导入的设置格式无效')
+      }
+    } catch (error) {
+      console.error('导入设置失败:', error)
+      throw new Error('设置导入失败')
+    }
+  }
+
+  /**
+   * 验证设置格式
+   */
+  private validateSettings(settings: any): boolean {
+    if (!settings || typeof settings !== 'object') {
+      return false
+    }
+
+    // 验证必要的设置项类型
+    const validations = [
+      () => !settings.theme || ['light', 'dark', 'auto'].includes(settings.theme),
+      () => !settings.language || ['zh-CN', 'en-US'].includes(settings.language),
+      () => !settings.autoSave || typeof settings.autoSave === 'boolean',
+      () => !settings.autoAddToQuestionBank || typeof settings.autoAddToQuestionBank === 'boolean',
+      () => !settings.algorithms || (
+
+        Array.isArray(settings.algorithms) && settings.algorithms.every((a: any) => (
+          a && typeof a === 'object' && typeof a.id === 'string' && typeof a.name === 'string' && typeof a.applicableType === 'string' && typeof a.code === 'string'
+        ))
+      ),
+      () => !settings.search || (
+        typeof settings.search === 'object' &&
+        (settings.search.enabled === undefined || typeof settings.search.enabled === 'boolean') &&
+        (settings.search.apiKey === undefined || typeof settings.search.apiKey === 'string')
+      )
+    ]
+
+    return validations.every(validation => validation())
+  }
+
+  /**
+   * 获取设置的描述信息
+   */
+  getSettingsInfo(): Record<keyof AppSettings, string> {
+    return {
+      theme: '界面主题模式',
+      language: '应用界面语言',
+      autoSave: '自动保存设置',
+      autoAddToQuestionBank: '自动将AI返回的题目添加到本地题库',
+      modelResponseTimeout: '文本模型最长响应时间（秒）',
+      modelRetryCount: '模型失败自动重试次数',
+
+      network: '网络配置设置',
+      windowSize: '窗口大小',
+      windowPosition: '窗口位置',
+      autoUpdate: '自动更新应用',
+      enableNotifications: '启用通知',
+      suppressNoModelWarning: '未选择模型提醒',
+      questionSaveDir: '题目保存目录',
+      questionSaveFolderId: '题目默认保存文件夹 ID',
+      algorithms: '算法配置列表',
+      adminToken: '管理员令牌',
+      multiUser: '多用户配置',
+      defaultDifficulty: '默认题目难度',
+      itemsPerPage: '每页显示题目数',
+      showExplanation: '显示题目解析',
+      search: '联网搜索（MCP）设置'
+    }
+
+  }
+}
+
+// 创建全局设置管理器实例
+export const settingsManager = new SettingsManager()
+
+// 导出设置管理器类型
+export type { SettingsManager }
+
+// 便捷的钩子函数
+export function useSettings() {
+  return {
+    settings: settingsManager.getSettings(),
+    get: settingsManager.get.bind(settingsManager),
+    set: settingsManager.set.bind(settingsManager),
+    update: settingsManager.update.bind(settingsManager),
+    save: settingsManager.save.bind(settingsManager),
+    reset: settingsManager.reset.bind(settingsManager),
+    addListener: settingsManager.addListener.bind(settingsManager),
+    removeListener: settingsManager.removeListener.bind(settingsManager)
+  }
+}

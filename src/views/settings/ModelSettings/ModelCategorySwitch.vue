@@ -3,7 +3,7 @@
     <div class="slider" :style="{ transform: `translateX(${Math.max(selectedIndex, 0) * 100}%)` }"></div>
     <label class="radio" v-for="(option, index) in options" :key="index">
       <input type="radio" :name="name" :value="option.value" v-model="selectedOption" @change="updateValue"/>
-      <span class="name">{{ option.label }}</span>
+      <span class="name" :data-text="option.label">{{ option.label }}</span>
     </label>
   </div>
 </template>
@@ -14,7 +14,7 @@ export default {
   props: {
     modelValue: {
       type: String,
-      default: 'text',
+      default: 'answer',
     },
     showSummary: {
       type: Boolean,
@@ -29,13 +29,11 @@ export default {
   },
   computed: {
     options() {
-      const baseOptions = [
-        { value: 'text', label: '文本' },
-        { value: 'vision', label: '视觉' }
-      ];
-      return this.showSummary
+      const baseOptions = [{ value: 'answer', label: '答题' }];
+      const withSummary = this.showSummary
         ? [...baseOptions, { value: 'summary', label: '总结' }]
         : baseOptions;
+      return [...withSummary, { value: 'agent', label: 'Agent' }];
     },
     selectedIndex() {
       return this.options.findIndex(o => o.value === this.selectedOption);
@@ -52,7 +50,7 @@ export default {
     },
     showSummary() {
       if (!this.showSummary && this.selectedOption === 'summary') {
-        this.selectedOption = 'text';
+        this.selectedOption = 'answer';
         this.updateValue();
       }
     }
@@ -67,6 +65,8 @@ export default {
 
   position: relative;
   display: flex;
+  width: max-content;
+  flex-shrink: 0;
   border-radius: 0.5rem;
   background-color: var(--platform-toggle-bg);
   padding: var(--pad);
@@ -74,7 +74,11 @@ export default {
 }
 
 .radio-inputs .radio {
-  flex: 1 1 0;
+  flex: 1 0 auto;
+  min-width: 3.6em;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   text-align: center;
   position: relative;
   z-index: 2;
@@ -86,14 +90,27 @@ export default {
 
 .radio-inputs .radio .name {
   display: flex;
+  flex-direction: column;
   cursor: pointer;
   align-items: center;
   justify-content: center;
+  width: 100%;
+  box-sizing: border-box;
   border-radius: 0.4rem;
-  padding: 0.1rem 0.5rem;
+  padding: 0.15rem 0.45rem;
   color: var(--text-secondary);
   transition: color 0.15s ease;
   white-space: nowrap;
+  user-select: none;
+}
+
+.radio-inputs .radio .name::after {
+  content: attr(data-text);
+  height: 0;
+  overflow: hidden;
+  font-weight: 600;
+  visibility: hidden;
+  pointer-events: none;
   user-select: none;
 }
 
