@@ -21,8 +21,9 @@
 
 ## 发版
 
-1. 用现有 Tauri 更新私钥签名。macOS 使用 `npm run tauri:build:signed`。Windows 使用 `npm run tauri:build:win`。
-2. 在主仓库新建 Release 草稿，使用形如 `v2.2.9` 的标签，且与桌面端构建版本一致。写好更新说明后上传对应的安装包、更新包和签名，再发布为正式 Release。
-3. 检查 Open 返回的版本和各架构下载链接，再用较旧且已接入 Open 更新接口的客户端验证更新，确认重启后的版本。
+1. 将发布提交合入 `master`，推送与 `src-tauri/tauri.conf.json` 版本一致的标签，例如 `v2.2.9`。GitHub Actions 会构建 Windows x64 NSIS 安装包并创建 Release 草稿。
+2. 下载草稿中的 Windows 安装包，用现有 Tauri 私钥在本机签名，例如 `npm exec -- tauri signer sign --private-key-path src-tauri/keys/zerror.key --password= ZError_2.2.9_x64-setup.exe`。用本机带 H.264/AAC 的 CEF 构建同版本 Apple Silicon DMG，将 Windows 的 `.sig` 和 macOS DMG 上传到草稿。
+3. 在 GitHub Actions 运行 `Build and publish release`，选择 `master` 并填写标签，例如 `gh workflow run release-windows.yml --ref master -f tag=v2.2.9`。流程会检查三个附件、验证 Windows 更新签名，然后发布正式 Release。
+4. 检查 Open 返回的版本和各架构下载链接，再用较旧且已接入 Open 更新接口的客户端验证更新，确认重新打开后的版本。
 
 保管好现有私钥。替换密钥会使旧客户端无法验证新签名。旧客户端使用随安装包内置的更新地址，接入 Open 的版本需要先安装一次。

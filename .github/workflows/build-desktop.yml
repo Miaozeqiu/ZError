@@ -1,6 +1,7 @@
 name: Build Windows installer
 
 on:
+  workflow_call:
   workflow_dispatch:
   push:
     branches: [dev-improvements]

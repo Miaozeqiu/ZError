@@ -1,94 +1,93 @@
-name: Build Windows Release
+name: Build and publish release
 
 on:
   push:
     tags:
-      - 'v*'
+      - 'v[0-9]*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag of the draft with signed Windows and local macOS assets
+        required: true
+        type: string
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: windows-release-${{ github.ref }}
+  group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
-  build:
-    runs-on: windows-latest
-    timeout-minutes: 60
+  build-windows:
+    if: github.event_name == 'push'
+    uses: ./.github/workflows/build-desktop.yml
 
+  prepare-release:
+    name: Prepare release draft
+    needs: build-windows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
         with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: package-lock.json
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
         with:
-          targets: x86_64-pc-windows-msvc
-
-      - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri -> target
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Prepare version and unsigned build
-        shell: pwsh
+          name: ZError-windows-x64-${{ github.run_number }}
+          path: installers
+      - name: Stage installer from master
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
         run: |
-          $tag = "${{ github.ref_name }}"
-          $version = $tag.TrimStart('v')
-          if ($version -notmatch '^\d+\.\d+\.\d+([.-].+)?$') {
-            throw "Tag must look like v2.2.8, got $tag"
-          }
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          git merge-base --is-ancestor HEAD origin/master
+          version="${TAG#v}"
+          test "$(jq -er .version src-tauri/tauri.conf.json)" = "$version"
+          installer="installers/ZError_${version}_x64-setup.exe"
+          test -s "$installer"
+          if draft=$(gh release view "$TAG" --json isDraft --jq .isDraft); then
+            test "$draft" = true
+            gh release upload "$TAG" "$installer"
+          else
+            gh release create "$TAG" "$installer" --draft --verify-tag --title "ZError $TAG" --generate-notes
+          fi
 
-          $confPath = 'src-tauri/tauri.conf.json'
-          $conf = Get-Content $confPath -Raw | ConvertFrom-Json
-          $conf.version = $version
-          $conf.bundle.createUpdaterArtifacts = $false
-          $conf | ConvertTo-Json -Depth 100 | Set-Content $confPath -Encoding utf8
-
-          $cargoPath = 'src-tauri/Cargo.toml'
-          $cargo = Get-Content $cargoPath -Raw
-          $cargo = $cargo -replace '(?m)^version\s*=\s*"[^"]+"', "version = `"$version`""
-          Set-Content $cargoPath $cargo -Encoding utf8
-
-          Write-Host "Building ZError $version (unsigned NSIS)"
-
-      - name: Build NSIS installer
-        run: npm run tauri -- build --bundles nsis
-
-      - name: List bundle output
-        shell: pwsh
-        run: Get-ChildItem -Recurse src-tauri/target/release/bundle/nsis | Format-Table Name, Length
-
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+  publish:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
         with:
-          name: ZError-${{ github.ref_name }}-windows-x64
-          path: src-tauri/target/release/bundle/nsis/*.exe
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          name: ZError ${{ github.ref_name }}
-          body: |
-            Windows 10/11 x64 NSIS 安装包。
-
-            - 版本：${{ github.ref_name }}
-            - 本次构建未启用 Tauri updater 签名，安装包可直接安装；不支持应用内自动更新。
-          files: src-tauri/target/release/bundle/nsis/*.exe
-          fail_on_unmatched_files: true
-          draft: false
-          prerelease: false
+          fetch-depth: 0
+      - name: Install signature verifier
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y minisign
+      - name: Verify release assets and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          git merge-base --is-ancestor "$TAG^{commit}" HEAD
+          version="${TAG#v}"
+          config=$(git show "$TAG:src-tauri/tauri.conf.json")
+          test "$(jq -er .version <<< "$config")" = "$version"
+          installer="ZError_${version}_x64-setup.exe"
+          dmg="ZError_${version}_aarch64.dmg"
+          release=$(gh release view "$TAG" --json isDraft,assets)
+          jq -e '.isDraft' <<< "$release"
+          for asset in "$installer" "$installer.sig" "$dmg"; do
+            jq -e --arg asset "$asset" 'any(.assets[]; .name == $asset and .size > 0)' <<< "$release"
+          done
+          check_dir=$(mktemp -d)
+          gh release download "$TAG" --pattern "$installer" --pattern "$installer.sig" --dir "$check_dir"
+          jq -er .plugins.updater.pubkey <<< "$config" | base64 --decode > "$check_dir/updater.pub"
+          base64 --decode "$check_dir/$installer.sig" > "$check_dir/updater.minisig"
+          minisign -Vm "$check_dir/$installer" -p "$check_dir/updater.pub" -x "$check_dir/updater.minisig"
+          gh release edit "$TAG" --draft=false --latest
