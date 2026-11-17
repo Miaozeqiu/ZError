@@ -60,6 +60,15 @@ EXE="$APP/Contents/MacOS/zerror"
 if [[ ! -x "$EXE" ]]; then
   EXE="$APP/Contents/MacOS/ZError"
 fi
+EXE_ARCHS="$(lipo -archs "$EXE")"
+case "$EXE_ARCHS" in
+  arm64) ARCH=aarch64 ;;
+  x86_64) ARCH=x64 ;;
+  'x86_64 arm64'|'arm64 x86_64') ARCH=universal ;;
+  *) echo "[cef] 无法识别 $EXE 的架构" >&2; exit 1 ;;
+esac
+read -r -a ARCHS <<< "$EXE_ARCHS"
+lipo "$DEST/$FW_NAME/Chromium Embedded Framework" -verify_arch "${ARCHS[@]}"
 
 helper_id() {
   case "$1" in
@@ -100,8 +109,13 @@ copy_helper() {
 </plist>
 EOF
   rm -f "$target"
-  # 硬链：装盘只算一份；dmg 需用能保留硬链的方式制作
-  ln "$EXE" "$target"
+  if [[ "${ZERROR_ADHOC_SIGN:-}" == "1" ]]; then
+    cp "$EXE" "$target"
+    codesign --force --sign - "$dest"
+  else
+    # 硬链：装盘只算一份；dmg 需用能保留硬链的方式制作
+    ln "$EXE" "$target"
+  fi
   chmod +x "$target"
 }
 
@@ -109,6 +123,12 @@ copy_helper "ZError Helper"
 copy_helper "ZError Helper (GPU)"
 copy_helper "ZError Helper (Plugin)"
 copy_helper "ZError Helper (Renderer)"
+
+if [[ "${ZERROR_ADHOC_SIGN:-}" == "1" ]]; then
+  codesign --force --deep --sign - "$DEST/$FW_NAME"
+  codesign --force --sign - "$APP"
+  codesign --verify --deep --strict "$APP"
+fi
 
 APP_SIZE="$(du -sh "$APP" | awk '{print $1}')"
 FW_SIZE="$(du -sh "$DEST/$FW_NAME" | awk '{print $1}')"
@@ -119,24 +139,30 @@ VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/
 if [[ -z "$VERSION" ]]; then
   VERSION="$(python3 -c 'import json; print(json.load(open("'"$ROOT"'/src-tauri/tauri.conf.json"))["version"])')"
 fi
-DMG_DIR="$ROOT/src-tauri/target/release/bundle/dmg"
+MACOS_DIR="$(dirname "$APP")"
+DMG_DIR="$MACOS_DIR/../dmg"
 mkdir -p "$DMG_DIR"
-DMG="$DMG_DIR/ZError_${VERSION}_aarch64.dmg"
+DMG="$DMG_DIR/ZError_${VERSION}_${ARCH}.dmg"
 
 # -srcfolder 会拆开硬链；先落到 APFS sparse image 再转 UDZO，保留硬链。
 STAGE="$(mktemp -d)"
 SPARSE="$STAGE/ZError.sparseimage"
+MNT="$STAGE/mount"
+mkdir "$MNT"
+cleanup() {
+  hdiutil detach "$MNT" >/dev/null 2>&1 || true
+  rm -rf "$STAGE"
+}
+trap cleanup EXIT
 hdiutil create -size 1g -type SPARSE -fs APFS -volname ZError "$SPARSE" >/dev/null
-MNT="$(hdiutil attach "$SPARSE" -nobrowse | awk '/\/Volumes\//{print $NF; exit}')"
+hdiutil attach "$SPARSE" -nobrowse -mountpoint "$MNT" >/dev/null
 ditto "$APP" "$MNT/ZError.app"
 hdiutil detach "$MNT" >/dev/null
 rm -f "$DMG"
 hdiutil convert "$SPARSE" -format UDZO -imagekey zlib-level=9 -o "$DMG" >/dev/null
-rm -rf "$STAGE"
 echo "[cef] remade $DMG ($(ls -lh "$DMG" | awk '{print $5}'))"
 
 # 更新器用的 .app.tar.gz（tar 默认保留硬链）
-MACOS_DIR="$ROOT/src-tauri/target/release/bundle/macos"
 shopt -s nullglob
 for tar in "$MACOS_DIR"/*.app.tar.gz; do
   out="$MACOS_DIR/$(basename "$tar")"

@@ -1,0 +1,81 @@
+name: Build desktop installers
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [dev-improvements]
+    paths:
+      - '.github/workflows/build-desktop.yml'
+      - 'scripts/bundle-cef-macos.sh'
+      - 'scripts/setup-cef-macos.sh'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-x64
+            runner: windows-2025
+            target: x86_64-pc-windows-msvc
+            artifact: nsis/*.exe
+          - platform: macos-arm64
+            runner: macos-15
+            target: aarch64-apple-darwin
+            artifact: dmg/*.dmg
+          - platform: macos-x64
+            runner: macos-15-intel
+            target: x86_64-apple-darwin
+            artifact: dmg/*.dmg
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+      - run: npm ci
+
+      - name: Configure installer build
+        run: |
+          node -e 'require("node:fs").writeFileSync(".tauri-ci.json", JSON.stringify({ bundle: { createUpdaterArtifacts: false } }))'
+
+      - name: Build Windows NSIS installer
+        if: runner.os == 'Windows'
+        run: npm exec -- tauri build --ci --target ${{ matrix.target }} --bundles nsis --config .tauri-ci.json -- --locked
+
+      - name: Build macOS DMG with Chromium
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          APPLE_SIGNING_IDENTITY: '-'
+          CEF_PATH: ${{ runner.temp }}/cef
+          ZERROR_ADHOC_SIGN: '1'
+        run: |
+          command -v cmake >/dev/null && command -v ninja >/dev/null || brew install cmake ninja
+          npm exec -- tauri build --ci --target ${{ matrix.target }} --bundles app --config .tauri-ci.json -- --locked
+          bash scripts/setup-cef-macos.sh
+          bundle="src-tauri/target/${{ matrix.target }}/release/bundle"
+          bash scripts/bundle-cef-macos.sh "$bundle/macos/ZError.app"
+          for dmg in "$bundle"/dmg/*.dmg; do
+            hdiutil verify "$dmg"
+          done
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: ZError-${{ matrix.platform }}-${{ github.run_number }}
+          path: src-tauri/target/${{ matrix.target }}/release/bundle/${{ matrix.artifact }}
+          if-no-files-found: error
+          retention-days: 14
