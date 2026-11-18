@@ -27,5 +27,8 @@ out="$root/output/release-v$version"
 mkdir -p "$out"
 cp "$bundle/dmg/ZError_${version}_aarch64.dmg" "$out/"
 tar -C "$bundle/macos" -czf "$out/ZError_${version}_aarch64.app.tar.gz" ZError.app
-npm exec -- tauri signer sign --private-key-path src-tauri/keys/zerror.key --password= "$out/ZError_${version}_aarch64.app.tar.gz" >/dev/null
+hdiutil verify "$out/ZError_${version}_aarch64.dmg"
+if [[ "${ZERROR_SKIP_UPDATER_SIGN:-}" != 1 ]]; then
+  npm exec -- tauri signer sign --private-key-path src-tauri/keys/zerror.key --password= "$out/ZError_${version}_aarch64.app.tar.gz" >/dev/null
+fi
 printf 'macOS artifacts staged at %s\n' "$out"
