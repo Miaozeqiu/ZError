@@ -28,6 +28,12 @@ const root = path.resolve(here, "..");
 const args = process.argv.slice(2);
 const isBuild = args.includes("build");
 
+// linuxdeploy 自带的 strip 不认新发行版库里的 .relr.dyn 段（binutils 2.41+），
+// 会导致 AppImage 打包失败；跳过 strip 对功能无影响。
+if (process.platform === "linux" && !process.env.NO_STRIP) {
+  process.env.NO_STRIP = "1";
+}
+
 const cefCodecs = os.platform() === "darwin"
   && fs.existsSync(path.join(os.homedir(), ".local/share/cef/151.3.24/cef_macos_aarch64/.zerror-codecs"));
 
