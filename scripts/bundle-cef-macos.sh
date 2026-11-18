@@ -172,7 +172,7 @@ for tar in "$MACOS_DIR"/*.app.tar.gz; do
 done
 shopt -u nullglob
 
-if [[ -f "$HOME/.local/share/cef/151.3.24/cef_macos_aarch64/.zerror-codecs" ]]; then
+if [[ -f "$(dirname "$SRC_FW")/.zerror-codecs" ]]; then
   echo "[cef] bundle includes H.264/AAC CEF"
 fi
 echo "[cef] Chromium framework embedded; Chaoxing may need re-login."

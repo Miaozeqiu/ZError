@@ -22,10 +22,11 @@
 
 ## 发版
 
-1. 将发布提交合入 `master`，推送与 `src-tauri/tauri.conf.json` 版本一致的标签，例如 `v2.2.9`。GitHub Actions 构建 Windows x64 和 Linux x64 安装包并创建 Release 草稿。
-2. 在 Apple Silicon Mac 本机运行 `bash scripts/build-release-macos.sh`，使用本机带 H.264/AAC 的 CEF 构建 DMG 和更新包。脚本对最终 Apple Silicon 更新包使用本机 Tauri 私钥签名。
-3. 下载草稿中的 Windows NSIS 和 Linux AppImage，用现有 Tauri 私钥为每个文件生成 `.sig`。例如 `npm exec -- tauri signer sign --private-key-path src-tauri/keys/zerror.key --password= ZError_2.2.9_x64-setup.exe`。将这两个签名及 macOS 目录下的 DMG、更新包和其签名上传到草稿。
-4. 运行 `gh workflow run release-windows.yml --ref master -f tag=v2.2.9`。工作流检查三个平台的附件和三份更新签名，再发布正式 Release。
-5. 检查 Open 返回的版本、Windows 和 macOS 更新链接，并用较旧且已接入 Open 的客户端核对安装和重启。Linux AppImage 的安全存储依赖系统提供 Secret Service 和 `secret-tool`。Debian 安装包会声明 `libsecret-tools` 依赖。
+1. 同步修改 `src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml` 和 `src-tauri/Cargo.lock` 的版本号，合入 `master`。
+2. GitHub 托管的 runner 构建 Windows x64、macOS Apple Silicon 和 Linux x64。macOS 下载私有 GitHub Packages 中的自编 CEF，并核对工作流锁定的 OCI 摘要和归档 SHA-256。
+3. `desktop-release` 环境中的 `TAURI_SIGNING_PRIVATE_KEY` 用于签署最终更新包。工作流用应用内置公钥核对三份签名，再为该提交创建版本标签和正式 Release。
+4. 检查 Open 返回的 Windows 和 macOS 更新链接，并用较旧且已接入 Open 的客户端核对安装和重启。Linux AppImage 的安全存储依赖系统提供 Secret Service 和 `secret-tool`。Debian 安装包会声明 `libsecret-tools` 依赖。
+
+`gh workflow run release-desktop.yml --ref master` 可以手动验证当前版本的三平台构建和更新签名。为当前提交重试正式发布时，使用 `gh workflow run release-desktop.yml --ref master -f publish=true`。
 
 保管好现有私钥。替换密钥会使旧客户端无法验证新签名。旧客户端使用随安装包内置的更新地址，接入 Open 的版本需要先安装一次。
