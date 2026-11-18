@@ -23,7 +23,7 @@
 ## 发版
 
 1. 同步修改 `src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml` 和 `src-tauri/Cargo.lock` 的版本号，合入 `master`。
-2. GitHub 托管的 runner 构建 Windows x64、macOS Apple Silicon 和 Linux x64。macOS 下载私有 GitHub Packages 中的自编 CEF，并核对工作流锁定的 OCI 摘要和归档 SHA-256。
+2. GitHub 托管的 runner 构建 Windows x64、macOS Apple Silicon 和 Linux x64。macOS 作业在 Intel runner 上交叉编译 arm64，并核对私有 GitHub Packages 中自编 CEF 的 OCI 摘要和归档 SHA-256。
 3. `desktop-release` 环境中的 `TAURI_SIGNING_PRIVATE_KEY` 用于签署最终更新包。工作流用应用内置公钥核对三份签名，再为该提交创建版本标签和正式 Release。
 4. 检查 Open 返回的 Windows 和 macOS 更新链接，并用较旧且已接入 Open 的客户端核对安装和重启。Linux AppImage 的安全存储依赖系统提供 Secret Service 和 `secret-tool`。Debian 安装包会声明 `libsecret-tools` 依赖。
 
