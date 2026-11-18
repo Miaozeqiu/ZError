@@ -196,6 +196,7 @@ const sendInApp = async (browserId: string, text: string) => {
   const session = ensureBrowserChat({ browserId })
   if (!session) return { ok: false, error: '没有浏览器对话' }
   selectChat(session.id)
+  window.dispatchEvent(new CustomEvent('navigate-tab', { detail: 'agent' }))
   const agent = modelConfigManager.getSelectedAgentModel() || modelConfigManager.getSelectedTextModel()
   if (!agent) return { ok: false, error: '没有可用的 agent 模型', sessionId: session.id }
   if (session.messages.some((item) => item.status === 'streaming')) stopChat(session.id)
@@ -297,7 +298,7 @@ export const runBridgeAction = async (cmd: BridgeCmd) => {
 
   if (action === 'chat') {
     const { controlForSession } = await import('../browser/control')
-    const { sessions, chatStoreReady } = await import('./chatStore')
+    const { sessions, chatStoreReady, activeChatId } = await import('./chatStore')
     await chatStoreReady
     const { modelConfigManager } = await import('../model/config')
     const candidates = [...sessions.value].filter(item => !item.parentId && item.messages.length)
@@ -331,6 +332,8 @@ export const runBridgeAction = async (cmd: BridgeCmd) => {
       lastRole: last?.role || '',
       lastText: clip(last?.content || last?.error || '', 240),
       ...(diagnostic ? {
+        loginFormVisible: Boolean(session && activeChatId.value === session.id
+          && document.querySelector('.chat-thread .assistant-turn form[aria-label="网站登录"] input[type="password"]')?.getClientRects().length),
         contextBudget: resolveContextBudget(selectedModel),
         run: last?.run,
         lastStatus: last?.status, taskOutcome: last?.taskOutcome, stopReason: last?.stopReason, waitingForEvent: hasAgentWait(session?.id || ''),
@@ -339,6 +342,11 @@ export const runBridgeAction = async (cmd: BridgeCmd) => {
         coursePlan: plan ? { total: plan.items.length, pending: plan.items.filter(item => item.status === 'pending').length, paused: Boolean(plan.pausedReason) } : null,
         recentTurns: session?.messages.slice(-6).map(message => ({
           role: message.role, status: message.status, stopReason: message.stopReason,
+          ...(args.details === true && message.run ? {
+            timing: { reasoningMs: message.reasoningDurationMs,
+              requests: message.run.usage.requests, inputTokens: message.run.usage.inputTokens,
+              elapsedMs: message.run.updatedAt - (message.run.trace[0]?.at ?? message.run.updatedAt) },
+          } : {}),
           ...(args.details === true ? { text: redactText(clip(message.content || '', 3000)) } : {}),
           tools: message.steps.map((step, index) => {
             let params: Record<string, unknown> = {}, result: Record<string, unknown> = {}
@@ -348,6 +356,9 @@ export const runBridgeAction = async (cmd: BridgeCmd) => {
               frame: params.frame, frameId: params.frameId, loaderId: params.loaderId,
               requestedStatus: params.status, watching: result.watching, finished: result.finished,
               resultStatus: result.status, ok: result.ok,
+              ...(step.name === 'browser_login_zjooc' ? { captchaImageCaptured: result.captchaImage === '[attached]' } : {}),
+              ...(args.details === true && step.finishedAt ? { elapsedMs: step.finishedAt - step.startedAt,
+                startedAfterMs: step.startedAt - (message.run?.trace[0]?.at ?? step.startedAt) } : {}),
               ...(args.details === true && (step.status === 'failed' || result.ok === false) ? {
                 error: redactText(clip(step.detail || String(result.error || result.reason || ''), 1200)),
               } : {}),

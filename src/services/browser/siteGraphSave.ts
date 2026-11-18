@@ -34,7 +34,7 @@ export const siteGraphSkillTarget = (site: { id?: string; host?: string }) => {
 export const serializeSiteGraph = (site: SiteGraphData): SiteGraphData => {
   const data = cloneGraph(site)
   const identity = websiteIdentityForHost(data.host)
-  if (identity?.loginHosts.length) {
+  if (identity && (identity.loginHosts.length || identity.excludedDomains?.length)) {
     data.id = websiteAccountId(identity.host)
     data.host = identity.host
     data.hostPattern = websiteHostPattern(identity.host)

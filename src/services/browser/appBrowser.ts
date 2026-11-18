@@ -423,6 +423,7 @@ export const readBrowserPage = async (id: string, opts: ReadPageOptions = {}) =>
       return {
         frameId: typeof row.frameId === 'string' ? row.frameId : undefined,
         loaderId: typeof row.loaderId === 'string' ? row.loaderId : undefined,
+        framePath: typeof row.framePath === 'string' ? row.framePath : undefined,
         url: String(row.url || ''),
         priority: Number(row.priority) || 0,
         snapshot: String(row.snapshot || ''),

@@ -545,14 +545,16 @@ fn site_origins(site: &str) -> Vec<String> {
         if let Ok(data) = serde_json::from_str::<Value>(&raw) {
             if let Some(rows) = data["profiles"].as_array() {
                 for row in rows {
-                    if row["host"].as_str() == Some(primary)
-                        && (row["credentialsApproved"] == true
-                            || row.get("credentialsApproved").is_none())
-                    {
+                    if row["host"].as_str() != Some(primary) {
+                        continue;
+                    }
+                    if let Some(excluded) = row["excludedDomains"].as_array() {
+                        hosts.retain(|host| !excluded.iter().filter_map(Value::as_str)
+                            .any(|domain| host == domain || host.ends_with(&format!(".{domain}"))));
+                    }
+                    if row["credentialsApproved"] == true || row.get("credentialsApproved").is_none() {
                         if let Some(aliases) = row["loginHosts"].as_array() {
-                            hosts.extend(
-                                aliases.iter().filter_map(Value::as_str).map(str::to_string),
-                            );
+                            hosts.extend(aliases.iter().filter_map(Value::as_str).map(str::to_string));
                         }
                     }
                 }
@@ -584,13 +586,14 @@ fn approved_site(v: &Vault, site: &str) -> bool {
         })
 }
 fn canonical_site(site: &str) -> String {
-    if site == "authserver.open.ha.cn" {
-        return "menhu.haou.edu.cn".into();
-    }
     if let Ok(raw) = std::fs::read_to_string(root().join("website-identities.json")) {
         if let Ok(data) = serde_json::from_str::<Value>(&raw) {
             if let Some(rows) = data["profiles"].as_array() {
                 for row in rows {
+                    if site == "authserver.open.ha.cn" && row["host"] == "menhu.haou.edu.cn"
+                        && row["excludedDomains"].as_array().is_some_and(|domains| domains.iter().any(|domain| domain == site)) {
+                        return site.into();
+                    }
                     if row["loginHosts"]
                         .as_array()
                         .is_some_and(|hosts| hosts.iter().any(|h| h.as_str() == Some(site)))
@@ -603,6 +606,7 @@ fn canonical_site(site: &str) -> String {
             }
         }
     }
+    if site == "authserver.open.ha.cn" { return "menhu.haou.edu.cn".into(); }
     site.into()
 }
 fn merge_accounts(left: Value, right: Value) -> Value {
@@ -1035,6 +1039,24 @@ pub async fn secure_register(
     storage_task(move || register_inner(site, fields)).await
 }
 fn register_inner(site: String, fields: BTreeMap<String, String>) -> Result<Value, String> {
+    register_site_fields(site, fields, None)
+}
+
+// Called by the desktop credential form, separate from registration of secrets found in messages.
+#[tauri::command]
+pub async fn secure_save_chat_login(
+    window: tauri::WebviewWindow,
+    site: String,
+    login_origin: String,
+    account: String,
+    password: String,
+) -> Result<(), String> {
+    trusted_window(&window)?;
+    let fields = BTreeMap::from([("account".into(), account), ("password".into(), password)]);
+    storage_task(move || register_site_fields(site, fields, Some(&login_origin)).map(|_| ())).await
+}
+
+fn register_site_fields(site: String, fields: BTreeMap<String, String>, login_origin: Option<&str>) -> Result<Value, String> {
     if site.is_empty()
         || site.len() > 253
         || !site
@@ -1044,7 +1066,12 @@ fn register_inner(site: String, fields: BTreeMap<String, String>) -> Result<Valu
         return Err("网站标识无效".into());
     }
     with_vault(true, |v| {
-        let pending = !approved_site(v, &site);
+        if let Some(target) = login_origin {
+            if !site_origins(&site).iter().any(|allowed| allowed == target) {
+                return Err("此登录域名未获准使用该网站的凭据".into());
+            }
+        }
+        let pending = login_origin.is_none() && !approved_site(v, &site);
         let site = if pending && !site.starts_with("pending-") {
             format!("pending-{}", uuid::Uuid::new_v4())
         } else {
@@ -1116,10 +1143,51 @@ fn site_account_names_in_vault(vault: &Vault) -> BTreeMap<String, String> {
     }
     names
 }
+// Mutate only these website records under the vault lock. Other windows may
+// have saved new credentials since the settings page loaded its account list.
+#[tauri::command]
+pub async fn secure_remove_site_accounts(window: tauri::WebviewWindow, ids: Vec<String>) -> Result<(), String> {
+    trusted_window(&window)?;
+    if ids.is_empty() || ids.iter().any(|id| id.is_empty() || id.len() > 253 ||
+        !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-')) {
+        return Err("无效的网站标识".into());
+    }
+    storage_task(move || with_vault(true, |vault| {
+        if let Some(rows) = vault.documents.get_mut("site_accounts").and_then(Value::as_object_mut) {
+            for id in &ids { rows.remove(id); }
+        }
+        for id in &ids {
+            for field in ["account", "password"] {
+                let key = format!("site/{id}/{field}");
+                let reference = token(&key);
+                vault.secrets.remove(&key);
+                vault.retired.retain(|(_, target)| target != &reference);
+                vault.aliases.retain(|alias, target| alias != &reference && target != &reference);
+            }
+        }
+        Ok(())
+    })).await
+}
+
 #[tauri::command]
 pub async fn secure_site_account_names(window: tauri::WebviewWindow) -> Result<BTreeMap<String, String>, String> {
     trusted_window(&window)?;
     storage_task(|| with_vault(false, |vault| Ok(site_account_names_in_vault(vault)))).await
+}
+
+fn site_password_length(vault: &Vault, reference: &str) -> Result<usize, String> {
+    let reference = vault.aliases.get(reference).map(String::as_str).unwrap_or(reference);
+    let id = token_id(reference).ok_or("无效的凭据变量")?;
+    let password = vault.secrets.get(id)
+        .filter(|secret| secret.kind == "site" && id.starts_with("site/") && id.ends_with("/password"))
+        .ok_or("网站密码已删除或尚未配置")?;
+    Ok(password.value.chars().count())
+}
+
+#[tauri::command]
+pub async fn secure_site_password_length(window: tauri::WebviewWindow, reference: String) -> Result<usize, String> {
+    trusted_window(&window)?;
+    storage_task(move || with_vault(false, |vault| site_password_length(vault, &reference))).await
 }
 
 #[tauri::command]
@@ -1174,6 +1242,10 @@ fn resolve_in_vault(
     let secret = v.secrets.get(id).ok_or("凭据已删除或尚未配置")?;
     let origin = origin(target).ok_or("目标地址无效")?;
     if secret.kind != kind || !secret.origins.contains(&origin) {
+        return Err("凭据与当前网站或服务不匹配，已阻止填写或发送".into());
+    }
+    // Stored credentials may predate a domain removal.
+    if kind == "site" && !id.split('/').nth(1).is_some_and(|site| site_origins(site).contains(&origin)) {
         return Err("凭据与当前网站或服务不匹配，已阻止填写或发送".into());
     }
     Ok(Zeroizing::new(secret.value.clone()))
@@ -1587,6 +1659,18 @@ mod credential_tests {
             json!([{"content":"pending-password-for-test"}]),
         )
         .unwrap();
+        let fields = BTreeMap::from([
+            ("account".into(), "chat-form-user".into()),
+            ("password".into(), "chat-form-password".into()),
+        ]);
+        let host = "chat-login.example";
+        assert!(register_site_fields(host.into(), fields.clone(), Some("https://other.example")).is_err());
+        let receipt = register_site_fields(host.into(), fields, Some("https://chat-login.example")).unwrap();
+        assert_eq!(receipt["pending"], false);
+        assert!(!receipt.to_string().contains("chat-form-"));
+        let reference = receipt["references"]["password"].as_str().unwrap();
+        assert_eq!(resolve(reference, "site", "https://chat-login.example").unwrap().as_str(), "chat-form-password");
+        assert!(resolve(reference, "site", "https://other.example").is_err());
         let pending = register_inner(
             "unknown.example.test".into(),
             BTreeMap::from([("password".into(), "pending-password-for-test".into())]),
@@ -1687,6 +1771,18 @@ mod credential_tests {
         assert!(site_account_names_in_vault(&vault).is_empty());
         vault.documents.insert("site_accounts".into(), json!({}));
         assert!(site_account_names_in_vault(&vault).is_empty());
+    }
+    #[test]
+    fn website_password_length_counts_characters_and_rejects_other_fields() {
+        let mut vault = Vault::default();
+        let mut document = json!({"zjooc": {"account": "synthetic-user", "password": "a密🔒7"}});
+        protect_document(&mut vault, "site_accounts", &mut document).unwrap();
+        let password = document["zjooc"]["password"].as_str().unwrap();
+        assert_eq!(site_password_length(&vault, password).unwrap(), 4);
+        let account = document["zjooc"]["account"].as_str().unwrap();
+        assert!(site_password_length(&vault, account).is_err());
+        let api_key = put_secret(&mut vault, "model/demo/apiKey", "synthetic-key", "api", vec![]).unwrap();
+        assert!(site_password_length(&vault, &api_key).is_err());
     }
     #[test]
     fn configuration_contains_references_and_revokes_deleted_accounts() {

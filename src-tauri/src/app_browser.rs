@@ -6,6 +6,7 @@ use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Rect, Web
 use tauri::webview::{NewWindowResponse, PageLoadEvent, WebviewBuilder};
 use url::Url;
 
+const SCRIPTCAT_OPTIONS: &str = "chrome-extension://biodkpbccbdobbjiandalbldblopjkhe/src/options.html";
 const LABEL_PREFIX: &str = "app-browser-";
 const SAFARI_UA: &str =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Safari/605.1.15";
@@ -89,6 +90,9 @@ pub(crate) fn parse_url(raw: &str) -> Result<Url, String> {
     return Ok(home_nav_url());
   }
   let trimmed = raw.trim();
+  if trimmed == "zerror://scriptcat" || trimmed.split('#').next() == Some(SCRIPTCAT_OPTIONS) {
+    return Url::parse(if trimmed == "zerror://scriptcat" { SCRIPTCAT_OPTIONS } else { trimmed }).map_err(|e| e.to_string());
+  }
   let candidate = if trimmed.contains("://") {
     trimmed.to_string()
   } else {
@@ -431,11 +435,7 @@ const BROWSER_HOME_LAUNCH: &str = r#"(function(){
     event.stopPropagation();
     try { document.title = 'ZRNAV:' + href; } catch (e2) {}
     try {
-      document.documentElement.style.background = '#fff';
-      if (document.body) {
-        document.body.replaceChildren();
-        document.body.style.cssText = 'margin:0;background:#fff;min-height:100vh';
-      }
+      if (document.body) document.body.replaceChildren();
     } catch (e3) {}
     try {
       var meta = document.querySelector('meta[name="referrer"]');
@@ -963,6 +963,8 @@ pub async fn browser_open(
 
   let window = parent_window(&app)?;
   let data_dir = shared_data_dir(&app)?;
+  #[cfg(windows)]
+  let install_record = data_dir.join("scriptcat-install.json");
   let state_id = id.clone();
   let title_id = id.clone();
   let popup_app = app.clone();
@@ -1020,6 +1022,20 @@ pub async fn browser_open(
     builder = builder.devtools(true);
   }
 
+  #[cfg(windows)]
+  let pending_install = {
+    let extensions = app.path().resource_dir().map_err(|e| e.to_string())?.join("browser-extensions");
+    // WebView2 persists extensions in this profile. Reinstall only for a new bundle or path.
+    let stamp = serde_json::to_vec(&(env!("SCRIPTCAT_RELEASE_SHA256"), &extensions))
+      .map_err(|err| err.to_string())?;
+    builder = builder.browser_extensions_enabled(true);
+    if std::fs::read(&install_record).ok().as_ref() == Some(&stamp) {
+      None
+    } else {
+      builder = builder.extensions_path(extensions);
+      Some(stamp)
+    }
+  };
   let webview = match window.add_child(
     builder,
     LogicalPosition::new(x.max(0.0), y.max(0.0)),
@@ -1040,6 +1056,15 @@ pub async fn browser_open(
       return Err(msg);
     }
   };
+  #[cfg(windows)]
+  {
+    if let Some(stamp) = pending_install {
+      if let Err(err) = std::fs::write(install_record, stamp) {
+        eprintln!("无法记录脚本猫安装状态: {err}");
+      }
+    }
+    crate::browser_theme::apply_webview(&webview)?;
+  }
   #[cfg(target_os = "macos")]
   webview.with_webview({ let id = id.clone(); move |platform| unsafe {
     round_browser_view(&*(platform.inner() as *const objc2_app_kit::NSView));
@@ -2146,6 +2171,16 @@ async fn dispatch_browser_protocol(
   args: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
   match op.as_str() {
+    "chaoxing_login_state" | "zjooc_login_state" => {
+      #[cfg(target_os = "macos")]
+      if crate::cef_runtime::cef_enabled() {
+        if op == "zjooc_login_state" {
+          return crate::cef::chaoxing_login::zjooc_state(&id, args["captureCaptcha"] == true).await;
+        }
+        return crate::cef::chaoxing_login::state(&id).await;
+      }
+      Ok(serde_json::json!({ "kind": "unsupported" }))
+    }
     "fill_secret" => {
       #[cfg(target_os="macos")]
       if crate::cef_runtime::cef_enabled() {
@@ -2170,6 +2205,13 @@ async fn dispatch_browser_protocol(
           protocol_arg_str(&args, "mid").unwrap_or_default()).await;
       }
       Err("当前平台浏览区不是 Chromium".into())
+    }
+    "attachment_frames" => {
+      #[cfg(target_os = "macos")]
+      if crate::cef_runtime::cef_enabled() {
+        return crate::cef::frames::attachment_frames(&id, args.get("locator").cloned().unwrap_or_default()).await;
+      }
+      Err("当前浏览器引擎不支持课件框定位".into())
     }
     "set_checked" => {
       #[cfg(target_os = "macos")]

@@ -13,11 +13,51 @@ const homeworkQuestionRange = {
   type: 'object', description: '用户指定的网页题号范围（含起止），如第 1–5 题传 {"start":1,"end":5}。只处理一题时两个值相同。',
   properties: { start: { type: 'integer', minimum: 1 }, end: { type: 'integer', minimum: 1 } }, required: ['start', 'end'],
 }
+const chapterQuizTarget = {
+  chapter_key: { type: 'string', description: '章节测验使用 needs_quiz 或 browser_review_chapter 返回的 chapterKey。' },
+  quiz_job_id: { type: 'string', description: '章节测验任务点标识，使用返回的 quiz_job_id。同页有多个测验时必填。' },
+}
+const chapterDiscussionTarget = {
+  chapter_key: { type: 'string', description: '章节工具返回的 chapterKey。' },
+  tab: { type: 'integer', minimum: 1, description: '讨论所在的章节页签编号。' },
+  discussion_id: { type: 'string', description: '章节工具返回的 discussion_id。' },
+}
 
 export const BROWSER_PRIMITIVE_TOOLS = [
   ...HISTORY_TOOLS,
   WEBSITE_ICON_TOOL,
-  { type: 'function', function: { name: 'browser_list_courses', description: '用已启用的学习通网站脚本打开「我学的课」并列出学生课程。可按课名过滤，nextOffset 可翻看已采集的下一批。', parameters: {
+  { type: 'function', function: { name: 'browser_home_shortcuts', description: '管理 ZError 浏览器「导航」首页的本地快捷入口。按用户要求查看、新增、改名、改网址或删除。必要时先打开导航页。', parameters: {
+    type: 'object', properties: {
+      action: { type: 'string', enum: ['list', 'add', 'update', 'remove'] },
+      target: { type: 'string', description: '更新或删除时填写已有入口的 ID、完整名称或完整网址。' },
+      name: { type: 'string', description: '新增必填。更新时仅在需要改名时填写。' },
+      url: { type: 'string', description: '新增必填。更新时仅在需要换地址时填写。使用完整 HTTP 或 HTTPS URL。' },
+    }, required: ['action'], additionalProperties: false,
+  } } },
+  { type: 'function', function: { name: 'browser_answer_zjooc', description: '在浙学作业或测验：自动登录提示、匹配或生成答案、逐题填写并回读。每批五题，按 nextOffset 和 assignment_id 继续；单题模式按用户范围点下一题。needs_review 需核对，保留已有作答，不交卷。', parameters: {
+    type: 'object', properties: { assignment_id: { type: 'string' }, offset: { type: 'integer', minimum: 0 },
+      question_range: { type: 'object', properties: { start: { type: 'integer', minimum: 1 }, end: { type: 'integer', minimum: 1 } }, required: ['start', 'end'], additionalProperties: false } }, additionalProperties: false,
+  } } },
+  { type: 'function', function: { name: 'browser_play_zjooc', description: '在浙学小节播放页。默认启动当前视频并监控；title 精确指定本节一条视频；mode=section 按页签顺序播完本小节所有未完成视频。连续播放时一次调用即可。',
+    parameters: { type: 'object', properties: {
+      mode: { type: 'string', enum: ['current', 'section'] },
+      title: { type: 'string', description: '仅限 current 模式，填页面显示的视频全名。' },
+    }, additionalProperties: false },
+  } },
+  { type: 'function', function: { name: 'browser_request_credentials', description: '当前 HTTPS 登录页需要账号密码时，在聊天中显示安全输入表单。已配置时直接返回本站引用。用 browser_type 的 secret_ref 填写；用户取消时停止登录。',
+    parameters: { type: 'object', properties: {}, additionalProperties: false },
+  } },
+  { type: 'function', function: { name: 'browser_login_zjooc', description: '安全登录在浙学。先不传参数检查登录态或获取验证码图片。看清验证码后传 captcha_id 和 captcha_code，宿主负责提交并核对是否登录。看不清时等待用户验证。账号密码由宿主管理。',
+    parameters: { type: 'object', properties: {
+      captcha_id: { type: 'string', description: '本轮登录工具回执中的验证码图片标识。' },
+      captcha_code: { type: 'string', description: '当前图片上看到的 5 位字母或数字，保留大小写。' },
+      wait_for_verification: { type: 'boolean', description: '无法看清图片时设为 true，等待用户在网页完成验证。' },
+    }, additionalProperties: false },
+  } },
+  { type: 'function', function: { name: 'browser_login_chaoxing', description: '登录学习通或确认已有登录态。软件使用已保存的学习通凭据，核对空间页才返回 loggedIn=true。出现验证码或滑块时返回人工处理提示。无需传参。',
+    parameters: { type: 'object', properties: {}, additionalProperties: false },
+  } },
+  { type: 'function', function: { name: 'browser_list_courses', description: '用学习通网站脚本打开「我学的课」并列出学生课程。可按课名过滤，nextOffset 可翻看已采集的下一批。', parameters: {
     type: 'object', properties: { course_name: { type: 'string', description: '可选的课程名称筛选' }, offset: { type: 'integer', minimum: 0 } },
   } } },
   { type: 'function', function: { name: 'browser_open_course', description: '根据用户指定的名称直接进入学习通学生课程。打开唯一匹配后核对落地页，并返回可用的页面快照与 ref。重名时返回候选，请用户确认。', parameters: {
@@ -27,12 +67,15 @@ export const BROWSER_PRIMITIVE_TOOLS = [
     type: 'object', properties: { course_name: { type: 'string' }, teacher: { type: 'string' }, homework_name: { type: 'string' }, offset: { type: 'integer', minimum: 0 } },
   } } },
   { type: 'function', function: { name: 'browser_open_homework', description: '根据用户指定的作业名在当前学习通课程中直接打开作业。可同时传课名；匹配唯一后返回落地页快照和 ref。仅打开页面。', parameters: {
-    type: 'object', properties: { course_name: { type: 'string' }, teacher: { type: 'string' }, homework_name: { type: 'string' } }, required: ['homework_name'],
+    type: 'object', properties: { course_name: { type: 'string' }, teacher: { type: 'string' }, homework_name: { type: 'string' },
+      homework_url: { type: 'string', description: '本地经验中与指定课程、作业唯一匹配的已核对顶层 HTTPS 地址。传完整作业名；失效时省略此参数并按课名查找。' },
+    }, required: ['homework_name'],
   } } },
-  { type: 'function', function: { name: 'browser_answer_homework', description: '学习通课程作答页上，用户要求完成指定题目时优先用此工具。用本地题库精确答案逐批填写并回读，最多八题。无可靠答案的题供 Agent 检查，核实后可用 answers 补填。保留已有冲突答案。不保存、不交卷。', parameters: {
+  { type: 'function', function: { name: 'browser_answer_homework', description: '逐批填写并回读学习通课程作业或章节测验，每批最多八题。章节测验须传 chapter_key，并沿用 quiz_job_id。使用本地题库精确答案，核实后可用 answers 补填。保留已有冲突答案。不保存、不交卷。', parameters: {
     type: 'object', properties: {
       assignment_id: { type: 'string', description: '同一作业续批或补填时，使用前次填答或复核返回的值；补填必填' },
       question_range: homeworkQuestionRange,
+      ...chapterQuizTarget,
       offset: { type: 'integer', minimum: 0, description: '当前范围的分页游标，首批省略；后续传 nextOffset 并保留同一范围。' },
       answers: { type: 'array', minItems: 1, maxItems: 8, description: '仅提交已核实的漏题答案；传入后只补填这些题',
         items: { type: 'object', required: ['question_id'], properties: {
@@ -41,12 +84,19 @@ export const BROWSER_PRIMITIVE_TOOLS = [
         } } },
     },
   } } },
-  { type: 'function', function: { name: 'browser_review_homework', description: '优先用此工具只读查看学习通课程作答页的题干、选项、实际作答、空白项和需辨认的题。填写后也用它复核。用 question_range 限定题号；有 nextOffset 时沿用同一范围继续。', parameters: {
-    type: 'object', properties: { assignment_id: { type: 'string' }, question_range: homeworkQuestionRange, offset: { type: 'integer', minimum: 0 } },
+  { type: 'function', function: { name: 'browser_review_homework', description: '只读查看和复核学习通课程作业或章节测验的题干、选项、实际作答、空白项。用 question_range 限定题号；有 nextOffset 时沿用同一目标和范围继续。', parameters: {
+    type: 'object', properties: { assignment_id: { type: 'string' }, ...chapterQuizTarget, question_range: homeworkQuestionRange, offset: { type: 'integer', minimum: 0 } },
+  } } },
+  { type: 'function', function: { name: 'browser_review_chapter_discussion', description: '读取当前学习通章节讨论的题目和少量匿名回复样本，或复核先前回复的发布与任务点状态。', parameters: {
+    type: 'object', properties: chapterDiscussionTarget, required: ['chapter_key', 'tab', 'discussion_id'], additionalProperties: false,
+  } } },
+  { type: 'function', function: { name: 'browser_reply_chapter_discussion', description: '将 Agent 根据题目和已有回复写出的原创正文发送到当前学习通章节话题，并回读网页确认。使用 needs_discussion 返回的章、页签和话题标识。用户授权时调用一次。', parameters: {
+    type: 'object', properties: { ...chapterDiscussionTarget, reply: { type: 'string', minLength: 1, maxLength: 4000, description: '实际要发到课程里的纯文本正文。' } },
+    required: ['chapter_key', 'tab', 'discussion_id', 'reply'], additionalProperties: false,
   } } },
   { type: 'function', function: {
     name: 'browser_start_chapter_tasks',
-    description: '学习通章节执行首选。用户要求完成课程的章节任务时，传 course_name 即可查找学生课程、打开章节目录、进入待完成小节并直接启动任务，播放器在同一次调用内等待就绪。继续整门课时可以在同一课程省略 course_name；只完成当前小节时从该小节调用并传 current_only=true。视频启动后主 Agent 自动等待事件，测验或文档返回给 Agent 继续处理。',
+    description: '启动学习通章节工作流。宿主打开课程，按顺序处理视频、课件、已授权的测验，并在遇到讨论时直接返回题目和已有回复。核对当前任务点后继续原工作流。只完成当前小节时传 current_only=true；继续同一课程可省略 course_name。',
     parameters: { type: 'object', properties: {
       course_name: { type: 'string', description: '用户提供的课程名，支持唯一匹配' },
       teacher: { type: 'string', description: '重名时用户提供的授课教师' },
@@ -60,7 +110,7 @@ export const BROWSER_PRIMITIVE_TOOLS = [
   { type: 'function', function: { name: 'browser_review_chapter', description: '在学习通学生端章节学习页只读核对当前小节、任务点、可用页签及目录待完成数。返回 chapterKey，完成本章时先用这个工具确认目标。', parameters: {
     type: 'object', properties: { chapter_key: { type: 'string', description: '可选。用上一次返回的 chapterKey 核对仍在同一个章节' }, video_mid: { type: 'string', description: '核对已有回执中原视频的标识' } },
   } } },
-  { type: 'function', function: { name: 'browser_complete_chapter', description: '学习通学生端完成当前章节的专用工具。每次处理一个任务点或切换同章页签。视频成功播放后主 Agent 自动等待事件。返回 video_event 时重新复核，仍返回 watching=true 时用 browser_finish(watching)。测验或文档返回当前任务和网页后续处理提示。依据目录任务点数或明确的已完成标记核对章节完成。', parameters: {
+  { type: 'function', function: { name: 'browser_complete_chapter', description: '学习通学生端完成当前章节的专用工具。每次处理一个任务点或切换同章页签。视频成功播放后主 Agent 自动等待事件。返回 video_event 时重新复核，仍返回 watching=true 时用 browser_finish(watching)。测验、文档和讨论返回当前任务与后续操作。依据平台标记核对章节完成。', parameters: {
     type: 'object', properties: {
       chapter_key: { type: 'string', description: 'browser_review_chapter 刚核对的 chapterKey' },
       video_only: { type: 'boolean', description: '用户只要求处理视频时传 true' },

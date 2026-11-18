@@ -1,8 +1,8 @@
 # 学习通登录
 
-登录本身不调用刷课工具。登录页已知 `#phone` / `#pwd`，不必先 eval 探路；看不清再用 `get_page`。
+用户要求登录，或执行学习通任务遇到登录页时，优先调用 `browser_login_chaoxing()`。只在 `loggedIn=true` 后继续进课、打开章节或作业。工具使用网站设置中的加密凭据。若提示人工验证，请用户在浏览器完成验证和登录；账号被拒绝时停止重试。
 
-## 登录
+## 通用工具备用流程
 
 1. 从导航页先开 https://i.chaoxing.com 。已登录会进空间，不要先走登录页。只有落到 `passport2` 才填表。已在 `login?fid=&newversion=true` 就不要再 navigate。必须打开登录页时用 https://passport2.chaoxing.com/login?fid=&newversion=true&refer=https%3A%2F%2Fi.chaoxing.com ，不要打开光秃的 https://passport2.chaoxing.com 或 `/login?fid=&refer=`（旧登录页一点登录会整页跳到新版、表单清空）。
 2. 用【凭据变量】中的引用，通过 `browser_type selector=#phone secret_ref=账号变量`、`browser_type selector=#pwd secret_ref=密码变量` 填写，再 `browser_click selector=#loginBtn`。用户刚发来账号密码时，先调用 `protect_credentials`（site 为 `chaoxing`），成功后仅使用返回的变量；不要把原文放进 text、脚本、经验或图谱。CSS 必须放 `selector`，不要放进 `ref`。type 必须回 `filled:true` 才算填上；`filled:false` 要重新读取页面。敏感表单禁止 eval 或截图读回；通过快照与点击核对登录结果。

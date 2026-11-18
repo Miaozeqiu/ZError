@@ -356,7 +356,7 @@ export const applySiteGraphPatch = (
     }
     const hostRaw = String(args.host || args.siteId || urlHost).trim().replace(/^www\./i, '').toLowerCase()
     const identity = websiteIdentityForHost(hostRaw)
-    const grouped = Boolean(identity?.loginHosts.length)
+    const grouped = Boolean(identity?.loginHosts.length || identity?.excludedDomains?.length)
     const siteId = grouped ? websiteAccountId(identity!.host) : String(args.siteId || hostRaw).trim().slice(0, 40)
     if (!siteId) return { ok: false, error: 'upsert_site 需要 siteId 或 host' }
     const existing = findLiveSite(siteId)

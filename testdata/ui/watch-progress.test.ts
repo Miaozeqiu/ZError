@@ -88,9 +88,9 @@ describe('visible video watch progress', () => {
     mount(() => h(Composer, { ...props, onHeightChange: (value: number) => sizes.push(value) }, {
       status: () => h(BrowserAgentWatchBar, { browserId: 'video-tab' }),
     }))
-    const form = root.querySelector('form')!
-    const status = form.querySelector('.composer-status')!
-    const box = form.querySelector('.composer-box')!
+    const composer = root.querySelector('.composer')!
+    const status = composer.querySelector('.composer-status')!
+    const box = composer.querySelector('form.composer-box')!
     expect(status.nextElementSibling).toBe(box)
     expect(status.children.length).toBe(0)
     startWatch(); await nextTick()

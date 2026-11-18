@@ -7689,7 +7689,7 @@ dependencies = [
 
 [[package]]
 name = "zerror"
-version = "2.2.8"
+version = "2.2.9"
 dependencies = [
  "base64 0.22.1",
  "block2 0.6.2",
@@ -7736,7 +7736,9 @@ dependencies = [
  "urlencoding",
  "uuid",
  "warp",
+ "webview2-com",
  "windows 0.56.0",
+ "windows-core 0.61.2",
  "zeroize",
  "zip 0.6.6",
 ]

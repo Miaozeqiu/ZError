@@ -1,5 +1,6 @@
 import { ref, computed, watch, onMounted, readonly } from 'vue'
 import { settingsManager } from '../services/app/settings'
+import { invoke, isTauri } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import type { UnlistenFn } from '@tauri-apps/api/event'
 
@@ -34,11 +35,9 @@ const applyTheme = (theme: ThemeMode) => {
     root.setAttribute('data-theme', actualTheme)
   }
 
-  // 同步到 Tauri 窗口原生主题：让 macOS 原生标题栏（标题文字 + 红绿灯符号）
-  // 跟随 app 主题，避免「系统深色 / 软件浅色」时原生文字与浅底撞色看不清
-  if (typeof window !== 'undefined' && window.__TAURI__) {
-    getCurrentWindow().setTheme(actualTheme).catch((e) => {
-      console.warn('同步原生窗口主题失败:', e)
+  if (isTauri()) {
+    void invoke('browser_set_theme', { theme }).catch(error => {
+      console.warn('同步窗口和浏览器主题失败:', error)
     })
   }
 }

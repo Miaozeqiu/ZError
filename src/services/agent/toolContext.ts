@@ -10,6 +10,7 @@ export type ChatToolContext = {
   browserId: () => string
   ensureBrowser?: () => Promise<string>
   onBrowserNavigation?: () => void
+  chapterResume?: import('./tools/websiteChapterStart').ChapterWorkflowResume
   browserEpoch?: number
   attachment: () => AgentChatAttachment | null
   folders: () => AgentChatAttachment[]

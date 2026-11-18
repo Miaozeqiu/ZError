@@ -20,12 +20,12 @@ vi.mock('@tauri-apps/plugin-http', () => ({ fetch: () => { throw new Error('旧�
 import type { AIModel } from '../../src/services/model/configTypes'
 import { callModelWithStreaming } from '../../src/services/questionServer/invoke'
 
-it('routes /query model authorization and output settings through the secure transport', async () => {
+it('uses secure authorization and the catalog output limit for /query even with a legacy override', async () => {
   upstream.fetch.mockImplementation(async (_url, init: RequestInit) => {
     const headers = new Headers(init.headers)
     if (headers.get('authorization') !== `Bearer ${upstream.key}`) return new Response('API Key 无效', { status: 401 })
     expect(headers.get('x-project')).toBe('question-bank')
-    expect(JSON.parse(String(init.body)).max_tokens).toBe(16384)
+    expect(JSON.parse(String(init.body)).max_tokens).toBe(4096)
     return Response.json({ choices: [{ message: { content: '题库回答' }, finish_reason: 'stop' }] })
   })
 

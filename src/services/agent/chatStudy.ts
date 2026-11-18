@@ -44,7 +44,7 @@ import {
 import { messageHistoryText } from './modelHistory'
 import { resolveSitePackForUrl } from './sitePack'
 import { siteAccountsPrompt } from './siteAccounts'
-import { websiteIdentityForHost, websitePrimaryHost } from './websiteIdentity'
+import { websiteDomains, websiteIdentityForHost, websitePrimaryHost } from './websiteIdentity'
 
 const describeFolders = (items?: AgentChatAttachment[]) => {
   const folders = (items || []).filter(isFolderAttachment)
@@ -88,11 +88,14 @@ export const browserStatePrefix = async (sessionId: string) => {
   if (!browserId) return ''
   const item = listAppBrowsers().find((browser) => browser.id === browserId)
   const url = peekAppBrowserUrl(browserId) || item?.url || ''
+  const { experienceHostForPage } = await import('./websiteRepository')
+  const host = await experienceHostForPage(url).catch(() => websitePrimaryHost(url))
   const name = item?.name || item?.title || hostnameOf(url)
   const accountLine = siteAccountsPrompt(url)
   const identity = websiteIdentityForHost(url)
-  const identityLine = identity?.loginHosts.length
-    ? `【网站归属】${identity.name}，主网站 ${identity.host}，关联登录域名 ${identity.loginHosts.join('、')}。账号与站点经验统一归到主网站；经验只写 site-learn / sites/${identity.host}/SKILL.md，不另建登录网站。`
+  const domains = identity ? websiteDomains(identity) : []
+  const identityLine = identity && domains.length > 1
+    ? `【网站归属】${identity.name}的网站域名为 ${domains.join('、')}。这些域名共用账号配置和网站经验。归档域名为 ${identity.host}。`
     : ''
   const snap = url ? siteGraphAgentSnap(url) : null
   const pack = resolveSitePackForUrl(url)
@@ -118,7 +121,6 @@ export const browserStatePrefix = async (sessionId: string) => {
     role: 'parent',
     refs,
   })
-  const host = websitePrimaryHost(url)
   let skillLine = ''
   if (host) {
     try {

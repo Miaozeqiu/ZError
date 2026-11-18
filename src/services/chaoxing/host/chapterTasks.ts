@@ -98,14 +98,15 @@ export async function readStudentChapter(browserId: string) {
   const identity = studentChapterUrl(main.url)
   const doc = main.ok && parseHtml(main.html)
   const header = doc && identity && chapterHeader(doc, identity)
-  return header && identity ? { identity, header, frameId: main.frameId } : null
+  return header && identity ? { identity, header, frameId: main.frameId, loaderId: main.loaderId } : null
 }
 
-type JobKind = 'video' | 'quiz' | 'document' | 'unknown'
+type JobKind = 'video' | 'quiz' | 'document' | 'discussion' | 'unknown'
 const attachmentKind = (path: string): JobKind => {
   if (/\/(?:insertvideo|insertaudio|modules\/(?:video|audio))\b/i.test(path)) return 'video'
   if (/\/(?:insertwork|inserthomework|work|modules\/(?:work|quiz))\b/i.test(path)) return 'quiz'
-  if (/\/(?:insertdoc|modules\/(?:pdf|document|innerbook|ppt|doc|read))\b/i.test(path)) return 'document'
+  if (/\/ananas\/modules\/insertbbs\//i.test(path)) return 'discussion'
+  if (/\/(?:insertdoc|insertbook|readsvr\/book\/mooc|modules\/(?:pdf|document|innerbook|book|ppt|doc|read))\b/i.test(path)) return 'document'
   return 'unknown'
 }
 
@@ -125,9 +126,13 @@ export function chapterCardJobs(doc: Document) {
       || [icon.getAttribute('title'), icon.getAttribute('aria-label')].includes('任务点已完成'))
     const attrs = ['jobid', 'data-jobid', 'objectid'] as const
     const attr = attrs.find(key => safeId.test(iframe?.getAttribute(key) || ''))
-    const selector = attr ? `iframe[${attr}="${iframe?.getAttribute(attr)}"]` : ''
+    const discussionId = kind === 'discussion' && safeId.test(mid) ? mid : undefined
+    const selector = attr ? `iframe[${attr}="${iframe?.getAttribute(attr)}"]`
+      : discussionId ? `iframe[src*="/insertbbs/"][_src*="mtopicid=${discussionId}&"]` : ''
+    const quizJobId = kind === 'quiz' ? iframe?.getAttribute('jobid') || iframe?.getAttribute('data-jobid') || data._jobid : null
     const focusRequired = iframe?.getAttribute('switchwindow') === 'true'
-    return { index, kind, done, name, focusRequired, mid: safeId.test(mid) ? mid : '', selector }
+    return { index, kind, done, name, focusRequired, mid: safeId.test(mid) ? mid : '', selector,
+      quizJobId: typeof quizJobId === 'string' && safeId.test(quizJobId) ? quizJobId : undefined, discussionId }
   })
 }
 
@@ -145,6 +150,7 @@ export async function readStudentChapterCard(browserId: string) {
 
 export const sameStudentChapterPage = (a: Awaited<ReturnType<typeof readStudentChapter>>, b: NonNullable<Awaited<ReturnType<typeof readStudentChapter>>>) =>
   a && a.identity.href === b.identity.href && a.frameId === b.frameId && a.header.tab === b.header.tab
+  && (!a.loaderId || !b.loaderId || a.loaderId === b.loaderId)
 
 // Documents and quizzes may need to enter the viewport before Chaoxing loads
 // their content. Scroll the uniquely identified attachment in this cards page.

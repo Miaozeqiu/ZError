@@ -79,7 +79,6 @@
       <AgentBrowserPane
         :active="active && (selectedAgentPane === 'browser' || agentBrowserExpanded)"
         :dismissed="!active || (!browserPaneVisible && !agentBrowserExpanded && paneQuiz?.mode !== 'homework')"
-        :preview-request="browserPreviewRequest"
         :obscured="browserObscured || showModelSelector || folderPickerVisible || !!previewImage"
       />
     </div>
@@ -190,7 +189,6 @@ import AgentCodeBlock from '../components/agent/AgentCodeBlock.vue'
 import {
   bindAgentChatPanes,
   browserPaneVisible,
-  browserPreviewRequest,
   closeGraphPane,
   finishOpenGraphStream,
   onGraphSelect,

@@ -1,4 +1,6 @@
 import { normalizeAnswerJsonContent } from '../../utils/answer/answerNormalize'
+import { redactObject } from '../security/secretRedaction'
+import { redactNative } from '../security/secureStore'
 import { getModelResponseFailure, isTimeoutLikeModelFailureText } from './errors'
 import {
   applyLocalRequestCompletion,
@@ -93,8 +95,10 @@ export const sendModelResponseToBackend = async (requestId: string, content: str
 
 
 // 发送模型进度到后端（用于流式输出期间的活跃心跳）
-export const sendModelProgressToBackend = async (requestId: string, content: string) => {
+export const sendModelProgressToBackend = async (requestId: string, content: string, details?: unknown) => {
   try {
+    const safeDetails = details === undefined ? undefined
+      : await redactNative(redactObject(details)).catch(() => undefined)
     const response = await fetch(`${serverUrl.value}/api/model/progress`, {
       method: 'POST',
       headers: {
@@ -102,7 +106,8 @@ export const sendModelProgressToBackend = async (requestId: string, content: str
       },
       body: JSON.stringify({
         request_id: requestId,
-        content: content
+        content,
+        details: safeDetails,
       })
     })
 

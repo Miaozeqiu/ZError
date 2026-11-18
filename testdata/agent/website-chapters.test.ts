@@ -26,6 +26,8 @@ import { handleWebsiteChapterTools } from '../../src/services/agent/tools/websit
 import { startWebsiteChapterTasks } from '../../src/services/agent/tools/websiteChapterStart'
 import { openNextWebsiteChapter } from '../../src/services/agent/tools/websiteChapterDirectory'
 import { chapterCardJobs, chapterHeader, studentChapterUrl } from '../../src/services/chaoxing/host/chapterTasks'
+import { handleWebsiteChapterDiscussion } from '../../src/services/agent/tools/websiteChapterDiscussion'
+import { isDiscussionReplyGoal, permitsChapterDiscussionReply } from '../../src/services/agent/chapterDiscussionIntent'
 
 const chapterUrl = 'https://mooc1.chaoxing.com/mycourse/studentstudy?chapterId=1065429967&courseId=257080147&clazzid=131924538'
 const cardPath = '/mooc-ans/knowledge/cards?clazzid=131924538&courseid=257080147&knowledgeid=1065429967'
@@ -77,6 +79,119 @@ it('reads only real task points and resolves the active chapter from captured Ch
   expect(chapterCardJobs(cards)?.map(job => job.kind)).toEqual(['video', 'quiz', 'video'])
 })
 
+function openDiscussion(mid: string, options: { remaining: number }, course = '257080147') {
+  const card = { frameId: 'bbs-card', loaderId: 'bbs-doc',
+    url: `https://mooc1.chaoxing.com/mooc-ans/bbscircle/chapter?mtopicid=${mid}&knowledgeid=1065429967&ut=s&courseid=257080147&clazzId=131924538` }
+  const topic = { frameId: 'bbs-topic', loaderId: 'topic-doc',
+    url: `https://groupweb.chaoxing.com/course/topic/v3/bbs/course-board/topic-${mid}/replysList?courseId=${course}&classId=131924538` }
+  openChapter(`<div class="ans-attach-ct"><span class="ans-job-icon"></span><iframe src="/ananas/modules/insertbbs/index.html"
+    _src="${card.url.replaceAll('&', '&amp;')}" data='{"title":"章节讨论","mid":"${mid}"}'></iframe></div>`, options)
+  const { window } = new JSDOM(`<div id="subPageMain">
+    <div class="topicDetail_detail"><div class="topicDetail_title">怎样证明这个结论？</div>
+    <div class="topicDetail_main"><div class="richText">请结合一个具体例子。</div></div></div>
+    <div class="topicDetail_replyWrap"><div class="topicDetail_replyList">
+      <div class="topicDetail_replyItem" id="student-a"><div class="topicReply_right">
+        <div class="otherInfo">学生姓名</div><div class="replyContent">可以从定义出发。</div></div></div></div></div>
+    <div class="topicDetail_editContainer"><div class="replyEdit"><div class="textareawrap"><textarea></textarea></div></div>
+      <div class="replyEditBtnGroup"><div class="addReply">回复</div></div></div></div>`, { url: topic.url, runScripts: 'outside-only' })
+  const cards = { frameId: 'cards', loaderId: 'cards-doc', url: new URL(cardPath + '&num=0', chapterUrl).href }
+  protocol.mockImplementation(async (_id, op, params) => op === 'snapshot' ? { frames: [cards] }
+    : { frames: [params.locator.value.includes('data-ze-discussion') ? topic : card] })
+  evaluate.mockImplementation(async (_id, script, _hint, frame) => {
+    if (frame.frameId === cards.frameId) return true
+    if (frame.frameId === card.frameId) return script.includes('location.reload()') ? null : { href: topic.url, done: false }
+    return window.eval(script)
+  })
+  const field = window.document.querySelector('textarea')!
+  const list = window.document.querySelector('.topicDetail_replyList')!
+  const post = (content: string) => {
+    const item = window.document.createElement('div')
+    item.className = 'topicDetail_replyItem'
+    item.id = 'posted-item'
+    item.innerHTML = '<div class="topicReply_right"><div class="replyContent"></div></div>'
+    item.querySelector('.replyContent')!.textContent = content
+    list.prepend(item)
+  }
+  const invoke = (reply?: string) => handleWebsiteChapterDiscussion({
+    browserId: 'tab', wait: async () => {},
+    name: reply === undefined ? 'browser_review_chapter_discussion' : 'browser_reply_chapter_discussion',
+    args: { chapter_key: chapterKey, tab: 1, discussion_id: mid, reply },
+  }).then(JSON.parse)
+  return { field, post, invoke }
+}
+
+it('returns the pending discussion directly from the chapter workflow and sends through the bound form once', async () => {
+  const options = { remaining: 1 }
+  const { field, post, invoke } = openDiscussion('1234567801', options)
+  const result = JSON.parse(await startWebsiteChapterTasks({
+    name: 'browser_start_chapter_tasks', ...context, args: { current_only: true }, wait: async () => {},
+    graphUrlOf: async () => '', liveHref: async () => chapterUrl, onNavigation: () => {},
+  } as Parameters<typeof startWebsiteChapterTasks>[0]))
+  expect(result).toMatchObject({ status: 'needs_discussion', discussion_id: '1234567801', discussion: {
+    title: '怎样证明这个结论？', question: '请结合一个具体例子。', replies: ['可以从定义出发。'], canReply: true,
+  } })
+  expect(JSON.stringify(result)).not.toContain('学生姓名')
+  expect(click).not.toHaveBeenCalled()
+  click.mockImplementation(async (_id, locator, action, text) => {
+    expect(locator).toMatchObject({ frameId: 'bbs-topic', loaderId: 'topic-doc' })
+    if (action === 'fill') field.value = text
+    else {
+      post(field.value)
+      options.remaining = 0
+    }
+    return { ok: true, dispatched: true }
+  })
+  expect(await invoke('例如，先验证边界条件，再使用定义证明。')).toMatchObject({ status: 'discussion_completed', jobDone: true, posted: true })
+  expect(await invoke('例如，先验证边界条件，再使用定义证明。')).toMatchObject({ status: 'discussion_completed', jobDone: true })
+  expect(click.mock.calls.map(call => call[2])).toEqual(['fill', 'click'])
+})
+
+it('distinguishes a visible reply from platform credit and does not resend to a pending topic', async () => {
+  const { field, post, invoke } = openDiscussion('1234567802', { remaining: 1 })
+  click.mockImplementation(async (_id, _locator, action, text) => {
+    if (action === 'fill') field.value = text
+    else post(field.value)
+    return { ok: true, dispatched: true }
+  })
+  expect(await invoke('用两个不同的例子验证。')).toMatchObject({ status: 'awaiting_discussion_credit', posted: true, jobDone: false })
+  expect(await invoke()).toMatchObject({ status: 'awaiting_discussion_credit', posted: true, jobDone: false })
+  expect(await invoke('再发一条。')).toMatchObject({ ok: false, reason: 'verification_required' })
+  expect(click.mock.calls.map(call => call[2])).toEqual(['fill', 'click'])
+})
+
+it('requires a fresh observation after an unanswered send instead of clicking again', async () => {
+  const { field, invoke } = openDiscussion('1234567805', { remaining: 1 })
+  click.mockImplementation(async (_id, _locator, action, text) => {
+    if (action === 'fill') field.value = text
+    return { ok: action === 'fill', dispatched: true }
+  })
+  expect(await invoke('对发送状态仍需核对。')).toMatchObject({ ok: false, reason: 'unstable', clickDispatched: true })
+  expect(await invoke()).toMatchObject({ ok: true, status: 'discussion_unverified' })
+  expect(await invoke('对发送状态仍需核对。')).toMatchObject({ ok: false, reason: 'verification_required', clickDispatched: false })
+  expect(click.mock.calls.map(call => call[2])).toEqual(['fill', 'click'])
+})
+
+it('leaves drafts intact and rejects a discussion page linked to a different course', async () => {
+  const wrong = openDiscussion('1234567803', { remaining: 1 }, '1')
+  expect(await wrong.invoke('这条不能发出。')).toMatchObject({ ok: false, reason: 'not_found' })
+  const correct = openDiscussion('1234567804', { remaining: 1 })
+  correct.field.value = '原有草稿'
+  expect(await correct.invoke('这条也不能发出。')).toMatchObject({ ok: false, reason: 'verification_required' })
+  expect(correct.field.value).toBe('原有草稿')
+  expect(click).not.toHaveBeenCalled()
+})
+
+it('requires a reply or chapter-completion request to post and keeps discussion-only scope', () => {
+  for (const goal of ['完成下推理社的章节任务吧', '把整门课刷完', '帮我在章节讨论里发一条回复', '完成当前章节的讨论']) {
+    expect(permitsChapterDiscussionReply(goal), goal).toBe(true)
+  }
+  for (const goal of ['查看其他人的讨论回复', '帮我检查讨论是否完成', '只看视频', '完成课程章节，别回复讨论', '完成下章节测验', '完成课程作业', '起草一条回帖']) {
+    expect(permitsChapterDiscussionReply(goal), goal).toBe(false)
+  }
+  expect(isDiscussionReplyGoal('完成当前章节的讨论')).toBe(true)
+  expect(isDiscussionReplyGoal('完成下推理社的章节任务，包括讨论')).toBe(false)
+})
+
 it('reviews the live chapter tab without a downloaded script or page action', async () => {
   openChapter(lesson('video', 'mid-a'), { remaining: 1, tab: 2, staleSrc: true })
   expect(await run('review')).toMatchObject({ chapterKey, chapterComplete: false, tab: 2, jobs: [{ index: 1, kind: 'video', done: false }] })
@@ -108,7 +223,8 @@ it('waits for platform credit after the named video ends and does not replay it'
 it('checks the target chapter and frame before handing off the pending quiz', async () => {
   openChapter(lesson('work', 'quiz') + lesson('video', 'vid'), { remaining: 2 })
   expect(await run('complete', { chapter_key: 'other' })).toMatchObject({ ok: false, reason: 'stale' })
-  expect(await run('complete', { chapter_key: chapterKey })).toMatchObject({ status: 'needs_quiz', job: { kind: 'quiz', index: 1 } })
+  expect(await run('complete', { chapter_key: chapterKey })).toMatchObject({ status: 'needs_quiz', chapterKey,
+    quiz_job_id: expect.stringMatching(/^job-/), job: { kind: 'quiz', index: 1 } })
   expect(evaluate).toHaveBeenCalledExactlyOnceWith('tab', expect.stringContaining('scrollIntoView'), '', { frameId: 'cards' })
   expect(click).not.toHaveBeenCalled()
 
@@ -152,6 +268,128 @@ it('credits a document only when the chapter status changes after revealing it',
   expect(click).not.toHaveBeenCalled()
 })
 
+it('turns pages in the selected PDF and waits for its platform receipt', async () => {
+  const options = { remaining: 1 }
+  openChapter(lesson('pdf', 'doc-a') + lesson('pdf', 'doc-b', true), options)
+  const cardsUrl = new URL(cardPath + '&num=0', chapterUrl).href
+  const viewer = { frameId: 'doc-a-frame', loaderId: 'doc-a-loader', url: 'https://mooc1.chaoxing.com/ananas/modules/pdf/index.html' }
+  const { window } = new JSDOM('<input id="pageNumber" value="1"><span id="numPages">3</span><button id="next">下一页</button>',
+    { url: viewer.url, runScripts: 'outside-only' })
+  Object.defineProperty(window.Element.prototype, 'getClientRects', { value: () => [{ width: 100, height: 20 }] })
+  const page = window.document.querySelector<HTMLInputElement>('#pageNumber')!
+  protocol.mockImplementation(async (_id, op, args) => {
+    if (op === 'snapshot') return { frames: [{ frameId: 'cards', loaderId: 'cards-doc', url: cardsUrl }] }
+    expect(op).toBe('attachment_frames')
+    expect(args.locator).toMatchObject({ value: 'iframe[jobid="job-doc-a"]', frameId: 'cards', loaderId: 'cards-doc' })
+    return { frames: [viewer] }
+  })
+  evaluate.mockImplementation(async (_id, script, _frame, identity) => {
+    if (identity.frameId === 'cards') return true
+    expect(identity).toMatchObject({ frameId: viewer.frameId, loaderId: viewer.loaderId })
+    return window.eval(script)
+  })
+  click.mockImplementation(async (_id, target) => {
+    expect(target).toMatchObject({ value: '#next', frameId: viewer.frameId, loaderId: viewer.loaderId })
+    page.value = String(Number(page.value) + 1)
+    if (page.value === '3') options.remaining = 0
+    return { ok: true, dispatched: true }
+  })
+  expect(await run('complete', { chapter_key: chapterKey })).toMatchObject({ status: 'complete', job: { kind: 'document', done: true } })
+  expect(click).toHaveBeenCalledTimes(2)
+})
+
+it('keeps a timed reader on each page and observes completion rather than assuming it', async () => {
+  const { readChapterDocument } = await import('../../src/services/chaoxing/host/chapterDocument')
+  const cards = { frameId: 'cards', url: new URL(cardPath + '&num=0', chapterUrl).href }
+  const viewer = { frameId: 'book', loaderId: 'book-doc', url: 'https://mooc1.chaoxing.com/readsvr/book/mooc?timing=3' }
+  const { window } = new JSDOM('<div id="reader"><select id="pagejump"><option value="1">封面</option><option value="2">正文</option><option value="3">封底</option></select></div>',
+    { url: viewer.url, runScripts: 'outside-only' })
+  Object.defineProperty(window.Element.prototype, 'getClientRects', { value: () => [{ width: 100, height: 20 }] })
+  protocol.mockImplementation(async (_id, op) => op === 'snapshot'
+    ? { frames: [{ ...cards, loaderId: 'cards-doc' }] } : { frames: [viewer] })
+  evaluate.mockImplementation(async (_id, script) => window.eval(script))
+  const wait = vi.fn(async () => {})
+  const turned: number[] = []
+  const jumper = window.document.querySelector<HTMLSelectElement>('#pagejump')!
+  jumper.addEventListener('change', () => turned.push(Number(jumper.value)))
+  expect(await readChapterDocument({ browserId: 'tab', cards, selector: 'iframe[objectid="book-one"]', wait,
+    observe: async () => 'pending',
+  })).toBe('needs_document')
+  expect(turned).toEqual([2, 3])
+  expect(wait.mock.calls.filter(args => args[0] === 3000)).toHaveLength(3)
+})
+
+it('reads a scrollable course document in viewport-sized steps', async () => {
+  const { readChapterDocument } = await import('../../src/services/chaoxing/host/chapterDocument')
+  const cards = { frameId: 'cards', url: new URL(cardPath + '&num=0', chapterUrl).href }
+  const viewer = { frameId: 'page', loaderId: 'reader-doc', url: 'https://mooc1.chaoxing.com/mooc-ans/screen/file?objectid=sample' }
+  const { window } = new JSDOM('<main>课件正文</main>', { url: viewer.url, runScripts: 'outside-only' })
+  const viewport = window.document.documentElement
+  const moves: number[] = []
+  let done = false
+  Object.defineProperty(window.document, 'scrollingElement', { value: viewport })
+  Object.defineProperties(viewport, {
+    clientHeight: { value: 100 },
+    scrollHeight: { value: 400 },
+    scrollBy: { value: ({ top }: { top: number }) => {
+      moves.push(top)
+      viewport.scrollTop += top
+      done = viewport.scrollTop === 300
+    } },
+  })
+  protocol.mockImplementation(async (_id, op) => op === 'snapshot'
+    ? { frames: [{ ...cards, loaderId: 'cards-doc' }] } : { frames: [viewer] })
+  evaluate.mockImplementation(async (_id, script) => window.eval(script))
+  expect(await readChapterDocument({ browserId: 'tab', cards, selector: 'iframe[objectid="course-file"]',
+    wait: async () => {}, observe: async () => done ? 'done' : 'pending',
+  })).toBe('done')
+  expect(moves).toEqual([80, 80, 80, 60])
+  expect(click).not.toHaveBeenCalled()
+})
+
+it('resumes the selected chapter after its original video receipt and handles the next task in the same workflow', async () => {
+  const options = { remaining: 1 }
+  openChapter(lesson('video', 'mid-finished', true) + lesson('pdf', 'doc-next'), options)
+  evaluate.mockImplementation(async () => { options.remaining = 0; return true })
+  const unused = vi.fn()
+  const ctx = {
+    ...context, name: 'browser_start_chapter_tasks', args: { current_only: true },
+    liveHref: unused, readBrowserPage: unused, navigateBrowserView: unused, clickByLocator: unused,
+    wait: async () => {},
+  }
+  expect(JSON.parse(await startWebsiteChapterTasks({ ...ctx,
+    chapterResume: { chapterKey, videoMid: 'mid-unrelated' },
+  }))).toMatchObject({ status: 'awaiting_video_receipt' })
+  expect(evaluate).not.toHaveBeenCalled()
+  expect(JSON.parse(await startWebsiteChapterTasks({ ...ctx,
+    chapterResume: { chapterKey, videoMid: 'mid-finished' },
+  }))).toMatchObject({ status: 'complete', scope: 'chapter', job: { kind: 'document', done: true } })
+  expect(unused).not.toHaveBeenCalled()
+})
+
+it('only completes the whole workflow when the student directory has no pending or unknown chapters', async () => {
+  openChapter('', { remaining: 0 })
+  const initial = html.getMockImplementation()!
+  let status = '<input class="jobUnfinishCount" value="0">'
+  html.mockImplementation(async (id, frame) => {
+    const result = await initial(id, frame)
+    if (frame) return result
+    result.html += `<div id="coursetree"><div class="posCatalog_select" id="cur1065429967">${status}</div></div>`
+    return result
+  })
+  const unused = vi.fn()
+  const ctx = {
+    ...context, name: 'browser_start_chapter_tasks', args: {},
+    liveHref: unused, readBrowserPage: unused, navigateBrowserView: unused, clickByLocator: unused,
+    wait: async () => {},
+  }
+  expect(JSON.parse(await startWebsiteChapterTasks(ctx))).toMatchObject({
+    status: 'course_complete', courseComplete: true, scope: 'course', completed: 1, unknown: 0, pending: 0,
+  })
+  status = ''
+  expect(JSON.parse(await startWebsiteChapterTasks(ctx))).toMatchObject({ opened: false, unknown: 1 })
+})
+
 it('uses the real completed badge and opens the first visibly pending chapter from the sidebar', async () => {
   const current = new JSDOM(
     '<div class="posCatalog_select posCatalog_active" id="cur1065429967"><span class="posCatalog_name">已学小节</span><span class="icon_Completed prevTips"><span>已完成</span></span></div>',
@@ -167,7 +405,7 @@ it('uses the real completed badge and opens the first visibly pending chapter fr
       <div class="posCatalog_select" id="cur${nextId}"><span class="posCatalog_name">接着学</span><input class="jobUnfinishCount" value="2"></div>
       </div>`,
   }))
-  protocol.mockResolvedValue({ frames: [{ frameId: 'root', loaderId: 'chapter-doc', url: chapterUrl }] })
+  protocol.mockResolvedValue({ ok: true, frameId: 'root', loaderId: 'chapter-doc' })
   click.mockImplementation(async () => { live = nextPage; return { ok: true, dispatched: true } })
 
   expect(JSON.parse(await openNextWebsiteChapter(context))).toMatchObject({
@@ -223,9 +461,10 @@ it('reads the real studentcourse task counters and opens the pending chapter fro
   let frameUrl = directory
   let current = course
   html.mockImplementation(async (_id, frame) => frame ? {
-    ok: true, url: frameUrl, frameId: 'course-list', html: htmlOfDirectory,
-  } : { ok: true, url: current, frameId: 'shell', html: '<main>推理社</main>' })
-  protocol.mockResolvedValue({ url: course, frames: [{ url: directory, frameId: 'course-list', loaderId: 'catalog-doc' }] })
+    ok: true, url: frameUrl, frameId: 'course-list', loaderId: 'catalog-doc', html: htmlOfDirectory,
+  } : { ok: true, url: current, frameId: 'shell', loaderId: 'shell-doc', html: '<main>推理社</main>' })
+  // CEF snapshots can omit a directory frame with no eligible accessibility refs.
+  protocol.mockResolvedValue({ url: course, frames: [] })
   click.mockImplementation(async () => { current = chapterUrl; return { ok: true, dispatched: true } })
 
   frameUrl = directory.replace('clazzid=131924538', 'clazzid=9')
@@ -236,7 +475,7 @@ it('reads the real studentcourse task counters and opens the pending chapter fro
   expect(JSON.parse(await openNextWebsiteChapter(context))).toMatchObject({
     opened: true, chapterKey, number: '2.3', title: '高阶导数', remaining: 2, pending: 1, completed: 1, unknown: 1,
   })
-  expect(protocol).toHaveBeenCalledWith('tab', 'snapshot', { acted: true, maxFrames: 1, frame: 'course-list' })
+  expect(protocol).not.toHaveBeenCalled()
   expect(click).toHaveBeenCalledExactlyOnceWith('tab', {
     by: 'css', value: '.chapter_item[id="cur1065429967"] > .catalog_title[role="link"]',
     frameId: 'course-list', loaderId: 'catalog-doc',
@@ -252,11 +491,11 @@ it('opens the directory and starts the first video in one host call', async () =
   const row = '<div class="chapter_item" id="cur1065429967" title="高阶导数"><div class="catalog_title" role="link"><div class="catalog_task"><input class="knowledgeJobCount" value="1"></div></div></div>'
   let stage = 'course'
   html.mockImplementation(async (_id, frame) => {
-    if (frame === '/mycourse/studentcourse') return stage === 'directory' ? { ok: true, url: directory, frameId: 'directory', html: row } : emptyFrame
+    if (frame === '/mycourse/studentcourse') return stage === 'directory' ? { ok: true, url: directory, frameId: 'directory', loaderId: 'catalog-doc', html: row } : emptyFrame
     if (frame === 'knowledge/cards') return { ok: true, url: frameHref, frameId: 'cards', html: `<div class="ans-cc">${lesson('video', 'mid-a')}</div>` }
     return stage === 'chapter' || stage === 'playing'
       ? { ok: true, url: chapterUrl, frameId: 'chapter', html: `${selected}<iframe id="iframe" src="${frameHref}"></iframe>` }
-      : { ok: true, url: course, frameId: 'course', html: '<title>推理社</title>' }
+      : { ok: true, url: course, frameId: 'course', loaderId: 'course-doc', html: '<title>推理社</title>' }
   })
   protocol.mockImplementation(async (_id, op, opts) => op === 'snapshot'
     ? { url: course, frames: opts.frame

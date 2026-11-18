@@ -8,11 +8,19 @@ export const BUILTIN_WEBSITES = [
 
 const BUILTIN_SERVICE_DOMAINS: Record<string, string[]> = { 'zhihuishu.com': ['polymas.com'] }
 
-export type WebsiteIdentity = { host: string; name: string; loginHosts: string[]; credentialsApproved?: boolean; iconUrl?: string; iconDataUrl?: string }
+export type WebsiteIdentity = { host: string; name: string; loginHosts: string[]; excludedDomains?: string[]; credentialsApproved?: boolean; iconUrl?: string; iconDataUrl?: string }
 // Verified service relationship. It does not create a website card until the site is used.
 const VERIFIED_WEBSITES: WebsiteIdentity[] = [
   { host: 'menhu.haou.edu.cn', name: '河南开放大学·云上河开', loginHosts: ['authserver.open.ha.cn'] },
 ]
+export const defaultWebsiteDomains = (host: string) => [
+  host, ...(BUILTIN_SERVICE_DOMAINS[host] ?? []), ...(VERIFIED_WEBSITES.find(site => site.host === host)?.loginHosts ?? []),
+]
+
+// Keep the existing profile and native credential file format. All configured
+// domains identify the same site for accounts, experience, and navigation.
+export const websiteDomains = (site: WebsiteIdentity) => [...new Set([...defaultWebsiteDomains(site.host).filter(host => !site.excludedDomains?.includes(host)), ...site.loginHosts])]
+
 const KEY = 'zerror-website-identities'
 const FILE = '.local/share/zerror/website-identities.json'
 export const websiteIdentityState = reactive({ profiles: [] as WebsiteIdentity[], ready: false })
@@ -41,11 +49,12 @@ const mergeProfiles = (rows: unknown): WebsiteIdentity[] => {
     // A login host cannot become another website's primary host.
     if (merged.some(site => site.host !== row.host && site.loginHosts.includes(row.host))) continue
     const previous = merged.find(site => site.host === row.host)
+    const excludedDomains = defaultWebsiteDomains(row.host).filter(host => Array.isArray(row.excludedDomains) && row.excludedDomains.includes(host))
     const loginHosts = [...new Set([...(VERIFIED_WEBSITES.find(site => site.host === row.host)?.loginHosts || []), ...(Array.isArray(row.loginHosts) ? row.loginHosts : previous?.loginHosts || [])])]
-      .filter((host): host is string => typeof host === 'string' && normalizeWebsiteHost(host) === host && host !== row.host)
+      .filter((host): host is string => typeof host === 'string' && normalizeWebsiteHost(host) === host && host !== row.host && !excludedDomains.includes(host))
       .filter(host => !merged.some(site => site.host !== row.host && (site.host === host || site.loginHosts.includes(host))))
     const next = {
-      host: row.host, name: String(row.name || previous?.name || row.host).trim(), loginHosts,
+      host: row.host, name: String(row.name || previous?.name || row.host).trim(), loginHosts, excludedDomains,
       credentialsApproved: row.credentialsApproved === true,
       ...(typeof row.iconUrl === 'string' && /^https?:\/\//i.test(row.iconUrl) ? { iconUrl: row.iconUrl } : {}),
       ...(typeof row.iconDataUrl === 'string' && /^data:image\/(?:png|jpeg|gif|webp|x-icon|svg\+xml);base64,[a-zA-Z0-9+/=]+$/.test(row.iconDataUrl) && row.iconDataUrl.length <= 360000 ? { iconDataUrl: row.iconDataUrl } : {}),
@@ -84,12 +93,17 @@ export const websiteIdentityForHost = (input: string): WebsiteIdentity | null =>
   const known = BUILTIN_WEBSITES.find(site => site.id === input)
   const host = known?.host || normalizeWebsiteHost(input)
   if (!host) return null
-  const builtinService = BUILTIN_WEBSITES.find(site => (BUILTIN_SERVICE_DOMAINS[site.host] || []).some(alias => host === alias || host.endsWith(`.${alias}`)))
-  if (builtinService) return websiteIdentityState.profiles.find(site => site.host === builtinService.host) || null
   const exact = websiteIdentityState.profiles.find(site => site.host === host || site.loginHosts.includes(host))
-  if (exact) return exact
-  const family = BUILTIN_WEBSITES.find(site => host.endsWith(`.${site.host}`) || (BUILTIN_SERVICE_DOMAINS[site.host] || []).some(alias => host === alias || host.endsWith(`.${alias}`)))
-  if (family) return websiteIdentityState.profiles.find(site => site.host === family.host) || null
+  if (exact) {
+    // The bare primary host remains the storage key even if its URL was unlinked.
+    if (input.includes('://') && exact.excludedDomains?.includes(host)) return null
+    return exact
+  }
+  const family = BUILTIN_WEBSITES.find(site => defaultWebsiteDomains(site.host).some(domain => host === domain || host.endsWith(`.${domain}`)))
+  if (family) {
+    const identity = websiteIdentityState.profiles.find(site => site.host === family.host)
+    if (identity && !identity.excludedDomains?.some(domain => domain === host || host.endsWith(`.${domain}`))) return identity
+  }
   return { host, name: host, loginHosts: [] }
 }
 export const websitePrimaryHost = (input: string) => websiteIdentityForHost(input)?.host || ''
@@ -101,11 +115,33 @@ export const websiteLabel = (id: string) => websiteIdentityForHost(id)?.name || 
 export const websiteHostPattern = (input: string) => {
   const site = websiteIdentityForHost(input)
   if (!site) return ''
-  const hosts = [site.host, ...site.loginHosts, ...(BUILTIN_SERVICE_DOMAINS[site.host] || [])].map(host => host.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+  const hosts = websiteDomains(site).map(host => host.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+  if (!hosts.length) return '(?!)'
   return `^https?://(?:www\\.)?(?:${hosts.join('|')})(?::\\d+)?(?:[/?#]|$)`
 }
 
-export const saveWebsiteIdentity = async (hostInput: string, name: string, loginInputs?: string[], icon?: { url: string; dataUrl: string }, credentialsApproved = false) => {
+const persistProfiles = async (profiles: WebsiteIdentity[]) => {
+  const snapshot = JSON.stringify({ version: 1, profiles }, null, 2)
+  const { writeTextFile, mkdir, BaseDirectory } = await import('@tauri-apps/plugin-fs')
+  await mkdir('.local/share/zerror', { baseDir: BaseDirectory.Home, recursive: true })
+  await writeTextFile(FILE, snapshot, { baseDir: BaseDirectory.Home })
+
+  revision += 1
+  websiteIdentityState.profiles = profiles
+  writeLocal()
+}
+
+export const removeWebsiteIdentity = async (host: string) => {
+  await loadWebsiteIdentities()
+  const pending = persistence.then(() => persistProfiles([
+    ...websiteIdentityState.profiles.filter(site => site.host !== host),
+    ...seedProfiles().filter(site => site.host === host),
+  ]))
+  persistence = pending.catch(() => undefined)
+  return pending
+}
+
+export const saveWebsiteIdentity = async (hostInput: string, name: string, loginInputs?: string[], icon?: { url: string; dataUrl: string }, credentialsApproved = false, excludedDefaults?: string[]) => {
   await loadWebsiteIdentities()
   const pending = persistence.then(async () => {
     const host = websitePrimaryHost(hostInput)
@@ -114,30 +150,25 @@ export const saveWebsiteIdentity = async (hostInput: string, name: string, login
     const loginHosts: string[] = []
     for (const value of loginInputs ?? old?.loginHosts ?? []) {
       const alias = normalizeWebsiteHost(value.trim())
-      if (!alias) throw new Error(`登录域名无效：${value}`)
+      if (!alias) throw new Error(`网站域名无效：${value}`)
       if (alias === host) continue
       const owner = websiteIdentityForHost(alias)
-      if (owner?.host !== alias && owner?.host !== host) throw new Error('登录域名已关联其他网站')
-      if (websiteIdentityState.profiles.some(site => site.host !== host && (site.host === alias || site.loginHosts.includes(alias)))) throw new Error('登录域名已属于其他网站')
+      if (owner?.host !== alias && owner?.host !== host) throw new Error('域名已关联其他网站')
+      if (websiteIdentityState.profiles.some(site => site.host !== host && (site.host === alias || site.loginHosts.includes(alias)))) throw new Error('域名已属于其他网站')
       if (!loginHosts.includes(alias)) loginHosts.push(alias)
     }
+    const excludedDomains = excludedDefaults ?? old?.excludedDomains ?? []
     const required = VERIFIED_WEBSITES.find(site => site.host === host)?.loginHosts || []
     const next: WebsiteIdentity = {
-      host, name: name.trim() || old?.name || host, credentialsApproved: credentialsApproved || old?.credentialsApproved === true, loginHosts: [...new Set([...required, ...loginHosts])],
+      host, name: name.trim() || old?.name || host, credentialsApproved: credentialsApproved || old?.credentialsApproved === true, loginHosts: [...new Set([...required, ...loginHosts])].filter(domain => !excludedDomains.includes(domain)),
+      excludedDomains,
       ...(old?.iconUrl ? { iconUrl: old.iconUrl } : {}),
       ...(old?.iconDataUrl ? { iconDataUrl: old.iconDataUrl } : {}),
       ...(icon ? { iconUrl: icon.url, iconDataUrl: icon.dataUrl } : {}),
     }
     const profiles = websiteIdentityState.profiles.filter(site => site.host !== host)
     profiles.push(next)
-    const snapshot = JSON.stringify({ version: 1, profiles }, null, 2)
-    const { writeTextFile, mkdir, BaseDirectory } = await import('@tauri-apps/plugin-fs')
-    await mkdir('.local/share/zerror', { baseDir: BaseDirectory.Home, recursive: true })
-    await writeTextFile(FILE, snapshot, { baseDir: BaseDirectory.Home })
-
-    revision += 1
-    websiteIdentityState.profiles = profiles
-    writeLocal()
+    await persistProfiles(profiles)
     return next
   })
   persistence = pending.then(() => undefined, () => undefined)

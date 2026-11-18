@@ -265,7 +265,6 @@ export const availableWriteStepId = computed(() => {
 })
 export const availableGraphSubjectId = computed(() => rememberedPane.value.graph ?? activeChat.value?.studySubjectId ?? null)
 export const browserPaneVisible = ref(false)
-export const browserPreviewRequest = ref(0)
 export const selectedAgentPane = computed<AgentPane | null>(() =>
   paneQuiz.value ? 'quiz'
     : openedWriteStep.value ? 'write'
@@ -284,10 +283,7 @@ export const selectAgentPane = (pane: AgentPane) => {
     if (availableGraphSubjectId.value != null) openGraphPane(availableGraphSubjectId.value)
     return
   }
-  if (pane === 'browser') {
-    browserPaneVisible.value = true
-    browserPreviewRequest.value += 1
-  }
+  if (pane === 'browser') browserPaneVisible.value = true
   const quiz = pane === 'quiz' ? availableQuizKey.value : null
   const write = pane === 'write' ? availableWriteStepId.value : null
   openedGraphSubjectId.value = null

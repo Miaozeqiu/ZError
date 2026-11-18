@@ -2,6 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
+  <meta name="color-scheme" content="light dark" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <!-- 开发态导航页在 localhost；带 Referer 打开学习通会被拒：localhost 该域名未授权 -->
   <meta name="referrer" content="no-referrer" />
@@ -11,73 +12,69 @@
 </head>
 <body>
   <main class="wrap">
-    <h1>导航</h1>
-    <p id="launcher-hint">点击打开网站，拖动图标调整顺序</p>
-    <nav class="grid" aria-label="网站快捷入口" aria-describedby="launcher-hint">
-      <a class="site" href="https://t.zerror.cc/" rel="noreferrer" referrerpolicy="no-referrer" draggable="false" title="t.zerror.cc">
-        <span class="mark ze" aria-hidden="true">
-          <span>Z</span>
-          <img src="browser-home/icons/zerror.png" alt="" draggable="false" />
-        </span>
-        <span class="name">ZError</span>
-      </a>
-      <a class="site" href="https://www.doubao.com/" rel="noreferrer" referrerpolicy="no-referrer" draggable="false" title="doubao.com">
+    <section class="launcher-panel" aria-labelledby="launcher-title" tabindex="-1">
+    <header class="bar">
+      <h1 id="launcher-title">导航</h1>
+    </header>
+    <nav class="grid" aria-label="网站快捷入口">
+      <a class="site" data-shortcut-id="doubao" href="https://www.doubao.com/" rel="noreferrer" referrerpolicy="no-referrer" draggable="false" title="doubao.com">
         <span class="mark db" aria-hidden="true">
           <span>豆</span>
           <img src="browser-home/icons/doubao.png" alt="" draggable="false" />
         </span>
         <span class="name">豆包</span>
       </a>
-      <a class="site" href="https://chat.deepseek.com/" rel="noreferrer" referrerpolicy="no-referrer" draggable="false" title="chat.deepseek.com">
+      <a class="site" data-shortcut-id="deepseek" href="https://chat.deepseek.com/" rel="noreferrer" referrerpolicy="no-referrer" draggable="false" title="chat.deepseek.com">
         <span class="mark ds" aria-hidden="true">
           <span>D</span>
           <img src="browser-home/icons/deepseek.svg" alt="" draggable="false" />
         </span>
         <span class="name">DeepSeek</span>
       </a>
-      <a class="site" href="https://www.qianwen.com/" rel="noreferrer" referrerpolicy="no-referrer" draggable="false" title="qianwen.com">
+      <a class="site" data-shortcut-id="qianwen" href="https://www.qianwen.com/" rel="noreferrer" referrerpolicy="no-referrer" draggable="false" title="qianwen.com">
         <span class="mark qw" aria-hidden="true">
           <span>千</span>
           <img src="browser-home/icons/qianwen.png" alt="" draggable="false" />
         </span>
         <span class="name">千问</span>
       </a>
-      <a class="site" href="https://chatgpt.com/" rel="noreferrer" referrerpolicy="no-referrer" draggable="false" title="chatgpt.com">
+      <a class="site" data-shortcut-id="chatgpt" href="https://chatgpt.com/" rel="noreferrer" referrerpolicy="no-referrer" draggable="false" title="chatgpt.com">
         <span class="mark gpt" aria-hidden="true">
           <span>G</span>
           <img src="browser-home/icons/chatgpt.png" alt="" draggable="false" />
         </span>
         <span class="name">ChatGPT</span>
       </a>
-      <a class="site" href="https://gemini.google.com/" rel="noreferrer" referrerpolicy="no-referrer" draggable="false" title="gemini.google.com">
+      <a class="site" data-shortcut-id="gemini" href="https://gemini.google.com/" rel="noreferrer" referrerpolicy="no-referrer" draggable="false" title="gemini.google.com">
         <span class="mark gm" aria-hidden="true">
           <span>星</span>
           <img src="browser-home/icons/gemini.png" alt="" draggable="false" />
         </span>
         <span class="name">Gemini</span>
       </a>
-      <a class="site" href="https://passport2.chaoxing.com/login?fid=&newversion=true&refer=https%3A%2F%2Fi.chaoxing.com" rel="noreferrer" referrerpolicy="no-referrer" draggable="false" title="passport2.chaoxing.com">
+      <a class="site" data-shortcut-id="chaoxing" href="https://passport2.chaoxing.com/login?fid=&newversion=true&refer=https%3A%2F%2Fi.chaoxing.com" rel="noreferrer" referrerpolicy="no-referrer" draggable="false" title="passport2.chaoxing.com">
         <span class="mark cx" aria-hidden="true">
           <span>学</span>
           <img src="browser-home/icons/chaoxing.png" alt="" draggable="false" />
         </span>
         <span class="name">学习通</span>
       </a>
-      <a class="site" href="https://www.zhihuishu.com/" rel="noreferrer" referrerpolicy="no-referrer" draggable="false" title="zhihuishu.com">
+      <a class="site" data-shortcut-id="zhihuishu" href="https://www.zhihuishu.com/" rel="noreferrer" referrerpolicy="no-referrer" draggable="false" title="zhihuishu.com">
         <span class="mark zs" aria-hidden="true">
           <span>智</span>
           <img src="browser-home/icons/zhihuishu.ico" alt="" draggable="false" />
         </span>
         <span class="name">智慧树</span>
       </a>
-      <a class="site" href="https://www.zjooc.cn/" rel="noreferrer" referrerpolicy="no-referrer" draggable="false" title="zjooc.cn">
+      <a class="site" data-shortcut-id="zjooc" href="https://www.zjooc.cn/" rel="noreferrer" referrerpolicy="no-referrer" draggable="false" title="zjooc.cn">
         <span class="mark zj" aria-hidden="true">
-          <span>之</span>
+          <span>在</span>
           <img src="browser-home/icons/zjooc.ico" alt="" draggable="false" />
         </span>
-        <span class="name">之江在线</span>
+        <span class="name">在浙学</span>
       </a>
     </nav>
+    </section>
     <div class="sr-only" role="status"></div>
   </main>
   <script>
@@ -90,9 +87,7 @@
         if (!href) return
         event.preventDefault()
         try { document.title = 'ZRNAV:' + href } catch (e) {}
-        document.documentElement.style.background = '#fff'
         document.body.replaceChildren()
-        document.body.style.cssText = 'margin:0;background:#fff;min-height:100vh'
         var meta = document.querySelector('meta[name="referrer"]')
         if (!meta) {
           meta = document.createElement('meta')

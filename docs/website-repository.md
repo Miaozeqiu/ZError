@@ -1,6 +1,6 @@
 # 网站云端经验与本地补充
 
-`open.zerrorai.com` 的公开网站经验目录提供学习通经验，由 `Miaozeqiu/ZError-chaoxing` 同步。客户端从各自的 GitHub 仓库读取在浙学、智慧树和用户在设置页导入的其他公开经验。每个网站独立保存来源、云端缓存和本地补充。
+客户端仅预装学习通，学习通禁止删除。Agent 遇到尚未安装经验的网站时，读取 Open 的 `GET /v1/website-experience` 目录，在本地按域名匹配，仅安装命中的官方仓库。已安装的 Open 仓库通过 `GET /v1/website-experience/<host>` 检查版本，更新时保留本地补充。在浙学、智慧树等其他 Open 仓库可从网站右键菜单删除；删除后会跳过自动安装，仍可手动重新导入。桌面端启动时、恢复网络后和运行期间每六小时检查已安装的来源。
 
 ## 导入格式
 
@@ -40,7 +40,7 @@ Open 以提交为单位同步官方仓库并校验 Git blob 哈希。客户端�
 
 ### 网站脚本
 
-在自定义 HTTP 来源的设置中，勾选「启用此来源的网站脚本」。学习通使用 [ZError-chaoxing 的开发服务](https://github.com/Miaozeqiu/ZError-chaoxing)，默认接口为 `http://127.0.0.1:8817/experience.json`。从网站仓库运行 `npm ci` 和 `npm run dev` 即可监听 TypeScript 变化。
+经验接口通过 `scriptManifest` 声明脚本清单。选用来源后，Agent 调用相关工具时自动加载脚本。学习通使用 [ZError-chaoxing 的开发服务](https://github.com/Miaozeqiu/ZError-chaoxing)，默认接口为 `http://127.0.0.1:8817/experience.json`。从网站仓库运行 `npm ci` 和 `npm run dev` 即可监听 TypeScript 变化。
 
 脚本清单包含 `apiVersion: 1`、`siteId`、`revision` 和 `bundles`。每个脚本条目包含 `url` 和 `sha256`。客户端在工具调用前用 ETag 检查新版本，并校验与已配置源同源的 JS 产物。新版本验证失败时，可使用当前进程中上次成功执行的版本。
 

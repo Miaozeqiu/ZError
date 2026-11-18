@@ -1,8 +1,8 @@
-// Read-only adapter for the student course homework page. Never walks or writes another frame.
-function readCourseHomework(doc, offset, limit, targetId, range) {
+// Read-only adapter for student homework and chapter quizzes. Never walks or writes another frame.
+function readCourseHomework(doc, offset, limit, targetId, range, chapterQuiz) {
   const normalize = value => String(value || '').replace(/[\s\u00a0]+/gu, ' ').trim();
   const text = node => normalize(node?.innerText || node?.textContent);
-  const rootSelector = '.questionLi';
+  const rootSelector = chapterQuiz ? ':is(.questionLi, .singleQuesId)' : '.questionLi';
   const containers = [...doc.querySelectorAll(rootSelector)];
   const rows = containers.filter(node => !node.parentElement?.closest(rootSelector));
   const keys = ['id', 'data-questionid', 'data-question-id', 'questionid', 'data'];
@@ -17,7 +17,7 @@ function readCourseHomework(doc, offset, limit, targetId, range) {
     }
     // Some layouts only expose the stable question number inside the type input.
     const types = [...box.querySelectorAll('input[id^="answertype"]')].filter(node =>
-      /^answertype[_-]?\d+$/.test(node.id) && /^type\d+$/.test(node.name));
+      /^answertype[_-]?\d+$/.test(node.id) && (/^type\d+$/.test(node.name) || chapterQuiz && node.name === node.id));
     if (types.length === 1 && doc.querySelectorAll('input[id="' + types[0].id + '"]').length === 1) {
       const selector = rootSelector + ':has(input[id="' + types[0].id + '"])';
       if (doc.querySelectorAll(selector).length === 1) return { id: 'type:' + types[0].id, selector };
@@ -44,11 +44,34 @@ function readCourseHomework(doc, offset, limit, targetId, range) {
   const headingTypes = [['single', /^(?:单选题?|单项选择题?)$/], ['multiple', /^(?:多选题?|多项选择题?)$/],
     ['judgement', /^判断题?$/], ['completion', /^填空题?$/]];
   const questionType = (label) => headingTypes.find(([, pattern]) => pattern.test(label))?.[0];
-  const headingOf = box => box.querySelector('.mark_name, :scope > h3');
+  const headingOf = box => box.querySelector(chapterQuiz ? '.mark_name, :scope > h3, .Zy_TItle' : '.mark_name, :scope > h3');
   const numberPrefix = stem => stem.match(/^\s*(\d+)[.．、)）]\s*/);
+  const numberOf = heading => {
+    const number = heading?.matches('.Zy_TItle') && text(heading.querySelector(':scope > i'));
+    return number && /^\d+$/.test(number) ? Number(number) : Number(numberPrefix(text(heading))?.[1]) || 0;
+  };
+  const quizOptions = (box, key, controls, type) => {
+    const labels = controls.map(row => normalize(row.querySelector('.num_option')?.getAttribute('data')).normalize('NFKC').toUpperCase());
+    const questionId = box.getAttribute('data') || (box.id || '').match(/^question(\d+)$/)?.[1];
+    const sameQuestion = /^\d+$/.test(questionId || '') && controls.every(row => row.getAttribute('qid') === questionId);
+    const answer = sameQuestion && box.querySelectorAll('input[type=hidden][id="answer' + questionId + '"]');
+    const value = answer?.length === 1 ? normalize(answer[0].value).toUpperCase() : null;
+    const selected = value !== null && /^(?:[A-Z](?:[,， ]?[A-Z])*)?$/.test(value) ? value.match(/[A-Z]/g) || [] : null;
+    const valid = selected && selected.every(label => labels.includes(label)) && new Set(selected).size === selected.length
+      && (type === 'multiple' || selected.length <= 1);
+    return controls.map((row, index) => {
+      const label = labels[index];
+      const content = row.querySelector('.after');
+      return { label, text: text(content), selected: Boolean(valid && selected.includes(label)),
+        selector: valid && /^[A-Z]$/.test(label) && content ? controlPath(row, box, key) : null,
+        unsafe: Boolean(unsafeText(content)), disabled: row.closest('[aria-disabled="true"], fieldset:disabled') !== null };
+    });
+  };
   const parse = (box, index, key) => {
     const heading = headingOf(box);
-    const rawStem = text(heading);
+    const zy = heading?.matches('.Zy_TItle');
+    const title = zy ? heading.querySelector('.newZy_TItle') : null;
+    const rawStem = text(zy ? title?.parentElement : heading);
     const number = numberPrefix(rawStem);
     let stem = number ? rawStem.slice(number[0].length) : rawStem;
     const badge = stem.match(/^[（(【\[]\s*([^）)】\]]+)\s*[）)】\]]\s*/);
@@ -60,7 +83,9 @@ function readCourseHomework(doc, offset, limit, targetId, range) {
     const codedType = ({ 0: 'single', 1: 'multiple', 2: 'completion', 3: 'judgement' })[rawType];
     const type = (namedType || codedType || 'unsupported');
     let unobservable = false;
-    const options = [...box.querySelectorAll('.answerBg .answer_p')].filter(visible).map(content => {
+    const quizControls = chapterQuiz ? [...box.querySelectorAll('.Zy_ulTop > li')].filter(visible) : [];
+    const options = quizControls.length ? quizOptions(box, key, quizControls, type)
+      : [...box.querySelectorAll('.answerBg .answer_p')].filter(visible).map(content => {
       const row = content.closest('.answerBg');
       const mark = row.querySelector('.num_option');
       const input = row.querySelector('input[type=radio], input[type=checkbox]');
@@ -91,8 +116,9 @@ function readCourseHomework(doc, offset, limit, targetId, range) {
     });
     const blanks = type === 'completion' ? [...box.querySelectorAll('textarea, input[type=text], input:not([type])')].filter(visible)
       .map(node => ({ text: node.value, selector: controlPath(node, box, key), maxLength: node.maxLength, disabled: node.disabled || node.readOnly || node.matches(':disabled') })) : [];
-    const nested = Boolean(box.querySelector('.reading_answer, .filling_answer, .line_answer, iframe, .questionLi'));
-    const extraStem = Boolean(box.querySelector('.line_wid_half, .splitS-left .mark_name ~ .mark_name'));
+    const nested = Boolean(box.querySelector('.reading_answer, .filling_answer, .line_answer, iframe, ' + rootSelector));
+    const extraStem = Boolean(box.querySelector('.line_wid_half, .splitS-left .mark_name ~ .mark_name')) ||
+      (zy && box.querySelectorAll('.Zy_TItle').length !== 1);
     const uniqueLabels = new Set(options.map(choice => choice.label));
     let issue = null;
     if (!key) issue = 'missing_identity';
@@ -100,16 +126,16 @@ function readCourseHomework(doc, offset, limit, targetId, range) {
     else if (nested || type === 'unsupported' || (typeInput && !codedType) || namedType && codedType && namedType !== codedType) issue = 'unsupported_type';
     else if (type === 'completion' ? !blanks.length || blanks.length > 16 || blanks.some(item => !item.selector || item.disabled) :
       unobservable || options.length < 2 || options.length > 16 || uniqueLabels.size !== options.length ||
-      (type === 'judgement' && options.length !== 2) || options.some(item => !item.text || item.text.length > 500 || !item.selector || item.disabled)) {
+      (type === 'judgement' && options.length !== 2) || options.some(item => (!item.text && !item.unsafe) || item.text.length > 500 || !item.selector || item.disabled)) {
       issue = 'controls_need_review';
     } else if (unsafeText(heading) || options.some(item => item.unsafe)) issue = 'visual_needed';
     else if (!stem) issue = 'stem_needs_review';
-    return { id: key?.id || null, order: index + 1, number: Number(number?.[1]) || index + 1, stem: stem.slice(0, 2500), type, issue, options, blanks };
+    return { id: key?.id || null, order: index + 1, number: numberOf(heading) || index + 1, stem: stem.slice(0, 2500), type, issue, options, blanks };
   };
   const scope = [];
   const numbers = new Set();
   if (range) rows.forEach((box, index) => {
-    const number = Number(numberPrefix(text(headingOf(box)))?.[1]) || index + 1;
+    const number = numberOf(headingOf(box)) || index + 1;
     if (number < range.start || number > range.end) return;
     numbers.add(number);
     scope.push(index);

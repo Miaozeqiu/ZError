@@ -181,18 +181,17 @@ export const sanitizeStoredPlatforms = (platforms: AIPlatform[]): AIPlatform[] =
           return isLikelyUserCreatedModel(model, platform.id)
         })
         .map(model => {
-          const legacy = model as AIModel & { name?: string }
-          const displayName = (legacy.displayName || legacy.name || legacy.id || '').trim() || legacy.id
+          const { name, maxTokensOverride: _ignoredOutputOverride, ...modelFields } =
+            model as AIModel & { name?: string; maxTokensOverride?: unknown }
+          const displayName = (model.displayName || name || model.id).trim() || model.id
           const nextModel: AIModel = {
-            ...model,
+            ...modelFields,
             displayName,
             platformId: preferredPlatform.id,
             isRemote: model.isRemote === true,
             hasVision: modelHasVision(model),
             category: 'text',
           }
-          // 废弃模型 name 字段
-          delete (nextModel as AIModel & { name?: string }).name
           // 远程模型不再保留 jsCode
           if (nextModel.isRemote) {
             delete nextModel.jsCode

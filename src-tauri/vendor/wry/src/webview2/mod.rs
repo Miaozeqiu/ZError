@@ -510,6 +510,15 @@ impl InnerWebView {
       }
     }
 
+    // Register bundled extensions before the first navigation, including extension URLs.
+    if pl_attrs.browser_extensions_enabled {
+      if let Some(extension_path) = pl_attrs.extension_path {
+        unsafe {
+          Self::load_extensions(&webview, &extension_path)?;
+        }
+      }
+    }
+
     // Navigation
     if let Some(mut url) = attributes.url {
       if let Some((protocol, _)) = url.split_once("://") {
@@ -541,15 +550,6 @@ impl InnerWebView {
 
       if attributes.focused {
         controller.MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC)?;
-      }
-    }
-
-    // Extension loading
-    if pl_attrs.browser_extensions_enabled {
-      if let Some(extension_path) = pl_attrs.extension_path {
-        unsafe {
-          Self::load_extensions(&webview, &extension_path)?;
-        }
       }
     }
 
@@ -1340,9 +1340,11 @@ impl InnerWebView {
     for entry in fs::read_dir(extension_path)? {
       let path = entry?.path();
       let path_hs = HSTRING::from(path.as_path());
-      let handler = ProfileAddBrowserExtensionCompletedHandler::create(Box::new(|_, _| Ok(())));
-
-      profile.AddBrowserExtension(&path_hs, &handler)?;
+      let profile = profile.clone();
+      ProfileAddBrowserExtensionCompletedHandler::wait_for_async_operation(
+        Box::new(move |handler| profile.AddBrowserExtension(&path_hs, &handler).map_err(Into::into)),
+        Box::new(|result, _| result),
+      )?;
     }
 
     Ok(())

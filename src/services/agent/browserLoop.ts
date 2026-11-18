@@ -12,6 +12,7 @@ import {
 } from '../platform/chaoxing/fallback'
 import { studentChapterUrl } from '../chaoxing/host/chapterTasks'
 import { studentHomeworkUrl } from '../platform/chaoxing/studentHomework'
+import { websiteIdentityForHost } from './websiteIdentity'
 import { formatLessonsNudge } from './agentLessons'
 import { coursePlanFor, coursePlanSummary } from '../browser/coursePlan'
 import { formatTodoNudge, toolRoundsWithoutTodoOf } from './browserTodo'
@@ -142,9 +143,14 @@ const learnedSkillHint = (host?: string) => {
 
 /** Agent 看见的站名：按当前 URL 主机，不要把样例站名套过来。 */
 export const displaySiteName = (
-  _url: string,
+  url: string,
   site?: { id?: string; name?: string; host?: string } | null,
-) => String(site?.name || '').trim()
+) => {
+  const name = site?.name?.trim()
+  if (name) return name
+  const identity = websiteIdentityForHost(url)
+  return identity && identity.name !== identity.host ? identity.name : ''
+}
 
 const homeworkAnswerRecipe = '建议：已在学习通课程作答页。看题、选项或当前答案，先用 browser_review_homework；用户要求作答，先用可用的 browser_answer_homework。指定第 1–5 题时传 question_range={"start":1,"end":5}，续批沿用范围。专用工具报错或标明题目需进一步识别时，再用通用网页工具补查。'
 
@@ -152,9 +158,8 @@ const homeworkRecipe = (kind: BrowserPageKind) => {
   if (kind === 'homework-list') return '建议：在作业列表。用快照 ref 打开用户点名的那一份。'
   if (kind === 'course') return '建议：课程壳。点侧栏「作业」进入作业列表。步骤见 chaoxing Skill。'
   if (kind === 'space') return '建议：已在空间。先确认当前选中「我学的课」，未选中就用快照 ref 点击该页签并核对结果，再在这份课表中打开课名进入作业。不要从「我教的课」或首页推荐课程进课。步骤见 chaoxing Skill。'
-  if (kind === 'login') return '建议：登录页。看快照里的输入框 ref 填写。步骤见 chaoxing Skill。'
   if (kind === 'home') return '建议：导航页。先打开课程空间。步骤见 chaoxing Skill。'
-  if (kind === 'player') return '建议：这是播放页上的章节测验。用快照 ref 作答或打开下一条。'
+  if (kind === 'player') return '建议：已打开章节测验时，用 browser_review_homework 读题；按用户授权用 browser_answer_homework 填答并复核。'
   return EXPLORE_RECIPE
 }
 
@@ -163,7 +168,6 @@ const playRecipe = (kind: BrowserPageKind, panel?: BrowserLoopPanel | null, focu
   if (kind === 'home') {
     return `建议：导航页。先打开课程空间。${course}步骤见 chaoxing Skill。`
   }
-  if (kind === 'login') return '建议：登录页。看快照里的输入框 ref 填写。步骤见 chaoxing Skill。'
   if (kind === 'space') return `建议：已在空间。${course}先确认当前选中「我学的课」，未选中就用快照 ref 点击该页签并核对结果，再在这份课表中用 ref 点课名。不要从「我教的课」或首页推荐课程进课。`
   if (kind === 'course') {
     if (tab === '章节') {
@@ -231,9 +235,13 @@ export const recipeForPage = (input: {
 }) => {
   const intent = input.intent || 'unknown'
   const chaoxing = input.siteId === 'chaoxing'
+  if (input.siteId === 'zjooc' && input.kind === 'login') return '需要登录在浙学时调用 browser_login_zjooc，按回执提示完成验证。'
+  if (input.siteId === 'zjooc' && intent === 'homework') return '进入在浙学作答页后使用 browser_answer_zjooc；只读任务按页面快照核对。'
+  if (input.siteId === 'zjooc' && input.kind === 'player' && intent === 'play') return `在浙学播放页调用 browser_play_zjooc。指定视频时传页签全名，连续播放本小节时用 mode=section。${learnedSkillHint('zjooc.cn')}`
   if (!chaoxing) {
     return cardRecipe({ id: input.siteId, name: input.siteName, host: input.host }, input.kind, intent)
   }
+  if (input.kind === 'login') return '建议：当前是学习通登录页。任务需要登录时，直接调用 browser_login_chaoxing；遇到人工验证时交给用户。'
   if (input.kind === 'homework-do' && intent !== 'play') return homeworkAnswerRecipe
   if (intent === 'homework') return homeworkRecipe(input.kind)
   if (intent === 'play') return playRecipe(input.kind, input.panel, input.focus, input.tab)

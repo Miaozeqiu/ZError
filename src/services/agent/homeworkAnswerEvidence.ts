@@ -15,6 +15,12 @@ export function permitsHomeworkAnswers(goal: string) {
   return true
 }
 
+export function permitsChapterQuizAnswers(goal: string) {
+  const active = goal.replace(/《[^》]*》|「[^」]*」|“[^”]*”/g, '')
+  return permitsHomeworkAnswers(goal)
+    && !/(?:只|仅)(?:要|需|要求)?(?:处理|看|播放|完成|做)(?:本节|当前|课堂|章节)?(?:视频|音频)|(?:不要|不用|无需|禁止|不必|别|先别|不)(?:再|去|做|做完|处理|完成|参加)?\s*(?:章节测验|随堂测验|测验|章节测试)/.test(active)
+}
+
 type Receipt = {
   ok?: boolean
   assignment_id?: string

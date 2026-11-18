@@ -7,7 +7,7 @@ type GraphDelta = { nodes: Record<string, GraphRecord>; edges: GraphRecord[] }
 export type WebsiteRepositoryDocument = {
   version: 3; generation: number; upstream: WebsiteSnapshot
   supplement: string; graph?: GraphDelta; migrated?: boolean
-  customSource?: { url: string; snapshot: WebsiteSnapshot; scriptsEnabled?: boolean }
+  customSource?: { url: string; snapshot: WebsiteSnapshot }
 }
 export type LegacyWebsiteRepositoryDocument = {
   version: 1; generation: number; upstream: WebsiteSnapshot; migrated?: boolean
@@ -217,7 +217,10 @@ export const createWebsiteRepository = (deps: {
           } else {
             if (typeof stored.supplement !== 'string') throw new Error('本地补充无效，已保留原数据')
             next.supplement = stored.supplement
-            next.customSource = stored.customSource && copy(stored.customSource)
+            if (stored.customSource) {
+              const { url, snapshot } = stored.customSource
+              next.customSource = { url, snapshot: copy(snapshot) }
+            }
           }
         }
       }
@@ -232,7 +235,8 @@ export const createWebsiteRepository = (deps: {
       }
       next.supplement = [next.supplement, collectLegacyNotes(oldNotes)].filter(Boolean).join('\n\n')
       validateDocument(next)
-      if ((stored && stored.version !== 3) || needsLegacy) {
+      const oldScriptSetting = stored?.version === 3 && stored.customSource && own(stored.customSource, 'scriptsEnabled')
+      if ((stored && stored.version !== 3) || needsLegacy || oldScriptSetting) {
         next.generation++
         await deps.save(copy(next))
       }

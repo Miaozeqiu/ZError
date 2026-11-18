@@ -624,7 +624,7 @@ export const playChaoxingVideo = async (
       ? asObject(await evalBrowserViewMain(id, READ_STUDY_PLAYER()).catch(() => null))
       : asObject(await readChaoxingChapterJobTick(id).catch(() => null))
     if (tab.quiz) {
-      return { quiz: true, step: String(tab.step || ''), hasVideo: false, playing: false, hint: '当前是章节测验。系统会按 ocs 流程自动搜题/随机/暂存' }
+      return { quiz: true, step: String(tab.step || ''), hasVideo: false, playing: false, hint: '当前是章节测验。核对章节后用 browser_review_homework 读题和复核。' }
     }
     if (opts?.skipIfDone && tab.jobDone && Number(tab.videoCount) > 0) {
       return {

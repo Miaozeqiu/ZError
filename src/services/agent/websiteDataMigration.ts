@@ -80,3 +80,36 @@ export const migrateWebsiteSkillOverrides = async (): Promise<{ moved: number; c
   })().catch(error => { pending = undefined; throw error })
   return pending
 }
+
+// The old chaoxing/sites tree can contain other websites. Only the files at
+// its skill root belong to Chaoxing itself.
+export const removeWebsiteSkillOverrides = async (host: string) => {
+  await migrateWebsiteSkillOverrides()
+  if (normalizeWebsiteHost(host) !== host || websitePrimaryHost(host) !== host) throw new Error('网站域名无效')
+  const { readDir, remove, exists, BaseDirectory } = await import('@tauri-apps/plugin-fs')
+  const options = { baseDir: BaseDirectory.Home }
+  for (const root of [ROOT, BACKUP]) {
+    if (!await exists(root, options)) continue
+    for (const entry of await readDir(root, options)) {
+      const path = root + '/' + entry.name
+      if (host === 'chaoxing.com' && /^(?:chaoxing\.md|chaoxing-(?:login|study|homework)(?:\.md)?)$/.test(entry.name)) {
+        await remove(path, { ...options, recursive: entry.isDirectory && !entry.isSymlink })
+        continue
+      }
+      if (!entry.isDirectory || entry.isSymlink || !['chaoxing', 'site-learn'].includes(entry.name)) continue
+      for (const child of await readDir(path, options)) {
+        const childPath = path + '/' + child.name
+        if (child.name === 'sites') {
+          if (!child.isDirectory || child.isSymlink) continue
+          for (const folder of await readDir(childPath, options)) {
+            if (normalizeWebsiteHost(folder.name) === folder.name && websitePrimaryHost(folder.name) === host) {
+              await remove(childPath + '/' + folder.name, { ...options, recursive: folder.isDirectory && !folder.isSymlink })
+            }
+          }
+        } else if (host === 'chaoxing.com' && entry.name === 'chaoxing') {
+          await remove(childPath, { ...options, recursive: child.isDirectory && !child.isSymlink })
+        }
+      }
+    }
+  }
+}

@@ -8,6 +8,20 @@ import * as study from '../../src/services/chaoxing/study'
 import * as chapters from '../../src/services/chaoxing/host/chapterTasks'
 
 describe('finishGate', () => {
+  it('finishes a navigation shortcut edit even when its name mentions a chapter', async () => {
+    const peek = vi.spyOn(appBrowser, 'peekAppBrowserUrl').mockReturnValue('http://localhost:1420/browser-home.html')
+    setBrowserTaskIntent('home-edit', 'play')
+    const step = { id: 'added', kind: 'tool' as const, name: 'browser_home_shortcuts', label: '添加快捷入口', status: 'done' as const,
+      result: JSON.stringify({ ok: true, action: 'add', shortcut: { name: '推理社章节' } }) }
+    try {
+      const evidence = await collectFinishEvidence('tab', 'home-edit', { goalText: '在导航页加一个推理社章节入口', steps: [step] })
+      expect(evidence.homeShortcutsDone).toBe(true)
+      expect(judgeFinish('done', '已添加入口', evidence).ok).toBe(true)
+      peek.mockReturnValue('https://example.com/')
+      expect((await collectFinishEvidence('tab', 'home-edit', { goalText: '在导航页加一个推理社章节入口', steps: [step] })).homeShortcutsDone).toBe(false)
+    } finally { peek.mockRestore(); clearBrowserTaskIntent('home-edit') }
+  })
+
   it('accepts 给我下作业列表 with a complete list receipt and no todo', async () => {
     setBrowserTaskIntent('list-homework', 'homework')
     const steps = [{ id: 'listed', kind: 'tool' as const, name: 'browser_list_homework', label: '读取作业', status: 'done' as const,
@@ -51,6 +65,24 @@ describe('finishGate', () => {
       expect((await collectFinishEvidence('tab', 'chapter', { steps, goalText: '完成 2.1 章节' })).chapterJobsDone).toBe(false)
     } finally { peek.mockRestore(); video.mockRestore(); chapter.mockRestore() }
   })
+  it('can finish opening a verified chapter that still has unfinished tasks', async () => {
+    const url = 'https://mooc1.chaoxing.com/mycourse/studentstudy?chapterId=2&courseId=4&clazzid=8'
+    const identity = chapters.studentChapterUrl(url)!
+    const peek = vi.spyOn(appBrowser, 'peekAppBrowserUrl').mockReturnValue(url)
+    const video = vi.spyOn(study, 'readChaoxingVideoTick').mockResolvedValue(null)
+    const chapter = vi.spyOn(chapters, 'readStudentChapter').mockResolvedValue({
+      identity, frameId: 'root', header: { title: '函数', number: '2.1', remaining: 1, tab: 1, cards: null, tabs: [] },
+    })
+    const steps = [{ id: 'verify-chapter', kind: 'tool' as const, name: 'browser_review_chapter', label: '核对章节', status: 'done' as const,
+      result: JSON.stringify({ ok: true, chapterKey: identity.key, observed_browser_id: 'tab', observation_id: 'verify-chapter' }) }]
+    setBrowserTaskIntent('open-chapter', 'play')
+    try {
+      const finish = async (goalText: string) => judgeFinish('done', '已打开小节', await collectFinishEvidence('tab', 'open-chapter', { steps, goalText }))
+      expect((await finish('打开 2.1 章节')).ok).toBe(true)
+      expect((await finish('打开 2.2 章节')).ok).toBe(false)
+      expect((await finish('打开 2.1 章节并播放')).ok).toBe(false)
+    } finally { peek.mockRestore(); video.mockRestore(); chapter.mockRestore(); clearBrowserTaskIntent('open-chapter') }
+  })
   it('当前用户的只读复核有新页面证据时，不要求完成当前页面的整门课程', async () => {
     const url = 'https://mooc1.chaoxing.com/mycourse/studentstudy?chapterId=2'
     const peek = vi.spyOn(appBrowser, 'peekAppBrowserUrl').mockReturnValue(url)
@@ -72,6 +104,25 @@ describe('finishGate', () => {
       expect(whole.reviewObservationId).toBeUndefined()
       expect(judgeFinish('done', '复核完成', whole).ok).toBe(false)
     } finally { peek.mockRestore(); read.mockRestore(); clearBrowserTaskIntent('review-production') }
+  })
+  it('accepts a stamped chapter quiz review only for the current read-only task', async () => {
+    const url = 'https://mooc1.chaoxing.com/mycourse/studentstudy?chapterId=2&courseId=4&clazzid=8'
+    const peek = vi.spyOn(appBrowser, 'peekAppBrowserUrl').mockReturnValue(url)
+    const read = vi.spyOn(study, 'readChaoxingVideoTick').mockResolvedValue(null)
+    setBrowserTaskIntent('quiz-review', 'play')
+    const result = { ok: true, chapter_key: '4:8:2', quiz_job_id: 'work-test', observation_id: 'review',
+      observed_browser_id: 'tab', observed_at: Date.now() }
+    const steps = [{ id: 'review', kind: 'tool' as const, name: 'browser_review_homework', label: '复核', status: 'done' as const,
+      result: JSON.stringify(result) }]
+    try {
+      const review = await collectFinishEvidence('tab', 'quiz-review', { goalText: '看看本章测验的作答情况', steps })
+      expect(judgeFinish('done', '测验作答已核对', review).ok).toBe(true)
+      const answering = await collectFinishEvidence('tab', 'quiz-review', { goalText: '完成本章测验，随后复核', steps })
+      expect(judgeFinish('done', '测验作答已核对', answering).ok).toBe(false)
+      steps[0].result = JSON.stringify({ ...result, chapter_key: '4:8:3' })
+      const stale = await collectFinishEvidence('tab', 'quiz-review', { goalText: '看看本章测验的作答情况', steps })
+      expect(judgeFinish('done', '测验作答已核对', stale).ok).toBe(false)
+    } finally { peek.mockRestore(); read.mockRestore(); clearBrowserTaskIntent('quiz-review') }
   })
   it('没有播放器或已结束的视频不能误判为正在播放', async () => {
     const peek = vi.spyOn(appBrowser, 'peekAppBrowserUrl').mockReturnValue('https://mooc1.chaoxing.com/mycourse/studentstudy')

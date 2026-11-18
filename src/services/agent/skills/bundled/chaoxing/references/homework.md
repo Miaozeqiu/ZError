@@ -1,9 +1,10 @@
 # 学习通作业 / 章节测验
 
-看快照点选项。作答页可以用 `browser_get_page` 只读看题。不要写 locators.json / see.json。
+在课程作答页或当前章节测验，用 `browser_review_homework` 读题和复核。有作答授权时优先用 `browser_answer_homework`。遇到 `needs_quiz` 把 `chapterKey` 和 `quiz_job_id` 分别作为 `chapter_key` 和 `quiz_job_id` 传入，续批沿用 `assignment_id`、题号范围和测验标识。仅在专用工具需要补查时读取对应测验框的快照。
 
 ## 流程
 
+- 指定作业可先按 [本地快捷入口](../SKILL.md#本地快捷入口) 匹配课程和作业，向 `browser_open_homework` 传完整作业名和 `homework_url`。失效时省略该参数，从学生作业列表重新定位。章节测验从章节页进入。
 - 课程作业：在课程壳点侧栏「作业」。已经在「任务」就改点「作业」。名单在页内 iframe，不要 `navigate` 打开 `mooc2/work/list`。
 - 从名单点作业名才进作答页。章节播放里的测验仍在 studentstudy 内，快照会多一层 iframe。
 - 快照里出现「未交」作业名就点那一行。

@@ -84,6 +84,7 @@ struct Tab {
   title: String,
   hidden: bool,
   zoom: f64,
+  audio_muted: bool,
 }
 
 struct Registry {
@@ -756,9 +757,6 @@ wrap_life_span_handler! {
   impl LifeSpanHandler {
     fn on_after_created(&self, browser: Option<&mut Browser>) {
       let Some(browser) = browser else { return };
-      if let Some(host) = browser.host() {
-        host.set_audio_muted(1);
-      }
       let bid = browser.identifier();
       eprintln!("[cef] on_after_created browser={bid}");
       if let Ok(mut reg) = registry().lock() {
@@ -891,11 +889,17 @@ wrap_load_handler! {
       if main {
         if let Some(browser) = browser.as_ref() {
           let bid = browser.identifier();
-          if let Ok(reg) = registry().lock() {
-            if let Some(id) = reg.by_browser.get(&bid).cloned() {
-              drop(reg);
-              forget_target(&id);
+          let tab = registry().lock().ok().and_then(|reg| {
+            let id = reg.by_browser.get(&bid)?;
+            Some((id.clone(), reg.tabs.get(id)?.audio_muted))
+          });
+          if let Some((id, muted)) = tab {
+            // The main document has committed. Apply the tab's preference to
+            // its attached WebContents before page scripts start media.
+            if let Some(host) = browser.host() {
+              host.set_audio_muted(i32::from(muted));
             }
+            forget_target(&id);
           }
         }
         emit_tab_load(browser, "started");
@@ -1694,6 +1698,24 @@ fn hide_other(keep: &str) {
   }
 }
 
+/// Chromium exposes its per-extension user-script permission in Chrome-style windows.
+#[tauri::command]
+pub async fn browser_scriptcat_permissions(app: AppHandle, id: String) -> Result<(), String> {
+  if !cef_runtime::cef_enabled() || !crate::browser_control::user_input_allowed(&id) {
+    return Err("请先取得浏览器控制权".into());
+  }
+  let app2 = app.clone();
+  on_main(&app, move || {
+    cef_runtime::ensure(&app2)?;
+    let info = WindowInfo { runtime_style: RuntimeStyle::CHROME, ..Default::default() };
+    let url = CefString::from("chrome://extensions/?id=biodkpbccbdobbjiandalbldblopjkhe");
+    let created = browser_host_create_browser(
+      Some(&info), None::<&mut Client>, Some(&url), Some(&BrowserSettings::default()), None, None,
+    );
+    if created == 1 { Ok(()) } else { Err("无法打开脚本猫权限设置".into()) }
+  })?
+}
+
 pub async fn open(
   app: AppHandle,
   id: String,
@@ -1724,6 +1746,7 @@ pub async fn open(
   on_main(&app, move || -> Result<(), String> {
     // CefInitialize / CreateBrowser 必须在同一条 UI 线程上，否则永远没有 on_after_created
     cef_runtime::ensure(&app2)?;
+    crate::browser_theme::apply_cef();
     let window = parent_window(&app2)?;
     let parent = parent_nsview(&window)?;
     if !hidden {
@@ -1758,6 +1781,7 @@ pub async fn open(
           title: String::new(),
           hidden,
           zoom: 1.0,
+          audio_muted: true,
         },
       );
     }
@@ -2050,11 +2074,18 @@ pub fn set_zoom(app: AppHandle, id: String, zoom: f64) -> Result<(), String> {
 
 pub fn set_audio_muted(app: AppHandle, id: String, muted: bool) -> Result<(), String> {
   on_main(&app, move || {
-    let bid = registry().lock().map_err(|_| "浏览器状态不可用".to_string())?
-      .tabs.get(&id).map(|tab| tab.browser_id).ok_or_else(|| "浏览器标签页不存在".to_string())?;
+    let mut reg = registry().lock().map_err(|_| "浏览器状态不可用".to_string())?;
+    let tab = reg.tabs.get_mut(&id).ok_or_else(|| "浏览器标签页不存在".to_string())?;
+    let bid = tab.browser_id;
+    if bid == 0 {
+      tab.audio_muted = muted;
+      return Ok(());
+    }
     let browser = browser_by_id(bid).ok_or_else(|| "浏览器尚未就绪".to_string())?;
     let host = browser.host().ok_or_else(|| "浏览器音频控制不可用".to_string())?;
-    host.set_audio_muted(if muted { 1 } else { 0 });
+    tab.audio_muted = muted;
+    drop(reg);
+    host.set_audio_muted(i32::from(muted));
     Ok::<(), String>(())
   })?
 }
@@ -4944,6 +4975,7 @@ pub async fn cdp_snapshot(_app: AppHandle, id: String, query: SnapshotQuery) -> 
     frame_out.push(json!({
       "frameId": frame.identity.as_ref().map(|f| &f.id),
       "loaderId": frame.identity.as_ref().map(|f| &f.loader_id),
+      "framePath": frame.path,
       "url": frame.url,
       "priority": frame.priority,
       "snapshot": local_lines.join("\n"),

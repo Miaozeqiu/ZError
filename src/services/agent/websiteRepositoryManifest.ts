@@ -2,18 +2,23 @@ export type WebsiteManifest = { version: 1; id: string; name: string; host: stri
 export type GitHubWebsiteSource = { owner: string; name: string; branch: string; root: string; url: string }
 export type WebsiteRepositoryIcon = { path: string; dataUrl: string }
 const domain = /^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/
-export const websiteManifest = (value: unknown): WebsiteManifest => {
+export const websiteManifestIdentity = (value: unknown): Pick<WebsiteManifest, 'id' | 'name' | 'host'> => {
   const data = value as WebsiteManifest
-  if (!data || data.version !== 1 || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(data.id) || data.id.length > 64
+  if (!data || typeof data.id !== 'string' || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(data.id) || data.id.length > 64
     || typeof data.name !== 'string' || !data.name.trim() || data.name.length > 80
-    || typeof data.host !== 'string' || data.host.length > 253 || !domain.test(data.host) || data.host.startsWith('www.')
-    || typeof data.icon !== 'string' || !/^assets\/[a-zA-Z0-9_-]+\.(?:png|ico|jpg|jpeg|webp|gif)$/.test(data.icon)) {
-    throw new Error('网站仓库 website.json 无效；需提供网站 id、name、host 与 assets/ 下的图标文件')
-  }
+    || typeof data.host !== 'string' || data.host.length > 253 || !domain.test(data.host) || data.host.startsWith('www.')) throw new Error('网站仓库 website.json 域名或标识无效')
   const reserved: Record<string, string> = { chaoxing: 'chaoxing.com', zjooc: 'zjooc.cn', zhihuishu: 'zhihuishu.com' }
   if ((reserved[data.id] && reserved[data.id] !== data.host) || Object.entries(reserved).some(([id, host]) => host === data.host && id !== data.id)
     || ['site-learn', 'site-graph', 'campus-bank', 'question-import', 'knowledge-graph', 'quiz-practice', 'folder-admin', 'skill-edit'].includes(data.id)) throw new Error('网站标识与内置资源冲突')
-  return { version: 1, id: data.id, name: data.name.trim(), host: data.host, icon: data.icon }
+  return { id: data.id, name: data.name.trim(), host: data.host }
+}
+export const websiteManifest = (value: unknown): WebsiteManifest => {
+  const identity = websiteManifestIdentity(value)
+  const data = value as WebsiteManifest
+  if (data.version !== 1 || typeof data.icon !== 'string' || !/^assets\/[a-zA-Z0-9_-]+\.(?:png|ico|jpg|jpeg|webp|gif)$/.test(data.icon)) {
+    throw new Error('网站仓库 website.json 无效；需提供网站 id、name、host 与 assets/ 下的图标文件')
+  }
+  return { version: 1, ...identity, icon: data.icon }
 }
 export const parseGitHubWebsiteUrl = (input: string): { owner: string; name: string; branch?: string; root?: string; url: string } => {
   const raw = input.trim()

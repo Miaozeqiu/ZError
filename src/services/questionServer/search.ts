@@ -67,6 +67,10 @@ export const runSearchForRequest = async (
   } finally {
     unregisterAbortController(requestId, controller)
     stopSearchHeartbeat(requestId)
-    await sendModelProgressToBackend(requestId, trace.status === 'success' ? 'search-finished' : 'search-failed')
+    const { modelName: name, query, status, durationMs, error, results } = trace
+    await sendModelProgressToBackend(requestId, status === 'success' ? 'search-finished' : 'search-failed', {
+      modelName: name, query, status, durationMs, error,
+      results: results.map(({ title, url, snippet }) => ({ title, url, snippet })),
+    })
   }
 }

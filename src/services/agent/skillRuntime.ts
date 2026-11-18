@@ -153,6 +153,7 @@ onWebsiteRepositoryChanged(host => {
     const { readTextFile, BaseDirectory } = await import('@tauri-apps/plugin-fs')
     const raw = await readTextFile(`${LEARNED_SITES_DIR}/${host}/${SITE_GRAPH_PATH}`, { baseDir: BaseDirectory.Home }).catch(() => '')
     if (hasWebsiteRepository(host)) return
+    if (host === 'chaoxing.com') siteGraphSeed = null
     const { liveSiteGraphs } = await import('../browser/siteGraphCore')
     liveSiteGraphs.value = liveSiteGraphs.value.filter(site => site.host !== host)
     applyLearnedSiteGraphContent(raw)

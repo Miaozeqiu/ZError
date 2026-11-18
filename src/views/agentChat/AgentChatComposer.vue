@@ -1,5 +1,5 @@
 <template>
-  <form ref="composerRoot" class="composer" @submit.prevent="emit('submit')">
+  <div ref="composerRoot" class="composer">
     <button
       v-if="!threadPinned"
       class="thread-jump"
@@ -12,7 +12,7 @@
       回到底部
     </button>
     <div class="composer-status"><slot name="status" /></div>
-    <div class="composer-box">
+    <form class="composer-box" @submit.prevent="emit('submit')">
       <div
         v-if="composerImages.length || composerFiles.length || quizOptionQuotes?.length"
         class="composer-attachments"
@@ -181,8 +181,8 @@
           </svg>
         </button>
       </div>
-    </div>
-  </form>
+    </form>
+  </div>
 
   <UnifiedContextMenu
     :visible="composerMenuVisible"

@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import type { AIModel, AIPlatform, ModelSelectionCategory, RemoteModelIconMapping } from '../../../services/model/config'
 import type { ModelConfigApi } from './types'
+import type { ModelTestMetrics, ModelTestResult } from './testModel'
 
 export const createModelSettingsState = (config: ModelConfigApi) => {
   const {
@@ -56,8 +57,9 @@ export const createModelSettingsState = (config: ModelConfigApi) => {
   const testAbortController = ref<AbortController | null>(null)
   const showTestDialog = ref(false)
   const testDialogModelName = ref('')
-  const currentTestResult = ref<any>(null)
+  const currentTestResult = ref<ModelTestResult | null>(null)
   const currentTestError = ref('')
+  const testMetrics = ref<ModelTestMetrics | null>(null)
   const streamingResponse = ref('')
   const streamingReasoning = ref('')
   const showMarkdownDemo = ref(false)
@@ -82,7 +84,6 @@ export const createModelSettingsState = (config: ModelConfigApi) => {
   const modelContextMenuX = ref(0)
   const modelContextMenuY = ref(0)
   const contextMenuModel = ref<AIModel | null>(null)
-  const modelToTest = ref<AIModel | null>(null)
 
   return {
     showAddPlatformDialog,
@@ -107,6 +108,7 @@ export const createModelSettingsState = (config: ModelConfigApi) => {
     testDialogModelName,
     currentTestResult,
     currentTestError,
+    testMetrics,
     streamingResponse,
     streamingReasoning,
     showMarkdownDemo,
@@ -128,7 +130,6 @@ export const createModelSettingsState = (config: ModelConfigApi) => {
     modelContextMenuX,
     modelContextMenuY,
     contextMenuModel,
-    modelToTest,
   }
 }
 

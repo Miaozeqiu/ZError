@@ -5,7 +5,7 @@ import { createSkillMarkdown, normalizeLegacySkillMarkdown, parseSkillFrontmatte
 import { normalizeWebsiteHost, websitePrimaryHost } from './websiteIdentity'
 import { isBuiltinRuntimeSkillFile, WEBSITE_RUNTIME_FILE_HINT } from './skillRuntimeFiles'
 import { resolveWebsiteSkillTarget } from './websiteSkillTarget'
-import { chaoxingRepository, ensureChaoxingRepository, listChaoxingRepositoryFiles, readChaoxingRepositoryFile,
+import { ensureChaoxingRepository, listChaoxingRepositoryFiles, readChaoxingRepositoryFile,
   writeChaoxingRepositoryFile, websiteRepositoryState, onWebsiteRepositoryChanged, CHAOXING_REPOSITORY,
   websiteRepositoryHosts, listWebsiteRepositoryFiles, readWebsiteRepositoryFile, writeWebsiteRepositoryFile, writeWebsiteRepositorySupplement, repositoryForHost, websiteRepositoryStates, repositorySourceFor } from './websiteRepository'
 import { WEBSITE_REPOSITORY_READ_ONLY, websiteRepositoryTarget } from './websiteRepositoryTarget'
@@ -171,9 +171,9 @@ const BUILTIN_SKILLS: Record<string, BuiltinSkillDef> = {
   },
   'site-learn': {
     editable: true,
-    name: '认识新站点',
-    description: '当前网址没有现成刷课步骤时：探路、记录页面结构和站点步骤。先读这个 Skill，再读 sites/<主网站域名>/SKILL.md。',
-    triggerHint: '当前站点没有对应步骤、图谱对不上、或没有专用工具时，先 read_agent_skill(site-learn)。',
+    name: '网站经验',
+    description: '查找和保存各网站的导航步骤、页面结构和本地快捷入口。站点文件位于 sites/<主网站域名>/SKILL.md。',
+    triggerHint: '需要查找或记录快捷入口，或在网站中摸索及更新流程时，使用 site-learn。',
     defaultEnabled: true,
     scope: 'browser',
   },
@@ -537,7 +537,9 @@ const readSkillBody = async (id: string): Promise<string> => {
 
 const buildItems = async (config: SkillConfigFile): Promise<AgentSkillItem[]> => {
   const items: AgentSkillItem[] = []
+  const hosts = await websiteRepositoryHosts()
   for (const [id, def] of Object.entries(BUILTIN_SKILLS)) {
+    if (id === 'chaoxing' && !hosts.includes('chaoxing.com')) continue
     const row = config.skills[id]
     const customized = await hasSkillOverride(id)
     let name = def.name
@@ -771,7 +773,7 @@ export const skillSurfaceFiles = (files: string[]) => files.filter((path) => {
 
 const nextSkillHint = (id: string, files: string[]) => {
   if (id === 'site-learn') {
-    return '这是总说明。本站步骤：read_agent_skill_file 读 files 里 sites/<主网站域名>/SKILL.md。步骤写法见 references/workflow.md。'
+    return '用 read_agent_skill_file 读取 sites/<主网站域名>/SKILL.md 中的本站步骤和本地快捷入口。记录方法见 references/workflow.md。'
   }
   if (id === 'site-graph') {
     return '操作表：read_agent_skill_file(site-graph, references/edit.md)。用 browser_site_graph 一条条改。'
@@ -794,14 +796,10 @@ export const nextSkillFileHint = (id: string, path: string, files: string[]) => 
   const site = path.match(/^sites\/([^/]+)\/SKILL\.md$/)
   if (id === 'site-learn' && site) {
     const host = site[1]
-    return [
-      `本站步骤写在 sites/${host}/SKILL.md。`,
-      '在当前网页验证步骤，再记录已验证的操作经验。',
-      '播放页同一节常有多条视频，当前条只是其中一条。走通后把点了哪个字写回 SKILL.md。',
-    ].filter(Boolean).join('')
+    return `本站经验归入 sites/${host}/SKILL.md。在当前网页验证目标和操作；同节多条视频时当前条只是其中一条。按返回的编辑范围保存已验证的导航步骤和本地快捷入口。`
   }
   if (id === 'site-learn' && path === 'references/workflow.md') {
-    return '本站步骤：sites/<主网站域名>/SKILL.md。写哪一页、点哪个字、在哪个框、坑在哪。'
+    return '导航步骤和快捷入口都按网站归档。读取 sites/<主网站域名>/SKILL.md 查看该站经验和编辑范围。'
   }
   if (id === 'chaoxing' && /^references\//.test(path)) {
     return '按当前页【建议】做。结构变化时通过快照重新观察，走通后更新本站 SKILL.md。'
@@ -1172,7 +1170,7 @@ export const resetSkillDocument = async (id: string) => {
   const item = skillItemOf(id)
   if (!item?.builtin) return
   assertSkillEditable(id)
-  if (id === 'chaoxing') await chaoxingRepository.reset()
+  if (id === 'chaoxing') await repositoryForHost('chaoxing.com').reset()
   else await removeSkillOverride(id)
   promptCache.delete(id)
   await syncState()
@@ -1204,7 +1202,7 @@ export const resetSkillFileContent = async (id: string, relativePath: string, op
     return
   }
   if (id === 'chaoxing') {
-    await chaoxingRepository.reset(path)
+    await repositoryForHost('chaoxing.com').reset(path)
     await syncState()
     return
   }

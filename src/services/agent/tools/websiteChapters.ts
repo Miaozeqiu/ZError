@@ -5,6 +5,8 @@ import { videoWatchFor } from '../../platform/panelAccess'
 import { readStudentChapter, readStudentChapterCard, revealChapterJob, sameStudentChapterPage } from '../../chaoxing/host/chapterTasks'
 import { watchChapterVideo } from '../../platform/chaoxing/chapterPlayback'
 import { runWebsiteScript } from '../websiteScripts'
+import { readChapterDocument } from '../../chaoxing/host/chapterDocument'
+import { handleChapterDiscussion } from '../../chaoxing/host/chapterDiscussion'
 
 type Context = {
   name: string
@@ -49,10 +51,13 @@ export async function handleWebsiteChapterTools(ctx: Context): Promise<string> {
     remaining: header.remaining, chapterComplete: header.remaining === 0,
     loaded: jobs !== null, jobCount: jobs?.length ?? 0,
     ...(matching ? { videoMid: matching[0].mid, videoJobDone: matching[0].done } : {}),
-    jobs: (jobs || []).slice(0, MAX_JOBS).map(({ index, kind, name, done }) => ({ index: index + 1, kind, name, done })),
+    jobs: (jobs || []).slice(0, MAX_JOBS).map(({ index, kind, name, done, quizJobId, discussionId }) => ({
+      index: index + 1, kind, name, done, ...(quizJobId ? { quiz_job_id: quizJobId } : {}),
+      ...(discussionId ? { discussion_id: discussionId } : {}),
+    })),
   }
   const report = (status: string, hint: string, extra: Record<string, unknown> = {}) => JSON.stringify({ ...receipt, status, hint, ...extra })
-  if (!advancing) return report(receipt.chapterComplete ? 'complete' : 'observed', '已读取当前章节的网页任务点状态。')
+  if (!advancing) return report(receipt.chapterComplete ? 'complete' : 'observed', '已读取当前章节的网页任务点状态。', { url: identity.href })
   if (!receipt.loaded && !receipt.chapterComplete) return report('loading', '当前章节内容正在加载，请稍候复核。')
 
   const requestedTab = args.tab === undefined ? undefined : header.tabs.find(item => item.tab === args.tab && item.id && item.tab !== header.tab)
@@ -90,16 +95,22 @@ export async function handleWebsiteChapterTools(ctx: Context): Promise<string> {
   if (action === 'pending') return report('pending', '本页签没有可继续的任务点。核对同章其他页签及目录完成状态。')
   const watch = videoWatchFor(browserId)
   if (watch?.sessionId === sessionId && watch.status === 'watching') {
-    return report('watching', '该标签已有视频监控。等待事件后重新复核章节。', { watching: true })
+    const mid = 'mid' in watch ? watch.mid : undefined
+    return report('watching', '该标签已有视频监控。等待事件后重新复核章节。', {
+      watching: true, ...(mid && jobs?.some(job => job.kind === 'video' && job.mid === mid) ? { videoMid: mid } : {}),
+    })
   }
 
   if (action === 'tab' && next) {
-    const raw = await callProtocol(browserId, 'snapshot', { frame: 'main', maxFrames: 1, acted: true }).catch(() => null)
-    const frames = Array.isArray(raw?.frames) ? raw.frames : []
-    const root = frames.find(frame => frame.frameId === state.frameId && frame.url === identity.href)
-    if (!root?.loaderId) return fail('invalid', '当前章节主文档已变化，无法确认页签。')
+    let loaderId = verified.loaderId
+    if (!loaderId) {
+      const raw = await callProtocol(browserId, 'snapshot', { frame: 'main', maxFrames: 1, acted: true }).catch(() => null)
+      const frames = Array.isArray(raw?.frames) ? raw.frames : []
+      loaderId = frames.find(frame => frame.frameId === state.frameId && frame.url === identity.href)?.loaderId
+    }
+    if (!loaderId) return fail('stale', '当前章节主文档已变化，无法确认页签。')
     const clicked = await actOnceOnBrowser(browserId, {
-      by: 'css', value: `#prev_tab .prev_ul > li#${next.id}`, frameId: root.frameId, loaderId: root.loaderId,
+      by: 'css', value: `#prev_tab .prev_ul > li#${next.id}`, frameId: state.frameId, loaderId,
     }, 'click')
     if (!clicked.ok) return fail('invalid', '没有确认目标页签已打开。请复核网页。', clicked.dispatched)
     await wait(400)
@@ -122,27 +133,40 @@ export async function handleWebsiteChapterTools(ctx: Context): Promise<string> {
   const detail = { job: { index: job.index + 1, kind: job.kind, name: job.name, done: job.done } }
   if (action === 'unknown') return report('unsupported_job', '该任务点类型需要用网页快照核对。', detail)
 
+  if (action === 'discussion') {
+    if (!job.discussionId) return fail('not_found', '该讨论没有可核对的话题标识。')
+    const discussion = await handleChapterDiscussion({ browserId, chapterKey: identity.key, discussionId: job.discussionId, tab: header.tab, wait })
+    return JSON.stringify({ ...receipt, ...detail, ...discussion })
+  }
+
   if (action === 'quiz' || action === 'document') {
     if (job.selector) {
       const revealed = await evalBrowserViewInFrame(browserId, revealChapterJob(cards.url, job.selector), '', { frameId: cards.frameId }).catch(() => false)
       if (revealed !== true) return fail('stale', '未能定位任务点，请用当前页面快照核对。')
     }
     if (action === 'quiz') {
-      return report('needs_quiz', '用当前测验网页核对题目和选项，按用户授权作答、保存或提交，再复核章节。', detail)
+      return report('needs_quiz', '将 chapterKey 和 quiz_job_id 传给 browser_review_homework 或 browser_answer_homework。逐批复核后按授权处理保存或提交，再核对章节状态。',
+        { ...detail, ...(job.quizJobId ? { quiz_job_id: job.quizJobId } : {}) })
     }
-    if (job.selector) {
-      await wait(600)
+    await wait(600)
+    let remaining = header.remaining
+    const status = await readChapterDocument({ browserId, cards, selector: job.selector, wait, observe: async () => {
       const after = await readStudentChapterCard(browserId)
-      if (!sameStudentChapterPage(after, state) || after?.cards?.frameId !== cards.frameId) {
-        return fail('stale', '章节页已改变，请先复核当前页面。', true)
-      }
-      if (after.header.remaining === 0 || after.jobs?.some(item => item.selector === job.selector && item.done)) {
-        return report(after.header.remaining === 0 ? 'complete' : 'job_completed', '网页已登记该文档任务点完成，请复核剩余任务。', {
-          job: { ...detail.job, done: true }, remaining: after.header.remaining, chapterComplete: after.header.remaining === 0,
-        })
-      }
+      if (!sameStudentChapterPage(after, state) || !after) return 'stale'
+      remaining = after.header.remaining
+      if (remaining === 0) return 'done'
+      if (after.cards?.frameId !== cards.frameId) return 'stale'
+      const jobs = after.jobs?.filter(item => item.kind === 'document' && item.selector === job.selector)
+      if (!job.selector || jobs?.length !== 1) return 'pending'
+      return jobs[0]?.done ? 'done' : 'pending'
+    } })
+    if (status === 'stale') return fail('stale', '阅读时章节页已改变，请重新核对。', true)
+    if (status === 'done') {
+      return report(remaining === 0 ? 'complete' : 'job_completed', '学习通已登记该课件任务点完成。', {
+        job: { ...detail.job, done: true }, remaining, chapterComplete: remaining === 0,
+      })
     }
-    return report('needs_document', '用当前文档控件阅读并核对平台标记。平台登记完成后再继续。', detail)
+    return report('needs_document', '课件阅读器需要核对，或平台尚未登记完成。请查看当前课件控件和任务点。', detail)
   }
 
   if (!job.mid || jobs?.filter(item => item.mid === job.mid).length !== 1) return fail('invalid', '未读到唯一的视频标识。请用当前页面快照核对。')

@@ -82,8 +82,7 @@ describe('Skill storage and installation', () => {
     try {
       io.writes.mockClear(); vi.mocked(remove).mockClear()
       const doc = await mod.getSkillDocument('site-learn', 'zjooc.cn')
-      expect(doc?.files).toContain('sites/zjooc.cn/SKILL.md')
-      expect(doc?.customized).toBe(false)
+      expect(doc).toBeNull()
       for (const path of legacy) {
         expect(await mod.listSkillFiles('site-learn')).not.toContain(path)
         expect(await mod.getSkillFileContent('site-learn', path)).toBeNull()
@@ -113,19 +112,16 @@ describe('Skill storage and installation', () => {
 
   it('opens one learned website without exposing internal instructions or another website', async () => {
     const mod = await load()
-    const doc = await mod.getSkillDocument('site-learn', 'zjooc.cn')
-    expect(doc?.name).toBe('在浙学')
-    expect(doc?.files?.length).toBeGreaterThan(0)
-    expect(doc?.files?.every(path => path.startsWith('sites/zjooc.cn/'))).toBe(true)
-    expect(doc?.files).not.toContain('SKILL.md')
     expect(await mod.getSkillDocument('site-learn', '../zhihuishu.com')).toBeNull()
     expect(await mod.getSkillDocument('site-learn')).toBeNull()
     const { readDir, readTextFile } = await import('@tauri-apps/plugin-fs')
+    io.files.set(base + 'site-learn/sites/zjooc.cn/SKILL.md', '---\nname: 在浙学\n---\n# 在浙学')
     io.files.set(base + 'site-learn/sites/custom.example.com/SKILL.md', '# Custom site')
     vi.mocked(readDir).mockImplementation(async (path: any) => {
       const entries: Record<string, any[]> = {
         [base + 'site-learn']: [{ name: 'sites', isDirectory: true }],
-        [base + 'site-learn/sites']: [{ name: 'custom.example.com', isDirectory: true }],
+        [base + 'site-learn/sites']: [{ name: 'custom.example.com', isDirectory: true }, { name: 'zjooc.cn', isDirectory: true }],
+        [base + 'site-learn/sites/zjooc.cn']: [{ name: 'SKILL.md', isFile: true }],
         [base + 'site-learn/sites/custom.example.com']: [{ name: 'SKILL.md', isFile: true }],
       }
       return entries[path] || []
@@ -142,6 +138,11 @@ describe('Skill storage and installation', () => {
       },
     } })
     try {
+      const doc = await mod.getSkillDocument('site-learn', 'zjooc.cn')
+      expect(doc?.name).toBe('在浙学')
+      expect(doc?.files?.length).toBeGreaterThan(0)
+      expect(doc?.files?.every(path => path.startsWith('sites/zjooc.cn/'))).toBe(true)
+      expect(doc?.files).not.toContain('SKILL.md')
       const identity = await import('../../src/services/agent/websiteIdentity')
       expect(identity.websitePrimaryHost('custom.example.com')).toBe('custom.example.com')
       expect(await mod.listSkillFiles('site-learn')).toContain('sites/custom.example.com/SKILL.md')
@@ -200,8 +201,8 @@ describe('Skill storage and installation', () => {
     expect(io.files.get(path)).toBe(original)
     await mod.saveSkillDocument('chaoxing', doc!.markdown)
     expect(io.files.get(path)).toBe(original)
-    const { chaoxingRepository } = await import('../../src/services/agent/websiteRepository')
-    expect(chaoxingRepository.inspect().supplement).toBe('用户正文')
+    const { repositoryForHost } = await import('../../src/services/agent/websiteRepository')
+    expect(repositoryForHost('chaoxing.com').inspect().supplement).toBe('用户正文')
     expect((await mod.getSkillDocument('chaoxing'))?.markdown).toContain('\n\n用户正文\n')
   })
 

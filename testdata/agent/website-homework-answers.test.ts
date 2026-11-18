@@ -9,12 +9,13 @@ const { invoke, evaluate, resolveScript, enabled } = vi.hoisted(() => ({
 }))
 vi.mock('@tauri-apps/api/core', () => ({ invoke }))
 vi.mock('../../src/services/browser/eval', () => ({ evalBrowserViewInFrame: evaluate }))
-vi.mock('../../src/services/agent/websiteScripts', () => ({ runWebsiteScript: resolveScript, websiteScriptEnabled: enabled }))
+vi.mock('../../src/services/agent/websiteScripts', () => ({ runWebsiteScript: resolveScript, hasWebsiteScriptManifest: enabled }))
 
 import { handleWebsiteHomeworkAnswerTools } from '../../src/services/agent/tools/websiteHomeworkAnswers'
-import { pendingHomeworkReview, permitsHomeworkAnswers } from '../../src/services/agent/homeworkAnswerEvidence'
+import { pendingHomeworkReview, permitsChapterQuizAnswers, permitsHomeworkAnswers } from '../../src/services/agent/homeworkAnswerEvidence'
 import { mergeHomeworkProgress, type HomeworkProgress, type HomeworkProgressUpdate } from '../../src/services/agent/homeworkProgress'
 import { requestedHomeworkQuestionRange } from '../../src/services/agent/homeworkQuestionRange'
+import * as chapters from '../../src/services/chaoxing/host/chapterTasks'
 
 const url = 'https://mooc1.chaoxing.com/mooc-ans/mooc2/work/dowork?courseId=42&classId=7&workId=11'
 const frame = { url, frameId: 'work', loaderId: 'doc-one' }
@@ -248,4 +249,72 @@ it('requires a fresh review of the assignment and reopens the review after a lat
   expect(pendingHomeworkReview([first, partial, last, step('answer', [1], 'targeted')])).toBe(true)
   expect(permitsHomeworkAnswers('打开作业《写作业》，不要填写')).toBe(false)
   expect(permitsHomeworkAnswers('请做完这份作业，别提交')).toBe(true)
+})
+
+it('reads, fills, and reviews the live chapter quiz by task and frame identity', async () => {
+  const chapterUrl = 'https://mooc1.chaoxing.com/mycourse/studentstudy?chapterId=5&courseId=42&clazzid=7'
+  const cardsUrl = 'https://mooc1.chaoxing.com/knowledge/cards?knowledgeid=5&courseid=42&clazzid=7&num=0'
+  const workUrl = 'https://mooc1.chaoxing.com/mooc-ans/work/doHomeWorkNew?courseid=42&classId=7&knowledgeid=5&jobid=work-current&workanswerid=91'
+  const chapter_key = '42:7:5'
+  const quiz_job_id = 'work-current'
+  const args = { chapter_key, quiz_job_id }
+  const cardFrame = { url: cardsUrl, frameId: 'cards', loaderId: 'cards-doc', framePath: '0' }
+  const quizFrame = { url: workUrl, frameId: 'quiz', loaderId: 'quiz-doc', framePath: '0/0/0' }
+  const task = { index: 0, kind: 'quiz' as const, name: '章节测验', done: false, quizJobId: quiz_job_id, mid: '', selector: '', focusRequired: false }
+  const chapter = vi.spyOn(chapters, 'readStudentChapterCard').mockResolvedValue({
+    identity: chapters.studentChapterUrl(chapterUrl)!, frameId: 'top',
+    header: { title: '导数', number: '2.1', remaining: 1, tab: 1, cards: chapters.chapterCardsUrl(cardsUrl), tabs: [] },
+    cards: { ...cardFrame, html: '<div/>', ok: true }, jobs: [task],
+  })
+  const { window } = new JSDOM(readFileSync(new URL('../chaoxing/homework/chapter-quiz.html', import.meta.url), 'utf8'), {
+    url: workUrl, runScripts: 'outside-only',
+  })
+  Object.defineProperty(window.Element.prototype, 'getClientRects', { value: () => [{ width: 100, height: 20 }] })
+  const doc = window.document
+  const ctx = setup()
+  const frames = [cardFrame, quizFrame, { ...quizFrame, frameId: 'unrelated', framePath: '1/0' }]
+  ctx.context.readBrowserPage.mockResolvedValue({ url: chapterUrl, frames })
+  evaluate.mockImplementation(async (_id, script, _name, identity) => {
+    expect(identity).toEqual({ frameId: 'quiz', loaderId: 'quiz-doc' })
+    return window.eval(script)
+  })
+  ctx.context.clickByLocator.mockImplementation(async (_id, locator) => {
+    expect(locator).toMatchObject({ frameId: 'quiz', loaderId: 'quiz-doc' })
+    doc.querySelector(locator.value)?.closest('.answerBg')?.querySelector('.num_option')?.classList.add('check_answer')
+    return { ok: true }
+  })
+  invoke.mockResolvedValue([[{ id: 1, answer: '甲' }]])
+  try {
+    const before = await homework('review', ctx, args)
+    expect(before).toMatchObject({ ok: true, ...args, assignment_id: 'chapter:42:7:5:work-current:91',
+      questions: [{ number: 1, stem: '章节测验题干', status: 'unanswered' }] })
+    expect(invoke).not.toHaveBeenCalled()
+    const { prepareWebsiteChapterQuiz } = await import('../../src/services/agent/tools/websiteChapterQuiz')
+    expect(await prepareWebsiteChapterQuiz({ ...ctx.context, name: 'browser_start_chapter_tasks', args: {} }, chapter_key, quiz_job_id))
+      .toMatchObject({ quiz: { assignment_id: before.assignment_id, total: 1, filled: 1, reviewed: 1, reviewNeeded: 0 } })
+    expect(await homework('review', ctx, { ...args, assignment_id: before.assignment_id }))
+      .toMatchObject({ questions: [{ status: 'answered', actual: { choices: ['A'] } }] })
+    expect(ctx.context.clickByLocator).toHaveBeenCalledTimes(1)
+    expect(await homework('answer', ctx, { ...args, chapter_key: '42:7:6' })).toMatchObject({ ok: false, reason: 'stale' })
+    expect(await homework('answer', ctx, { ...args, assignment_id: 'chapter:42:7:5:work-current:90' }))
+      .toMatchObject({ ok: false, reason: 'stale' })
+    ctx.context.readBrowserPage.mockResolvedValue({ url: chapterUrl, frames: [...frames, { ...quizFrame, frameId: 'duplicate', framePath: '0/1/0' }] })
+    expect(await homework('review', ctx, args)).toMatchObject({ ok: false, reason: 'ambiguous' })
+    expect(ctx.context.clickByLocator).toHaveBeenCalledTimes(1)
+  } finally { chapter.mockRestore() }
+})
+
+it('keeps the visible quiz option labels for review of image questions', async () => {
+  const { courseHomeworkReadScript } = await import('../../src/services/chaoxing/host/courseHomeworkAnswers')
+  const { window } = new JSDOM(readFileSync(new URL('../chaoxing/homework/chapter-quiz-zy.html', import.meta.url), 'utf8'), { runScripts: 'outside-only' })
+  Object.defineProperty(window.Element.prototype, 'getClientRects', { value: () => [{ width: 100, height: 20 }] })
+  window.document.querySelector<HTMLInputElement>('input[id^="answer"][name^="answer"]')!.value = 'C'
+  const result = window.eval(courseHomeworkReadScript(0, 8, undefined, { start: 1, end: 1 }, true))
+  expect(result).toMatchObject({ total: 1, scopeTotal: 1, questions: [{ number: 1, type: 'single', issue: 'visual_needed' }] })
+  expect(result.questions[0].options.map((item: { label: string; selected: boolean }) => [item.label, item.selected]))
+    .toEqual([['A', false], ['B', false], ['C', true], ['D', false]])
+  expect(permitsChapterQuizAnswers('完成章节任务，只播放视频')).toBe(false)
+  expect(permitsChapterQuizAnswers('完成章节任务，别做测验')).toBe(false)
+  expect(permitsChapterQuizAnswers('看看本章测验的作答情况')).toBe(false)
+  expect(permitsChapterQuizAnswers('完成本章测验，别提交')).toBe(true)
 })

@@ -34,6 +34,8 @@ export type NativeWatchState = {
   startedAt: number
   updatedAt: number
   locator?: BrowserLocator
+  handledByTool?: boolean
+  requireEnded?: boolean
 }
 
 export type NativeWatchKind = 'progress' | 'stalled' | 'lost' | 'done'
@@ -64,6 +66,7 @@ const POLL_MS = 1000
 const INTERPOLATE_MS = 12_000
 
 const nativeWatches = ref<Record<string, NativeWatchState>>({})
+const scopedReaders = new Map<string, () => Promise<NativeVideoTick | null>>()
 const timers = new Map<string, number[]>()
 const inFlight = new Set<string>()
 const generations = new Map<string, number>()
@@ -132,6 +135,7 @@ export const parseNativeTick = (raw: unknown): NativeVideoTick | null => {
 }
 
 const emit = (kind: NativeWatchKind, state: NativeWatchState) => {
+  if (state.handledByTool) return
   checkHandler?.({
     browserId: state.browserId,
     sessionId: state.sessionId,
@@ -159,6 +163,7 @@ export const stopNativeWatch = (browserId?: string, opts?: { keep?: boolean }) =
   const id = String(browserId || '').trim()
   if (!id) return
   clearTimers(id)
+  scopedReaders.delete(id)
   lastProgressAt.delete(id)
   lastSeenAt.delete(id)
   pausedAt.delete(id)
@@ -211,7 +216,7 @@ export const applyNativeTickState = (
     return { state: prev, kind: null, clocks }
   }
   const nearEnd = duration > 1 && current >= duration - NATIVE_NEAR_END
-  const done = Boolean(tick.ended || nearEnd)
+  const done = Boolean(tick.ended || (!prev.requireEnded && nearEnd))
   let nextProgress = clocks.lastProgressAt
   let nextPaused = clocks.pausedAt
   if (!tick.paused && (current >= prev.sampledCurrent + 0.35 || done)) {
@@ -300,7 +305,7 @@ const tickLive = (browserId: string) => {
   const elapsed = (Date.now() - watch.sampledAt) / 1000
   if (elapsed < 0.05) return
   const current = Math.min(watch.duration, watch.sampledCurrent + elapsed)
-  const done = Boolean(watch.ended || (watch.duration > 0 && current >= watch.duration - 0.15))
+  const done = Boolean(watch.ended || (!watch.requireEnded && watch.duration > 0 && current >= watch.duration - 0.15))
   const next = patchWatch(browserId, {
     current,
     percent: livePercent(current, watch.duration, done),
@@ -322,7 +327,8 @@ const syncTick = async (browserId: string) => {
   inFlight.add(browserId)
   const generation = generations.get(browserId)
   try {
-    const tick = await readNativeVideoTick(browserId, nativeWatches.value[browserId]?.locator)
+    const reader = scopedReaders.get(browserId)
+    const tick = reader ? await reader().catch(() => null) : await readNativeVideoTick(browserId, nativeWatches.value[browserId]?.locator)
     if (generations.get(browserId) !== generation) return
     applyTick(browserId, tick)
   } catch {
@@ -336,7 +342,7 @@ export const startNativeWatch = (
   browserId: string,
   sessionId: string,
   seed?: Partial<NativeVideoTick> & { title?: string },
-  opts?: { resume?: boolean; locator?: BrowserLocator },
+  opts?: { resume?: boolean; locator?: BrowserLocator; handledByTool?: boolean; readTick?: () => Promise<NativeVideoTick | null> },
 ) => {
   const id = String(browserId || '').trim()
   const sid = String(sessionId || '').trim()
@@ -344,6 +350,8 @@ export const startNativeWatch = (
   const prev = nativeWatches.value[id]
   const resume = Boolean(opts?.resume && prev)
   clearTimers(id)
+  if (opts?.readTick) scopedReaders.set(id, opts.readTick)
+  else scopedReaders.delete(id)
   if (!resume) {
     stallNotified.delete(id)
     doneFired.delete(id)
@@ -369,6 +377,8 @@ export const startNativeWatch = (
     sampledCurrent: current,
     startedAt: now,
     updatedAt: now,
+    handledByTool: opts?.handledByTool,
+    requireEnded: Boolean(opts?.readTick),
     locator: opts?.locator || (seed?.frameId ? {
       by: 'css', value: seed.value || 'video', nth: seed.nth || 1,
       frameId: seed.frameId, loaderId: seed.loaderId,

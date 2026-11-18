@@ -1,10 +1,10 @@
 import { listCachedPageRefs, type BrowserLocator } from '../../browser/engine'
 import { evalBrowserViewInFrame, evalBrowserViewMain } from '../../browser/eval'
 import { chaoxingUrl, isCourseListFrame, READ_STUDENT_COURSES, studentCourseUrl } from '../../platform/chaoxing/studentCourses'
-import { runWebsiteScript, websiteScriptEnabled } from '../websiteScripts'
+import { runWebsiteScript, hasWebsiteScriptManifest } from '../websiteScripts'
 
 type Course = { title: string; teacher?: string; target: NonNullable<ReturnType<typeof studentCourseUrl>> }
-type Frame = { frameId?: string; loaderId?: string; url: string; snapshot?: string }
+type Frame = { frameId?: string; loaderId?: string; framePath?: string; url: string; snapshot?: string }
 type CoursePage = { frames?: Frame[]; url?: string; title?: string; snapshot?: string; error?: string }
 const site = 'chaoxing.com'
 const space = 'https://i.chaoxing.com/'
@@ -22,6 +22,7 @@ type CourseToolContext = {
   clickByLocator: (id: string, locator: BrowserLocator) => Promise<{ ok: boolean; error?: string; reason?: string }>
   onNavigation?: () => void
   wait: (ms: number) => Promise<void>
+  includeLandingSnapshot?: boolean
 }
 
 const collect = async (id: string, frame: Frame) => {
@@ -47,7 +48,7 @@ export async function handleWebsiteCourseTools(ctx: CourseToolContext): Promise<
   if (ctx.role === 'explore' || query.length > 180 || teacherQuery.length > 100 || (opening && !query)) return fail('invalid', '请提供明确的学习通课程名。')
   let courseDispatched = false
   try {
-    if (!await websiteScriptEnabled(site)) return fail('invalid', '学习通网站脚本未启用。可以先用普通网页工具进入课程。')
+    if (!await hasWebsiteScriptManifest(site)) return fail('invalid', '当前学习通经验来源未提供脚本清单。可以先用普通网页工具进入课程。')
     const id = ctx.browserId
     const initial = await ctx.liveHref(id)
     const login = () => fail('invalid', '学习通需要登录，请先完成登录再读取课程。', { loginRequired: true })
@@ -143,6 +144,11 @@ export async function handleWebsiteCourseTools(ctx: CourseToolContext): Promise<
       if (isLogin(href)) return fail('verification_required', '课程页要求重新登录。', { clickDispatched: true, loginRequired: true, ...meta })
       landed = matchesCourse(href) ? href : ''
       if (!landed) continue
+
+      if (ctx.includeLandingSnapshot === false && /\/mycourse\/stu\/?$/i.test(new URL(landed).pathname)) {
+        ctx.syncPeekedUrl?.(id, landed)
+        return JSON.stringify({ ok: true, opened: true, course: results[0], ...meta })
+      }
 
       const page = await ctx.readBrowserPage(id, { maxFrames: 2 })
       if (isLogin(page.url || '')) return fail('verification_required', '课程页要求重新登录。', { clickDispatched: true, loginRequired: true, ...meta })

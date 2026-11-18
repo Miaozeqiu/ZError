@@ -1,6 +1,15 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 const api = vi.hoisted(() => ({ steps: [] as any[], read: vi.fn(), write: vi.fn(), saveFile: vi.fn(), approve: vi.fn(), policy: 'ask' }))
+// These tool scenarios run after the user has installed the ZJOOC repository.
+vi.mock('../../src/services/agent/websiteRepository', async original => {
+  const repo = await original<typeof import('../../src/services/agent/websiteRepository')>()
+  return {
+    ...repo,
+    hasWebsiteRepository: (host: string) => host === 'zjooc.cn' || repo.hasWebsiteRepository(host),
+    installedExperienceHost: (host: string) => host === 'zjooc.cn' ? host : repo.installedExperienceHost(host),
+  }
+})
 vi.mock('../../src/services/agent/browserTools', () => ({ executeBrowserTool: vi.fn() }))
 vi.mock('../../src/services/agent/chatStore', () => ({ liveSession: () => ({ messages: [{ id: 'answer', steps: api.steps }] }) }))
 vi.mock('../../src/services/browser/appBrowser', () => ({

@@ -133,6 +133,7 @@ wrap_browser_process_handler! {
 wrap_app! {
   pub struct ZeCefApp {
     process: BrowserProcessHandler,
+    scriptcat: Option<String>,
   }
 
   impl App {
@@ -142,6 +143,9 @@ wrap_app! {
       command_line: Option<&mut CommandLine>,
     ) {
       let Some(cmd) = command_line else { return };
+      if let Some(path) = &self.scriptcat {
+        cmd.append_switch_with_value(Some(&CefString::from("load-extension")), Some(&CefString::from(path.as_str())));
+      }
       for flag in [
         "disable-gpu-shader-disk-cache",
         "no-first-run",
@@ -542,7 +546,7 @@ pub fn maybe_run_helper() -> bool {
   }
   bind_api_version();
   let cef_args = args::Args::new();
-  let mut app = ZeCefApp::new(ZeBrowserProcess::new());
+  let mut app = ZeCefApp::new(ZeBrowserProcess::new(), None);
   let code = execute_process(
     Some(cef_args.as_main_args()),
     Some(&mut app),
@@ -602,7 +606,8 @@ pub fn initialize_browser_process(app: &tauri::AppHandle) -> Result<(), String> 
   let port = DEFAULT_DEBUG_PORT;
 
   let cef_args = args::Args::new();
-  let mut application = ZeCefApp::new(ZeBrowserProcess::new());
+  let scriptcat = app.path().resource_dir().map_err(|e| e.to_string())?.join("browser-extensions/scriptcat");
+  let mut application = ZeCefApp::new(ZeBrowserProcess::new(), Some(scriptcat.to_string_lossy().into_owned()));
   let settings = Settings {
     no_sandbox: 1,
     external_message_pump: 1,

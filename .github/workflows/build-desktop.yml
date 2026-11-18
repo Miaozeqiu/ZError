@@ -1,4 +1,4 @@
-name: Build Windows installer
+name: Build desktop installers
 
 on:
   workflow_call:
@@ -14,7 +14,7 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  windows:
     name: windows-x64
     runs-on: windows-2025
     timeout-minutes: 60
@@ -44,5 +44,42 @@ jobs:
         with:
           name: ZError-windows-x64-${{ github.run_number }}
           path: src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+          if-no-files-found: error
+          retention-days: 14
+
+  linux:
+    name: linux-x64
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev patchelf libfuse2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+      - run: npm ci
+      - name: Build Linux packages
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: '1'
+        run: |
+          printf '%s\n' '{"bundle":{"createUpdaterArtifacts":false}}' > .tauri-ci.json
+          npm exec -- tauri build --ci --target x86_64-unknown-linux-gnu --bundles deb,appimage --config .tauri-ci.json -- --locked
+      - name: Upload Linux packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: ZError-linux-x64-${{ github.run_number }}
+          path: |
+            src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb
+            src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage
           if-no-files-found: error
           retention-days: 14

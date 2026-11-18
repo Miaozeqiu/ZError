@@ -664,7 +664,7 @@ export const studyChaoxingUnfinished = async (id: string, title?: string) => {
         unfinishedCount: Number(parsed?.unfinishedCount) || unfinished.length || progressLeft,
         progress,
         skipped,
-        hint: '当前是章节测验。系统会按 ocs 流程自动搜题/随机/暂存；失败再用 homework inspect/guess，然后 next。',
+        hint: '当前是章节测验。确认章节后用 browser_review_homework 读题，按用户授权填答并复核。',
       }
     }
     if (!played.hasVideo) {

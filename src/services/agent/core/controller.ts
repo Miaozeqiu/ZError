@@ -130,8 +130,18 @@ export const createRunController = (input: {
       if (failed) traceRun(run, 'failure', { tool: call.name, code: classifyFailure(result.error) })
       const hasObservation = call.name === 'browser_screenshot'
         ? typeof result.image === 'string' && result.image.startsWith('data:image/')
+        : (call.name === 'browser_login_chaoxing' || call.name === 'browser_login_zjooc')
+          ? result.ok === true && result.loggedIn === true
+        : call.name === 'browser_play_zjooc'
+          ? result.ok === true && (result.playbackEnded === true || (result.watching === true && result.playing === true))
         : call.name === 'browser_review_chapter'
           ? result.ok === true && typeof result.chapterKey === 'string'
+        : call.name === 'browser_review_homework'
+          ? result.ok === true && typeof result.assignment_id === 'string' && Array.isArray(result.questions) && result.questions.length > 0
+        : call.name === 'browser_review_chapter_discussion' || call.name === 'browser_reply_chapter_discussion'
+          ? result.ok === true && typeof result.chapterKey === 'string' && typeof result.discussion_id === 'string'
+        : call.name === 'browser_start_chapter_tasks'
+          ? result.ok === true && (result.courseComplete === true || result.chapterComplete === true)
           : typeof result.snapshot === 'string' && Boolean(result.snapshot.trim()) && !result.empty
           && (!(call.name === 'browser_open_course' || call.name === 'browser_open_homework') || result.opened === true)
       if (!failed && observationTool(call.name) && hasObservation && browserId === input.browserId()) {

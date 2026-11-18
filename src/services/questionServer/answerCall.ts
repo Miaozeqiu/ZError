@@ -3,6 +3,7 @@ import { modelApi } from './deps'
 import {
   createCancelledRequestError,
   formatModelCallError,
+  getModelResponseFailure,
   isAbortLikeError,
   MODEL_REQUEST_CANCELLED_MESSAGE,
 } from './errors'
@@ -269,6 +270,14 @@ export const callModelAPI = async (requestId: string, query: string) => {
 
     // --- 阶段 2: 汇总与总结 (Summary Phase) ---
     const summaryModels = globalSelectedSummaryModels.value
+    const responseDetails = (summary: boolean) => requestLogs.value.find(log => log.id === requestId)
+      ?.multiModelResponses?.filter(model => model.modelId.startsWith('summary:') === summary)
+      .map(({ modelName, platformName, response, reasoningContent, isLoading }) => ({
+        modelName, platformName, response, reasoningContent, isLoading,
+        failed: !isLoading && Boolean(getModelResponseFailure(response)),
+      }))
+    await sendModelProgressToBackend(requestId, 'models-finished', responseDetails(false))
+    if (isRequestCancelled(requestId)) return
 
     // 过滤掉失败的基础模型结果，只用成功的部分做总结和最终答案
     const successfulBaseEntries = results.filter(result => result.success)
@@ -395,7 +404,8 @@ ${baseCombinedResponse}
       const successfulSummaryEntries = summaryResults.filter(entry => entry.success)
       await sendModelProgressToBackend(
         requestId,
-        successfulSummaryEntries.length > 0 ? 'summary-finished' : 'summary-failed'
+        successfulSummaryEntries.length > 0 ? 'summary-finished' : 'summary-failed',
+        responseDetails(true),
       )
 
       if (successfulSummaryEntries.length > 0) {

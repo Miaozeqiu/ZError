@@ -6,6 +6,7 @@ const rawModules = import.meta.glob<string>([
   './bundled/**/*.{md,json}',
   '!./bundled/**/fixtures/**',
   '!./bundled/**/parsers/**',
+  '!./bundled/site-learn/sites/**',
 ], {
   query: '?raw',
   import: 'default',

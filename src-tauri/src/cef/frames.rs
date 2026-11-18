@@ -236,6 +236,40 @@ pub(crate) async fn visible(page: &PageBind, rows: &[FrameContext], frame: &Fram
   true
 }
 
+/// Bind a task iframe to its actual owner node, including when sibling
+/// attachments share the same viewer URL.
+pub async fn attachment_frames(id: &str, locator: Value) -> Result<Value, String> {
+  let page = crate::cef::bind_page(id).await?;
+  let rows = contexts(&page).await?;
+  let parent = select(&rows, &locator)?.ok_or("缺少任务点父框")?;
+  let selector = locator["value"].as_str().ok_or("缺少任务点定位")?;
+  if parent.path.is_empty() || string(&locator, "loaderId").is_empty() {
+    return Err("任务点父框没有已核对的页面身份".into());
+  }
+  let mut selected = Vec::new();
+  for child in rows.iter().filter(|child| child.path.rsplit_once('/').is_some_and(|(path, _)| path == parent.path)) {
+    let Ok(owner) = page.conn.call("DOM.getFrameOwner", json!({ "frameId": child.id }), parent.session.as_deref()).await else { continue };
+    let Ok(resolved) = page.conn.call("DOM.resolveNode", json!({ "backendNodeId": owner["backendNodeId"] }), parent.session.as_deref()).await else { continue };
+    let Some(object) = resolved.pointer("/object/objectId").and_then(Value::as_str) else { continue };
+    let matched = page.conn.call("Runtime.callFunctionOn", json!({ "objectId": object, "returnByValue": true,
+      "arguments": [{ "value": selector }],
+      "functionDeclaration": "function(selector){const nodes=this.ownerDocument.querySelectorAll(selector);return this.isConnected&&nodes.length===1&&nodes[0]===this;}"
+    }), parent.session.as_deref()).await;
+    let _ = page.conn.call("Runtime.releaseObject", json!({ "objectId": object }), parent.session.as_deref()).await;
+    if matched.ok().and_then(|value| value.pointer("/result/value").and_then(Value::as_bool)) == Some(true) { selected.push(child); }
+  }
+  if selected.len() != 1 { return Ok(json!({ "frames": [] })); }
+  let root = selected[0];
+  let prefix = format!("{}/", root.path);
+  let mut result = Vec::new();
+  for frame in rows.iter().filter(|frame| frame.id == root.id || frame.path.starts_with(&prefix)) {
+    if visible(&page, &rows, frame).await {
+      result.push(json!({ "frameId": frame.id, "loaderId": frame.loader_id, "url": frame.url }));
+    }
+  }
+  Ok(json!({ "frames": result }))
+}
+
 pub async fn media_tick(id: String, locator: Value, mid: String) -> Result<Value, String> {
   let page = crate::cef::bind_page(&id).await?;
   let rows = contexts(&page).await?;

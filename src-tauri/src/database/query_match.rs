@@ -110,12 +110,22 @@ const QUERY_STOPWORDS: &[&str] = &[
     "地方",
 ];
 
-const QUESTION_AND_OPTIONS_MATCH_KEYWORDS: &[&str] = &["以下", "下列", "下面", "下叙"];
-
-pub(crate) fn should_require_option_match(title: &str) -> bool {
-    QUESTION_AND_OPTIONS_MATCH_KEYWORDS
-        .iter()
-        .any(|keyword| title.contains(keyword))
+/// A generic stem cannot identify a question without its choices.
+pub(crate) fn is_generic_choice_title(title: &str) -> bool {
+    static GENERIC_STEM: OnceLock<Regex> = OnceLock::new();
+    let pattern = GENERIC_STEM.get_or_init(|| {
+        let wording = concat!(
+            r"(?:下列|以下|下面|下述|下叙|上述|上列|",
+            r"哪(?:一|几)?(?:项|个|种)|哪些|[各每](?:项|个|种)|",
+            r"说法|选项|答案|陈述|表述|叙述|描述|选择|选出|单选题?|多选题?|",
+            r"[一项的中是不为请最有均都]|\p{P})",
+        );
+        let judgment = r"(?:正确|错误|恰当|合适|准确|合理|符合(?:题意|要求)|对|错)";
+        Regex::new(&format!(
+            r"^(?:第[0-9]+题|[0-9]+[.、)])?{wording}*{judgment}{wording}*$"
+        )).unwrap()
+    });
+    pattern.is_match(title.trim_matches(is_punctuation_or_space))
 }
 
 pub(crate) fn normalize_optional_query_text(text: Option<&str>) -> Option<String> {
@@ -435,7 +445,32 @@ pub(crate) fn exact_query_options_match(query: &str, candidate: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{compute_query_match_score, exact_query_options_match, is_exact_match_score};
+    use super::{
+        compute_query_match_score, exact_query_options_match, is_exact_match_score,
+        is_generic_choice_title, QueryMatchText,
+    };
+
+    #[test]
+    fn only_generic_option_judgments_require_choices() {
+        for title in [
+            "下列选项正确的是",
+            "下列选项错误的是",
+            "以下哪一项不正确？",
+            "下面各项中，描述错误的是（ ）",
+            "上述说法中、哪一项是错误的？",
+            "1. 下列说法中，不正确的是（ ）",
+            "请选择正确选项",
+        ] {
+            assert!(is_generic_choice_title(&QueryMatchText::new(title).compact), "{title}");
+        }
+        for title in [
+            "下列哪种媒介的雄虫不传播疾病？",
+            "下列关于蚊虫传播的说法正确的是",
+            "以下哪一种属于哺乳动物？",
+        ] {
+            assert!(!is_generic_choice_title(&QueryMatchText::new(title).compact), "{title}");
+        }
+    }
 
     #[test]
     fn ignores_spacing_and_parenthesis_width_in_question_text() {

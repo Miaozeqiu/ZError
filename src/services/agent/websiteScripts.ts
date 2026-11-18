@@ -6,7 +6,7 @@ import { limitedJson } from './websiteRepositoryGitHub'
 import { websiteScriptSource } from './websiteRepository'
 
 type Bundle = { revision: string; etag: string; sha256: string; code: string }
-type SiteScriptSource = { url: string; manifest?: string }
+type SiteScriptSource = { url: string; manifest: string }
 const cached = new Map<string, Bundle>()
 const pending = new Map<string, Promise<Bundle>>()
 const bundleLimit = 256 * 1024
@@ -41,7 +41,6 @@ const readBundle = async (response: Response) => {
 }
 
 const fetchBundle = async (source: SiteScriptSource, siteId: string, capability: string, previous?: Bundle) => {
-  if (!source.manifest) throw new Error('此网站经验来源未提供脚本清单。')
   const origin = new URL(source.url).origin
   const manifest = scriptUrl(source.manifest, source.url, origin)
   const request = isNativeSecureStore() ? (await import('@tauri-apps/plugin-http')).fetch as typeof fetch : globalThis.fetch
@@ -83,11 +82,11 @@ export async function runIsolatedWebsiteScript(code: string, input: unknown): Pr
   } finally { runtime.dispose() }
 }
 
-export const websiteScriptEnabled = async (host: string) => Boolean(await websiteScriptSource(host))
+export const hasWebsiteScriptManifest = async (host: string) => Boolean(await websiteScriptSource(host))
 
 export async function runWebsiteScript<T>(host: string, siteId: string, capability: string, input: unknown, validate: (result: unknown) => T): Promise<{ result: T; revision: string; cached?: boolean }> {
   const source = await websiteScriptSource(host)
-  if (!source) throw new Error('在「网站设置」填写网站经验 HTTP 地址并启用网站脚本。')
+  if (!source) throw new Error('当前网站经验来源未提供脚本清单。')
   const key = JSON.stringify([host, source.url, source.manifest, capability])
   const previous = cached.get(key)
   let candidate: Bundle | undefined

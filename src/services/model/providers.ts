@@ -11,7 +11,7 @@ export type ProviderFetch = (url: string, init: RequestInit) => Promise<Response
 export type ProviderAdapter = (input: ProviderRequest, config: ProviderConfig, fetch: ProviderFetch, abortSignal: AbortSignal) => Promise<ProviderChunk | AsyncIterable<ProviderChunk>>
 const incompleteOutputError = (reason: string, config: ProviderConfig, providerReasoning?: string) => Object.assign(new Error(reason === 'content_filter'
   ? '模型服务端过滤了输出（content_filter），响应未完成。'
-  : `模型输出达到长度上限（${config.maxTokens || '服务端默认'} token，${reason}），响应未完成。请在模型设置中增加最大输出长度；思考内容也可能占用该额度。`),
+  : `模型输出达到长度上限（${config.maxTokens || '服务端默认'} token，${reason}），响应未完成。可以缩小本次任务范围后重试。思考内容也可能占用该额度。`),
   { name: reason === 'content_filter' ? 'ModelContentFilterError' : 'ModelOutputLimitError', providerReasoning })
 const helpersFor = (input: ProviderRequest, config: ProviderConfig, modelId: string, thinking: ReturnType<typeof normalizeThinkingOptions>) => {
 

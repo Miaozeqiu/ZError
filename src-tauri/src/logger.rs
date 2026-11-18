@@ -62,6 +62,8 @@ pub struct ModelCallProgress {
     pub request_id: String, // 关联的请求ID
     pub content: String,    // 当前累计或增量内容
     pub timestamp: DateTime<Utc>,
+    #[serde(skip)]
+    pub(crate) details: Option<serde_json::Value>,
 }
 
 // 新增：模型调用响应事件
@@ -361,12 +363,18 @@ impl RequestLogger {
     }
 
     // 新增：发送模型调用进度事件（不会完成等待通道，仅用于活跃心跳）
-    pub fn send_model_call_progress(&self, request_id: String, content: String) {
+    pub fn send_model_call_progress(
+        &self,
+        request_id: String,
+        content: String,
+        details: Option<serde_json::Value>,
+    ) {
         self.touch_activity(&request_id);
         let event = ModelCallProgress {
             request_id,
             content,
             timestamp: Utc::now(),
+            details,
         };
 
         println!(
@@ -598,7 +606,11 @@ mod model_wait_tests {
         let heartbeats = logger.clone();
         let heartbeat = tokio::spawn(async move {
             loop {
-                heartbeats.send_model_call_progress("keepalive".into(), "still waiting".into());
+                heartbeats.send_model_call_progress(
+                    "keepalive".into(),
+                    "still waiting".into(),
+                    None,
+                );
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
         });

@@ -2,6 +2,8 @@ import { invoke } from '@tauri-apps/api/core'
 import type { BrowserLocator } from '../../browser/engine'
 import { evalBrowserViewInFrame } from '../../browser/eval'
 import { courseHomeworkReadScript, type PageHomework, type PageHomeworkQuestion } from '../../chaoxing/host/courseHomeworkAnswers'
+import { locateChapterQuiz } from '../../chaoxing/host/chapterQuizFrames'
+import { studentChapterUrl } from '../../chaoxing/host/chapterTasks'
 import { chaoxingUrl } from '../../platform/chaoxing/studentCourses'
 import { studentHomeworkUrl } from '../../platform/chaoxing/studentHomework'
 import {
@@ -9,7 +11,7 @@ import {
   type HomeworkAnswer, type HomeworkProgressUpdate, type HomeworkQuestionProgress,
 } from '../homeworkProgress'
 import { isHomeworkQuestionRange, type HomeworkQuestionRange } from '../homeworkQuestionRange'
-import { runWebsiteScript, websiteScriptEnabled } from '../websiteScripts'
+import { runWebsiteScript, hasWebsiteScriptManifest } from '../websiteScripts'
 import type { handleWebsiteHomeworkTools } from './websiteHomework'
 
 type Context = Parameters<typeof handleWebsiteHomeworkTools>[0] & {
@@ -96,22 +98,38 @@ export async function handleWebsiteHomeworkAnswerTools(ctx: Context): Promise<st
     return fail('invalid', 'question_range 须提供有效的起止题号（start、end）。')
   }
   try {
-    if (answering && !manual && !await websiteScriptEnabled(site)) {
-      return fail('invalid', '学习通网站脚本未启用。可先核对作业页面。')
+    if (answering && !manual && !await hasWebsiteScriptManifest(site)) {
+      return fail('invalid', '当前学习通经验来源未提供脚本清单。可先核对作业页面。')
     }
     const page = await ctx.readBrowserPage(id, { maxFrames: 12 })
     if (page.error) return fail('stale', '作业页面读取失败，请重新读取当前页。')
-    if (!page.url || !chaoxingUrl(page.url)) return fail('not_found', '请先打开学习通课程作业的作答页。')
+    if (!page.url || !chaoxingUrl(page.url)) return fail('not_found', '请先打开学习通课程作业或章节测验的作答页。')
+    const chapter = studentChapterUrl(page.url)
+    if (!chapter && (ctx.args.chapter_key !== undefined || ctx.args.quiz_job_id !== undefined)) {
+      return fail('stale', '当前已离开目标章节测验，请重新定位。')
+    }
+    if (chapter && answering && ctx.args.chapter_key !== chapter.key) {
+      return fail('stale', '填写章节测验时须传刚核对的 chapter_key。')
+    }
+    let quiz = chapter && await locateChapterQuiz(id, page.url, page.frames ?? [], ctx.args.chapter_key, ctx.args.quiz_job_id)
+    for (let attempt = 0; attempt < 3 && quiz?.ok === false && quiz.reason === 'not_found'; attempt++) {
+      await ctx.wait(250)
+      const live = await ctx.readBrowserPage(id, { maxFrames: 12 })
+      if (live.error || live.url !== page.url) return fail('stale', '打开测验时章节页面已变化，请重新核对。')
+      quiz = await locateChapterQuiz(id, live.url, live.frames ?? [], ctx.args.chapter_key, ctx.args.quiz_job_id)
+    }
+    if (quiz?.ok === false) return fail(quiz.reason, quiz.error)
+    if (quiz?.done && answering) return fail('invalid', '学习通已标记这份章节测验完成。')
     const top = studentHomeworkUrl(page.url)
-    const frames = (page.frames ?? []).filter(frame => frame.frameId && frame.loaderId && studentHomeworkUrl(frame.url)?.kind === 'dowork'
+    const frames = quiz ? [quiz.frame] : (page.frames ?? []).filter(frame => frame.frameId && frame.loaderId && studentHomeworkUrl(frame.url)?.kind === 'dowork'
       && (!top || (top.kind === 'dowork' && frame.url === page.url)))
     const distinct = [...new Map(frames.map(frame => [frame.frameId, frame])).values()]
     if (distinct.length !== 1) {
       return fail(distinct.length ? 'ambiguous' : 'not_found', '需要唯一的学习通课程作答页。若在作业介绍页，先点击「开始作答／继续作答」。')
     }
     const frame = distinct[0]
-    const assignment = studentHomeworkUrl(frame.url)!
-    const assignmentId = [assignment.course, assignment.clazz, assignment.work].join(':')
+    const homework = studentHomeworkUrl(frame.url)
+    const assignmentId = quiz?.assignmentId ?? [homework!.course, homework!.clazz, homework!.work].join(':')
     if (ctx.args.assignment_id !== undefined && ctx.args.assignment_id !== assignmentId) {
       return fail('stale', '当前作业和前次核对的作业不同，未写入任何答案。')
     }
@@ -120,7 +138,7 @@ export async function handleWebsiteHomeworkAnswerTools(ctx: Context): Promise<st
     })
     const read = async (offset: number, limit: number, questionId?: string, scope?: HomeworkQuestionRange): Promise<PageHomework> => {
       await ctx.wait(0)
-      const state = await evalBrowserViewInFrame(id, courseHomeworkReadScript(offset, limit, questionId, scope), '', { frameId: frame.frameId!, loaderId: frame.loaderId })
+      const state = await evalBrowserViewInFrame(id, courseHomeworkReadScript(offset, limit, questionId, scope, Boolean(quiz)), '', { frameId: frame.frameId!, loaderId: frame.loaderId })
       if (state?.url !== frame.url || !Number.isInteger(state?.total) || !Array.isArray(state.questions)) {
         throw new Error('作业页面已变化，请重新读取。')
       }
@@ -136,14 +154,15 @@ export async function handleWebsiteHomeworkAnswerTools(ctx: Context): Promise<st
     if (!manual && offset >= total) return fail('invalid', 'offset 已超出本次要处理的范围。')
     const nextOffset = offset + batch < total ? offset + batch : undefined
     const meta = receipt = { assignment_id: assignmentId, total: state.total, nextOffset: manual ? undefined : nextOffset,
+      ...(quiz ? { chapter_key: quiz.chapterKey, quiz_job_id: quiz.quizJobId } : {}),
       ...(range ? { question_range: range, scopeTotal: total } : {}), ...(answering ? { mode: manual ? 'targeted' : 'automatic' } : {}) }
-    const title = state.title?.trim() || (top?.kind === 'dowork' ? page.title?.trim() : undefined)
+    const title = state.title?.trim() || quiz?.title || (top?.kind === 'dowork' ? page.title?.trim() : undefined)
     const publish = (phase: HomeworkProgressUpdate['phase'], questions: HomeworkQuestionProgress[]) => {
       if (questions.length) ctx.onHomeworkProgress?.({ assignmentId, title, total: state.total, phase, questions })
     }
     const observed = state.questions.map(observeHomeworkQuestion)
     publish('read', observed)
-    if (ctx.onHomeworkProgress && offset === 0 && !manual && !range) {
+    if (!quiz && ctx.onHomeworkProgress && offset === 0 && !manual && !range) {
       const previewSize = 32
       for (let start = batch; start < state.total; start += previewSize) {
         try {

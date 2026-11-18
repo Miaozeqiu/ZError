@@ -26,7 +26,7 @@ vi.mock('../../src/services/model/config', () => ({
     getSettings: () => ({ platforms: [{ id: 'test', apiKey: 'test-key', baseUrl: 'https://model.test', models: [{ id: 'test-model' }] }] }) },
 }))
 vi.mock('../../src/services/model/protocol', () => ({ resolveRuntimeModelId: () => 'test-model',
-  resolveExecutableModelJsCode: () => "async function processModel(input, config, fetch, signal) { return fetch('https://model.test', {signal}); }" }))
+  resolveExecutableModelJsCode: () => "async function processModel(input, config, fetch, signal) { return fetch('https://model.test', {signal, body: JSON.stringify({ tools: input.tools })}); }" }))
 vi.mock('../../src/services/security/secureFetch', () => ({ secureFetch: api.fetch }))
 vi.mock('../../src/services/study/graphStream', () => ({ studyGraphStream: { value: null }, finishStudyGraphStream: vi.fn() }))
 vi.mock('../../src/services/study/timelineSummary', () => ({ finalizeStudySessionSummary: vi.fn() }))
@@ -139,6 +139,25 @@ describe('same task completion through the real chat loop and model runner', () 
     })
     return session
   }
+  it('sends deferred schemas only after discovery and executes with the original handler', async () => {
+    await init()
+    const schemas: string[][] = []
+    const replies = [
+      tool('load_agent_tools', 'discover', { names: ['browser_find'] }),
+      tool('browser_find', 'find', { query: '课程' }),
+      { content: '已核对。' },
+    ]
+    api.fetch.mockImplementation(async (_url, options) => {
+      schemas.push(JSON.parse(options.body).tools.map((t: any) => t.function.name))
+      return replies.shift()
+    })
+    const pending = send('查找课程文字')
+    await vi.advanceTimersByTimeAsync(0); await pending
+    expect(schemas[0]).toContain('load_agent_tools')
+    expect(schemas[0]).not.toContain('browser_find')
+    expect(schemas[1]).toContain('browser_find')
+    expect(api.execute.mock.calls.map(([call]) => call.name)).toEqual(['browser_find'])
+  })
   it('completion storage failure is reported as failed and a new turn can recover the original run', async () => {
     await init()
     api.write.mockImplementation(async (_name, payload) => {
@@ -281,6 +300,36 @@ const endVideo = async () => {
 }
 
 describe('same task video waiting with the actual model runner and watch event chain', () => {
+  it('finishes an explicit login request with confirmed host receipts before requesting a model', async () => {
+    hydration.resolve(null); await store.chatStoreReady
+    store.createChat({ browserId: 'watched-video' })
+    api.execute.mockImplementation(async (call) => call.name === 'browser_login_chaoxing'
+      ? '{"ok":true,"loggedIn":true}'
+      : '{"ok":true,"status":"done","finished":true}')
+    const pending = send('登录下学习通')
+    await vi.advanceTimersByTimeAsync(0)
+    await pending
+    const message = store.activeChat.value!.messages.at(-1)!
+    expect(message).toMatchObject({ status: 'done', content: '学习通已登录。', run: { status: 'completed', usage: { requests: 0 } } })
+    expect(api.execute.mock.calls.map(([call]) => call.name)).toEqual(['browser_login_chaoxing', 'browser_finish'])
+    expect(api.fetch).not.toHaveBeenCalled()
+  })
+
+  it('starts a named chapter workflow directly without a planning or todo round', async () => {
+    hydration.resolve(null); await store.chatStoreReady
+    store.createChat({ browserId: 'watched-video' })
+    api.pageUrl.mockReturnValue('https://i.chaoxing.com/base')
+    api.execute.mockImplementation(async (call) => call.name === 'browser_start_chapter_tasks'
+      ? '{"ok":true,"status":"course_complete","courseComplete":true,"completed":44}'
+      : '{"ok":true,"status":"done","finished":true}')
+    const pending = send('完成下 推理社 的章节')
+    await vi.advanceTimersByTimeAsync(0)
+    await pending
+    expect(JSON.parse(api.execute.mock.calls[0][0].arguments)).toEqual({ course_name: '推理社' })
+    expect(api.execute.mock.calls.map(([call]) => call.name)).toEqual(['browser_start_chapter_tasks', 'browser_finish'])
+    expect(api.fetch).not.toHaveBeenCalled()
+  })
+
   it('keeps a long video task pending without extra model calls or model timeout, then continues in the same assistant message', async () => {
     const run = await start()
     let returned = false; void run.pending.then(() => { returned = true })
