@@ -50,3 +50,23 @@ jobs:
         with:
           workspaces: src-tauri -> target
       - run: cargo check --manifest-path src-tauri/Cargo.toml --locked --no-default-features
+
+  backend-linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libxdo-dev \
+            libssl-dev
+      - run: cargo check --manifest-path src-tauri/Cargo.toml --locked --no-default-features
