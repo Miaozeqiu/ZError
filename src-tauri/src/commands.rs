@@ -21,9 +21,9 @@ use std::hash::{Hash, Hasher};
 use std::io::Write as _;
 use std::path::PathBuf;
 use std::process::Command;
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{OnceLock};
+use std::sync::OnceLock;
 use urlencoding;
 use zip::ZipArchive;
 
@@ -97,11 +97,41 @@ pub fn segment_text(text: String) -> Vec<String> {
     words.into_iter().map(|s| s.to_string()).collect()
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 static ELEVATION_FLAG: OnceLock<AtomicBool> = OnceLock::new();
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 fn elevation_requested() -> &'static AtomicBool {
     ELEVATION_FLAG.get_or_init(|| AtomicBool::new(false))
+}
+
+/// Linux 用 polkit 的 pkexec 重新拉起自身。pkexec 会清空环境变量，
+/// 这里显式带上图形会话和用户目录相关变量，否则提权后的窗口连不上显示器，
+/// 而且会把数据写到 /root 下。
+#[cfg(target_os = "linux")]
+fn pkexec_elevated_command(exe: &std::path::Path) -> Command {
+    let mut command = Command::new("pkexec");
+    command.arg("env");
+    for key in [
+        "DISPLAY",
+        "XAUTHORITY",
+        "WAYLAND_DISPLAY",
+        "XDG_RUNTIME_DIR",
+        "XDG_SESSION_TYPE",
+        "DBUS_SESSION_BUS_ADDRESS",
+        "HOME",
+        "USER",
+        "LOGNAME",
+        "LANG",
+        "LC_ALL",
+    ] {
+        if let Some(value) = std::env::var_os(key) {
+            let mut pair = std::ffi::OsString::from(format!("{key}="));
+            pair.push(value);
+            command.arg(pair);
+        }
+    }
+    command.arg(exe).arg("--elevated");
+    command
 }
 
 pub fn spawn_elevated_self() -> Result<(), String> {
@@ -122,8 +152,44 @@ pub fn spawn_elevated_self() -> Result<(), String> {
         }
         return Ok(());
     }
-    #[cfg(not(target_os = "windows"))]
+
+    #[cfg(target_os = "linux")]
+    {
+        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        if elevation_requested().swap(true, Ordering::SeqCst) {
+            return Err("already_requested".to_string());
+        }
+        if let Err(err) = pkexec_elevated_command(&exe).spawn() {
+            elevation_requested().store(false, Ordering::SeqCst);
+            return Err(if err.kind() == std::io::ErrorKind::NotFound {
+                "pkexec_not_found".to_string()
+            } else {
+                err.to_string()
+            });
+        }
+        Ok(())
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
     Err("unsupported_platform".to_string())
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod elevation_tests {
+    use super::*;
+
+    #[test]
+    fn pkexec_relaunches_self_with_elevated_flag() {
+        let command = pkexec_elevated_command(std::path::Path::new("/opt/zerror/zerror"));
+        assert_eq!(command.get_program().to_string_lossy(), "pkexec");
+        let args: Vec<String> = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(args.first().map(String::as_str), Some("env"));
+        assert!(args.iter().any(|arg| arg.ends_with("/opt/zerror/zerror")));
+        assert_eq!(args.last().map(String::as_str), Some("--elevated"));
+    }
 }
 
 #[tauri::command]
