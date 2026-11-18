@@ -1,5 +1,5 @@
 /** finish 必须带证据。模型口头 done 不算完成。 */
-import { peekAppBrowserUrl } from '../browser/appBrowser'
+import { isBrowserHome, peekAppBrowserUrl } from '../browser/appBrowser'
 import { pendingTodos } from './browserTodo'
 import { classifyBrowserPage, type BrowserPageKind } from './browserLoop'
 import { browserTaskIntent, browserTaskTargets, isWholeCourseScope, specifiedChapterTargets, type BrowserTaskIntent } from './browserTask'
@@ -15,6 +15,8 @@ import type { ImportTaskStep } from '../app/importTasks'
 import { isReadOnlyReviewGoal, reviewObservationId } from './observationReview'
 import { readStudentChapter, studentChapterUrl } from '../chaoxing/host/chapterTasks'
 import { pendingHomeworkReview } from './homeworkAnswerEvidence'
+import { studentCourseUrl } from '../platform/chaoxing/studentCourses'
+import { isDiscussionReplyGoal } from './chapterDiscussionIntent'
 
 export type FinishStatus = 'done' | 'blocked' | 'watching'
 
@@ -44,7 +46,13 @@ export type FinishEvidence = {
   reviewObservationId?: string
   reviewRequested?: boolean
   homeworkNavigation?: boolean
+  chapterNavigation?: boolean
+  zjoocPlaybackDone?: boolean
+  chapterWorkflowDone?: boolean
   homeworkReviewPending?: boolean
+  homeShortcutsDone?: boolean
+  discussionRequested?: boolean
+  discussionDone?: boolean
 }
 
 export const isMultiStepIntent = (intent?: BrowserTaskIntent, extras?: {
@@ -102,10 +110,67 @@ export const collectFinishEvidence = async (
   })
   const chapter = chapterToolUsed && !courseChapterFlow && await readStudentChapter(id).catch(() => null)
   const chapterVerified = chapter && chapter.identity.key === chapterIdentity?.key && chapter.header.remaining === 0
+  const chapterReview = extras?.steps?.filter(step => step.name === 'browser_review_chapter' && step.status === 'done').at(-1)
+  const goal = extras?.goalText || ''
+  const homeStep = extras?.steps?.filter(step => step.name === 'browser_home_shortcuts').at(-1)
+  let homeShortcutsDone = false
+  if (url && isBrowserHome(url) && homeStep?.status === 'done' && /导航|快捷入口/.test(goal)) {
+    try { homeShortcutsDone = JSON.parse(homeStep.result || '{}').ok === true } catch { /* No valid receipt. */ }
+  }
+  const discussionRequested = Boolean(chapterIdentity && isDiscussionReplyGoal(goal))
+  const discussionDone = discussionRequested && (extras?.steps || []).some(step => {
+    if (!['browser_reply_chapter_discussion', 'browser_review_chapter_discussion'].includes(step.name || '') || step.status !== 'done') return false
+    try {
+      const result = JSON.parse(step.result || '{}')
+      if (result.ok !== true || result.chapterKey !== chapterIdentity?.key || result.observed_browser_id !== id
+        || result.observation_id !== step.id || !result.discussion_id) return false
+      return /完成|做完|做下/.test(goal) ? result.jobDone === true : result.posted === true
+    } catch { return false }
+  })
+  const chapterOpenGoal = goal.replace(/《[^》]*》|「[^」]*」|“[^”]*”/g, '')
+    .replace(/(?:不要|不用|无需|别)(?:播放|刷课|做题|答题|作答)/g, '')
+  let chapterNavigation = false
+  if (chapter && chapterReview && chapter.identity.key === chapterIdentity?.key
+    && /打开|进入|点开|跳到/.test(chapterOpenGoal) && !/完成|播放|刷课|看完|播完|做题|答题|作答|提交/.test(chapterOpenGoal)
+    && !isWholeCourseScope(goal)
+    && (targets.length ? targets.length === 1 && targets[0] === chapter.header.number
+      : Boolean(chapter.header.title && goal.includes(chapter.header.title)))) {
+    try {
+      const result = JSON.parse(chapterReview.result || '{}')
+      chapterNavigation = result.ok === true && result.chapterKey === chapter.identity.key
+        && result.observed_browser_id === id && result.observation_id === chapterReview.id
+    } catch { /* Invalid receipts cannot establish navigation. */ }
+  }
+  let zjoocPlaybackDone = false
+  const playback = extras?.steps?.filter(step => step.name === 'browser_play_zjooc').at(-1)
+  if (playback?.status === 'done' && !isWholeCourseScope(goal) && !targets.length &&
+    /播放|看完|播完|连播/.test(goal) && !/测验|作业|讨论|整门|所有章节|全部章节|下一节/.test(goal)) {
+    try {
+      const result = JSON.parse(playback.result || '{}')
+      const observedEnd = watch && 'requireEnded' in watch && watch.requireEnded && watch.sessionId === sessionId &&
+        watch.startedAt === result.startedAt && watch.status === 'done' && watch.ended
+      zjoocPlaybackDone = (result.playbackEnded === true || Boolean(result.watching && observedEnd)) && result.ok === true && result.observed_browser_id === id
+        && result.observation_id === playback.id && result.url === url.split(/[?#]/)[0]
+        && (result.scope === 'section' || !/连续|连播|所有|全部/.test(goal))
+    } catch { /* Only an observed playback receipt can finish this task. */ }
+  }
   const chapterJobsDone = chapterToolUsed || courseChapterFlow
     ? Boolean(chapterVerified && !isWholeCourseScope(extras?.goalText || '')
       && (!targets.length || (targets.length === 1 && targets[0] === chapter.header.number)))
     : panel?.event === 'chapter_jobs_done' || (Boolean(panel?.thisSection) && !panel?.leftJobs?.length)
+  const workflow = extras?.steps?.filter(step => step.name === 'browser_start_chapter_tasks' && step.status === 'done').at(-1)
+  let chapterWorkflowDone = false
+  if (workflow) {
+    try {
+      const result = JSON.parse(workflow.result || '{}')
+      const course = studentCourseUrl(url)
+      const liveCourse = chapterIdentity?.courseKey || (course?.clazz ? `${course.id}:${course.clazz}` : '')
+      chapterWorkflowDone = result.ok === true && result.observed_browser_id === id && result.observation_id === workflow.id
+        && (result.scope === 'chapter' ? chapterJobsDone && result.chapterComplete === true && chapterIdentity?.key === result.chapterKey
+          : result.scope === 'course' && !targets.length && !!liveCourse && liveCourse === result.courseKey
+            && result.courseComplete === true && result.pending === 0 && result.unknown === 0 && result.completed > 0)
+    } catch { /* A malformed workflow receipt is not completion evidence. */ }
+  }
   const leftJobs = !chapterVerified && Array.isArray(panel?.leftJobs) ? panel.leftJobs.map(String) : []
   const unfinished = Array.isArray(panel?.unfinishedSections) ? panel.unfinishedSections.length : 0
   return {
@@ -133,7 +198,13 @@ export const collectFinishEvidence = async (
     reviewObservationId: reviewObservationId(extras?.goalText, extras?.steps || [], id, url || ''),
     reviewRequested: Boolean(extras?.goalText && isReadOnlyReviewGoal(extras.goalText)),
     homeworkNavigation: homeworkNavigationSucceeded(extras?.goalText, extras?.steps, id),
+    chapterNavigation,
+    chapterWorkflowDone,
+    zjoocPlaybackDone,
     homeworkReviewPending: pendingHomeworkReview(extras?.steps || []),
+    homeShortcutsDone,
+    discussionRequested,
+    discussionDone,
   }
 }
 
@@ -155,7 +226,7 @@ export const judgeFinish = (
   }
 
   if (want === 'done' && evidence.homeworkReviewPending) {
-    return { ok: false, error: '课程作业还没有复核完。用 browser_review_homework 逐批核对实际填写和漏题，补填后重新复核；确实无法核对时说明阻塞。' }
+    return { ok: false, error: '作业或章节测验还没有复核完。用 browser_review_homework 逐批核对实际填写和漏题，补填后重新复核；确实无法核对时说明阻塞。' }
   }
   const role = evidence.role || 'parent'
   const pending = pendingTodos(evidence.todos)
@@ -169,12 +240,21 @@ export const judgeFinish = (
     && (!(evidence.planTotal || 0) || evidence.planComplete)) {
     return { ok: true, status: want, summary: text }
   }
-  if (want === 'done' && evidence.homeworkNavigation && !evidence.playing && !evidence.watching
+  if (want === 'done' && (evidence.homeworkNavigation || evidence.chapterNavigation || evidence.homeShortcutsDone) && !evidence.playing && !evidence.watching
     && (!(evidence.planTotal || 0) || evidence.planComplete)) {
     return { ok: true, status: want, summary: text }
   }
   if (want === 'done' && evidence.reviewRequested) {
     return { ok: false, error: '本次是只读复核，不要求完成整门课程。先在当前标签 browser_get_page / browser_screenshot 获取最新页面证据；滚动后重新读取。若本轮已执行填写、勾选、导航或写入，或仍有播放、监控、课程计划未完成，请说明具体阻塞，不要反复查询整课完成统计。' }
+  }
+  if (want === 'done' && (evidence.chapterWorkflowDone || evidence.zjoocPlaybackDone) && !evidence.playing && !evidence.watching
+    && (!(evidence.planTotal || 0) || evidence.planComplete)) {
+    return { ok: true, status: want, summary: text }
+  }
+  if (want === 'done' && evidence.discussionRequested) {
+    return evidence.discussionDone
+      ? { ok: true, status: want, summary: text }
+      : { ok: false, error: '还没有核对讨论回复或任务点回执。请复核当前讨论后再收尾。' }
   }
   if (
     want === 'done'

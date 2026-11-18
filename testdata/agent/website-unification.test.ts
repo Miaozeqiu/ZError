@@ -12,7 +12,11 @@ vi.mock('@tauri-apps/plugin-fs', () => ({
     io.writes(path, content); io.files.set(path, content)
   },
   mkdir: vi.fn(async () => {}),
-  remove: vi.fn(async (path: string) => { io.files.delete(path) }),
+  exists: async (path: string) => io.files.has(path) || [...io.files.keys()].some(file => file.startsWith(path + '/')),
+  remove: vi.fn(async (path: string, options?: { recursive?: boolean }) => {
+    io.files.delete(path)
+    if (options?.recursive) for (const file of io.files.keys()) if (file.startsWith(path + '/')) io.files.delete(file)
+  }),
   readDir: async (dir: string) => {
     const entries = new Map<string, any>()
     for (const path of io.files.keys()) {
@@ -67,6 +71,24 @@ describe('website identity across login domains', () => {
     expect(restored.websiteAccountId('account.example.com')).toBe('other.example.com')
   })
 
+  it('keeps removed default domains unlinked after reload and allows adding them again', async () => {
+    io.files.set(root + '/skill-overrides/site-learn/sites/zhihuishu.com/SKILL.md', '# 个人经验')
+    const { addWebsiteSettings, listWebsiteSettings } = await import('../../src/services/agent/websiteSettings')
+    await addWebsiteSettings('zhihuishu.com', '智慧树', [], true)
+    expect((await listWebsiteSettings()).find(site => site.id === 'zhihuishu')?.domains).toEqual([])
+    localStorage.clear()
+    vi.resetModules()
+    const identity = await load()
+    await identity.loadWebsiteIdentities()
+    expect(identity.websiteDomains(identity.websiteIdentityForHost('zhihuishu')!)).toEqual([])
+    expect(identity.websitePrimaryHost('https://zhihuishu.com/')).toBe('')
+    expect(identity.websiteAccountId('https://background.zhihuishu.com/')).not.toBe('zhihuishu')
+    const settings = await import('../../src/services/agent/websiteSettings')
+    await settings.addWebsiteSettings('zhihuishu.com', '智慧树', ['zhihuishu.com'], true)
+    expect(identity.websiteDomains(identity.websiteIdentityForHost('zhihuishu')!)).toEqual(['zhihuishu.com'])
+    expect(identity.websiteAccountId('https://background.zhihuishu.com/')).toBe('zhihuishu')
+  })
+
   it('shares one encrypted credential record across the portal and verified login host', async () => {
     const references = { account: '{{secret:site/menhu.haou.edu.cn/account}}', password: '{{secret:site/menhu.haou.edu.cn/password}}', note: '', updatedAt: 1 }
     credentials.read.mockResolvedValue({ [primary]: references })
@@ -114,6 +136,25 @@ describe('website identity across login domains', () => {
     expect(io.files.get(`${root}/backups/website-unify-v1/skill-overrides/chaoxing/sites/${primary}/SKILL.md`)).toBe('# Verified portal steps')
     vi.resetModules()
     expect(await (await import('../../src/services/agent/websiteDataMigration')).migrateWebsiteSkillOverrides()).toMatchObject({ moved: 0 })
+  })
+
+  it('deletes alias accounts, overrides, migration backups and identity only for the selected site', async () => {
+    const mod = await load()
+    const login = 'login.example.com'
+    const host = 'portal.example.com'
+    await mod.saveWebsiteIdentity(host, 'School', [login])
+    credentials.read.mockImplementation(async name => name === 'site_accounts' ? { [host]: {}, [login]: {}, zjooc: { note: 'other' } } : null)
+    const overrides = root + '/skill-overrides'
+    io.files.set(overrides + '/chaoxing/sites/' + login + '/SKILL.md', 'private')
+    const other = overrides + '/site-learn/sites/zjooc.cn/site-graph.json'
+    io.files.set(other, 'keep')
+    const { deleteWebsiteSettings } = await import('../../src/services/agent/websiteSettings')
+    await deleteWebsiteSettings(host)
+    expect(credentials.write).toHaveBeenCalledWith('site_accounts', { zjooc: { note: 'other' } })
+    expect([...io.files.values()]).not.toContain('private')
+    expect(io.files.get(other)).toBe('keep')
+    expect(mod.websiteAccountId(login)).toBe(login)
+    expect(io.files.get(root + '/website-identities.json')).not.toContain(host)
   })
 
   it('reruns experience migration when a user configures another website login domain', async () => {

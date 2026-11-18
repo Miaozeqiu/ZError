@@ -332,8 +332,9 @@ class ModelConfigManager {
           name: _ignoredRemoteName,
           icon: _ignoredRemoteIcon,
           description: _ignoredRemoteDescription,
+          maxTokensOverride: _ignoredOutputOverride,
           ...remoteModelFields
-        } = rm as AIModel & { pricing?: unknown; name?: string }
+        } = rm as AIModel & { pricing?: unknown; name?: string; maxTokensOverride?: unknown }
         return {
           ...remoteModelFields,
           platformId: rp.id,
@@ -344,7 +345,6 @@ class ModelConfigManager {
           apiProtocol: platformProtocol,
           enabled: rm.enabled ?? true,
           maxTokens: rm.maxTokens ?? DEFAULT_MODEL_OUTPUT_TOKENS,
-          maxTokensOverride: existingModel?.maxTokensOverride,
           contextWindow: Number(rm.contextWindow ?? (rm as any).context_window ?? (rm as any).context_length ?? (rm as any).contextLength) || existingModel?.contextWindow,
           temperature: rm.temperature ?? 0.7,
           topP: rm.topP ?? 0.9,

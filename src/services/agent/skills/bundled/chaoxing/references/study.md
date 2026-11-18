@@ -1,5 +1,9 @@
 # 学习通刷课
 
+指定小节可先按 [本地快捷入口](../SKILL.md#本地快捷入口) 匹配课程和小节，使用 `browser_navigate` 打开，再用 `browser_review_chapter` 核对。需要推进任务时，调用 `browser_start_chapter_tasks(current_only=true)`。没有可用链接时走下方的目录流程。
+
+处理章节任务时启动一次 `browser_start_chapter_tasks`。宿主按任务点顺序等待视频和平台完成标记，用原生控件阅读支持的 PDF、PPT 和图书，并按授权准备和复核测验。需要补题、保存提交或人工处理时按回执继续同一工作流。未验证的课件仍保留为待完成。
+
 看快照点，播起来后 `browser_watch`。指定的那条没点中不能改播当前条。不要写 see.json。
 
 完成章节或课程时，默认检查并完成范围内的视频和章节测验等任务点；用户明确限定只看视频或不答题时遵守其范围。提交后核对结果和任务点状态。
@@ -15,7 +19,8 @@
    播放页可能是多层 iframe：`studentstudy` → `knowledge/cards` → 视频框（按 mid 区分）→ 测验还可能再套一层。快照按框分段。
 5. 点指定那一条视频框里的播放，确认在播后再 `browser_watch`。裸点只作用于当前看得见的那条。
 6. `browser_wait`。面板出现测验、本节做完、卡住或验证码会结束等待。
-   转入章节测验时先读 `references/homework.md`，按显示题号绑定题干、选项与元素，再作答；不要按元素 ID 大小配题。
+   返回 `needs_quiz` 后，用 `chapter_key` 和 `quiz_job_id` 调用 `browser_review_homework` 读题或复核，用户授权时用 `browser_answer_homework` 填答。平台登记任务点完成后继续章节；步骤见 `references/homework.md`。
+7. 工作流遇到讨论会返回 `needs_discussion`，同时提供题目、正文和少量公开回复。根据题目构思自己的回复；有图片题干时先查看题图。用户授权时用 `browser_reply_chapter_discussion` 发送，传回章节、页签和话题标识。用 `browser_review_chapter_discussion` 复核未确认的发送结果。任务点已登记完成后继续原章节工作流。
 
 ## 坑
 

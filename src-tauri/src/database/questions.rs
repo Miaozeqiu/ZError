@@ -1068,6 +1068,18 @@ pub struct LocalQuestionMatch {
     pub similarity: f64,
     #[serde(default)]
     pub status: LocalMatchStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rejection_reason: Option<String>,
+}
+
+pub(crate) fn record_exact_match_rejection(
+    similar: &mut [LocalQuestionMatch],
+    id: i64,
+    reason: &str,
+) {
+    if let Some(row) = similar.iter_mut().find(|row| row.id == id && is_exact_match_score(row.similarity)) {
+        row.rejection_reason = Some(reason.to_owned());
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
@@ -1122,7 +1134,7 @@ fn scan_question_matches(
     let query_urls = extract_urls(title);
     let title_with_urls = compact_query_spacing(title);
     let query_options = normalize_optional_query_text(options);
-    let require_option_match = should_require_option_match(&normalized_title.compact);
+    let require_option_match = is_generic_choice_title(&normalized_title.compact);
 
     let query = if indexed {
         super::question_search::candidate_query(conn, &normalized_title.compact)?
@@ -1157,6 +1169,7 @@ fn scan_question_matches(
                     question: question.clone(),
                     similarity,
                     status: LocalMatchStatus::Similar,
+                    rejection_reason: None,
                 });
                 similar.truncate(display_limit);
             }
@@ -1230,25 +1243,42 @@ mod local_question_matches_tests {
                 IsAi INTEGER, IsPendingCorrection INTEGER, QuestionType TEXT
              );",
         ).unwrap();
-        let title = "劳动力市场与普通商品市场最显著的差异是？";
-        let options = "A. 劳动力不能被储存\nB. 供给完全无弹性";
+        let title = "虫媒病的季节性主要取决于：";
+        let options = "A. 湿度\nB. 雨量\nC. 温度\nD. 光照\nE. 食性";
+        let mosquito_title = "下列哪种媒介的雄虫不传播疾病？";
+        let mosquito_options = "A. 蚊\nB. 蝇\nC. 蚤\nD. 虱\nE. 蜚蠊";
         conn.execute(
-            "INSERT INTO AIResponses VALUES (1, ?, ?, 'A', 0, 0, '单选'),
+            "INSERT INTO AIResponses VALUES (1, ?, ?, 'C', 1, 0, '单选'),
                  (2, ?, ?, 'B', 0, 1, '单选'),
-                 (3, '下列哪项正确？', ?, 'A', 0, 0, '单选')",
-            [title, options, title, options, options],
+                 (3, '下列哪项正确？', ?, 'A', 0, 0, '单选'),
+                 (4, ?, ?, 'A', 1, 0, '单选'),
+                 (5, '1. 下列说法中，不正确的是（ ）', ?, 'A', 0, 0, '单选')",
+            [title, options, title, options, options, mosquito_title, mosquito_options, options],
         ).unwrap();
 
         let classify = |title, options, kind| {
             let (matches, similar) = scan_question_matches(&conn, title, options, 5, false).unwrap();
             classify_request_matches(title, options, kind, 5, matches, similar)
         };
-        let title_only = classify(title, None, None);
-        assert_eq!(title_only.exact.iter().map(|row| row.id).collect::<Vec<_>>(), [1]);
-        assert!(title_only.candidates.is_empty());
+        for (options, kind) in [
+            (None, None),
+            (Some(""), Some("")),
+            (Some("\u{200b}\n\u{feff}"), Some("\u{feff}\u{200b}")),
+        ] {
+            let title_only = classify(title, options, kind);
+            assert_eq!(title_only.exact.iter().map(|row| row.id).collect::<Vec<_>>(), [1]);
+            assert!(title_only.candidates.is_empty());
+            assert_eq!(title_only.similar[1].rejection_reason.as_deref(), Some("本地题目已标记待修正"));
+        }
         assert!(classify(title, None, Some("single")).exact.is_empty());
-        assert!(classify(title, Some("A. 不同的选项\nB. 供给完全无弹性"), None).exact.is_empty());
+        let different_options = classify(title, Some("A. 湿度\nB. 雨量\nC. 温度\nD. 光照\nE. 种群密度"), None);
+        assert!(different_options.exact.is_empty());
+        assert_eq!(different_options.similar[0].rejection_reason.as_deref(), Some("请求选项与本地选项不一致"));
         assert!(classify("下列哪项正确？", None, None).exact.is_empty());
+        assert!(classify("1. 下列说法中，不正确的是（ ）", None, None).exact.is_empty());
+        let mosquito = classify(mosquito_title, None, None);
+        assert_eq!(mosquito.exact.iter().map(|row| row.id).collect::<Vec<_>>(), [4]);
+        assert!(mosquito.candidates.is_empty());
     }
 
     #[test]
@@ -1398,36 +1428,44 @@ fn classify_request_matches(
     query_type: Option<&str>,
     limit: usize,
     matches: Vec<QuestionMatch>,
-    similar: Vec<LocalQuestionMatch>,
+    mut similar: Vec<LocalQuestionMatch>,
 ) -> RequestQuestionMatches {
     let query_kind = query_type.and_then(crate::server::detect_question_kind);
-    let title_only = query_type.is_none_or(|kind| kind.trim().is_empty());
+    let title_only = normalize_optional_query_text(query_type).is_none();
     let needs_options = query_kind.is_some_and(|kind| kind.requires_options())
-        || should_require_option_match(&QueryMatchText::new(title).compact);
+        || is_generic_choice_title(&QueryMatchText::new(title).compact);
     let query_options = normalize_optional_query_text(options);
     let supplied_options = query_options.as_deref().unwrap_or_default();
     let mut exact = Vec::new();
     let mut candidates = Vec::new();
 
     for matched in matches {
-        if matched.is_pending_correction || matched.answer.trim().is_empty()
+        if matched.is_pending_correction {
+            record_exact_match_rejection(&mut similar, matched.id, "本地题目已标记待修正");
+            continue;
+        }
+        if matched.answer.trim().is_empty()
             || (matched.is_ai && crate::model_response::validate_answer(&matched.answer).is_err())
         {
+            record_exact_match_rejection(&mut similar, matched.id, "本地答案为空或不可用");
             continue;
         }
 
         let stored_kind = matched.question_type.as_deref().and_then(crate::server::detect_question_kind);
         if matches!((query_kind, stored_kind), (Some(a), Some(b)) if a != b) {
+            record_exact_match_rejection(&mut similar, matched.id, "请求题型与本地题型不一致");
             continue;
         }
 
         let stored_options = matched.options.as_deref().unwrap_or_default();
         if [title, supplied_options, &matched.question, stored_options].iter().any(|text| text.contains("[图片")) {
+            record_exact_match_rejection(&mut similar, matched.id, "题目包含需要核对的图片");
             continue;
         }
         let stored_has_options = normalize_optional_query_text(matched.options.as_deref()).is_some();
 
         if query_options.is_none() && needs_options {
+            record_exact_match_rejection(&mut similar, matched.id, "作答需要选项，本次请求未提供");
             continue;
         }
         if query_options.is_none() && stored_has_options {
@@ -1435,16 +1473,23 @@ fn classify_request_matches(
             // exact title match. The caller checks for conflicting answers.
             if title_only && is_exact_match_score(matched.title_similarity) {
                 exact.push(matched);
+            } else {
+                record_exact_match_rejection(&mut similar, matched.id, "请求未提供选项，无法核对作答条件");
             }
             continue;
         }
         if !stored_has_options && (query_options.is_some() || stored_kind.is_some_and(|kind| kind.requires_options())) {
+            record_exact_match_rejection(&mut similar, matched.id, "本地题目缺少可核对的选项");
             continue;
         }
         if is_exact_question_match(title, options, &matched) {
             exact.push(matched);
-        } else if candidates.len() < limit && same_query_options_unordered(supplied_options, stored_options) {
-            candidates.push(matched);
+        } else if same_query_options_unordered(supplied_options, stored_options) {
+            if candidates.len() < limit {
+                candidates.push(matched);
+            }
+        } else {
+            record_exact_match_rejection(&mut similar, matched.id, "请求选项与本地选项不一致");
         }
     }
 

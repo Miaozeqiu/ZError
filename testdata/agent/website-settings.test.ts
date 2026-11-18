@@ -29,13 +29,13 @@ beforeEach(() => {
 })
 
 describe('settings grouped by website', () => {
-  it('shows portal and authentication credentials as one website with a login-domain label', async () => {
+  it('shows portal and authentication credentials as one website with both domains', async () => {
     state.files.set('site-learn/sites/menhu.haou.edu.cn/SKILL.md', '# 登录流程')
     state.rows = { 'menhu.haou.edu.cn': { account: 'portal-user' }, 'authserver.open.ha.cn': { account: 'same-user' } }
     const rows = await listWebsiteSettings()
     expect(rows.filter(site => site.id === 'menhu.haou.edu.cn')).toHaveLength(1)
     expect(rows.some(site => site.id === 'authserver.open.ha.cn')).toBe(false)
-    expect(rows.find(site => site.id === 'menhu.haou.edu.cn')).toMatchObject({ name: '河南开放大学·云上河开', loginHosts: ['authserver.open.ha.cn'] })
+    expect(rows.find(site => site.id === 'menhu.haou.edu.cn')).toMatchObject({ name: '河南开放大学·云上河开', domains: ['menhu.haou.edu.cn', 'authserver.open.ha.cn'] })
   })
   it('joins existing website IDs and keeps each website file list isolated', async () => {
     state.rows = { chaoxing: { account: 'cx' }, zjooc: { account: 'zj' } }
@@ -71,6 +71,21 @@ describe('settings grouped by website', () => {
     await addWebsiteSettings('example.com', '不同名称')
     expect(state.save).not.toHaveBeenCalled()
     expect(state.files.get('site-learn/sites/example.com/SKILL.md')).toBe(original)
+  })
+
+  it('groups course and media domains under the same site and can remove either added domain', async () => {
+    const host = 'school.example.org'
+    const course = 'courses.example.org'
+    const media = 'media.example.org'
+    await addWebsiteSettings(host, '示例学校', [host, course, media], true)
+    const row = (await listWebsiteSettings()).find(site => site.host === host)!
+    expect(row.domains).toEqual([host, course, media])
+    expect(websiteAccountId(course)).toBe(row.id)
+    expect(websiteAccountId(media)).toBe(row.id)
+    await addWebsiteSettings(host, row.name, [host, media], true)
+    expect(websiteAccountId(course)).toBe(course)
+    expect(websiteAccountId(media)).toBe(row.id)
+    expect((await listWebsiteSettings()).find(site => site.host === host)?.files).toEqual(row.files)
   })
 
   it('normalizes known subdomains but does not confuse lookalike domains or unsafe input', async () => {

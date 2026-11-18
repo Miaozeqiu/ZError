@@ -70,7 +70,7 @@ const formatWatchPrompt = (check: VideoWatchCheck) => {
     return `${base}\n学习通弹出图片验证码（9010）。图会附上或页面上有 #ccc。认出 4 位后填进输入框再点播放。`
   }
   if (check.kind === 'quiz') {
-    return `${base}\n当前是章节测验。系统会按 ocs 流程自动搜题/随机/暂存；若失败再 inspect/guess，然后 看快照。`
+    return `${base}\n当前是章节测验。用 browser_review_chapter 核对任务点，再调用 browser_review_homework 读题；按用户授权用 browser_answer_homework 填写并复核。`
   }
   if (check.kind === 'done') {
     return `${base}\n这个视频已经结束。不要自动点开下一段。看 jobs，用 看快照 指定 videoIndex / label；只剩测验就 看快照。`
@@ -301,7 +301,7 @@ const handleChapterQuizWatch = async (check: VideoWatchCheck) => {
   notifyPanelTakeover(
     sessionId,
     '解析面板 · 出现测验',
-    '解析面板有事件：当前是章节测验。看卡片，用 看快照 按 handle 作答。',
+    '当前是章节测验。先确认章节和测验标识，再用 browser_review_homework 读题，按用户授权填答和复核。',
     browserId,
   )
 }

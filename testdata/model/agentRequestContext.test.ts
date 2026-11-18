@@ -19,6 +19,15 @@ describe('browser request context', () => {
     expect(JSON.stringify(messages)).toBe(original)
   })
 
+  it('replays a large previous-turn page as a receipt with an archive reference', () => {
+    const message = { ...page(3), content: JSON.stringify({ ok: true, observation_id: 'obs3', snapshot: '历史页面'.repeat(500) }) }
+    const current = JSON.parse(compactAgentRequestMessages([message])[0].content)
+    const previous = JSON.parse(compactAgentRequestMessages([message], new Set(), undefined, true)[0].content)
+    expect(previous).toMatchObject({ ok: true, history_ref: 'c3', observation_id: 'obs3' })
+    expect(previous.snapshot).toBeUndefined()
+    expect(current.snapshot).toBe(JSON.parse(message.content).snapshot)
+  })
+
   it('replaces only old tool image batches and preserves genuine user images and the latest captcha batch', () => {
     const user = { role: 'user', content: [{ type: 'image_url', image_url: { url: 'original' } }] }
     const old = { role: 'user', content: [{ type: 'image_url', image_url: { url: 'old screenshot' } }] }

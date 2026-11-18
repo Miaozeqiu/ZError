@@ -1,3 +1,4 @@
+import { experienceHostForPage } from '../websiteRepository'
 
 import { cachedPageSnap, findInSnapshot, observedJson, pageSnapAge, PAGE_SNAP_FRESH_MS } from '../../browser/engine'
 
@@ -24,8 +25,7 @@ export const handleNavTools = async (ctx: Record<string, any>): Promise<string |
     const url = String(state?.url || item?.url || '')
     const graphUrl = await graphUrlOf(browserId, url)
     const { siteGraphAgentSnap } = await import('../../browser/siteGraph')
-    const { websiteRepositoryHosts } = await import('../websiteRepository')
-    await websiteRepositoryHosts().catch(() => undefined)
+    await experienceHostForPage(url).catch(() => undefined)
     const { coursePlanFor, coursePlanSummary } = await import('../../browser/coursePlan')
     const snap = siteGraphAgentSnap(graphUrl || url)
     const summary = coursePlanSummary(coursePlanFor(browserId))
@@ -49,6 +49,7 @@ export const handleNavTools = async (ctx: Record<string, any>): Promise<string |
   if (name === 'browser_get_page') {
     try {
       const url = await currentUrl(browserId)
+      await experienceHostForPage(url).catch(() => undefined)
       const graphUrl = await graphUrlOf(browserId, url)
       const nodeId = graphNodeId(graphUrl)
       const probes = notePageProbe(browserId)
@@ -189,6 +190,7 @@ export const handleNavTools = async (ctx: Record<string, any>): Promise<string |
         want: target,
       })
     }
+    await experienceHostForPage(landed).catch(() => undefined)
     const note = pageHostOf(landed) !== pageHostOf(target)
       ? `已到同站 ${pageHostOf(landed)}，路径发生变化。请根据当前网址和页面内容核对导航结果。`
       : undefined

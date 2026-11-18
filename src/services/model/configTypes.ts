@@ -47,8 +47,6 @@ export interface AIModel {
   displayName: string
   platformId: string
   maxTokens: number
-  /** Local output budget preference, retained when the remote catalog syncs. */
-  maxTokensOverride?: number
   /** Input + output context window. Unknown models use a conservative local estimate. */
   contextWindow?: number
   temperature: number

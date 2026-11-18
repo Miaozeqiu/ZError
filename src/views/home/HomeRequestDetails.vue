@@ -128,14 +128,24 @@
             </div>
 
             <template v-else>
-              <section v-if="activeTab === 'local'" class="detail-section process-step">
-                <p class="process-note">{{ localSearchText }}</p>
+              <section v-if="activeTab === 'local'" class="exchange-section">
+                <div class="exchange-section-heading">
+                  <h4 class="exchange-title">本地题库</h4>
+                  <span v-if="similarLocalQuestions.length" class="exchange-header-count">
+                    {{ similarLocalQuestions.length }} 道相似题
+                  </span>
+                </div>
+                <p class="process-note local-search-note">{{ localSearchText }}</p>
                 <ul v-if="similarLocalQuestions.length" class="local-match-list" aria-label="相似题目">
                   <li v-for="match in similarLocalQuestions" :key="match.id" class="local-match-row">
-                    <span class="local-match-question">{{ match.question }}</span>
-                    <span class="local-match-score" title="题干相似度">
-                      {{ localMatchLabels[match.status ?? 'similar'] }} · 题干 {{ formatSimilarity(match.similarity) }}
-                    </span>
+                    <p class="local-match-question">{{ match.question }}</p>
+                    <div class="local-match-meta">
+                      <span class="local-match-status" :class="match.status ?? 'similar'">
+                        {{ localMatchLabels[match.status ?? 'similar'] }}
+                      </span>
+                      <span class="local-match-score">题干相似度 <strong>{{ formatSimilarity(match.similarity) }}</strong></span>
+                    </div>
+                    <p v-if="match.rejection_reason" class="process-note local-match-note">{{ match.rejection_reason }}</p>
                   </li>
                 </ul>
               </section>
@@ -199,6 +209,7 @@
                       active: selectedAnswerModel?.modelId === model.modelId,
                       loading: model.isLoading,
                       failed: !model.isLoading && isModelResponseErrorText(model.response),
+                      success: !model.isLoading && !!model.response?.trim() && !isModelResponseErrorText(model.response),
                     }"
                     :aria-pressed="selectedAnswerModel?.modelId === model.modelId"
                     @click="activeModelTab = model.modelId">
@@ -233,6 +244,10 @@
                       :is-loading="selectedAnswerModel.isLoading"
                     />
                     <p v-else class="process-note">{{ selectedAnswerModel.isLoading ? '等待模型响应…' : '暂无响应内容' }}</p>
+                    <ModelResponseHint
+                      v-if="!selectedAnswerModel.isLoading && isModelResponseErrorText(selectedAnswerModel.response)"
+                      :message="selectedAnswerModel.response"
+                    />
                   </div>
                 </div>
                 <p v-else-if="!log.urlQuestion" class="process-note">
@@ -258,6 +273,10 @@
                       :is-loading="model.isLoading"
                     />
                     <p v-else class="process-note">{{ model.isLoading ? '等待总结模型响应…' : '暂无总结内容' }}</p>
+                    <ModelResponseHint
+                      v-if="!model.isLoading && isModelResponseErrorText(model.response)"
+                      :message="model.response"
+                    />
                   </div>
                 </div>
                 <p v-if="!summaryModels.length" class="process-note">暂无总结模型记录</p>
@@ -277,6 +296,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import AIOutputRender from '../../components/agent/AIOutputRender.vue'
+import ModelResponseHint from '../../components/ui/ModelResponseHint.vue'
 import { useCustomScrollbar } from '../../composables/useCustomScrollbar'
 import JsonCodeViewer from './JsonCodeViewer.vue'
 import HomeSearchTraces from './HomeSearchTraces.vue'
@@ -467,4 +487,5 @@ onUnmounted(() => {
 })
 </script>
 
+<style scoped src="./RequestDetailsShared.css"></style>
 <style scoped src="./HomeRequestDetails.css"></style>

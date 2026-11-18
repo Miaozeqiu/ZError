@@ -20,7 +20,7 @@ vi.mock('../../src/views/agentChat/threadDisplay', () => ({
   quizStatFor: () => '1 题', quizTitleFor: () => '练习', stepQuizCards: () => [],
 }))
 import {
-  availableGraphSubjectId, availableQuizKey, availableWriteStepId, bindAgentChatPanes, browserPreviewRequest,
+  availableGraphSubjectId, availableQuizKey, availableWriteStepId, bindAgentChatPanes,
   openGraphPane, openedGraphSubjectId, openedQuizKey, openedWriteStepId, openQuizReview, paneQuiz,
   homeworkPaneKey, openHomeworkPane, revealBrowserPane, selectAgentPane, selectedAgentPane, toggleQuiz,
 } from '../../src/views/agentChat/useAgentChatPanes'
@@ -62,11 +62,9 @@ describe('Agent header panel switching', () => {
   })
   it('reveals the browser sidebar without toggling it closed on a repeat request', () => {
     expect(selectedAgentPane.value).toBe('quiz')
-    const before = browserPreviewRequest.value
     revealBrowserPane()
     revealBrowserPane()
     expect(selectedAgentPane.value).toBe('browser')
-    expect(browserPreviewRequest.value).toBe(before + 1)
   })
   it('switches exclusively between saved questions, graph and browser', async () => {
     selectAgentPane('write')

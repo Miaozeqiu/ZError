@@ -8,7 +8,7 @@ describe('builtin website resources for end users', () => {
     for (const id of ['chaoxing', 'site-learn']) {
       const files = listBundledSkillFiles(id)
       expect(files).toContain('SKILL.md')
-      expect(files.some(file => file.endsWith('site-graph.json'))).toBe(true)
+      expect(files.some(file => file.endsWith('site-graph.json'))).toBe(id === 'chaoxing')
       expect(files.every(isBuiltinRuntimeSkillFile)).toBe(true)
       expect(files.some(file => /fixtures|parsers|\.html$/i.test(file))).toBe(false)
     }

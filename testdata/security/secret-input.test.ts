@@ -15,7 +15,7 @@ const mount = (kind: 'password' | 'api' = 'password') => {
 }
 const field = () => root.querySelector('input')!
 const click = (label: string) => root.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`)!.click()
-beforeEach(() => { vi.clearAllMocks(); model.value = reference; mount() })
+beforeEach(() => { native.invoke.mockReset(); native.clipboard.mockClear(); model.value = reference; mount() })
 afterEach(() => { app.unmount(); root.remove(); vi.useRealTimers() })
 describe('system-verified saved credential fields', () => {
   it('requests native verification before revealing, never writes the revealed value into settings, and hides after 30 seconds', async () => {
@@ -65,7 +65,8 @@ describe('system-verified saved credential fields', () => {
     model.value = reference; await nextTick()
     expect(field().value).toBe('newly-typed-value')
     field().dispatchEvent(new FocusEvent('blur')); await nextTick()
-    expect(field().value).toBe(''); expect(native.invoke).not.toHaveBeenCalled()
+    expect(field().value).toBe('')
+    expect(native.invoke.mock.calls.every(([command]) => command === 'secure_site_password_length')).toBe(true)
   })
 
   it('masks saved API keys using only the current key length', async () => {

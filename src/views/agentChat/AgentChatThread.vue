@@ -301,7 +301,16 @@
                   </button>
                 </div>
 
-                <div v-if="isThinking(message)" class="assistant-thinking">
+                <AgentLoginForm
+                  v-if="loginRequest && message.status === 'streaming'"
+                  :key="loginRequest.id"
+                  :request="loginRequest"
+                  @contextmenu.stop
+                />
+                <div v-else-if="message.status === 'streaming' && waitingForWebsiteVerification" class="assistant-thinking" role="status">
+                  请在浏览器完成验证码并点击登录，登录成功后会自动继续。
+                </div>
+                <div v-else-if="isThinking(message)" class="assistant-thinking">
                   正在思考
                 </div>
                 <div v-if="message.status === 'streaming' && message.awaitingVideo" class="assistant-thinking" role="status">正在监控视频，等待完成后继续任务</div>
@@ -338,6 +347,8 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, useId, watch } from 'vue'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { Icon } from '@iconify/vue/offline'
+import AgentLoginForm from '../../components/agent/AgentLoginForm.vue'
+import { chatLoginRequests, pendingWebsiteVerification } from '../../services/agent/chatLogin'
 import { activeChat, activeChatId, parseMessageParts } from '../../services/agent/chat'
 import { themeState } from '../../composables/useTheme'
 import { useCustomScrollbar } from '../../composables/useCustomScrollbar'
@@ -388,6 +399,8 @@ defineProps<{
 }>()
 
 const threadPinned = defineModel<boolean>('pinned', { default: true })
+const loginRequest = computed(() => chatLoginRequests.get(activeChatId.value || ''))
+const waitingForWebsiteVerification = computed(() => pendingWebsiteVerification.has(activeChatId.value || ''))
 const quizReviews = computed(() => quizReviewsFor(activeChat.value?.messages || []))
 const homeworkByMessage = computed(() => {
   const reports = new Map<string, HomeworkProgress[]>()

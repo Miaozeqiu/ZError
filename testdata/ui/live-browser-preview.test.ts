@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, h, nextTick, reactive, ref, type App } from 'vue'
 const test = vi.hoisted(() => ({
-  selected: undefined as any, expanded: undefined as any, sessionId: undefined as any,
+  selected: undefined as any, expanded: undefined as any, sessionId: undefined as any, open: undefined as any,
   bounds: vi.fn(), show: vi.fn(), hide: vi.fn(), ensure: vi.fn(), control: vi.fn(), screenshot: vi.fn(),
 }))
 vi.mock('../../src/services/agent/chatStore', () => ({
@@ -12,7 +12,7 @@ vi.mock('../../src/services/agent/chatStore', () => ({
 vi.mock('../../src/services/agent/agentBrowser', () => ({
   agentBrowserExpanded: { __v_isRef: true, get value() { return test.expanded.value }, set value(value) { test.expanded.value = value } },
   currentAgentBrowser: { __v_isRef: true, get value() { return test.selected.value } }, currentAgentBrowsers: { __v_isRef: true, value: [] },
-  currentAgentBrowserOpen: { __v_isRef: true, get value() { return Boolean(test.selected.value) } },
+  currentAgentBrowserOpen: { __v_isRef: true, get value() { return test.open.value } },
   agentBrowserHasTasks: { __v_isRef: true, value: false },
   bindChatBrowser: vi.fn(), browserIdsForChat: () => [], ensureAgentBrowser: test.ensure,
   refreshAgentBrowsers: vi.fn(), startAgentBrowserWorkspace: async () => {},
@@ -50,7 +50,7 @@ const mount = async () => {
 beforeEach(() => {
   vi.clearAllMocks()
   test.selected = ref({ id: 'tab-1', title: '测试网页', url: 'https://example.test', zoom: 1 })
-  test.expanded = ref(false); test.sessionId = ref('chat-1')
+  test.expanded = ref(false); test.sessionId = ref('chat-1'); test.open = ref(true)
   test.bounds.mockResolvedValue(undefined); test.show.mockResolvedValue(undefined); test.hide.mockResolvedValue(undefined)
   test.ensure.mockImplementation(async () => test.selected.value?.id)
   props.active = true; props.obscured = false
@@ -127,11 +127,39 @@ describe('live native browser miniature', () => {
     expect(test.show).toHaveBeenLastCalledWith('tab-1')
   })
 
-  it('does not create a browser merely by showing an empty miniature', async () => {
+  it('opens and shows the first tab from the sidebar without expanding it', async () => {
     test.selected.value = null
+    test.open.value = false
+    props.active = false
+    let finishOpening!: (id: string) => void
+    test.ensure.mockImplementation(() => new Promise<string>(resolve => {
+      finishOpening = id => {
+        test.selected.value = { id, title: '导航', url: 'about:blank', zoom: 1 }
+        resolve(id)
+      }
+    }))
     await mount()
     expect(test.ensure).not.toHaveBeenCalled()
     expect(test.show).not.toHaveBeenCalled()
-    expect(root.textContent).toContain('浏览器待命')
+    props.active = true
+    await vi.waitFor(() => expect(test.ensure).toHaveBeenCalledWith('chat-1'))
+    expect(root.textContent).toContain('正在打开浏览器')
+    expect(test.show).not.toHaveBeenCalled()
+    finishOpening('tab-new')
+    test.ensure.mockResolvedValue('tab-new')
+    await settle()
+    expect(test.bounds).toHaveBeenLastCalledWith('tab-new', expect.objectContaining({ preview: true, x: 900 }))
+    expect(test.show).toHaveBeenCalledExactlyOnceWith('tab-new')
+    expect(test.expanded.value).toBe(false)
+    expect(test.control).not.toHaveBeenCalled()
+  })
+
+  it('restores a remembered tab from the sidebar when its native view is closed', async () => {
+    test.open.value = false
+    await mount()
+    expect(test.ensure).toHaveBeenCalledWith('chat-1')
+    expect(test.bounds).toHaveBeenLastCalledWith('tab-1', expect.objectContaining({ preview: true }))
+    expect(test.show).toHaveBeenCalledExactlyOnceWith('tab-1')
+    expect(test.expanded.value).toBe(false)
   })
 })

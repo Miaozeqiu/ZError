@@ -6,6 +6,7 @@
     <meta name="color-scheme" content="light dark">
     <link rel="icon" type="image/png" href="/app-icon.png">
     <title>本地题库查询 · ZError</title>
+    <link rel="stylesheet" href="/query-details/styles.css">
     <style>
         :root {
             color-scheme: light dark;
@@ -150,7 +151,7 @@
         .primary { padding: 8px 16px; background: var(--action); color: var(--action-ink); border-radius: 999px; font-weight: 650; }
         .correction { color: var(--accent); background: var(--accent-fill); }
         @media (hover: hover) {
-            button:not(.query-step-button):hover:not(:disabled) { background: var(--hover); }
+            button:not(.process-step-button, .multi-model-tab):hover:not(:disabled) { background: var(--hover); }
             button.primary:hover:not(:disabled) { background: var(--action-hover); }
             button.correction:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 14%, var(--panel)); }
         }
@@ -176,139 +177,37 @@
         .response-details dd { margin: 3px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
         .response-answer { padding: 12px 14px; border-radius: 8px; background: var(--field); }
         .response-answer dd { font-weight: 600; }
-        .correction-row { margin-top: 16px; display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; }
-        .correction-row span { font-size: 13px; }
+        #correctionStatus { margin: 0; font-size: 12px; }
 
-        .query-progress {
-            margin-bottom: 18px;
-            padding-bottom: 14px;
-            border-bottom: 1px solid var(--line);
-        }
-        .query-steps {
-            --step-outline: #83838b;
-            --step-connector: #aaaab2;
-            --step-completed: #2d854d;
-            --step-completed-text: #fff;
-            display: grid;
-            grid-auto-flow: column;
-            grid-auto-columns: minmax(62px, 1fr);
-            gap: 4px;
-            list-style: none;
+        .query-process-header { container-type: inline-size; }
+        .query-process-header:has(.process-stepper:not([hidden])) { padding: 12px clamp(8px, 3%, 20px); }
+        .query-process-header .process-stepper { align-self: stretch; }
+        .query-panels { padding: 24px; }
+        .query-panels .response-result .result-heading { margin-bottom: 10px; }
+        .query-panels .response-details { margin-top: 4px; }
+        .query-panels .response-answer { padding: 0; background: none; }
+        .query-panels .raw-heading { margin: 0; }
+        .query-panel-model-text {
             margin: 0;
-            padding: 3px;
-            overflow-x: auto;
-        }
-        @media (prefers-color-scheme: dark) {
-            .query-steps {
-                --step-outline: #92929a;
-                --step-connector: #77777f;
-                --step-completed: #80c99a;
-                --step-completed-text: #14261a;
-            }
-        }
-        .query-step {
-            --indicator-size: 25px;
-            position: relative;
-        }
-        .query-step + .query-step::before {
-            content: "";
-            position: absolute;
-            top: calc(7px + var(--indicator-size) / 2 - 1px);
-            right: calc(50% + var(--indicator-size) / 2 + 4px);
-            width: calc(100% - var(--indicator-size) - 4px);
-            border-top: 2px solid var(--step-connector);
-            pointer-events: none;
-        }
-        .query-step[data-state="done"] + .query-step[data-state="done"]::before {
-            border-color: var(--step-completed);
-        }
-        .query-step[data-state="skipped"] + .query-step::before,
-        .query-step + .query-step[data-state="skipped"]::before {
-            border-top-style: dashed;
-        }
-        .query-step-button {
-            position: relative;
-            display: grid;
-            justify-items: center;
-            gap: 6px;
-            width: 100%;
-            padding: 6px 0 9px;
-            border-color: transparent;
-            background: transparent;
-            color: var(--ink);
-            font-size: 12px;
-            line-height: 1.25;
-            white-space: nowrap;
-        }
-        :where(.query-step:is([data-state="idle"], [data-state="unknown"], [data-state="skipped"])) .query-step-button {
-            color: var(--muted);
-        }
-        .query-step-button[aria-pressed="true"] {
-            color: var(--accent);
-            font-weight: 650;
-        }
-        .query-step-button[aria-pressed="true"]::after {
-            content: "";
-            position: absolute;
-            bottom: 3px;
-            width: 16px;
-            height: 2px;
-            border-radius: 1px;
-            background: currentColor;
-        }
-        .query-step-indicator {
-            display: grid;
-            place-items: center;
-            width: var(--indicator-size);
-            height: var(--indicator-size);
-            border: 1px solid var(--step-outline);
-            border-radius: 50%;
-            background: var(--panel);
-            color: var(--muted);
-            font-weight: 650;
-        }
-        .query-step[data-state="skipped"] .query-step-indicator { background: var(--field); }
-        .query-step[data-state="done"] .query-step-indicator {
-            border-color: var(--step-completed);
-            background: var(--step-completed);
-            color: var(--step-completed-text);
-        }
-        .query-step[data-state="running"] .query-step-indicator {
-            border-color: var(--accent);
-            background: var(--accent-fill);
-            color: var(--accent);
-        }
-        .query-step[data-state="failed"] .query-step-indicator {
-            border-color: var(--error);
-            background: color-mix(in srgb, var(--error) 12%, var(--panel));
-            color: var(--error);
-        }
-        .query-step-button[aria-pressed="true"] .query-step-indicator {
-            outline: 1px solid var(--accent);
-            outline-offset: 2px;
-        }
-        @media (hover: hover) {
-            .query-step-button:hover { color: var(--accent); }
-            .query-step-button:hover .query-step-indicator {
-                box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
-            }
-        }
-        .query-step-button:focus-visible { outline: none; }
-        .query-step-button:focus-visible .query-step-indicator {
-            outline: 2px solid var(--accent);
-            outline-offset: 2px;
-        }
-        .query-step-detail {
-            margin: 8px 0 0;
-            padding: 8px 10px;
-            border-radius: 8px;
-            background: var(--field);
-            color: var(--muted);
-            font-size: 13px;
+            white-space: pre-wrap;
             overflow-wrap: anywhere;
         }
+        .query-panel-reasoning { margin: 0 0 10px; }
+        .query-panel-reasoning p { margin-top: 7px; color: var(--text-secondary); }
+        .query-panels :is(.multi-model-tab, .search-result-title):focus-visible {
+            outline: 2px solid var(--color-primary);
+            outline-offset: 2px;
+        }
+        .query-panels .model-response-card + .model-response-card { margin-top: 12px; }
+        .query-panels .raw-response {
+            border: 0;
+            border-radius: 10px;
+            background: var(--bg-primary);
+        }
+        @media (max-width: 480px) {
+            .query-panels { padding: 16px; }
+        }
 
-        .raw { margin-top: 20px; padding-top: 14px; border-top: 1px solid var(--line); }
         summary { width: fit-content; color: var(--muted); font-size: 13px; cursor: pointer; }
         .raw-heading { margin: 10px 0 8px; flex-wrap: wrap; }
         .raw-actions { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -333,7 +232,18 @@
         .json-string { color: var(--json-string); }
         .json-number { color: var(--json-number); }
         .json-literal { color: var(--json-literal); }
-        .json-punctuation, .json-ellipsis { color: var(--muted); }
+        .json-punctuation { color: var(--muted); }
+        .raw-response .json-fold-toggle {
+            margin-inline: 4px;
+            padding: 0 5px;
+            border-radius: 4px;
+            background: var(--accent-fill);
+            color: var(--accent);
+            font: inherit;
+            font-size: 11px;
+            white-space: nowrap;
+            user-select: none;
+        }
         @media (prefers-color-scheme: dark) {
             .raw-response {
                 --json-key: #d0adfb;
@@ -401,49 +311,65 @@
                 </div>
             </section>
 
-            <section class="panel result-panel" aria-labelledby="result-heading">
-                <div class="panel-header">
+            <section class="panel result-panel" aria-label="查询结果">
+                <div class="panel-header query-process-header">
                     <h2 id="result-heading">查询结果</h2>
+                    <ol id="querySteps" class="process-stepper" aria-label="请求处理过程" hidden></ol>
                 </div>
-                <div class="panel-body">
-                    <section id="queryProgress" class="query-progress" aria-label="查询过程" hidden>
-                        <ol id="querySteps" class="query-steps" aria-label="查询步骤"></ol>
-                        <p id="queryStepDetail" class="query-step-detail" role="status"></p>
-                    </section>
-                    <div class="result" id="result" data-state="idle">
+                <div class="query-panels">
+                    <div class="result" id="idleResult" data-state="idle">
                         <div>
-                            <div class="result-heading">
-                                <h3 id="resultTitle" aria-live="polite">等待查询</h3>
-                                <span class="result-meta" id="resultSource" hidden></span>
-                            </div>
-                            <p class="status-note" id="resultNote">提交题干后，答案会显示在这里。</p>
-                        </div>
-                        <dl class="response-details" id="responseDetails" hidden>
-                            <div><dt>匹配题干</dt><dd id="matchedQuestion"></dd></div>
-                            <div class="response-answer"><dt>答案</dt><dd id="matchedAnswer"></dd></div>
-                        </dl>
-                        <div class="correction-row" id="correctionRow" hidden>
-                            <button class="correction" id="correctionButton" type="button">标记为待修正</button>
-                            <span id="correctionStatus" role="status"></span>
+                            <h3>等待查询</h3>
+                            <p class="status-note">提交题干后，答案会显示在这里。</p>
                         </div>
                     </div>
-                    <details class="raw" id="rawDetails" hidden>
-                        <summary>原始响应</summary>
-                        <div class="raw-heading">
-                            <span class="result-meta" id="httpStatus"></span>
-                            <div class="raw-actions">
-                                <button id="toggleRawStrings" type="button" aria-controls="rawResponse" aria-expanded="false" hidden>展开长字段</button>
-                                <button id="copyRaw" type="button">复制完整响应</button>
+                    <div id="queryStepDetail" hidden></div>
+                    <div id="queryReturn" class="exchange-details" hidden>
+                        <section class="exchange-section">
+                            <h3 class="exchange-title">返回结果</h3>
+                            <div class="exchange-overview">
+                                <dl id="responseMeta" class="exchange-meta"></dl>
+                                <div class="result response-result" id="result" data-state="loading">
+                                    <div>
+                                        <div class="result-heading">
+                                            <h3 id="resultTitle" aria-live="polite">等待查询</h3>
+                                            <span class="result-meta" id="resultSource" hidden></span>
+                                        </div>
+                                        <p class="status-note" id="resultNote"></p>
+                                    </div>
+                                    <dl class="response-details" id="responseDetails" hidden>
+                                        <div><dt>匹配题干</dt><dd id="matchedQuestion"></dd></div>
+                                        <div class="response-answer"><dt>答案</dt><dd id="matchedAnswer"></dd></div>
+                                    </dl>
+                                </div>
                             </div>
-                        </div>
-                        <pre class="raw-response" id="rawResponse" tabindex="0" aria-label="响应内容"><code id="rawCode"></code></pre>
-                    </details>
+                        </section>
+                        <section id="rawDetails" class="exchange-section" hidden>
+                            <div class="raw-heading">
+                                <h3 class="exchange-title">响应体</h3>
+                                <div class="raw-actions">
+                                    <button id="correctionButton" class="correction" type="button" aria-describedby="correctionStatus" hidden>标记为待修正</button>
+                                    <button id="copyRaw" type="button">复制完整响应</button>
+                                </div>
+                            </div>
+                            <p id="correctionStatus" class="status-note" role="status" hidden></p>
+                            <pre class="raw-response" id="rawResponse" tabindex="0" aria-label="响应内容"><code id="rawCode"></code></pre>
+                        </section>
+                        <section id="responseHeaders" class="exchange-section" hidden></section>
+                    </div>
                 </div>
             </section>
         </div>
     </main>
 
-    <script>
+    <script type="module">
+        import { renderStageDetail, renderMetadata, renderHeaders, highlightJson } from '/query-details/view.js';
+
+        const prefersDark = matchMedia('(prefers-color-scheme: dark)');
+        const updateTheme = () => { document.documentElement.dataset.theme = prefersDark.matches ? 'dark' : 'light'; };
+        prefersDark.addEventListener('change', updateTheme);
+        updateTheme();
+
         const byId = (id) => document.getElementById(id);
         const form = byId('queryForm');
         const title = byId('title');
@@ -453,125 +379,141 @@
         const result = byId('result');
         const correction = byId('correctionButton');
         const correctionStatus = byId('correctionStatus');
+        const notSavedMessages = new Map([
+            ['empty_answer', '模型没有返回答案，此题未入库。'],
+            ['auto_save_disabled', '「AI回答添加到本地题库」已关闭，此题未入库。'],
+            ['write_failed', '写入本地题库失败，此题暂时无法标记。'],
+        ]);
         const rawCode = byId('rawCode');
-        const toggleRawStrings = byId('toggleRawStrings');
-        const jsonToken = /("(?:\\.|[^"\\])*")([ \t]*:)?|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)|(true|false|null)|([{}\[\],:])/g;
-        const rawStringPreviewLength = 120;
         let rawText = '';
-        let formattedRaw = '';
-        let rawIsJson = false;
         const steps = byId('querySteps');
         const stepDetail = byId('queryStepDetail');
-        const stageTitles = new Map([
-            ['receive', '接收'],
-            ['local', '本地搜索'],
-            ['verify', '相似题核对'],
-            ['search', '联网搜索'],
-            ['model', 'AI 处理'],
-            ['summary', '总结'],
-            ['return', '返回'],
-        ]);
+        const stageTitles = {
+            receive: '接收',
+            local: '本地搜索',
+            search: '联网搜索',
+            model: 'AI 处理',
+            summary: '总结',
+            return: '返回',
+        };
         const stageStates = {
-            idle: '待处理',
-            running: '进行中',
-            done: '已完成',
-            failed: '失败',
-            skipped: '已跳过',
-            unknown: '暂无记录',
+            idle: ['idle', '暂无记录'],
+            running: ['running', '进行中'],
+            done: ['completed', '已完成'],
+            failed: ['failed', '失败'],
+            skipped: ['skipped', '已跳过'],
+            no_result: ['no-result', '无结果'],
         };
-        const stageIcons = {
-            done: '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 4 4L19 6"/></svg>',
-            skipped: '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 12h12"/></svg>',
-        };
+        const stageIcon = (path) => '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="' + path + '"/></svg>';
         const stages = new Map();
         let activeStage;
         let followProgress = true;
+        let verifyDetail;
+        let requestInfo;
+        let responseData;
         let latestResult;
+
+        function renderActiveStage() {
+            if (!activeStage) return;
+            const stage = stages.get(activeStage);
+            if (activeStage === 'return') {
+                const metrics = stage.data;
+                renderMetadata(byId('responseMeta'), [
+                    ['状态码', metrics?.status ?? requestInfo.httpStatus ?? '—'],
+                    ['响应时间', requestInfo.duration == null ? '—' : (metrics?.response_time ?? requestInfo.duration) + ' ms'],
+                ]);
+            } else {
+                const returnedAnswer = latestResult?.answer || responseData?.message;
+                const fallbackModel = (stage.state === 'done' || stage.state === 'failed') && returnedAnswer
+                    ? { modelName: 'AI 模型响应', response: returnedAnswer, failed: stage.state === 'failed' }
+                    : undefined;
+                renderStageDetail(stepDetail, activeStage, stage, requestInfo, verifyDetail, fallbackModel);
+            }
+        }
 
         function selectStage(step) {
             if (activeStage) stages.get(activeStage).button.setAttribute('aria-pressed', 'false');
-            const stage = stages.get(step);
             activeStage = step;
-            stage.button.setAttribute('aria-pressed', 'true');
-            const description = stageTitles.get(step) + ' · ' + stage.detail;
-            if (stepDetail.textContent !== description) stepDetail.textContent = description;
+            stages.get(step).button.setAttribute('aria-pressed', 'true');
+            stepDetail.hidden = step === 'return';
+            byId('queryReturn').hidden = step !== 'return';
+            renderActiveStage();
         }
 
         function showStep({ step, state, detail }, follow = true) {
-            if (!stageTitles.has(step) || !Object.hasOwn(stageStates, state)) return;
-            let stage = stages.get(step);
-            if (!stage) {
-                const row = document.createElement('li');
-                row.className = 'query-step';
-                row.dataset.step = step;
-                const button = document.createElement('button');
-                button.type = 'button';
-                button.className = 'query-step-button';
-                button.setAttribute('aria-controls', stepDetail.id);
-                button.setAttribute('aria-pressed', 'false');
-                button.addEventListener('click', () => {
-                    followProgress = false;
-                    selectStage(step);
-                });
-                const indicator = document.createElement('span');
-                indicator.className = 'query-step-indicator';
-                indicator.setAttribute('aria-hidden', 'true');
-                const label = document.createElement('span');
-                label.textContent = stageTitles.get(step);
-                button.append(indicator, label);
-                row.append(button);
-                steps.insertBefore(row, step === 'verify' ? stages.get('search').row : null);
-                stage = { row, button, indicator };
-                stages.set(step, stage);
-            }
-
-            stage.detail = detail;
-            stage.row.dataset.state = state;
-            const label = stageTitles.get(step) + '，' + stageStates[state];
-            stage.button.setAttribute('aria-label', label);
-            stage.button.title = label;
-            if (Object.hasOwn(stageIcons, state)) {
-                stage.indicator.innerHTML = stageIcons[state];
-            } else {
-                stage.indicator.textContent = state === 'failed' ? '!' : stageIndex(stage.row);
-            }
             if (step === 'verify') {
-                // Inserting an optional step shifts the numbers of the steps that follow.
-                for (const other of stages.values()) {
-                    if (['idle', 'running', 'unknown'].includes(other.row.dataset.state)) {
-                        other.indicator.textContent = stageIndex(other.row);
-                    }
-                }
+                verifyDetail = detail;
+                if (followProgress && follow) selectStage('local');
+                else if (activeStage === 'local') renderActiveStage();
+                return;
             }
-            if (step === activeStage || (follow && followProgress)) selectStage(step);
+            const stage = stages.get(step);
+            if (!stage || !Object.hasOwn(stageStates, state)) return;
+            stage.state = state;
+            stage.detail = detail;
+            const [className, status] = stageStates[state];
+            stage.row.className = className;
+            const label = stageTitles[step];
+            stage.button.setAttribute('aria-label', label + '，' + status);
+            stage.button.title = label + ' · ' + status;
+            if (state === 'done' || state === 'skipped' || state === 'no_result') {
+                stage.indicator.innerHTML = stageIcon(state === 'done' ? 'm5 12 4 4L19 6' : 'M6 12h12');
+            } else {
+                stage.indicator.textContent = state === 'failed' ? '!' : stage.index;
+            }
+            if (step === activeStage) renderActiveStage();
+            else if (follow && followProgress) selectStage(step);
         }
 
-        function stageIndex(row) {
-            return Array.prototype.indexOf.call(steps.children, row) + 1;
+        function showDetails({ step, data }) {
+            const stage = stages.get(step);
+            if (!stage) return;
+            stage.data = data;
+            if (activeStage === step) renderActiveStage();
         }
 
         function resetSteps() {
             steps.replaceChildren();
             stages.clear();
             activeStage = undefined;
+            verifyDetail = undefined;
             followProgress = true;
-            for (const step of stageTitles.keys()) {
-                if (step === 'verify') continue;
+            for (const [index, [step, label]] of Object.entries(stageTitles).entries()) {
+                const row = document.createElement('li');
+                row.dataset.step = step;
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = 'process-step-button';
+                button.setAttribute('aria-controls', step === 'return' ? 'queryReturn' : stepDetail.id);
+                button.setAttribute('aria-pressed', 'false');
+                button.addEventListener('click', () => {
+                    followProgress = false;
+                    selectStage(step);
+                });
+                const indicator = document.createElement('span');
+                indicator.className = 'process-step-indicator';
+                indicator.setAttribute('aria-hidden', 'true');
+                const name = document.createElement('span');
+                name.textContent = label;
+                button.append(indicator, name);
+                row.append(button);
+                steps.append(row);
+                stages.set(step, { row, button, indicator, index: index + 1 });
                 showStep({ step, state: 'idle', detail: '尚未开始' }, false);
             }
             showStep({ step: 'receive', state: 'running', detail: '正在提交查询' });
         }
 
         function finishSteps(state, detail, receivedFinalProgress) {
-            for (const [step, { row }] of stages) {
+            for (const [step, stage] of stages) {
                 if (step === 'return') continue;
-                if (row.dataset.state === 'running') {
+                if (stage.state === 'running') {
                     showStep({ step, state: 'failed', detail: '处理未完成' }, false);
-                } else if (row.dataset.state === 'idle') {
+                } else if (stage.state === 'idle') {
                     const skipped = receivedFinalProgress && step !== 'local';
                     showStep({
                         step,
-                        state: skipped ? 'skipped' : 'unknown',
+                        state: skipped ? 'skipped' : 'idle',
                         detail: skipped ? '本次查询未执行此步骤' : '没有收到这一步的处理记录',
                     }, false);
                 }
@@ -599,8 +541,9 @@
                         const lines = frame.split('\n');
                         const event = lines.find((line) => line.startsWith('event:'))?.slice(6).trim();
                         const data = lines.filter((line) => line.startsWith('data:'))
-                            .map((line) => line.slice(5).trimStart()).join('\n');
+                            .map((line) => line.slice(5).replace(/^ /, '')).join('\n');
                         if (event === 'progress' && data) showStep(JSON.parse(data));
+                        if (event === 'details' && data) showDetails(JSON.parse(data));
                         if (event === 'result' && data) return data;
                     }
                 }
@@ -629,16 +572,22 @@
             byId('resultNote').hidden = !note;
             byId('resultSource').hidden = state !== 'success';
             byId('responseDetails').hidden = state !== 'success';
-            byId('correctionRow').hidden = true;
+            correction.hidden = true;
+            correctionStatus.hidden = true;
         }
 
         function showCorrection(data) {
-            byId('correctionRow').hidden = !(data.correction_path || data.is_pending_correction);
-            correction.hidden = !data.correction_path || Boolean(data.is_pending_correction);
-            correction.disabled = false;
+            const marked = Boolean(data.is_pending_correction);
+            const canMark = Boolean(data.correction_path) && !marked;
+            correction.hidden = marked;
+            correction.disabled = !canMark;
             correction.textContent = '标记为待修正';
-            correctionStatus.className = data.is_pending_correction ? 'correction-done' : '';
-            correctionStatus.textContent = data.is_pending_correction ? '已标记待修正' : '';
+            correctionStatus.hidden = canMark;
+            correctionStatus.className = marked ? 'status-note correction-done' : 'status-note';
+            correctionStatus.textContent = marked ? '已标记待修正'
+                : canMark ? ''
+                : data.id > 0 ? '本次响应缺少标记链接，请重新查询。'
+                : notSavedMessages.get(data.not_saved_reason) ?? '此题尚未保存到本地题库，暂时无法标记。';
         }
 
         byId('exampleButton').addEventListener('click', () => {
@@ -646,55 +595,6 @@
             options.value = 'A. 上海\nB. 北京\nC. 广州\nD. 杭州';
             type.value = 'single';
             title.focus();
-        });
-
-        function renderRawResponse(expanded = false) {
-            toggleRawStrings.setAttribute('aria-expanded', String(expanded));
-            toggleRawStrings.textContent = expanded ? '收起长字段' : '展开长字段';
-            if (!rawIsJson) {
-                rawCode.textContent = rawText;
-                toggleRawStrings.hidden = true;
-                return;
-            }
-
-            const output = document.createDocumentFragment();
-            let cursor = 0;
-            let hasLongStrings = false;
-            for (const match of formattedRaw.matchAll(jsonToken)) {
-                output.append(formattedRaw.slice(cursor, match.index));
-                cursor = match.index + match[0].length;
-                const [, quoted, keySeparator, number, literal] = match;
-                const token = document.createElement('span');
-                token.className = keySeparator ? 'json-key'
-                    : quoted ? 'json-string'
-                    : number ? 'json-number'
-                    : literal ? 'json-literal' : 'json-punctuation';
-                token.textContent = quoted ?? match[0];
-                const stringValue = quoted && !keySeparator && quoted.length > rawStringPreviewLength + 2
-                    ? JSON.parse(quoted) : '';
-                if (stringValue.length > rawStringPreviewLength) {
-                    hasLongStrings = true;
-                    if (!expanded) {
-                        // Keep the preview a complete quoted string even if truncation crosses a JSON escape.
-                        const preview = stringValue.slice(0, rawStringPreviewLength).replace(/[\uD800-\uDBFF]$/, '');
-                        token.textContent = JSON.stringify(preview);
-                        const ellipsis = document.createElement('span');
-                        ellipsis.className = 'json-ellipsis';
-                        ellipsis.textContent = '…';
-                        output.append(token, ellipsis);
-                        continue;
-                    }
-                }
-                output.append(token);
-                if (keySeparator) output.append(keySeparator);
-            }
-            output.append(formattedRaw.slice(cursor));
-            rawCode.replaceChildren(output);
-            toggleRawStrings.hidden = !hasLongStrings;
-        }
-
-        toggleRawStrings.addEventListener('click', () => {
-            renderRawResponse(toggleRawStrings.getAttribute('aria-expanded') !== 'true');
         });
 
         form.addEventListener('submit', async (event) => {
@@ -706,50 +606,57 @@
             submit.disabled = true;
             submit.textContent = '查询中…';
             latestResult = null;
+            responseData = null;
             rawText = '';
+            requestInfo = {
+                url: new URL('/query', location.href).href,
+                startedAt: Date.now(),
+                headers: new Headers({ 'Content-Type': 'application/json', Accept: 'text/event-stream' }),
+                body: JSON.stringify({
+                    title: question,
+                    options: options.value.trim() || null,
+                    type: type.value.trim() || null,
+                }),
+            };
+            const started = performance.now();
             byId('rawDetails').hidden = true;
-            byId('rawDetails').open = false;
+            byId('responseHeaders').hidden = true;
             byId('copyRaw').textContent = '复制完整响应';
             resetSteps();
-            byId('queryProgress').hidden = false;
+            steps.hidden = false;
+            byId('idleResult').hidden = true;
+            byId('result-heading').hidden = true;
             showResult('loading', '正在查询');
 
             try {
                 const response = await fetch('/query', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-                    body: JSON.stringify({
-                        title: question,
-                        options: options.value.trim() || null,
-                        type: type.value.trim() || null
-                    })
+                    headers: requestInfo.headers,
+                    body: requestInfo.body,
                 });
                 updateService(true);
+                requestInfo.httpStatus = response.status;
+                const responseHeaders = byId('responseHeaders');
+                renderHeaders(responseHeaders, '响应头', response.headers);
+                responseHeaders.hidden = false;
                 const hasProgress = response.headers.get('content-type')?.startsWith('text/event-stream') ?? false;
                 if (response.ok || hasProgress) {
                     showStep({ step: 'receive', state: 'done', detail: '服务已接收查询请求' });
                 }
                 rawText = await readQueryResponse(response);
-                byId('httpStatus').textContent = 'HTTP ' + response.status;
                 byId('rawDetails').hidden = false;
-                let data;
-                rawIsJson = false;
-                try {
-                    data = JSON.parse(rawText);
-                    formattedRaw = JSON.stringify(data, null, 2);
-                    rawIsJson = true;
-                } finally {
-                    renderRawResponse();
-                }
+                highlightJson(rawCode, rawText);
+                const data = responseData = JSON.parse(rawText);
+                requestInfo.duration = Math.round(performance.now() - started);
                 if (!response.ok) throw new Error(data.message || 'HTTP ' + response.status);
                 if (data.code === 1 && data.data) {
                     latestResult = data.data;
                     showResult('success', '查询成功');
-                    finishSteps('done', '已返回答案', hasProgress);
                     byId('resultSource').textContent = latestResult.is_ai ? 'AI 生成' : '本地题库';
                     byId('matchedQuestion').textContent = latestResult.question_text || question;
                     byId('matchedAnswer').textContent = latestResult.answer || '—';
                     showCorrection(latestResult);
+                    finishSteps('done', '已返回答案', hasProgress);
                 } else if (data.code === 0 && (!data.message || data.message === 'No matching records found')) {
                     finishSteps('done', '未找到匹配题目', hasProgress);
                     showResult('empty', '未找到匹配题目', '可以检查题干、选项和题型后再试。');
@@ -758,6 +665,7 @@
                     showResult('error', '查询未完成', data.message || '服务返回了无法识别的结果。');
                 }
             } catch (error) {
+                requestInfo.duration = Math.round(performance.now() - started);
                 finishSteps('failed', '请求未完成', false);
                 if (byId('rawDetails').hidden) void checkService();
                 showResult('error', '请求失败', error.message || '请检查本地题库服务后重试。');
@@ -769,7 +677,7 @@
 
         correction.addEventListener('click', async () => {
             const data = latestResult;
-            if (!data || correction.disabled) return;
+            if (!data?.correction_path || correction.disabled) return;
             correction.disabled = true;
             correction.textContent = '标记中…';
             correctionStatus.textContent = '';
@@ -786,7 +694,8 @@
             } catch (error) {
                 if (latestResult === data) {
                     showCorrection(data);
-                    correctionStatus.className = 'correction-error';
+                    correctionStatus.hidden = false;
+                    correctionStatus.className = 'status-note correction-error';
                     correctionStatus.textContent = error.message || '标记失败，请重试';
                 }
             }
@@ -800,7 +709,7 @@
                 if (rawText === copiedResponse) button.textContent = '已复制';
             } catch {
                 if (rawText !== copiedResponse) return;
-                renderRawResponse(true);
+                rawCode.textContent = copiedResponse;
                 byId('rawResponse').focus();
                 const selection = window.getSelection();
                 if (selection) {

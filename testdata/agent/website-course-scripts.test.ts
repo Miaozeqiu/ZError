@@ -144,4 +144,37 @@ describe('external course scripts', () => {
       expect(navigateBrowserView).not.toHaveBeenCalled()
     } finally { await close() }
   })
+
+  it('opens a remembered student homework directly and verifies the top-level assignment', async () => {
+    const { close } = await serve()
+    const url = 'https://mooc1.chaoxing.com/mooc-ans/mooc2/work/task?courseId=42&classId=7&workId=5'
+    const title = '第二份作业'
+    const snapshot = '- heading "第二份作业" [ref=e1]\n- button "查看作业" [ref=e2]'
+    const navigateBrowserView = vi.fn(async () => undefined)
+    const readBrowserPage = vi.fn(async () => ({ url, title: '作业', snapshot }))
+    const ctx = {
+      name: 'browser_open_homework', args: { course_name: '数据库基础', homework_name: title, homework_url: url },
+      browserId: 'tab', liveHref: vi.fn(async () => 'about:blank'), readBrowserPage,
+      clickByLocator: vi.fn(async () => ({ ok: true })), navigateBrowserView, wait: async () => undefined,
+    }
+    try {
+      expect(JSON.parse((await handleWebsiteHomeworkTools(ctx))!))
+        .toMatchObject({ opened: true, url, assignment: { title }, snapshot })
+      expect(navigateBrowserView).toHaveBeenCalledExactlyOnceWith('tab', url)
+      expect(ctx.liveHref).not.toHaveBeenCalled()
+      expect(readFrame).not.toHaveBeenCalled()
+
+      readBrowserPage.mockResolvedValueOnce({ url: 'https://passport2.chaoxing.com/login', title: '登录', snapshot: '' })
+      expect(JSON.parse((await handleWebsiteHomeworkTools(ctx))!)).toMatchObject({ ok: false, loginRequired: true })
+
+      readBrowserPage.mockResolvedValue({ url, title: '作业', snapshot: snapshot.replace(title, '第一份作业') })
+      expect(JSON.parse((await handleWebsiteHomeworkTools(ctx))!)).toMatchObject({ ok: false, reason: 'verification_required' })
+
+      navigateBrowserView.mockClear()
+      const external = url.replace('mooc1.chaoxing.com', 'mooc1.chaoxing.com.example.test')
+      expect(JSON.parse((await handleWebsiteHomeworkTools({ ...ctx, args: { ...ctx.args, homework_url: external } }))!))
+        .toMatchObject({ ok: false, reason: 'invalid' })
+      expect(navigateBrowserView).not.toHaveBeenCalled()
+    } finally { await close() }
+  })
 })

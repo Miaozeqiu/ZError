@@ -28,6 +28,7 @@ pub async fn dom_frame_html(_app: AppHandle, id: String, frame: Option<String>) 
     "html": html,
     "url": url,
     "frameId": frame_id,
+    "loaderId": target.loader_id,
   }))
 }
 

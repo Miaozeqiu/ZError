@@ -167,16 +167,19 @@ const liveHref = async (browserId: string) => {
 
 export const executeBrowserTool = async (input: {
   name: string
+  signal?: AbortSignal
   args: Record<string, unknown>
   browserId: string
   sessionId: string
   wait: (ms: number) => Promise<void>
   onNavigation?: () => void
   onHomeworkProgress?: (update: import('./homeworkProgress').HomeworkProgressUpdate) => void
+  chapterResume?: import('./tools/websiteChapterStart').ChapterWorkflowResume
+  chapterQuiz?: { range?: import('./homeworkQuestionRange').HomeworkQuestionRange }
   role?: 'parent' | 'explore' | 'execute'
   jobId?: string
 }): Promise<string> => {
-  const { name, args, browserId, sessionId, wait, role, onNavigation, onHomeworkProgress } = input
+  const { name, args, browserId, sessionId, wait, role, onNavigation, onHomeworkProgress, chapterResume, chapterQuiz } = input
   const { packAgentPanel } = await import('../platform/panelAccess')
   const loop = readBrowserLoop({
     url: await liveHref(browserId),
@@ -204,7 +207,8 @@ export const executeBrowserTool = async (input: {
   }
 
   const toolCtx = {
-    name, args, browserId, sessionId, wait, role, loop, policy, failWithCard, platformTool: null, onNavigation, onHomeworkProgress,
+    name, args, browserId, sessionId, signal: input.signal, wait, role, loop, policy, failWithCard, platformTool: null, onNavigation, onHomeworkProgress,
+    chapterResume, chapterQuiz,
     currentUrl, graphUrlOf, liveHref, resetPageProbe,
     notePageProbe, readBrowserPage, getBrowserState, peekAppBrowserUrl, emptyPageSnaps, callProtocol,
     graphNodeId, siteGraphNodeForUrl, isShellNode, SPACE_HINT, COURSE_HW_HINT,
@@ -227,6 +231,22 @@ export const executeBrowserTool = async (input: {
 
 /** 四个处理器都没认领，才是未知工具。测试用这份，不打真实页面。 */
 export const dispatchBrowserTool = async (ctx: Record<string, any>): Promise<string> => {
+  if (ctx.name === 'browser_home_shortcuts') {
+    const { handleBrowserHomeShortcuts } = await import('./tools/browserHomeShortcuts')
+    return handleBrowserHomeShortcuts(ctx as Parameters<typeof handleBrowserHomeShortcuts>[0])
+  }
+  if (ctx.name === 'browser_answer_zjooc') {
+    const { answerZjooc } = await import('./tools/zjoocAnswers')
+    return answerZjooc(ctx as Parameters<typeof answerZjooc>[0])
+  }
+  if (ctx.name === 'browser_play_zjooc') {
+    const { playZjoocVideos } = await import('./tools/zjoocPlayback')
+    return playZjoocVideos(ctx as Parameters<typeof playZjoocVideos>[0])
+  }
+  if (['browser_request_credentials', 'browser_login_zjooc', 'browser_login_chaoxing'].includes(ctx.name)) {
+    const { handleLoginTool } = await import('./tools/websiteLogin')
+    return handleLoginTool(ctx as Parameters<typeof handleLoginTool>[0])
+  }
   if (ctx.name === 'browser_list_courses' || ctx.name === 'browser_open_course') {
     const { handleWebsiteCourseTools } = await import('./tools/websiteCourses')
     return (await handleWebsiteCourseTools(ctx as Parameters<typeof handleWebsiteCourseTools>[0]))!
@@ -239,9 +259,19 @@ export const dispatchBrowserTool = async (ctx: Record<string, any>): Promise<str
     const { handleWebsiteHomeworkAnswerTools } = await import('./tools/websiteHomeworkAnswers')
     return handleWebsiteHomeworkAnswerTools(ctx as Parameters<typeof handleWebsiteHomeworkAnswerTools>[0])
   }
+  if (ctx.name === 'browser_review_chapter_discussion' || ctx.name === 'browser_reply_chapter_discussion') {
+    const { handleWebsiteChapterDiscussion } = await import('./tools/websiteChapterDiscussion')
+    return handleWebsiteChapterDiscussion(ctx as Parameters<typeof handleWebsiteChapterDiscussion>[0])
+  }
   if (ctx.name === 'browser_start_chapter_tasks') {
     const { startWebsiteChapterTasks } = await import('./tools/websiteChapterStart')
-    return startWebsiteChapterTasks(ctx as Parameters<typeof startWebsiteChapterTasks>[0])
+    const { prepareWebsiteChapterQuiz } = await import('./tools/websiteChapterQuiz')
+    const chapter = ctx as Parameters<typeof startWebsiteChapterTasks>[0]
+    return startWebsiteChapterTasks({ ...chapter,
+      processQuiz: ctx.chapterQuiz && ctx.policy?.permissionMode !== 'strict'
+        ? (chapterKey, jobId) => prepareWebsiteChapterQuiz(ctx as Parameters<typeof prepareWebsiteChapterQuiz>[0], chapterKey, jobId, ctx.chapterQuiz.range)
+        : undefined,
+    })
   }
   if (ctx.name === 'browser_open_pending_chapter') {
     const { openNextWebsiteChapter } = await import('./tools/websiteChapterDirectory')

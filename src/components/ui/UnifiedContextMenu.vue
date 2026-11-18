@@ -4,7 +4,7 @@
       <div
         v-if="visible"
         ref="menuRef"
-        class="context-menu"
+        class="context-menu" role="menu"
         :class="menuClass"
         :style="menuStyle"
         @click.stop
@@ -30,7 +30,9 @@
             <!-- 普通菜单项 -->
             <div 
               v-else
-              class="menu-item" 
+              class="menu-item" role="menuitem"
+              :tabindex="item.disabled ? -1 : 0" :aria-disabled="Boolean(item.disabled)" :title="item.title" :aria-label="item.ariaLabel"
+              @keydown.enter.prevent="handleItemClick(item)" @keydown.space.prevent="handleItemClick(item)"
               :class="{ 
                 disabled: item.disabled, 
                 danger: item.danger 
@@ -38,7 +40,7 @@
               @click="handleItemClick(item)"
             >
               <!-- 图标 -->
-              <div v-if="item.icon" class="menu-icon">
+              <div v-if="item.icon" class="menu-icon" aria-hidden="true">
                 <!-- SVG 图标 -->
                 <svg 
                   v-if="typeof item.icon === 'object' && item.icon.type === 'svg'" 
@@ -85,12 +87,12 @@
                 <!-- 文本图标 -->
                 <span v-else-if="typeof item.icon === 'object' && item.icon.type === 'text'">{{ item.icon.content }}</span>
                 
-                <!-- 纯字符串图标 (如果是字符串) -->
+                <Icon v-else-if="typeof item.icon === 'string' && item.icon.startsWith('lucide:')" :icon="item.icon" width="16" height="16" />
                 <span v-else-if="typeof item.icon === 'string'">{{ item.icon }}</span>
               </div>
               
               <!-- 标签 -->
-              <span class="menu-label">{{ item.label }}</span>
+              <span v-if="item.label" class="menu-label">{{ item.label }}</span>
             </div>
           </template>
         </div>
@@ -101,6 +103,7 @@
 
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from 'vue';
+import { Icon } from '@iconify/vue/offline';
 import { createExclusiveMenuId, useExclusiveMenuProp } from '../../composables/useExclusiveMenu';
 
 export interface MenuIcon {
@@ -144,6 +147,8 @@ export interface MenuItem {
   id?: string;
   type?: 'item' | 'divider' | 'header';
   label?: string;
+  ariaLabel?: string;
+  title?: string;
   icon?: MenuIcon | string;
   disabled?: boolean;
   danger?: boolean;

@@ -20,6 +20,41 @@ const candidate = (id = 'example', host = 'example.com') => ({
 beforeEach(() => { vi.resetModules(); vi.clearAllMocks(); storage.value = null; storage.download.mockImplementation(async (_source, _previous, _request, identity) => snapshot(identity.id, identity.host)) })
 afterEach(() => vi.unstubAllGlobals())
 describe('website repository registry', () => {
+  it('keeps Chaoxing protected with a custom endpoint, before any local data is deleted', async () => {
+    const host = 'chaoxing.com'
+    const mod = await import('../../src/services/agent/websiteRepository')
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json(snapshot('chaoxing', host))))
+    await mod.setWebsiteExperienceUrl(host, 'http://localhost:8123/experience.json')
+    expect(mod.isOpenWebsiteRepository(host)).toBe(true)
+    expect(mod.websiteIdentityLocked(host)).toBe(true)
+    const cleanup = vi.fn()
+    await expect(mod.removeWebsiteRepository(host, cleanup)).rejects.toThrow('学习通是默认仓库，不能删除')
+    expect(cleanup).not.toHaveBeenCalled()
+    expect(await mod.websiteRepositoryHosts()).toContain(host)
+    await mod.setWebsiteExperienceUrl(host, '')
+    expect(mod.websiteIdentityLocked(host)).toBe(true)
+  })
+
+  it('deletes only the selected repository and keeps a deleted repository removed until imported again', async () => {
+    const host = 'school.example'
+    let mod = await import('../../src/services/agent/websiteRepository')
+    await mod.importWebsiteRepository(candidate('school', host))
+    await mod.importWebsiteRepository(candidate())
+    const other = structuredClone(storage.value.entries['example.com'])
+    await mod.writeWebsiteRepositorySupplement(host, 'private notes', '')
+    const stale = mod.repositoryForHost(host)
+    await mod.removeWebsiteRepository(host)
+    await expect(stale.writeSupplement('stale notes', 'private notes')).rejects.toThrow()
+    expect(storage.value.entries[host]).toBeUndefined()
+    expect(storage.value.entries['example.com']).toEqual(other)
+    vi.resetModules()
+    mod = await import('../../src/services/agent/websiteRepository')
+    expect(await mod.websiteRepositoryHosts()).not.toContain(host)
+    await mod.importWebsiteRepository(candidate('school', host))
+    expect(await mod.websiteRepositoryHosts()).toContain(host)
+    expect((await mod.readWebsiteRepositoryFile(host, 'SKILL.md')).content).not.toContain('private notes')
+  })
+
   it('uses a persisted HTTP endpoint, reloads changes, and restores the default source without losing notes', async () => {
     const host = 'chaoxing.com', customUrl = 'http://127.0.0.1:8123/experience.json?channel=dev'
     const cloud = snapshot('chaoxing', host)
@@ -57,6 +92,34 @@ describe('website repository registry', () => {
     expect((await mod.readWebsiteRepositoryFile(host, 'SKILL.md')).supplement).toBe('My local notes')
     await mod.refreshWebsiteRepository(host, true)
     expect(fetcher.mock.calls.filter(([url]) => url !== customUrl)).toHaveLength(2)
+  })
+
+  it('uses the selected manifest on save, upgrade and restore, including a previously disabled source', async () => {
+    const host = 'chaoxing.com'
+    const customUrl = 'http://127.0.0.1:8123/experience.json'
+    const openUrl = 'https://open.zerrorai.com/v1/website-experience/' + host
+    const base = snapshot('chaoxing', host)
+    const cloud = { ...base, scriptManifest: './official-manifest.json' }
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => Response.json(url === openUrl ? cloud : url === customUrl
+      ? { ...base, scriptManifest: './dev-manifest.json' } : base)))
+    let mod = await import('../../src/services/agent/websiteRepository')
+    await mod.refreshWebsiteRepository(host, true)
+    expect(await mod.websiteScriptSource(host)).toEqual({ url: openUrl, manifest: cloud.scriptManifest })
+    await mod.setWebsiteExperienceUrl(host, customUrl)
+    const expected = { url: customUrl, manifest: './dev-manifest.json' }
+    expect(await mod.websiteScriptSource(host)).toEqual(expected)
+
+    storage.value.entries[host].document.customSource.scriptsEnabled = false
+    vi.resetModules()
+    mod = await import('../../src/services/agent/websiteRepository')
+    await mod.ensureWebsiteRepository(host)
+    expect(await mod.websiteScriptSource(host)).toEqual(expected)
+    expect(storage.value.entries[host].document.customSource).not.toHaveProperty('scriptsEnabled')
+
+    await mod.setWebsiteExperienceUrl(host, customUrl + '?docs-only')
+    expect(await mod.websiteScriptSource(host)).toBeNull()
+    await mod.setWebsiteExperienceUrl(host, '')
+    expect(await mod.websiteScriptSource(host)).toEqual({ url: openUrl, manifest: cloud.scriptManifest })
   })
 
   it('can switch an app-managed site to a development server and back', async () => {
@@ -122,14 +185,72 @@ describe('website repository registry', () => {
     expect(effective.content).toContain('Local note')
     expect(mod.websiteRepositoryStates['chaoxing.com'].error).toContain('HTTP 503')
   })
-  it('updates other built-in experiences directly from GitHub', async () => {
-    const request = vi.fn()
-    vi.stubGlobal('fetch', request)
-    const mod = await import('../../src/services/agent/websiteRepository')
-    await mod.refreshWebsiteRepository('zhihuishu.com', true)
-    await mod.refreshWebsiteRepository('zjooc.cn', true)
-    expect(storage.download.mock.calls.map(([source]) => source.name)).toEqual(['ZError-zhihuishu', 'ZError-zjooc'])
-    expect(request).not.toHaveBeenCalled()
+  it.each([['zjooc', 'zjooc.cn'], ['zhihuishu', 'zhihuishu.com'], ['school', 'school.example']])(
+    'installs %s on demand and respects deletion across restarts and later visits', async (id, host) => {
+      const root = 'https://open.zerrorai.com/v1/website-experience'
+      const selected = candidate(id, host)
+      const fetcher = vi.fn(async (url: string) => url === root
+        ? Response.json({ sites: [{ ...selected.website, ...selected.source }] })
+        : Response.json(snapshot(id, host)))
+      vi.stubGlobal('fetch', fetcher)
+      let mod = await import('../../src/services/agent/websiteRepository')
+      expect(await mod.websiteRepositoryHosts()).toEqual(['chaoxing.com'])
+      const page = 'https://course.' + host + '/lesson'
+      expect(await mod.experienceHostForPage(page)).toBe(host)
+      expect(mod.isOpenWebsiteRepository(host)).toBe(true)
+      const cleanup = vi.fn()
+      await mod.removeWebsiteRepository(host, cleanup)
+      expect(cleanup).toHaveBeenCalledOnce()
+      vi.resetModules()
+      mod = await import('../../src/services/agent/websiteRepository')
+      fetcher.mockClear()
+      await mod.experienceHostForPage(page)
+      expect(await mod.websiteRepositoryHosts()).toEqual(['chaoxing.com'])
+      expect(fetcher.mock.calls.every(([url]) => url === root)).toBe(true)
+      await mod.importWebsiteRepository(selected)
+      expect(await mod.websiteRepositoryHosts()).toContain(host)
+      expect(storage.value.removedOpenHosts).not.toContain(host)
+    })
+  it('installs only the visited catalog site, shares concurrent requests and refreshes through Open after restart', async () => {
+    const root = 'https://open.zerrorai.com/v1/website-experience'
+    const host = 'school.example'
+    const entry = (id: string, host: string) => ({ id, host, name: id, url: 'https://github.com/owner/' + id, branch: 'main', root: 'skills/' + id })
+    const cloud = snapshot('school', host)
+    const fetcher = vi.fn(async (url: string) => {
+      if (url === root) return Response.json({ sites: [entry('school', host), entry('other', 'other.example')] })
+      if (url === root + '/' + host) return Response.json(cloud)
+      if (url === root + '/' + host + '?revision=' + cloud.revision) return Response.json({ ...cloud, revision: 'b'.repeat(40), files: { ...cloud.files, 'SKILL.md': main('school', 'Updated') } })
+      throw new Error('unexpected request ' + url)
+    })
+    vi.stubGlobal('fetch', fetcher)
+    let mod = await import('../../src/services/agent/websiteRepository')
+    expect(await mod.experienceHostForPage('https://school.example.evil.test/private')).toBe('school.example.evil.test')
+    expect(await mod.websiteRepositoryHosts()).not.toContain(host)
+    const urls = ['https://portal.school.example/course?token=private', 'https://school.example/']
+    expect(await Promise.all(urls.map(mod.experienceHostForPage))).toEqual([host, host])
+    expect(fetcher.mock.calls.map(([url]) => url)).toEqual([root, root + '/' + host])
+    expect(await mod.websiteRepositoryHosts()).not.toContain('other.example')
+    await mod.writeWebsiteRepositorySupplement(host, 'Local note', '')
+    vi.resetModules()
+    mod = await import('../../src/services/agent/websiteRepository')
+    expect(await mod.experienceHostForPage(urls[0])).toBe(host)
+    expect(mod.isOpenWebsiteRepository(host)).toBe(true)
+    await mod.refreshWebsiteRepository(host, true)
+    const file = await mod.readWebsiteRepositoryFile(host, 'SKILL.md')
+    expect(file.content).toContain('Updated')
+    expect(file.supplement).toBe('Local note')
+    expect(storage.download).not.toHaveBeenCalled()
+  })
+  it('accepts old removed builtin records and keeps previously installed non-default repositories', async () => {
+    storage.value = { version: 2, entries: {}, removedBuiltins: ['chaoxing.com', 'zhihuishu.com'] }
+    let mod = await import('../../src/services/agent/websiteRepository')
+    expect(await mod.websiteRepositoryHosts()).toEqual(['chaoxing.com'])
+    await mod.importWebsiteRepository(candidate('zhihuishu', 'zhihuishu.com'))
+    await mod.writeWebsiteRepositorySupplement('zhihuishu.com', 'Existing notes', '')
+    vi.resetModules()
+    mod = await import('../../src/services/agent/websiteRepository')
+    expect(await mod.websiteRepositoryHosts()).toContain('zhihuishu.com')
+    expect((await mod.readWebsiteRepositoryFile('zhihuishu.com', 'SKILL.md')).supplement).toBe('Existing notes')
   })
   it('upgrades the old single-website cache without losing its local notes', async () => {
     const old = snapshot('chaoxing', 'chaoxing.com')
@@ -137,13 +258,14 @@ describe('website repository registry', () => {
       fork: { id: 'local', parentRevision: old.revision, updatedAt: 1, files: { 'SKILL.md': main('chaoxing', 'Private local') }, bases: { 'SKILL.md': old.files['SKILL.md'] }, conflicts: [] } }
     const mod = await import('../../src/services/agent/websiteRepository')
     expect((await mod.readWebsiteRepositoryFile('chaoxing.com', 'SKILL.md')).content).toContain('Private local')
-    await mod.readWebsiteRepositoryFile('zjooc.cn', 'SKILL.md')
+    expect(await mod.websiteRepositoryHosts()).toEqual(['chaoxing.com'])
     expect(storage.value.version).toBe(2)
     expect(storage.value.entries['chaoxing.com'].document.supplement).toContain('Private local')
-    expect(storage.value.entries['zjooc.cn'].configuration.source.name).toBe('ZError-zjooc')
+    expect(storage.value.entries['zjooc.cn']).toBeUndefined()
   })
   it('serializes persistence across websites without mixing local edits', async () => {
     const mod = await import('../../src/services/agent/websiteRepository')
+    await mod.importWebsiteRepository(candidate('zjooc', 'zjooc.cn'))
     await Promise.all([mod.ensureWebsiteRepository('chaoxing.com'), mod.ensureWebsiteRepository('zjooc.cn')])
     await Promise.all([mod.writeWebsiteRepositoryFile('chaoxing.com', 'SKILL.md', main('chaoxing', 'A local')),
       mod.writeWebsiteRepositoryFile('zjooc.cn', 'SKILL.md', main('zjooc', 'B local'))])
@@ -164,7 +286,7 @@ describe('website repository registry', () => {
   })
   it('does not replace another source for an existing website or overwrite on invalid imports', async () => {
     const mod = await import('../../src/services/agent/websiteRepository')
-    await expect(mod.importWebsiteRepository(candidate('zjooc', 'zjooc.cn'))).rejects.toThrow('另一仓库')
+    await expect(mod.importWebsiteRepository(candidate('chaoxing', 'chaoxing.com'))).rejects.toThrow('另一仓库')
     expect(storage.download).not.toHaveBeenCalled()
     storage.download.mockResolvedValue({ ...snapshot('example', 'example.com'), icon: undefined })
     await expect(mod.importWebsiteRepository(candidate())).rejects.toThrow('图标无效')

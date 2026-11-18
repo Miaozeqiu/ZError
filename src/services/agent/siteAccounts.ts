@@ -1,6 +1,7 @@
+import { invoke } from '@tauri-apps/api/core'
 import { reactive } from 'vue'
-import { BUILTIN_WEBSITES, normalizeWebsiteHost, websiteAccountId, websiteLabel } from './websiteIdentity'
-import { readSecureDocument, writeSecureDocument, isSecretReference } from '../security/secureStore'
+import { BUILTIN_WEBSITES, normalizeWebsiteHost, websiteAccountId, websiteLabel, websiteDomains, websiteIdentityForHost, websitePrimaryHost } from './websiteIdentity'
+import { readSecureDocument, writeSecureDocument, isSecretReference, isNativeSecureStore } from '../security/secureStore'
 
 export type SiteAccountId = string
 /** account/password hold opaque references after secure persistence, never decrypted values. */
@@ -18,9 +19,10 @@ export const siteAccountsReady = readSecureDocument<Partial<Record<string, SiteA
   }
   siteAccountsState.rows = merged; siteAccountsState.ready = true
 }).catch(() => { siteAccountsState.saveError = '安全存储未解锁，账号暂不可用。' })
+let lastSave: Promise<void> = Promise.resolve()
 const save = () => {
   const version = ++revision
-  void siteAccountsReady.then(() => { if (!siteAccountsState.ready) throw new Error('安全存储尚未解锁'); return writeSecureDocument('site_accounts', JSON.parse(JSON.stringify(siteAccountsState.rows))) }).then(rows => {
+  lastSave = siteAccountsReady.then(() => { if (!siteAccountsState.ready) throw new Error('安全存储尚未解锁'); return writeSecureDocument('site_accounts', JSON.parse(JSON.stringify(siteAccountsState.rows))) }).then(rows => {
     if (revision === version) siteAccountsState.rows = rows
     siteAccountsState.saveError = ''
   }).catch(() => { siteAccountsState.saveError = '账号未能安全保存，请解锁系统凭据存储后重试。' })
@@ -42,7 +44,23 @@ export const rememberSiteAccount = (id: string, patch: Partial<Pick<SiteAccount,
   save(); return next
 }
 export const forgetSiteAccount = (id: string) => { if (!siteAccountsState.ready) changedDuringLoad.add(websiteAccountId(id)); delete siteAccountsState.rows[websiteAccountId(id)]; save() }
-export const platformFromUrl = (url: string) => normalizeWebsiteHost(url) ? websiteAccountId(url) : null
+export const removeWebsiteAccounts = async (host: string) => {
+  await siteAccountsReady
+  await lastSave
+  const siteId = websiteAccountId(host)
+  const rows = await readSecureDocument<Partial<Record<string, SiteAccount>>>('site_accounts') || {}
+  const identity = websiteIdentityForHost(host)
+  const ids = new Set([siteId, host, ...(identity ? websiteDomains(identity) : []),
+    ...Object.keys(rows).filter(id => websiteAccountId(id) === siteId)])
+  if (isNativeSecureStore()) {
+    await invoke('secure_remove_site_accounts', { ids: [...ids] })
+  } else {
+    for (const id of ids) delete rows[id]
+    await writeSecureDocument('site_accounts', rows)
+  }
+  for (const id of ids) delete siteAccountsState.rows[id]
+}
+export const platformFromUrl = (url: string) => websitePrimaryHost(url) ? websiteAccountId(url) : null
 // Credential recognition is performed by the model via protect_credentials.
 // Replaying old user text or observing typing must never resurrect deleted secrets.
 export const rememberAccountsFromUserText = (_text: string, _url = '') => undefined

@@ -3,12 +3,15 @@ import type { ImportTaskStep } from '../app/importTasks'
 
 /** Explicit current-user review requests, never inferred from an Agent summary. */
 export const isReadOnlyReviewGoal = (goal: string): boolean => {
-  if (!/只读/.test(goal) || !/核对|复核|查看|读取|检查|分析|观察/.test(goal)) return false
-  const action = '(?:播放|刷课|刷完|看完|播完|答题|作答|提交|保存|修改|填写|输入|点击|勾选|删除|进入|切换|打开|导航|上传|下载|登录)'
+  const quiz = /(?:章节|本节|本章|小节).{0,10}(?:测验|测试)/.test(goal)
+  if ((!/只读/.test(goal) && !quiz) || !/核对|复核|查看|读取|检查|分析|观察|看(?:一?下|看)|读题/.test(goal)) return false
+  const action = '(?:播放|刷课|刷完|看完|播完|答题|作答|提交|保存|修改|填写|补填|做题|做完|输入|点击|勾选|删除|进入|切换|打开|导航|上传|下载|登录)'
   const active = goal.replace(new RegExp('(?:不要|不必|无需|不用|禁止|不能|不|别)(?:再|去|做|进行)?' + action, 'g'), '')
     .replace(new RegExp('(?:已经|已)' + action, 'g'), '')
+    .replace(/(?:作答|答题|填写)(?:情况|状态|记录|结果|进度|详情)/g, '')
     .replace(/(?:已经|已)完成/g, '')
   return !new RegExp(action + '|完成(?:章节|课程|视频|作业|测验|任务|\\s*\\d)').test(active)
+    && !(quiz && /(?:^|[^未不])(?:完成|做|参加)(?:一下|下)?[^，。！？；]{0,14}(?:测验|测试)/.test(active))
 }
 
 // Read-only review completion is separate from course completion. There must be
@@ -23,11 +26,14 @@ export const reviewObservationId = (goal: string | undefined, steps: ImportTaskS
   // resulting viewport. Other read tools can inspect that observed document.
   let lastScroll = -1
   tools.forEach((step, index) => { if (step.name === 'browser_scroll') lastScroll = index })
-  const latest = tools.slice(lastScroll + 1).filter(step => ['browser_get_page', 'browser_screenshot', 'browser_review_chapter'].includes(step.name || '')).at(-1)
+  const chapter = studentChapterUrl(url)
+  const latest = tools.slice(lastScroll + 1).filter(step => ['browser_get_page', 'browser_screenshot', 'browser_review_chapter'].includes(step.name || '')
+    || (chapter && step.name === 'browser_review_homework')).at(-1)
   if (!latest) return
   try {
     const result = JSON.parse(latest.result || '{}')
-    if (latest.name === 'browser_review_chapter' && studentChapterUrl(url)?.key !== result.chapterKey) return
+    if (latest.name === 'browser_review_chapter' && chapter?.key !== result.chapterKey) return
+    if (latest.name === 'browser_review_homework' && (!chapter || chapter.key !== result.chapter_key || !result.quiz_job_id)) return
     if (result.ok === false || result.error || result.snapshotStale || result.empty
       || result.observation_id !== latest.id || result.observed_browser_id !== browserId
       || !Number.isFinite(result.observed_at) || now - result.observed_at > 120_000 || result.observed_at > now

@@ -17,6 +17,7 @@ export interface LocalQuestionMatch {
   question: string
   similarity: number
   status?: 'similar' | 'candidate' | 'used'
+  rejection_reason?: string
 }
 
 export interface RequestLog {

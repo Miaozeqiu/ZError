@@ -2,9 +2,7 @@
 export const DEFAULT_CONTEXT_WINDOW = 64 * 1024
 export const DEFAULT_MODEL_OUTPUT_TOKENS = 16 * 1024
 export const IMAGE_CONTEXT_TOKENS = 4096
-export const resolveModelOutputLimit = (model?: { maxTokens?: number; maxTokensOverride?: number }) => {
-  const override = model?.maxTokensOverride
-  if (typeof override === 'number' && Number.isSafeInteger(override) && override > 0) return override
+export const resolveModelOutputLimit = (model?: { maxTokens?: number }) => {
   const configured = Number(model?.maxTokens)
   return Number.isFinite(configured) && configured >= 1 ? Math.floor(configured) : DEFAULT_MODEL_OUTPUT_TOKENS
 }
@@ -26,7 +24,7 @@ export const estimateContextTokens = (value: unknown) => {
   }) || ''
   return estimateTextTokens(text) + images * IMAGE_CONTEXT_TOKENS
 }
-export const resolveContextBudget = (model?: { contextWindow?: number; maxTokens?: number; maxTokensOverride?: number; context_window?: unknown; contextLength?: unknown; context_length?: unknown }) => {
+export const resolveContextBudget = (model?: { contextWindow?: number; maxTokens?: number; context_window?: unknown; contextLength?: unknown; context_length?: unknown }) => {
   const configured = Number(model?.contextWindow ?? model?.context_window ?? model?.contextLength ?? model?.context_length)
   const contextWindow = Number.isFinite(configured) && configured >= 4096 ? Math.floor(configured) : DEFAULT_CONTEXT_WINDOW
   const outputReserve = Math.min(resolveModelOutputLimit(model), Math.floor(contextWindow / 2))

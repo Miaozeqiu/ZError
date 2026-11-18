@@ -1,31 +1,10 @@
 <template>
   <Transition name="dialog-fade" :duration="180" @after-leave="onDialogAfterLeave">
     <div v-if="show" key="model-config-dialog" class="dialog-overlay dialog-overlay--vue" @click="handleOverlayClick">
-      <div class="dialog-panel model-config-panel" :class="{ 'model-config-panel--compact': !showAdvancedCode }" @click.stop>
+      <div class="dialog-panel model-config-panel" :class="{ 'model-config-panel--compact': !showAdvancedCode }"
+        role="dialog" aria-modal="true" :aria-labelledby="`${formId}-title`" @click.stop>
       <div class="dialog-header">
-        <button class="btn-back" type="button" @click="$emit('close')" title="取消">
-          <svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" width="18" height="18">
-            <path d="M768 96c19.2-19.2 19.2-51.2 0-70.4-19.2-19.2-51.2-19.2-70.4 0l-448 448c-19.2 19.2-19.2 51.2 0 70.4l448 448c19.2 19.2 51.2 19.2 70.4 0 19.2-19.2 19.2-51.2 0-70.4L358.4 512l409.6-416z" fill="currentColor"/>
-          </svg>
-        </button>
-        <span class="dialog-title">{{ dialogTitle }}</span>
-        <div class="dialog-header-actions">
-          <button
-            type="button"
-            class="model-test-card"
-            :class="modelTestCardClass"
-            :disabled="isTestingModel || !canTestModel"
-            :title="modelTestTooltip"
-            @click="testModelAvailability"
-          >
-            <span v-if="isTestingModel" class="model-test-spinner" aria-hidden="true" />
-            <span class="model-test-title">{{ modelTestTitle }}</span>
-            <span v-if="modelTestMeta" class="model-test-meta">{{ modelTestMeta }}</span>
-          </button>
-          <button class="btn-confirm" type="button" :disabled="!isFormValid" @click="handlePrimaryAction">
-            完成
-          </button>
-        </div>
+        <h3 :id="`${formId}-title`" class="dialog-title">{{ dialogTitle }}</h3>
       </div>
       <div class="dialog-body">
         <div class="split-container" :class="{ 'split-container--compact': !showAdvancedCode }">
@@ -38,7 +17,7 @@
         </div>
 
           <!-- 右侧：基本信息与操作按钮 -->
-          <form class="form-panel" :class="{ 'form-panel--full': !showAdvancedCode }" @submit.prevent="handleSubmit">
+          <form :id="formId" class="form-panel" :class="{ 'form-panel--full': !showAdvancedCode }" novalidate @submit.prevent="handleSubmit">
             <div ref="modelDropdownAnchorRef" class="form-group qa-model-id-group">
               <label class="form-label">模型 ID</label>
               <div
@@ -114,13 +93,6 @@
                 :readonly="isRemote"
                 :disabled="isRemote"
               >
-            </div>
-
-            <div class="form-group">
-              <label class="form-label" for="model-max-output-tokens">最大输出长度</label>
-              <input id="model-max-output-tokens" v-model.number="formData.maxTokensOverride" type="number"
-                class="form-input" min="1" step="1" :placeholder="String(defaultOutputTokens)">
-              <p class="form-hint">单位为 token，留空使用默认值。部分模型的思考会占用这项额度，实际请求还受上下文窗口和服务端限制。</p>
             </div>
 
             <div class="form-group">
@@ -256,22 +228,41 @@
           </form>
         </div>
       </div>
+      <div class="model-config-footer">
+        <button
+          type="button"
+          class="account-dialog-cancel model-test-card"
+          :class="modelTestCardClass"
+          :disabled="isTestingModel || !canTestModel"
+          :title="modelTestTooltip"
+          @click="testModelAvailability"
+        >
+          <span v-if="isTestingModel" class="model-test-spinner" aria-hidden="true" />
+          <span class="model-test-title">{{ modelTestTitle }}</span>
+          <span v-if="modelTestMeta" class="model-test-meta">{{ modelTestMeta }}</span>
+        </button>
+        <div class="account-dialog-footer">
+          <button class="account-dialog-cancel" type="button" @click="$emit('close')">取消</button>
+          <button class="btn-confirm" type="submit" :form="formId" :disabled="!isFormValid">
+            {{ isEditing ? '保存' : '添加' }}
+          </button>
+        </div>
+      </div>
     </div>
     </div>
   </Transition>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { useId } from 'vue'
 import { useModelConfigDialog, Props, Emits } from './useModelConfigDialog'
-import { resolveModelOutputLimit } from '../../../services/model/contextBudget'
 
 const props = defineProps<Props>()
 const emit = defineEmits<Emits>()
-const defaultOutputTokens = computed(() => resolveModelOutputLimit({ maxTokens: props.model?.maxTokens }))
+const formId = useId()
 
 const {
-  thinkingEffortOptions, effortMatrixRaf, effortMatrixStop, effortMatrixIo, effortMatrixRo, stopEffortMatrixFx, startEffortMatrixFx, bindEffortMatrix, modelDropdownAnchorRef, modelIdInputRef, modelDropdownRef, modelDropdownStyle, isFetchingModels, showModelDropdown, fetchedModelList, formData, isEditing, isRemote, effortMaxIndex, EFFORT_THUMB_PX, effortBarRef, effortSlide, isDraggingEffort, effortIndex, isMaxEffort, effortThumbOffset, effortFillWidth, effortStopLeft, effortThumbLeft, snapEffortValue, applyEffortMagnet, slideEffortFromClientX, suppressEffortSelectStart, lockEffortTextSelect, onEffortPointerDown, onEffortPointerMove, onEffortPointerUp, onEffortKeydown, dialogTitle, requiresModelId, isChatProtocol, isResponsesProtocol, isMessagesProtocol, isFormValid, filteredFetchedModels, groupedFetchedModels, updateModelDropdownPosition, modelDropdownBlurTimer, clearModelDropdownBlurTimer, openModelDropdown, closeModelDropdown, normalizeBaseUrl, modelsCacheByBaseUrl, fetchModelsGeneration, tauriFetchPromise, getTauriFetch, applyFetchedModels, restoreModelsFromCache, handleModelIdFocus, toggleModelDropdown, handleModelIdBlur, handleModelIdInput, handleModelDropdownOutsideClick, handleModelDropdownViewportChange, parseModelsResponse, fetchModels, selectFetchedModel, DEFAULT_JS_CODE, DEFAULT_VISION_JS_CODE, thinkingPresetOptions, buildCurrentPresetJsCode, syncPresetJsCode, EFFORT_VALUES, normalizeEffort, normalizeOffResponsesEffort, createDialogFormData, readEnableThinkingFromJsCode, applyEnableThinkingToJsCode, deriveEnableThinking, showAdvancedCode, applyModelIdToJsCode, onDialogAfterLeave, cmContainerRef, cmView, themeObserver, rebuildEditorWithDoc, jsSyntaxLinter, initCodeMirror, setEditorDoc, handleOverlayClick, handlePrimaryAction, handleSubmit, isTestingModel, modelTestStatus, modelTestMessage, modelTestElapsedMs, modelTestAbort, canTestModel, modelTestCardClass, modelTestTitle, modelTestTooltip, modelTestMeta, resetModelTestState, isAbortError, collectProcessModelOutput, testModelAvailability
+  thinkingEffortOptions, effortMatrixRaf, effortMatrixStop, effortMatrixIo, effortMatrixRo, stopEffortMatrixFx, startEffortMatrixFx, bindEffortMatrix, modelDropdownAnchorRef, modelIdInputRef, modelDropdownRef, modelDropdownStyle, isFetchingModels, showModelDropdown, fetchedModelList, formData, isEditing, isRemote, effortMaxIndex, EFFORT_THUMB_PX, effortBarRef, effortSlide, isDraggingEffort, effortIndex, isMaxEffort, effortThumbOffset, effortFillWidth, effortStopLeft, effortThumbLeft, snapEffortValue, applyEffortMagnet, slideEffortFromClientX, suppressEffortSelectStart, lockEffortTextSelect, onEffortPointerDown, onEffortPointerMove, onEffortPointerUp, onEffortKeydown, dialogTitle, requiresModelId, isChatProtocol, isResponsesProtocol, isMessagesProtocol, isFormValid, filteredFetchedModels, groupedFetchedModels, updateModelDropdownPosition, modelDropdownBlurTimer, clearModelDropdownBlurTimer, openModelDropdown, closeModelDropdown, normalizeBaseUrl, modelsCacheByBaseUrl, fetchModelsGeneration, tauriFetchPromise, getTauriFetch, applyFetchedModels, restoreModelsFromCache, handleModelIdFocus, toggleModelDropdown, handleModelIdBlur, handleModelIdInput, handleModelDropdownOutsideClick, handleModelDropdownViewportChange, parseModelsResponse, fetchModels, selectFetchedModel, DEFAULT_JS_CODE, DEFAULT_VISION_JS_CODE, thinkingPresetOptions, buildCurrentPresetJsCode, syncPresetJsCode, EFFORT_VALUES, normalizeEffort, normalizeOffResponsesEffort, createDialogFormData, readEnableThinkingFromJsCode, applyEnableThinkingToJsCode, deriveEnableThinking, showAdvancedCode, applyModelIdToJsCode, onDialogAfterLeave, cmContainerRef, cmView, themeObserver, rebuildEditorWithDoc, jsSyntaxLinter, initCodeMirror, setEditorDoc, handleOverlayClick, handleSubmit, isTestingModel, modelTestStatus, modelTestMessage, modelTestElapsedMs, modelTestAbort, canTestModel, modelTestCardClass, modelTestTitle, modelTestTooltip, modelTestMeta, resetModelTestState, isAbortError, collectProcessModelOutput, testModelAvailability
 } = useModelConfigDialog(props, emit)
 
 </script>
@@ -337,7 +328,7 @@ const {
 }
 
 .model-config-panel > .dialog-body {
-  padding: 24px;
+  padding: 24px 24px 12px;
   flex: 1;
   min-height: 0;
   display: flex;
@@ -398,7 +389,8 @@ const {
 
 /* 编辑器收起时，表单占满可用宽度并居中，避免左侧留大块空白 */
 .form-panel--full {
-  flex: 0 0 520px;        /* 用具体 flex-basis 以便过渡动画 */
+  flex: 0 1 520px;        /* 用具体 flex-basis 以便过渡动画 */
+  min-width: 0;
   max-width: 520px;
   margin: 0 auto;
   align-self: stretch;
@@ -1056,112 +1048,27 @@ const {
 }
 
 .model-config-panel > .dialog-header {
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  align-items: center;
-  gap: 8px;
-}
-
-.model-config-panel > .dialog-header .btn-back {
-  justify-self: start;
-  box-sizing: border-box;
-  width: 32px;
-  height: 32px;
-  padding: 0;
-  border: 1px solid var(--platform-config-toggle-button-border, #e2e8f0);
-  border-radius: 50%;
-  background: var(--form-input-bg, #F7F7F7);
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
-  color: #979797;
-  transition:
-    color 180ms cubic-bezier(0.2, 0.7, 0.2, 1),
-    background-color 180ms cubic-bezier(0.2, 0.7, 0.2, 1),
-    border-color 180ms cubic-bezier(0.2, 0.7, 0.2, 1),
-    box-shadow 180ms cubic-bezier(0.2, 0.7, 0.2, 1);
-}
-
-.model-config-panel > .dialog-header .btn-back:hover {
-  color: var(--platform-config-dialog-title-text, #2d3748);
-  background: var(--form-input-bg, #F7F7F7);
-  border-color: var(--platform-config-toggle-button-hover-border, #cbd5e0);
-  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.1);
-}
-
-.model-config-panel > .dialog-header .btn-back svg {
-  width: 14px;
-  height: 14px;
-}
-
-.model-config-panel > .dialog-header .dialog-title {
-  justify-self: center;
-  font-weight: 400;
-}
-
-.dialog-header-actions {
-  justify-self: end;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-}
-
-.dialog-header-actions .btn-confirm,
-.model-test-card {
-  box-sizing: border-box;
-  height: 32px;
-  padding: 0 14px;
-  font-size: 14px;
-  font-weight: 500;
-  line-height: 1;
-  border-radius: 999px;
-  display: inline-flex;
-  align-items: center;
   justify-content: center;
 }
 
-.dialog-header-actions .btn-confirm {
-  border: 1px solid color-mix(in srgb, #000 14%, #F8B62B);
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
-  transition:
-    opacity 0.15s ease,
-    border-color 180ms cubic-bezier(0.2, 0.7, 0.2, 1),
-    box-shadow 180ms cubic-bezier(0.2, 0.7, 0.2, 1);
+.model-config-footer {
+  display: flex;
+  flex-wrap: wrap;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  padding: 0 24px 18px;
 }
 
-.dialog-header-actions .btn-confirm:hover:not(:disabled) {
-  opacity: 1;
-  border-color: color-mix(in srgb, #000 22%, #F8B62B);
-  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.12);
+.model-config-footer .account-dialog-footer {
+  margin-inline-start: auto;
+  padding-top: 0;
 }
 
 .model-test-card {
-  appearance: none;
-  -webkit-appearance: none;
-  border: 1px solid var(--platform-config-toggle-button-border, #e2e8f0);
-  background: var(--form-input-bg, #F7F7F7);
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
-  color: var(--text-primary, #2d3748);
-  font: inherit;
-  font-size: 14px;
-  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
   gap: 6px;
-  cursor: pointer;
-  transition:
-    background-color 180ms cubic-bezier(0.2, 0.7, 0.2, 1),
-    border-color 180ms cubic-bezier(0.2, 0.7, 0.2, 1),
-    box-shadow 180ms cubic-bezier(0.2, 0.7, 0.2, 1),
-    color 180ms cubic-bezier(0.2, 0.7, 0.2, 1),
-    transform 120ms cubic-bezier(0.2, 0.7, 0.2, 1);
-}
-
-.model-test-card:hover:not(:disabled) {
-  border-color: var(--platform-config-toggle-button-hover-border, #cbd5e0);
-  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.1);
-}
-
-.model-test-card:active:not(:disabled) {
-  transform: scale(0.97);
-  box-shadow: 0 1px 1px rgba(15, 23, 42, 0.05);
 }
 
 .model-test-card:disabled {
@@ -1240,10 +1147,6 @@ const {
 
   .model-test-card {
     transition: none;
-  }
-
-  .model-test-card:active:not(:disabled) {
-    transform: none;
   }
 
   .model-test-spinner {

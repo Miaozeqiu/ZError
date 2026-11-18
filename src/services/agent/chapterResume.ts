@@ -1,3 +1,4 @@
+import { takeToolImages } from '../model/toolImages'
 import { studentChapterUrl } from '../chaoxing/host/chapterTasks'
 import type { RunTextModelOptions } from '../model/runner'
 import { validateToolCall } from './core/tools'
@@ -42,26 +43,32 @@ export function chapterResumePlan(input: {
   return { chapterKey: chapter.key, mid, operationIds: verified.length === unresolved.length ? verified.map(op => op.id) : null }
 }
 
-export async function runChapterResume(
-  plan: NonNullable<ReturnType<typeof chapterResumePlan>>,
+export function createHostToolRunner(
   options: Pick<RunTextModelOptions, 'tools' | 'executeTool' | 'onEvent' | 'onTurnTranscript'>,
   turnId: string,
 ) {
-  if (!options.executeTool) return ''
   let sequence = 0
-  const run = async (name: string, args: Record<string, unknown>) => {
+  return async (name: string, args: Record<string, unknown>) => {
     const call = { id: `${turnId}-host-${++sequence}`, name, arguments: JSON.stringify(args) }
     const invalid = validateToolCall(options.tools || [], call)
     if (invalid) return { ok: false, error: invalid }
+    if (!options.executeTool) return { ok: false, error: '当前没有可执行的工具。' }
     options.onEvent?.({ type: 'tool_start', ...call })
-    const result = await options.executeTool!(call)
-    options.onEvent?.({ type: 'tool_end', id: call.id, name, result })
+    const result = await options.executeTool(call)
+    const { text } = takeToolImages(result)
+    options.onEvent?.({ type: 'tool_end', id: call.id, name, result: text })
     options.onTurnTranscript?.([
       { role: 'assistant', content: '', tool_calls: [{ id: call.id, type: 'function', function: { name, arguments: call.arguments } }] },
-      { role: 'tool', tool_call_id: call.id, name, content: result },
+      { role: 'tool', tool_call_id: call.id, name, content: text },
     ])
     return object(result)
   }
+}
+
+export async function runChapterResume(
+  plan: NonNullable<ReturnType<typeof chapterResumePlan>>,
+  run: ReturnType<typeof createHostToolRunner>,
+) {
   const args = { chapter_key: plan.chapterKey, video_mid: plan.mid }
   const observed = await run('browser_review_chapter', args)
   if (observed.ok !== true || observed.chapterKey !== plan.chapterKey || observed.videoMid !== plan.mid) {

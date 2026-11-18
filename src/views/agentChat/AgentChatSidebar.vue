@@ -121,6 +121,8 @@ onMounted(() => bind())
 }
 
 .chat-list {
+  -webkit-user-select: none;
+  user-select: none;
   position: absolute;
   inset: 0;
   overflow: auto;

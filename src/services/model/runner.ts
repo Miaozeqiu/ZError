@@ -305,7 +305,7 @@ export async function runTextModel(
   // Project old tool payloads while they still have tool roles. Background
   // replay must not turn them into unbounded, apparently user-authored text.
   const projectedHistory = options?.compactBrowserContext
-    ? compactAgentRequestMessages(options?.history || [], new Set(), resolveContextBudget(model).target)
+    ? compactAgentRequestMessages(options?.history || [], new Set(), resolveContextBudget(model).target, true)
     : options?.history || []
   const priorHistory = model.enableThinking || model.apiProtocol === 'anthropic' || platform.apiProtocol === 'anthropic'
     ? replayAsBackground(projectedHistory) : projectedHistory
@@ -379,7 +379,6 @@ export async function runTextModel(
     model: runtimeModelId,
     modelId: runtimeModelId,
     maxTokens: resolveModelOutputLimit(model),
-    maxTokensOverride: undefined,
   }
   if (options?.outputTokenLimit) config.maxTokens = Math.min(Number(config.maxTokens) || options.outputTokenLimit, options.outputTokenLimit)
   const contextBudget = resolveContextBudget(config)

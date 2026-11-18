@@ -1,22 +1,28 @@
 ---
 name: site-learn
-description: 当前网址没有现成步骤时：看快照摸路，走通后把经验写进 sites/<主网站域名>/SKILL.md，并用网站地图记下这一页。
+description: 查找和保存网站的导航经验与直达网址。站点流程归入 sites/<主网站域名>/SKILL.md。
 compatibility: Requires ZError browser tools, read_agent_skill_file and write_agent_skill_file.
 metadata:
-  display-name: 认识新站点
+  display-name: 网站经验
 ---
 
-# 认识新站点
+# 网站经验
 
-当前网址没有对应站点步骤、图谱对不上，或任务中换方法后验证成功时用。先看快照把事做成，再把做成的步骤写成经验。不要写解析器、see.json、schema.json、locators.json。
+查找和保存网站经验时用，包括复用已知页面的直达网址、给新网站摸路，以及验证后更新旧流程。不要写解析器、see.json、schema.json、locators.json。
 
 ## 先读哪份
 
-本站步骤按主网站归档到 `site-learn` 的 `sites/<主网站域名>/SKILL.md`。例如 zjooc.cn 对应 `sites/zjooc.cn/SKILL.md`。关联登录域名属于同一网站，统一使用主网站的账号配置、操作经验和导航图谱，不另建网站；以工具返回的归档路径和收尾检查提示为准。未确认的跨域跳转不能自行认定为同一网站。
+本站步骤按主网站归档到 `site-learn` 的 `sites/<主网站域名>/SKILL.md`。例如 zjooc.cn 对应 `sites/zjooc.cn/SKILL.md`。同一网站的多个域名共用账号配置、操作经验和导航图谱。按工具返回的路径归档。未确认的跨域跳转不能自行认定为同一网站。
 
-自建网站图标：从当前网页的 `link[rel~="icon"]`、`apple-touch-icon` 或真实品牌 logo 读取图片地址，用 `new URL(href, document.baseURI).href` 转为完整地址，再调用 `set_website_icon(icon_url=完整地址)` 保存。登录域名共用主网站图标。在线网站使用仓库提供的图标。
+自建网站图标：从当前网页的 `link[rel~="icon"]`、`apple-touch-icon` 或真实品牌 logo 读取图片地址，用 `new URL(href, document.baseURI).href` 转为完整地址，再调用 `set_website_icon(icon_url=完整地址)` 保存。同一网站的各个域名共用图标。在线网站使用仓库提供的图标。
 
 写法见 [references/workflow.md](references/workflow.md)。
+
+## 快捷入口
+
+- 已知网站且用户点名页面或资源时，在该站本地经验中查「快捷入口」。站点、所属范围和目标唯一匹配后才直达。进入后核对页面内容和当前身份；链接失效或落点不符时，从该站已验证的菜单、目录或列表重新定位。
+- 核对后按「所属范围｜目标类型｜目标名称｜网址」记录可复用的站内顶层 HTTPS 地址。同一目标更新原条目。保留定位所需的稳定业务 ID，跳过会话令牌、一次性签名、登录回调、iframe 和会触发操作的地址。
+- 实际网址只写本站的本地经验。按站点文件返回的编辑范围保存；共享经验、参考文件和图谱只记录通用流程。
 
 ## 默认顺序
 

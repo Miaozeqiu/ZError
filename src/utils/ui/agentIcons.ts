@@ -5,6 +5,7 @@ import lucide from '@iconify-json/lucide/icons.json'
 
 const NEEDED = [
   'globe',
+  'puzzle',
   'github',
   'settings-2',
   'square-pen',
@@ -38,6 +39,7 @@ const NEEDED = [
   'camera',
   'list-checks',
   'workflow',
+  'network',
   'share-2',
   'clock',
   'check',

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { secureStorageState, cleanupLegacySecrets, redactNative, authorizeSecureStorage } from './services/security/secureStore';
 import { sessions as agentSessions, chatStoreReady, persistSoon } from './services/agent/chatStore';
+import { startInstalledWebsiteSync } from './services/agent/websiteRepository';
 import { siteAccountsReady } from './services/agent/siteAccounts';
 import { modelConfigManager } from './services/model/config';
 import { settingsManager } from './services/app/settings';
@@ -38,11 +39,14 @@ const reloadSecureStore = async () => {
 }
 
 const openLoginDialog = () => {
+  agentBrowserExpanded.value = false
   loginDialogVisible.value = true
 }
 
-const closeLoginDialog = () => {
+const closeLoginDialog = (success = false) => {
+  if (!loginDialogVisible.value) return
   loginDialogVisible.value = false
+  window.dispatchEvent(new CustomEvent('login-dialog-finished', { detail: success }))
 }
 
 const {
@@ -431,8 +435,11 @@ onMounted(async () => {
   window.addEventListener('blur', hideInputContextMenu)
 });
 
+let stopWebsiteSync: (() => void) | undefined
+
 // 应用初始化
 onMounted(async () => {
+  stopWebsiteSync = startInstalledWebsiteSync()
   try {
     console.log('开始应用初始化...');
     await initGlobalTheme();
@@ -449,6 +456,7 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+  stopWebsiteSync?.()
   window.removeEventListener('navigate-tab', handleNavigateTab as EventListener)
   window.removeEventListener('open-login', openLoginDialog)
   document.removeEventListener('contextmenu', handleGlobalContextMenu, true)
@@ -513,7 +521,7 @@ onUnmounted(() => {
     <LoginDialog
       :visible="loginDialogVisible"
       @close="closeLoginDialog"
-      @success="closeLoginDialog"
+      @success="closeLoginDialog(true)"
     />
 
     <!-- 版本更新对话框 -->

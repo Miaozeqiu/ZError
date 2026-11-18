@@ -1,9 +1,11 @@
 import { isImageAttachment } from './folderTokens'
 import { messageHistoryText } from './modelHistory'
-import { buildAgentSystemPrompt } from './prompts'
+import { browserWorkflowInstructions, buildAgentSystemPrompt } from './prompts'
 import { getEnabledSkillCatalog } from './agentSkills'
 import { getActiveAgentProfile } from './agentProfiles'
-import { assembleAgentTools } from './tools'
+import { modelAgentTools } from './toolDiscovery'
+import { useSettings } from '../app/settings'
+import { assembleAgentTools, availableAgentTools } from './tools'
 import { peekAppBrowserUrl } from '../browser/appBrowser'
 import { buildModelHistory } from './modelHistory'
 import { compactAgentRequestMessages } from '../model/agentRequestContext'
@@ -59,19 +61,20 @@ export const estimateAgentContext = (
   pendingImages = 0,
 ): AgentContextUsage => {
   const budget = resolveContextBudget(modelConfigManager.getSelectedAgentModel?.() || modelConfigManager.getSelectedTextModel?.())
-  const systemTokens = estimateTextTokens(buildAgentSystemPrompt({ catalog: getEnabledSkillCatalog() }) + (getActiveAgentProfile()?.systemOverlay || ''))
-  const tools = assembleAgentTools(peekAppBrowserUrl(session?.browserId || ''))
+  const systemTokens = estimateTextTokens(buildAgentSystemPrompt({ catalog: getEnabledSkillCatalog() }) + (session?.browserId ? browserWorkflowInstructions : '') + (getActiveAgentProfile()?.systemOverlay || ''))
+  const available = availableAgentTools(assembleAgentTools(peekAppBrowserUrl(session?.browserId || '')), useSettings().settings.search)
+  const tools = modelAgentTools(available, session)
   const toolSignature = JSON.stringify(tools)
   if (toolSignature !== cachedToolSignature) {
     cachedToolSignature = toolSignature
-    cachedToolTokens = estimateTextTokens(JSON.stringify(tools))
+    cachedToolTokens = estimateTextTokens(toolSignature)
   }
   const toolTokens = cachedToolTokens
   const { summary, kept, compactedCount } = splitCompactedHistory(session)
   const summaryTokens = summary ? estimateTextTokens(contextSummaryPrompt(summary)) : 0
   // 使用实际回放结构估算，不能拿每条工具仅 1200 字符的展示摘要代替。
   const replay = buildModelHistory(kept)
-  const history = estimateContextTokens(compactAgentRequestMessages(replay, new Set(), budget.target))
+  const history = estimateContextTokens(compactAgentRequestMessages(replay, new Set(), budget.target, true))
   const study = session?.studySubjectId ? estimateTextTokens(STUDY_PREFIX_SAMPLE) : 0
   const draft = estimateTextTokens(draftText)
   const imageCount = kept.reduce((sum, item) => (

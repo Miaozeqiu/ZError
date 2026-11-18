@@ -6,12 +6,12 @@
     @after-enter="finishPaneEnter"
     @enter-cancelled="finishPaneEnter"
   >
-  <aside v-show="active && !obscured" class="agent-browser-pane" :class="{ 'is-expanded': agentBrowserExpanded, 'is-macos': isMacOS }" :style="browserFrameStyle" aria-label="浏览器工作区">
+  <aside v-show="visible" class="agent-browser-pane" :class="{ 'is-expanded': agentBrowserExpanded, 'is-macos': isMacOS }" :style="browserFrameStyle" aria-label="浏览器工作区">
     <div class="browser-pane-inner">
     <header class="browser-pane-head" :data-tauri-drag-region="agentBrowserExpanded ? '' : undefined">
       <span class="browser-pane-title"><Icon icon="lucide:monitor" width="15" height="15" /><span>{{ agentBrowserExpanded ? currentAgentBrowser?.title || '浏览器' : '浏览器' }}</span></span>
       <button v-if="agentBrowserExpanded" class="browser-icon-button browser-chrome-toggle" type="button" title="显示或隐藏浏览器工具栏" aria-label="浏览器工具栏" :aria-expanded="showBrowserChrome" @click="showBrowserChrome = !showBrowserChrome"><Icon icon="lucide:globe" width="15" height="15" /></button>
-      <button v-if="agentBrowserExpanded && supportsAudioMute" class="browser-icon-button" type="button" :title="muted ? '开启声音' : '关闭声音'" :aria-label="muted ? '开启声音' : '关闭声音'" :aria-pressed="muted" :disabled="!currentAgentBrowser || audioBusy" @click="toggleAudio"><Icon :icon="muted ? 'lucide:volume-x' : 'lucide:volume-2'" width="15" height="15" /></button>
+      <button v-if="agentBrowserExpanded && usesCef" class="browser-icon-button" type="button" :title="muted ? '开启声音' : '关闭声音'" :aria-label="muted ? '开启声音' : '关闭声音'" :aria-pressed="muted" :disabled="!currentAgentBrowser || audioBusy" @click="toggleAudio"><Icon :icon="muted ? 'lucide:volume-x' : 'lucide:volume-2'" width="15" height="15" /></button>
       <button ref="toggleRef" class="browser-icon-button" type="button" :title="agentBrowserExpanded ? '收起浏览器' : '放大浏览器'" :aria-label="agentBrowserExpanded ? '收起浏览器' : '放大浏览器'" :aria-expanded="agentBrowserExpanded" aria-controls="agent-browser-screen" @click="toggleBrowser">
         <Icon :icon="agentBrowserExpanded ? 'lucide:minimize-2' : 'lucide:maximize-2'" width="15" height="15" />
       </button>
@@ -19,17 +19,17 @@
 
     <button v-if="!agentBrowserExpanded" class="browser-preview" type="button" aria-label="放大浏览器" @click="expandBrowser">
       <span ref="previewHostRef" class="browser-preview-screen">
-        <span v-if="!currentAgentBrowser" class="browser-preview-placeholder">
-          <Icon :icon="currentAgentBrowser ? 'lucide:globe' : 'lucide:monitor'" width="28" height="28" />
-          <span>{{ currentAgentBrowser ? '点击查看网页' : '浏览器待命' }}</span>
+        <span v-if="busy || paneEntering || !currentAgentBrowser" class="browser-preview-placeholder">
+          <Icon icon="lucide:monitor" width="28" height="28" />
+          <span>{{ error ? '浏览器未能打开' : '正在打开浏览器…' }}</span>
         </span>
         <span class="browser-preview-expand"><Icon icon="lucide:maximize-2" width="15" height="15" /></span>
       </span>
       <span class="browser-preview-caption" :title="currentAgentBrowser?.title || currentAgentBrowser?.url">
         <span class="browser-status-dot" :class="{ 'is-working': working }" />
-        <span>{{ currentAgentBrowser?.title || (currentAgentBrowser ? hostnameOf(currentAgentBrowser.url) : '点击打开浏览器') }}</span>
+        <span>{{ currentAgentBrowser?.title || (currentAgentBrowser ? hostnameOf(currentAgentBrowser.url) : '浏览器') }}</span>
       </span>
-      <span class="browser-preview-hint">{{ userInControl ? '你正在操作 · 当前对话已停止' : working ? 'Agent 正在操作网页' : '点击放大，可随时收起' }}</span>
+      <span v-if="userInControl || working" class="browser-preview-hint">{{ userInControl ? '你正在操作 · 当前对话已停止' : 'Agent 正在操作网页' }}</span>
     </button>
 
     <AgentTaskHistory v-if="!agentBrowserExpanded" />
@@ -40,13 +40,15 @@
           <button type="button" role="tab" :disabled="!canInteract" :aria-selected="tab.id === currentAgentBrowser?.id" :title="tab.title || tab.url" @click="selectTab(tab.id)">{{ tab.title || hostnameOf(tab.url) }}</button>
           <button class="browser-tab-close" type="button" :disabled="!canInteract || !!closingTabId" :aria-label="`关闭 ${tab.title || '标签页'}`" @click="closeTab(tab.id)"><Icon icon="lucide:x" width="12" height="12" /></button>
         </div>
-        <button class="browser-icon-button" type="button" title="新建标签页" aria-label="新建标签页" :disabled="!canInteract || currentAgentBrowsers.length >= 16" @click="newTab"><Icon icon="lucide:plus" width="15" height="15" /></button>
+        <button class="browser-icon-button" type="button" title="新建标签页" aria-label="新建标签页" :disabled="!canInteract || currentAgentBrowsers.length >= 16" @click="newTab()"><Icon icon="lucide:plus" width="15" height="15" /></button>
       </div>
       <form v-show="showBrowserChrome" class="browser-toolbar" :inert="!canInteract" :aria-disabled="!canInteract" @submit.prevent="navigate">
         <button class="browser-icon-button" type="button" title="后退" aria-label="后退" :disabled="!canInteract || !currentAgentBrowser || busy" @click="runNavigation('back')"><Icon icon="lucide:chevron-left" width="15" height="15" /></button>
         <button class="browser-icon-button" type="button" title="前进" aria-label="前进" :disabled="!canInteract || !currentAgentBrowser || busy" @click="runNavigation('forward')"><Icon icon="lucide:chevron-right" width="15" height="15" /></button>
         <button class="browser-icon-button" type="button" title="刷新" aria-label="刷新" :disabled="!canInteract || !currentAgentBrowser || busy" @click="runNavigation('reload')"><Icon icon="lucide:refresh-cw" width="14" height="14" /></button>
         <input v-model="address" class="browser-address" aria-label="网址" :disabled="!canInteract" placeholder="输入网址，按回车打开" spellcheck="false" autocomplete="off" @focus="focusAddress" @blur="blurAddress" @keydown.esc="blurAddress" />
+        <button v-if="usesCef && onScriptCatPage" class="browser-zoom" type="button" :disabled="!canInteract" @click="openScriptCatPermissions">脚本权限</button>
+        <button v-if="supportsScriptCat" class="browser-icon-button" type="button" title="脚本猫管理" aria-label="脚本猫管理" :disabled="!canInteract || currentAgentBrowsers.length >= 16" @click="newTab('zerror://scriptcat', '脚本猫')"><Icon icon="lucide:puzzle" width="15" height="15" /></button>
         <button class="browser-zoom" type="button" :disabled="!canInteract" :title="`当前缩放 ${zoomPercent}%，点击切换`" @click="cycleZoom">{{ zoomPercent }}%</button>
       </form>
       <div v-if="loading" class="browser-loading" role="progressbar" aria-label="网页加载中" />
@@ -75,13 +77,14 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { Icon } from '@iconify/vue/offline'
+import { invoke } from '@tauri-apps/api/core'
 import '../../utils/ui/agentIcons'
 import BrowserAgentWatchBar from '../../components/browser/BrowserAgentWatchBar.vue'
 import AgentTaskHistory from './AgentTaskHistory.vue'
 import { activeChat, activeChatId, ensureNewChatDraft, patchSession } from '../../services/agent/chatStore'
 import {
   agentBrowserExpanded, agentBrowserHasTasks, bindChatBrowser, browserIdsForChat, closeAgentBrowser, createChatBrowserTab,
-  currentAgentBrowser, currentAgentBrowserOpen, currentAgentBrowsers, ensureAgentBrowser,
+  currentAgentBrowser, currentAgentBrowsers, ensureAgentBrowser,
   refreshAgentBrowsers, startAgentBrowserWorkspace, suspendAgentBrowsers,
 } from '../../services/agent/agentBrowser'
 import {
@@ -97,8 +100,7 @@ const props = withDefaults(defineProps<{
   active?: boolean
   obscured?: boolean
   dismissed?: boolean
-  previewRequest?: number
-}>(), { active: true, obscured: false, dismissed: false, previewRequest: 0 })
+}>(), { active: true, obscured: false, dismissed: false })
 const isMacOS = /mac/i.test(navigator.platform || navigator.userAgent)
 const browserInsets = { paddingRatio: 0.07, paddingMin: 16, paddingMax: 144, compactBreakpoint: 760, compactPadding: 12 }
 // Mirrors the collapsed pane's CSS widths and horizontal padding at each breakpoint.
@@ -116,7 +118,18 @@ const address = ref('')
 const addressFocused = ref(false)
 const error = ref('')
 const busy = ref(false)
-const supportsAudioMute = ref(false)
+const usesCef = ref(false)
+const supportsScriptCat = computed(() => usesCef.value || (isTauriEnvironment() && /windows/i.test(navigator.userAgent)))
+const onScriptCatPage = computed(() => {
+  const url = currentAgentBrowser.value?.url || ''
+  return url === 'zerror://scriptcat' || url.startsWith('chrome-extension://biodkpbccbdobbjiandalbldblopjkhe/')
+})
+const openScriptCatPermissions = async () => {
+  try {
+    requireUserControl()
+    await invoke('browser_scriptcat_permissions', { id: currentAgentBrowser.value?.id })
+  } catch (value) { showError(value) }
+}
 const audioBusy = ref(false)
 const loading = ref(false)
 const showBrowserChrome = ref(false)
@@ -129,8 +142,7 @@ const controlTarget = ref<{ sessionId: string; owner: 'agent' | 'user' } | null>
 const displayedUserControl = computed(() => controlTarget.value?.sessionId === activeChatId.value
   ? controlTarget.value.owner === 'user' : userInControl.value)
 const paneEntering = ref(false)
-const visible = computed(() => props.active && !props.obscured && !paneEntering.value
-  && (agentBrowserExpanded.value || currentAgentBrowserOpen.value))
+const visible = computed(() => props.active && !props.obscured)
 const muted = computed(() => browserAudioMuted.value[currentAgentBrowser.value?.id || ''] ?? true)
 const zoomPercent = computed(() => Math.round((currentAgentBrowser.value?.zoom || 1) * 100))
 const working = computed(() => Boolean(activeChat.value?.messages.some(message => message.status === 'streaming'
@@ -177,11 +189,11 @@ const changeControl = async () => {
 const selectTab = async (id: string) => {
   try { requireUserControl(); bindChatBrowser(requireSession(), id) } catch (value) { showError(value) }
 }
-const newTab = async () => {
+const newTab = async (url = browserHomeUrl(), title = '导航') => {
   if (currentAgentBrowsers.value.length >= 16) return
   try {
     requireUserControl()
-    createChatBrowserTab(requireSession(), { url: browserHomeUrl(), title: '导航' })
+    createChatBrowserTab(requireSession(), { url, title })
   } catch (value) { showError(value) }
 }
 const closeTab = async (id: string) => {
@@ -257,8 +269,8 @@ const collapseBrowser = () => {
 const toggleBrowser = () => { if (agentBrowserExpanded.value) collapseBrowser(); else void expandBrowser() }
 const retry = () => { error.value = ''; void syncView() }
 
-// Measure both presentations after layout. Keep the native page visible while
-// moving it between the preview and the expanded host.
+// Start the browser when the pane opens. Wait for the entrance to settle before
+// placing its native view, then reuse it when expanding or collapsing.
 const syncView = () => {
   syncAgain = true
   if (syncFlight) return syncFlight
@@ -288,6 +300,7 @@ const syncView = () => {
         const id = currentId && shownId === currentId ? currentId : await ensureAgentBrowser(sessionId)
         if (initializing) await nextTick()
         if (disposed || !visible.value || activeChatId.value !== sessionId || currentAgentBrowser.value?.id !== id || agentBrowserExpanded.value !== expanded) { syncAgain = true; continue }
+        if (paneEntering.value) continue
         const bounds = hostBounds(expanded ? hostRef.value : previewHostRef.value)
         if (!bounds) continue
         const renderer = expanded ? bounds : hostBounds(hostRef.value)
@@ -302,6 +315,7 @@ const syncView = () => {
         if (key !== shownKey) {
           await setBrowserBounds(id, bounds)
           if (disposed || !visible.value || activeChatId.value !== sessionId || currentAgentBrowser.value?.id !== id || agentBrowserExpanded.value !== expanded) { syncAgain = true; continue }
+          if (paneEntering.value) continue
           // 位置更新不能反复 show/提升原生层级，也不能重新打开标签页。
           if (shownId !== id) await showBrowserView(id)
           shownId = id
@@ -334,11 +348,6 @@ watch([visible, agentBrowserExpanded, () => currentAgentBrowser.value?.id, activ
 watch([() => props.dismissed, agentBrowserHasTasks], () => {
   suspendAgentBrowsers(() => props.dismissed)
 })
-watch(() => props.previewRequest, () => {
-  const sessionId = activeChatId.value
-  if (!props.active || !sessionId || !currentAgentBrowser.value || !isTauriEnvironment()) return
-  void ensureAgentBrowser(sessionId).catch(showError)
-})
 watch(() => currentAgentBrowser.value?.url, syncAddress, { immediate: true })
 watch(() => currentAgentBrowser.value?.id, () => { addressFocused.value = false; syncAddress() })
 watch([hostRef, previewHostRef], () => {
@@ -353,7 +362,7 @@ onMounted(async () => {
   if (disposed) return
   if (import.meta.env.DEV) void import('../../services/agent/cursorBridge').then(m => m.startCursorBridge()).catch(() => undefined)
   if (isTauriEnvironment()) {
-    void isCefEngine().then(supported => { supportsAudioMute.value = supported })
+    void isCefEngine().then(supported => { usesCef.value = supported })
     const off = await listenBrowserLoad(state => {
       if (state.id !== currentAgentBrowser.value?.id) return
       loading.value = state.phase === 'started'

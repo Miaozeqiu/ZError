@@ -92,6 +92,7 @@ pub struct ModelCallResponseRequest {
 pub struct ModelCallProgressRequest {
     pub request_id: String,
     pub content: String,
+    pub details: Option<serde_json::Value>,
 }
 
 /// 查询响应结构体
@@ -176,9 +177,19 @@ pub struct QueryData {
     pub question_text: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub correction_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub not_saved_reason: Option<QuerySaveFailure>,
     pub answer: String,
     pub is_ai: bool,
     pub is_pending_correction: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QuerySaveFailure {
+    EmptyAnswer,
+    AutoSaveDisabled,
+    WriteFailed,
 }
 
 /// 请求日志结构体

@@ -31,11 +31,6 @@ export const bindPlatformOps = (ctx: PlatformOpsCtx) => {
     isSelectedPlatformDisabled,
     showTestDialog,
     testDialogModelName,
-    testingModelId,
-    currentTestResult,
-    currentTestError,
-    streamingResponse,
-    streamingReasoning,
     showDeleteModelDialog,
     deleteModelName,
     deleteModelId,
@@ -52,7 +47,6 @@ export const bindPlatformOps = (ctx: PlatformOpsCtx) => {
     modelContextMenuX,
     modelContextMenuY,
     contextMenuModel,
-    modelToTest,
     showApiKey,
   } = ctx.state
 
@@ -240,27 +234,13 @@ export const bindPlatformOps = (ctx: PlatformOpsCtx) => {
     hideModelMenu()
   }
 
-  const handleTestModel = async (payload?: { testFunctionCalling: boolean }) => {
-    if (contextMenuModel.value) {
-      modelToTest.value = contextMenuModel.value
-      testDialogModelName.value = contextMenuModel.value.displayName || contextMenuModel.value.id
-      showTestDialog.value = true
-      testingModelId.value = null // 不自动开始测试，等待用户点击
-      currentTestResult.value = null
-      currentTestError.value = ''
-      streamingResponse.value = ''
-      streamingReasoning.value = ''
-      // 延迟执行以确保弹窗打开后再触发自动测试
-      await nextTick()
-      testModel(contextMenuModel.value, payload?.testFunctionCalling ?? false)
-    }
+  const handleTestModel = () => {
+    const model = contextMenuModel.value
     hideModelMenu()
-  }
-
-  const handleStartTest = async ({ testFunctionCalling }: { testFunctionCalling: boolean }) => {
-    if (modelToTest.value) {
-      await testModel(modelToTest.value, testFunctionCalling)
-    }
+    if (!model || !selectedPlatform.value) return
+    testDialogModelName.value = model.displayName || model.id
+    showTestDialog.value = true
+    void testModel(model)
   }
 
   const handleDeleteModel = async () => {
@@ -450,10 +430,9 @@ export const bindPlatformOps = (ctx: PlatformOpsCtx) => {
       let newModelId: string | null = null
 
       if (editingModel.value) {
-        // 远程模型保留本机输出长度与思考设置。
+        // 远程模型保留本机思考设置。
         if (editingModel.value.isRemote) {
           await updateModel(editingModel.value.id, {
-            maxTokensOverride: modelData.maxTokensOverride,
             enableThinking: modelData.enableThinking,
             thinkingOffEnableThinkingFalse: modelData.thinkingOffEnableThinkingFalse,
             thinkingOffThinkingTypeDisabled: modelData.thinkingOffThinkingTypeDisabled,
@@ -465,7 +444,6 @@ export const bindPlatformOps = (ctx: PlatformOpsCtx) => {
         }
         // 使用 ModelConfigManager 的 updateModel 以确保正确保存
         await updateModel(editingModel.value.id, {
-          maxTokensOverride: modelData.maxTokensOverride,
           displayName: modelData.displayName,
           modelId: modelData.modelId,
           jsCode: modelData.jsCode,
@@ -483,7 +461,6 @@ export const bindPlatformOps = (ctx: PlatformOpsCtx) => {
         const newModelData = {
           displayName: modelData.displayName || '新模型',
           maxTokens: DEFAULT_MODEL_OUTPUT_TOKENS,
-          maxTokensOverride: modelData.maxTokensOverride,
           temperature: 0.7,
           topP: 1.0,
           enabled: true,
@@ -621,7 +598,6 @@ export const bindPlatformOps = (ctx: PlatformOpsCtx) => {
     handleDeletePlatform,
     handleEditModel,
     handleTestModel,
-    handleStartTest,
     handleDeleteModel,
     toggleApiKeyVisibility,
     updatePlatformApiKey,

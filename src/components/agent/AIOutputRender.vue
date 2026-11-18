@@ -91,6 +91,7 @@ defineProps<{
 }
 
 .reasoning-section {
+  box-sizing: border-box;
   padding: 8px 0 8px 16px;
   background: transparent;
   border-left: 1px solid var(--border-color);

@@ -2,6 +2,7 @@
 #![cfg(target_os = "macos")]
 
 pub mod browser;
+pub mod chaoxing_login;
 pub mod dom;
 pub mod frames;
 pub mod h264;

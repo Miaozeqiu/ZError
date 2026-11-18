@@ -47,14 +47,14 @@ import { contextSummaryPrompt, splitCompactedHistory } from './context'
 import { clipAgentDebug, logAgentDebug } from './debugLog'
 import { isFileAttachment, isFolderAttachment, isImageAttachment } from './folderTokens'
 import { buildModelHistory } from './modelHistory'
-import { buildAgentSystemPrompt } from './prompts'
+import { browserWorkflowInstructions, buildAgentSystemPrompt } from './prompts'
 import { redactObject, redactText } from '../security/secretRedaction'
 import { redactNative } from '../security/secureStore'
 import { runAgentTurnLoop } from './subagent/runtime'
 import { assembleAgentTools, availableAgentTools } from './tools'
 import { useSettings } from '../app/settings'
 import { claimBrowserForNewMessage } from '../browser/control'
-import { websiteRepositoryHosts, websiteRepositoryState } from './websiteRepository'
+import { websiteRepositoryHosts } from './websiteRepository'
 
 const matchSubjectInText = <T extends { id: number; name: string }>(text: string, subjects: T[]) => {
   const raw = String(text || '')
@@ -231,6 +231,7 @@ export const sendChatMessage = async (
     const originalGoal = recovery?.goalMessageId ? liveSession(sessionId)?.messages.find(message => message.id === recovery.goalMessageId)?.content || '' : ''
     const turnSystemPrompt = composePrompt([
       { id: 'core', priority: 0, trust: 'system', text: baseSystemPrompt },
+      { id: 'browser-workflow', priority: 1, trust: 'system', text: isBrowserChat ? browserWorkflowInstructions : '' },
       { id: 'profile', priority: 10, trust: 'system', text: overlay ? `【附加规则】\n${overlay}` : '' },
       { id: 'providers', priority: 20, trust: 'context', text: `【API Key 服务索引】provider_id：search/exa=Exa 搜索，search/deepseek=DeepSeek 搜索；模型平台 ${JSON.stringify(providerIndex)}。这里只包含配置标识，不含密钥。` },
       { id: 'summary', priority: 30, trust: 'context', text: contextSummaryPrompt(compacted.summary) },
@@ -251,7 +252,8 @@ export const sendChatMessage = async (
       : undefined
 
     const liveBrowserId = () => String(sessions.value.find(item => item.id === sessionId)?.browserId || '').trim()
-    const currentTools = () => availableAgentTools(assembleAgentTools(peekAppBrowserUrl(liveBrowserId())), useSettings().settings.search, websiteRepositoryState.scriptsEnabled)
+    const currentTools = () => availableAgentTools(assembleAgentTools(peekAppBrowserUrl(liveBrowserId())), useSettings().settings.search)
+    const plainCommand = !attachments?.length && !quizOptionQuotes?.length && !options?.kind && !modelFacing
     const loop = await runAgentTurnLoop({
       sessionId,
       assistantId,
@@ -261,7 +263,9 @@ export const sendChatMessage = async (
       history,
       systemPrompt: turnSystemPrompt,
       tools: currentTools(),
-      chapterResume: !attachments?.length && !quizOptionQuotes?.length && !options?.kind && !modelFacing
+      deferTools: true,
+      startupCommand: plainCommand && !recovery ? content : undefined,
+      chapterResume: plainCommand
         ? chapterResumePlan({ command: content, browserId, url: peekAppBrowserUrl(browserId), previous: recoveryMessage, current: assistantMessage })
         : undefined,
       liveTools: currentTools,
@@ -271,7 +275,7 @@ export const sendChatMessage = async (
         if (!id) return ''
         const url = peekAppBrowserUrl(id) || ''
         const refs = await loadLiveExploreRefs(id, url)
-        return formatBrowserLiveContext({
+        return (isBrowserChat ? '' : browserWorkflowInstructions + '\n') + formatBrowserLiveContext({
           url,
           sessionId,
           todos: current?.todos || [],

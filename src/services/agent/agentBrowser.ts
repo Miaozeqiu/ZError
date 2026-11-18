@@ -1,5 +1,5 @@
 /** Agent 的浏览器工作区。会话保留标签，原生网页按需打开。 */
-import { computed, ref, shallowReactive } from 'vue'
+import { computed, ref, shallowReactive, watch } from 'vue'
 import {
   browserHomeUrl, createAppBrowser, listAppBrowsers,
   listenBrowserOpened, listenBrowserState, openBrowserView, patchAppBrowser,
@@ -7,6 +7,7 @@ import {
 } from '../browser/appBrowser'
 import { activeChat, chatStoreReady, createChat, isChatBusy, liveSession, newChatDraft, patchSession, sessions } from './chatStore'
 import { listenBrowserControl, registerBrowserControl } from '../browser/control'
+import { authUser, isLoggedIn } from '../app/auth'
 import { agentWatchBusy } from '../platform/panelAccess'
 
 export const agentBrowserTabs = ref<AppBrowser[]>(listAppBrowsers())
@@ -150,6 +151,32 @@ export const startAgentBrowserWorkspace = () => {
       const session = createChat({ title: '浏览器', browserId: legacy[0].id, activate: false })
       patchSession(session.id, current => ({ ...current, browserIds: legacy.map(tab => tab.id) }))
     }
+    // Native state events include SPA route changes. Give a newly rendered
+    // results page time to show the official answers, and stop on tab changes.
+    const reviewJobs = new Map<string, { key: string }>()
+    unlisteners.push(watch(() => agentBrowserTabs.value
+      .filter(tab => opening.has(tab.id) && isLoggedIn.value && authUser.value?.id
+        && /^https:\/\/www\.zjooc\.cn\/(?:u(?:ser)?center\/student\/)?course\/study\/[\w-]+\/(?:homework|exam)\/result\//.test(tab.url))
+      .map(tab => ({ id: tab.id, url: tab.url, user: authUser.value!.id })), tabs => {
+      const active = new Map(tabs.map(tab => [tab.id, JSON.stringify([tab.url, tab.user])]))
+      for (const [id, job] of reviewJobs) if (active.get(id) !== job.key) reviewJobs.delete(id)
+      for (const { id, url } of tabs) {
+        const key = active.get(id)!
+        if (reviewJobs.has(id)) continue
+        const job = { key }
+        reviewJobs.set(id, job)
+        const isCurrent = () => reviewJobs.get(id) === job
+        void (async () => {
+          const { captureReview } = await import('../platform/zjooc/paperBank')
+          for (let delay = 250; isCurrent(); delay = Math.min(delay * 3, 30000)) {
+            await new Promise(resolve => setTimeout(resolve, delay))
+            if (!isCurrent()) return
+            if (await captureReview(id, url, isCurrent).catch(() => false)) return
+          }
+        })()
+      }
+    }, { immediate: true }))
+    unlisteners.push(() => reviewJobs.clear())
     unlisteners.push(await listenBrowserState(state => {
       if (!listAppBrowsers().some(tab => tab.id === state.id)) return
       patchAppBrowser(state.id, { ...(state.url ? { url: state.url } : {}), ...(state.title ? { title: state.title } : {}) })

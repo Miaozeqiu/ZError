@@ -1,8 +1,8 @@
 import { listCachedPageRefs, type BrowserLocator } from '../../browser/engine'
 import { evalBrowserViewInFrame } from '../../browser/eval'
 import { isStudentHomeworkList, READ_STUDENT_HOMEWORK, studentHomeworkUrl } from '../../platform/chaoxing/studentHomework'
-import { studentCourseUrl } from '../../platform/chaoxing/studentCourses'
-import { runWebsiteScript, websiteScriptEnabled } from '../websiteScripts'
+import { chaoxingUrl, studentCourseUrl } from '../../platform/chaoxing/studentCourses'
+import { runWebsiteScript, hasWebsiteScriptManifest } from '../websiteScripts'
 import { handleWebsiteCourseTools } from './websiteCourses'
 
 type Course = NonNullable<ReturnType<typeof studentCourseUrl>>
@@ -21,6 +21,7 @@ export async function handleWebsiteHomeworkTools(ctx: Context): Promise<string |
   if (!opening && ctx.name !== 'browser_list_homework') return null
   const query = typeof ctx.args.homework_name === 'string' ? ctx.args.homework_name.trim() : ''
   const courseName = typeof ctx.args.course_name === 'string' ? ctx.args.course_name.trim() : ''
+  const shortcut = opening && typeof ctx.args.homework_url === 'string' ? ctx.args.homework_url.trim() : ''
   if (ctx.role === 'explore' || (opening && !query) || query.length > 180 || courseName.length > 180) {
     return JSON.stringify({ ok: false, reason: 'invalid', error: '请提供有效的学习通作业名称。' })
   }
@@ -32,12 +33,61 @@ export async function handleWebsiteHomeworkTools(ctx: Context): Promise<string |
     return ctx.clickByLocator(id, { by: 'css', value: selector, frameId: frame.frameId, loaderId: frame.loaderId })
   }
   try {
-    if (!await websiteScriptEnabled(site)) return fail('invalid', '学习通网站脚本未启用，可通过快照查看课程作业。')
+    if (!await hasWebsiteScriptManifest(site)) return fail('invalid', '当前学习通经验来源未提供脚本清单，可通过快照查看课程作业。')
+    const open = async (address: string, assignment: { title: string; status?: string }, meta = {}) => {
+      const expected = studentHomeworkUrl(address)!
+      const isTarget = (url: string) => {
+        const target = studentHomeworkUrl(url)
+        return target?.work === expected.work && target.course === expected.course
+          && (!expected.clazz || target.clazz === expected.clazz)
+      }
+      await ctx.wait(0)
+      dispatched = true
+      await ctx.navigateBrowserView(id, address)
+      ctx.onNavigation?.()
+      let landing: { url: string; top: boolean; title?: string; snapshot: string } | undefined
+      let ready = false
+      for (let attempt = 0; attempt < 14; attempt++) {
+        await ctx.wait(300)
+        const page = await ctx.readBrowserPage(id, { maxFrames: 4 })
+        if (page.error) continue
+        if (shortcut && page.url && chaoxingUrl(page.url)?.hostname === 'passport2.chaoxing.com') {
+          return fail('verification_required', '学习通需要登录。登录后可从学生课程重新定位作业。', { loginRequired: true })
+        }
+        const top = Boolean(page.url && isTarget(page.url))
+        const frame = page.frames?.find(item => isTarget(item.url))
+        const url = top ? page.url : shortcut ? undefined : frame?.url
+        const snapshot = top ? page.snapshot : frame?.snapshot
+        landing = url ? { url, top, title: page.title, snapshot: snapshot?.trimEnd() || '' } : undefined
+        if (!landing) continue
+        if (page.url) ctx.syncPeekedUrl?.(id, page.url)
+        const titleMatches = !shortcut || nameKey(page.title || '') === nameKey(assignment.title)
+          || landing.snapshot.split('\n').some(line => line.trimStart().startsWith(`- heading ${JSON.stringify(assignment.title)} [`))
+        if (titleMatches && homeworkContentReady(landing.snapshot)) { ready = true; break }
+      }
+      if (shortcut && !ready) return fail('verification_required', '快捷入口未核对到目标作业，请从学生课程的作业列表重新定位。')
+      if (!landing) return fail('verification_required', '已打开作业入口，尚未核对到目标作业页面。请读取当前页确认。')
+      const lines = landing.snapshot ? landing.snapshot.split('\n') : []
+      return JSON.stringify({ ok: true, opened: true, assignment, title: landing.title, path: new URL(landing.url).pathname,
+        ...(landing.top && ready ? { url: landing.url } : {}),
+        snapshot: lines.length ? lines.slice(0, 100).join('\n') : undefined,
+        ...(lines.length > 100 ? { snapshotTruncated: true } : {}), ...(!ready ? { snapshotPending: true } : {}), ...meta,
+        hint: ready ? '作业已打开。只要求进入时可直接收尾；后续操作可使用这份快照的 ref。'
+          : '已核对进入作业，正文暂未就绪。后续操作需要正文时，使用 browser_get_page 重新读取。' })
+    }
+    if (shortcut) {
+      if (!studentHomeworkUrl(shortcut)) return fail('invalid', '请使用本地经验里已核对的学习通学生作业顶层网址。')
+      return await open(shortcut, { title: query })
+    }
     if (courseName) {
       const result = await handleWebsiteCourseTools({ ...ctx, name: 'browser_open_course', args: { course_name: courseName, teacher: ctx.args.teacher } })
       if (!result || JSON.parse(result).opened !== true) return result
     }
-    const course = studentCourseUrl(await ctx.liveHref(id))
+    const currentUrl = await ctx.liveHref(id)
+    if (chaoxingUrl(currentUrl)?.hostname === 'passport2.chaoxing.com') {
+      return fail('invalid', '学习通需要登录。请先完成登录再读取课程作业。', { loginRequired: true })
+    }
+    const course = studentCourseUrl(currentUrl)
     if (!course) return fail('invalid', '请先进入学习通学生课程，或指定 course_name。')
     const belongs = (address: string) => {
       const target = studentHomeworkUrl(address)
@@ -150,35 +200,8 @@ export async function handleWebsiteHomeworkTools(ctx: Context): Promise<string |
     if (!chosen || !chosen.entries.some(row => row.address === assignment.address && row.title === assignment.title)) {
       return fail('stale', '作业列表已变化，请重新读取。')
     }
-    const expected = belongs(assignment.address)!
-    await ctx.wait(0)
-    dispatched = true
     // The site's row handler can open a separate window. Use the verified row URL in the Agent's tab.
-    await ctx.navigateBrowserView(id, assignment.address)
-    ctx.onNavigation?.()
-    const isTarget = (value: string) => belongs(value)?.work === expected.work
-    let landing: { url: string; title?: string; snapshot: string } | undefined
-    let ready = false
-    for (let attempt = 0; attempt < 14; attempt++) {
-      await ctx.wait(300)
-      const page = await ctx.readBrowserPage(id, { maxFrames: 4 })
-      if (page.error) continue
-      const inTop = Boolean(page.url && isTarget(page.url))
-      const frame = page.frames?.find(item => isTarget(item.url))
-      const url = inTop ? page.url : frame?.url
-      const snapshot = inTop ? page.snapshot : frame?.snapshot
-      landing = url ? { url, title: page.title, snapshot: snapshot?.trimEnd() || '' } : undefined
-      if (!landing) continue
-      if (page.url) ctx.syncPeekedUrl?.(id, page.url)
-      if (homeworkContentReady(landing.snapshot)) { ready = true; break }
-    }
-    if (!landing) return fail('verification_required', '已打开作业入口，尚未核对到目标作业页面。请读取当前页确认。')
-    const lines = landing.snapshot ? landing.snapshot.split('\n') : []
-    return JSON.stringify({ ok: true, opened: true, assignment: { title: assignment.title, status: assignment.status },
-      title: landing.title, path: new URL(landing.url).pathname, snapshot: lines.length ? lines.slice(0, 100).join('\n') : undefined,
-      ...(lines.length > 100 ? { snapshotTruncated: true } : {}), ...(!ready ? { snapshotPending: true } : {}), ...meta,
-      hint: ready ? '作业已打开。只要求进入时可直接收尾；后续操作可使用这份快照的 ref。'
-        : '已核对进入作业，正文暂未就绪。后续操作需要正文时，使用 browser_get_page 重新读取。' })
+    return await open(assignment.address, { title: assignment.title, status: assignment.status }, meta)
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') throw error
     return fail(dispatched ? 'verification_required' : 'invalid', error instanceof Error ? error.message : String(error))

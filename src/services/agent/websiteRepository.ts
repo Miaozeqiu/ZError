@@ -5,22 +5,23 @@ import { listBundledSkillFiles, readBundledSkillFile } from './skills/builtinSki
 import { normalizeLegacySkillMarkdown, parseSkillFrontmatter } from './skillFormat'
 import { createWebsiteRepository, repositoryPath, validateWebsiteSnapshot, type StoredWebsiteRepositoryDocument, type WebsiteRepositoryDocument, type WebsiteSnapshot } from './websiteRepositoryCore'
 import { CHAOXING_REPOSITORY, ZJOOC_REPOSITORY, ZHIHUISHU_REPOSITORY, downloadWebsiteRepository, discoverWebsiteRepositories, WebsiteRepositoryHttpError, type WebsiteRepositoryCandidate } from './websiteRepositoryGitHub'
-import { customWebsiteExperienceUrl, downloadCustomWebsiteExperience, downloadOpenWebsiteExperience } from './websiteRepositoryOpen'
+import { findOpenWebsite, customWebsiteExperienceUrl, downloadCustomWebsiteExperience, downloadOpenWebsiteExperience, openWebsiteExperienceUrl } from './websiteRepositoryOpen'
 import { parseGitHubWebsiteUrl, type GitHubWebsiteSource } from './websiteRepositoryManifest'
+import { BUILTIN_WEBSITES, normalizeWebsiteHost, loadWebsiteIdentities, websiteIdentityForHost, websitePrimaryHost } from './websiteIdentity'
 export { CHAOXING_REPOSITORY, ZJOOC_REPOSITORY }
 export type { WebsiteRepositoryCandidate }
-type Configuration = { id: string; name: string; host: string; source?: GitHubWebsiteSource }
+type Configuration = { id: string; name: string; host: string; source?: GitHubWebsiteSource; open?: true }
 type RegistryEntry = { configuration: Configuration; document: StoredWebsiteRepositoryDocument }
-type Registry = { version: 2; entries: Record<string, RegistryEntry> }
+type Registry = { version: 2; entries: Record<string, RegistryEntry>; removedOpenHosts?: string[] }
+type StoredRegistry = Registry & { removedBuiltins?: string[] }
 const defaults: Configuration[] = [
   { id: 'chaoxing', name: '学习通', host: 'chaoxing.com', source: CHAOXING_REPOSITORY },
-  { id: 'zjooc', name: '在浙学', host: 'zjooc.cn', source: ZJOOC_REPOSITORY },
-  { id: 'zhihuishu', name: '智慧树', host: 'zhihuishu.com', source: ZHIHUISHU_REPOSITORY },
 ]
+export const isRequiredWebsiteRepository = (host: string) => host === 'chaoxing.com'
 const configurations = new Map(defaults.map(value => [value.host, value]))
 const OFFLINE_REVISION = 'bundled:1', CACHE_TTL = 6 * 60 * 60 * 1000
 const initialState = () => ({ ready: false, refreshing: false, revision: '', version: '', checkedAt: 0,
-  source: 'offline' as 'offline' | 'repository' | 'http', customUrl: '', scriptsEnabled: false, changedPaths: [] as string[], error: '', retryAt: 0, iconUrl: '' })
+  source: 'offline' as 'offline' | 'repository' | 'http', customUrl: '', changedPaths: [] as string[], error: '', retryAt: 0, iconUrl: '' })
 export const websiteRepositoryStates = reactive<Record<string, ReturnType<typeof initialState>>>(Object.fromEntries(defaults.map(({ host }) => [host, initialState()])))
 export const websiteRepositoryState = websiteRepositoryStates['chaoxing.com']
 export const repositoryRegistryState = reactive({ revision: 0 })
@@ -40,30 +41,39 @@ const validConfiguration = (value: Configuration) => {
 const sameSource = (first: GitHubWebsiteSource, second: GitHubWebsiteSource) =>
   first.owner.toLowerCase() === second.owner.toLowerCase() && first.name.toLowerCase() === second.name.toLowerCase()
   && first.branch === second.branch && first.root === second.root
-const usesOpenExperience = (configuration: Configuration, source: GitHubWebsiteSource) =>
-  configuration.host === 'chaoxing.com' && sameSource(CHAOXING_REPOSITORY, source)
+// Also recognize official sources persisted before the registry recorded Open installs.
+const legacyOpenSources = new Map([
+  ['chaoxing.com', CHAOXING_REPOSITORY], ['zjooc.cn', ZJOOC_REPOSITORY], ['zhihuishu.com', ZHIHUISHU_REPOSITORY],
+])
+const usesOpenExperience = (configuration: Configuration, source: GitHubWebsiteSource) => {
+  const legacy = legacyOpenSources.get(configuration.host)
+  return configuration.open === true || Boolean(legacy && sameSource(legacy, source))
+}
 const customSourceOf = (entry?: RegistryEntry) => entry?.document.version === 3 ? entry.document.customSource : undefined
 const loadRegistry = async () => {
   loading ||= (async () => {
-    const stored = await readSecureDocument<Registry | Extract<StoredWebsiteRepositoryDocument, { version: 1 }>>('website_repositories')
-    const next: Registry = stored?.version === 1 ? { version: 2, entries: { 'chaoxing.com': { configuration: defaults[0], document: stored } } }
+    const stored = await readSecureDocument<StoredRegistry | Extract<StoredWebsiteRepositoryDocument, { version: 1 }>>('website_repositories')
+    const next: StoredRegistry = stored?.version === 1 ? { version: 2, entries: { 'chaoxing.com': { configuration: defaults[0], document: stored } } }
       : stored ?? { version: 2, entries: {} }
     if (next.version !== 2 || !next.entries || Array.isArray(next.entries) || Object.keys(next.entries).length > 64) throw new Error('网站仓库索引无效，已保留原数据')
-    const ids = new Map(defaults.map(value => [value.id, value.host]))
+    for (const removed of [next.removedBuiltins, next.removedOpenHosts]) {
+      if (removed !== undefined && (!Array.isArray(removed) || !removed.every(host => typeof host === 'string' && normalizeWebsiteHost(host) === host))) throw new Error('网站仓库删除记录无效')
+    }
+    const ids = new Map<string, string>(BUILTIN_WEBSITES.map(site => [site.id, site.host]))
     for (const [host, entry] of Object.entries(next.entries)) {
       validConfiguration(entry.configuration)
       if (entry.configuration.host !== host || (ids.has(entry.configuration.id) && ids.get(entry.configuration.id) !== host)) throw new Error('网站仓库索引身份冲突')
       validateWebsiteSnapshot(entry.document.upstream, entry.configuration)
       ids.set(entry.configuration.id, host)
     }
-    registry = clone({ version: 2, entries: next.entries })
+    const removed = new Set([...(next.removedBuiltins ?? []), ...(next.removedOpenHosts ?? [])])
+    registry = { version: 2, entries: clone(next.entries), removedOpenHosts: [...removed].filter(host => !isRequiredWebsiteRepository(host) && !next.entries[host]) }
     for (const [host, entry] of Object.entries(registry.entries)) {
       const customSource = customSourceOf(entry)
       if (!entry.configuration.source && !customSource) continue
       configurations.set(host, entry.configuration)
       const state = websiteRepositoryStates[host] ||= initialState()
       state.customUrl = customSource?.url ?? ''
-      state.scriptsEnabled = customSource?.scriptsEnabled === true
     }
     repositoryRegistryState.revision++
   })().catch(error => { loading = undefined; throw error })
@@ -79,8 +89,11 @@ const saveRegistry = (update: (next: Registry) => void) => {
   saving = pending
   return pending
 }
-const saveEntry = (configuration: Configuration, document: WebsiteRepositoryDocument, createOnly = false) =>
+const saveEntry = (configuration: Configuration, document: WebsiteRepositoryDocument, createOnly = false, isCurrent?: () => boolean) =>
   saveRegistry(next => {
+    if (isCurrent && !isCurrent()) throw new Error('网站经验来源已变更')
+    if (BUILTIN_WEBSITES.some(site => site.id === configuration.id && site.host !== configuration.host)) throw new Error('该网站标识已被内置网站使用')
+    if (createOnly && next.removedOpenHosts) next.removedOpenHosts = next.removedOpenHosts.filter(host => host !== configuration.host)
     const existing = next.entries[configuration.host]
     if (createOnly && (existing?.configuration.source || customSourceOf(existing))) throw new Error('该网站刚刚已设置经验来源，未覆盖已有资料')
     if (Object.values(registry.entries).some(entry => entry.configuration.id === configuration.id && entry.configuration.host !== configuration.host)) throw new Error('该网站标识已被另一网站使用')
@@ -148,7 +161,7 @@ export const repositoryForHost = (host: string) => {
   const repository = createWebsiteRepository({
     fallback,
     load: async () => { await loadRegistry(); return registry.entries[host]?.document || null },
-    save: document => saveEntry(configurations.get(host)!, document),
+    save: document => saveEntry(initial, document, false, () => instances.get(host) === repository),
     legacy: initial.source ? () => legacyFiles(initial, fallback) : undefined,
     readCustomSource: async (url, previous) => {
       const snapshot = await downloadCustomWebsiteExperience(url, initial, await request())
@@ -166,12 +179,12 @@ export const repositoryForHost = (host: string) => {
       return snapshot
     },
     changed: document => {
+      if (instances.get(host) !== repository) return
       const snapshot = document.customSource?.snapshot ?? document.upstream
       Object.assign(websiteRepositoryStates[host] ||= initialState(), { ready: true, revision: snapshot.revision,
         version: `${host}:${snapshot.revision}:${document.generation}`, checkedAt: snapshot.checkedAt,
         source: document.customSource ? 'http' : snapshot.revision === OFFLINE_REVISION ? 'offline' : 'repository',
         customUrl: document.customSource?.url ?? '',
-        scriptsEnabled: document.customSource?.scriptsEnabled === true,
         changedPaths: [...(document.supplement ? ['SKILL.md'] : []), ...(document.graph && !document.customSource ? ['site-graph.json'] : [])],
         iconUrl: snapshot.icon?.dataUrl ?? '' })
       notifyWebsiteRepositoryChanged(host)
@@ -180,22 +193,37 @@ export const repositoryForHost = (host: string) => {
   instances.set(host, repository)
   return repository
 }
-export const chaoxingRepository = repositoryForHost('chaoxing.com')
 export const hasWebsiteRepository = (host: string) => { void repositoryRegistryState.revision; return configurations.has(host) }
+export const isOpenWebsiteRepository = (host: string) => {
+  void repositoryRegistryState.revision
+  const config = configurations.get(host)
+  return Boolean(config?.source && usesOpenExperience(config, config.source))
+}
+export const websiteIdentityLocked = (host: string, customUrl = websiteRepositoryStates[host]?.customUrl) =>
+  isOpenWebsiteRepository(host) || Boolean(customUrl?.trim())
+
+const wasRemovedFromOpen = (host: string) => registry.removedOpenHosts?.includes(host) ?? false
 export const repositorySourceFor = (host: string) => configurations.get(host)?.source
 export const websiteRepositoryHosts = async () => { await loadRegistry(); return [...configurations.keys()] }
 
 export const websiteScriptSource = async (host: string) => {
   await loadRegistry()
-  const source = customSourceOf(registry.entries[host])
-  if (!source?.scriptsEnabled) return null
-  return { url: source.url, manifest: source.snapshot.scriptManifest }
+  const entry = registry.entries[host]
+  const custom = customSourceOf(entry)
+  if (custom) return custom.snapshot.scriptManifest ? { url: custom.url, manifest: custom.snapshot.scriptManifest } : null
+  const manifest = entry?.document.upstream.scriptManifest
+  const configuration = entry?.configuration
+  if (manifest && configuration?.source && usesOpenExperience(configuration, configuration.source)) {
+    return { url: openWebsiteExperienceUrl(host), manifest }
+  }
+  return null
 }
 const pending = new Map<string, Promise<void>>()
 const lastCustomCheck = new Map<string, number>()
 export const refreshWebsiteRepository = async (host: string, force = false) => {
   const repository = repositoryForHost(host)
   await repository.ready()
+  if (instances.get(host) !== repository) return
   if (pending.has(host)) return pending.get(host)
   const state = websiteRepositoryStates[host], now = Date.now()
   if (state.customUrl) {
@@ -215,11 +243,36 @@ export const refreshWebsiteRepository = async (host: string, force = false) => {
   pending.set(host, refresh)
   return refresh
 }
+export function startInstalledWebsiteSync() {
+  if (!isNativeSecureStore()) return () => {}
+  let stopped = false
+  let running = false
+  const sync = async () => {
+    if (stopped || running) return
+    running = true
+    try {
+      for (const host of await websiteRepositoryHosts()) {
+        if (stopped) break
+        await refreshWebsiteRepository(host).catch(() => undefined)
+      }
+    } finally { running = false }
+  }
+  const check = () => { void sync().catch(() => undefined) }
+  check()
+  const timer = window.setInterval(check, CACHE_TTL)
+  window.addEventListener('online', check)
+  return () => {
+    stopped = true
+    window.clearInterval(timer)
+    window.removeEventListener('online', check)
+  }
+}
+
 export const ensureWebsiteRepository = async (host: string, checkOnOpen = false) => {
   await loadRegistry()
   await repositoryForHost(host).ready()
-  if (websiteRepositoryStates[host].customUrl) await refreshWebsiteRepository(host, checkOnOpen)
-  else if (isNativeSecureStore()) void refreshWebsiteRepository(host, checkOnOpen).catch(error => { websiteRepositoryStates[host].error = error instanceof Error ? error.message : '网站仓库无法加载' })
+  if (websiteRepositoryStates[host]?.customUrl) await refreshWebsiteRepository(host, checkOnOpen)
+  else if (isNativeSecureStore()) void refreshWebsiteRepository(host, checkOnOpen).catch(error => { if (hasWebsiteRepository(host)) websiteRepositoryStates[host].error = error instanceof Error ? error.message : '网站仓库无法加载' })
 }
 export const readWebsiteRepositoryFile = async (host: string, path: string) => { await ensureWebsiteRepository(host); return repositoryForHost(host).read(path) }
 export const listWebsiteRepositoryFiles = async (host: string) => { await ensureWebsiteRepository(host); return repositoryForHost(host).list() }
@@ -244,7 +297,7 @@ export const previewWebsiteRepository = async (url: string) => {
   return candidates
 }
 
-export const setWebsiteExperienceUrl = (host: string, input: string, scriptsEnabled = false) => changeSource(host, async () => {
+export const setWebsiteExperienceUrl = (host: string, input: string) => changeSource(host, async () => {
   await loadRegistry()
   const active = configurations.get(host)
   const stored = registry.entries[host]
@@ -267,16 +320,9 @@ export const setWebsiteExperienceUrl = (host: string, input: string, scriptsEnab
     return
   }
   const url = customWebsiteExperienceUrl(input)
-  const current = customSourceOf(stored)
-  // Users must be able to turn scripts off while the development server is down.
-  if (current?.url === url && !scriptsEnabled && active) {
-    await repositoryForHost(host).setCustomSource({ ...current, scriptsEnabled: false })
-    return
-  }
   const snapshot = await downloadCustomWebsiteExperience(url, { host, id: active?.id ?? stored?.configuration.id }, await request())
   await verifyIcon(snapshot.icon?.dataUrl)
-  if (scriptsEnabled && !snapshot.scriptManifest) throw new Error('网站经验接口未提供脚本清单。')
-  const source = { url, snapshot, scriptsEnabled }
+  const source = { url, snapshot }
   if (active) {
     await repositoryForHost(host).setCustomSource(source)
   } else {
@@ -297,6 +343,24 @@ export const setWebsiteExperienceUrl = (host: string, input: string, scriptsEnab
   websiteRepositoryStates[host].refreshing = false
 })
 
+export const removeWebsiteRepository = (host: string, removeLocalData?: () => Promise<void>) => changeSource(host, async () => {
+  await loadRegistry()
+  if (isRequiredWebsiteRepository(host)) throw new Error('学习通是默认仓库，不能删除')
+  const fromOpen = isOpenWebsiteRepository(host)
+  await removeLocalData?.()
+  await saveRegistry(next => {
+    delete next.entries[host]
+    if (fromOpen) next.removedOpenHosts = [...new Set([...(next.removedOpenHosts ?? []), host])]
+  })
+  configurations.delete(host)
+  instances.delete(host)
+  pending.delete(host)
+  lastCustomCheck.delete(host)
+  delete websiteRepositoryStates[host]
+  repositoryRegistryState.revision++
+  notifyWebsiteRepositoryChanged(host)
+})
+
 export const importWebsiteRepository = (candidate: WebsiteRepositoryCandidate) => changeSource(candidate.website.host, async () => {
   await loadRegistry()
   const { website, source } = candidate
@@ -309,18 +373,62 @@ export const importWebsiteRepository = (candidate: WebsiteRepositoryCandidate) =
   }
   if ([...configurations.values()].some(value => value.id === website.id && value.host !== website.host)) throw new Error('该网站标识已被其他网站使用')
   const snapshot = await downloadWebsiteRepository({ ...source, branch: candidate.revision }, { revision: '', checkedAt: 0, files: {} }, await request(), website)
+  return installWebsiteSnapshot({ id: website.id, name: website.name, host: website.host, source }, snapshot)
+})
+
+async function installWebsiteSnapshot(configuration: Configuration, snapshot: WebsiteSnapshot) {
   await verifyIcon(snapshot.icon?.dataUrl)
-  const configuration = { id: website.id, name: website.name, host: website.host, source }
   validConfiguration(configuration)
   const legacy = await legacyFiles(configuration, snapshot)
-  const dormant = registry.entries[website.host]?.document
+  const dormant = registry.entries[configuration.host]?.document
   const prepared = createWebsiteRepository({ fallback: snapshot, load: async () => dormant?.version === 3 ? { ...dormant, upstream: snapshot } : null,
     save: async () => undefined, download: async () => snapshot, legacy: async () => legacy })
   await prepared.ready()
   await saveEntry(configuration, prepared.inspect(), true)
-  configurations.set(website.host, configuration)
-  websiteRepositoryStates[website.host] ||= initialState()
+  configurations.set(configuration.host, configuration)
+  websiteRepositoryStates[configuration.host] ||= initialState()
   repositoryRegistryState.revision++
-  await repositoryForHost(website.host).ready()
-  return website.host
-})
+  await repositoryForHost(configuration.host).ready()
+  return configuration.host
+}
+
+export function installedExperienceHost(host: string) {
+  if (hasWebsiteRepository(host)) return host
+  for (let offset = host.indexOf('.'); offset !== -1; offset = host.indexOf('.', offset + 1)) {
+    const parent = host.slice(offset + 1)
+    if (isOpenWebsiteRepository(parent) && !websiteIdentityForHost(parent)?.excludedDomains?.includes(parent)) return parent
+  }
+  return ''
+}
+
+const installRetryAt = new Map<string, number>()
+
+/** Resolve only the Agent's current page. Discovery failures leave ordinary browsing available. */
+export async function experienceHostForPage(url: string): Promise<string> {
+  if (!/^https?:\/\//i.test(url)) return ''
+  await Promise.all([loadRegistry(), loadWebsiteIdentities()])
+  const host = websitePrimaryHost(url)
+  if (!host || wasRemovedFromOpen(host)) return host
+  const installed = installedExperienceHost(host)
+  if (installed) {
+    await ensureWebsiteRepository(installed)
+    return installed
+  }
+  const fetcher = await request()
+  const entry = await findOpenWebsite(host, fetcher)
+  if (!entry) return host
+  return changeSource(entry.host, async () => {
+    if (wasRemovedFromOpen(entry.host)) return host
+    if (hasWebsiteRepository(entry.host)) return entry.host
+    if (Date.now() < (installRetryAt.get(entry.host) ?? 0)) return host
+    try {
+      const snapshot = await downloadOpenWebsiteExperience(entry, { revision: '', checkedAt: 0, files: {} }, fetcher)
+      await installWebsiteSnapshot({ ...entry, name: snapshot.website!.name, open: true }, snapshot)
+      installRetryAt.delete(entry.host)
+      return entry.host
+    } catch {
+      installRetryAt.set(entry.host, Date.now() + 60_000)
+      return host
+    }
+  })
+}

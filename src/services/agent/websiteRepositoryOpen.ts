@@ -1,7 +1,7 @@
 import { ZERROR_OPEN_ORIGIN } from '../app/openApi'
 import { validateWebsiteSnapshot, type WebsiteSnapshot } from './websiteRepositoryCore'
 import { limitedJson, WebsiteRepositoryHttpError } from './websiteRepositoryGitHub'
-import { websiteManifest } from './websiteRepositoryManifest'
+import { parseGitHubWebsiteUrl, websiteManifest, websiteManifestIdentity, type GitHubWebsiteSource } from './websiteRepositoryManifest'
 
 const commitSha = /^[a-f0-9]{40}$/
 
@@ -23,13 +23,50 @@ export async function downloadCustomWebsiteExperience(
   return fetchWebsiteExperience(customWebsiteExperienceUrl(url), identity, request)
 }
 
+type OpenCatalogEntry = ReturnType<typeof websiteManifestIdentity> & { source: GitHubWebsiteSource }
+const catalogUrl = ZERROR_OPEN_ORIGIN + '/v1/website-experience'
+let catalog = new Map<string, OpenCatalogEntry>()
+let catalogExpires = 0
+let loadingCatalog: Promise<void> | undefined
+
+export async function findOpenWebsite(host: string, request: typeof fetch) {
+  if (Date.now() >= catalogExpires) {
+    loadingCatalog ??= (async () => {
+      const response = await request(catalogUrl, {
+        headers: { Accept: 'application/json' }, credentials: 'omit', redirect: 'error', signal: AbortSignal.timeout(4000),
+      })
+      if (!response.ok) throw new Error(`Open 目录读取失败（HTTP ${response.status}）`)
+      const data = await limitedJson(response, 512 * 1024)
+      if (!Array.isArray(data?.sites)) throw new Error('Open 目录缺少 sites')
+      const next = new Map<string, OpenCatalogEntry>()
+      for (const row of data.sites) {
+        const site = websiteManifestIdentity(row)
+        const { owner, name, url } = parseGitHubWebsiteUrl(row.url)
+        if (next.has(site.host) || typeof row.branch !== 'string' || !row.branch ||
+          typeof row.root !== 'string' || (row.root && !/^(?:skills|\.agents\/skills)\/[a-z0-9]+(?:-[a-z0-9]+)*$/.test(row.root))) throw new Error('Open 目录条目无效')
+        next.set(site.host, { ...site, source: { owner, name, url, branch: row.branch, root: row.root } })
+      }
+      catalog = next
+      catalogExpires = Date.now() + 300_000
+    })().catch(() => { catalogExpires = Date.now() + 30_000 }).finally(() => { loadingCatalog = undefined })
+    await loadingCatalog
+  }
+  // Match locally, most specific domain first. Never send the visited URL to Open.
+  for (let suffix = host; suffix.includes('.'); suffix = suffix.slice(suffix.indexOf('.') + 1)) {
+    const match = catalog.get(suffix)
+    if (match) return match
+  }
+  return undefined
+}
+
+export const openWebsiteExperienceUrl = (host: string) => catalogUrl + '/' + encodeURIComponent(host)
+
 export async function downloadOpenWebsiteExperience(
   identity: { id: string; host: string },
   previous: WebsiteSnapshot,
   request: typeof fetch,
 ): Promise<WebsiteSnapshot> {
-  const url = new URL(ZERROR_OPEN_ORIGIN + '/v1/website-experience/' + encodeURIComponent(identity.host))
-  return fetchWebsiteExperience(url.href, identity, request, previous)
+  return fetchWebsiteExperience(openWebsiteExperienceUrl(identity.host), identity, request, previous)
 }
 
 async function fetchWebsiteExperience(
@@ -82,7 +119,7 @@ async function fetchWebsiteExperience(
     website,
     icon: data.icon,
     checkedAt: Date.now(),
-    ...(!previous && typeof data.scriptManifest === 'string' && data.scriptManifest.length <= 2048 ? { scriptManifest: data.scriptManifest } : {}),
+    ...(typeof data.scriptManifest === 'string' && data.scriptManifest.length <= 2048 ? { scriptManifest: data.scriptManifest } : {}),
   }
   validateWebsiteSnapshot(snapshot, website)
   return snapshot

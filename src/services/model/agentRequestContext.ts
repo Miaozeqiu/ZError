@@ -18,9 +18,9 @@ const frameMeta = (frame: any) => {
   if (!frame || typeof frame !== 'object') return frame
   return Object.fromEntries(['id', 'frameId', 'loaderId', 'path', 'name', 'label', 'url', 'cross', 'priority'].filter(key => frame[key] !== undefined).map(key => [key, frame[key]]))
 }
-const pageContent = (text: string, old: boolean) => {
+const pageContent = (text: string, old: boolean, reference?: string) => {
   const data = parseObject(text)
-  if (!data) return clip(text, old ? 300 : 8000)
+  if (!data) return old ? projectToolResult(text, 300, reference) : clip(text, 8000)
   const next = { ...data }
   // refs 属于执行器的定位索引，模型使用 snapshot 中的 ref 即可。
   delete next.refs
@@ -28,13 +28,13 @@ const pageContent = (text: string, old: boolean) => {
   if (next.preferredFrame) next.preferredFrame = frameMeta(next.preferredFrame)
   if (old) {
     const summary = Object.fromEntries(['ok', 'error', 'reason', 'url', 'title', 'navigated', 'opened', 'course', 'assignment', 'path', 'frame', 'empty', 'captcha', 'observation_id', 'operation_id', 'resultUncertain', 'pendingOperations'].filter(key => next[key] !== undefined).map(key => [key, next[key]]))
-    return JSON.stringify({ ...summary, history: '旧页面快照已省略，定位使用最新快照；需要旧内容时重新读取。' })
+    return JSON.stringify({ ...summary, history_ref: reference, history: '旧页面快照已省略，定位使用最新快照；需要旧内容时重新读取。' })
   }
   return JSON.stringify(next)
 }
 const historicalContent = projectToolResult
 
-export const compactAgentRequestMessages = (messages: any[], toolImageMessages = new Set<any>(), budget = AGENT_REQUEST_TOKEN_BUDGET) => {
+export const compactAgentRequestMessages = (messages: any[], toolImageMessages = new Set<any>(), budget = AGENT_REQUEST_TOKEN_BUDGET, priorTurn = false) => {
   const pages = messages.flatMap((message, index) => message.role === 'tool' && PAGE_TOOLS.has(message.name) ? [index] : [])
   const recentPages = new Set(pages.slice(-3))
   const image = (message: any) => isToolImageMessage(message) || toolImageMessages.has(message)
@@ -44,7 +44,9 @@ export const compactAgentRequestMessages = (messages: any[], toolImageMessages =
       return { ...message, content: '先前工具截图已省略，请参考识别结论；需要图像时重新截图。' }
     }
     if (message.role === 'tool' && PAGE_TOOLS.has(message.name)) {
-      return { ...message, content: historicalContent(pageContent(String(message.content || ''), !recentPages.has(index)), 12000, message.tool_call_id) }
+      const text = String(message.content || '')
+      const old = !recentPages.has(index) || (priorTurn && text.length > 1600)
+      return { ...message, content: historicalContent(pageContent(text, old, message.tool_call_id), 12000, message.tool_call_id) }
     }
     // 最近的非页面结果（题目、文件等）保持完整；更早的结果只保留摘要。
     if (message.role === 'tool' && index < messages.length - 12) {

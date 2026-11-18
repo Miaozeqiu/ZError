@@ -1,20 +1,32 @@
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
+  background: var(--bg);
   --bg: #f5f5f7;
   --tile: #fff;
   --text: #252733;
   --muted: #626674;
   --border: #171a2614;
   --shadow: 0 4px 12px #171a2610;
+  --folder-surface: #fefefe;
+  --folder-backdrop: #f5f5f7a3;
+  --hover-shadow: 0 7px 18px #171a2628;
+  --lift-shadow: 0 10px 24px #171a2638;
+  --panel-shadow: 0 16px 64px #171a2620;
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #202022;
-    --tile: #303034;
-    --text: #eeeef0;
+    color-scheme: dark;
+    --bg: #1c1c1e;
+    --tile: #3a3a3c;
+    --text: #f5f5f7;
     --muted: #b6b6bf;
     --border: #ffffff16;
     --shadow: 0 4px 12px #0003;
+    --folder-surface: #2c2c2e;
+    --folder-backdrop: #10101299;
+    --hover-shadow: 0 6px 16px #0006;
+    --lift-shadow: 0 10px 24px #0008;
+    --panel-shadow: 0 16px 64px #0007;
   }
 }
 * { box-sizing: border-box; }
@@ -28,13 +40,13 @@ body {
 }
 .wrap { max-width: 520px; margin: 0 auto; text-align: center; }
 h1 { margin: 0 0 8px; font-size: 27px; font-weight: 650; }
-p { margin: 0 0 28px; color: var(--muted); font-size: 13px; }
 .grid {
+  position: relative;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(82px, 100%), 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(82px, 100%), 1fr));
   gap: 16px 10px;
 }
-.site {
+.site, .home-tile {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -45,7 +57,9 @@ p { margin: 0 0 28px; color: var(--muted); font-size: 13px; }
   color: inherit;
   text-decoration: none;
   user-select: none;
-  touch-action: none;
+  touch-action: pan-y;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
 }
 .site:focus-visible { outline: 2px solid var(--muted); outline-offset: 1px; }
 .mark {
@@ -80,19 +94,81 @@ p { margin: 0 0 28px; color: var(--muted); font-size: 13px; }
   font-weight: 550;
 }
 @media (hover: hover) {
-  .grid:not(.is-sorting) .site:hover .mark { box-shadow: 0 7px 18px #171a2628; }
+  .grid:not(.is-sorting) .site:hover .mark { box-shadow: var(--hover-shadow); }
 }
 .grid.is-sorting, .grid.is-sorting .site { cursor: grabbing; }
-.site.is-dragging { opacity: .35; }
-.site.is-drop-target { outline: 2px solid var(--muted); outline-offset: -2px; }
+.site.is-dragging { opacity: .18; }
+.site:active > .mark, .site:active > .folder-preview { scale: .96; }
 .drag-icon {
   position: fixed;
-  z-index: 1;
+  z-index: 5;
   top: 0;
   left: 0;
-  width: 60px;
-  margin: -30px 0 0 -30px;
   pointer-events: none;
+  will-change: transform;
+}
+.drag-icon > :first-child {
+  scale: 1.055;
+}
+.drag-icon > .mark, .drag-icon > .folder-preview { box-shadow: var(--lift-shadow); }
+button, input { color: inherit; font: inherit; }
+button { cursor: pointer; }
+.bar { margin-bottom: 8px; }
+.bar h1 { margin: 0; }
+.launcher-panel:focus { outline: none; }
+.folder-open .bar {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  inset-inline: 0;
+  margin: 0;
+}
+.folder-open h1 input {
+  field-sizing: content;
+  min-width: min(5em, 100%);
+  max-width: 100%;
+  padding: 5px 10px;
+  font: inherit;
+  text-align: center;
+  text-overflow: ellipsis;
+  color: var(--text);
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+}
+.folder-open h1 input:focus {
+  outline: none;
+  text-overflow: clip;
+  border-color: var(--border);
+  background: var(--folder-surface);
+}
+.folder { border: 0; background: transparent; }
+.folder-preview {
+  display: grid;
+  width: min(100%, 60px);
+  aspect-ratio: 1;
+  grid-template: repeat(2, minmax(0, 1fr)) / repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  padding: 7px;
+  border-radius: 17px;
+  background: color-mix(in srgb, var(--muted) 18%, var(--bg));
+}
+.folder-preview .mark { width: 100%; border-radius: 5px; font-size: 10px; box-shadow: none; }
+.site:not(.folder).is-group-target > .mark {
+  outline: 2px solid Highlight;
+  outline-offset: 3px;
+  scale: 1.07;
+}
+.folder > .folder-preview {
+  transition: scale 150ms cubic-bezier(.2,.8,.25,1);
+}
+.folder.is-group-target > .folder-preview { scale: 1.2; }
+@media (prefers-reduced-motion: reduce) {
+  .drag-icon > :first-child, .site.is-group-target > :first-child { scale: 1; }
+  .folder > .folder-preview { transition: none; }
+  .folder.is-group-target > .folder-preview {
+    scale: 1;
+    background: color-mix(in srgb, var(--muted) 40%, var(--bg));
+  }
 }
 .sr-only {
   position: absolute;
@@ -103,3 +179,61 @@ p { margin: 0 0 28px; color: var(--muted); font-size: 13px; }
   clip-path: inset(50%);
   white-space: nowrap;
 }
+
+/* The home grid keeps its place beneath the expanded folder. */
+html { scrollbar-gutter: stable; }
+html.folder-open { overflow: hidden; }
+.home-underlay {
+  pointer-events: none;
+  user-select: none;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(82px, 100%), 1fr));
+  gap: 16px 10px;
+}
+.folder-shade {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  background: var(--folder-backdrop);
+  backdrop-filter: blur(6px);
+}
+.folder-open .launcher-panel {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  translate: -50% -50%;
+  z-index: 2;
+  width: min(420px, calc(100% - 28px));
+  max-height: max(54px, calc(100dvh - 116px));
+  display: flex;
+  flex-direction: column;
+  padding: clamp(14px, 3vw, 24px);
+  border-radius: 28px;
+  background: var(--folder-surface);
+  box-shadow: var(--panel-shadow), inset 0 0 0 1px var(--border);
+}
+.folder-open .launcher-panel .grid {
+  grid-template-columns: repeat(auto-fill, minmax(min(90px, 100%), 1fr));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 3px 0;
+}
+.folder-open h1 { font-size: 22px; }
+.folder-cover {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  width: 100%;
+  height: 100%;
+  aspect-ratio: auto;
+  padding: 0;
+  overflow: hidden;
+  /* The two-by-two miniature keeps its shape at the collapsed end. */
+  grid-template: 7fr 21fr 4fr 21fr 7fr / 7fr 21fr 4fr 21fr 7fr;
+  gap: 0;
+  border-radius: inherit;
+  background-color: color-mix(in srgb, var(--muted) 18%, var(--bg));
+}
+.folder-cover > .mark { grid-row: 2; grid-column: 2; height: 100%; aspect-ratio: auto; border-radius: 24%; }
+.folder-cover > :nth-child(even) { grid-column: 4; }
+.folder-cover > :nth-child(n+3) { grid-row: 4; }

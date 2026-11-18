@@ -15,5 +15,5 @@ export type PageHomeworkQuestion = {
 }
 export type PageHomework = { url: string; title?: string; documentTime?: number; total: number; scopeTotal?: number; scopeAmbiguous?: boolean; questions: PageHomeworkQuestion[] }
 
-export const courseHomeworkReadScript = (offset: number, limit: number, targetId?: string, range?: HomeworkQuestionRange) =>
-  pageScript(source, `return readCourseHomework(document, ${offset}, ${limit}, ${JSON.stringify(targetId ?? null)}, ${JSON.stringify(range ?? null)});`)
+export const courseHomeworkReadScript = (offset: number, limit: number, targetId?: string, range?: HomeworkQuestionRange, chapterQuiz = false) =>
+  pageScript(source, `return readCourseHomework(document, ${offset}, ${limit}, ${JSON.stringify(targetId ?? null)}, ${JSON.stringify(range ?? null)}, ${chapterQuiz});`)

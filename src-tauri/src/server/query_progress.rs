@@ -14,6 +14,7 @@ pub(super) enum Step {
     Search,
     Model,
     Summary,
+    Return,
 }
 
 #[derive(Clone, Copy, Serialize)]
@@ -22,6 +23,7 @@ pub(super) enum State {
     Running,
     Done,
     Failed,
+    NoResult,
 }
 
 type Event = Result<warp::sse::Event, Infallible>;
@@ -79,6 +81,12 @@ impl QueryProgress {
         self.send("result", response);
     }
 
+    pub(super) fn details(&self, step: Step, data: impl Serialize) {
+        if self.0.is_some() {
+            self.send("details", serde_json::json!({ "step": step, "data": data }));
+        }
+    }
+
     pub(super) async fn track_answer(
         &self,
         logger: &RequestLogger,
@@ -110,14 +118,24 @@ impl QueryProgress {
                                 search_finished = true;
                                 let (state, detail) = if event.content == "search-failed" {
                                     (State::Failed, "未能取得网络资料，继续处理题目")
+                                } else if event.details.as_ref().and_then(|trace| trace["results"].as_array()).is_some_and(Vec::is_empty) {
+                                    (State::NoResult, "没有解析到结构化结果")
                                 } else {
                                     (State::Done, "已取得网络搜索结果")
                                 };
+                                if let Some(trace) = &event.details {
+                                    self.details(Step::Search, trace);
+                                }
                                 self.step(Step::Search, state, detail);
                             }
                             "started" if !model_started && !summary_started => {
                                 model_started = true;
                                 self.step(Step::Model, State::Running, "正在等待模型回答");
+                            }
+                            "models-finished" => {
+                                if let Some(models) = &event.details {
+                                    self.details(Step::Model, models);
+                                }
                             }
                             "summary-started" if !summary_started => {
                                 summary_started = true;
@@ -126,6 +144,9 @@ impl QueryProgress {
                             }
                             "summary-finished" | "summary-failed" if summary_started && !summary_finished => {
                                 summary_finished = true;
+                                if let Some(models) = &event.details {
+                                    self.details(Step::Summary, models);
+                                }
                                 if event.content == "summary-finished" {
                                     self.step(Step::Summary, State::Done, "已完成总结");
                                 } else {
@@ -175,7 +196,11 @@ mod tests {
             let logger = RequestLogger::new(1);
             let (_, result) = progress
                 .track_answer(&logger, "current", async {
-                    logger.send_model_call_progress("other".into(), "started".into());
+                    logger.send_model_call_progress(
+                        "other".into(),
+                        "models-finished".into(),
+                        Some(serde_json::json!(["other request"])),
+                    );
                     for content in [
                         "private model output",
                         "searching",
@@ -186,8 +211,13 @@ mod tests {
                         "started",
                         "summary-failed",
                     ] {
-                        logger.send_model_call_progress("current".into(), content.into());
+                        logger.send_model_call_progress("current".into(), content.into(), None);
                     }
+                    logger.send_model_call_progress(
+                        "current".into(),
+                        "models-finished".into(),
+                        Some(serde_json::json!([{ "modelName": "fixture", "response": "42" }])),
+                    );
                     wait_for_answer.await.unwrap();
                     (200, QueryResponse::not_found())
                 })
@@ -215,6 +245,19 @@ mod tests {
             assert_eq!(data["step"], step);
             assert_eq!(data["state"], state);
         }
+
+        let frame = body.data().await.unwrap().unwrap();
+        let payload = std::str::from_utf8(&frame)
+            .unwrap()
+            .strip_prefix("event:details\ndata:")
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(payload).unwrap(),
+            serde_json::json!({
+                "step": "model",
+                "data": [{ "modelName": "fixture", "response": "42" }],
+            }),
+        );
 
         answer_ready.send(()).unwrap();
         let frame = body.data().await.unwrap().unwrap();

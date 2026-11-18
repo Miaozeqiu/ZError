@@ -16,14 +16,16 @@
 | Windows x64 | `ZError_2.2.9_x64-setup.exe` | 同一文件与 `ZError_2.2.9_x64-setup.exe.sig` |
 | macOS Apple Silicon | `ZError_2.2.9_aarch64.dmg` | `ZError_2.2.9_aarch64.app.tar.gz` 及其 `.sig` |
 | macOS Intel | `ZError_2.2.9_x64.dmg` | `ZError_2.2.9_x64.app.tar.gz` 及其 `.sig` |
+| Linux x64 | `ZError_2.2.9_amd64.deb` 或 `ZError_2.2.9_amd64.AppImage` | Open 当前只提供 Windows 和 macOS 更新清单 |
 
 文件名应标明架构，macOS 通用包用 `universal`。旧格式的 `ZError_Setup_2.2.5.exe` 仍按 Windows x64 安装包处理。修改更新包文件名时，签名文件也改成与更新包同名再加 `.sig`。如果重新打包，需对最终文件重新签名。
 
 ## 发版
 
-1. 将发布提交合入 `master`，推送与 `src-tauri/tauri.conf.json` 版本一致的标签，例如 `v2.2.9`。GitHub Actions 会构建 Windows x64 NSIS 安装包并创建 Release 草稿。
-2. 下载草稿中的 Windows 安装包，用现有 Tauri 私钥在本机签名，例如 `npm exec -- tauri signer sign --private-key-path src-tauri/keys/zerror.key --password= ZError_2.2.9_x64-setup.exe`。用本机带 H.264/AAC 的 CEF 构建同版本 Apple Silicon DMG，将 Windows 的 `.sig` 和 macOS DMG 上传到草稿。
-3. 在 GitHub Actions 运行 `Build and publish release`，选择 `master` 并填写标签，例如 `gh workflow run release-windows.yml --ref master -f tag=v2.2.9`。流程会检查三个附件、验证 Windows 更新签名，然后发布正式 Release。
-4. 检查 Open 返回的版本和各架构下载链接，再用较旧且已接入 Open 更新接口的客户端验证更新，确认重新打开后的版本。
+1. 将发布提交合入 `master`，推送与 `src-tauri/tauri.conf.json` 版本一致的标签，例如 `v2.2.9`。GitHub Actions 构建 Windows x64 和 Linux x64 安装包并创建 Release 草稿。
+2. 在 Apple Silicon Mac 本机运行 `bash scripts/build-release-macos.sh`，使用本机带 H.264/AAC 的 CEF 构建 DMG 和更新包。脚本对最终 Apple Silicon 更新包使用本机 Tauri 私钥签名。
+3. 下载草稿中的 Windows NSIS 和 Linux AppImage，用现有 Tauri 私钥为每个文件生成 `.sig`。例如 `npm exec -- tauri signer sign --private-key-path src-tauri/keys/zerror.key --password= ZError_2.2.9_x64-setup.exe`。将这两个签名及 macOS 目录下的 DMG、更新包和其签名上传到草稿。
+4. 运行 `gh workflow run release-windows.yml --ref master -f tag=v2.2.9`。工作流检查三个平台的附件和三份更新签名，再发布正式 Release。
+5. 检查 Open 返回的版本、Windows 和 macOS 更新链接，并用较旧且已接入 Open 的客户端核对安装和重启。Linux AppImage 的安全存储依赖系统提供 Secret Service 和 `secret-tool`。Debian 安装包会声明 `libsecret-tools` 依赖。
 
 保管好现有私钥。替换密钥会使旧客户端无法验证新签名。旧客户端使用随安装包内置的更新地址，接入 Open 的版本需要先安装一次。

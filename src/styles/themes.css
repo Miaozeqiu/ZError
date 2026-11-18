@@ -206,10 +206,6 @@
   --multi-model-tab-failed-hover-bg: rgba(239, 68, 68, 0.16);
   --multi-model-tab-failed-hover-text: #991b1b;
   --multi-model-tab-failed-hover-border: rgba(220, 38, 38, 0.36);
-  --multi-model-tab-failed-active-bg: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
-  --multi-model-tab-failed-active-text: #ffffff;
-  --multi-model-tab-failed-active-border: rgba(185, 28, 28, 0.72);
-  --multi-model-tab-failed-active-shadow: 0 8px 18px rgba(185, 28, 28, 0.18);
 
   /* 模型响应卡片颜色 */
   --model-response-card-bg: #f4f4f4;
@@ -295,13 +291,10 @@
 
   /* 侧边栏导航项颜色 */
   --nav-item-text: #858589;
-  --nav-item-text-hover: #2d3748;
+  --nav-item-text-hover: #46464d;
   --nav-item-text-active: #29292d;
-  --nav-item-bg: transparent;
-  --nav-item-bg-hover: #ffffff;
+  --nav-item-bg-hover: #ececef;
   --nav-item-bg-active: #e7e7eb;
-  --nav-item-border: transparent;
-  --nav-item-border-hover: transparent;
 
   /* 平台列表项颜色 */
   --platform-item-bg: transparent;
@@ -694,10 +687,6 @@
   --multi-model-tab-failed-hover-bg: rgba(248, 113, 113, 0.18);
   --multi-model-tab-failed-hover-text: #fecaca;
   --multi-model-tab-failed-hover-border: rgba(252, 165, 165, 0.42);
-  --multi-model-tab-failed-active-bg: linear-gradient(135deg, #b91c1c 0%, #991b1b 100%);
-  --multi-model-tab-failed-active-text: #fff1f2;
-  --multi-model-tab-failed-active-border: rgba(252, 165, 165, 0.42);
-  --multi-model-tab-failed-active-shadow: 0 10px 24px rgba(127, 29, 29, 0.28);
 
   /* 模型响应卡片颜色 */
   --model-response-card-bg: #313131;
@@ -777,13 +766,10 @@
 
   /* 侧边栏导航项颜色 */
   --nav-item-text: #96969d;
-  --nav-item-text-hover: #e2e8f0;
+  --nav-item-text-hover: #cfcfd5;
   --nav-item-text-active: #e6e6e9;
-  --nav-item-bg: transparent;
-  --nav-item-bg-hover: #5c5c5c;
+  --nav-item-bg-hover: #303034;
   --nav-item-bg-active: #38383c;
-  --nav-item-border: transparent;
-  --nav-item-border-hover: transparent;
 
   /* 平台列表项颜色 */
   --platform-item-bg: transparent;

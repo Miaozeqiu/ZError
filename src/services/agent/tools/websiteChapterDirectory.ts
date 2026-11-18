@@ -7,7 +7,7 @@ import { videoWatchFor } from '../../platform/panelAccess'
 import { studentCourseUrl } from '../../platform/chaoxing/studentCourses'
 
 export async function openNextWebsiteChapter(ctx: {
-  browserId: string; role?: string; wait?: (ms: number) => Promise<void>; openDirectory?: boolean
+  browserId: string; role?: string; wait?: (ms: number) => Promise<void>; openDirectory?: boolean; courseKey?: string
 }) {
   const { browserId, wait = waitMs } = ctx
   const fail = (reason: string, error: string, clickDispatched = false) => JSON.stringify({ ok: false, reason, error, clickDispatched })
@@ -20,19 +20,30 @@ export async function openNextWebsiteChapter(ctx: {
   const course = player ? null : studentCourseUrl(main.url)
   const courseKey = player?.courseKey || (course?.clazz ? `${course.id}:${course.clazz}` : '')
   if (!courseKey) return fail('invalid', '请先打开目标课程的学生章节目录或小节。')
+  if (ctx.courseKey && ctx.courseKey !== courseKey) return fail('stale', '学生课程已经切换，请重新核对目标。')
 
   const readDirectory = () => readFrameHtml(browserId, '/mycourse/studentcourse')
   const matchesDirectory = (url: string) => studentChapterDirectoryUrl(url) === courseKey
+  const pin = async (source: typeof main, selector: string) => {
+    if (source.frameId && source.loaderId) return source.loaderId
+    // Compatible with older browser builds: a locator can provide the live document
+    // identity even when the accessibility snapshot omits this chapter frame.
+    const found = await callProtocol(browserId, 'find', {
+      locator: { by: 'css', value: selector, frameId: source.frameId },
+    }).catch(() => null)
+    if (found?.ok !== true || found.frameId !== source.frameId || typeof found.loaderId !== 'string') return ''
+    const live = await readFrameHtml(browserId, source.frameId)
+    return live.ok && live.frameId === source.frameId && live.url === source.url && live.html === source.html ? found.loaderId : ''
+  }
   let source = player ? main : await readDirectory()
   if (!player && !matchesDirectory(source.url)) {
     if (!ctx.openDirectory) return fail('not_found', '当前课程的章节目录框尚未就绪。请打开本课「章节」页签后重试。')
-    const snapshot = await callProtocol(browserId, 'snapshot', { acted: true, maxFrames: 1 }).catch(() => null)
-    const frames = Array.isArray(snapshot?.frames) ? snapshot.frames : []
-    const root = frames.find(frame => frame.frameId === main.frameId && frame.url === main.url)
-    if (!root?.loaderId) return fail('stale', '当前学生课程已切换，请重新核对。')
+    const selector = 'a[title="章节"][data-url*="/mycourse/studentcourse"]'
+    const loaderId = await pin(main, selector)
+    if (!loaderId) return fail('stale', '当前学生课程已切换，请重新核对。')
     await wait(0)
     const tab = await actOnceOnBrowser(browserId, {
-      by: 'css', value: 'a[title="章节"][data-url*="/mycourse/studentcourse"]', frameId: root.frameId, loaderId: root.loaderId,
+      by: 'css', value: selector, frameId: main.frameId, loaderId,
     }, 'click')
     if (!tab.ok) return fail('not_found', '没有找到当前学生课程的「章节」入口。', tab.dispatched)
     for (let i = 0; i < 12; i++) {
@@ -40,7 +51,7 @@ export async function openNextWebsiteChapter(ctx: {
       if (source.ok && matchesDirectory(source.url)) break
       await wait(250)
     }
-    if (!matchesDirectory(source.url)) return fail('stale', '点击章节后尚未读到本课目录，请核对当前页面。', true)
+    if (!source.ok || !matchesDirectory(source.url)) return fail('stale', '点击章节后尚未读到本课目录，请核对当前页面。', true)
   }
   const doc = source.ok && parseHtml(source.html)
   if (!doc) return fail('not_found', '学习通章节目录尚未加载。')
@@ -53,23 +64,19 @@ export async function openNextWebsiteChapter(ctx: {
   const left = rows.filter(row => Number(row.remaining) > 0)
   const active = player && left.find(row => row.chapterId === player.chapterId)
   const next = active || left[0]
-  const summary = { pending: left.length, completed: rows.filter(row => row.remaining === 0).length, unknown: rows.filter(row => row.remaining === null).length }
+  const summary = { courseKey, pending: left.length, completed: rows.filter(row => row.remaining === 0).length, unknown: rows.filter(row => row.remaining === null).length }
   if (!next) return JSON.stringify({ ok: true, opened: false, ...summary,
     hint: '目录没有明确标出的待完成小节。需要汇报整门课程完成时，核对目录的任务点总数。' })
   if (active && player) return JSON.stringify({ ok: true, opened: true, already: true, chapterKey: player.key, ...next, ...summary })
 
-  const snapshot = await callProtocol(browserId, 'snapshot', {
-    acted: true, maxFrames: 1, ...(player ? {} : { frame: source.frameId }),
-  }).catch(() => null)
-  const frames = Array.isArray(snapshot?.frames) ? snapshot.frames : []
-  const target = frames.find(frame => frame.frameId === source.frameId && frame.url === source.url)
-  if (!target?.loaderId || snapshot?.url && snapshot.url !== main.url) return fail('stale', '章节目录已经刷新，请重新读取。')
   const selector = player
     ? `#coursetree .posCatalog_select[id="cur${next.chapterId}"] .posCatalog_name`
     : `.chapter_item[id="cur${next.chapterId}"] > .catalog_title[role="link"]`
+  const loaderId = await pin(source, selector)
+  if (!loaderId) return fail('stale', '章节目录已经刷新，请重新读取。')
   await wait(0)
   const clicked = await actOnceOnBrowser(browserId, {
-    by: 'css', value: selector, frameId: target.frameId, loaderId: target.loaderId,
+    by: 'css', value: selector, frameId: source.frameId, loaderId,
   }, 'click')
   if (!clicked.ok) return fail('invalid', '未能打开目录里标出的待完成小节。', clicked.dispatched)
 

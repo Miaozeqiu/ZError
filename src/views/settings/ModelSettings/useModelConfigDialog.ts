@@ -233,7 +233,6 @@ export function useModelConfigDialog(props: Props, emit: Emits) {
 
   const formData = ref({
     displayName: '',
-    maxTokensOverride: '' as number | '',
     hasVision: false,
     jsCode: '',
     modelId: '',
@@ -663,7 +662,6 @@ export function useModelConfigDialog(props: Props, emit: Emits) {
 
     return {
       displayName: model?.displayName || '',
-      maxTokensOverride: model?.maxTokensOverride ?? '',
       hasVision,
       jsCode: protocol === 'custom'
         ? (model?.jsCode || (hasVision ? DEFAULT_VISION_JS_CODE : DEFAULT_JS_CODE))
@@ -1055,10 +1053,6 @@ export function useModelConfigDialog(props: Props, emit: Emits) {
     }, 0)
   }
 
-  const handlePrimaryAction = () => {
-    handleSubmit()
-  }
-
   const handleSubmit = () => {
     if (!formData.value.displayName.trim()) {
       alert('请输入显示名')
@@ -1069,14 +1063,8 @@ export function useModelConfigDialog(props: Props, emit: Emits) {
       return
     }
 
-    const maxTokensOverride = formData.value.maxTokensOverride
-    if (maxTokensOverride !== '' && (!Number.isSafeInteger(maxTokensOverride) || maxTokensOverride < 1)) {
-      alert('最大输出长度必须是正整数')
-      return
-    }
     const modelData: Partial<AIModel> = {
       displayName: formData.value.displayName.trim(),
-      maxTokensOverride: maxTokensOverride === '' ? undefined : maxTokensOverride,
       category: 'text',
       hasVision: formData.value.hasVision,
       modelId: formData.value.modelId.trim(),
@@ -1232,7 +1220,7 @@ export function useModelConfigDialog(props: Props, emit: Emits) {
       }
       const config = {
         apiKey: props.platformApiKey,
-        maxTokens: resolveModelOutputLimit({ maxTokens: props.model?.maxTokens, maxTokensOverride: Number(formData.value.maxTokensOverride) }),
+        maxTokens: resolveModelOutputLimit(props.model ?? undefined),
         baseUrl: normalizeBaseUrl(props.platformBaseUrl),
         model: runtimeModelId,
         modelId: runtimeModelId
@@ -1362,7 +1350,6 @@ export function useModelConfigDialog(props: Props, emit: Emits) {
     initCodeMirror,
     setEditorDoc,
     handleOverlayClick,
-    handlePrimaryAction,
     handleSubmit,
     isTestingModel,
     modelTestStatus,
