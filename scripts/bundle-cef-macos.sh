@@ -149,15 +149,37 @@ STAGE="$(mktemp -d)"
 SPARSE="$STAGE/ZError.sparseimage"
 MNT="$STAGE/mount"
 mkdir "$MNT"
+mounted=0
 cleanup() {
-  hdiutil detach "$MNT" >/dev/null 2>&1 || true
+  if [[ "$mounted" == 1 ]]; then
+    # Never remove a staging directory while the image is still mounted there.
+    hdiutil detach -force "$MNT" >/dev/null || return
+  fi
   rm -rf "$STAGE"
 }
 trap cleanup EXIT
 hdiutil create -size 1g -type SPARSE -fs APFS -volname ZError "$SPARSE" >/dev/null
-hdiutil attach "$SPARSE" -nobrowse -mountpoint "$MNT" >/dev/null
+hdiutil attach "$SPARSE" -nobrowse -noautoopen -mountpoint "$MNT" >/dev/null
+mounted=1
 ditto "$APP" "$MNT/ZError.app"
-hdiutil detach "$MNT" >/dev/null
+
+# GitHub-hosted macOS can briefly hold the volume busy just after the copy.
+for delay in 2 4 8 16; do
+  if hdiutil detach "$MNT" >/dev/null; then
+    mounted=0
+    break
+  else
+    status=$?
+    if [[ "$status" != 16 ]]; then
+      exit "$status"
+    fi
+  fi
+  sleep "$delay"
+done
+if [[ "$mounted" == 1 ]]; then
+  hdiutil detach "$MNT" >/dev/null
+  mounted=0
+fi
 rm -f "$DMG"
 hdiutil convert "$SPARSE" -format UDZO -imagekey zlib-level=9 -o "$DMG" >/dev/null
 echo "[cef] remade $DMG ($(ls -lh "$DMG" | awk '{print $5}'))"
