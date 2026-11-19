@@ -70,3 +70,4 @@ jobs:
             libxdo-dev \
             libssl-dev
       - run: cargo check --manifest-path src-tauri/Cargo.toml --locked --no-default-features
+      - run: cargo test --manifest-path src-tauri/Cargo.toml --locked --no-default-features --lib linux_elevation::tests

@@ -20,6 +20,8 @@ mod macos_wheel;
 pub mod commands;
 pub mod database;
 pub mod logger;
+#[cfg(target_os = "linux")]
+mod linux_elevation;
 mod model_response;
 pub mod server;
 pub mod secret_vault;
@@ -555,6 +557,9 @@ pub fn run() {
             }
 
             let _tray = tray_builder.build(app)?;
+
+            #[cfg(target_os = "linux")]
+            crate::linux_elevation::notify_ready(_main.is_ok())?;
 
             println!("✅ 应用启动完成，主窗口已创建，其他窗口按需创建");
             Ok(())
