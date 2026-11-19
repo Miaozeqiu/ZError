@@ -18,9 +18,11 @@ configuration: a ZIP containing exactly one PE file whose product name is ZError
 Third-party DLLs and the generated NSIS uninstaller are not signed by this workflow.
 
 The verification script briefly trusts only the pinned self-signed certificate in
-the ephemeral Windows runner's CurrentUser root store, verifies Authenticode, then
+the ephemeral Windows runner's LocalMachine root store, verifies Authenticode, then
 removes the temporary trust. This does not make the downloaded artifacts trusted
 on users' computers.
+The script refuses to run outside a GitHub-hosted runner. The machine store avoids
+the interactive security prompt that can block unattended CurrentUser root imports.
 
 Run it manually from GitHub Actions, or push signing configuration changes to
 codex/signpath-setup during initial setup. The workflow only uploads artifacts

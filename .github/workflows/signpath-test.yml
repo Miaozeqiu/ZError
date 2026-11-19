@@ -78,6 +78,7 @@ jobs:
           wait-for-completion: true
           output-artifact-directory: signed-app
       - name: Verify and stage the signed application
+        timeout-minutes: 5
         run: |
           ./scripts/verify-signpath-test.ps1 -Path signed-app/zerror.exe
           Copy-Item signed-app/zerror.exe src-tauri/target/x86_64-pc-windows-msvc/release/zerror.exe -Force
@@ -104,6 +105,7 @@ jobs:
           wait-for-completion: true
           output-artifact-directory: signed-installer
       - name: Verify the installer and write the signing report
+        timeout-minutes: 5
         env:
           APP_REQUEST_URL: ${{ steps.sign-app.outputs.signing-request-web-url }}
           INSTALLER_REQUEST_URL: ${{ steps.sign-installer.outputs.signing-request-web-url }}
