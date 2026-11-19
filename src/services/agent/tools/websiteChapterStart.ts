@@ -4,6 +4,7 @@ import { studentCourseUrl } from '../../platform/chaoxing/studentCourses'
 import { openNextWebsiteChapter } from './websiteChapterDirectory'
 import { handleWebsiteChapterTools } from './websiteChapters'
 import { handleWebsiteCourseTools } from './websiteCourses'
+import { runWebsiteWorkflow } from '../websiteScripts'
 
 export type ChapterWorkflowResume = { chapterKey: string; videoMid: string }
 type Context = Parameters<typeof handleWebsiteCourseTools>[0] & {
@@ -75,40 +76,70 @@ export async function startWebsiteChapterTasks(ctx: Context): Promise<string> {
   }
 
   let result: Record<string, unknown> = {}
-  let readinessChecks = 0
+  let processed = false
+  let final: Record<string, unknown> | undefined
   const completed = new Set<string>()
   const transitions = new Set<string>()
-  while (true) {
-    await wait(0)
-    result = JSON.parse(await handleWebsiteChapterTools({
-      name: 'browser_complete_chapter', browserId, sessionId, role, wait,
-      args: { chapter_key: chapterKey, video_only: args.video_only === true },
-    }))
-    if (result.ok === true && result.status === 'complete' && !currentOnly) {
-      completed.add(chapterKey)
-      const next = await openNext()
-      if (next.opened !== true || typeof next.chapterKey !== 'string') return report(next)
-      if (completed.has(next.chapterKey)) return fail('目录仍将已处理的小节标为待完成，请核对平台状态。')
-      opened = next
-      chapterKey = next.chapterKey
-      readinessChecks = 0
-      continue
-    }
-    if (result.ok === true && result.status === 'needs_quiz' && typeof result.quiz_job_id === 'string' && ctx.processQuiz) {
-      return report({ ...opened, ...result, ...await ctx.processQuiz(chapterKey, result.quiz_job_id), chapterKey })
-    }
-    // Retry only page/player readiness reads and confirmed transitions.
-    // Ambiguous clicks are returned to the Agent for verification.
-    if (result.ok === true && ['tab_changed', 'job_completed', 'discussion_completed'].includes(String(result.status))) {
-      const transition = JSON.stringify([chapterKey, result.status, result.tab, result.job, result.remaining])
-      if (transitions.has(transition)) return fail('章节任务点没有继续推进，请核对当前页面。')
-      transitions.add(transition)
-      readinessChecks = 0
-      continue
-    }
-    if (result.status !== 'loading' && result.retryable !== true) break
-    if (++readinessChecks >= 12) break
-    await wait(250)
+  try {
+    const outcome = await runWebsiteWorkflow('chaoxing.com', 'chaoxing', 'chapters', {
+      currentOnly, allowQuiz: Boolean(ctx.processQuiz),
+    }, async raw => {
+      await wait(0)
+      const command = raw as { op?: unknown } | null
+      if (final) return { ok: false }
+      switch (command?.op) {
+        case 'process': {
+          if (processed && result.status !== 'loading' && result.retryable !== true
+            && (result.ok !== true || !['tab_changed', 'job_completed', 'discussion_completed'].includes(String(result.status)))) {
+            throw new Error('当前章节步骤需要先核对或等待。')
+          }
+          processed = true
+          result = JSON.parse(await handleWebsiteChapterTools({
+            name: 'browser_complete_chapter', browserId, sessionId, role, wait,
+            args: { chapter_key: chapterKey, video_only: args.video_only === true },
+          }))
+          if (result.ok === true && ['tab_changed', 'job_completed', 'discussion_completed'].includes(String(result.status))) {
+            const transition = JSON.stringify([chapterKey, result.status, result.tab, result.job, result.remaining])
+            if (transitions.has(transition)) throw new Error('章节任务点没有继续推进，请核对当前页面。')
+            transitions.add(transition)
+          }
+          return result
+        }
+        case 'next': {
+          if (!processed || currentOnly || result.ok !== true || result.status !== 'complete') {
+            throw new Error('当前任务尚未确认完成，不能切换小节。')
+          }
+          completed.add(chapterKey)
+          const next = await openNext()
+          if (next.opened !== true || typeof next.chapterKey !== 'string') {
+            final = next
+            return { opened: false }
+          }
+          if (completed.has(next.chapterKey)) throw new Error('目录仍将已处理的小节标为待完成，请核对平台状态。')
+          opened = next
+          chapterKey = next.chapterKey
+          processed = false
+          return { opened: true }
+        }
+        case 'quiz':
+          if (!processed || result.ok !== true || result.status !== 'needs_quiz' || typeof result.quiz_job_id !== 'string' || !ctx.processQuiz) {
+            throw new Error('当前章节测验未获授权或已经切换。')
+          }
+          final = { ...opened, ...result, ...await ctx.processQuiz(chapterKey, result.quiz_job_id), chapterKey }
+          return { ok: final.ok === true }
+        case 'wait':
+          if (!processed || (result.status !== 'loading' && result.retryable !== true)) throw new Error('当前章节无需等待加载。')
+          await wait(250)
+          return null
+        default:
+          throw new Error('章节脚本请求了未知操作。')
+      }
+    }) as Record<string, unknown> | null
+    if (final) return report(final)
+    if (outcome?.done !== true || !processed) return fail(typeof outcome?.error === 'string' ? outcome.error.slice(0, 300) : '网站章节流程未完成。')
+    return report({ ...opened, ...result, chapterKey })
+  } catch (error) {
+    if ((error instanceof DOMException && error.name === 'AbortError') || String(error).includes('BROWSER_USER_CONTROL')) throw error
+    return fail(error instanceof Error ? error.message : '网站章节流程未能继续。')
   }
-  return report({ ...opened, ...result, chapterKey })
 }

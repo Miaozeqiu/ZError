@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { JSDOM } from 'jsdom'
+import { paperRules } from './fixtures/paperRules'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { invoke } from '@tauri-apps/api/core'
 import { evalBrowserViewMain } from '../../src/services/browser/eval'
@@ -10,6 +11,32 @@ import { captureReview } from '../../src/services/platform/zjooc/paperBank'
 import { chaoxingStartup } from '../../src/services/agent/chaoxingStartup'
 import { answerZjooc } from '../../src/services/agent/tools/zjoocAnswers'
 
+vi.mock('../../src/services/agent/websiteScripts', () => ({
+  runWebsiteScript: async (_host: string, _site: string, _capability: string, input: any, validate: (value: unknown) => unknown) =>
+    ({ result: validate(input.operation === 'paper_rules' ? paperRules
+      : input.origin === 'https://www.zjooc.cn' && /\/(homework|exam)\/result\//.test(input.path)), revision: 'fixture' }),
+  runWebsiteWorkflow: async (_host: string, _site: string, _capability: string, _input: unknown,
+    send: (command: unknown, interpret: () => unknown) => Promise<any>) => {
+    const act = (command: unknown) => send(command, () => paperRules)
+    const batch = await act({ op: 'read' })
+    for (const q of batch.questions) {
+      if (!q.supported || q.answered) {
+        await act({ op: 'record', index: q.index, status: q.supported ? 'existing_answer' : 'needs_review' })
+        continue
+      }
+      let found = false
+      for (const source of ['review', 'server', 'local_bank', 'model']) {
+        if (!(await act({ op: 'lookup', index: q.index, source })).found) continue
+        const receipt = await act({ op: 'fill', index: q.index })
+        if (!receipt.ok) return receipt
+        found = true
+        break
+      }
+      if (!found) await act({ op: 'record', index: q.index, status: 'needs_review' })
+    }
+    return { done: true }
+  },
+}))
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 vi.mock('../../src/services/browser/eval', () => ({ evalBrowserViewMain: vi.fn() }))
 vi.mock('../../src/services/app/auth', () => ({ authToken: { value: '' }, authUser: { value: null }, openLoginDialog: vi.fn() }))

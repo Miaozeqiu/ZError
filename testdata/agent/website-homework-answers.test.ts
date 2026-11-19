@@ -1,3 +1,4 @@
+import { pageRules } from './fixtures/courseHomeworkRules'
 import { readFileSync } from 'node:fs'
 import { JSDOM } from 'jsdom'
 import { beforeEach, expect, it, vi } from 'vitest'
@@ -9,7 +10,16 @@ const { invoke, evaluate, resolveScript, enabled } = vi.hoisted(() => ({
 }))
 vi.mock('@tauri-apps/api/core', () => ({ invoke }))
 vi.mock('../../src/services/browser/eval', () => ({ evalBrowserViewInFrame: evaluate }))
-vi.mock('../../src/services/agent/websiteScripts', () => ({ runWebsiteScript: resolveScript, hasWebsiteScriptManifest: enabled }))
+vi.mock('../../src/services/agent/websiteScripts', () => ({
+  runWebsiteScript: resolveScript, hasWebsiteScriptManifest: enabled,
+  runWebsiteWorkflow: async (_host: string, _site: string, _capability: string,
+    input: { rows: Array<{ status: string }> }, dispatch: (command: unknown) => Promise<any>) => {
+    for (const [index, row] of input.rows.entries()) {
+      if (!(await dispatch({ op: row.status === 'ready' ? 'apply' : 'record', index })).ok) return { done: false }
+    }
+    return { done: true }
+  },
+}))
 
 import { handleWebsiteHomeworkAnswerTools } from '../../src/services/agent/tools/websiteHomeworkAnswers'
 import { pendingHomeworkReview, permitsChapterQuizAnswers, permitsHomeworkAnswers } from '../../src/services/agent/homeworkAnswerEvidence'
@@ -60,7 +70,7 @@ beforeEach(() => {
   enabled.mockResolvedValue(true)
   invoke.mockResolvedValue([[{ id: 1, answer: '任意 ε 都存在 N' }], [], [{ id: 2, answer: 'false' }], [{ id: 3, answer: '极限' }]])
   resolveScript.mockImplementation(async (_site, _id, _capability, input, validate) => ({
-    result: validate({ decisions: input.questions.map((q: { id: string }, index: number) => ({ id: q.id, ...[
+    result: validate(input.operation === 'page_rules' ? pageRules : { decisions: input.questions.map((q: { id: string }, index: number) => ({ id: q.id, ...[
       { status: 'ready', choices: ['A'], bankId: 1 },
       { status: 'no_match' },
       { status: 'ready', choices: ['B'], bankId: 2 },
@@ -208,7 +218,7 @@ it('publishes homework rows before the script runs and merges actual answers and
 it('rejects a forged script answer, stale assignment, strict mode, and ambiguous frames', async () => {
   const ctx = setup()
   resolveScript.mockImplementation(async (_site, _id, _capability, input, validate) => ({
-    result: validate({ decisions: input.questions.map((q: { id: string }, i: number) => i === 2
+    result: validate(input.operation === 'page_rules' ? pageRules : { decisions: input.questions.map((q: { id: string }, i: number) => i === 2
       ? { id: q.id, status: 'ready', choices: ['A'], bankId: 2 } : { id: q.id, status: 'no_match' }) }),
   }))
   expect((await homework('answer', ctx)).questions[2]).toMatchObject({ status: 'unmatched' })
@@ -225,7 +235,7 @@ it('keeps obfuscated questions out of the automatic answer list and permits veri
   const ctx = setup()
   ctx.doc.querySelector('[data=q-103] .mark_name')?.classList.add('font-cxsecret')
   resolveScript.mockImplementation(async (_site, _id, _capability, input, validate) => ({
-    result: validate({ decisions: input.questions.map((q: { id: string }) => ({ id: q.id, status: 'no_match' })) }),
+    result: validate(input.operation === 'page_rules' ? pageRules : { decisions: input.questions.map((q: { id: string }) => ({ id: q.id, status: 'no_match' })) }),
   }))
   invoke.mockResolvedValue([[], [], []])
   const result = await homework('answer', ctx)
@@ -309,7 +319,7 @@ it('keeps the visible quiz option labels for review of image questions', async (
   const { window } = new JSDOM(readFileSync(new URL('../chaoxing/homework/chapter-quiz-zy.html', import.meta.url), 'utf8'), { runScripts: 'outside-only' })
   Object.defineProperty(window.Element.prototype, 'getClientRects', { value: () => [{ width: 100, height: 20 }] })
   window.document.querySelector<HTMLInputElement>('input[id^="answer"][name^="answer"]')!.value = 'C'
-  const result = window.eval(courseHomeworkReadScript(0, 8, undefined, { start: 1, end: 1 }, true))
+  const result = window.eval(courseHomeworkReadScript(pageRules, 0, 8, undefined, { start: 1, end: 1 }, true))
   expect(result).toMatchObject({ total: 1, scopeTotal: 1, questions: [{ number: 1, type: 'single', issue: 'visual_needed' }] })
   expect(result.questions[0].options.map((item: { label: string; selected: boolean }) => [item.label, item.selected]))
     .toEqual([['A', false], ['B', false], ['C', true], ['D', false]])

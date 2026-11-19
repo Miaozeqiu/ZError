@@ -1,4 +1,6 @@
 /** 按父 / 子角色装配工具表。execute 再按 HostCapabilities 过滤。 */
+import { installedExperienceHost, websiteToolsForHost } from '../websiteRepository'
+import { websitePrimaryHost } from '../websiteIdentity'
 import type { AgentToolRole } from '../toolContext'
 import { BROWSER_PRIMITIVE_TOOLS } from '../toolDefs/browserPrimitiveTools'
 import {
@@ -57,20 +59,22 @@ export const assembleRoleTools = (input: {
   url?: string
   role?: BrowserToolRole
   capabilities?: HostCapabilities
+  startupHost?: string
 }) => {
   const role = input.role || 'parent'
   const url = String(input.url || '')
+  const siteTools = [...new Set([installedExperienceHost(websitePrimaryHost(url)), input.startupHost || ''])].flatMap(websiteToolsForHost)
   if (role === 'parent') {
     const caps = input.capabilities || hostCapabilitiesFor(url)
     const names = new Set(executeToolNamesFor(caps))
     for (const name of LOOK_NAMES) names.add(name)
     if (SUBAGENTS_ENABLED) names.add('browser_task')
-    return filterToolsByNames(names)
+    return [...filterToolsByNames(names), ...siteTools]
   }
-  if (role === 'explore') return namesOf(EXPLORE_NAMES)
+  if (role === 'explore') return [...namesOf(EXPLORE_NAMES), ...siteTools.filter(tool => EXPLORE_NAMES.has(tool.function.name))]
   const caps = input.capabilities || hostCapabilitiesFor(url)
   const names = new Set(executeToolNamesFor(caps))
-  return filterToolsByNames(names)
+  return [...filterToolsByNames(names), ...siteTools]
 }
 
 export const toolNamesOf = (tools: Array<{ function?: { name?: string } }>) =>

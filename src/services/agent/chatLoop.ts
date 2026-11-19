@@ -54,7 +54,9 @@ import { runAgentTurnLoop } from './subagent/runtime'
 import { assembleAgentTools, availableAgentTools } from './tools'
 import { useSettings } from '../app/settings'
 import { claimBrowserForNewMessage } from '../browser/control'
-import { websiteRepositoryHosts } from './websiteRepository'
+import { experienceHostForPage, websiteRepositoryHosts } from './websiteRepository'
+import { websiteToolHost } from './websiteToolDefinitions'
+import { chaoxingStartup } from './chaoxingStartup'
 
 const matchSubjectInText = <T extends { id: number; name: string }>(text: string, subjects: T[]) => {
   const raw = String(text || '')
@@ -252,8 +254,15 @@ export const sendChatMessage = async (
       : undefined
 
     const liveBrowserId = () => String(sessions.value.find(item => item.id === sessionId)?.browserId || '').trim()
-    const currentTools = () => availableAgentTools(assembleAgentTools(peekAppBrowserUrl(liveBrowserId())), useSettings().settings.search)
     const plainCommand = !attachments?.length && !quizOptionQuotes?.length && !options?.kind && !modelFacing
+    const currentUrl = peekAppBrowserUrl(liveBrowserId())
+    const startup = plainCommand && !recovery ? chaoxingStartup(content, currentUrl) : undefined
+    const startupHost = startup ? websiteToolHost(startup.name) : undefined
+    await prepareTurn(abort.signal, () => Promise.all([
+      experienceHostForPage(currentUrl).catch(() => ''),
+      startupHost ? experienceHostForPage(`https://${startupHost}`).catch(() => '') : Promise.resolve(''),
+    ]))
+    const currentTools = () => availableAgentTools(assembleAgentTools(peekAppBrowserUrl(liveBrowserId()), startupHost), useSettings().settings.search)
     const loop = await runAgentTurnLoop({
       sessionId,
       assistantId,

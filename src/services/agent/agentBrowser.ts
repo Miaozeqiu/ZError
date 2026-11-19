@@ -9,6 +9,7 @@ import { activeChat, chatStoreReady, createChat, isChatBusy, liveSession, newCha
 import { listenBrowserControl, registerBrowserControl } from '../browser/control'
 import { authUser, isLoggedIn } from '../app/auth'
 import { agentWatchBusy } from '../platform/panelAccess'
+import { websitePrimaryHost } from './websiteIdentity'
 
 export const agentBrowserTabs = ref<AppBrowser[]>(listAppBrowsers())
 export const agentBrowserExpanded = ref(false)
@@ -156,7 +157,7 @@ export const startAgentBrowserWorkspace = () => {
     const reviewJobs = new Map<string, { key: string }>()
     unlisteners.push(watch(() => agentBrowserTabs.value
       .filter(tab => opening.has(tab.id) && isLoggedIn.value && authUser.value?.id
-        && /^https:\/\/www\.zjooc\.cn\/(?:u(?:ser)?center\/student\/)?course\/study\/[\w-]+\/(?:homework|exam)\/result\//.test(tab.url))
+        && websitePrimaryHost(tab.url) === 'zjooc.cn')
       .map(tab => ({ id: tab.id, url: tab.url, user: authUser.value!.id })), tabs => {
       const active = new Map(tabs.map(tab => [tab.id, JSON.stringify([tab.url, tab.user])]))
       for (const [id, job] of reviewJobs) if (active.get(id) !== job.key) reviewJobs.delete(id)
@@ -167,7 +168,8 @@ export const startAgentBrowserWorkspace = () => {
         reviewJobs.set(id, job)
         const isCurrent = () => reviewJobs.get(id) === job
         void (async () => {
-          const { captureReview } = await import('../platform/zjooc/paperBank')
+          const { isPaperReview, captureReview } = await import('../platform/zjooc/paperBank')
+          if (!await isPaperReview(url).catch(() => false)) return
           for (let delay = 250; isCurrent(); delay = Math.min(delay * 3, 30000)) {
             await new Promise(resolve => setTimeout(resolve, delay))
             if (!isCurrent()) return

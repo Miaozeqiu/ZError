@@ -4,7 +4,6 @@ import {
   bindChaoxingSiteGraph,
   getChaoxingSiteGraphSeed,
   reloadLearnedSiteGraphs,
-  seedChaoxingSiteGraph,
 } from '../agent/skillRuntime'
 
 export type SiteGraphParserId = string
@@ -170,7 +169,7 @@ export const cloneGraph = (data: SiteGraphData): SiteGraphData => (
 )
 
 /** 运行时图谱：先读 Skill 的 site-graph.json，Agent 可再改内存。 */
-export const liveSiteGraphs = ref<SiteGraphData[]>([cloneGraph(seedChaoxingSiteGraph())])
+export const liveSiteGraphs = ref<SiteGraphData[]>([])
 export const SITE_GRAPHS = liveSiteGraphs
 
 bindChaoxingSiteGraph((data) => {

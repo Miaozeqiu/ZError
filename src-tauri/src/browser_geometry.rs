@@ -1,6 +1,11 @@
 //! 原生浏览区跟随窗口的锚点规则；不改变网页的固定 CSS 视口。
 use serde::Deserialize;
 
+#[cfg(any(windows, target_os = "macos"))]
+pub(crate) const PAGE_W: f64 = 1920.0;
+#[cfg(any(windows, target_os = "macos"))]
+pub(crate) const PAGE_H: f64 = 1080.0;
+
 #[derive(Clone, Copy, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BrowserViewportLayout {

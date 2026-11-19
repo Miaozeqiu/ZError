@@ -1,19 +1,12 @@
 import { AUTH_API_BASE, remoteJson, RemoteApiError } from '../../app/remoteHttp'
 import { authToken, authUser } from '../../app/auth'
-import { evalBrowserViewMain } from '../../browser/eval'
-import questionPage from './questionPage.js?raw'
+import { websitePaperAccess, websitePaperRules, type WebsitePaper as Paper, type WebsiteQuestion as Question } from '../../browser/websitePaper'
+import { runWebsiteScript } from '../../agent/websiteScripts'
 
-export type Question = {
-  index: number; number: number; subjectType: number; stem: string; type: 'single' | 'multiple' | 'judgement' | 'completion'
-  options: { label: string; text: string }[]; blanks: number; actual: string[]; official: string; supported: boolean
-}
-export type Paper = { key: string; courseId: string; kind: string; stage: string; paperId: string; title: string; declared: number; total: number; scopeTotal: number; ambiguous: boolean; hasNext: boolean; questions: Question[] }
-export const pageOp = (id: string, request: object) => evalBrowserViewMain(id, '(' + questionPage + ')(' + JSON.stringify(request) + ')')
-export async function readPaper(id: string, offset: number, limit: number, range?: { start: number; end: number }): Promise<Paper> {
-  const p = await pageOp(id, { offset, limit, range })
-  if (!Array.isArray(p?.questions)) throw new Error(p?.error || '在浙学试卷未就绪。')
-  return p
-}
+export type { Question }
+export const paperBankRead = (browserId: string, rules: ReturnType<typeof websitePaperRules>) =>
+  websitePaperAccess(browserId, 'zjooc.cn', rules)
+
 // Crosses the Rust JSON bridge, where object key order is not guaranteed.
 export const identity = (q: Question) => JSON.stringify([
   q.index, q.number, q.type, q.subjectType, q.stem, q.blanks, q.options.map(o => [o.label, o.text]),
@@ -91,13 +84,27 @@ export async function fetchSubjects(p: Paper, signal?: AbortSignal): Promise<Sub
 
 const pendingUploads = new Map<string, Promise<boolean>>()
 
+export async function isPaperReview(expectedUrl: string) {
+  const url = new URL(expectedUrl)
+  const { result } = await runWebsiteScript('zjooc.cn', 'zjooc', 'homework', {
+    operation: 'review_page', origin: url.origin, path: url.pathname,
+  }, value => value === true, { reuseForMs: 30_000 })
+  return result
+}
+
 export async function captureReview(browserId: string, expectedUrl: string, active = () => true) {
   const user = authUser.value?.id
   if (!user || !authToken.value) return false
-  if (!(await pageOp(browserId, { reviewReady: true }))?.ready || !active()) return false
-  const p = await readPaper(browserId, 0, 1000)
-  const path = new URL(expectedUrl).pathname.replace(/(?:\/processStatus\/\d+)?\/?$/, '')
-  if (p.stage !== 'result' || !path.endsWith('/course/study/' + p.courseId + '/' + p.kind + '/result/' + p.paperId) || !p.questions.length) return false
+  const url = new URL(expectedUrl)
+  const host = 'zjooc.cn'
+  if (!await isPaperReview(expectedUrl) || !active()) return false
+  const { result: rules } = await runWebsiteScript(host, 'zjooc', 'homework', {
+    operation: 'paper_rules',
+  }, websitePaperRules, { reuseForMs: 30_000 })
+  const page = paperBankRead(browserId, rules)
+  if (!(await page.pageOp({ reviewReady: true }))?.ready || !active()) return false
+  const p = await page.read(0, 1000)
+  if (p.stage !== rules.reviewStage || p.url !== url.origin + url.pathname || !p.questions.length) return false
   const subjects: Subject[] = []
   for (const q of p.questions) {
     if (!q.supported || !q.official) continue

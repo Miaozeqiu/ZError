@@ -28,7 +28,7 @@ pub fn mark(id: &str, loader: &str) {
         .unwrap_or_else(|e| e.into_inner())
         .insert(id.into(), loader.into());
 }
-pub async fn guard(id: &str) -> Result<(), String> {
+pub async fn guard(_app: &tauri::AppHandle, id: &str) -> Result<(), String> {
     let previous = DOCUMENTS
         .get_or_init(|| Mutex::new(HashMap::new()))
         .lock()
@@ -39,14 +39,20 @@ pub async fn guard(id: &str) -> Result<(), String> {
         return Ok(());
     };
     #[cfg(target_os = "macos")]
-    if let Ok(current) = loader(id).await {
-        if !previous.is_empty() && current != previous {
-            DOCUMENTS
-                .get()
-                .unwrap()
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .remove(id);
+    let current = loader(id).await;
+    #[cfg(windows)]
+    let current = crate::webview2_secrets::loader(_app, id).await;
+    #[cfg(any(target_os = "macos", windows))]
+    if current.is_ok_and(|current| current != previous) && !previous.is_empty() {
+        let mut documents = DOCUMENTS
+            .get()
+            .unwrap()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if documents.get(id) == Some(&previous) {
+            documents.remove(id);
+        }
+        if !documents.contains_key(id) {
             return Ok(());
         }
     }

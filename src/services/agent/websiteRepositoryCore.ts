@@ -1,7 +1,9 @@
 /** Cached cloud experience with separately stored local additions. */
+import { validateWebsiteTools } from './websiteToolDefinitions'
+import type { ToolDefinition } from './core/tools'
 import { parseSkillFrontmatter, validateSkillMarkdown } from './skillFormat'
 import { websiteManifest, type WebsiteManifest, type WebsiteRepositoryIcon } from './websiteRepositoryManifest'
-export type WebsiteSnapshot = { revision: string; files: Record<string, string>; etag?: string; checkedAt: number; website?: WebsiteManifest; icon?: WebsiteRepositoryIcon; scriptManifest?: string }
+export type WebsiteSnapshot = { revision: string; files: Record<string, string>; etag?: string; checkedAt: number; website?: WebsiteManifest; icon?: WebsiteRepositoryIcon; scriptManifest?: string; tools?: ToolDefinition[] }
 type GraphRecord = Record<string, unknown>
 type GraphDelta = { nodes: Record<string, GraphRecord>; edges: GraphRecord[] }
 export type WebsiteRepositoryDocument = {
@@ -33,6 +35,7 @@ export const validateWebsiteSnapshot = (snapshot: WebsiteSnapshot, identity?: { 
   }
   const graph = JSON.parse(snapshot.files['site-graph.json'])
   const expected = identity || snapshot.website || { id: graph.id, host: graph.host }
+  validateWebsiteTools(expected.host, snapshot.tools)
   const errors = validateSkillMarkdown(snapshot.files['SKILL.md'], expected.id)
   if (errors.length) throw new Error(`网站仓库入口无效：${errors.join('；')}`)
   if (snapshot.website) {
@@ -138,6 +141,7 @@ const collectLegacyNotes = (files: Record<string, string>) => {
 
 export const createWebsiteRepository = (deps: {
   fallback: WebsiteSnapshot
+  replaceBundledSnapshot?: boolean
   load: () => Promise<StoredWebsiteRepositoryDocument | null>
   save: (document: WebsiteRepositoryDocument) => Promise<unknown>
   download: (previous: WebsiteSnapshot) => Promise<WebsiteSnapshot>
@@ -175,6 +179,7 @@ export const createWebsiteRepository = (deps: {
   const publish = () => deps.changed?.(copy(document))
   const commit = async (next: WebsiteRepositoryDocument) => {
     const changed = next.upstream.revision !== document.upstream.revision || !equal(next.upstream.files, document.upstream.files)
+      || !equal(next.upstream.tools, document.upstream.tools) || next.upstream.scriptManifest !== document.upstream.scriptManifest
       || next.supplement !== document.supplement || !equal(next.graph, document.graph) || !equal(next.customSource, document.customSource)
     next.generation = document.generation + Number(changed)
     validateDocument(next)
@@ -234,9 +239,11 @@ export const createWebsiteRepository = (deps: {
         next.migrated = true
       }
       next.supplement = [next.supplement, collectLegacyNotes(oldNotes)].filter(Boolean).join('\n\n')
+      const replacedBundle = deps.replaceBundledSnapshot && next.upstream.revision === 'bundled:1'
+      if (replacedBundle) next.upstream = copy(deps.fallback)
       validateDocument(next)
       const oldScriptSetting = stored?.version === 3 && stored.customSource && own(stored.customSource, 'scriptsEnabled')
-      if ((stored && stored.version !== 3) || needsLegacy || oldScriptSetting) {
+      if ((stored && stored.version !== 3) || needsLegacy || oldScriptSetting || replacedBundle) {
         next.generation++
         await deps.save(copy(next))
       }

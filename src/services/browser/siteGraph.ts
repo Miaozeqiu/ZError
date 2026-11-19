@@ -6,14 +6,12 @@ import {
   lastSiteCard,
   type BrowserAbstractionId,
 } from './abstractions'
-import chaoxingBundledGraph from '../agent/skills/bundled/chaoxing/site-graph.json'
 import { isOnlineSiteGraph } from './siteGraphSave'
 import {
   activeFrameOf,
   hydrateSite,
   liveSiteGraphs,
   nodeFrames,
-  replaceLiveSite,
   siteGraphForUrl,
   siteGraphNodeForUrl,
   type SiteGraphData,
@@ -590,12 +588,4 @@ export const toggleAbstractionMenu = () => {
   const next = !abstractionMenuOpen.value
   abstractionMenuOpen.value = next
   if (next) siteGraphMenuOpen.value = false
-}
-
-if (import.meta.hot) {
-  replaceLiveSite(chaoxingBundledGraph as SiteGraphData)
-  import.meta.hot.accept('../agent/skills/bundled/chaoxing/site-graph.json', (mod) => {
-    const data = (mod as { default?: SiteGraphData } | undefined)?.default
-    if (data?.id) replaceLiveSite(data)
-  })
 }

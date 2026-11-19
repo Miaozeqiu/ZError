@@ -24,6 +24,7 @@ export const assembleBrowserTools = (input?: {
   url?: string
   role?: BrowserToolRole | 'full'
   capabilities?: HostCapabilities
+  startupHost?: string
 }) => {
   const role = input?.role
   const assembled = role && role !== 'full'
@@ -31,6 +32,7 @@ export const assembleBrowserTools = (input?: {
       url: input?.url,
       role,
       capabilities: input?.capabilities,
+      startupHost: input?.startupHost,
     })
     : BROWSER_PRIMITIVE_TOOLS
   const browserTools = withoutSubagentTools(assembled)
@@ -40,7 +42,7 @@ export const assembleBrowserTools = (input?: {
 }
 
 /** 普通对话也能操作浏览器，共享工具（搜索、Skill）只声明一次。 */
-export const assembleAgentTools = (url = '') => {
-  const tools = [...CHAT_TOOLS, ...assembleBrowserTools({ url, role: 'parent' })]
+export const assembleAgentTools = (url = '', startupHost?: string) => {
+  const tools = [...CHAT_TOOLS, ...assembleBrowserTools({ url, startupHost, role: 'parent' })]
   return [...new Map(tools.map(tool => [tool.function.name, tool])).values()]
 }

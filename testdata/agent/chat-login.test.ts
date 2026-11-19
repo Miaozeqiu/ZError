@@ -1,3 +1,4 @@
+import { runLoginCommands } from './fixtures/loginCommands'
 // @vitest-environment jsdom
 import { createApp, h, nextTick } from 'vue'
 import { beforeEach, expect, it, vi } from 'vitest'
@@ -6,6 +7,13 @@ import { cancelChatLogin, chatLoginRequests, requestChatLogin, submitChatLogin }
 import { handleLoginTool } from '../../src/services/agent/tools/websiteLogin'
 
 const io = vi.hoisted(() => ({ invoke: vi.fn(), page: vi.fn(), account: vi.fn() }))
+vi.mock('../../src/services/agent/tools/websiteLoginObservation', () => ({
+  loginObserver: (call: Function, id: string) => (captureCaptcha = false) =>
+    call(id, 'login_observe', captureCaptcha ? { captureCaptcha } : undefined),
+}))
+
+vi.mock('../../src/services/agent/websiteScripts', () => ({ runWebsiteWorkflow: runLoginCommands }))
+
 vi.mock('@tauri-apps/api/core', async original => ({ ...await original<typeof import('@tauri-apps/api/core')>(), invoke: io.invoke }))
 vi.mock('../../src/services/browser/appBrowser', () => ({ getBrowserState: io.page }))
 vi.mock('../../src/services/browser/eval', async original => ({ ...await original<typeof import('../../src/services/browser/eval')>(), isCefEngine: async () => true }))
@@ -25,7 +33,7 @@ const pending = async () => {
 }
 
 it('continues a login from the chat form and sends only references to the browser tool', async () => {
-  const form = { kind: 'form', url: origin + '/login', modern: true, frameId: 'top', loaderId: 'doc' }
+  const form = { kind: 'form', url: origin + '/login?newversion=true', modern: true, frameId: 'top', loaderId: 'doc' }
   let clicked = false
   const protocol = vi.fn(async (_id: string, op: string, _args?: unknown) => {
     if (op === 'fill_secret') return { ok: true, filled: true }
@@ -71,7 +79,7 @@ it('replaces a rejected ZJOOC password in the same verification flow', async () 
   io.account.mockReturnValue({ account, password: '{{secret:site/zjooc/password}}' })
   io.page.mockResolvedValue({ url })
   const protocol = vi.fn(async (_id: string, op: string, _args?: unknown) =>
-    op === 'zjooc_login_state' ? states.shift()! : { ok: true, filled: true })
+    op === 'login_observe' ? states.shift()! : { ok: true, filled: true })
   const navigateBrowserView = vi.fn()
   const actOnceOnBrowser = vi.fn()
   const run = handleLoginTool({ name: 'browser_login_zjooc', args: { wait_for_verification: true },
@@ -80,7 +88,7 @@ it('replaces a rejected ZJOOC password in the same verification flow', async () 
   const request = await pending()
   expect(request).toMatchObject({ origin: loginOrigin, replacingRejectedCredentials: true, canReuseAccount: true })
   expect(navigateBrowserView).not.toHaveBeenCalled()
-  expect(protocol.mock.calls.every(([, op]) => op === 'zjooc_login_state')).toBe(true)
+  expect(protocol.mock.calls.every(([, op]) => op === 'login_observe')).toBe(true)
   await submitChatLogin(request, '', 'replacement password ')
   expect(JSON.parse(await run)).toMatchObject({ loggedIn: true })
   expect(io.invoke).toHaveBeenCalledWith('secure_save_chat_login', { site: 'zjooc', loginOrigin, account, password: 'replacement password ' })

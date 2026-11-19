@@ -3,7 +3,7 @@ import { listenBrowserLoad } from '../browser/appBrowser'
 import { parseHtml, readFrameHtml } from '../browser/domRead'
 import { kickParserClock, kickParserClockSoon, unwatchParserClock, watchParserClock } from '../browser/pageClock'
 import { onBrowserFrame, onBrowserTick } from '../browser/pushEvents'
-import { courseChapterRows, readStudentChapterCard, studentChapterDirectoryUrl, studentChapterUrl } from '../chaoxing/host/chapterTasks'
+import { courseChapterRows, loadChapterRules, readStudentChapterCard, studentChapterDirectoryUrl, studentChapterUrl } from '../chaoxing/host/chapterTasks'
 import { studentCourseUrl } from '../platform/chaoxing/studentCourses'
 import { videoWatchFor } from '../platform/panelAccess'
 
@@ -40,7 +40,8 @@ export function watchBrowserChapters(source: () => Target | null) {
         const frame = await readFrameHtml(id, '/mycourse/studentcourse')
         if (!frame.ok || studentChapterDirectoryUrl(frame.url) !== `${course!.id}:${course!.clazz}`) return
         const doc = parseHtml(frame.html)
-        const rows = doc ? courseChapterRows(doc) : []
+        const rules = doc && await loadChapterRules().catch(() => null)
+        const rows = doc && rules ? courseChapterRows(doc, rules) : []
         if (!rows.length) return
         const next = rows.find(row => Number(row.remaining) > 0)
         summary = {

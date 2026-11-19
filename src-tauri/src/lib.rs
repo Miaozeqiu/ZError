@@ -5,6 +5,8 @@
 pub mod app_activity;
 pub mod app_browser;
 mod browser_theme;
+#[cfg(any(windows, target_os = "macos"))]
+mod browser_login;
 pub mod browser_control;
 pub mod browser_geometry;
 #[cfg(target_os = "macos")]
@@ -28,6 +30,10 @@ pub mod secret_vault;
 pub mod secret_http;
 pub mod secret_browser;
 mod secret_access;
+#[cfg(windows)]
+mod webview2;
+#[cfg(windows)]
+mod webview2_secrets;
 #[cfg(target_os = "macos")]
 mod secret_keychain;
 pub mod types;

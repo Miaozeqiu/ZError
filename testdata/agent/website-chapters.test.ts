@@ -1,5 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { JSDOM } from 'jsdom'
+import { chapterRules, jobKinds } from './fixtures/chapterRules'
+import type { WebsiteChapterRules } from '../../src/services/browser/websiteChapterRules'
 import { beforeEach, expect, it, vi } from 'vitest'
 
 const { html, protocol, click, evaluate, resolveScript, watch, watchFor, pin, appFocus } = vi.hoisted(() => ({
@@ -13,7 +15,27 @@ vi.mock('../../src/services/browser/protocol', async load => ({
 }))
 vi.mock('../../src/services/browser/engine', () => ({ actOnceOnBrowser: click }))
 vi.mock('../../src/services/browser/eval', () => ({ waitMs: async () => {}, evalBrowserViewInFrame: evaluate }))
-vi.mock('../../src/services/agent/websiteScripts', () => ({ runWebsiteScript: resolveScript }))
+vi.mock('../../src/services/agent/websiteScripts', () => ({
+  runWebsiteScript: resolveScript,
+  runWebsiteWorkflow: async (_host: string, _site: string, _capability: string,
+    args: { currentOnly: boolean; allowQuiz: boolean }, send: (command: unknown) => Promise<any>) => {
+    for (let i = 0; i < 20; i++) {
+      const result = await send({ op: 'process' })
+      if (result.ok && result.status === 'needs_quiz' && args.allowQuiz) {
+        await send({ op: 'quiz' })
+        break
+      }
+      if (result.ok && result.status === 'complete' && !args.currentOnly) {
+        if (!(await send({ op: 'next' })).opened) break
+        continue
+      }
+      if (result.ok && ['tab_changed', 'job_completed', 'discussion_completed'].includes(result.status)) continue
+      if (result.status !== 'loading' && !result.retryable) break
+      await send({ op: 'wait' })
+    }
+    return { done: true }
+  },
+}))
 vi.mock('../../src/services/chaoxing/browser/watch', () => ({ startChaoxingWatch: watch }))
 vi.mock('../../src/services/platform/panelAccess', () => ({ videoWatchFor: watchFor }))
 vi.mock('../../src/services/chaoxing/study/video', async load => ({
@@ -25,9 +47,14 @@ import { watchExistingChapterVideo } from '../../src/services/platform/chaoxing/
 import { handleWebsiteChapterTools } from '../../src/services/agent/tools/websiteChapters'
 import { startWebsiteChapterTasks } from '../../src/services/agent/tools/websiteChapterStart'
 import { openNextWebsiteChapter } from '../../src/services/agent/tools/websiteChapterDirectory'
-import { chapterCardJobs, chapterHeader, studentChapterUrl } from '../../src/services/chaoxing/host/chapterTasks'
+import { chapterAttachments, chapterCardJobs, chapterHeader, studentChapterUrl } from '../../src/services/chaoxing/host/chapterTasks'
 import { handleWebsiteChapterDiscussion } from '../../src/services/agent/tools/websiteChapterDiscussion'
 import { isDiscussionReplyGoal, permitsChapterDiscussionReply } from '../../src/services/agent/chapterDiscussionIntent'
+
+const fixtureRules = chapterRules satisfies WebsiteChapterRules
+const classify = (sources: string[]) => sources.map(src => jobKinds.find(([, pattern]) => new RegExp(pattern, 'i').test(src))?.[0] ?? 'unknown')
+const probe = (input: { operation?: string; sources?: string[] }) => input.operation === 'page_rules' ? fixtureRules
+  : input.operation === 'classify_jobs' ? classify(input.sources ?? []) : undefined
 
 const chapterUrl = 'https://mooc1.chaoxing.com/mycourse/studentstudy?chapterId=1065429967&courseId=257080147&clazzid=131924538'
 const cardPath = '/mooc-ans/knowledge/cards?clazzid=131924538&courseid=257080147&knowledgeid=1065429967'
@@ -61,6 +88,7 @@ beforeEach(() => {
   evaluate.mockResolvedValue(true)
   watch.mockReturnValue({ status: 'watching' })
   resolveScript.mockImplementation(async (_host, _site, _capability, input, validate) => {
+    if (input.operation) return { result: validate(probe(input)), revision: 'test' }
     const index = input.jobs.findIndex((job: { done: boolean; kind: string }) => !job.done && (!input.videoOnly || job.kind === 'video'))
     const proposed = input.remaining === 0 ? { action: 'complete' }
       : !input.loaded ? { action: 'loading' }
@@ -75,8 +103,9 @@ beforeEach(() => {
 it('reads only real task points and resolves the active chapter from captured Chaoxing pages', () => {
   const top = new JSDOM(fixture('studentstudy')).window.document
   const cards = new JSDOM(fixture('studentstudy-cards')).window.document
-  expect(chapterHeader(top, studentChapterUrl(chapterUrl)!)).toMatchObject({ number: '2.6', remaining: 1, tab: 1 })
-  expect(chapterCardJobs(cards)?.map(job => job.kind)).toEqual(['video', 'quiz', 'video'])
+  expect(chapterHeader(top, studentChapterUrl(chapterUrl)!, fixtureRules)).toMatchObject({ number: '2.6', remaining: 1, tab: 1 })
+  const attachments = chapterAttachments(cards, fixtureRules)!
+  expect(chapterCardJobs(attachments, fixtureRules, classify(attachments.map(item => item.iframe?.getAttribute('src') || ''))).map(job => job.kind)).toEqual(['video', 'quiz', 'video'])
 })
 
 function openDiscussion(mid: string, options: { remaining: number }, course = '257080147') {
@@ -192,10 +221,10 @@ it('requires a reply or chapter-completion request to post and keeps discussion-
   expect(isDiscussionReplyGoal('完成下推理社的章节任务，包括讨论')).toBe(false)
 })
 
-it('reviews the live chapter tab without a downloaded script or page action', async () => {
+it('reviews the live chapter tab without requesting a page action', async () => {
   openChapter(lesson('video', 'mid-a'), { remaining: 1, tab: 2, staleSrc: true })
   expect(await run('review')).toMatchObject({ chapterKey, chapterComplete: false, tab: 2, jobs: [{ index: 1, kind: 'video', done: false }] })
-  expect(resolveScript).not.toHaveBeenCalled()
+  expect(resolveScript.mock.calls.every(([, , , input]) => input.operation)).toBe(true)
   expect(click).not.toHaveBeenCalled()
 })
 
@@ -209,7 +238,7 @@ it('plays and monitors exactly the selected pending video using the fresh player
   expect(click).toHaveBeenCalledExactlyOnceWith('tab', expect.objectContaining({ frameId: 'player-b', loaderId: 'video-doc' }), 'click')
   expect(protocol).toHaveBeenNthCalledWith(1, 'tab', 'media_tick', { mid: 'mid-b' })
   expect(watch).toHaveBeenCalledWith('tab', 'chat', expect.objectContaining({ mid: 'mid-b' }), { recoverPause: expect.any(Function) })
-  expect(JSON.stringify(resolveScript.mock.calls[0][3])).not.toMatch(/mid-b|chaoxing.com|work-c/)
+  expect(JSON.stringify(resolveScript.mock.calls.find(([, , , input]) => input.jobs)?.[3])).not.toMatch(/mid-b|chaoxing.com|work-c/)
 })
 
 it('waits for platform credit after the named video ends and does not replay it', async () => {
@@ -237,10 +266,10 @@ it('switches only a verified same-chapter tab and rejects unverified completion 
   openChapter(lesson('video', 'vid', true), { remaining: 1 })
   expect(await run('complete', { chapter_key: chapterKey })).toMatchObject({ status: 'tab_changed', tab: 2 })
   expect(click).toHaveBeenCalledExactlyOnceWith('tab', {
-    by: 'css', value: '#prev_tab .prev_ul > li#dct2', frameId: 'root', loaderId: 'student-doc',
+    by: 'css', value: '#dct2:is(#prev_tab .prev_ul > li[cardid])', frameId: 'root', loaderId: 'student-doc',
   }, 'click')
 
-  resolveScript.mockImplementation(async (_host, _site, _capability, _input, validate) => ({ result: validate({ action: 'complete' }) }))
+  resolveScript.mockImplementation(async (_host, _site, _capability, input, validate) => ({ result: validate(probe(input) ?? { action: 'complete' }) }))
   expect(await run('complete', { chapter_key: chapterKey })).toMatchObject({ ok: false, reason: 'invalid' })
   expect(click).toHaveBeenCalledTimes(1)
 })
@@ -394,7 +423,7 @@ it('uses the real completed badge and opens the first visibly pending chapter fr
   const current = new JSDOM(
     '<div class="posCatalog_select posCatalog_active" id="cur1065429967"><span class="posCatalog_name">已学小节</span><span class="icon_Completed prevTips"><span>已完成</span></span></div>',
   ).window.document.body.innerHTML
-  expect(chapterHeader(new JSDOM(current).window.document, studentChapterUrl(chapterUrl)!)?.remaining).toBe(0)
+  expect(chapterHeader(new JSDOM(current).window.document, studentChapterUrl(chapterUrl)!, fixtureRules)?.remaining).toBe(0)
   const nextId = '1065429988'
   const nextPage = chapterUrl.replace('1065429967', nextId)
   let live = chapterUrl
@@ -412,7 +441,7 @@ it('uses the real completed badge and opens the first visibly pending chapter fr
     opened: true, chapterKey: '257080147:131924538:' + nextId, remaining: 2, pending: 1,
   })
   expect(click).toHaveBeenCalledExactlyOnceWith('tab', {
-    by: 'css', value: `#coursetree .posCatalog_select[id="cur${nextId}"] .posCatalog_name`,
+    by: 'css', value: `#cur${nextId}:is(${fixtureRules.sidebar.target}) :is(${fixtureRules.sidebar.name})`,
     frameId: 'root', loaderId: 'chapter-doc',
   }, 'click')
 })
@@ -477,7 +506,7 @@ it('reads the real studentcourse task counters and opens the pending chapter fro
   })
   expect(protocol).not.toHaveBeenCalled()
   expect(click).toHaveBeenCalledExactlyOnceWith('tab', {
-    by: 'css', value: '.chapter_item[id="cur1065429967"] > .catalog_title[role="link"]',
+    by: 'css', value: `#cur1065429967 > :is(${fixtureRules.directory.row})`,
     frameId: 'course-list', loaderId: 'catalog-doc',
   }, 'click')
 })

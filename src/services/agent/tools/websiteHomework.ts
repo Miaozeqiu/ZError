@@ -1,6 +1,6 @@
 import { listCachedPageRefs, type BrowserLocator } from '../../browser/engine'
 import { evalBrowserViewInFrame } from '../../browser/eval'
-import { isStudentHomeworkList, READ_STUDENT_HOMEWORK, studentHomeworkUrl } from '../../platform/chaoxing/studentHomework'
+import { homeworkListRules, isStudentHomeworkList, readStudentHomeworkScript, studentHomeworkUrl } from '../../platform/chaoxing/studentHomework'
 import { chaoxingUrl, studentCourseUrl } from '../../platform/chaoxing/studentCourses'
 import { runWebsiteScript, hasWebsiteScriptManifest } from '../websiteScripts'
 import { handleWebsiteCourseTools } from './websiteCourses'
@@ -93,8 +93,10 @@ export async function handleWebsiteHomeworkTools(ctx: Context): Promise<string |
       const target = studentHomeworkUrl(address)
       return target && target.course === course.id && (!course.clazz || course.clazz === target.clazz) ? target : null
     }
+    const { result: rules } = await runWebsiteScript(site, 'chaoxing', 'homework', { operation: 'list_rules' }, homeworkListRules, { reuseForMs: 30_000 })
+    const probe = readStudentHomeworkScript(rules)
     const readList = async (frame: Frame): Promise<List | null> => {
-      const data = await evalBrowserViewInFrame(id, READ_STUDENT_HOMEWORK, '', { frameId: frame.frameId!, loaderId: frame.loaderId })
+      const data = await evalBrowserViewInFrame(id, probe, '', { frameId: frame.frameId!, loaderId: frame.loaderId })
       if (!Array.isArray(data?.entries) || !Number.isInteger(data.page)) return null
       const entries = data.entries.filter((row: Entry) => row.title && belongs(row.address)) as Entry[]
       if ((!entries.length && !data.empty) || entries.length !== data.entries.length) return null
@@ -105,7 +107,7 @@ export async function handleWebsiteHomeworkTools(ctx: Context): Promise<string |
       const frames = (page.frames ?? []).filter(frame => frame.frameId && frame.loaderId && isStudentHomeworkList(frame.url, course))
       if (frames.length === 1) return readList(frames[0]).catch(() => null)
       if (frames.length > 1 || !allowTabClick) return null
-      const refs = listCachedPageRefs(id).filter(ref => ref.name === '作业' && /^(link|button|tab)$/.test(ref.role)
+      const refs = listCachedPageRefs(id).filter(ref => ref.name === rules.tabName && /^(link|button|tab)$/.test(ref.role)
         && !ref.disabled && !ref.locator.framePath && ref.locator.frameId && ref.locator.loaderId)
       if (refs.length !== 1) return null
       await ctx.wait(0)
@@ -121,7 +123,7 @@ export async function handleWebsiteHomeworkTools(ctx: Context): Promise<string |
     }
     if (!list) return fail('not_found', '没有读到已加载的作业列表，请查看当前课程的「作业」页。')
     const move = async (before: List, direction: 'previous' | 'next') => {
-      const selector = direction === 'next' ? '.pageDiv .xl-nextPage:not(.xl-disabled)' : '.pageDiv .xl-prevPage:not(.xl-disabled)'
+      const selector = direction === 'next' ? rules.nextButton : rules.previousButton
       await scopedClick(before.frame, selector)
       const expected = before.page + (direction === 'next' ? 1 : -1)
       const signature = before.entries.map(row => belongs(row.address)?.work).join(',')

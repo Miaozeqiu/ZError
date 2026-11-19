@@ -1,8 +1,9 @@
 import { reactive } from 'vue'
+import type { ToolDefinition } from './core/tools'
+import { validateWebsiteTools, websiteHasSupportedTools } from './websiteToolDefinitions'
 import { readSecureDocument, writeSecureDocument, redactNative, isNativeSecureStore } from '../security/secureStore'
 import { redactObject } from '../security/secretRedaction'
-import { listBundledSkillFiles, readBundledSkillFile } from './skills/builtinSkillAssets'
-import { normalizeLegacySkillMarkdown, parseSkillFrontmatter } from './skillFormat'
+import { createSkillMarkdown, normalizeLegacySkillMarkdown, parseSkillFrontmatter } from './skillFormat'
 import { createWebsiteRepository, repositoryPath, validateWebsiteSnapshot, type StoredWebsiteRepositoryDocument, type WebsiteRepositoryDocument, type WebsiteSnapshot } from './websiteRepositoryCore'
 import { CHAOXING_REPOSITORY, ZJOOC_REPOSITORY, ZHIHUISHU_REPOSITORY, downloadWebsiteRepository, discoverWebsiteRepositories, WebsiteRepositoryHttpError, type WebsiteRepositoryCandidate } from './websiteRepositoryGitHub'
 import { findOpenWebsite, customWebsiteExperienceUrl, downloadCustomWebsiteExperience, downloadOpenWebsiteExperience, openWebsiteExperienceUrl } from './websiteRepositoryOpen'
@@ -19,7 +20,7 @@ const defaults: Configuration[] = [
 ]
 export const isRequiredWebsiteRepository = (host: string) => host === 'chaoxing.com'
 const configurations = new Map(defaults.map(value => [value.host, value]))
-const OFFLINE_REVISION = 'bundled:1', CACHE_TTL = 6 * 60 * 60 * 1000
+const EMPTY_REVISION = 'unloaded:1', CACHE_TTL = 6 * 60 * 60 * 1000
 const initialState = () => ({ ready: false, refreshing: false, revision: '', version: '', checkedAt: 0,
   source: 'offline' as 'offline' | 'repository' | 'http', customUrl: '', changedPaths: [] as string[], error: '', retryAt: 0, iconUrl: '' })
 export const websiteRepositoryStates = reactive<Record<string, ReturnType<typeof initialState>>>(Object.fromEntries(defaults.map(({ host }) => [host, initialState()])))
@@ -100,20 +101,19 @@ const saveEntry = (configuration: Configuration, document: WebsiteRepositoryDocu
     next.entries[configuration.host] = { configuration: clone(configuration), document: clone(document) }
     if (Object.keys(next.entries).length > 64) throw new Error('网站仓库数量已达上限')
   })
-const fallbackFor = (configuration: Configuration): WebsiteSnapshot => {
-  const { host, id, name } = configuration
-  const prefix = id === 'chaoxing' ? '' : `sites/${host}/`
-  const skill = id === 'chaoxing' ? 'chaoxing' : 'site-learn'
-  const files = Object.fromEntries(listBundledSkillFiles(skill).filter(path => path.startsWith(prefix) && repositoryPath(path.slice(prefix.length)))
-    .map(path => [path.slice(prefix.length), readBundledSkillFile(skill, path)!]))
-  if (files['SKILL.md']) files['SKILL.md'] = normalizeLegacySkillMarkdown(files['SKILL.md'], id, { name, description: `${name}操作经验` })
-  return { revision: OFFLINE_REVISION, checkedAt: 0, files }
-}
+const fallbackFor = ({ host, id, name }: Configuration): WebsiteSnapshot => ({
+  revision: EMPTY_REVISION,
+  checkedAt: 0,
+  files: {
+    'SKILL.md': createSkillMarkdown(id, `${name}网站经验尚未从 Open 下载。`, name, '首次同步需要连接 Open。'),
+    'site-graph.json': JSON.stringify({ id, name, host, hostPattern: host.replaceAll('.', '\\.'), nodes: [], edges: [] }),
+  },
+})
 const legacyFiles = async (configuration: Configuration, fallback: WebsiteSnapshot) => {
   if (!isNativeSecureStore()) return {}
   const { readTextFile, readDir, BaseDirectory } = await import('@tauri-apps/plugin-fs')
   const options = { baseDir: BaseDirectory.Home }, { host, id, name } = configuration
-  const absent = (error: unknown) => /ENOENT|No such file or directory|not found|os error 2\b/i.test(String(error))
+  const absent = (error: unknown) => /ENOENT|No such file or directory|not found|os error [23]\b/i.test(String(error))
   const read = async (path: string) => { try { return await readTextFile(path, options) } catch (error) { if (absent(error)) return null; throw error } }
   const base = '.local/share/zerror/skill-overrides', dir = id === 'chaoxing' ? `${base}/chaoxing` : `${base}/site-learn/sites/${host}`
   const files: Record<string, string> = {}
@@ -135,6 +135,9 @@ const legacyFiles = async (configuration: Configuration, fallback: WebsiteSnapsh
   }
   return await redactNative(redactObject(files))
 }
+const toolDefinitions = reactive<Record<string, ToolDefinition[]>>({})
+export const websiteToolsForHost = (host: string): ToolDefinition[] => toolDefinitions[host] ?? []
+
 const instances = new Map<string, ReturnType<typeof createWebsiteRepository>>()
 const sourceChanges = new Map<string, Promise<unknown>>()
 const changeSource = async <T>(host: string, change: () => Promise<T>) => {
@@ -157,9 +160,10 @@ export const repositoryForHost = (host: string) => {
   if (instances.has(host)) return instances.get(host)!
   const initial = configurations.get(host)
   if (!initial) throw new Error('该网站尚未关联仓库')
-  const fallback = registry.entries[host]?.document.upstream || fallbackFor(initial)
+  const fallback = fallbackFor(initial)
   const repository = createWebsiteRepository({
     fallback,
+    replaceBundledSnapshot: true,
     load: async () => { await loadRegistry(); return registry.entries[host]?.document || null },
     save: document => saveEntry(initial, document, false, () => instances.get(host) === repository),
     legacy: initial.source ? () => legacyFiles(initial, fallback) : undefined,
@@ -181,9 +185,10 @@ export const repositoryForHost = (host: string) => {
     changed: document => {
       if (instances.get(host) !== repository) return
       const snapshot = document.customSource?.snapshot ?? document.upstream
+      toolDefinitions[host] = validateWebsiteTools(host, snapshot.tools)
       Object.assign(websiteRepositoryStates[host] ||= initialState(), { ready: true, revision: snapshot.revision,
         version: `${host}:${snapshot.revision}:${document.generation}`, checkedAt: snapshot.checkedAt,
-        source: document.customSource ? 'http' : snapshot.revision === OFFLINE_REVISION ? 'offline' : 'repository',
+        source: document.customSource ? 'http' : snapshot.revision === EMPTY_REVISION ? 'offline' : 'repository',
         customUrl: document.customSource?.url ?? '',
         changedPaths: [...(document.supplement ? ['SKILL.md'] : []), ...(document.graph && !document.customSource ? ['site-graph.json'] : [])],
         iconUrl: snapshot.icon?.dataUrl ?? '' })
@@ -231,7 +236,8 @@ export const refreshWebsiteRepository = async (host: string, force = false) => {
     lastCustomCheck.set(host, now)
   } else {
     const cached = repository.inspect().upstream
-    if (!configurations.get(host)?.source || now < state.retryAt || (!force && cached.website && cached.icon && now - cached.checkedAt < CACHE_TTL)) return
+    if (!configurations.get(host)?.source || now < state.retryAt || (!force && cached.website && cached.icon && now - cached.checkedAt < CACHE_TTL
+      && (cached.tools !== undefined || !websiteHasSupportedTools(host)))) return
   }
   const usingCustomSource = Boolean(state.customUrl)
   state.refreshing = true
@@ -272,7 +278,12 @@ export const ensureWebsiteRepository = async (host: string, checkOnOpen = false)
   await loadRegistry()
   await repositoryForHost(host).ready()
   if (websiteRepositoryStates[host]?.customUrl) await refreshWebsiteRepository(host, checkOnOpen)
-  else if (isNativeSecureStore()) void refreshWebsiteRepository(host, checkOnOpen).catch(error => { if (hasWebsiteRepository(host)) websiteRepositoryStates[host].error = error instanceof Error ? error.message : '网站仓库无法加载' })
+  else if (isNativeSecureStore()) {
+    const refresh = refreshWebsiteRepository(host, checkOnOpen).catch(error => {
+      if (hasWebsiteRepository(host)) websiteRepositoryStates[host].error = error instanceof Error ? error.message : '网站仓库无法加载'
+    })
+    if (websiteRepositoryStates[host].source === 'offline' || (websiteHasSupportedTools(host) && repositoryForHost(host).inspect().upstream.tools === undefined)) await refresh
+  }
 }
 export const readWebsiteRepositoryFile = async (host: string, path: string) => { await ensureWebsiteRepository(host); return repositoryForHost(host).read(path) }
 export const listWebsiteRepositoryFiles = async (host: string) => { await ensureWebsiteRepository(host); return repositoryForHost(host).list() }
@@ -310,6 +321,7 @@ export const setWebsiteExperienceUrl = (host: string, input: string) => changeSo
       configurations.delete(host)
       instances.delete(host)
       delete websiteRepositoryStates[host]
+      delete toolDefinitions[host]
       repositoryRegistryState.revision++
       notifyWebsiteRepositoryChanged(host)
     } else {
@@ -357,6 +369,7 @@ export const removeWebsiteRepository = (host: string, removeLocalData?: () => Pr
   pending.delete(host)
   lastCustomCheck.delete(host)
   delete websiteRepositoryStates[host]
+  delete toolDefinitions[host]
   repositoryRegistryState.revision++
   notifyWebsiteRepositoryChanged(host)
 })
@@ -372,8 +385,13 @@ export const importWebsiteRepository = (candidate: WebsiteRepositoryCandidate) =
     return website.host
   }
   if ([...configurations.values()].some(value => value.id === website.id && value.host !== website.host)) throw new Error('该网站标识已被其他网站使用')
-  const snapshot = await downloadWebsiteRepository({ ...source, branch: candidate.revision }, { revision: '', checkedAt: 0, files: {} }, await request(), website)
-  return installWebsiteSnapshot({ id: website.id, name: website.name, host: website.host, source }, snapshot)
+  const configuration = { id: website.id, name: website.name, host: website.host, source }
+  const previousSnapshot = { revision: '', checkedAt: 0, files: {} }
+  const fetch = await request()
+  const snapshot = usesOpenExperience(configuration, source)
+    ? await downloadOpenWebsiteExperience(website, previousSnapshot, fetch)
+    : await downloadWebsiteRepository({ ...source, branch: candidate.revision }, previousSnapshot, fetch, website)
+  return installWebsiteSnapshot(configuration, snapshot)
 })
 
 async function installWebsiteSnapshot(configuration: Configuration, snapshot: WebsiteSnapshot) {

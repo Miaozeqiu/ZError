@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { websiteToolNames } from '../../src/services/agent/websiteToolDefinitions'
 import { BROWSER_PRIMITIVE_TOOLS } from '../../src/services/agent/toolDefs/browserPrimitiveTools'
 import { dispatchBrowserTool } from '../../src/services/agent/browserTools'
 
@@ -83,8 +84,7 @@ describe('浏览器工具都能分发', () => {
   })
 
   it('注册过的 browser_* 不会回未知工具', async () => {
-    const names = BROWSER_PRIMITIVE_TOOLS
-      .map((tool) => tool.function.name)
+    const names = [...BROWSER_PRIMITIVE_TOOLS.map((tool) => tool.function.name), ...websiteToolNames]
       .filter((name) => name.startsWith('browser_') && !handledOutside.has(name))
     const unknown: string[] = []
     for (const name of names) {

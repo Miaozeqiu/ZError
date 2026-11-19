@@ -3,9 +3,11 @@ import { authToken, authUser, openLoginDialog } from '../../app/auth'
 import { RemoteApiError } from '../../app/remoteHttp'
 import { modelConfigManager } from '../../model/config'
 import { runTextModel } from '../../model/runner'
-import { fetchSubjects, identity, officialAnswer, pageOp, plan, readPaper, reviewedAnswer, serverAnswer, type Question } from '../../platform/zjooc/paperBank'
+import { fetchSubjects, identity, officialAnswer, paperBankRead, plan, reviewedAnswer, serverAnswer, type Question } from '../../platform/zjooc/paperBank'
 import type { HomeworkProgressUpdate, HomeworkQuestionProgress } from '../homeworkProgress'
+import { runWebsiteWorkflow } from '../websiteScripts'
 import { isHomeworkQuestionRange } from '../homeworkQuestionRange'
+import { websitePaperRules } from '../../browser/websitePaper'
 
 function login(signal: AbortSignal) {
   signal.throwIfAborted()
@@ -46,99 +48,152 @@ export async function answerZjooc(ctx: Context) {
   if (args.question_range !== undefined && !range) return fail('题号范围无效。')
   const offset = args.offset ?? 0
   if (typeof offset !== 'number' || !Number.isSafeInteger(offset) || offset < 0 || (offset && !args.assignment_id)) return fail('继续作答时需要上一批的试卷标识和偏移量。')
-  try {
+  type Paper = Awaited<ReturnType<ReturnType<typeof paperBankRead>['read']>>
+  type Status = HomeworkQuestionProgress['status']
+  let batch: { paper: Paper; page: ReturnType<typeof paperBankRead>; checkPage: () => Promise<void> } | undefined
+  let sessionUser = authUser.value?.id
+  let sessionToken = authToken.value
+  let remote: Awaited<ReturnType<typeof fetchSubjects>> | undefined
+  let serverUnavailable = false
+  let resolved: { answer: string[]; source: string } | undefined
+  const tried = new Set<string>()
+  const ensureSession = () => {
     signal.throwIfAborted()
-    const paper = await readPaper(browserId, offset, 5, range)
-    if (range && (paper.ambiguous || (paper.kind !== 'singleQuestion' && paper.scopeTotal !== range.end - range.start + 1))) return fail('指定范围内有重复或缺失的显示题号，请核对当前试卷。')
-    if (paper.stage !== 'do' || !paper.total || !paper.questions.length) return fail('请打开有可见题目的作答页。')
-    if (args.assignment_id !== undefined && paper.key !== args.assignment_id) return fail('当前试卷已经切换。')
-    const checkPage = async () => {
-      const live = await readPaper(browserId, offset, 5, range)
-      signal.throwIfAborted()
-      if (live.stage !== 'do' || live.key !== paper.key || JSON.stringify(live.questions.map(identity)) !== JSON.stringify(paper.questions.map(identity))) {
-        throw new Error('试卷已切换')
-      }
+    if (!sessionToken || authToken.value !== sessionToken) throw new Error('题库账号已变化。')
+  }
+  const progress = (q: Question, status: Status): HomeworkQuestionProgress => {
+    const paper = batch!.paper
+    return {
+      question_id: paper.key + '/' + (paper.single ? q.number : q.index + 1),
+      number: q.number, order: paper.single ? q.number : q.index + 1, stem: q.stem, type: q.type,
+      options: q.options, actual: q.type === 'completion' ? { blanks: q.actual } : { choices: q.actual }, status,
     }
-    if (!authToken.value) {
-      if (!await login(signal)) return fail('已取消题库登录，本次作答已停止。')
-      await checkPage()
-    }
-    const sessionUser = authUser.value?.id
-    let sessionToken = authToken.value
-    const ensureSession = async () => {
+  }
+  const publish = (phase: HomeworkProgressUpdate['phase'], questions: HomeworkQuestionProgress[]) => {
+    const paper = batch!.paper
+    ctx.onHomeworkProgress?.({ assignmentId: paper.key, title: paper.title, total: Math.max(paper.total, paper.declared), phase, questions })
+  }
+  const record = (q: Question, status: Status, source?: string) => {
+    results.push({ number: q.number, status, source })
+    publish('result', [progress(q, status)])
+    tried.clear()
+    resolved = undefined
+  }
+  const done = (paper: Paper) => ({
+    ok: true, assignment_id: paper.key, questions: results, serverUnavailable,
+    nextOffset: offset + 5 < paper.scopeTotal ? offset + 5 : undefined, singlePage: paper.single, hasNextPage: paper.hasNext, submitted: false,
+  })
+  try {
+    const completion = await runWebsiteWorkflow('zjooc.cn', 'zjooc', 'homework', {}, async (raw, interpret) => {
       await ctx.wait(0)
       signal.throwIfAborted()
-      if (!sessionToken || authToken.value !== sessionToken) throw new Error('题库账号已变化')
-    }
-    let remote: Awaited<ReturnType<typeof fetchSubjects>> | undefined
-    let serverUnavailable = false
-    const progress = (q: Question, status: HomeworkQuestionProgress['status']): HomeworkQuestionProgress => ({
-      question_id: paper.key + '/' + (paper.kind === 'singleQuestion' ? q.number : q.index + 1),
-      number: q.number, order: paper.kind === 'singleQuestion' ? q.number : q.index + 1, stem: q.stem, type: q.type,
-      options: q.options, actual: q.type === 'completion' ? { blanks: q.actual } : { choices: q.actual }, status,
-    })
-    const publish = (phase: HomeworkProgressUpdate['phase'], questions: HomeworkQuestionProgress[]) =>
-      ctx.onHomeworkProgress?.({ assignmentId: paper.key, title: paper.title, total: Math.max(paper.total, paper.declared), phase, questions })
-    publish('read', paper.questions.map(q => progress(q, !q.supported ? 'needs_review' : !q.actual.some(Boolean) ? 'unanswered' : q.actual.every(Boolean) ? 'answered' : 'partial')))
-    for (const q of paper.questions) {
-      await ensureSession()
-      const report = (status: HomeworkQuestionProgress['status'], source?: string, observed = q) => {
-        results.push({ number: q.number, status, source })
-        publish('result', [progress(observed, status)])
-      }
-      if (!q.supported) { report('needs_review'); continue }
-      if (q.actual.some(s => s.trim())) { report('existing_answer'); continue }
-      let resolved = officialAnswer(q) ?? reviewedAnswer(paper, q)
-      let source = 'review'
-      if (!resolved) {
-        if (remote === undefined) {
-          try { remote = await fetchSubjects(paper, signal) } catch (e) {
-            if (e instanceof RemoteApiError && (e.status === 401 || (e.status === 400 && /token/i.test(e.message)))) {
-              if (!await login(signal)) return fail('题库登录已失效，本次作答已停止。')
-              if (sessionUser && sessionUser !== authUser.value?.id) return fail('题库账号已切换，请重新开始作答。')
-              await checkPage()
-              sessionToken = authToken.value
-              remote = await fetchSubjects(paper, signal)
-            } else if (e instanceof RemoteApiError && e.status === 403) return fail('当前账号没有访问这份服务器题库的权限。')
-            else { signal.throwIfAborted(); remote = []; serverUnavailable = true }
+      const command = raw as Record<string, unknown> | null
+      if (command?.op === 'read' && !batch) {
+        const rules = websitePaperRules(interpret({ operation: 'paper_rules' }))
+        const page = paperBankRead(browserId, rules)
+        const paper = await page.read(offset, 5, range)
+        if (range && (paper.ambiguous || (!paper.single && paper.scopeTotal !== range.end - range.start + 1))) {
+          throw new Error('指定范围内有重复或缺失的显示题号，请核对当前试卷。')
+        }
+        if (paper.stage !== rules.exerciseStage || !paper.total || !paper.questions.length) throw new Error('请打开有可见题目的作答页。')
+        if (args.assignment_id !== undefined && paper.key !== args.assignment_id) throw new Error('当前试卷已经切换。')
+        const checkPage = async () => {
+          const live = await page.read(offset, 5, range)
+          signal.throwIfAborted()
+          if (live.stage !== paper.stage || live.url !== paper.url || live.key !== paper.key
+            || JSON.stringify(live.questions.map(identity)) !== JSON.stringify(paper.questions.map(identity))) {
+            throw new Error('试卷已切换。')
           }
         }
-        resolved = serverAnswer(q, remote)
-        source = 'server'
+        if (!authToken.value) {
+          if (!await login(signal)) throw new Error('已取消题库登录，本次作答已停止。')
+          await checkPage()
+        }
+        batch = { paper, page, checkPage }
+        sessionUser = authUser.value?.id
+        sessionToken = authToken.value
+        publish('read', paper.questions.map(q => progress(q, !q.supported ? 'needs_review'
+          : !q.actual.some(Boolean) ? 'unanswered' : q.actual.every(Boolean) ? 'answered' : 'partial')))
+        return { questions: paper.questions.map(q => ({ index: q.index, supported: q.supported, answered: q.actual.some(s => s.trim()) })) }
       }
-      if (!resolved) {
-        const [hits = []] = await invoke<{ answer: string }[][]>('lookup_homework_bank_answers', {
-          questions: [{ title: q.stem, type: q.type, options: q.options.map(o => o.label + '. ' + o.text).join('\n') || null }],
-        }).catch(() => [[]])
-        const plans = hits.map(h => plan(q, h.answer.split('###')))
-        if (plans.length && plans[0] && plans.every(v => JSON.stringify(v) === JSON.stringify(plans[0]))) resolved = plans[0]
-        source = 'local_bank'
+      if (!batch) throw new Error('请先读取当前作答批次。')
+      const { paper, page, checkPage } = batch
+      const q = paper.questions[results.length]
+      if (!q || command?.index !== q.index) throw new Error('请求的题号与授权作答批次不一致。')
+      const answered = q.actual.some(s => s.trim())
+      ensureSession()
+      if (command.op === 'record') {
+        const status = !q.supported ? 'needs_review' : answered ? 'existing_answer' : 'needs_review'
+        if (command.status !== status || resolved) throw new Error('试题记录状态无效。')
+        record(q, status)
+        return { ok: true }
       }
-      if (!resolved) {
-        await ensureSession()
-        try { resolved = await modelAnswer(q, signal) } catch { signal.throwIfAborted() }
-        source = 'model'
+      if (!q.supported || answered) throw new Error('当前题目需要人工处理，或已有作答。')
+      if (command.op === 'lookup') {
+        const source = command.source
+        if (typeof source !== 'string' || tried.has(source) || resolved) throw new Error('题库查询请求无效。')
+        tried.add(source)
+        let answer: string[] | undefined
+        switch (source) {
+          case 'review':
+            answer = officialAnswer(q) ?? reviewedAnswer(paper, q)
+            break
+          case 'server':
+            if (remote === undefined) {
+              try { remote = await fetchSubjects(paper, signal) } catch (error) {
+                if (error instanceof RemoteApiError && (error.status === 401 || (error.status === 400 && /token/i.test(error.message)))) {
+                  if (!await login(signal)) throw new Error('题库登录已失效，本次作答已停止。')
+                  if (sessionUser && sessionUser !== authUser.value?.id) throw new Error('题库账号已切换，请重新开始作答。')
+                  await checkPage()
+                  sessionToken = authToken.value
+                  remote = await fetchSubjects(paper, signal)
+                } else if (error instanceof RemoteApiError && error.status === 403) {
+                  throw new Error('当前账号没有访问这份服务器题库的权限。')
+                } else { signal.throwIfAborted(); remote = []; serverUnavailable = true }
+              }
+            }
+            answer = serverAnswer(q, remote)
+            break
+          case 'local_bank': {
+            const [hits = []] = await invoke<{ answer: string }[][]>('lookup_homework_bank_answers', {
+              questions: [{ title: q.stem, type: q.type, options: q.options.map(o => o.label + '. ' + o.text).join('\n') || null }],
+            }).catch(() => [[]])
+            const candidates = hits.map(hit => plan(q, hit.answer.split('###')))
+            if (candidates[0] && candidates.every(value => JSON.stringify(value) === JSON.stringify(candidates[0]))) answer = candidates[0]
+            break
+          }
+          case 'model':
+            try { answer = await modelAnswer(q, signal) } catch { signal.throwIfAborted() }
+            break
+          default:
+            throw new Error('网站请求了未授权的题库来源。')
+        }
+        if (answer) resolved = { answer, source }
+        return { found: Boolean(resolved) }
       }
-      if (!resolved) { report('needs_review'); continue }
-      await ensureSession()
-      const index = q.index
-      const action = await pageOp(browserId, { write: true, index, key: paper.key, identity: identity(q), before: q.actual, answers: resolved })
-      if (!action?.written) return fail(action?.error || '未能确认写入目标。')
+      if (command.op !== 'fill' || !resolved) throw new Error('当前题目缺少经过核对的答案。')
+      const action = await page.pageOp({ write: true, index: q.index, url: paper.url, key: paper.key,
+        identity: identity(q), before: q.actual, answers: resolved.answer })
+      if (!action?.written) return { ok: false, error: action?.error || '未能确认写入目标。' }
       await ctx.wait(0)
-      const observed = await readPaper(browserId, index, 1)
+      const observed = await page.read(q.index, 1)
       const actual = observed.questions[0]
-      if (observed.key !== paper.key || observed.stage !== 'do' || !actual || identity(actual) !== identity(q) || JSON.stringify(actual.actual) !== JSON.stringify(resolved)) {
-        report('unverified', source)
-        return fail('写入后未能核对答案，请检查当前题目。')
+      if (observed.key !== paper.key || observed.url !== paper.url || observed.stage !== paper.stage || !actual
+        || identity(actual) !== identity(q) || JSON.stringify(actual.actual) !== JSON.stringify(resolved.answer)) {
+        record(q, 'unverified', resolved.source)
+        return { ok: false, error: '写入后未能核对答案，请检查当前题目。' }
       }
-      report('filled', source, actual)
+      record(actual, 'filled', resolved.source)
+      return { ok: true }
+    })
+    const status = completion as { done?: unknown; error?: unknown } | null
+    if (status?.done !== true || !batch || results.length !== batch.paper.questions.length) {
+      return fail(typeof status?.error === 'string' ? status.error.slice(0, 300) : '网站答题流程未完成。')
     }
-    return JSON.stringify({ ok: true, assignment_id: paper.key, questions: results, serverUnavailable,
-      nextOffset: offset + 5 < paper.scopeTotal ? offset + 5 : undefined, singlePage: paper.kind === 'singleQuestion', hasNextPage: paper.hasNext, submitted: false })
+    return JSON.stringify(done(batch.paper))
   } catch (error) {
     signal.throwIfAborted()
     if (String(error).includes('BROWSER_USER_CONTROL')) throw error
-    if (error instanceof Error && ['试卷已切换', '题库账号已变化'].includes(error.message)) return fail(error.message + '，请重新核对当前试卷。')
-    return fail('请核对当前试卷、题库登录状态和网络连接。')
+    return fail(error instanceof Error ? error.message : '请核对当前试卷、题库登录状态和网络连接。')
   }
 }

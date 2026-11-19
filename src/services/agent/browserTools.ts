@@ -29,7 +29,6 @@ import { rememberLoginTyped } from './siteAccounts'
 import { browserTaskIntent } from './browserTask'
 import { compactStudyPanel, displaySiteName, formatSlimRefs, readBrowserLoop } from './browserLoop'
 import { inspectEvalScript } from './browserEvalGuard'
-import { resolveChaoxingLoginUrl } from '../browser/skills/chaoxingLogin'
 import { isCourseChromeTab, readCourseTab, sameChaoxingCourse } from '../platform/chaoxing/courseTab'
 import { isSpaceListTopUrl } from '../platform/chaoxing/spaceTab'
 import { siteGraphForUrl, siteGraphNodeForUrl, siteGraphUrlFromFrames } from '../browser/siteGraphCore'
@@ -55,6 +54,9 @@ import { handleActTools } from './tools/act'
 import { handleNavTools } from './tools/nav'
 import { handlePageTools } from './tools/page'
 import { handleCourseTools } from './tools/course'
+import { websiteToolHost } from './websiteToolDefinitions'
+import { installedExperienceHost, websiteToolsForHost } from './websiteRepository'
+import { websitePrimaryHost } from './websiteIdentity'
 import { missingHostNeeds } from './hostCapabilities'
 import { missingNeedsNote, nextStep } from './nextStep'
 
@@ -187,6 +189,14 @@ export const executeBrowserTool = async (input: {
     panel: packAgentPanel(browserId),
   })
 
+  const website = websiteToolHost(name)
+  if (website && !websiteToolsForHost(website).some(tool => tool.function.name === name)) {
+    return JSON.stringify({ ok: false, reason: 'website_tool_unavailable', error: '当前网站经验未提供此工具，请先同步网站经验。' })
+  }
+  if (website && installedExperienceHost(websitePrimaryHost(loop.url)) !== website && name !== 'browser_login_chaoxing' && name !== 'browser_login_zjooc'
+    && name !== 'browser_start_chapter_tasks' && name !== 'browser_list_courses' && name !== 'browser_open_course') {
+    return JSON.stringify({ ok: false, reason: 'wrong_website', error: '请先打开此工具所属网站。' })
+  }
   const policy = getAgentPolicy()
   const failWithCard = (body: Record<string, unknown>, _href = loop.url) => (
     JSON.stringify({ ok: false, ...body })
@@ -212,7 +222,7 @@ export const executeBrowserTool = async (input: {
     currentUrl, graphUrlOf, liveHref, resetPageProbe,
     notePageProbe, readBrowserPage, getBrowserState, peekAppBrowserUrl, emptyPageSnaps, callProtocol,
     graphNodeId, siteGraphNodeForUrl, isShellNode, SPACE_HINT, COURSE_HW_HINT,
-    browserTaskIntent, resolveChaoxingLoginUrl, sameChaoxingCourse, isChaoxingIframeNavUrl, isSpaceListTopUrl,
+    browserTaskIntent, sameChaoxingCourse, isChaoxingIframeNavUrl, isSpaceListTopUrl,
     IFRAME_NAV_HINT, navigateBrowserView, evalBrowserView, pageHostMatches, pageHostOf, reloadBrowserView,
     goBackBrowserView, goForwardBrowserView, formatMissRefsHint, cssSelectorFromArgs, looksLikeCssSelector,
     resolveRefLocator, actOnceOnBrowser, clickByLocator, clickBrowserElement, clickBrowserText, observeAfterClick, asObject,
@@ -240,8 +250,8 @@ export const dispatchBrowserTool = async (ctx: Record<string, any>): Promise<str
     return answerZjooc(ctx as Parameters<typeof answerZjooc>[0])
   }
   if (ctx.name === 'browser_play_zjooc') {
-    const { playZjoocVideos } = await import('./tools/zjoocPlayback')
-    return playZjoocVideos(ctx as Parameters<typeof playZjoocVideos>[0])
+    const { playWebsiteVideos } = await import('./tools/websitePlayback')
+    return playWebsiteVideos('zjooc.cn', 'zjooc', ctx as Parameters<typeof playWebsiteVideos>[2])
   }
   if (['browser_request_credentials', 'browser_login_zjooc', 'browser_login_chaoxing'].includes(ctx.name)) {
     const { handleLoginTool } = await import('./tools/websiteLogin')

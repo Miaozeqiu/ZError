@@ -22,20 +22,29 @@ export const isStudentHomeworkList = (value: string, course: { id: string; clazz
   return id === course.id && (!course.clazz || clazz === course.clazz)
 }
 
-export const READ_STUDENT_HOMEWORK = String.raw`(function(){
-  const list = document.querySelector('.bottomList');
+const listFields = ['list', 'item', 'title', 'status', 'page', 'previous', 'next', 'previousButton', 'nextButton', 'disabled', 'tabName'] as const
+export type HomeworkListRules = Record<(typeof listFields)[number], string>
+export function homeworkListRules(value: unknown): HomeworkListRules {
+  const rules = value as HomeworkListRules
+  if (!rules || listFields.some(key => typeof rules[key] !== 'string' || !rules[key] || rules[key].length > 512)) {
+    throw new Error('网站脚本提供的作业列表规则无效。')
+  }
+  return rules
+}
+export const readStudentHomeworkScript = (rules: HomeworkListRules) => String.raw`(function(rules){
+  const list = document.querySelector(rules.list);
   const visible = item => Boolean(item?.getClientRects().length && getComputedStyle(item).visibility !== 'hidden');
   const clean = item => String(item?.getAttribute('title') || item?.innerText || item?.textContent || '').replace(/\s+/g, ' ').trim();
-  const entries = [...(list?.querySelectorAll('li[data]') || [])].filter(visible).map(item => ({
-    title: clean(item.querySelector('.right-content .overHidden2, .titTxt, .workName, .work-title')),
-    status: clean(item.querySelector('.status')),
+  const entries = [...(list?.querySelectorAll(rules.item) || [])].filter(visible).map(item => ({
+    title: clean(item.querySelector(rules.title)),
+    status: clean(item.querySelector(rules.status)),
     address: item.getAttribute('data') || '',
   }));
   const enabled = selector => {
     const item = document.querySelector(selector);
-    return visible(item) && !item.matches('.xl-disabled, [aria-disabled="true"], :disabled');
+    return visible(item) && !item.matches(rules.disabled);
   };
-  return { entries, page: Number(clean(document.querySelector('.pageDiv .xl-active'))) || 1,
-    previous: enabled('.pageDiv .xl-prevPage'), next: enabled('.pageDiv .xl-nextPage'),
+  return { entries, page: Number(clean(document.querySelector(rules.page))) || 1,
+    previous: enabled(rules.previous), next: enabled(rules.next),
     empty: /暂无(?:任何)?作业|没有(?:任何)?作业/.test(document.body?.innerText || '') };
-})()`
+})(${JSON.stringify(rules)})`

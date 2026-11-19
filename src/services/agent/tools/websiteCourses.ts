@@ -1,6 +1,6 @@
 import { listCachedPageRefs, type BrowserLocator } from '../../browser/engine'
 import { evalBrowserViewInFrame, evalBrowserViewMain } from '../../browser/eval'
-import { chaoxingUrl, isCourseListFrame, READ_STUDENT_COURSES, studentCourseUrl } from '../../platform/chaoxing/studentCourses'
+import { chaoxingUrl, courseListRules, isCourseListFrame, readStudentCoursesScript, studentCourseUrl } from '../../platform/chaoxing/studentCourses'
 import { runWebsiteScript, hasWebsiteScriptManifest } from '../websiteScripts'
 
 type Course = { title: string; teacher?: string; target: NonNullable<ReturnType<typeof studentCourseUrl>> }
@@ -25,8 +25,8 @@ type CourseToolContext = {
   includeLandingSnapshot?: boolean
 }
 
-const collect = async (id: string, frame: Frame) => {
-  const snapshot = await evalBrowserViewInFrame(id, READ_STUDENT_COURSES, '', { frameId: frame.frameId!, loaderId: frame.loaderId })
+const collect = async (id: string, frame: Frame, probe: string) => {
+  const snapshot = await evalBrowserViewInFrame(id, probe, '', { frameId: frame.frameId!, loaderId: frame.loaderId })
   const seen = new Set<string>()
   const courses: Course[] = []
   for (const row of Array.isArray(snapshot?.courses) ? snapshot.courses : []) {
@@ -49,6 +49,8 @@ export async function handleWebsiteCourseTools(ctx: CourseToolContext): Promise<
   let courseDispatched = false
   try {
     if (!await hasWebsiteScriptManifest(site)) return fail('invalid', '当前学习通经验来源未提供脚本清单。可以先用普通网页工具进入课程。')
+    const { result: rules } = await runWebsiteScript(site, 'chaoxing', 'courses', { operation: 'list_rules' }, courseListRules, { reuseForMs: 30_000 })
+    const probe = readStudentCoursesScript(rules)
     const id = ctx.browserId
     const initial = await ctx.liveHref(id)
     const login = () => fail('invalid', '学习通需要登录，请先完成登录再读取课程。', { loginRequired: true })
@@ -72,7 +74,7 @@ export async function handleWebsiteCourseTools(ctx: CourseToolContext): Promise<
         if (frames.length > 1) return fail('ambiguous', '发现多个课表框，请先确认当前的学生课表。')
         if (frames.length === 1) {
           const frame = frames[0]
-          try { data = await collect(id, frame) } catch (error) {
+          try { data = await collect(id, frame, probe) } catch (error) {
             if (!/frame|文档已更换/i.test(String(error))) throw error
             data = undefined
           }
@@ -82,12 +84,12 @@ export async function handleWebsiteCourseTools(ctx: CourseToolContext): Promise<
           }
           if (data && !data.student && !clickedStudentTab) {
             await ctx.wait(0)
-            const clicked = await ctx.clickByLocator(id, { by: 'css', value: '.tab-item[coursetype="1"]', frameId: frame.frameId, loaderId: frame.loaderId })
+            const clicked = await ctx.clickByLocator(id, { by: 'css', value: rules.studentTab, frameId: frame.frameId, loaderId: frame.loaderId })
             clickedStudentTab = clicked.ok
             if (!clicked.ok && clicked.reason !== 'not_found' && !/frame|文档已更换/i.test(clicked.error ?? '')) return fail('invalid', clicked.error || '无法切换到「我学的课」。')
           }
         } else if (isSpace(current) && !clickedCourseMenu) {
-          const refs = listCachedPageRefs(id).filter(ref => !ref.disabled && ref.role === 'menuitem' && ref.name.trim() === '课程' && ref.locator.frameId && ref.locator.loaderId && !ref.locator.framePath)
+          const refs = listCachedPageRefs(id).filter(ref => !ref.disabled && ref.role === 'menuitem' && ref.name.trim() === rules.menuName && ref.locator.frameId && ref.locator.loaderId && !ref.locator.framePath)
           if (refs.length === 1) {
             await ctx.wait(0)
             const clicked = await ctx.clickByLocator(id, refs[0].locator)
@@ -128,7 +130,7 @@ export async function handleWebsiteCourseTools(ctx: CourseToolContext): Promise<
     await ctx.wait(0)
     const current = await ctx.liveHref(id)
     if (!isSpace(current) && !isCourseListFrame(current)) return fail('stale', '当前页面已离开课表，请重新读取。')
-    const latest = await collect(id, sourceFrame).catch(() => undefined)
+    const latest = await collect(id, sourceFrame, probe).catch(() => undefined)
     if (!latest?.student || latest.truncated || JSON.stringify(latest.courses) !== JSON.stringify(courses)) return fail('stale', '课表在查询期间发生了变化，请重新读取。')
     courseDispatched = true
     await ctx.navigateBrowserView(id, course.target.url)

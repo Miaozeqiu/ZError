@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import type { BrowserLocator } from '../../browser/engine'
 import { evalBrowserViewInFrame } from '../../browser/eval'
-import { courseHomeworkReadScript, type PageHomework, type PageHomeworkQuestion } from '../../chaoxing/host/courseHomeworkAnswers'
+import { courseHomeworkReadScript, loadCourseHomeworkRules, type PageHomework, type PageHomeworkQuestion } from '../../chaoxing/host/courseHomeworkAnswers'
 import { locateChapterQuiz } from '../../chaoxing/host/chapterQuizFrames'
 import { studentChapterUrl } from '../../chaoxing/host/chapterTasks'
 import { chaoxingUrl } from '../../platform/chaoxing/studentCourses'
@@ -11,7 +11,7 @@ import {
   type HomeworkAnswer, type HomeworkProgressUpdate, type HomeworkQuestionProgress,
 } from '../homeworkProgress'
 import { isHomeworkQuestionRange, type HomeworkQuestionRange } from '../homeworkQuestionRange'
-import { runWebsiteScript, hasWebsiteScriptManifest } from '../websiteScripts'
+import { runWebsiteScript, runWebsiteWorkflow, hasWebsiteScriptManifest } from '../websiteScripts'
 import type { handleWebsiteHomeworkTools } from './websiteHomework'
 
 type Context = Parameters<typeof handleWebsiteHomeworkTools>[0] & {
@@ -136,9 +136,10 @@ export async function handleWebsiteHomeworkAnswerTools(ctx: Context): Promise<st
     const locator = (selector: string): BrowserLocator => ({
       by: 'css', value: selector, frameId: frame.frameId, loaderId: frame.loaderId,
     })
+    const rules = await loadCourseHomeworkRules()
     const read = async (offset: number, limit: number, questionId?: string, scope?: HomeworkQuestionRange): Promise<PageHomework> => {
       await ctx.wait(0)
-      const state = await evalBrowserViewInFrame(id, courseHomeworkReadScript(offset, limit, questionId, scope, Boolean(quiz)), '', { frameId: frame.frameId!, loaderId: frame.loaderId })
+      const state = await evalBrowserViewInFrame(id, courseHomeworkReadScript(rules, offset, limit, questionId, scope, Boolean(quiz)), '', { frameId: frame.frameId!, loaderId: frame.loaderId })
       if (state?.url !== frame.url || !Number.isInteger(state?.total) || !Array.isArray(state.questions)) {
         throw new Error('作业页面已变化，请重新读取。')
       }
@@ -239,13 +240,12 @@ export async function handleWebsiteHomeworkAnswerTools(ctx: Context): Promise<st
       }
     }
 
-    for (const original of questions) {
-      const plan = original.id ? plans.get(original.id) : undefined
+    const execute = async (original: PageHomeworkQuestion, plan: Decision | undefined) => {
       const row: HomeworkQuestionProgress = { ...publicQuestion(original), status: 'needs_review' }
       items.push(row)
       try {
-        if (!plan) continue
-        if (plan.status !== 'ready') { row.status = plan.status; continue }
+        if (!plan) return
+        if (plan.status !== 'ready') { row.status = plan.status; return }
         row.source = manual ? 'agent' : 'bank'
         if (!manual) row.bankId = plan.bankId
         row.expected = plan.plan
@@ -253,15 +253,15 @@ export async function handleWebsiteHomeworkAnswerTools(ctx: Context): Promise<st
         const valid = (q: PageHomeworkQuestion | undefined): q is PageHomeworkQuestion => !!q &&
           fingerprint(q) === fingerprint(original) && (!q.issue || Boolean(manual && q.issue === 'visual_needed'))
         let live = await refresh()
-        if (!valid(live)) { row.status = 'page_changed'; continue }
+        if (!valid(live)) { row.status = 'page_changed'; return }
         row.actual = current(live)
         const intended = values(plan.plan)
-        if (same(row.actual, plan.plan)) { row.status = 'already_matches'; continue }
+        if (same(row.actual, plan.plan)) { row.status = 'already_matches'; return }
         const compatible = (actual: Plan) => 'blanks' in actual
           ? actual.blanks.every((value, index) => !value.trim() || value === intended[index])
           : actual.choices.every(value => intended.includes(value))
         // Existing contradictory values may belong to the user; surface them for review.
-        if (!compatible(row.actual)) { row.status = 'existing_answer'; continue }
+        if (!compatible(row.actual)) { row.status = 'existing_answer'; return }
         let pending = false
         for (let index = 0; index < intended.length; index++) {
           const value = intended[index]
@@ -303,6 +303,25 @@ export async function handleWebsiteHomeworkAnswerTools(ctx: Context): Promise<st
         publish('result', [row])
       }
     }
+    const actions = questions.map(question => question.id ? plans.get(question.id) : undefined)
+    let failure: string | undefined
+    const outcome = await runWebsiteWorkflow(site, 'chaoxing', 'homework', {
+      rows: actions.map(plan => ({ status: plan?.status ?? 'needs_review' })),
+    }, async raw => {
+      await ctx.wait(0)
+      const command = raw as { op?: unknown; index?: unknown } | null
+      const index = items.length
+      const plan = actions[index]
+      const expected = plan?.status === 'ready' ? 'apply' : 'record'
+      if (failure || index >= questions.length || command?.index !== index || command.op !== expected) {
+        throw new Error('网站作答流程请求的操作与当前题目或授权答案不一致。')
+      }
+      failure = await execute(questions[index], plan)
+      return { ok: !failure }
+    }) as { done?: unknown } | null
+    if (failure) return failure
+    if (outcome?.done !== true || items.length !== questions.length) return fail('stale', '网站作答流程未完成。', meta)
+
     return JSON.stringify({ ok: true, ...meta, scriptRevision: revision, questions: items,
       filled: items.filter(item => item.status === 'filled').length,
       reviewNeeded: items.filter(item => !['filled', 'already_matches'].includes(item.status)).length,

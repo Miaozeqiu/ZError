@@ -3,7 +3,7 @@ import { listenBrowserLoad } from '../browser/appBrowser'
 import { evalBrowserViewMainIdle } from '../browser/eval'
 import { kickParserClock, kickParserClockSoon, unwatchParserClock, watchParserClock } from '../browser/pageClock'
 import { onHomeworkChanged } from '../browser/pushEvents'
-import { courseHomeworkReadScript, type PageHomework } from '../chaoxing/host/courseHomeworkAnswers'
+import { courseHomeworkReadScript, loadCourseHomeworkRules, type PageHomework } from '../chaoxing/host/courseHomeworkAnswers'
 import { studentHomeworkUrl } from '../platform/chaoxing/studentHomework'
 import { liveSession, recordHomeworkProgress, sessionIsStreaming } from './chatStore'
 import { observeHomeworkQuestion, type HomeworkQuestionProgress } from './homeworkProgress'
@@ -32,6 +32,8 @@ export function watchBrowserHomework(
         return !stopped && generation === revision && current?.sessionId === sessionId
           && current.browserId === browserId && current.url === url
       }
+      const rules = await loadCourseHomeworkRules().catch(() => null)
+      if (!rules || !isCurrent()) return false
       let total = 0
       let title: string | undefined
       let documentTime: number | undefined
@@ -46,7 +48,7 @@ export function watchBrowserHomework(
       }
 
       for (let offset = 0; isCurrent() && (offset === 0 || offset < total); offset += batchSize) {
-        const page: PageHomework | null = await evalBrowserViewMainIdle(browserId, courseHomeworkReadScript(offset, batchSize)).catch(() => null)
+        const page: PageHomework | null = await evalBrowserViewMainIdle(browserId, courseHomeworkReadScript(rules, offset, batchSize)).catch(() => null)
         if (!isCurrent() || page?.url !== url || !Number.isSafeInteger(page.total) || page.total <= 0
           || !Array.isArray(page.questions) || page.questions.length !== Math.min(batchSize, page.total - offset)) return false
         if (offset === 0) {

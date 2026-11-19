@@ -8,7 +8,7 @@ use crate::app_browser::{
   remembered_url, CdpActResult,
 };
 use crate::cdp_client::{connect_loop, CdpConn};
-use crate::browser_geometry::{AnchoredBrowserGeometry, BrowserViewportLayout};
+use crate::browser_geometry::{AnchoredBrowserGeometry, BrowserViewportLayout, PAGE_W, PAGE_H};
 use futures_util::future::join_all;
 use std::time::Duration;
 use crate::cef::h264::claim_h264_bundle;
@@ -32,10 +32,6 @@ use std::sync::{Arc, Mutex, OnceLock};
 use tauri::{AppHandle, Emitter, Manager};
 
 const CHROME_UA_NOTE: &str = "浏览内核已换 Chromium，学习通需重新登录。";
-
-/// 网页布局永远按这个 CSS 视口。洞口只负责把整页缩放进可见区域，不改页面大小。
-const PAGE_W: f64 = 1920.0;
-const PAGE_H: f64 = 1080.0;
 
 /// 取能把 1920x1080 整页放进洞口的缩放。小于 1 是缩小，大于 1 是放大。
 fn fit_scale(hole_w: f64, hole_h: f64) -> f64 {

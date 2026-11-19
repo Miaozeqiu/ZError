@@ -891,13 +891,11 @@ pub async fn cdp_fill_secret(app:AppHandle,id:String,locator:Value,reference:Str
     let info=info.pointer("/result/value").ok_or("无法验证输入节点")?;
     if info["connected"]!=true || info["disabled"]==true || info["readonly"]==true || info["tag"]!="INPUT" {return Err("凭据只能填写到可编辑的原生输入框".into());}
     let target=info["origin"].as_str().ok_or("无法验证输入框所属网站")?;
-    let password=reference.ends_with("/password}}");
-    if password && info["type"]!="password" {return Err("密码变量只能用于密码输入框".into());}
-    if !password && info["type"]=="password" {return Err("账号变量不能用于密码输入框".into());}
-    let secret=crate::secret_vault::resolve(&reference,"site",target)?;
+    let kind=info["type"].as_str().filter(|value| matches!(*value, "password" | "text" | "tel" | "email" | "number")).ok_or("凭据只能填写到账号或密码输入框")?;
+    let secret=crate::secret_vault::resolve_site_input(&reference,target,kind=="password")?;
     crate::secret_browser::mark(&id,&crate::secret_browser::loader(&id).await?);
-    let filled=page.conn.call("Runtime.callFunctionOn",json!({"objectId":object,"returnByValue":true,"arguments":[{"value":secret.as_str()},{"value":target}],"functionDeclaration":r#"function(value,origin){
-      if(!this.isConnected||this.disabled||this.readOnly||this.ownerDocument.location.origin!==origin)return {ok:false,filled:false};
+    let filled=page.conn.call("Runtime.callFunctionOn",json!({"objectId":object,"returnByValue":true,"arguments":[{"value":secret.as_str()},{"value":target},{"value":kind}],"functionDeclaration":r#"function(value,origin,type){
+      if(!this.isConnected||this.disabled||this.readOnly||this.type!==type||this.ownerDocument.location.origin!==origin)return {ok:false,filled:false};
       var win=this.ownerDocument.defaultView;var descriptor=Object.getOwnPropertyDescriptor(win.HTMLInputElement.prototype,'value');
       this.scrollIntoView({block:'center',inline:'nearest'});this.focus();
       if(!descriptor||!descriptor.set)return {ok:false,filled:false};
