@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
+import { courseListRules, homeworkListRules } from './fixtures/studentListRules'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const { state, readFrame, liveLocation, remembered } = vi.hoisted(() => ({
@@ -11,7 +12,7 @@ vi.mock('../../src/services/security/secureStore', () => ({ isNativeSecureStore:
 vi.mock('../../src/services/browser/eval', () => ({ evalBrowserViewInFrame: readFrame, evalBrowserViewMain: liveLocation }))
 vi.mock('../../src/services/browser/engine', () => ({ listCachedPageRefs: remembered }))
 
-import { runIsolatedWebsiteScript, runWebsiteScript } from '../../src/services/agent/websiteScripts'
+import { runIsolatedWebsiteScript, runWebsiteScript, runWebsiteWorkflow } from '../../src/services/agent/websiteScripts'
 import { handleWebsiteCourseTools } from '../../src/services/agent/tools/websiteCourses'
 import { handleWebsiteHomeworkTools } from '../../src/services/agent/tools/websiteHomework'
 import { studentCourseUrl } from '../../src/services/platform/chaoxing/studentCourses'
@@ -60,9 +61,30 @@ describe('external course scripts', () => {
     } finally { await close() }
   })
 
+  it('drives a pinned workflow through typed host steps without replaying an interrupted action', async () => {
+    const { source, close } = await serve()
+    source.code = 'var ZErrorSiteScript = {run: input => input.value, *workflow(){const issued = yield {op:"read"}; yield {op:"act", issued}; return {done: true}}};'
+    try {
+      const steps: unknown[] = []
+      const result = await runWebsiteWorkflow('chaoxing.com', 'chaoxing', 'courses', {}, async (command, interpret) => {
+        steps.push(command)
+        return interpret({ value: 'current' })
+      })
+      expect(result).toEqual({ done: true })
+      expect(steps).toEqual([{ op: 'read' }, { op: 'act', issued: 'current' }])
+
+      const send = vi.fn(async (command: any) => {
+        if (command.op === 'act') throw new Error('uncertain click')
+        return 'current'
+      })
+      await expect(runWebsiteWorkflow('chaoxing.com', 'chaoxing', 'courses', {}, send)).rejects.toThrow('uncertain click')
+      expect(send).toHaveBeenCalledTimes(2)
+    } finally { await close() }
+  })
+
   it('uses the actual student list for a direct open and verifies the landing', async () => {
     const { source, close } = await serve()
-    source.code = 'var ZErrorSiteScript = { run: ({courses}) => ({ ids: [courses[0].id], selected: courses[0].id }) };'
+    source.code = `var ZErrorSiteScript = { run: ({operation, courses}) => operation === "list_rules" ? ${JSON.stringify(courseListRules)} : ({ ids: [courses[0].id], selected: courses[0].id }) };`
     const courseUrl = 'https://mooc2-ans.chaoxing.com/mooc2-ans/mycourse/stu?courseid=42&clazzid=7'
     const navigateBrowserView = vi.fn(async () => undefined)
     const clickByLocator = vi.fn(async () => ({ ok: true }))
@@ -106,7 +128,7 @@ describe('external course scripts', () => {
 
   it('reads all homework pages before opening a unique row and returns only the verified landing snapshot', async () => {
     const { source, close } = await serve()
-    source.code = 'var ZErrorSiteScript = { run: ({operation, query, assignments}) => { const ids = assignments.filter(a => !query || a.title === query).map(a => a.id); return { ids, selected: operation === "open" && ids.length === 1 ? ids[0] : undefined }; } };'
+    source.code = `var ZErrorSiteScript = { run: ({operation, query, assignments}) => { if (operation === "list_rules") return ${JSON.stringify(homeworkListRules)}; const ids = assignments.filter(a => !query || a.title === query).map(a => a.id); return { ids, selected: operation === "open" && ids.length === 1 ? ids[0] : undefined }; } };`
     const course = 'https://mooc2-ans.chaoxing.com/mooc2-ans/mycourse/stu?courseid=42&clazzid=7'
     const list = 'https://mooc2-ans.chaoxing.com/mooc2/work/list?courseId=42&classId=7'
     const address = (work: number) => `https://mooc1.chaoxing.com/mooc-ans/mooc2/work/task?courseId=42&classId=7&workId=${work}`

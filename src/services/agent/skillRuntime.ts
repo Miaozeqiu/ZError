@@ -1,13 +1,9 @@
-import { homeworkCaptureScript } from '../chaoxing/host/homeworkHost'
-import '../chaoxing/host'
 import { hasWebsiteRepository, repositoryForHost, readChaoxingRepositoryFile, onWebsiteRepositoryChanged, websiteRepositoryHosts, readWebsiteRepositoryFile } from './websiteRepository'
 
 import type { SiteGraphData } from '../browser/siteGraphCore'
 
 export const CHAOXING_SKILL_ID = 'chaoxing'
 export const SITE_GRAPH_PATH = 'site-graph.json'
-export const STUDY_PARSER_PATH = 'parsers/study'
-export const HOMEWORK_PARSER_PATH = 'parsers/homework'
 
 const OVERRIDE_DIR = '.local/share/zerror/skill-overrides'
 
@@ -53,11 +49,6 @@ const applyGraphSource = (source: string | null, pushLive: boolean) => {
 }
 
 export const getChaoxingSiteGraphSeed = (): SiteGraphData => siteGraphSeed || emptyGraph()
-
-export const homeworkScript = (name: string) => {
-  if (name === 'capture') return homeworkCaptureScript()
-  throw new Error(`作业解析器没有注入脚本 ${name}`)
-}
 
 const LEARNED_SITES_DIR = `${OVERRIDE_DIR}/site-learn/sites`
 const LEARNED_GRAPH = /^sites\/[^/]+\/site-graph\.json$/

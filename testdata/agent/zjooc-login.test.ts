@@ -1,24 +1,18 @@
+import { runLoginCommands } from './fixtures/loginCommands'
 import { describe, expect, it, vi } from 'vitest'
-import { JSDOM } from 'jsdom'
-import { readFileSync } from 'node:fs'
 import { pendingWebsiteVerification } from '../../src/services/agent/chatLogin'
-import { loginZjooc } from '../../src/services/agent/tools/zjoocLogin'
+import { loginZjooc } from '../../src/services/agent/tools/websiteLogin'
 import { chaoxingStartup } from '../../src/services/agent/chaoxingStartup'
 import { assembleRoleTools } from '../../src/services/agent/subagent/tools'
 
 const { siteAccountOf } = vi.hoisted(() => ({ siteAccountOf: vi.fn() }))
-vi.mock('../../src/services/agent/websiteScripts', () => ({
-  runWebsiteScript: async (_host: string, _site: string, capability: string, input: any, validate: (value: unknown) => unknown) => {
-    let result: unknown
-    if (capability === 'homework') result = input.questions.map((q: any) => ({ index: q.index, action: !q.supported ? 'needs_review' : q.answered ? 'existing_answer' : 'resolve' }))
-    else if (capability === 'playback') result = input.videos.filter((video: any) => input.mode === 'section' ? !video.complete : input.title ? video.title === input.title : video.id === input.active).map((video: any) => video.id)
-    else if (_site === 'chaoxing') result = input.kind === 'space' ? 'logged_in' : input.kind === 'challenge' ? 'verify'
-      : input.host !== 'passport2.chaoxing.com' ? input.kind === 'loading' ? 'wait' : 'open_space'
-      : input.kind === 'form' && input.modern && input.frameReady ? 'fill' : ['passport', 'form'].includes(input.kind) ? 'open_form' : 'wait'
-    else result = input.kind === 'space' ? 'logged_in' : input.kind === 'form' && input.atForm && input.frameReady ? 'fill' : input.kind === 'guest' && input.atHome ? 'open_form' : 'wait'
-    return { result: validate(result), revision: 'fixture' }
-  },
+vi.mock('../../src/services/agent/tools/websiteLoginObservation', () => ({
+  loginObserver: (call: Function, id: string) => (captureCaptcha = false) =>
+    call(id, 'login_observe', captureCaptcha ? { captureCaptcha } : undefined),
 }))
+
+vi.mock('../../src/services/agent/websiteScripts', () => ({ runWebsiteWorkflow: runLoginCommands }))
+
 vi.mock('../../src/services/agent/websiteRepository', async original => ({
   ...await original<typeof import('../../src/services/agent/websiteRepository')>(),
   installedExperienceHost: (host: string) => host,
@@ -35,7 +29,7 @@ const context = (...states: Record<string, unknown>[]) => {
   return {
     args: {}, browserId: 'tab', wait: async () => {}, navigateBrowserView: vi.fn(async () => {}),
     actOnceOnBrowser: vi.fn(async () => ({ dispatched: true, ok: true, filled: true })),
-    callProtocol: vi.fn(async (_id: string, op: string, _args?: Record<string, unknown>) => op === 'zjooc_login_state'
+    callProtocol: vi.fn(async (_id: string, op: string, _args?: Record<string, unknown>) => op === 'login_observe'
       ? states[Math.min(step++, states.length - 1)] : { ok: true, filled: true }),
   }
 }
@@ -53,7 +47,7 @@ describe('在浙学登录', () => {
     const captchaImage = 'data:image/png;base64,example-image'
     const ctx = context({ kind: 'other' }, { kind: 'guest', url: 'https://www.zjooc.cn/', frameId: 'main', loaderId: 'home' }, form, { ...form, captchaImage })
     expect(JSON.parse(await loginZjooc(ctx))).toMatchObject({ userActionRequired: true, challenge: 'image_captcha', captchaImage })
-    expect(ctx.callProtocol).toHaveBeenLastCalledWith('tab', 'zjooc_login_state', { captureCaptcha: true })
+    expect(ctx.callProtocol).toHaveBeenLastCalledWith('tab', 'login_observe', { captureCaptcha: true })
     expect(ctx.navigateBrowserView).toHaveBeenCalledTimes(1)
     expect(ctx.callProtocol.mock.calls.filter(([,op]) => op === 'fill_secret').map(([, , args]) => args))
       .toEqual(Object.values(account).map(reference => ({ secret_ref: reference, locator: expect.objectContaining({ frameId: 'main', loaderId: 'doc' }) })))
@@ -67,7 +61,7 @@ describe('在浙学登录', () => {
       wait: async ms => { if (ms === 2000) expect(pendingWebsiteVerification.has(sessionId)).toBe(true) },
     })
     expect(JSON.parse(result)).toMatchObject({ ok: true, loggedIn: true })
-    expect(ctx.callProtocol.mock.calls.every(([, op]) => op === 'zjooc_login_state')).toBe(true)
+    expect(ctx.callProtocol.mock.calls.every(([, op]) => op === 'login_observe')).toBe(true)
     expect(ctx.actOnceOnBrowser).not.toHaveBeenCalled()
     expect(pendingWebsiteVerification.has(sessionId)).toBe(false)
   })
@@ -116,38 +110,5 @@ describe('在浙学登录', () => {
     expect(JSON.parse(await loginZjooc(context(form, { ...form, loaderId: 'new' })))).not.toHaveProperty('challenge')
     siteAccountOf.mockReturnValue(null)
     expect(JSON.parse(await loginZjooc(context(form)))).toMatchObject({ credentialsRequired: true })
-  })
-  it('reports the visible challenge without returning entered values', () => {
-    const script = readFileSync(new URL('../../src-tauri/src/cef/zjooc_login_state.js', import.meta.url), 'utf8')
-    const dom = new JSDOM('<div class="login_box"><input id="login_name" type="text"><input id="password" type="password" value="private"><div class="forms code"><input name="captchaCode"><img alt="点击刷新"></div><button class="dologin">登录</button></div>', { url, runScripts: 'outside-only' })
-    Object.defineProperty(dom.window.Element.prototype, 'getClientRects', { value: () => [{}] })
-    expect(dom.window.eval(script + '(false)')).toEqual({ kind: 'form', challenge: true })
-    const image = dom.window.document.querySelector('img')!
-    Object.defineProperties(image, {
-      complete: { value: true },
-      naturalWidth: { value: 120 },
-      naturalHeight: { value: 40 },
-    })
-    const drawImage = vi.fn()
-    const captchaImage = 'data:image/png;base64,example-image'
-    Object.defineProperties(dom.window.HTMLCanvasElement.prototype, {
-      getContext: { value: () => ({ drawImage }) },
-      toDataURL: { value: () => captchaImage },
-    })
-    expect(dom.window.eval(script + '(true)')).toEqual({ kind: 'form', challenge: true, captchaImage })
-    expect(drawImage).toHaveBeenCalledExactlyOnceWith(image, 0, 0)
-    const error = dom.window.document.createElement('div')
-    error.id = 'error_msg'
-    dom.window.document.body.append(error)
-    error.textContent = '用户名或密码错误'
-    expect(dom.window.eval(script + '(true)')).toEqual({ kind: 'rejected', rejection: 'credentials' })
-    error.textContent = '验证码已过期'
-    expect(dom.window.eval(script + '(true)')).toEqual({ kind: 'rejected', rejection: 'captcha' })
-    error.textContent = '登录失败'
-    expect(dom.window.eval(script + '(true)')).toEqual({ kind: 'rejected', rejection: 'unknown' })
-    expect(drawImage).toHaveBeenCalledOnce()
-    dom.reconfigure({ url: 'https://unrelated.example/gxptLogin' })
-    expect(dom.window.eval(script + '(true)')).toEqual({ kind: 'other' })
-    dom.window.close()
   })
 })

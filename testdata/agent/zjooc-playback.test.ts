@@ -1,21 +1,29 @@
 import { JSDOM } from 'jsdom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { chaoxingStartup } from '../../src/services/agent/chaoxingStartup'
-import { playZjoocVideos } from '../../src/services/agent/tools/zjoocPlayback'
+import { playWebsiteVideos } from '../../src/services/agent/tools/websitePlayback'
 import { evalBrowserViewMain } from '../../src/services/browser/eval'
 import { nativeWatchFor, resetNativeWatches } from '../../src/services/browser/videoWatch'
 import { assembleRoleTools } from '../../src/services/agent/subagent/tools'
 
 vi.mock('../../src/services/agent/websiteScripts', () => ({
-  runWebsiteScript: async (_host: string, _site: string, capability: string, input: any, validate: (value: unknown) => unknown) => {
-    let result: unknown
-    if (capability === 'homework') result = input.questions.map((q: any) => ({ index: q.index, action: !q.supported ? 'needs_review' : q.answered ? 'existing_answer' : 'resolve' }))
-    else if (capability === 'playback') result = input.videos.filter((video: any) => input.mode === 'section' ? !video.complete : input.title ? video.title === input.title : video.id === input.active).map((video: any) => video.id)
-    else if (_site === 'chaoxing') result = input.kind === 'space' ? 'logged_in' : input.kind === 'challenge' ? 'verify'
-      : input.host !== 'passport2.chaoxing.com' ? input.kind === 'loading' ? 'wait' : 'open_space'
-      : input.kind === 'form' && input.modern && input.frameReady ? 'fill' : ['passport', 'form'].includes(input.kind) ? 'open_form' : 'wait'
-    else result = input.kind === 'space' ? 'logged_in' : input.kind === 'form' && input.atForm && input.frameReady ? 'fill' : input.kind === 'guest' && input.atHome ? 'open_form' : 'wait'
-    return { result: validate(result), revision: 'fixture' }
+  runWebsiteWorkflow: async (_host: string, _site: string, _capability: string,
+    { mode, title }: { mode: string; title: string }, send: (command: unknown, run: () => unknown) => Promise<any>) => {
+    const rules = () => ({
+      routes: [['ucenter', 'student', 'course', 'study', ':group', 'plan', 'detail', ':resource']],
+      optionalSegments: 0, root: '.plan-detailvideo', dialogs: '[role="dialog"]',
+      tabs: '.el-tabs__header [role="tab"]', panelAttribute: 'aria-controls', panelPrefix: 'pane-',
+      active: '[aria-selected=true]', disabled: '[aria-disabled=true]',
+      videoTab: '.icon-shipin', completedTab: '.icon-shipin.complete', player: '.contain-video',
+    })
+    const catalog = await send({ op: 'catalog' }, rules)
+    if (!catalog?.videos) return { error: catalog?.error }
+    for (const video of catalog.videos) {
+      if (!(mode === 'section' ? !video.complete : title ? video.title === title : video.id === catalog.active)) continue
+      const result = await send({ op: 'play', id: video.id }, rules)
+      if (!result.ok || result.playing) return result
+    }
+    return { done: true }
   },
 }))
 vi.mock('../../src/services/agent/websiteRepository', async original => ({
@@ -78,7 +86,7 @@ describe('在浙学视频页签播放', () => {
   })
   it('advances only after each video ends and skips complete and document tabs', async () => {
     const { history } = fixture()
-    const job = playZjoocVideos(ctx({ mode: 'section' }))
+    const job = playWebsiteVideos('zjooc.cn', 'zjooc', ctx({ mode: 'section' }))
     await vi.advanceTimersByTimeAsync(1750)
     expect(history).toEqual(['first'])
     await vi.advanceTimersByTimeAsync(7000)
@@ -88,18 +96,18 @@ describe('在浙学视频页签播放', () => {
   })
   it('starts a named video, refuses a foreign page and leaves unrelated videos alone', async () => {
     const { dom, history } = fixture()
-    const start = playZjoocVideos(ctx({ title: 'second' }))
+    const start = playWebsiteVideos('zjooc.cn', 'zjooc', ctx({ title: 'second' }))
     await vi.advanceTimersByTimeAsync(800)
     expect(JSON.parse(await start)).toMatchObject({ playing: true, watching: true, title: 'second' })
     dom.reconfigure({ url: 'https://example.test/ucenter/student/course/study/course/plan/detail/second' })
-    const invalid = playZjoocVideos(ctx({ mode: 'section' }))
+    const invalid = playWebsiteVideos('zjooc.cn', 'zjooc', ctx({ mode: 'section' }))
     await vi.advanceTimersByTimeAsync(50)
     expect(JSON.parse(await invalid).ok).toBe(false)
     expect(history).toEqual(['second'])
   })
   it('stops a section run when the user changes the active resource', async () => {
     const { dom, history } = fixture()
-    const task = playZjoocVideos(ctx({ mode: 'section' }))
+    const task = playWebsiteVideos('zjooc.cn', 'zjooc', ctx({ mode: 'section' }))
     await vi.advanceTimersByTimeAsync(800)
     dom.window.document.querySelector('button')!.click()
     await vi.advanceTimersByTimeAsync(19000)

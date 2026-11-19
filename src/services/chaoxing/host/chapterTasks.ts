@@ -1,5 +1,11 @@
 import { parseHtml, readFrameHtml } from '../../browser/domRead'
 import { chaoxingUrl } from '../../platform/chaoxing/studentCourses'
+import { websiteChapterRules, WEBSITE_CHAPTER_KINDS, type WebsiteChapterKind, type WebsiteChapterRules } from '../../browser/websiteChapterRules'
+import { runWebsiteScript } from '../../agent/websiteScripts'
+
+export const loadChapterRules = async () =>
+  (await runWebsiteScript('chaoxing.com', 'chaoxing', 'chapters', { operation: 'page_rules' }, websiteChapterRules,
+    { reuseForMs: 30_000 })).result
 
 const studyPath = /^\/(?:(?:mooc2?-ans)\/)?mycourse\/studentstudy\/?$/i
 const cardsPath = /^\/(?:(?:mooc2?-ans)\/)?knowledge\/cards\/?$/i
@@ -40,90 +46,92 @@ export function studentChapterDirectoryUrl(value: string) {
   return digits.test(courseId) && digits.test(classId) ? `${courseId}:${classId}` : null
 }
 
-export function courseChapterRows(doc: Document) {
-  return [...doc.querySelectorAll('.chapter_item[id^="cur"] > .catalog_title[role="link"]')].flatMap(link => {
+function remainingTasks(row: Element, rules: WebsiteChapterRules['directory'], completionLabel: string) {
+  const task = rules.task ? row.querySelector(rules.task) : row
+  const hidden = count(task?.querySelector(rules.hiddenCount)?.getAttribute('value'))
+  const badge = count(task?.querySelector(rules.badge)?.textContent)
+  const pending = hidden === null ? badge : Math.max(hidden, badge ?? 0)
+  return pending ?? (task?.querySelector(rules.completed)?.textContent?.trim() === completionLabel ? 0 : null)
+}
+
+export function courseChapterRows(doc: Document, rules: WebsiteChapterRules) {
+  const row = rules.directory
+  return [...doc.querySelectorAll(row.row)].flatMap(link => {
     const chapterId = link.parentElement?.id.slice(3) || ''
     if (!digits.test(chapterId)) return []
-    const name = link.querySelector('.catalog_name')
+    const name = link.querySelector(row.name)
     const title = (link.parentElement?.getAttribute('title') || name?.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 160)
     if (!title) return []
-    const number = name?.querySelector('.catalog_sbar')?.textContent?.trim() || ''
-    const task = link.querySelector('.catalog_task')
-    const hidden = count(task?.querySelector('.knowledgeJobCount')?.getAttribute('value'))
-    const badge = count(task?.querySelector('.catalog_points_yi')?.textContent)
-    const pending = hidden === null ? badge : Math.max(hidden, badge ?? 0)
-    const complete = task?.querySelector('.icon_yiwanc')?.textContent?.trim() === '已完成'
-    return [{ chapterId, title, number, remaining: pending ?? (complete ? 0 : null) }]
+    const number = name?.querySelector(row.number)?.textContent?.trim() || ''
+    return [{ chapterId, title, number, remaining: remainingTasks(link, row, rules.completionLabel) }]
   })
 }
 
-export function chapterRow(row: Element) {
-  const name = row.querySelector('.posCatalog_name')
+export function chapterRow(element: Element, rules: WebsiteChapterRules) {
+  const row = rules.sidebar
+  const name = element.querySelector(row.name)
   const title = (name?.getAttribute('title') || name?.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 160)
-  const number = name?.querySelector('.posCatalog_sbar')?.textContent?.trim() || ''
-  const hidden = count(row.querySelector('.jobUnfinishCount')?.getAttribute('value'))
-  const badge = count(row.querySelector('.orangeNew')?.textContent)
-  const pending = hidden === null ? badge : Math.max(hidden, badge ?? 0)
-  const complete = row.querySelector('.icon_Completed')?.textContent?.trim() === '已完成'
-  return { title, number, remaining: pending ?? (complete ? 0 : null) }
+  const number = name?.querySelector(row.number)?.textContent?.trim() || ''
+  return { title, number, remaining: remainingTasks(element, row, rules.completionLabel) }
 }
 
-export function chapterHeader(doc: Document, identity: NonNullable<ReturnType<typeof studentChapterUrl>>) {
-  const row = doc.querySelector(`.posCatalog_select.posCatalog_active[id="cur${identity.chapterId}"]`)
-  if (!row) return null
-  const source = doc.querySelector('iframe[info="card"], iframe#iframe')?.getAttribute('src')
+export function chapterHeader(doc: Document, identity: NonNullable<ReturnType<typeof studentChapterUrl>>, rules: WebsiteChapterRules) {
+  const row = doc.getElementById(`cur${identity.chapterId}`)
+  if (!row?.matches(rules.sidebar.row) || !row.matches(rules.sidebar.active)) return null
+  const source = doc.querySelector(rules.cards)?.getAttribute('src')
   let cards: ReturnType<typeof chapterCardsUrl> = null
   if (source) {
     try { cards = chapterCardsUrl(new URL(source, identity.href).href) } catch { /* malformed frame URL */ }
   }
-  const tabs = [...doc.querySelectorAll('#prev_tab .prev_ul > li[cardid]')]
-  const selected = tabs.findIndex(tab => tab.classList.contains('active')) + 1
+  const tabs = [...doc.querySelectorAll(rules.tabs)]
+  const selected = tabs.findIndex(tab => tab.matches(rules.activeTab)) + 1
   const tab = selected || cards?.tab || 1
   // The iframe may navigate independently of its src attribute. Its live
   // URL is checked against the selected tab when reading the card.
   if (cards?.key !== identity.key) cards = null
 
   return {
-    ...chapterRow(row), tab, cards,
+    ...chapterRow(row, rules), tab, cards,
     tabs: tabs.map((item, i) => ({
       tab: i + 1,
-      id: /^dct\d+$/.test(item.id) && tabs.filter(other => other.id === item.id).length === 1
-        && !item.matches('.disabled, [aria-disabled="true"]') ? item.id : '',
+      id: item.id.startsWith(rules.tabPrefix) && digits.test(item.id.slice(rules.tabPrefix.length)) && tabs.filter(other => other.id === item.id).length === 1
+        && !item.matches(rules.disabledTab) ? item.id : '',
     })),
   }
 }
 
-export async function readStudentChapter(browserId: string) {
+export async function readStudentChapter(browserId: string, pinnedRules?: WebsiteChapterRules) {
   const main = await readFrameHtml(browserId)
   const identity = studentChapterUrl(main.url)
   const doc = main.ok && parseHtml(main.html)
-  const header = doc && identity && chapterHeader(doc, identity)
-  return header && identity ? { identity, header, frameId: main.frameId, loaderId: main.loaderId } : null
+  if (!doc || !identity) return null
+  const rules = pinnedRules ?? await loadChapterRules().catch(() => null)
+  const header = rules && chapterHeader(doc, identity, rules)
+  return header && rules ? { identity, header, rules, frameId: main.frameId, loaderId: main.loaderId } : null
 }
 
-type JobKind = 'video' | 'quiz' | 'document' | 'discussion' | 'unknown'
-const attachmentKind = (path: string): JobKind => {
-  if (/\/(?:insertvideo|insertaudio|modules\/(?:video|audio))\b/i.test(path)) return 'video'
-  if (/\/(?:insertwork|inserthomework|work|modules\/(?:work|quiz))\b/i.test(path)) return 'quiz'
-  if (/\/ananas\/modules\/insertbbs\//i.test(path)) return 'discussion'
-  if (/\/(?:insertdoc|insertbook|readsvr\/book\/mooc|modules\/(?:pdf|document|innerbook|book|ppt|doc|read))\b/i.test(path)) return 'document'
-  return 'unknown'
-}
-
-export function chapterCardJobs(doc: Document) {
-  const body = doc.querySelector('#pageDiv.ans-cc, .ans-cc')
+export function chapterAttachments(doc: Document, rules: WebsiteChapterRules) {
+  const body = doc.querySelector(rules.body)
   if (!body) return null
-  return [...body.querySelectorAll('.ans-job-icon')].map((icon, index) => {
-    const box = icon.closest('.ans-attach-ct')
-    const iframe = box && [...box.querySelectorAll('iframe')].find(el => el.closest('.ans-attach-ct') === box)
+  return [...body.querySelectorAll(rules.jobIcon)].map(icon => {
+    const box = icon.closest(rules.jobContainer)
+    const iframe = box && [...box.querySelectorAll('iframe')].find(el => el.closest(rules.jobContainer) === box)
+    return { icon, box, iframe }
+  })
+}
+
+export function chapterCardJobs(
+  attachments: NonNullable<ReturnType<typeof chapterAttachments>>, rules: WebsiteChapterRules, kinds: WebsiteChapterKind[],
+) {
+  return attachments.map(({ icon, box, iframe }, index) => {
     let data: Record<string, unknown> = {}
     try { data = JSON.parse(iframe?.getAttribute('data') || '{}') || {} } catch { /* attachment without metadata */ }
     const mid = iframe?.getAttribute('mid') || iframe?.getAttribute('data-mid') || String(data.mid || '')
-    const kind = attachmentKind(iframe?.getAttribute('src') || '')
+    const kind = kinds[index] ?? 'unknown'
     const name = String(data.name || data.title || iframe?.title || '').replace(/\s+/g, ' ').trim().slice(0, 120)
-    const done = Boolean(icon.matches('.ans-job-icon-finish, .ans-job-icon-finished, .ans-job-done')
-      || box?.classList.contains('ans-job-finished')
-      || [icon.getAttribute('title'), icon.getAttribute('aria-label')].includes('任务点已完成'))
+    const done = Boolean(icon.matches(rules.jobDoneIcon)
+      || box?.matches(rules.jobDoneBox)
+      || [icon.getAttribute('title'), icon.getAttribute('aria-label')].includes(rules.jobDoneLabel))
     const attrs = ['jobid', 'data-jobid', 'objectid'] as const
     const attr = attrs.find(key => safeId.test(iframe?.getAttribute(key) || ''))
     const discussionId = kind === 'discussion' && safeId.test(mid) ? mid : undefined
@@ -140,11 +148,21 @@ export async function readStudentChapterCard(browserId: string) {
   const state = await readStudentChapter(browserId)
   if (!state) return null
   const desired = state.header.cards
-  const cards = desired && await readFrameHtml(browserId, 'knowledge/cards')
+  const cards = desired && await readFrameHtml(browserId, state.rules.cardTarget)
   const cardUrl = cards && chapterCardsUrl(cards.url)
   const doc = cards?.ok && cardUrl?.key === state.identity.key && cardUrl.tab === state.header.tab
     ? parseHtml(cards.html) : null
-  const jobs = doc ? chapterCardJobs(doc) : null
+  const attachments = doc && chapterAttachments(doc, state.rules)
+  const sources = attachments?.map(attachment => (attachment.iframe?.getAttribute('src') || '').slice(0, 2048))
+  const kinds = sources && await runWebsiteScript('chaoxing.com', 'chaoxing', 'chapters', {
+    operation: 'classify_jobs', sources,
+  }, value => {
+    if (!Array.isArray(value) || value.length !== sources.length || value.some(kind => !WEBSITE_CHAPTER_KINDS.includes(kind))) {
+      throw new Error('章节脚本返回了无效任务类型。')
+    }
+    return value as WebsiteChapterKind[]
+  }, { reuseForMs: 30_000 }).catch(() => null)
+  const jobs = attachments && kinds ? chapterCardJobs(attachments, state.rules, kinds.result) : null
   return { ...state, jobs, cards: cards && doc ? cards : null }
 }
 
@@ -154,11 +172,11 @@ export const sameStudentChapterPage = (a: Awaited<ReturnType<typeof readStudentC
 
 // Documents and quizzes may need to enter the viewport before Chaoxing loads
 // their content. Scroll the uniquely identified attachment in this cards page.
-export function revealChapterJob(href: string, selector: string) {
+export function revealChapterJob(href: string, selector: string, rules: WebsiteChapterRules) {
   return `(function(){
     if (location.href !== ${JSON.stringify(href)}) return false;
     const matches = document.querySelectorAll(${JSON.stringify(selector)});
-    if (matches.length !== 1 || !matches[0].closest('.ans-attach-ct')?.querySelector('.ans-job-icon')) return false;
+    if (matches.length !== 1 || !matches[0].closest(${JSON.stringify(rules.jobContainer)})?.querySelector(${JSON.stringify(rules.jobIcon)})) return false;
     matches[0].scrollIntoView({block: 'center'});
     return true;
   })()`

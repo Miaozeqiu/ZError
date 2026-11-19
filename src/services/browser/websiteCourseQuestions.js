@@ -1,11 +1,11 @@
 // Read-only adapter for student homework and chapter quizzes. Never walks or writes another frame.
-function readCourseHomework(doc, offset, limit, targetId, range, chapterQuiz) {
+function readCourseHomework(doc, offset, limit, targetId, range, chapterQuiz, rules) {
   const normalize = value => String(value || '').replace(/[\s\u00a0]+/gu, ' ').trim();
   const text = node => normalize(node?.innerText || node?.textContent);
-  const rootSelector = chapterQuiz ? ':is(.questionLi, .singleQuesId)' : '.questionLi';
+  const rootSelector = chapterQuiz ? rules.quizRows : rules.rows;
   const containers = [...doc.querySelectorAll(rootSelector)];
   const rows = containers.filter(node => !node.parentElement?.closest(rootSelector));
-  const keys = ['id', 'data-questionid', 'data-question-id', 'questionid', 'data'];
+  const keys = rules.keys;
   // A synthesized path is never used to identify a question.
   const identity = box => {
     for (const key of keys) {
@@ -16,10 +16,10 @@ function readCourseHomework(doc, offset, limit, targetId, range, chapterQuiz) {
       }
     }
     // Some layouts only expose the stable question number inside the type input.
-    const types = [...box.querySelectorAll('input[id^="answertype"]')].filter(node =>
+    const types = [...box.querySelectorAll(rules.typeInputs)].filter(node =>
       /^answertype[_-]?\d+$/.test(node.id) && (/^type\d+$/.test(node.name) || chapterQuiz && node.name === node.id));
     if (types.length === 1 && doc.querySelectorAll('input[id="' + types[0].id + '"]').length === 1) {
-      const selector = rootSelector + ':has(input[id="' + types[0].id + '"])';
+      const selector = ':is(' + rootSelector + '):has(input[id="' + types[0].id + '"])';
       if (doc.querySelectorAll(selector).length === 1) return { id: 'type:' + types[0].id, selector };
     }
     return null;
@@ -38,20 +38,18 @@ function readCourseHomework(doc, offset, limit, targetId, range, chapterQuiz) {
     return node.getClientRects().length > 0 && style.visibility !== 'hidden' && style.visibility !== 'collapse';
   };
   const unsafeText = node => node && (/[\uE000-\uF8FF]/u.test(text(node)) ||
-    node.matches('img,svg,canvas,math,mjx-container,.MathJax,.font-cxsecret,[class*="cxsecret"]') ||
-    node.querySelector('img,svg,canvas,math,mjx-container,.MathJax,.font-cxsecret,[class*="cxsecret"]') ||
-    /cxsecret/i.test(doc.defaultView.getComputedStyle(node).fontFamily));
-  const headingTypes = [['single', /^(?:单选题?|单项选择题?)$/], ['multiple', /^(?:多选题?|多项选择题?)$/],
-    ['judgement', /^判断题?$/], ['completion', /^填空题?$/]];
-  const questionType = (label) => headingTypes.find(([, pattern]) => pattern.test(label))?.[0];
-  const headingOf = box => box.querySelector(chapterQuiz ? '.mark_name, :scope > h3, .Zy_TItle' : '.mark_name, :scope > h3');
+    node.matches(rules.visual) ||
+    node.querySelector(rules.visual) ||
+    doc.defaultView.getComputedStyle(node).fontFamily.toLowerCase().includes(rules.unreadableFont));
+  const questionType = label => Object.keys(rules.labels).find(kind => rules.labels[kind].includes(label));
+  const headingOf = box => box.querySelector(chapterQuiz ? rules.quizHeading : rules.heading);
   const numberPrefix = stem => stem.match(/^\s*(\d+)[.．、)）]\s*/);
   const numberOf = heading => {
-    const number = heading?.matches('.Zy_TItle') && text(heading.querySelector(':scope > i'));
+    const number = heading?.matches(rules.quizTitleKind) && text(heading.querySelector(rules.quizTitleNumber));
     return number && /^\d+$/.test(number) ? Number(number) : Number(numberPrefix(text(heading))?.[1]) || 0;
   };
   const quizOptions = (box, key, controls, type) => {
-    const labels = controls.map(row => normalize(row.querySelector('.num_option')?.getAttribute('data')).normalize('NFKC').toUpperCase());
+    const labels = controls.map(row => normalize(row.querySelector(rules.optionMark)?.getAttribute('data')).normalize('NFKC').toUpperCase());
     const questionId = box.getAttribute('data') || (box.id || '').match(/^question(\d+)$/)?.[1];
     const sameQuestion = /^\d+$/.test(questionId || '') && controls.every(row => row.getAttribute('qid') === questionId);
     const answer = sameQuestion && box.querySelectorAll('input[type=hidden][id="answer' + questionId + '"]');
@@ -61,7 +59,7 @@ function readCourseHomework(doc, offset, limit, targetId, range, chapterQuiz) {
       && (type === 'multiple' || selected.length <= 1);
     return controls.map((row, index) => {
       const label = labels[index];
-      const content = row.querySelector('.after');
+      const content = row.querySelector(rules.quizChoiceText);
       return { label, text: text(content), selected: Boolean(valid && selected.includes(label)),
         selector: valid && /^[A-Z]$/.test(label) && content ? controlPath(row, box, key) : null,
         unsafe: Boolean(unsafeText(content)), disabled: row.closest('[aria-disabled="true"], fieldset:disabled') !== null };
@@ -69,25 +67,25 @@ function readCourseHomework(doc, offset, limit, targetId, range, chapterQuiz) {
   };
   const parse = (box, index, key) => {
     const heading = headingOf(box);
-    const zy = heading?.matches('.Zy_TItle');
-    const title = zy ? heading.querySelector('.newZy_TItle') : null;
+    const zy = heading?.matches(rules.quizTitleKind);
+    const title = zy ? heading.querySelector(rules.quizTitle) : null;
     const rawStem = text(zy ? title?.parentElement : heading);
     const number = numberPrefix(rawStem);
     let stem = number ? rawStem.slice(number[0].length) : rawStem;
     const badge = stem.match(/^[（(【\[]\s*([^）)】\]]+)\s*[）)】\]]\s*/);
     const namedType = questionType(normalize(box.getAttribute('typename'))) || (badge && questionType(badge[1].trim()));
     if (badge && questionType(badge[1].trim())) stem = stem.slice(badge[0].length);
-    const typeInputs = [...box.querySelectorAll('input[id^="answertype"]')];
+    const typeInputs = [...box.querySelectorAll(rules.typeInputs)];
     const typeInput = typeInputs.find(node => /^type\d+$/.test(node.name)) || (typeInputs.length === 1 ? typeInputs[0] : null);
     const rawType = typeInput?.value;
-    const codedType = ({ 0: 'single', 1: 'multiple', 2: 'completion', 3: 'judgement' })[rawType];
+    const codedType = Object.hasOwn(rules.codes, rawType) ? rules.codes[rawType] : null;
     const type = (namedType || codedType || 'unsupported');
     let unobservable = false;
-    const quizControls = chapterQuiz ? [...box.querySelectorAll('.Zy_ulTop > li')].filter(visible) : [];
+    const quizControls = chapterQuiz ? [...box.querySelectorAll(rules.quizOptions)].filter(visible) : [];
     const options = quizControls.length ? quizOptions(box, key, quizControls, type)
-      : [...box.querySelectorAll('.answerBg .answer_p')].filter(visible).map(content => {
-      const row = content.closest('.answerBg');
-      const mark = row.querySelector('.num_option');
+      : [...box.querySelectorAll(rules.options)].filter(visible).map(content => {
+      const row = content.closest(rules.optionRow);
+      const mark = row.querySelector(rules.optionMark);
       const input = row.querySelector('input[type=radio], input[type=checkbox]');
       const markerLabel = mark?.getAttribute('data') || '';
       const rendered = text(content);
@@ -105,7 +103,7 @@ function readCourseHomework(doc, offset, limit, targetId, range, chapterQuiz) {
       const inputId = input?.id;
       let selector = null;
       if (key && attrLabel && /^[A-Za-zＡ-Ｚ]$/u.test(attrLabel)) {
-        selector = key.selector + ' .answerBg:has(.num_option[data="' + attrLabel + '"]) ' + (control === input ? 'input[type="' + input.type + '"]' : '.answer_p');
+        selector = key.selector + ' :is(' + rules.optionRow + '):has(:is(' + rules.optionMark + ')[data="' + attrLabel + '"]) ' + (control === input ? 'input[type="' + input.type + '"]' : rules.optionText);
       } else if (key && control === input && /^[a-zA-Z0-9_-]{1,96}$/.test(inputId || '')) {
         selector = key.selector + ' input[id="' + inputId + '"]';
       }
@@ -114,11 +112,11 @@ function readCourseHomework(doc, offset, limit, targetId, range, chapterQuiz) {
         selector, unsafe: Boolean(unsafeText(content)),
         disabled: Boolean(input?.disabled || row.closest('[aria-disabled="true"], fieldset:disabled')) };
     });
-    const blanks = type === 'completion' ? [...box.querySelectorAll('textarea, input[type=text], input:not([type])')].filter(visible)
+    const blanks = type === 'completion' ? [...box.querySelectorAll('textarea, input[type=text], input:not([type])')].filter(node => visible(node) && !node.closest('[data-zerror-private]'))
       .map(node => ({ text: node.value, selector: controlPath(node, box, key), maxLength: node.maxLength, disabled: node.disabled || node.readOnly || node.matches(':disabled') })) : [];
-    const nested = Boolean(box.querySelector('.reading_answer, .filling_answer, .line_answer, iframe, ' + rootSelector));
-    const extraStem = Boolean(box.querySelector('.line_wid_half, .splitS-left .mark_name ~ .mark_name')) ||
-      (zy && box.querySelectorAll('.Zy_TItle').length !== 1);
+    const nested = Boolean(box.querySelector(rules.nested + ', ' + rootSelector));
+    const extraStem = Boolean(box.querySelector(rules.extraStem)) ||
+      (zy && box.querySelectorAll(rules.quizTitleKind).length !== 1);
     const uniqueLabels = new Set(options.map(choice => choice.label));
     let issue = null;
     if (!key) issue = 'missing_identity';
@@ -150,7 +148,7 @@ function readCourseHomework(doc, offset, limit, targetId, range, chapterQuiz) {
     const end = Math.min(rows.length, offset + limit);
     for (let i = offset; i < end; i++) questions.push(parse(rows[i], i, identity(rows[i])));
   }
-  const title = text(doc.querySelector('.mark_title, .work-title, h1')).slice(0, 180);
+  const title = text(doc.querySelector(rules.title)).slice(0, 180);
   return { url: doc.location.href, title, documentTime: doc.defaultView.performance.timeOrigin, total: rows.length, questions,
     ...(range ? { scopeTotal: scope.length, scopeAmbiguous: numbers.size !== scope.length } : {}) };
 }

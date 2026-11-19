@@ -1462,6 +1462,7 @@ pub async fn browser_dom_html(
   id: String,
   frame: Option<String>,
 ) -> Result<serde_json::Value, String> {
+  crate::secret_browser::guard(&app, &id).await?;
   #[cfg(target_os = "macos")]
   if crate::cef_runtime::cef_enabled() {
     return crate::cef::dom_frame_html(app, id, frame).await;
@@ -2207,19 +2208,14 @@ async fn dispatch_browser_protocol(
 ) -> Result<serde_json::Value, String> {
   match op.as_str() {
     #[cfg(windows)]
-    "chaoxing_login_state" | "zjooc_login_state" => {
-      crate::webview2_secrets::login_state(&app, &id, &op, args["captureCaptcha"] == true).await
-    }
+    "login_observe" => crate::webview2_secrets::login_observe(&app, &id, &args).await,
     #[cfg(not(windows))]
-    "chaoxing_login_state" | "zjooc_login_state" => {
+    "login_observe" => {
       #[cfg(target_os = "macos")]
       if crate::cef_runtime::cef_enabled() {
-        if op == "zjooc_login_state" {
-          return crate::cef::chaoxing_login::zjooc_state(&id, args["captureCaptcha"] == true).await;
-        }
-        return crate::cef::chaoxing_login::state(&id).await;
+        return crate::cef::login::observe(&id, &args).await;
       }
-      Ok(serde_json::json!({ "kind": "unsupported" }))
+      Ok(serde_json::json!({"unsupported": true}))
     }
     #[cfg(windows)]
     "login_action" => crate::webview2_secrets::login_action(&app, &id, &args).await,
@@ -2396,6 +2392,7 @@ async fn dispatch_browser_protocol(
       browser_cdp_snapshot(app, id).await
     }
     "evaluate" => {
+      crate::secret_browser::guard(&app, &id).await?;
       let script = protocol_arg_str(&args, "script").unwrap_or_default();
       #[cfg(target_os = "macos")]
       if crate::cef_runtime::cef_enabled() {

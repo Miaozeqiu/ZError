@@ -566,6 +566,10 @@ fn site_origins(site: &str) -> Vec<String> {
         .filter_map(|host| origin(&format!("https://{}", host)))
         .collect()
 }
+#[cfg(windows)]
+pub(crate) fn site_accepts_origin(site: &str, target: &str) -> bool {
+    site_origins(site).iter().any(|origin| origin == target)
+}
 fn approved_site(v: &Vault, site: &str) -> bool {
     if ["chaoxing", "zhihuishu", "zjooc", "menhu.haou.edu.cn"].contains(&site) {
         return true;
@@ -1126,7 +1130,7 @@ fn register_site_fields(site: String, fields: BTreeMap<String, String>, login_or
 pub fn resolve(reference: &str, kind: &str, target: &str) -> Result<Zeroizing<String>, String> {
     with_vault(false, |v| resolve_in_vault(v, reference, kind, target))
 }
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 pub(crate) fn resolve_site_input(
     reference: &str,
     target: &str,

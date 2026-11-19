@@ -1,23 +1,16 @@
+import { runLoginCommands } from './fixtures/loginCommands'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { readFileSync } from 'node:fs'
-import { JSDOM } from 'jsdom'
 import { loginChaoxing } from '../../src/services/agent/tools/websiteLogin'
-import { CHAOXING_LOGIN_URL } from '../../src/services/browser/skills/chaoxingLogin'
 import { assembleRoleTools } from '../../src/services/agent/subagent/tools'
 
 const { accountOf } = vi.hoisted(() => ({ accountOf: vi.fn() }))
-vi.mock('../../src/services/agent/websiteScripts', () => ({
-  runWebsiteScript: async (_host: string, _site: string, capability: string, input: any, validate: (value: unknown) => unknown) => {
-    let result: unknown
-    if (capability === 'homework') result = input.questions.map((q: any) => ({ index: q.index, action: !q.supported ? 'needs_review' : q.answered ? 'existing_answer' : 'resolve' }))
-    else if (capability === 'playback') result = input.videos.filter((video: any) => input.mode === 'section' ? !video.complete : input.title ? video.title === input.title : video.id === input.active).map((video: any) => video.id)
-    else if (_site === 'chaoxing') result = input.kind === 'space' ? 'logged_in' : input.kind === 'challenge' ? 'verify'
-      : input.host !== 'passport2.chaoxing.com' ? input.kind === 'loading' ? 'wait' : 'open_space'
-      : input.kind === 'form' && input.modern && input.frameReady ? 'fill' : ['passport', 'form'].includes(input.kind) ? 'open_form' : 'wait'
-    else result = input.kind === 'space' ? 'logged_in' : input.kind === 'form' && input.atForm && input.frameReady ? 'fill' : input.kind === 'guest' && input.atHome ? 'open_form' : 'wait'
-    return { result: validate(result), revision: 'fixture' }
-  },
+vi.mock('../../src/services/agent/tools/websiteLoginObservation', () => ({
+  loginObserver: (call: Function, id: string) => (captureCaptcha = false) =>
+    call(id, 'login_observe', captureCaptcha ? { captureCaptcha } : undefined),
 }))
+
+vi.mock('../../src/services/agent/websiteScripts', () => ({ runWebsiteWorkflow: runLoginCommands }))
+
 vi.mock('../../src/services/agent/websiteRepository', async original => ({
   ...await original<typeof import('../../src/services/agent/websiteRepository')>(),
   websiteToolsForHost: (host: string) => host === 'chaoxing.com'
@@ -32,6 +25,7 @@ const credentials = {
   account: '{{secret:site/chaoxing/account}}',
   password: '{{secret:site/chaoxing/password}}',
 }
+const CHAOXING_LOGIN_URL = 'https://passport2.chaoxing.com/login?fid=&newversion=true&refer=https%3A%2F%2Fi.chaoxing.com'
 const form = { kind: 'form', url: CHAOXING_LOGIN_URL, frameId: 'top', loaderId: 'login-doc', modern: true }
 const space = { kind: 'space', url: 'https://i.mooc.chaoxing.com/space/index' }
 const challenge = { ...form, kind: 'challenge' }
@@ -39,7 +33,7 @@ const challenge = { ...form, kind: 'challenge' }
 const context = (...observations: Record<string, unknown>[]) => {
   let index = 0
   const callProtocol = vi.fn(async (_id: string, op: string, _args?: Record<string, unknown>) =>
-    op === 'chaoxing_login_state' ? observations[Math.min(index++, observations.length - 1)]! : { ok: true, filled: true, dispatched: true })
+    op === 'login_observe' ? observations[Math.min(index++, observations.length - 1)]! : { ok: true, filled: true, dispatched: true })
   return {
     browserId: 'tab', args: {}, callProtocol, navigateBrowserView: vi.fn(async () => undefined),
     actOnceOnBrowser: vi.fn(async () => ({ dispatched: true })), wait: async () => undefined,
@@ -64,17 +58,6 @@ describe('learning platform login tool', () => {
     expect(ctx.navigateBrowserView).not.toHaveBeenCalled()
   })
 
-  it('recognizes the current space shell even when its old menu IDs are absent', () => {
-    const probe = readFileSync(new URL('../../src-tauri/src/cef/chaoxing_login_state.js', import.meta.url), 'utf8')
-    const { window } = new JSDOM('<iframe id="frame_content" src="https://mooc1.chaoxing.com/visit/interaction"></iframe>', {
-      url: 'https://i.chaoxing.com/base', runScripts: 'outside-only',
-    })
-    Object.defineProperty(window.Element.prototype, 'getClientRects', { value: () => [{ width: 100, height: 50 }] })
-    expect(window.eval(probe)).toEqual({ kind: 'space' })
-    window.document.querySelector('iframe')!.src = 'https://example.com/visit/interaction'
-    expect(window.eval(probe)).toEqual({ kind: 'loading' })
-  })
-
   it('opens the new login page, fills opaque references in the pinned document and confirms the redirect', async () => {
     const ctx = context({ kind: 'other', url: 'about:blank' },
       { ...form, modern: false, url: 'https://passport2.chaoxing.com/login' }, form, form, space)
@@ -92,7 +75,7 @@ describe('learning platform login tool', () => {
     const ctx = context(nativeForm, nativeForm, space)
     expect(JSON.parse(await loginChaoxing(ctx))).toMatchObject({ ok: true, loggedIn: true })
     expect(ctx.callProtocol).toHaveBeenCalledWith('tab', 'login_action', {
-      action: 'click', locator: { by: 'css', value: '#loginBtn', frameId: 'top', loaderId: 'login-doc' },
+      action: 'click', site: 'chaoxing', url: form.url, selector: '#loginBtn', locator: { by: 'css', value: '#loginBtn', frameId: 'top', loaderId: 'login-doc' },
     })
     expect(ctx.actOnceOnBrowser).not.toHaveBeenCalled()
   })

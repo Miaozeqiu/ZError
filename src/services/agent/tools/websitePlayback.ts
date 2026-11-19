@@ -3,11 +3,29 @@ import { evalBrowserViewMain } from '../../browser/eval'
 import type { BrowserLocator } from '../../browser/engine'
 import { userControlsBrowser } from '../../browser/control'
 import { nativeWatchFor, parseNativeTick, startNativeWatch, stopNativeWatch } from '../../browser/videoWatch'
-import { runWebsiteScript } from '../websiteScripts'
-import playbackPage from '../../platform/zjooc/playbackPage.js?raw'
+import { runWebsiteWorkflow } from '../websiteScripts'
+import mediaPage from '../../browser/websiteMediaPage.js?raw'
 
 type Video = { id: string; title: string; complete: boolean; locked: boolean }
-type Catalog = { course: string; keys: string[]; active: string; videos: Video[] }
+type Catalog = { course: string; origin: string; keys: string[]; active: string; videos: Video[] }
+type Rules = {
+  routes: string[][]; optionalSegments: number
+  root: string; dialogs: string; tabs: string; panelAttribute: string; panelPrefix: string
+  active: string; disabled: string; videoTab: string; completedTab: string; player: string
+}
+const validateRules = (value: unknown): Rules => {
+  const rules = value as Rules | null
+  const fields = ['root', 'dialogs', 'tabs', 'panelAttribute', 'panelPrefix', 'active', 'disabled', 'videoTab', 'completedTab', 'player'] as const
+  if (!rules || fields.some(key => typeof rules[key] !== 'string' || rules[key].length > 512)
+    || !Array.isArray(rules.routes) || !rules.routes.length || rules.routes.length > 8
+    || rules.routes.some(route => !Array.isArray(route) || route.length > 15
+      || route.some(part => typeof part !== 'string' || !/^(?:[a-zA-Z0-9_-]{1,64}|:group|:resource)$/.test(part))
+      || route.filter(part => part === ':group').length !== 1 || route.filter(part => part === ':resource').length !== 1)
+    || !Number.isSafeInteger(rules.optionalSegments) || rules.optionalSegments < 0 || rules.optionalSegments > 2) {
+    throw new Error('网站播放脚本返回了无效的课件页面规则。')
+  }
+  return rules
+}
 type Context = {
   browserId: string; sessionId: string; args: Record<string, unknown>; role?: string
   actOnceOnBrowser: (id: string, locator: BrowserLocator, op: 'click') => Promise<{ dispatched: boolean }>
@@ -36,7 +54,10 @@ function resourceReader(browserId: string, inspect: (op: string, target: object)
   }
 }
 
-export async function playZjoocVideos({ browserId, sessionId, args, role, wait, actOnceOnBrowser, syncPeekedUrl }: Context) {
+export async function playWebsiteVideos(
+  host: string, site: string,
+  { browserId, sessionId, args, role, wait, actOnceOnBrowser, syncPeekedUrl }: Context,
+) {
   const fail = (error: string, ended: string[] = []) => JSON.stringify({ ok: false, error, ended })
   const mode = args.mode ?? 'current'
   const title = typeof args.title === 'string' ? args.title.trim() : ''
@@ -44,8 +65,9 @@ export async function playZjoocVideos({ browserId, sessionId, args, role, wait, 
     Object.keys(args).some(k => k !== 'mode' && k !== 'title') || (args.title !== undefined && !title) || (mode === 'section' && title)) {
     return fail('请选择当前视频、指定视频名称或本小节连续播放。')
   }
+  let rules: Rules | undefined
   const inspect = (op: string, target?: object) =>
-    evalBrowserViewMain(browserId, '(' + playbackPage + ')(' + JSON.stringify(op) + ',' + JSON.stringify(target ?? null) + ')')
+    evalBrowserViewMain(browserId, '(' + mediaPage + ')(' + [host, rules, op, target ?? null].map(value => JSON.stringify(value)).join(',') + ')')
   const checkControl = async (ms: number) => {
     await wait(ms)
     if (userControlsBrowser(sessionId)) throw new DOMException('用户已接管浏览器', 'AbortError')
@@ -58,32 +80,35 @@ export async function playZjoocVideos({ browserId, sessionId, args, role, wait, 
   }
   try {
     let catalog: Catalog | undefined
-    for (let i = 0; i < 24; i++) {
-      await checkControl(i ? 250 : 0)
-      const page = await inspect('list')
-      if (page?.error) return fail(String(page.error))
-      if (Array.isArray(page?.videos)) { catalog = page; break }
-    }
-    if (!catalog) return fail('小节的视频页签尚未就绪。')
-    const videos = catalog.videos
-    const expected = videos.filter(v => mode === 'section' ? !v.complete : title ? v.title === title : v.id === catalog.active)
-    const { result: items } = await runWebsiteScript('zjooc.cn', 'zjooc', 'playback', {
-      mode, title, active: catalog.active, videos: videos.map(({ id, title, complete }) => ({ id, title, complete })),
-    }, proposal => {
-      if (!Array.isArray(proposal) || proposal.length !== expected.length || proposal.some((id, index) => id !== expected[index].id)) {
-        throw new Error('在浙学脚本选择的页签与当前任务不一致。')
+    let expected: Video[] | undefined
+    let from: string | undefined
+    let playing: Record<string, unknown> | undefined
+    const result = await runWebsiteWorkflow(host, site, 'playback', { mode, title }, async (command, run) => {
+      rules ??= validateRules(run({ operation: 'page_rules' }))
+      const action = command as { op?: unknown; id?: unknown; delay?: unknown }
+      if (action?.op === 'catalog' && expected === undefined) {
+        const delay = action.delay === 250 ? 250 : 0
+        await checkControl(delay)
+        const page = await inspect('list')
+        if (Array.isArray(page?.videos)) {
+          catalog = page as Catalog
+          from = catalog.active
+          expected = catalog.videos.filter(video => mode === 'section' ? !video.complete : title ? video.title === title : video.id === catalog!.active)
+        }
+        if (!catalog) return page
+        return { videos: catalog.videos, active: catalog.active }
       }
-      return proposal.map(id => videos.find(video => video.id === id)!)
-    })
-    if (mode !== 'section' && items.length !== 1) return fail(title ? '请核对视频名称，当前小节没有唯一匹配。' : '当前页签不是视频，请指定本小节的视频名称。')
-    if (!catalog.videos.length) return fail('当前小节没有视频课件。')
-    let from = catalog.active
-    for (const item of items) {
+      const item = expected?.[ended.length]
+      const reject = (error: string) => ({ ok: false, error })
+      if (action?.op !== 'play' || !catalog || !item || playing || action.id !== item.id
+        || (mode !== 'section' && expected?.length !== 1)) {
+        return reject('网站播放请求与当前课件或授权范围不一致。')
+      }
       await checkControl(0)
-      if (item.locked) return fail('「' + item.title + '」已锁定。', ended)
-      const target = { course: catalog.course, keys: catalog.keys, from, id: item.id }
+      if (item.locked) return reject('「' + item.title + '」已锁定。')
+      const target = { course: catalog.course, origin: catalog.origin, keys: catalog.keys, from, id: item.id }
       const selected = await inspect('select', target)
-      if (!selected?.selected) return fail(selected?.error || '未能选中视频页签。', ended)
+      if (!selected?.selected) return reject(selected?.error || '未能选中视频页签。')
       const readResource = resourceReader(browserId, inspect, target)
       let requested = false
       let clickedPlay = false
@@ -93,7 +118,7 @@ export async function playZjoocVideos({ browserId, sessionId, args, role, wait, 
       for (let i = 0; i < 36; i++) {
         await checkControl(i ? 250 : 0)
         const raw = await readResource(requested ? 'tick' : 'play')
-        if (raw?.error) return fail(String(raw.error), ended)
+        if (raw?.error) return reject(String(raw.error))
         const tick = parseNativeTick(raw)
         if (!tick?.hasVideo) continue
         requested = true
@@ -102,7 +127,7 @@ export async function playZjoocVideos({ browserId, sessionId, args, role, wait, 
           await checkControl(0)
           clickedPlay = true
           const click = await actOnceOnBrowser(browserId, clickLocator, 'click')
-          if (!click.dispatched) return fail('浏览器要求点击播放，请在当前视频上点击播放。', ended)
+          if (!click.dispatched) return reject('浏览器要求点击播放，请在当前视频上点击播放。')
         }
         if (tick.ended) { hasEnded = true; break }
         if (source !== tick.src || baseline === undefined) { source = tick.src; baseline = tick.current }
@@ -112,24 +137,25 @@ export async function playZjoocVideos({ browserId, sessionId, args, role, wait, 
           return next?.hasVideo && next.src === source ? next : null
         }
         const watch = startNativeWatch(browserId, sessionId, { ...tick, title: item.title }, { readTick, handledByTool: mode === 'section' })
-        if (!watch) return fail('未能登记播放监控。', ended)
+        if (!watch) return reject('未能登记播放监控。')
         activeWatch = watch.startedAt
         if (mode !== 'section') {
           const page = await inspect('list')
-          if (page?.course !== catalog.course || page?.active !== item.id) {
+          if (page?.course !== catalog.course || page?.origin !== catalog.origin || page?.active !== item.id) {
             cleanup()
-            return fail('播放页签已变化。')
+            return reject('播放页签已变化。')
           }
           syncPeekedUrl?.(browserId, page.url)
-          return JSON.stringify({ ok: true, scope: mode, url: page.url, playing: true, watching: true, startedAt: watch.startedAt, title: item.title })
+          playing = { ok: true, scope: mode, url: page.url, playing: true, watching: true, startedAt: watch.startedAt, title: item.title }
+          return { ok: true, playing: true }
         }
         for (;;) {
           await checkControl(500)
           const live = nativeWatchFor(browserId)
-          if (!live || live.sessionId !== sessionId || live.startedAt !== watch.startedAt) return fail('播放监控已停止或被替换。', ended)
+          if (!live || live.sessionId !== sessionId || live.startedAt !== watch.startedAt) return reject('播放监控已停止或被替换。')
           if (live.status === 'lost' || live.status === 'stalled') {
             cleanup()
-            return fail('「' + item.title + '」的播放器已切换、暂停或卡住。', ended)
+            return reject('「' + item.title + '」的播放器已切换、暂停或卡住。')
           }
           if (live.status === 'done') break
         }
@@ -137,12 +163,18 @@ export async function playZjoocVideos({ browserId, sessionId, args, role, wait, 
         cleanup()
         break
       }
-      if (!hasEnded) return fail('未确认「' + item.title + '」开始播放，请核对页面中的播放按钮。', ended)
+      if (!hasEnded) return reject('未确认「' + item.title + '」开始播放，请核对页面中的播放按钮。')
       ended.push(item.title)
       from = item.id
+      return { ok: true }
+    })
+    if (playing) return JSON.stringify(playing)
+    const status = result as { done?: unknown; error?: unknown } | null
+    if (status?.done !== true || !catalog || ended.length !== expected?.length) {
+      return fail(typeof status?.error === 'string' ? status.error.slice(0, 300) : '网站播放流程未完成。', ended)
     }
     const last = await inspect('list')
-    if (last?.course !== catalog.course || last?.active !== from || JSON.stringify(last?.keys) !== JSON.stringify(catalog.keys)) {
+    if (last?.course !== catalog.course || last?.origin !== catalog.origin || last?.active !== from || JSON.stringify(last?.keys) !== JSON.stringify(catalog.keys)) {
       return fail('播放结束时小节已变化，请核对当前页面。', ended)
     }
     syncPeekedUrl?.(browserId, last.url)
@@ -150,6 +182,6 @@ export async function playZjoocVideos({ browserId, sessionId, args, role, wait, 
   } catch (error) {
     cleanup()
     if ((error instanceof DOMException && error.name === 'AbortError') || String(error).includes('BROWSER_USER_CONTROL')) throw error
-    return fail(error instanceof Error ? error.message : '读取在浙学播放器失败，请核对当前页面。', ended)
+    return fail(error instanceof Error ? error.message : '读取播放器失败，请核对当前页面。', ended)
   }
 }

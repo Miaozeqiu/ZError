@@ -29,7 +29,6 @@ import { rememberLoginTyped } from './siteAccounts'
 import { browserTaskIntent } from './browserTask'
 import { compactStudyPanel, displaySiteName, formatSlimRefs, readBrowserLoop } from './browserLoop'
 import { inspectEvalScript } from './browserEvalGuard'
-import { resolveChaoxingLoginUrl } from '../browser/skills/chaoxingLogin'
 import { isCourseChromeTab, readCourseTab, sameChaoxingCourse } from '../platform/chaoxing/courseTab'
 import { isSpaceListTopUrl } from '../platform/chaoxing/spaceTab'
 import { siteGraphForUrl, siteGraphNodeForUrl, siteGraphUrlFromFrames } from '../browser/siteGraphCore'
@@ -223,7 +222,7 @@ export const executeBrowserTool = async (input: {
     currentUrl, graphUrlOf, liveHref, resetPageProbe,
     notePageProbe, readBrowserPage, getBrowserState, peekAppBrowserUrl, emptyPageSnaps, callProtocol,
     graphNodeId, siteGraphNodeForUrl, isShellNode, SPACE_HINT, COURSE_HW_HINT,
-    browserTaskIntent, resolveChaoxingLoginUrl, sameChaoxingCourse, isChaoxingIframeNavUrl, isSpaceListTopUrl,
+    browserTaskIntent, sameChaoxingCourse, isChaoxingIframeNavUrl, isSpaceListTopUrl,
     IFRAME_NAV_HINT, navigateBrowserView, evalBrowserView, pageHostMatches, pageHostOf, reloadBrowserView,
     goBackBrowserView, goForwardBrowserView, formatMissRefsHint, cssSelectorFromArgs, looksLikeCssSelector,
     resolveRefLocator, actOnceOnBrowser, clickByLocator, clickBrowserElement, clickBrowserText, observeAfterClick, asObject,
@@ -251,8 +250,8 @@ export const dispatchBrowserTool = async (ctx: Record<string, any>): Promise<str
     return answerZjooc(ctx as Parameters<typeof answerZjooc>[0])
   }
   if (ctx.name === 'browser_play_zjooc') {
-    const { playZjoocVideos } = await import('./tools/zjoocPlayback')
-    return playZjoocVideos(ctx as Parameters<typeof playZjoocVideos>[0])
+    const { playWebsiteVideos } = await import('./tools/websitePlayback')
+    return playWebsiteVideos('zjooc.cn', 'zjooc', ctx as Parameters<typeof playWebsiteVideos>[2])
   }
   if (['browser_request_credentials', 'browser_login_zjooc', 'browser_login_chaoxing'].includes(ctx.name)) {
     const { handleLoginTool } = await import('./tools/websiteLogin')

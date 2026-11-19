@@ -1,52 +1,60 @@
 // Read only what the current paper renders. Writes recheck the route, stem,
 // option order and existing answer in the same browser operation.
-(function (request) {
-  const route = location.pathname.match(/^\/(?:u(?:ser)?center\/student\/)?course\/study\/([\w-]+)\/(homework|exam|singleQuestion)\/(do|result)\/([\w-]+)(?:\/processStatus\/\d+)?\/?$/)
-  if (location.origin !== 'https://www.zjooc.cn' || !route) return { error: '请先打开在浙学的作答页或讲评页。' }
-  const [, courseId, kind, stage, paperId] = route
+(function (host, rules, request) {
+  const atHost = location.hostname === host || location.hostname.endsWith('.' + host)
+  const parts = location.pathname.split('/').filter(Boolean)
+  const suffix = rules.optionalSuffix
+  if (suffix && parts.at(-2) === suffix && /^\d+$/.test(parts.at(-1))) parts.splice(-2)
+  const route = rules.routes.find(pattern => parts.length === pattern.length
+    && pattern.every((part, index) => part.startsWith(':') ? /^[\w-]+$/.test(parts[index]) : part === parts[index]))
+  if (location.protocol !== 'https:' || location.port || !atHost || !route) return { error: '请先打开目标作答页或讲评页。' }
+  const [courseId, kind, stage, paperId] = [':course', ':kind', ':stage', ':paper'].map(key => parts[route.indexOf(key)])
+  if (!rules.kinds.includes(kind) || ![rules.exerciseStage, rules.reviewStage].includes(stage)) return { error: '请先打开目标作答页或讲评页。' }
   const key = [courseId, kind, paperId].join('/')
   const visible = el => !!el && el.getClientRects().length > 0 && getComputedStyle(el).visibility === 'visible'
   const text = el => (el?.innerText ?? el?.textContent ?? '').replace(/\s+/g, ' ').trim()
-  if (request.reviewReady) return { ready: stage === 'result' && [...document.querySelectorAll('.common_test_correct + .common_test_html')].some(el => visible(el) && text(el)) }
-  const single = kind === 'singleQuestion'
-  const rows = [...document.querySelectorAll(single ? '.left_container > .question_content' : '.common_look_main .questiono-item')].filter(visible)
-  const title = text(document.querySelector('.common_look_title h6, .common_look_header .ft18, .top_title p'))
+  if (request.reviewReady) return { ready: stage === rules.reviewStage && [...document.querySelectorAll(rules.reviewReady)].some(el => visible(el) && text(el)) }
+  const single = kind === rules.singleKind
+  const rows = [...document.querySelectorAll(single ? rules.singleRows : rules.rows)].filter(visible)
+  const title = text(document.querySelector(rules.title))
   const rowNumber = (row, i) => {
-    const label = single ? document.querySelector('.left_container > .question_title p') : row.querySelector('.questiono-header b')
+    const label = single ? document.querySelector(rules.singleNumber) : row.querySelector(rules.rowNumber)
     return Number(text(label).match(/^\s*(\d+)/)?.[1]) || i + 1
   }
   function read(row, index) {
-    const header = row.querySelector('.questiono-header h6 .processing_img, .questiono-header .processing_img, .question_title > span')
-    const fields = [...row.querySelectorAll('.pb10 input.el-input__inner[placeholder="此处输入答案"], .blanks_box input, .blanks_box textarea')].filter(visible)
-    const choices = [...row.querySelectorAll('.common_test_option, .radio_content')].filter(visible)
+    const header = row.querySelector(rules.stem)
+    const fields = [...row.querySelectorAll(rules.fields)].filter(el => visible(el)
+      && el.matches('textarea, input[type=text], input:not([type])') && !el.closest('[data-zerror-private]'))
+    const choices = [...row.querySelectorAll(rules.choices)].filter(visible)
     const inputs = choices.map(el => el.querySelector('input[type=radio],input[type=checkbox]'))
     const options = choices.map((el, i) => {
-      const content = el.querySelector('.processing_img, p')
+      const content = el.querySelector(rules.choiceText)
       const value = content ? text(content) : text(el).replace(/^[A-Z][.、．]\s*/, '')
       const raw = inputs[i]?.value || ''
       const label = /^[A-Z]$/.test(raw) ? raw : String.fromCharCode(65 + i)
       return { label, text: value }
     })
     const multiple = inputs.some(el => el?.type === 'checkbox')
-    const judge = choices.length === 2 && options.every(opt => /^(正确|错误|对|错)$/.test(opt.text))
-    const group = single ? text(document.querySelector('.left_container > .question_title p')) :
-      text(row.closest('.common-question')?.previousElementSibling)
-    const complex = /听力|材料题|完型|完形|简答/.test(group)
+    const judge = choices.length === 2 && options.every(opt => rules.judgeLabels.includes(opt.text))
+    const group = single ? text(document.querySelector(rules.singleNumber)) :
+      text(row.closest(rules.questionGroup)?.previousElementSibling)
+    const complex = rules.unsupportedGroups.some(label => group.includes(label))
     const type = choices.length ? multiple ? 'multiple' : judge ? 'judgement' : 'single' : 'completion'
     const actual = fields.length ? fields.map(el => el.value) : options.filter((_,i) => inputs[i]?.checked).map(o => o.label)
     const stem = text(header)
-    const supported = !complex && !!stem && !row.querySelector('img,video,audio,.questiono-item,.questiono-header a[href],.question_title a[href]') && row.querySelectorAll('.questiono-main').length <= 1
+    const supported = !complex && !!stem && !row.querySelector(rules.excluded) && row.querySelectorAll(rules.questionBody).length <= 1
       && (choices.length ? !fields.length && inputs.every(Boolean) && new Set(options.map(o => o.label)).size === choices.length && options.every(o => o.text) && new Set(options.map(o => o.text)).size === options.length : fields.length > 0)
-    const markers = [...row.querySelectorAll('.common_test_correct')].filter(visible)
-    const official = markers.length === 1 && /正确答案/.test(text(markers[0])) && markers[0].nextElementSibling?.matches('.common_test_html') && visible(markers[0].nextElementSibling)
+    const markers = [...row.querySelectorAll(rules.reviewMarker)].filter(visible)
+    const official = markers.length === 1 && text(markers[0]).includes(rules.reviewLabel) && markers[0].nextElementSibling?.matches(rules.reviewAnswer) && visible(markers[0].nextElementSibling)
       ? text(markers[0].nextElementSibling) : ''
     const number = rowNumber(row, index)
-    const subjectType = group.includes('不定项') ? 10 : { single: 1, multiple: 2, judgement: 3, completion: 7 }[type]
+    const subjectType = group.includes(rules.alternateMultipleLabel) ? rules.subjectTypes.alternate : rules.subjectTypes[type]
     return { data: { index, number, stem, options, type, subjectType, blanks: fields.length, actual, supported, official }, fields, inputs }
   }
   if (request.write) {
-    if (stage !== 'do' || key !== request.key) return { error: '试卷已切换。' }
+    if (stage !== rules.exerciseStage || key !== request.key) return { error: '试卷已切换。' }
     const row = rows[request.index]
+    if (typeof request.url !== 'string' || location.origin + location.pathname !== request.url) return { error: '试卷地址已变化。' }
     if (!row) return { error: '题目已切换。' }
     const { data, fields, inputs } = read(row, request.index)
     const { actual } = data
@@ -69,12 +77,12 @@
     return { written: true }
   }
   const index = Number(request.offset) || 0
-  const totalText = [...document.querySelectorAll('.common_look_main .el-col')].filter(el => !el.childElementCount && !el.closest('.questiono-item') && visible(el)).map(text)
-  const declared = single ? document.querySelectorAll('.index_box li').length : totalText.reduce((sum, value) => sum + Number(value.match(/共\s*(\d+)\s*题/)?.[1] || 0), 0)
+  const totalText = [...document.querySelectorAll(rules.totalLabels)].filter(el => !el.childElementCount && !el.closest(':is(' + rules.rows + ')') && visible(el)).map(text)
+  const declared = single ? document.querySelectorAll(rules.indexItems).length : totalText.reduce((sum, value) => sum + Number(value.match(/共\s*(\d+)\s*题/)?.[1] || 0), 0)
   const scope = rows.map((row, i) => ({ row, i, number: rowNumber(row, i) })).filter(({ number }) =>
     !request.range || (number >= request.range.start && number <= request.range.end))
-  return { key, courseId, kind, stage, paperId, title, declared, total: rows.length, scopeTotal: scope.length,
+  return { key, url: location.origin + location.pathname, single, courseId, kind, stage, paperId, title, declared, total: rows.length, scopeTotal: scope.length,
     ambiguous: !!request.range && new Set(scope.map(r => r.number)).size !== scope.length,
-    hasNext: single && [...document.querySelectorAll('.question_btn button')].some(el => visible(el) && !el.disabled && text(el) === '下一题'),
+    hasNext: single && [...document.querySelectorAll(rules.next)].some(el => visible(el) && !el.disabled && text(el) === rules.nextLabel),
     questions: scope.slice(index, index + request.limit).map(({row, i}) => read(row, i).data) }
 })

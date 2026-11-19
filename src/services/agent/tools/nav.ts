@@ -8,7 +8,7 @@ export const handleNavTools = async (ctx: Record<string, any>): Promise<string |
     currentUrl, graphUrlOf, liveHref,
     notePageProbe, readBrowserPage, getBrowserState, peekAppBrowserUrl, emptyPageSnaps, callProtocol,
     graphNodeId, siteGraphNodeForUrl, isShellNode, SPACE_HINT, COURSE_HW_HINT,
-    browserTaskIntent, resolveChaoxingLoginUrl, sameChaoxingCourse, isChaoxingIframeNavUrl, isSpaceListTopUrl,
+    browserTaskIntent, sameChaoxingCourse, isChaoxingIframeNavUrl, isSpaceListTopUrl,
     IFRAME_NAV_HINT, navigateBrowserView, evalBrowserView, pageHostMatches, pageHostOf, reloadBrowserView,
     goBackBrowserView, goForwardBrowserView, formatMissRefsHint, cssSelectorFromArgs, looksLikeCssSelector,
     resolveRefLocator, clickByLocator, clickBrowserElement, clickBrowserText, observeAfterClick, asObject,
@@ -150,7 +150,7 @@ export const handleNavTools = async (ctx: Record<string, any>): Promise<string |
         ? '这是课表/iframe 地址，通常应留在外壳里点页签，而不是顶层打开。'
         : IFRAME_NAV_HINT)
       : undefined
-    const target = resolveChaoxingLoginUrl(url)
+    const target = url
     const from = await liveHref(browserId).catch(() => currentUrl(browserId))
     await navigateBrowserView(browserId, target)
     onNavigation?.()

@@ -258,96 +258,60 @@ async fn fill_input(
     Ok(json!({"ok": filled, "filled": filled}))
 }
 
-pub(crate) async fn login_state(
-    app: &AppHandle,
-    id: &str,
-    op: &str,
-    capture_captcha: bool,
-) -> Result<Value, String> {
+pub(crate) async fn login_observe(app: &AppHandle, id: &str, args: &Value) -> Result<Value, String> {
+    let _operation = lock(id).await;
     let webview = crate::app_browser::find_browser(app, id)?;
     let doc = Document::read(&webview).await?;
-    let probe = if op == "zjooc_login_state" {
-        format!(
-            "{}({capture_captcha})",
-            include_str!("cef/zjooc_login_state.js").trim()
-        )
-    } else {
-        include_str!("cef/chaoxing_login_state.js").into()
-    };
-    let observed = async {
-        let context = doc.context(&webview).await?;
-        let result = evaluate(&webview, context, probe, true).await?;
-        if Document::read(&webview).await? != doc {
-            return Err(STALE.into());
-        }
-        result["value"]
-            .as_object()
-            .cloned()
-            .ok_or_else(|| CDP_ERROR.into())
+    if args["url"].as_str() != Some(doc.url.as_str()) {
+        return Ok(json!({"url": doc.url, "supportsLoginAction": true}));
     }
-    .await;
-    let mut observed = observed.unwrap_or_else(|_: String| {
-        serde_json::Map::from_iter([("kind".into(), json!("loading"))])
-    });
-    observed.insert("url".into(), json!(doc.url));
-    observed.insert("frameId".into(), json!(doc.frame));
-    observed.insert("loaderId".into(), json!(doc.loader));
-    observed.insert("supportsLoginAction".into(), json!(true));
-    Ok(Value::Object(observed))
+    let (probe, rules) = crate::browser_login::observation(&doc.url, args)?;
+    let context = doc.context(&webview).await?;
+    let result = evaluate(&webview, context, probe, true).await?;
+    if Document::read(&webview).await? != doc {
+        return Ok(json!({}));
+    }
+    let mut result = crate::browser_login::finish_observation(&doc.url, &doc.frame, &doc.loader, result["value"].clone(), rules);
+    result["supportsLoginAction"] = json!(true);
+    Ok(result)
 }
 
 pub(crate) async fn login_action(app: &AppHandle, id: &str, args: &Value) -> Result<Value, String> {
     let locator = &args["locator"];
-    let (origin, path, selector, text_match, code) = match (
-        args["action"].as_str(),
-        locator["by"].as_str(),
-        locator["value"].as_str(),
-    ) {
-        (Some("click"), Some("css"), Some("#loginBtn")) => (
-            "https://passport2.chaoxing.com",
-            "/login",
-            "#loginBtn",
-            None,
-            None,
-        ),
-        (Some("click"), Some("css"), Some(".login_box button.dologin")) => (
-            "https://background.zjooc.cn",
-            "/gxptLogin",
-            ".login_box button.dologin",
-            None,
-            None,
-        ),
-        (Some("click"), Some("text"), Some("请登录")) => (
-            "https://www.zjooc.cn",
-            "",
-            ".front-header-top .ta-r a",
-            Some("请登录"),
-            None,
-        ),
-        (Some("fill"), Some("css"), Some(".login_box .forms.code input[name=captchaCode]")) => {
-            let code = args["text"]
-                .as_str()
-                .filter(|s| s.len() == 5 && s.bytes().all(|b| b.is_ascii_alphanumeric()))
-                .ok_or("验证码格式不正确")?;
-            (
-                "https://background.zjooc.cn",
-                "/gxptLogin",
-                ".login_box .forms.code input[name=captchaCode]",
-                None,
-                Some(code),
-            )
-        }
+    let site = args["site"].as_str().ok_or("缺少登录网站身份")?;
+    let expected = args["url"].as_str().ok_or(STALE)?;
+    let target = url::Url::parse(expected).map_err(|_| STALE)?;
+    let origin = target.origin().ascii_serialization();
+    if !crate::secret_vault::site_accepts_origin(site, &origin) {
+        return Err("当前页面不在网站的登录授权范围内".into());
+    }
+    let selector = args["selector"].as_str().filter(|s| !s.is_empty() && s.len() <= 512)
+        .ok_or("缺少登录控件选择器")?;
+    let text_match = args["label"].as_str().filter(|s| s.len() <= 80);
+    let code = match args["action"].as_str() {
+        Some("click") => None,
+        Some("fill") => Some(args["text"].as_str()
+            .filter(|s| s.len() == 5 && s.bytes().all(|b| b.is_ascii_alphanumeric()))
+            .ok_or("验证码格式不正确")?),
         _ => return Err("不支持的登录页面操作".into()),
     };
     let _operation = lock(id).await;
     let webview = crate::app_browser::find_browser(app, id)?;
     let doc = Document::read(&webview).await?;
     doc.check_locator(locator, true)?;
+    if doc.url != expected {
+        return Err(STALE.into());
+    }
     let context = doc.context(&webview).await?;
-    let query = format!("((origin, path, selector, text) => {{ if (location.origin !== origin || \
-        (path && location.pathname.replace(/\\/$/, '') !== path)) return null; \
-        const nodes = [...document.querySelectorAll(selector)].filter(node => text === null || node.textContent.trim() === text); \
-        return nodes.length === 1 ? nodes[0] : null; }})({}, {}, {}, {})", json!(origin), json!(path), json!(selector), json!(text_match));
+    let query = format!(
+        r#"((expected, selector, text) => {{
+            if (location.href !== expected) return null;
+            const nodes = [...document.querySelectorAll(selector)].filter(node =>
+                node.getClientRects().length > 0 && getComputedStyle(node).visibility === 'visible'
+                && (text === null || node.textContent.trim() === text));
+            return nodes.length === 1 ? nodes[0] : null;
+        }})({}, {}, {})"#, json!(expected), json!(selector), json!(text_match)
+    );
     let node = evaluate(&webview, context, query, false).await?;
     let Some(object) = node["objectId"].as_str() else {
         return Ok(json!({"ok":false, "dispatched":false}));
@@ -357,14 +321,14 @@ pub(crate) async fn login_action(app: &AppHandle, id: &str, args: &Value) -> Res
             return Err(STALE.into());
         }
         if let Some(code) = code {
-            let filled = write_input(&webview, object, code, origin, "text").await?;
+            let filled = write_input(&webview, object, code, &origin, "text").await?;
             return Ok(json!({"ok":filled, "filled":filled, "dispatched":filled}));
         }
         let result = cdp(&webview, "Runtime.callFunctionOn", json!({
-            "objectId": object, "returnByValue": true, "silent": true, "arguments": [{"value":origin}, {"value":path}],
-            "functionDeclaration": r#"function(origin, path) {
-                if (!this.isConnected || this.ownerDocument !== document || location.origin !== origin
-                    || (path && location.pathname.replace(/\/$/, '') !== path)
+            "objectId": object, "returnByValue": true, "silent": true, "arguments": [{"value":expected}],
+            "functionDeclaration": r#"function(expected) {
+                if (!this.isConnected || this.ownerDocument !== document || location.href !== expected
+                    || !this.matches('a, button, [role="button"], input[type=submit], input[type=button]')
                     || this.matches(':disabled, [aria-disabled="true"]') || !this.getClientRects().length
                     || getComputedStyle(this).visibility !== 'visible') return false;
                 this.click();

@@ -82,12 +82,12 @@ export async function handleWebsiteChapterTools(ctx: Context): Promise<string> {
         throw new Error('章节脚本返回的动作与当前网页任务点不一致。')
       }
       return expected
-    })
+    }, { reuseForMs: 30_000 })
   } catch (error) {
     return fail('invalid', error instanceof Error ? error.message : '章节脚本运行失败。')
   }
   const { action, index } = script.result
-  const verified = await readStudentChapter(browserId)
+  const verified = await readStudentChapter(browserId, state.rules)
   if (!sameStudentChapterPage(verified, state) || verified?.header.cards?.href !== header.cards?.href || verified?.header.remaining !== header.remaining) {
     return fail('stale', '章节状态已刷新，请重新复核后继续。')
   }
@@ -110,7 +110,7 @@ export async function handleWebsiteChapterTools(ctx: Context): Promise<string> {
     }
     if (!loaderId) return fail('stale', '当前章节主文档已变化，无法确认页签。')
     const clicked = await actOnceOnBrowser(browserId, {
-      by: 'css', value: `#prev_tab .prev_ul > li#${next.id}`, frameId: state.frameId, loaderId,
+      by: 'css', value: `#${next.id}:is(${state.rules.tabs})`, frameId: state.frameId, loaderId,
     }, 'click')
     if (!clicked.ok) return fail('invalid', '没有确认目标页签已打开。请复核网页。', clicked.dispatched)
     await wait(400)
@@ -141,7 +141,7 @@ export async function handleWebsiteChapterTools(ctx: Context): Promise<string> {
 
   if (action === 'quiz' || action === 'document') {
     if (job.selector) {
-      const revealed = await evalBrowserViewInFrame(browserId, revealChapterJob(cards.url, job.selector), '', { frameId: cards.frameId }).catch(() => false)
+      const revealed = await evalBrowserViewInFrame(browserId, revealChapterJob(cards.url, job.selector, state.rules), '', { frameId: cards.frameId }).catch(() => false)
       if (revealed !== true) return fail('stale', '未能定位任务点，请用当前页面快照核对。')
     }
     if (action === 'quiz') {
@@ -171,7 +171,7 @@ export async function handleWebsiteChapterTools(ctx: Context): Promise<string> {
 
   if (!job.mid || jobs?.filter(item => item.mid === job.mid).length !== 1) return fail('invalid', '未读到唯一的视频标识。请用当前页面快照核对。')
   const video = await watchChapterVideo(browserId, sessionId, job.mid, job.name || header.title,
-    async () => { await wait(0); return Boolean(sameStudentChapterPage(await readStudentChapter(browserId), state)) }, job.focusRequired)
+    async () => { await wait(0); return Boolean(sameStudentChapterPage(await readStudentChapter(browserId), state)) }, state.rules.player, job.focusRequired)
   if (video.ok === false) {
     if (video.reason === 'not_found' && !video.dispatched) return report('loading', video.error)
     return fail(video.reason, video.error, video.dispatched)

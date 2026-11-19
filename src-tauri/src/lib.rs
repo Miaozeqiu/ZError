@@ -5,6 +5,8 @@
 pub mod app_activity;
 pub mod app_browser;
 mod browser_theme;
+#[cfg(any(windows, target_os = "macos"))]
+mod browser_login;
 pub mod browser_control;
 pub mod browser_geometry;
 #[cfg(target_os = "macos")]

@@ -1,162 +1,240 @@
 import type { BrowserLocator } from '../../browser/engine'
-import { CHAOXING_LOGIN_URL } from '../../browser/skills/chaoxingLogin'
-import { chaoxingUrl } from '../../platform/chaoxing/studentCourses'
 import { isSecretReference } from '../../security/secureStore'
-import { runWebsiteScript } from '../websiteScripts'
+import { pendingWebsiteVerification, requestChatLogin } from '../chatLogin'
 import { siteAccountOf, siteAccountsReady } from '../siteAccounts'
+import { runWebsiteWorkflow } from '../websiteScripts'
 import type { handleWebsiteCourseTools } from './websiteCourses'
+import { loginObserver } from './websiteLoginObservation'
 
 type Context = Pick<Parameters<typeof handleWebsiteCourseTools>[0],
   'args' | 'browserId' | 'role' | 'navigateBrowserView' | 'syncPeekedUrl' | 'onNavigation' | 'wait'> & {
     callProtocol: (id: string, op: string, args?: Record<string, unknown>) => Promise<Record<string, unknown>>
     actOnceOnBrowser: (id: string, locator: BrowserLocator, op: 'click' | 'fill', text?: string) =>
       Promise<{ dispatched: boolean; ok?: boolean; filled?: boolean }>
+    sessionId?: string
+    signal?: AbortSignal
   }
 
-export const actOnLoginPage = async (
-  ctx: Context, useNative: boolean, locator: BrowserLocator, action: 'click' | 'fill', text?: string,
-) => {
-  if (!useNative) return text === undefined
-    ? ctx.actOnceOnBrowser(ctx.browserId, locator, action)
-    : ctx.actOnceOnBrowser(ctx.browserId, locator, action, text)
-  const result = await ctx.callProtocol(ctx.browserId, 'login_action', { locator, action, ...(text === undefined ? {} : { text }) })
-  return { dispatched: result.dispatched === true, ok: result.ok === true, filled: result.filled === true }
+type SiteLogin = { host: string; site: string; credentialOrigin: string }
+const chaoxing: SiteLogin = { host: 'chaoxing.com', site: 'chaoxing', credentialOrigin: 'https://passport2.chaoxing.com' }
+const zjooc: SiteLogin = { host: 'zjooc.cn', site: 'zjooc', credentialOrigin: 'https://background.zjooc.cn' }
+const captchaChallenges = new WeakMap<AbortSignal, {
+  id: string; browserId: string; site: string; url: string; frameId: string; loaderId: string; image: string
+}>()
+
+function sameSite(url: string, host: string): URL | undefined {
+  if (!URL.canParse(url)) return
+  const parsed = new URL(url)
+  if (parsed.protocol === 'https:' && !parsed.port && !parsed.username && !parsed.password
+    && (parsed.hostname === host || parsed.hostname.endsWith('.' + host))) return parsed
 }
 
-const site = 'chaoxing'
-const space = 'https://i.chaoxing.com/'
+const selector = (value: unknown) => typeof value === 'string' && value.length > 0 && value.length <= 512 ? value : ''
+type LoginResult = {
+  ok: boolean; reason?: string; error?: string; credentialsRequired?: boolean; credentialsRejected?: boolean
+  challenge?: 'image_captcha'; [field: string]: unknown
+}
+const fail = (reason: string, error: string, extra: Partial<LoginResult> = {}): LoginResult => ({ ok: false, reason, error, ...extra })
 
-export async function loginChaoxing(ctx: Context): Promise<string> {
-  const id = ctx.browserId
-  const fail = (reason: string, error: string, extra = {}) => JSON.stringify({ ok: false, reason, error, ...extra })
-  if (ctx.role === 'explore' || Object.keys(ctx.args).length) {
-    return fail('invalid', '学习通登录工具无需参数，凭据由软件从该网站的安全设置中读取。')
+async function runLogin(ctx: Context, profile: SiteLogin, restart: boolean): Promise<LoginResult> {
+  const { host, site, credentialOrigin } = profile
+  const { args, browserId, signal, sessionId } = ctx
+  const verify = args.wait_for_verification === true
+  const captchaCode = typeof args.captcha_code === 'string' ? args.captcha_code : ''
+  const captchaId = typeof args.captcha_id === 'string' ? args.captcha_id : ''
+  const submittingCaptcha = args.captcha_code !== undefined || args.captcha_id !== undefined
+  const allowed = ['wait_for_verification', 'captcha_code', 'captcha_id']
+  if (ctx.role === 'explore' || Object.keys(args).some(key => !allowed.includes(key))
+    || (args.wait_for_verification !== undefined && typeof args.wait_for_verification !== 'boolean')
+    || (submittingCaptcha && (verify || !captchaId || !/^[a-z0-9]{5}$/i.test(captchaCode)))) {
+    return fail('invalid', '登录参数无效，请重新读取登录页。')
   }
-
-  const read = async () => {
+  if (verify && (!sessionId || pendingWebsiteVerification.has(sessionId))) {
+    return fail('invalid', '请在当前对话中等待网站登录验证。')
+  }
+  const observe = loginObserver(ctx.callProtocol, browserId, host)
+  type Observation = Awaited<ReturnType<typeof observe>>
+  let state: Observation = {}
+  let fillingAttempted = false
+  let filled = false
+  let clicked = false
+  let form: { url: string; frameId: string; loaderId: string } | undefined
+  let issued: { captcha_id: string; captchaImage: string } | undefined
+  let credentialsRequired = false
+  let rejected = false
+  const read = async (capture: boolean, run: (input: unknown) => unknown) => {
+    state = await observe(capture, run)
+    const url = sameSite(String(state.url ?? ''), host)
+    const image = typeof state.captchaImage === 'string' && state.captchaImage.startsWith('data:image/png;base64,')
+      && state.captchaImage.length <= 400_000 ? state.captchaImage : undefined
+    return {
+      kind: state.kind, rejection: state.rejection, rejected: state.rejected, challenge: state.challenge,
+      origin: url?.origin, path: url?.pathname, modern: state.modern === true,
+      document: typeof state.frameId === 'string' && typeof state.loaderId === 'string' ? state.loaderId : '',
+      imageAvailable: Boolean(image),
+    }
+  }
+  const identity = () => {
+    const { url, frameId, loaderId } = state
+    return typeof url === 'string' && typeof frameId === 'string' && frameId && typeof loaderId === 'string' && loaderId
+      ? { url, frameId, loaderId } : undefined
+  }
+  const current = (pin = form) => pin && pin.url === state.url && pin.frameId === state.frameId && pin.loaderId === state.loaderId
+  const sameForm = () => state.kind === 'form' && sameSite(String(state.url ?? ''), host)?.origin === credentialOrigin
+  const locator = (value: string, pin: NonNullable<typeof form>): BrowserLocator => ({
+    by: 'css', value, frameId: pin.frameId, loaderId: pin.loaderId,
+  })
+  const act = async (target: string, action: 'click' | 'fill', pin: NonNullable<typeof form>, text?: string, label?: string) => {
+    const where = label ? { ...locator(label, pin), by: 'text' as const, exact: true } : locator(target, pin)
     await ctx.wait(0)
-    const state = await ctx.callProtocol(id, 'chaoxing_login_state')
-    const url = typeof state.url === 'string' ? chaoxingUrl(state.url) : null
-    const frameId = typeof state.frameId === 'string' ? state.frameId : ''
-    const loaderId = typeof state.loaderId === 'string' ? state.loaderId : ''
-    return { kind: state.kind, modern: state.modern === true, rejected: state.rejected === true, url, frameId, loaderId,
-      supportsLoginAction: state.supportsLoginAction === true }
-  }
-  type State = Awaited<ReturnType<typeof read>>
-  const done = (state: State, alreadyLoggedIn: boolean) => {
-    const url = state.url!
-    ctx.syncPeekedUrl?.(id, url.href)
-    return JSON.stringify({ ok: true, loggedIn: true, alreadyLoggedIn, url: url.origin + url.pathname })
-  }
-  const challenge = () => fail('verification_required', '学习通要求人工验证。请在浏览器完成验证码或滑块，并完成登录后继续。', { userActionRequired: true })
-  const navigate = async (url: string) => {
-    await ctx.wait(0)
-    await ctx.navigateBrowserView(id, url)
-    ctx.onNavigation?.()
-  }
-  const onPassport = (state: State) => state.url?.hostname === 'passport2.chaoxing.com'
-  const inSpace = (state: State) => state.kind === 'space'
-    && (state.url?.hostname === 'i.chaoxing.com' || state.url?.hostname === 'i.mooc.chaoxing.com')
-  const plan = async (state: State) => (await runWebsiteScript('chaoxing.com', site, 'login', {
-    kind: state.kind, host: state.url?.hostname || '', modern: state.modern, frameReady: Boolean(state.frameId && state.loaderId),
-  }, proposal => {
-    if (typeof proposal !== 'string' || !['logged_in', 'verify', 'open_space', 'open_form', 'fill', 'wait'].includes(proposal)) {
-      throw new Error('学习通登录脚本返回了未知操作。')
+    if (!state.supportsLoginAction) {
+      return text === undefined ? ctx.actOnceOnBrowser(browserId, where, action) : ctx.actOnceOnBrowser(browserId, where, action, text)
     }
-    return proposal
-  }, { reuseForMs: 30_000 })).result
-  let submitted = false
-  try {
-    let state = await read()
-    if (state.kind === 'unsupported') {
-      return fail('invalid', '当前浏览器不支持自动安全填写。请在浏览器手动登录学习通。', { userActionRequired: true })
-    }
-    let action = await plan(state)
-    if (action === 'logged_in' && inSpace(state)) return done(state, true)
-    if (state.kind === 'challenge') return challenge()
-    let openedLogin = false
-    if (action === 'open_space' && !onPassport(state) && state.kind !== 'loading') await navigate(space)
-    for (let attempt = 0; attempt < 20; attempt++) {
-      if (action === 'logged_in' && inSpace(state)) return done(state, true)
-      if (state.kind === 'challenge') return challenge()
-      if (action === 'fill' && onPassport(state) && state.kind === 'form' && state.modern && state.frameId && state.loaderId) break
-      if (action === 'open_form' && !openedLogin && onPassport(state) && (state.kind === 'passport' || (state.kind === 'form' && !state.modern))) {
-        await navigate(CHAOXING_LOGIN_URL)
-        openedLogin = true
-      }
-      await ctx.wait(250)
-      state = await read()
-      action = await plan(state)
-    }
-    if (action !== 'fill' || !onPassport(state) || state.kind !== 'form' || !state.modern || !state.frameId || !state.loaderId) {
-      return fail('verification_required', '未确认学习通登录表单或已登录空间。请核对浏览器当前页面。')
-    }
-
-    await siteAccountsReady
-    const account = siteAccountOf(site)
-    if (!isSecretReference(account?.account) || !isSecretReference(account?.password)) {
-      return fail('invalid', '学习通账号或密码未配置。请在软件的学习通网站设置中填写，或在浏览器手动登录。', { credentialsRequired: true })
-    }
-    const locator = (value: string): BrowserLocator => ({
-      by: 'css', value, frameId: state.frameId, loaderId: state.loaderId,
+    return ctx.callProtocol(browserId, 'login_action', {
+      site, url: pin.url, locator: where, selector: target, action,
+      ...(text === undefined ? {} : { text }), ...(label === undefined ? {} : { label }),
     })
-    for (const [selector, reference] of [['input#phone', account.account], ['input#pwd[type="password"]', account.password]]) {
+  }
+  if (verify) pendingWebsiteVerification.add(sessionId!)
+  try {
+    const output = await runWebsiteWorkflow(host, site, 'login', { verify, submittingCaptcha, restart }, async (raw, run) => {
       await ctx.wait(0)
-      const filled = await ctx.callProtocol(id, 'fill_secret', { locator: locator(selector), secret_ref: reference })
-      if (filled.ok !== true || filled.filled !== true) return fail('stale', '学习通表单未能完成安全填写。请核对当前页面与网站账号设置。')
-    }
-    const beforeClick = await read()
-    if (beforeClick.kind === 'challenge') return challenge()
-    if (!onPassport(beforeClick) || beforeClick.kind !== 'form'
-      || beforeClick.frameId !== state.frameId || beforeClick.loaderId !== state.loaderId) {
-      return fail('stale', '登录表单已变化，未点击登录。请核对当前页面。')
-    }
-    await ctx.wait(0)
-    const click = await actOnLoginPage(ctx, beforeClick.supportsLoginAction, locator('#loginBtn'), 'click')
-    if (!click.dispatched) return fail('stale', '未能点击学习通登录按钮，请核对页面。')
-    submitted = true
-    ctx.onNavigation?.()
-    for (let attempt = 0; attempt < 24; attempt++) {
-      await ctx.wait(250)
-      const result = await read()
-      if (inSpace(result)) return done(result, false)
-      if (result.kind === 'challenge') return challenge()
-      if (onPassport(result) && result.rejected && (attempt >= 3 || !beforeClick.rejected)) {
-        return fail('invalid', '学习通登录表单返回错误。请检查网站账号和密码，或在浏览器查看提示。', { loginRejected: true })
+      signal?.throwIfAborted()
+      const command = raw as Record<string, unknown> | null
+      switch (command?.op) {
+        case 'read': {
+          const delay = typeof command.delay === 'number' ? command.delay : 0
+          if (!Number.isSafeInteger(delay) || delay < 0 || delay > 2000) throw new Error('登录流程等待时间无效')
+          if (delay) await ctx.wait(delay)
+          return read(command.capture === true && (filled || submittingCaptcha), run)
+        }
+        case 'navigate': {
+          if (verify || submittingCaptcha || fillingAttempted || clicked) return false
+          const url = sameSite(String(command.url ?? ''), host)
+          if (!url) return false
+          await ctx.navigateBrowserView(browserId, url.href)
+          ctx.onNavigation?.()
+          state = {}
+          return true
+        }
+        case 'open_form': {
+          const pin = identity()
+          const target = selector(command.selector)
+          const label = typeof command.label === 'string' && command.label.length <= 80 ? command.label : undefined
+          if (!pin || !target || verify || submittingCaptcha || fillingAttempted || state.kind !== 'guest') return false
+          const receipt = await act(target, 'click', pin, undefined, label)
+          if (receipt.dispatched) {
+            ctx.onNavigation?.()
+            state = {}
+          }
+          return receipt.dispatched === true
+        }
+        case 'fill_credentials': {
+          const account = selector(command.account)
+          const password = selector(command.password)
+          form = identity()
+          if (!account || !password || !form || !sameForm() || verify || submittingCaptcha || fillingAttempted || clicked) return 'stale'
+          fillingAttempted = true
+          await siteAccountsReady
+          const credentials = siteAccountOf(site)
+          if (!isSecretReference(credentials?.account) || !isSecretReference(credentials?.password)) {
+            credentialsRequired = true
+            return 'missing'
+          }
+          for (const [target, reference] of [[account, credentials.account], [password, credentials.password]]) {
+            await ctx.wait(0)
+            const receipt = await ctx.callProtocol(browserId, 'fill_secret', { locator: locator(target, form), secret_ref: reference })
+            if (receipt.ok !== true || receipt.filled !== true) return 'stale'
+          }
+          filled = true
+          return 'filled'
+        }
+        case 'issue_captcha': {
+          if (issued || !filled || !sameForm() || !current() || !signal || !form || state.challenge !== true
+            || typeof state.captchaImage !== 'string' || !state.captchaImage.startsWith('data:image/png;base64,')
+            || state.captchaImage.length > 400_000) return false
+          const id = crypto.randomUUID()
+          captchaChallenges.set(signal, { ...form, id, browserId, site, image: state.captchaImage })
+          issued = { captcha_id: id, captchaImage: state.captchaImage }
+          return true
+        }
+        case 'submit': {
+          const button = selector(command.button)
+          if (!button || verify || clicked || !sameForm()) return false
+          if (submittingCaptcha) {
+            const challenge = signal && captchaChallenges.get(signal)
+            if (!signal || !challenge || challenge.id !== captchaId || challenge.browserId !== browserId
+              || challenge.site !== site || !current(challenge) || state.challenge !== true || challenge.image !== state.captchaImage
+              || !selector(command.captcha)) return false
+            captchaChallenges.delete(signal)
+            form = challenge
+            const receipt = await act(selector(command.captcha), 'fill', challenge, captchaCode)
+            if (receipt.ok !== true || receipt.filled !== true) return false
+            await read(true, run)
+            if (!sameForm() || !current(challenge) || challenge.image !== state.captchaImage) return false
+          }
+          if (!form || !current() || (!submittingCaptcha && (!filled || state.challenge === true))) return false
+          const receipt = await act(button, 'click', form)
+          clicked = receipt.dispatched === true
+          if (clicked) ctx.onNavigation?.()
+          return clicked
+        }
+        case 'reject_credentials':
+          rejected = sameSite(String(state.url ?? ''), host)?.origin === credentialOrigin && state.rejection === 'credentials'
+          credentialsRequired = rejected
+          return rejected
+        default:
+          throw new Error('网站登录脚本请求了未知操作')
+      }
+    })
+    const result = output as Record<string, unknown> | null
+    if (result?.status === 'logged_in' && state.kind === 'space') {
+      const url = sameSite(String(state.url ?? ''), host)
+      if (url) {
+        ctx.syncPeekedUrl?.(browserId, url.href)
+        if (verify) ctx.onNavigation?.()
+        return { ok: true, loggedIn: true, alreadyLoggedIn: !clicked, url: url.origin + url.pathname }
       }
     }
-    return fail('verification_required', '已尝试登录，尚未确认进入学习通空间。请先检查当前页面。', { clickDispatched: true })
+    if (result?.status === 'captcha' && issued) return {
+      ok: true, loggedIn: false, challenge: 'image_captcha', ...issued,
+      hint: '识别当前图片并传入 captcha_id 和 5 位 captcha_code。看不清时可等待用户验证。',
+    }
+    const message = typeof result?.message === 'string' && result.message.length <= 300 ? result.message : '请在浏览器核对登录状态。'
+    if (credentialsRequired) return fail('invalid', message, { credentialsRequired: true, credentialsRejected: rejected })
+    return fail(result?.status === 'stale' ? 'stale' : result?.status === 'rejected' ? 'invalid' : 'verification_required', message, {
+      ...(result?.status === 'rejected' ? { loginRejected: true } : {}),
+      ...(result?.status === 'captcha' ? { challenge: 'image_captcha', captchaImage: state.captchaImage } : {}),
+      ...(clicked ? { clickDispatched: true } : {}), userActionRequired: true,
+    })
   } catch (error) {
     if ((error instanceof DOMException && error.name === 'AbortError') || String(error).includes('BROWSER_USER_CONTROL')) throw error
-    return fail('verification_required', '暂时无法完成学习通登录。请核对浏览器当前页面与安全凭据设置。', { clickDispatched: submitted })
+    return fail('verification_required', '登录流程未能继续，请核对浏览器页面和网站经验版本。', { clickDispatched: clicked, userActionRequired: true })
+  } finally {
+    if (verify) pendingWebsiteVerification.delete(sessionId!)
   }
 }
 
-export async function handleLoginTool(ctx: Context & { name: string; sessionId: string; signal?: AbortSignal }): Promise<string> {
-  const { requestChatLogin } = await import('../chatLogin')
+export const loginChaoxing = async (ctx: Context) => JSON.stringify(await runLogin(ctx, chaoxing, false))
+export const loginZjooc = async (ctx: Context) => JSON.stringify(await runLogin(ctx, zjooc, false))
+
+export async function handleLoginTool(ctx: Context & { name: string; sessionId: string }): Promise<string> {
   if (ctx.name === 'browser_request_credentials') {
-    if (ctx.role === 'explore' || Object.keys(ctx.args).length) return JSON.stringify({ ok: false, error: '请在登录页执行此工具，无需参数。' })
+    if (ctx.role === 'explore' || Object.keys(ctx.args).length) return JSON.stringify(fail('invalid', '请在登录页执行此工具，无需参数。'))
     return JSON.stringify(await requestChatLogin(ctx.sessionId, ctx.browserId, ctx.signal))
   }
-  if (ctx.name === 'browser_login_zjooc') {
-    const { loginZjooc } = await import('./zjoocLogin')
-    let result = await loginZjooc(ctx)
-    while (true) {
-      const { credentialsRequired, credentialsRejected } = JSON.parse(result)
-      if (!credentialsRequired) return result
-      const receipt = await requestChatLogin(ctx.sessionId, ctx.browserId, ctx.signal, {
-        expectedOrigin: 'https://background.zjooc.cn',
-        replacingRejectedCredentials: credentialsRejected === true,
-      })
-      if (!receipt.ok) return JSON.stringify(receipt)
-      result = await loginZjooc({ ...ctx, args: {} }, credentialsRejected === true)
-      if (ctx.args.wait_for_verification === true && JSON.parse(result).challenge === 'image_captcha') {
-        result = await loginZjooc(ctx)
-      }
+  const profile = ctx.name === 'browser_login_zjooc' ? zjooc : chaoxing
+  let result = await runLogin(ctx, profile, false)
+  while (result.credentialsRequired) {
+    const receipt = await requestChatLogin(ctx.sessionId, ctx.browserId, ctx.signal, {
+      expectedOrigin: profile.credentialOrigin,
+      replacingRejectedCredentials: result.credentialsRejected === true,
+    })
+    if (!receipt.ok) return JSON.stringify(receipt)
+    result = await runLogin({ ...ctx, args: {} }, profile, result.credentialsRejected === true)
+    if (ctx.args.wait_for_verification === true && result.challenge === 'image_captcha') {
+      result = await runLogin({ ...ctx, args: { wait_for_verification: true } }, profile, false)
     }
   }
-  const result = await loginChaoxing(ctx)
-  if (!JSON.parse(result).credentialsRequired) return result
-  const receipt = await requestChatLogin(ctx.sessionId, ctx.browserId, ctx.signal, { expectedOrigin: 'https://passport2.chaoxing.com' })
-  return receipt.ok ? loginChaoxing(ctx) : JSON.stringify(receipt)
+  return JSON.stringify(result)
 }

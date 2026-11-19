@@ -2,7 +2,7 @@ import { parseHtml, readFrameHtml } from '../../browser/domRead'
 import { actOnceOnBrowser } from '../../browser/engine'
 import { waitMs } from '../../browser/eval'
 import { callProtocol } from '../../browser/protocol'
-import { chapterRow, courseChapterRows, studentChapterDirectoryUrl, studentChapterUrl } from '../../chaoxing/host/chapterTasks'
+import { chapterRow, courseChapterRows, loadChapterRules, studentChapterDirectoryUrl, studentChapterUrl } from '../../chaoxing/host/chapterTasks'
 import { videoWatchFor } from '../../platform/panelAccess'
 import { studentCourseUrl } from '../../platform/chaoxing/studentCourses'
 
@@ -35,10 +35,12 @@ export async function openNextWebsiteChapter(ctx: {
     const live = await readFrameHtml(browserId, source.frameId)
     return live.ok && live.frameId === source.frameId && live.url === source.url && live.html === source.html ? found.loaderId : ''
   }
+  const rules = await loadChapterRules().catch(() => null)
+  if (!rules) return fail('not_found', '网站经验未提供章节目录识别规则。')
   let source = player ? main : await readDirectory()
   if (!player && !matchesDirectory(source.url)) {
     if (!ctx.openDirectory) return fail('not_found', '当前课程的章节目录框尚未就绪。请打开本课「章节」页签后重试。')
-    const selector = 'a[title="章节"][data-url*="/mycourse/studentcourse"]'
+    const selector = rules.directory.target
     const loaderId = await pin(main, selector)
     if (!loaderId) return fail('stale', '当前学生课程已切换，请重新核对。')
     await wait(0)
@@ -56,10 +58,10 @@ export async function openNextWebsiteChapter(ctx: {
   const doc = source.ok && parseHtml(source.html)
   if (!doc) return fail('not_found', '学习通章节目录尚未加载。')
   const rows = player
-    ? [...doc.querySelectorAll('#coursetree .posCatalog_select[id^="cur"]:not(.firstLayer)')]
+    ? [...doc.querySelectorAll(rules.sidebar.target)]
       .filter(row => /^cur\d+$/.test(row.id))
-      .map(row => ({ chapterId: row.id.slice(3), ...chapterRow(row) }))
-    : courseChapterRows(doc)
+      .map(row => ({ chapterId: row.id.slice(3), ...chapterRow(row, rules) }))
+    : courseChapterRows(doc, rules)
   if (!rows.length) return fail('not_found', '当前目录未读到可核对的小节。请查看目录页是否已加载。')
   const left = rows.filter(row => Number(row.remaining) > 0)
   const active = player && left.find(row => row.chapterId === player.chapterId)
@@ -70,8 +72,8 @@ export async function openNextWebsiteChapter(ctx: {
   if (active && player) return JSON.stringify({ ok: true, opened: true, already: true, chapterKey: player.key, ...next, ...summary })
 
   const selector = player
-    ? `#coursetree .posCatalog_select[id="cur${next.chapterId}"] .posCatalog_name`
-    : `.chapter_item[id="cur${next.chapterId}"] > .catalog_title[role="link"]`
+    ? `#cur${next.chapterId}:is(${rules.sidebar.target}) :is(${rules.sidebar.name})`
+    : `#cur${next.chapterId} > :is(${rules.directory.row})`
   const loaderId = await pin(source, selector)
   if (!loaderId) return fail('stale', '章节目录已经刷新，请重新读取。')
   await wait(0)

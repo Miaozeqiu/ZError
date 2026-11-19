@@ -66,7 +66,7 @@ export async function handleChapterDiscussion({ browserId, chapterKey, discussio
     return (Array.isArray(result?.frames) ? result.frames : []).filter(frame => frame.frameId && frame.loaderId)
   }
   await wait(0)
-  if (!await inFrame(cards, revealChapterJob(cards.url, job.selector))) return unavailable('stale', '没有打开目标讨论卡片。')
+  if (!await inFrame(cards, revealChapterJob(cards.url, job.selector, chapter.rules))) return unavailable('stale', '没有打开目标讨论卡片。')
   let card: Frame | undefined
   let target: URL | null = null
   let cardCompleted = false

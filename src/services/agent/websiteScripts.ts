@@ -65,21 +65,27 @@ const fetchBundle = async (source: SiteScriptSource, siteId: string, capability:
   return { revision: data.revision, etag, sha256, checkedAt: Date.now(), code: new TextDecoder('utf-8', { fatal: true }).decode(bytes) }
 }
 
-export async function runIsolatedWebsiteScript(code: string, input: unknown): Promise<unknown> {
+async function withSandbox<T>(work: (evaluate: (source: string) => unknown) => T | Promise<T>): Promise<T> {
   const quickjs = await getQuickJS()
   const runtime = quickjs.newRuntime()
   try {
     runtime.setMemoryLimit(8 * 1024 * 1024)
     runtime.setMaxStackSize(256 * 1024)
-    const deadline = performance.now() + 100
+    let deadline = 0
     runtime.setInterruptHandler(() => performance.now() > deadline)
     const context = runtime.newContext()
-    try {
-      const result = context.evalCode(`${code}\n;JSON.stringify(ZErrorSiteScript.run(${JSON.stringify(input)}))`, 'website-adapter.js', { type: 'global' })
+    const evaluate = (source: string) => {
+      deadline = performance.now() + 100
+      const result = context.evalCode(source, 'website-adapter.js', { type: 'global' })
       if (!('value' in result)) { result.error.dispose(); throw new Error('网站脚本执行失败或超时。') }
       try { return JSON.parse(context.getString(result.value)) } finally { result.value.dispose() }
-    } finally { context.dispose() }
+    }
+    try { return await work(evaluate) } finally { context.dispose() }
   } finally { runtime.dispose() }
+}
+
+export function runIsolatedWebsiteScript(code: string, input: unknown): Promise<unknown> {
+  return withSandbox(evaluate => evaluate(`${code}\n;JSON.stringify(ZErrorSiteScript.run(${JSON.stringify(input)}))`))
 }
 
 export const hasWebsiteScriptManifest = async (host: string) => Boolean(await websiteScriptSource(host))
@@ -107,4 +113,44 @@ export async function runWebsiteScript<T>(host: string, siteId: string, capabili
     if (!previous || candidate === previous) throw error
     return { ...await execute(previous), cached: true }
   }
+}
+
+/** The repository can propose commands. I/O runs only through the caller's validated host adapter. */
+export async function runWebsiteWorkflow(
+  host: string, siteId: string, capability: string, input: unknown,
+  dispatch: (command: unknown, run: (input: unknown) => unknown) => Promise<unknown>,
+): Promise<unknown> {
+  const source = await websiteScriptSource(host)
+  if (!source) throw new Error('当前网站经验来源未提供脚本清单。')
+  const key = JSON.stringify([host, source.url, source.manifest, capability])
+  const previous = cached.get(key)
+  let bundle = previous
+  if (!previous || Date.now() - previous.checkedAt >= 30_000) {
+    let loading = pending.get(key)
+    if (!loading) {
+      loading = fetchBundle(source, siteId, capability, previous).finally(() => pending.delete(key))
+      pending.set(key, loading)
+    }
+    bundle = await loading.catch(error => {
+      if (!previous) throw error
+      return previous
+    })
+  }
+  if (!bundle) throw new Error('未取得网站流程脚本。')
+  const selected = bundle
+  return withSandbox(async evaluate => {
+    evaluate(`${selected.code}\n;const __workflow = ZErrorSiteScript.workflow(${JSON.stringify(input)}); JSON.stringify(true)`)
+    let response: unknown = null
+    for (let i = 0; i < 512; i++) {
+      const step = evaluate(`JSON.stringify(__workflow.next(${JSON.stringify(response ?? null)}))`) as { done: boolean; value: unknown }
+      if (step.done === true) {
+        cached.set(key, selected)
+        if (cached.size > 32) cached.delete(cached.keys().next().value!)
+        return step.value
+      }
+      // An interrupted workflow is never replayed after a command may have changed the page.
+      response = await dispatch(step.value, data => evaluate(`JSON.stringify(ZErrorSiteScript.run(${JSON.stringify(data)}))`))
+    }
+    throw new Error('网站流程超过操作次数限制。')
+  })
 }

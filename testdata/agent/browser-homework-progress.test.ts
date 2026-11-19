@@ -1,8 +1,13 @@
+import { pageRules } from './fixtures/courseHomeworkRules'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { effectScope, nextTick, ref } from 'vue'
 
 const browser = vi.hoisted(() => ({
   read: vi.fn(), onChanged: vi.fn(), onLoad: vi.fn(), record: vi.fn(),
+}))
+vi.mock('../../src/services/agent/websiteScripts', () => ({
+  runWebsiteScript: async (_host: string, _site: string, _capability: string, _input: unknown, validate: (value: unknown) => unknown) =>
+    ({ result: validate(pageRules), revision: 'test' }),
 }))
 vi.mock('../../src/services/browser/eval', () => ({ evalBrowserViewMainIdle: browser.read }))
 vi.mock('../../src/services/browser/appBrowser', () => ({ listenBrowserLoad: browser.onLoad }))
