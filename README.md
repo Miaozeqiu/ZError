@@ -32,6 +32,7 @@ https://www.bilibili.com/video/BV12PSQBLE5G
 ## 系统要求
 
 - Windows 10/11
+- Linux（实验性，AppImage）
 
 ## 安装方法
 
@@ -40,6 +41,20 @@ https://www.bilibili.com/video/BV12PSQBLE5G
 3. 运行软件
 
 开发时在仓库根跑 `npm run rust:check` / `npm run rust:test`（会补上 pip 的 cmake/ninja 和 `CEF_PATH`）。
+
+## Linux 构建
+
+Linux 默认构建 AppImage。需要提权时通过 Polkit 的 `pkexec` 请求；运行 AppImage 需要 FUSE 2，未安装时可使用 `APPIMAGE_EXTRACT_AND_RUN=1` 启动。
+
+以 Debian/Ubuntu 为例安装构建依赖：
+
+```bash
+sudo apt install libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev patchelf
+bun install
+bun run tauri:build
+```
+
+产物位于 `src-tauri/target/release/bundle/appimage/`。也支持系统 OpenSSL 4.x。
 
 ## 许可证
 

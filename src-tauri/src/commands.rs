@@ -23,7 +23,7 @@ use std::path::PathBuf;
 use std::process::Command;
 #[cfg(target_os = "windows")]
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{OnceLock};
+use std::sync::OnceLock;
 use urlencoding;
 use zip::ZipArchive;
 
@@ -104,26 +104,22 @@ fn elevation_requested() -> &'static AtomicBool {
     ELEVATION_FLAG.get_or_init(|| AtomicBool::new(false))
 }
 
+#[cfg(target_os = "windows")]
 pub fn spawn_elevated_self() -> Result<(), String> {
-    #[cfg(target_os = "windows")]
-    {
-        let exe: PathBuf = std::env::current_exe().map_err(|e| format!("{}", e))?;
-        let already = elevation_requested().swap(true, Ordering::SeqCst);
-        if already {
-            return Err("already_requested".to_string());
-        }
-        let status = runas::Command::new(exe)
-            .arg("--elevated")
-            .gui(true)
-            .status()
-            .map_err(|e| format!("{}", e))?;
-        if !status.success() {
-            return Err("elevation_failed".to_string());
-        }
-        return Ok(());
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let already = elevation_requested().swap(true, Ordering::SeqCst);
+    if already {
+        return Err("already_requested".to_string());
     }
-    #[cfg(not(target_os = "windows"))]
-    Err("unsupported_platform".to_string())
+    let status = runas::Command::new(exe)
+        .arg("--elevated")
+        .gui(true)
+        .status()
+        .map_err(|e| e.to_string())?;
+    if !status.success() {
+        return Err("elevation_failed".to_string());
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -1008,15 +1004,27 @@ pub async fn open_devtools(app: tauri::AppHandle) -> Result<String, String> {
     }
 }
 
+#[cfg(not(target_os = "linux"))]
 #[tauri::command]
-pub fn request_admin_elevation(app: tauri::AppHandle) -> Result<String, String> {
-    match spawn_elevated_self() {
-        Ok(_) => {
-            app.exit(0);
-            Ok("ok".to_string())
-        }
-        Err(e) => Err(e),
+pub fn request_admin_elevation(_app: tauri::AppHandle) -> Result<String, String> {
+    #[cfg(target_os = "windows")]
+    {
+        spawn_elevated_self()?;
+        _app.exit(0);
+        Ok("ok".to_string())
     }
+    #[cfg(not(target_os = "windows"))]
+    Err("unsupported_platform".to_string())
+}
+
+#[cfg(target_os = "linux")]
+#[tauri::command]
+pub async fn request_admin_elevation(app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(crate::linux_elevation::relaunch)
+        .await
+        .map_err(|error| error.to_string())??;
+    app.exit(0);
+    Ok("ok".to_string())
 }
 
 /// 获取 exe 同级目录
