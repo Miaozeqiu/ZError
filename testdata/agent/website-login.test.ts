@@ -21,7 +21,7 @@ const challenge = { ...form, kind: 'challenge' }
 const context = (...observations: Record<string, unknown>[]) => {
   let index = 0
   const callProtocol = vi.fn(async (_id: string, op: string, _args?: Record<string, unknown>) =>
-    op === 'chaoxing_login_state' ? observations[Math.min(index++, observations.length - 1)]! : { ok: true, filled: true })
+    op === 'chaoxing_login_state' ? observations[Math.min(index++, observations.length - 1)]! : { ok: true, filled: true, dispatched: true })
   return {
     browserId: 'tab', args: {}, callProtocol, navigateBrowserView: vi.fn(async () => undefined),
     actOnceOnBrowser: vi.fn(async () => ({ dispatched: true })), wait: async () => undefined,
@@ -47,8 +47,7 @@ describe('learning platform login tool', () => {
   })
 
   it('recognizes the current space shell even when its old menu IDs are absent', () => {
-    const native = readFileSync(new URL('../../src-tauri/src/cef/chaoxing_login.rs', import.meta.url), 'utf8')
-    const probe = native.match(/r##"([\s\S]+?)"##;/)?.[1] ?? ''
+    const probe = readFileSync(new URL('../../src-tauri/src/cef/chaoxing_login_state.js', import.meta.url), 'utf8')
     const { window } = new JSDOM('<iframe id="frame_content" src="https://mooc1.chaoxing.com/visit/interaction"></iframe>', {
       url: 'https://i.chaoxing.com/base', runScripts: 'outside-only',
     })
@@ -68,6 +67,16 @@ describe('learning platform login tool', () => {
       ['tab', 'fill_secret', { locator: { by: 'css', value: 'input#pwd[type="password"]', frameId: 'top', loaderId: 'login-doc' }, secret_ref: credentials.password }],
     ])
     expect(ctx.actOnceOnBrowser).toHaveBeenCalledExactlyOnceWith('tab', { by: 'css', value: '#loginBtn', frameId: 'top', loaderId: 'login-doc' }, 'click')
+  })
+
+  it('submits through the WebView2 login action when the native probe supports it', async () => {
+    const nativeForm = { ...form, supportsLoginAction: true }
+    const ctx = context(nativeForm, nativeForm, space)
+    expect(JSON.parse(await loginChaoxing(ctx))).toMatchObject({ ok: true, loggedIn: true })
+    expect(ctx.callProtocol).toHaveBeenCalledWith('tab', 'login_action', {
+      action: 'click', locator: { by: 'css', value: '#loginBtn', frameId: 'top', loaderId: 'login-doc' },
+    })
+    expect(ctx.actOnceOnBrowser).not.toHaveBeenCalled()
   })
 
   it('leaves verification to the user before or after a single login attempt', async () => {

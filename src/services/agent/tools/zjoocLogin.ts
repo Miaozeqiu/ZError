@@ -1,6 +1,6 @@
 import { siteAccountOf, siteAccountsReady } from '../siteAccounts'
 import { pendingWebsiteVerification } from '../chatLogin'
-import type { loginChaoxing } from './websiteLogin'
+import { actOnLoginPage, type loginChaoxing } from './websiteLogin'
 
 const home = 'https://www.zjooc.cn'
 const passport = 'https://background.zjooc.cn/gxptLogin'
@@ -44,6 +44,7 @@ export async function loginZjooc(ctx: Context, restartAfterRejection = false): P
         && state.captchaImage.length <= 400_000 ? state.captchaImage : undefined,
       kind: state.kind, rejection: state.rejection, challenge: state.challenge === true, url,
       atForm: !!url && url.origin + url.pathname === passport,
+      supportsLoginAction: state.supportsLoginAction === true,
       frameId: typeof state.frameId === 'string' ? state.frameId : '',
       loaderId: typeof state.loaderId === 'string' ? state.loaderId : '',
     }
@@ -76,11 +77,11 @@ export async function loginZjooc(ctx: Context, restartAfterRejection = false): P
         by: 'css' as const, value, frameId: pending.frameId, loaderId: pending.loaderId,
       })
       await ctx.wait(0)
-      const filled = await ctx.actOnceOnBrowser(id, locator(captchaInput), 'fill', captchaAnswer)
+      const filled = await actOnLoginPage(ctx, state.supportsLoginAction, locator(captchaInput), 'fill', captchaAnswer)
       if (filled.ok !== true || filled.filled !== true) return manual('未能填写在浙学验证码，请检查登录表单。')
       if (!matchesChallenge(await read(true))) return blocked('stale', '填写时验证码发生变化，请重新获取图片。')
       await ctx.wait(0)
-      const click = await ctx.actOnceOnBrowser(id, locator('.login_box button.dologin'), 'click')
+      const click = await actOnLoginPage(ctx, state.supportsLoginAction, locator('.login_box button.dologin'), 'click')
       if (!click.dispatched) return manual('未能点击在浙学登录按钮，请核对页面。')
       submitted = true
       ctx.onNavigation?.()
@@ -152,7 +153,7 @@ export async function loginZjooc(ctx: Context, restartAfterRejection = false): P
       if (state.atForm && state.kind === 'form' && state.frameId && state.loaderId) break
       if (!openedLogin && state.kind === 'guest' && state.url?.origin === home && state.frameId && state.loaderId) {
         openedLogin = true
-        const click = await ctx.actOnceOnBrowser(id, {
+        const click = await actOnLoginPage(ctx, state.supportsLoginAction, {
           by: 'text', value: '请登录', exact: true, frameId: state.frameId, loaderId: state.loaderId,
         }, 'click')
         if (!click.dispatched) return manual('未能打开在浙学登录页，请核对官网上的「请登录」入口。')

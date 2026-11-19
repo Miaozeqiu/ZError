@@ -223,9 +223,9 @@ fn with_key<T>(f: impl FnOnce(&[u8]) -> Result<T, String>) -> Result<T, String> 
     f(state.obtain(|| os_key(!vault_path().exists()))?)
 }
 #[tauri::command]
-pub async fn secure_storage_authorize(window: tauri::WebviewWindow) -> Result<(), String> {
-    trusted_window(&window)?;
-    if !window.is_focused().unwrap_or(false) {
+pub async fn secure_storage_authorize(webview: tauri::Webview) -> Result<(), String> {
+    trusted_webview(&webview)?;
+    if !crate::secret_access::window_is_foreground(&webview.window()) {
         return Err("请在软件前台主动恢复安全存储授权".into());
     }
     storage_task(|| {
@@ -1008,34 +1008,34 @@ async fn storage_task<T: Send + 'static>(
 }
 #[tauri::command]
 pub async fn secure_document_read(
-    window: tauri::WebviewWindow,
+    webview: tauri::Webview,
     name: String,
     legacy: Option<Value>,
 ) -> Result<Value, String> {
-    trusted_window(&window)?;
+    trusted_webview(&webview)?;
     storage_task(move || document_read(&name, legacy)).await
 }
 #[tauri::command]
 pub async fn secure_document_write(
-    window: tauri::WebviewWindow,
+    webview: tauri::Webview,
     name: String,
     value: Value,
 ) -> Result<Value, String> {
-    trusted_window(&window)?;
+    trusted_webview(&webview)?;
     storage_task(move || document_write(&name, value)).await
 }
 #[tauri::command]
-pub async fn secure_redact(window: tauri::WebviewWindow, value: Value) -> Result<Value, String> {
-    trusted_window(&window)?;
+pub async fn secure_redact(webview: tauri::Webview, value: Value) -> Result<Value, String> {
+    trusted_webview(&webview)?;
     storage_task(move || redact(value)).await
 }
 #[tauri::command]
 pub async fn secure_register(
-    window: tauri::WebviewWindow,
+    webview: tauri::Webview,
     site: String,
     fields: BTreeMap<String, String>,
 ) -> Result<Value, String> {
-    trusted_window(&window)?;
+    trusted_webview(&webview)?;
     storage_task(move || register_inner(site, fields)).await
 }
 fn register_inner(site: String, fields: BTreeMap<String, String>) -> Result<Value, String> {
@@ -1045,13 +1045,13 @@ fn register_inner(site: String, fields: BTreeMap<String, String>) -> Result<Valu
 // Called by the desktop credential form, separate from registration of secrets found in messages.
 #[tauri::command]
 pub async fn secure_save_chat_login(
-    window: tauri::WebviewWindow,
+    webview: tauri::Webview,
     site: String,
     login_origin: String,
     account: String,
     password: String,
 ) -> Result<(), String> {
-    trusted_window(&window)?;
+    trusted_webview(&webview)?;
     let fields = BTreeMap::from([("account".into(), account), ("password".into(), password)]);
     storage_task(move || register_site_fields(site, fields, Some(&login_origin)).map(|_| ())).await
 }
@@ -1126,6 +1126,23 @@ fn register_site_fields(site: String, fields: BTreeMap<String, String>, login_or
 pub fn resolve(reference: &str, kind: &str, target: &str) -> Result<Zeroizing<String>, String> {
     with_vault(false, |v| resolve_in_vault(v, reference, kind, target))
 }
+#[cfg(windows)]
+pub(crate) fn resolve_site_input(
+    reference: &str,
+    target: &str,
+    password_input: bool,
+) -> Result<Zeroizing<String>, String> {
+    with_vault(false, |vault| {
+        let canonical = vault.aliases.get(reference).map(String::as_str).unwrap_or(reference);
+        let id = token_id(canonical).ok_or("无效的凭据变量")?;
+        let field = if password_input { "/password" } else { "/account" };
+        if !id.starts_with("site/") || !id.ends_with(field) {
+            return Err("凭据类型与输入框不匹配，已阻止填写".into());
+        }
+        resolve_in_vault(vault, reference, "site", target)
+    })
+}
+
 // Username display is a separate UI projection: no secret-reference argument and
 // no password/API entries can be selected through this command.
 fn site_account_names_in_vault(vault: &Vault) -> BTreeMap<String, String> {
@@ -1146,8 +1163,8 @@ fn site_account_names_in_vault(vault: &Vault) -> BTreeMap<String, String> {
 // Mutate only these website records under the vault lock. Other windows may
 // have saved new credentials since the settings page loaded its account list.
 #[tauri::command]
-pub async fn secure_remove_site_accounts(window: tauri::WebviewWindow, ids: Vec<String>) -> Result<(), String> {
-    trusted_window(&window)?;
+pub async fn secure_remove_site_accounts(webview: tauri::Webview, ids: Vec<String>) -> Result<(), String> {
+    trusted_webview(&webview)?;
     if ids.is_empty() || ids.iter().any(|id| id.is_empty() || id.len() > 253 ||
         !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-')) {
         return Err("无效的网站标识".into());
@@ -1170,8 +1187,8 @@ pub async fn secure_remove_site_accounts(window: tauri::WebviewWindow, ids: Vec<
 }
 
 #[tauri::command]
-pub async fn secure_site_account_names(window: tauri::WebviewWindow) -> Result<BTreeMap<String, String>, String> {
-    trusted_window(&window)?;
+pub async fn secure_site_account_names(webview: tauri::Webview) -> Result<BTreeMap<String, String>, String> {
+    trusted_webview(&webview)?;
     storage_task(|| with_vault(false, |vault| Ok(site_account_names_in_vault(vault)))).await
 }
 
@@ -1185,17 +1202,17 @@ fn site_password_length(vault: &Vault, reference: &str) -> Result<usize, String>
 }
 
 #[tauri::command]
-pub async fn secure_site_password_length(window: tauri::WebviewWindow, reference: String) -> Result<usize, String> {
-    trusted_window(&window)?;
+pub async fn secure_site_password_length(webview: tauri::Webview, reference: String) -> Result<usize, String> {
+    trusted_webview(&webview)?;
     storage_task(move || with_vault(false, |vault| site_password_length(vault, &reference))).await
 }
 
 #[tauri::command]
 pub async fn secure_api_key_length(
-    window: tauri::WebviewWindow,
+    webview: tauri::Webview,
     reference: String,
 ) -> Result<usize, String> {
-    trusted_window(&window)?;
+    trusted_webview(&webview)?;
     storage_task(move || {
         with_vault(false, |vault| {
             let id = token_id(&reference).ok_or("无效的凭据变量")?;
@@ -1319,11 +1336,11 @@ mod tests {
 
 #[tauri::command]
 pub async fn secure_register_api(
-    window: tauri::WebviewWindow,
+    webview: tauri::Webview,
     provider: String,
     value: String,
 ) -> Result<Value, String> {
-    trusted_window(&window)?;
+    trusted_webview(&webview)?;
     storage_task(move || register_api_inner(provider, value)).await
 }
 fn register_api_inner(provider: String, value: String) -> Result<Value, String> {
@@ -1379,8 +1396,10 @@ fn register_api_inner(provider: String, value: String) -> Result<Value, String> 
     })
 }
 
-pub fn trusted_window(window: &tauri::WebviewWindow) -> Result<(), String> {
-    if window.label() != "main" {
+pub(crate) fn trusted_webview(webview: &tauri::Webview) -> Result<(), String> {
+    // The host can also contain native browser tabs. Only the app's own view
+    // can access the vault, regardless of how many views the window hosts.
+    if webview.label() != "main" || webview.window().label() != "main" {
         return Err("网页及辅助窗口无权访问应用凭据存储".into());
     }
     Ok(())
@@ -1388,10 +1407,10 @@ pub fn trusted_window(window: &tauri::WebviewWindow) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn secure_archive_legacy(
-    window: tauri::WebviewWindow,
+    webview: tauri::Webview,
     values: BTreeMap<String, Value>,
 ) -> Result<(), String> {
-    trusted_window(&window)?;
+    trusted_webview(&webview)?;
     storage_task(move || archive_legacy_inner(values)).await
 }
 fn archive_legacy_inner(values: BTreeMap<String, Value>) -> Result<(), String> {
@@ -1475,8 +1494,8 @@ fn clean_tree(dir: &std::path::Path, mode: &str, depth: usize) -> Result<usize, 
     Ok(count)
 }
 #[tauri::command]
-pub async fn secure_cleanup_legacy(window: tauri::WebviewWindow) -> Result<Value, String> {
-    trusted_window(&window)?;
+pub async fn secure_cleanup_legacy(webview: tauri::Webview) -> Result<Value, String> {
+    trusted_webview(&webview)?;
     tauri::async_runtime::spawn_blocking(cleanup_legacy)
         .await
         .map_err(|_| "敏感数据迁移任务失败".to_string())?
@@ -1498,11 +1517,11 @@ fn cleanup_legacy() -> Result<Value, String> {
 
 #[tauri::command]
 pub async fn secure_bind_pending(
-    window: tauri::WebviewWindow,
+    webview: tauri::Webview,
     pending: String,
     site: String,
 ) -> Result<Value, String> {
-    trusted_window(&window)?;
+    trusted_webview(&webview)?;
     storage_task(move || bind_pending_inner(pending, site)).await
 }
 fn bind_pending_inner(pending: String, site: String) -> Result<Value, String> {

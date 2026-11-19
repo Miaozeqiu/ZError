@@ -72,8 +72,11 @@ pub fn browser_control_register(id: String, session_id: String) -> Result<Contro
   Ok(next)
 }
 #[tauri::command]
-pub fn browser_control_set(app: AppHandle, id: String, owner: String) -> Result<ControlState, String> {
-  set_owner(&app, &id, &owner)
+pub async fn browser_control_set(app: AppHandle, id: String, owner: String) -> Result<ControlState, String> {
+  let next = set_owner(&app, &id, &owner)?;
+  #[cfg(windows)]
+  crate::app_browser::refresh_browser_input(&app, &next.session_id).await?;
+  Ok(next)
 }
 
 #[derive(Clone, Debug)]

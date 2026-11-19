@@ -90,7 +90,7 @@ impl ResponseFilter {
 
 #[tauri::command]
 pub async fn secure_http_request(
-    window: tauri::WebviewWindow,
+    webview: tauri::Webview,
     request_id: String,
     url: String,
     method: String,
@@ -98,7 +98,7 @@ pub async fn secure_http_request(
     body: Option<String>,
     events: Channel<Value>,
 ) -> Result<(), String> {
-    crate::secret_vault::trusted_window(&window)?;
+    crate::secret_vault::trusted_webview(&webview)?;
     let (start, ready) = tokio::sync::oneshot::channel::<()>();
     let handle = tokio::spawn(async move {
         ready.await.map_err(|_| "请求已取消")?;
@@ -208,8 +208,8 @@ pub async fn secure_http_request(
     result
 }
 #[tauri::command]
-pub fn secure_http_cancel(window: tauri::WebviewWindow, request_id: String) -> Result<(), String> {
-    crate::secret_vault::trusted_window(&window)?;
+pub fn secure_http_cancel(webview: tauri::Webview, request_id: String) -> Result<(), String> {
+    crate::secret_vault::trusted_webview(&webview)?;
     let mut requests = REQUESTS
         .get_or_init(|| Mutex::new(Requests::default()))
         .lock()

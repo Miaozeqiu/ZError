@@ -10,6 +10,7 @@ pub struct WindowSizePreset {
     pub height_ratio: f64,
     pub max_width: f64,
     pub max_height: f64,
+    use_work_area: bool,
 }
 
 impl WindowSizePreset {
@@ -32,6 +33,7 @@ impl WindowSizePreset {
             height_ratio,
             max_width,
             max_height,
+            use_work_area: false,
         }
     }
 }
@@ -44,6 +46,13 @@ pub struct ResolvedWindowSize {
     pub min_height: f64,
 }
 
+#[cfg(windows)]
+pub const MAIN_WINDOW_PRESET: WindowSizePreset = WindowSizePreset {
+    use_work_area: true,
+    ..WindowSizePreset::new(1280.0, 760.0, 780.0, 540.0, 0.84, 0.88, 1720.0, 1100.0)
+};
+
+#[cfg(not(windows))]
 pub const MAIN_WINDOW_PRESET: WindowSizePreset =
     // 略加大：1920x1080 约 1180x740，笔记本仍按比例收敛
     WindowSizePreset::new(1120.0, 740.0, 780.0, 540.0, 0.615, 0.685, 1280.0, 900.0);
@@ -71,29 +80,40 @@ pub fn resolve_window_size(app: &AppHandle, preset: WindowSizePreset) -> Resolve
     let mut min_height = preset.min_height.min(height);
 
     let monitor = app
-        .get_webview_window("main")
+        .get_window("main")
         .and_then(|window| window.current_monitor().ok().flatten())
         .or_else(|| app.primary_monitor().ok().flatten());
 
     if let Some(monitor) = monitor {
         let scale_factor = monitor.scale_factor().max(1.0);
-        let screen_width = monitor.size().width as f64 / scale_factor;
-        let screen_height = monitor.size().height as f64 / scale_factor;
+        let screen = if preset.use_work_area {
+            &monitor.work_area().size
+        } else {
+            monitor.size()
+        };
+        let screen_width = screen.width as f64 / scale_factor;
+        let screen_height = screen.height as f64 / scale_factor;
 
-        let available_width = (screen_width - 48.0).max(640.0);
-        let available_height = (screen_height - 72.0).max(480.0);
+        let (available_width, available_height) = if preset.use_work_area {
+            (screen_width.max(1.0), screen_height.max(1.0))
+        } else {
+            (
+                (screen_width - 48.0).max(640.0),
+                (screen_height - 72.0).max(480.0),
+            )
+        };
 
         let max_width = preset.max_width.min(available_width);
         let max_height = preset.max_height.min(available_height);
 
         width = clamp(
             (screen_width * preset.width_ratio).floor(),
-            640.0,
+            640.0_f64.min(max_width),
             max_width,
         );
         height = clamp(
             (screen_height * preset.height_ratio).floor(),
-            480.0,
+            480.0_f64.min(max_height),
             max_height,
         );
 

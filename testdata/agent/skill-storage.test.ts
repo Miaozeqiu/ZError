@@ -30,6 +30,33 @@ beforeEach(() => {
 })
 
 describe('Skill storage and installation', () => {
+  it('lists websites when Windows reports that the legacy parent directory is missing', async () => {
+    io.native = true
+    const { readTextFile, readDir } = await import('@tauri-apps/plugin-fs')
+    const originalRead = vi.mocked(readTextFile).getMockImplementation()!
+    const originalList = vi.mocked(readDir).getMockImplementation()!
+    const missingPath = '系统找不到指定的路径。 (os error 3)'
+    vi.mocked(readTextFile).mockImplementation(async (path, options) => {
+      if (path.startsWith(base) && !io.files.has(path)) throw missingPath
+      return originalRead(path, options)
+    })
+    vi.mocked(readDir).mockImplementation(async (path, options) => {
+      if (path.startsWith(base)) throw missingPath
+      return originalList(path, options)
+    })
+    try {
+      const { listWebsiteSettings } = await import('../../src/services/agent/websiteSettings')
+      await expect(listWebsiteSettings()).resolves.toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: 'chaoxing', name: '学习通', files: expect.arrayContaining(['SKILL.md']) }),
+      ]))
+      const { readAgentSkillFileContent } = await load()
+      await expect(readAgentSkillFileContent('site-learn', 'sites/portal.example.com/SKILL.md')).resolves.toBeNull()
+    } finally {
+      vi.mocked(readTextFile).mockImplementation(originalRead)
+      vi.mocked(readDir).mockImplementation(originalList)
+    }
+  })
+
   it('distinguishes an absent website document from filesystem read errors without relying on a directory listing', async () => {
     const mod = await load()
     const target = 'sites/portal.example.com/SKILL.md'

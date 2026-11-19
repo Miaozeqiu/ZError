@@ -113,7 +113,7 @@ const legacyFiles = async (configuration: Configuration, fallback: WebsiteSnapsh
   if (!isNativeSecureStore()) return {}
   const { readTextFile, readDir, BaseDirectory } = await import('@tauri-apps/plugin-fs')
   const options = { baseDir: BaseDirectory.Home }, { host, id, name } = configuration
-  const absent = (error: unknown) => /ENOENT|No such file or directory|not found|os error 2\b/i.test(String(error))
+  const absent = (error: unknown) => /ENOENT|No such file or directory|not found|os error [23]\b/i.test(String(error))
   const read = async (path: string) => { try { return await readTextFile(path, options) } catch (error) { if (absent(error)) return null; throw error } }
   const base = '.local/share/zerror/skill-overrides', dir = id === 'chaoxing' ? `${base}/chaoxing` : `${base}/site-learn/sites/${host}`
   const files: Record<string, string> = {}

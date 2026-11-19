@@ -12,6 +12,16 @@ type Context = Pick<Parameters<typeof handleWebsiteCourseTools>[0],
       Promise<{ dispatched: boolean; ok?: boolean; filled?: boolean }>
   }
 
+export const actOnLoginPage = async (
+  ctx: Context, useNative: boolean, locator: BrowserLocator, action: 'click' | 'fill', text?: string,
+) => {
+  if (!useNative) return text === undefined
+    ? ctx.actOnceOnBrowser(ctx.browserId, locator, action)
+    : ctx.actOnceOnBrowser(ctx.browserId, locator, action, text)
+  const result = await ctx.callProtocol(ctx.browserId, 'login_action', { locator, action, ...(text === undefined ? {} : { text }) })
+  return { dispatched: result.dispatched === true, ok: result.ok === true, filled: result.filled === true }
+}
+
 const site = 'chaoxing'
 const space = 'https://i.chaoxing.com/'
 
@@ -28,7 +38,8 @@ export async function loginChaoxing(ctx: Context): Promise<string> {
     const url = typeof state.url === 'string' ? chaoxingUrl(state.url) : null
     const frameId = typeof state.frameId === 'string' ? state.frameId : ''
     const loaderId = typeof state.loaderId === 'string' ? state.loaderId : ''
-    return { kind: state.kind, modern: state.modern === true, rejected: state.rejected === true, url, frameId, loaderId }
+    return { kind: state.kind, modern: state.modern === true, rejected: state.rejected === true, url, frameId, loaderId,
+      supportsLoginAction: state.supportsLoginAction === true }
   }
   type State = Awaited<ReturnType<typeof read>>
   const done = (state: State, alreadyLoggedIn: boolean) => {
@@ -90,7 +101,7 @@ export async function loginChaoxing(ctx: Context): Promise<string> {
       return fail('stale', '登录表单已变化，未点击登录。请核对当前页面。')
     }
     await ctx.wait(0)
-    const click = await ctx.actOnceOnBrowser(id, locator('#loginBtn'), 'click')
+    const click = await actOnLoginPage(ctx, beforeClick.supportsLoginAction, locator('#loginBtn'), 'click')
     if (!click.dispatched) return fail('stale', '未能点击学习通登录按钮，请核对页面。')
     submitted = true
     ctx.onNavigation?.()

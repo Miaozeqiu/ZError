@@ -878,7 +878,7 @@ export const readAgentSkillFileContent = async (id: string, relativePath: string
       content = await readTextFile(`${skillOverrideDir(id)}/${path}`, { baseDir: BaseDirectory.Home })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      if (!/ENOENT|No such file or directory|not found|os error 2\b/i.test(message)) throw error
+      if (!/ENOENT|No such file or directory|not found|os error [23]\b/i.test(message)) throw error
       content = readBuiltinSkillFileRaw(id, path)
     }
     return content == null ? null : { id, path, content, write_scope: 'website_files' as const, hint: nextSkillFileHint(id, path, [path]) }

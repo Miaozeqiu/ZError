@@ -2,7 +2,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Rect, WebviewUrl};
+use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, WebviewUrl};
 use tauri::webview::{NewWindowResponse, PageLoadEvent, WebviewBuilder};
 use url::Url;
 
@@ -119,7 +119,7 @@ fn parent_window(app: &AppHandle) -> Result<tauri::Window, String> {
     .ok_or_else(|| "主窗口不存在".into())
 }
 
-fn find_browser(app: &AppHandle, id: &str) -> Result<tauri::Webview, String> {
+pub(crate) fn find_browser(app: &AppHandle, id: &str) -> Result<tauri::Webview, String> {
   let label = label_for(id)?;
   app
     .get_webview(&label)
@@ -186,17 +186,26 @@ pub(crate) fn clear_fallback_user_focus(app: &AppHandle, session: &str) -> Resul
   }).map_err(|error| error.to_string())
 }
 
-fn apply_bounds(webview: &tauri::Webview, x: f64, y: f64, width: f64, height: f64) -> Result<(), String> {
+async fn apply_bounds(
+  webview: &tauri::Webview, id: &str, bounds: (f64, f64, f64, f64), preview: bool,
+) -> Result<(), String> {
+  #[cfg(windows)]
+  return crate::webview2::set_browser_bounds(webview, id.to_owned(), bounds, preview).await;
+  #[cfg(not(windows))]
+  {
+  let (x, y, width, height) = bounds;
+  let _ = (id, preview);
   let width = width.max(1.0);
   let height = height.max(1.0);
   // 一次 set_bounds，避免 set_position + set_size 各打一帧 setFrame，拖窗口时 WK 更容易白屏。
   webview
-    .set_bounds(Rect {
+    .set_bounds(tauri::Rect {
       position: LogicalPosition::new(x.max(0.0), y.max(0.0)).into(),
       size: LogicalSize::new(width, height).into(),
     })
     .map_err(|err| err.to_string())?;
   Ok(())
+  }
 }
 
 fn hidden_since() -> &'static Mutex<HashMap<String, Instant>> {
@@ -217,6 +226,8 @@ fn mark_hidden(id: &str) {
 }
 
 fn forget_view(id: &str) {
+  #[cfg(windows)]
+  crate::webview2::forget_preview(id);
   if let Ok(mut map) = hidden_since().lock() {
     map.remove(id);
   }
@@ -234,6 +245,19 @@ fn browser_labels(app: &AppHandle) -> Vec<String> {
     .filter(|(label, _)| id_from_label(label).is_some())
     .map(|(label, _)| label)
     .collect()
+}
+
+#[cfg(windows)]
+pub(crate) async fn refresh_browser_input(app: &AppHandle, session: &str) -> Result<(), String> {
+  for label in browser_labels(app) {
+    let Some(id) = id_from_label(&label) else { continue; };
+    if crate::browser_control::session_owns_tab(session, id) {
+      if let Some(webview) = app.get_webview(&label) {
+        crate::webview2::refresh_browser_input(&webview, id.to_owned()).await?;
+      }
+    }
+  }
+  Ok(())
 }
 
 fn hide_other_browsers(app: &AppHandle, keep_label: &str) {
@@ -955,7 +979,7 @@ pub async fn browser_open(
   }
   if let Some(existing) = app.get_webview(&label) {
     if hidden.unwrap_or(false) { return Ok(()); }
-    apply_bounds(&existing, x, y, width, height)?;
+    apply_bounds(&existing, &id, (x, y, width, height), false).await?;
     existing.show().map_err(|err| err.to_string())?;
     mark_shown(&id);
     return Ok(());
@@ -1047,7 +1071,7 @@ pub async fn browser_open(
       if msg.contains("already exists") {
         if let Some(existing) = app.get_webview(&label) {
           if hidden.unwrap_or(false) { return Ok(()); }
-          apply_bounds(&existing, x, y, width, height)?;
+          apply_bounds(&existing, &id, (x, y, width, height), false).await?;
           existing.show().map_err(|e| e.to_string())?;
           mark_shown(&id);
           return Ok(());
@@ -1064,6 +1088,10 @@ pub async fn browser_open(
       }
     }
     crate::browser_theme::apply_webview(&webview)?;
+    if let Err(error) = apply_bounds(&webview, &id, (x, y, width, height), false).await {
+      let _ = webview.close();
+      return Err(error);
+    }
   }
   #[cfg(target_os = "macos")]
   webview.with_webview({ let id = id.clone(); move |platform| unsafe {
@@ -1107,7 +1135,9 @@ pub async fn browser_set_bounds(
   if let Ok(mut views) = fallback_input_views().lock() {
     if let Some(view) = views.get_mut(&id) { view.preview = preview.unwrap_or(false); }
   }
-  apply_bounds(&webview, x, y, width, height)?;
+  #[cfg(not(target_os = "macos"))]
+  let _ = (notify, layout);
+  apply_bounds(&webview, &id, (x, y, width, height), preview.unwrap_or(false)).await?;
   // 拖窗口时不要每帧 show（很卡）；白屏修复交给前端 settle 后的 browser_show。
   mark_shown(&id);
   Ok(())
@@ -1663,6 +1693,9 @@ pub async fn browser_cdp_snapshot(
     )
     .await;
   }
+  #[cfg(windows)]
+  return crate::webview2::snapshot(&find_browser(&app, &id)?).await;
+  #[cfg(not(windows))]
   {
     let _ = (app, id);
     Err("当前平台浏览区不是 Chromium".into())
@@ -1674,7 +1707,7 @@ pub async fn browser_screenshot(
   app: AppHandle,
   id: String,
 ) -> Result<serde_json::Value, String> {
-  crate::secret_browser::guard(&id).await?;
+  crate::secret_browser::guard(&app, &id).await?;
   #[cfg(target_os = "macos")]
   if crate::cef_runtime::cef_enabled() {
     return crate::cef::cdp_screenshot(app, id).await;
@@ -1797,7 +1830,7 @@ pub async fn browser_eval_frames(
   app: AppHandle,
   id: String,
   script: String, expected_epoch: Option<u64>) -> Result<serde_json::Value, String> {
-  crate::secret_browser::guard(&id).await?;
+  crate::secret_browser::guard(&app, &id).await?;
   let control_id = id.clone();
   crate::browser_control::run_at(&control_id, false, expected_epoch, async move {
   #[cfg(target_os = "macos")]
@@ -2039,7 +2072,7 @@ async fn eval_wait_title(
 
 #[tauri::command]
 pub async fn browser_eval_main(app: AppHandle, id: String, script: String, expected_epoch: Option<u64>) -> Result<String, String> {
-  crate::secret_browser::guard(&id).await?;
+  crate::secret_browser::guard(&app, &id).await?;
   let control_id = id.clone();
   crate::browser_control::run_at(&control_id, false, expected_epoch, async move {
   #[cfg(target_os = "macos")]
@@ -2053,7 +2086,9 @@ pub async fn browser_eval_main(app: AppHandle, id: String, script: String, expec
 
 #[tauri::command]
 pub async fn browser_eval(app: AppHandle, id: String, script: String, expected_epoch: Option<u64>) -> Result<String, String> {
-  crate::secret_browser::guard(&id).await?;
+  #[cfg(windows)]
+  let _operation = crate::webview2_secrets::lock(&id).await;
+  crate::secret_browser::guard(&app, &id).await?;
   let control_id = id.clone();
   crate::browser_control::run_at(&control_id, false, expected_epoch, async move {
   #[cfg(target_os = "macos")]
@@ -2171,6 +2206,11 @@ async fn dispatch_browser_protocol(
   args: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
   match op.as_str() {
+    #[cfg(windows)]
+    "chaoxing_login_state" | "zjooc_login_state" => {
+      crate::webview2_secrets::login_state(&app, &id, &op, args["captureCaptcha"] == true).await
+    }
+    #[cfg(not(windows))]
     "chaoxing_login_state" | "zjooc_login_state" => {
       #[cfg(target_os = "macos")]
       if crate::cef_runtime::cef_enabled() {
@@ -2181,6 +2221,14 @@ async fn dispatch_browser_protocol(
       }
       Ok(serde_json::json!({ "kind": "unsupported" }))
     }
+    #[cfg(windows)]
+    "login_action" => crate::webview2_secrets::login_action(&app, &id, &args).await,
+    #[cfg(windows)]
+    "fill_secret" => {
+      let reference = args["secret_ref"].as_str().ok_or("缺少凭据变量")?;
+      crate::webview2_secrets::fill(&app, &id, &args["locator"], reference).await
+    }
+    #[cfg(not(windows))]
     "fill_secret" => {
       #[cfg(target_os="macos")]
       if crate::cef_runtime::cef_enabled() {
@@ -2189,7 +2237,7 @@ async fn dispatch_browser_protocol(
       Err("当前浏览器引擎不支持安全凭据填写".into())
     }
     "frame_eval" => {
-      crate::secret_browser::guard(&id).await?;
+      crate::secret_browser::guard(&app, &id).await?;
       #[cfg(target_os = "macos")]
       if crate::cef_runtime::cef_enabled() {
         return crate::cef::frames::evaluate_hint(id,
