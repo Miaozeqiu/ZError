@@ -212,8 +212,8 @@ describe('Skill storage and installation', () => {
     expect(entry.name).toBe('学习通')
     expect(entry).not.toHaveProperty('compatibility')
     const skill = await mod.readAgentSkillContent('chaoxing')
-    expect(skill?.compatibility).toContain('ZError')
-    expect(skill?.content).toContain('# 学习通')
+    expect(skill?.compatibility).toBeUndefined()
+    expect(skill?.content).toContain('首次同步需要连接 Open')
   })
 
   it('migrates old overrides into encrypted local notes without changing the originals', async () => {

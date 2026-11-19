@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { websiteToolNames } from '../../src/services/agent/websiteToolDefinitions'
 import { BROWSER_PRIMITIVE_TOOLS } from '../../src/services/agent/toolDefs/browserPrimitiveTools'
 
 const src = resolve(fileURLToPath(new URL('.', import.meta.url)), '../../src')
@@ -25,7 +26,7 @@ const walk = (dir: string, out: string[] = []) => {
 describe('browser tool names', () => {
   it('模型能看见的 browser_* 都是已注册工具', () => {
     const registered = new Set(
-      BROWSER_PRIMITIVE_TOOLS.map((tool) => tool.function.name),
+      [...BROWSER_PRIMITIVE_TOOLS.map((tool) => tool.function.name), ...websiteToolNames],
     )
     const allow = new Set([
       'browser_id',

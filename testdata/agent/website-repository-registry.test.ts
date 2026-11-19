@@ -1,10 +1,16 @@
 import { createServer } from 'node:http'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-const storage = vi.hoisted(() => ({ value: null as any, saves: vi.fn(), download: vi.fn(), discover: vi.fn() }))
+const storage = vi.hoisted(() => ({ value: null as any, native: false, request: vi.fn(), saves: vi.fn(), download: vi.fn(), discover: vi.fn() }))
 vi.mock('../../src/services/security/secureStore', () => ({
-  isNativeSecureStore: () => false, readSecureDocument: async () => structuredClone(storage.value),
+  isNativeSecureStore: () => storage.native, readSecureDocument: async () => structuredClone(storage.value),
   writeSecureDocument: async (name: string, value: unknown) => { storage.saves(name, value); storage.value = structuredClone(value); return value },
   redactNative: async (value: unknown) => value,
+}))
+vi.mock('@tauri-apps/plugin-http', () => ({ fetch: storage.request }))
+vi.mock('@tauri-apps/plugin-fs', () => ({
+  BaseDirectory: { Home: 1 },
+  readTextFile: async () => { throw new Error('ENOENT') },
+  readDir: async () => [],
 }))
 vi.mock('../../src/services/agent/websiteRepositoryGitHub', async original => ({
   ...await original<typeof import('../../src/services/agent/websiteRepositoryGitHub')>(), downloadWebsiteRepository: storage.download, discoverWebsiteRepositories: storage.discover,
@@ -17,9 +23,54 @@ const candidate = (id = 'example', host = 'example.com') => ({
   source: { owner: 'owner', name: 'website', branch: 'main', root: `skills/${id}`, url: 'https://github.com/owner/website' },
   website: snapshot(id, host).website, icon: snapshot(id, host).icon, revision: 'c'.repeat(40),
 })
-beforeEach(() => { vi.resetModules(); vi.clearAllMocks(); storage.value = null; storage.download.mockImplementation(async (_source, _previous, _request, identity) => snapshot(identity.id, identity.host)) })
+beforeEach(() => { vi.resetModules(); vi.clearAllMocks(); storage.value = null; storage.native = false; storage.download.mockImplementation(async (_source, _previous, _request, identity) => snapshot(identity.id, identity.host)) })
 afterEach(() => vi.unstubAllGlobals())
 describe('website repository registry', () => {
+  it('registers official site tools only after installation and unregisters them on removal', async () => {
+    const host = 'zjooc.cn'
+    const root = 'https://open.zerrorai.com/v1/website-experience'
+    const selected = candidate('zjooc', host)
+    const cloud = snapshot('zjooc', host)
+    const tool = { type: 'function', function: { name: 'browser_play_zjooc', description: 'Play video', parameters: { type: 'object' } } }
+    const request = vi.fn(async (url: string) => url === root
+      ? Response.json({ sites: [{ ...selected.website, ...selected.source }] })
+      : Response.json({ ...cloud, tools: [tool], scriptManifest: '/v1/website-experience/zjooc.cn/script-manifest.json' }))
+    vi.stubGlobal('fetch', request)
+    const mod = await import('../../src/services/agent/websiteRepository')
+    expect(mod.websiteToolsForHost(host)).toEqual([])
+    await mod.experienceHostForPage('https://www.zjooc.cn/')
+    expect(mod.websiteToolsForHost(host)).toEqual([tool])
+    const { assembleAgentTools } = await import('../../src/services/agent/tools')
+    const names = (url: string) => assembleAgentTools(url).map(row => row.function.name)
+    expect(names('https://www.zjooc.cn/')).toContain(tool.function.name)
+    expect(names('https://another.example/')).not.toContain(tool.function.name)
+    expect(await mod.websiteScriptSource(host)).toMatchObject({ url: root + '/zjooc.cn' })
+    request.mockResolvedValueOnce(Response.json({ ...cloud, tools: [{ ...tool, function: { ...tool.function, name: 'browser_login_chaoxing' } }] }))
+    await mod.refreshWebsiteRepository(host, true)
+    expect(mod.websiteToolsForHost(host)).toEqual([tool])
+    await mod.removeWebsiteRepository(host)
+    expect(mod.websiteToolsForHost(host)).toEqual([])
+    expect(names('https://www.zjooc.cn/')).not.toContain(tool.function.name)
+  })
+
+  it('replaces an older bundled snapshot and waits for Open on the first native read', async () => {
+    const host = 'chaoxing.com'
+    const cloud = snapshot('chaoxing', host)
+    const { website, icon, ...old } = cloud
+    storage.value = { version: 1, migrated: true, generation: 3,
+      upstream: { ...old, revision: 'bundled:1', files: { ...old.files, 'SKILL.md': main('chaoxing', 'Old bundled guide') } },
+      fork: { files: { 'SKILL.md': main('chaoxing', 'Old bundled guide') + '\nPersonal shortcut\n' }, bases: {} } }
+    storage.native = true
+    storage.request.mockResolvedValueOnce(Response.json(cloud))
+    const mod = await import('../../src/services/agent/websiteRepository')
+    const result = await mod.readWebsiteRepositoryFile(host, 'SKILL.md')
+    expect(storage.request).toHaveBeenCalledExactlyOnceWith('https://open.zerrorai.com/v1/website-experience/' + host, expect.anything())
+    expect(result.content).toContain('Upstream')
+    expect(result.content).not.toContain('Old bundled guide')
+    expect(result.supplement).toBe('Personal shortcut')
+    expect(mod.websiteRepositoryStates[host]).toMatchObject({ source: 'repository', revision: cloud.revision })
+  })
+
   it('keeps Chaoxing protected with a custom endpoint, before any local data is deleted', async () => {
     const host = 'chaoxing.com'
     const mod = await import('../../src/services/agent/websiteRepository')
@@ -163,7 +214,7 @@ describe('website repository registry', () => {
     expect(storage.saves).not.toHaveBeenCalled()
   })
   it('refreshes official experience through Open and retains local notes when Open is unavailable', async () => {
-    const initial = snapshot('chaoxing', 'chaoxing.com')
+    const initial = { ...snapshot('chaoxing', 'chaoxing.com'), tools: [] }
     const request = vi.fn(async (_url: string, _init?: RequestInit) => Response.json(initial))
     vi.stubGlobal('fetch', request)
     const mod = await import('../../src/services/agent/websiteRepository')

@@ -5,6 +5,7 @@ import { modelConfigManager } from '../../model/config'
 import { runTextModel } from '../../model/runner'
 import { fetchSubjects, identity, officialAnswer, pageOp, plan, readPaper, reviewedAnswer, serverAnswer, type Question } from '../../platform/zjooc/paperBank'
 import type { HomeworkProgressUpdate, HomeworkQuestionProgress } from '../homeworkProgress'
+import { runWebsiteScript } from '../websiteScripts'
 import { isHomeworkQuestionRange } from '../homeworkQuestionRange'
 
 function login(signal: AbortSignal) {
@@ -52,6 +53,20 @@ export async function answerZjooc(ctx: Context) {
     if (range && (paper.ambiguous || (paper.kind !== 'singleQuestion' && paper.scopeTotal !== range.end - range.start + 1))) return fail('指定范围内有重复或缺失的显示题号，请核对当前试卷。')
     if (paper.stage !== 'do' || !paper.total || !paper.questions.length) return fail('请打开有可见题目的作答页。')
     if (args.assignment_id !== undefined && paper.key !== args.assignment_id) return fail('当前试卷已经切换。')
+    let actions: ('resolve' | 'needs_review' | 'existing_answer')[]
+    try {
+      const questions = paper.questions.map(q => ({ index: q.index, supported: q.supported, answered: q.actual.some(s => s.trim()) }))
+      const script = await runWebsiteScript('zjooc.cn', 'zjooc', 'homework', { questions }, proposal => {
+        if (!Array.isArray(proposal) || proposal.length !== questions.length || proposal.some((row, i) => {
+          const q = questions[i]
+          return row?.index !== q.index || row.action !== (!q.supported ? 'needs_review' : q.answered ? 'existing_answer' : 'resolve')
+        })) throw new Error('在浙学脚本返回的题目状态与页面不一致。')
+        return proposal.map(row => row.action)
+      })
+      actions = script.result
+    } catch (error) {
+      return fail(error instanceof Error ? error.message : '无法加载作答脚本。')
+    }
     const checkPage = async () => {
       const live = await readPaper(browserId, offset, 5, range)
       signal.throwIfAborted()
@@ -80,14 +95,14 @@ export async function answerZjooc(ctx: Context) {
     const publish = (phase: HomeworkProgressUpdate['phase'], questions: HomeworkQuestionProgress[]) =>
       ctx.onHomeworkProgress?.({ assignmentId: paper.key, title: paper.title, total: Math.max(paper.total, paper.declared), phase, questions })
     publish('read', paper.questions.map(q => progress(q, !q.supported ? 'needs_review' : !q.actual.some(Boolean) ? 'unanswered' : q.actual.every(Boolean) ? 'answered' : 'partial')))
-    for (const q of paper.questions) {
+    for (const [position, q] of paper.questions.entries()) {
       await ensureSession()
       const report = (status: HomeworkQuestionProgress['status'], source?: string, observed = q) => {
         results.push({ number: q.number, status, source })
         publish('result', [progress(observed, status)])
       }
-      if (!q.supported) { report('needs_review'); continue }
-      if (q.actual.some(s => s.trim())) { report('existing_answer'); continue }
+      const actionPlan = actions[position]
+      if (actionPlan !== 'resolve') { report(actionPlan); continue }
       let resolved = officialAnswer(q) ?? reviewedAnswer(paper, q)
       let source = 'review'
       if (!resolved) {

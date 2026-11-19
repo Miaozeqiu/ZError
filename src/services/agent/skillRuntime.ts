@@ -1,6 +1,5 @@
 import { homeworkCaptureScript } from '../chaoxing/host/homeworkHost'
 import '../chaoxing/host'
-import { listBundledSkillFiles, readBundledSkillFile } from './skills/builtinSkillAssets'
 import { hasWebsiteRepository, repositoryForHost, readChaoxingRepositoryFile, onWebsiteRepositoryChanged, websiteRepositoryHosts, readWebsiteRepositoryFile } from './websiteRepository'
 
 import type { SiteGraphData } from '../browser/siteGraphCore'
@@ -40,17 +39,6 @@ const parseGraph = (raw: string | null): SiteGraphData | null => {
   }
 }
 
-export const readBundledChaoxingFile = (path: string) => readBundledSkillFile(CHAOXING_SKILL_ID, path)
-
-export const readOverrideChaoxingFile = async (path: string): Promise<string | null> => {
-  try {
-    const { readTextFile, BaseDirectory } = await import('@tauri-apps/plugin-fs')
-    return await readTextFile(`${OVERRIDE_DIR}/${CHAOXING_SKILL_ID}/${path}`, { baseDir: BaseDirectory.Home })
-  } catch {
-    return null
-  }
-}
-
 export const readChaoxingImplFile = async (path: string): Promise<string | null> => (
   (await readChaoxingRepositoryFile(path)).content
 )
@@ -64,13 +52,7 @@ const applyGraphSource = (source: string | null, pushLive: boolean) => {
   if (pushLive) applySiteGraph?.(data)
 }
 
-export const seedChaoxingSiteGraph = (): SiteGraphData => {
-  const data = parseGraph(readBundledChaoxingFile(SITE_GRAPH_PATH)) || emptyGraph()
-  siteGraphSeed = data
-  return data
-}
-
-export const getChaoxingSiteGraphSeed = (): SiteGraphData => siteGraphSeed || seedChaoxingSiteGraph()
+export const getChaoxingSiteGraphSeed = (): SiteGraphData => siteGraphSeed || emptyGraph()
 
 export const homeworkScript = (name: string) => {
   if (name === 'capture') return homeworkCaptureScript()
@@ -93,14 +75,7 @@ export const isLearnedParserPath = (path: string) => LEARNED_PARSER.test(String(
 
 export const applyLearnedParserContent = (_path: string, _content: string) => false
 
-export const seedBundledLearnedSites = () => {
-  for (const path of listBundledSkillFiles('site-learn')) {
-    if (LEARNED_GRAPH.test(path)) applyLearnedSiteGraphContent(readBundledSkillFile('site-learn', path) || '')
-  }
-}
-
 export const reloadLearnedSiteGraphs = async () => {
-  seedBundledLearnedSites()
   try {
     const { readDir, readTextFile, BaseDirectory } = await import('@tauri-apps/plugin-fs')
     const entries = await readDir(LEARNED_SITES_DIR, { baseDir: BaseDirectory.Home }).catch(() => [])
@@ -160,12 +135,3 @@ onWebsiteRepositoryChanged(host => {
   }
   void update().catch(() => undefined)
 })
-try { seedBundledLearnedSites() } catch (error) {
-  console.warn('[site-learn] 内置站点解析器加载失败', error)
-}
-
-if (import.meta.hot) {
-  import.meta.hot.accept('./skills/builtinSkillAssets.ts', () => {
-    void reloadChaoxingImpl()
-  })
-}

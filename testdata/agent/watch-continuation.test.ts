@@ -72,7 +72,9 @@ vi.mock('../../src/services/agent/context', () => ({
 vi.mock('../../src/services/agent/debugLog', () => ({ clipAgentDebug: (text: string) => text, logAgentDebug: vi.fn(), writeBrowserTranscript: vi.fn(), writeDebugDump: vi.fn() }))
 vi.mock('../../src/services/agent/tools', async () => {
   const { BROWSER_PRIMITIVE_TOOLS } = await import('../../src/services/agent/toolDefs/browserPrimitiveTools')
-  return { assembleAgentTools: () => BROWSER_PRIMITIVE_TOOLS, availableAgentTools: (tools: unknown[]) => tools }
+  const { websiteToolNames } = await import('../../src/services/agent/websiteToolDefinitions')
+  return { assembleAgentTools: () => [...BROWSER_PRIMITIVE_TOOLS,
+    ...websiteToolNames.map(name => ({ type: 'function', function: { name } }))], availableAgentTools: (tools: unknown[]) => tools }
 })
 vi.mock('../../src/services/app/settings', () => ({ useSettings: () => ({ settings: {} }), settingsManager: { get: () => 0 } }))
 

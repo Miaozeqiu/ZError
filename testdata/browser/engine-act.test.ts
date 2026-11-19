@@ -77,7 +77,7 @@ describe('actOnBrowser', () => {
     invoke.mockImplementation(async (_cmd: string, payload: any) => {
       if (payload.op === 'find') return { ok: true, x: 10, y: 20, backend: 42, session: 'quiz-session', frameId: 'quiz', loaderId: 'doc' }
       if (payload.op === 'fill_node') {
-        expect(payload.args).toEqual({ backend: 42, session: 'quiz-session', text })
+        expect(payload.args).toEqual({ backend: 42, session: 'quiz-session', frameId: 'quiz', loaderId: 'doc', text })
         return { ok: true, filled: true, length: text.length, password, text: password ? undefined : text }
       }
       throw new Error(`unexpected ${payload.op}`)

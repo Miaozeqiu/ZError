@@ -9,7 +9,7 @@ vi.mock('../../src/services/browser/abstractions', async () => {
   return { abstractionMenuOpen: ref(false), BROWSER_ABSTRACTIONS: [], currentBrowserUrl: ref(''), lastSiteCard: ref(null) }
 })
 import Graph from '../../src/components/browser/BrowserSiteGraphPanel.vue'
-import data from '../../src/services/agent/skills/bundled/chaoxing/site-graph.json'
+import data from '../sites/fixtures/chaoxing-graph.json'
 let app: App
 let root: HTMLDivElement
 let view: HTMLElement

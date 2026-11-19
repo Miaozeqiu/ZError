@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { classifyBrowserPage } from '../../../src/services/agent/browserLoop'
 import { homeworkEnteringList, homeworkPageUrl, isHomeworkCourseShell } from '../../../src/services/agent/homeworkGate'
-import { siteGraphNodeForUrl } from '../../../src/services/browser/siteGraphCore'
+import { replaceLiveSite, siteGraphNodeForUrl, type SiteGraphData } from '../../../src/services/browser/siteGraphCore'
+import graph from '../../sites/fixtures/chaoxing-graph.json'
 
 const middle = 'https://mooc2-ans.chaoxing.com/visit/stucoursemiddle?courseid=1&clazzid=2&cpi=3&ismooc2=1'
 const workList = 'https://mooc1.chaoxing.com/mooc2/work/list?courseId=1&classId=2'
@@ -14,6 +15,8 @@ const adapter = {
 }
 
 describe('homework list gate', () => {
+  beforeEach(() => replaceLiveSite(graph as SiteGraphData))
+
   it('stucoursemiddle + work/list iframe 认成作业列表', () => {
     const page = homeworkPageUrl(middle, [workList])
     expect(page).toBe(workList)

@@ -6,6 +6,18 @@ import { cancelChatLogin, chatLoginRequests, requestChatLogin, submitChatLogin }
 import { handleLoginTool } from '../../src/services/agent/tools/websiteLogin'
 
 const io = vi.hoisted(() => ({ invoke: vi.fn(), page: vi.fn(), account: vi.fn() }))
+vi.mock('../../src/services/agent/websiteScripts', () => ({
+  runWebsiteScript: async (_host: string, _site: string, capability: string, input: any, validate: (value: unknown) => unknown) => {
+    let result: unknown
+    if (capability === 'homework') result = input.questions.map((q: any) => ({ index: q.index, action: !q.supported ? 'needs_review' : q.answered ? 'existing_answer' : 'resolve' }))
+    else if (capability === 'playback') result = input.videos.filter((video: any) => input.mode === 'section' ? !video.complete : input.title ? video.title === input.title : video.id === input.active).map((video: any) => video.id)
+    else if (_site === 'chaoxing') result = input.kind === 'space' ? 'logged_in' : input.kind === 'challenge' ? 'verify'
+      : input.host !== 'passport2.chaoxing.com' ? input.kind === 'loading' ? 'wait' : 'open_space'
+      : input.kind === 'form' && input.modern && input.frameReady ? 'fill' : ['passport', 'form'].includes(input.kind) ? 'open_form' : 'wait'
+    else result = input.kind === 'space' ? 'logged_in' : input.kind === 'form' && input.atForm && input.frameReady ? 'fill' : input.kind === 'guest' && input.atHome ? 'open_form' : 'wait'
+    return { result: validate(result), revision: 'fixture' }
+  },
+}))
 vi.mock('@tauri-apps/api/core', async original => ({ ...await original<typeof import('@tauri-apps/api/core')>(), invoke: io.invoke }))
 vi.mock('../../src/services/browser/appBrowser', () => ({ getBrowserState: io.page }))
 vi.mock('../../src/services/browser/eval', async original => ({ ...await original<typeof import('../../src/services/browser/eval')>(), isCefEngine: async () => true }))

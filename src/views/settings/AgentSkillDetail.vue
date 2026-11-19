@@ -218,8 +218,8 @@ const repositoryStatusLabel = computed(() => {
   const state = websiteRepositoryState.value
   if (state?.customUrl) return state.error ? 'HTTP 接口不可用 · 使用缓存' : '自定义 HTTP'
   if (state?.refreshing) return '正在同步…'
-  if (state?.error) return '同步失败 · 离线可用'
-  return state?.source === 'repository' ? '云端经验 · 已同步' : '离线资料'
+  if (state?.source === 'repository') return state.error ? '同步失败 · 使用缓存' : '云端经验 · 已同步'
+  return state?.error ? '同步失败 · 尚无缓存' : '尚未同步'
 })
 const repositoryPath = computed(() => websiteRepositoryTarget(props.skillId, currentPath.value)?.path || '')
 const loadedRepositoryVersion = ref<string | undefined>()

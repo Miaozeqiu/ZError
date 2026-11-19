@@ -7,6 +7,25 @@ import { chaoxingStartup } from '../../src/services/agent/chaoxingStartup'
 import { assembleRoleTools } from '../../src/services/agent/subagent/tools'
 
 const { siteAccountOf } = vi.hoisted(() => ({ siteAccountOf: vi.fn() }))
+vi.mock('../../src/services/agent/websiteScripts', () => ({
+  runWebsiteScript: async (_host: string, _site: string, capability: string, input: any, validate: (value: unknown) => unknown) => {
+    let result: unknown
+    if (capability === 'homework') result = input.questions.map((q: any) => ({ index: q.index, action: !q.supported ? 'needs_review' : q.answered ? 'existing_answer' : 'resolve' }))
+    else if (capability === 'playback') result = input.videos.filter((video: any) => input.mode === 'section' ? !video.complete : input.title ? video.title === input.title : video.id === input.active).map((video: any) => video.id)
+    else if (_site === 'chaoxing') result = input.kind === 'space' ? 'logged_in' : input.kind === 'challenge' ? 'verify'
+      : input.host !== 'passport2.chaoxing.com' ? input.kind === 'loading' ? 'wait' : 'open_space'
+      : input.kind === 'form' && input.modern && input.frameReady ? 'fill' : ['passport', 'form'].includes(input.kind) ? 'open_form' : 'wait'
+    else result = input.kind === 'space' ? 'logged_in' : input.kind === 'form' && input.atForm && input.frameReady ? 'fill' : input.kind === 'guest' && input.atHome ? 'open_form' : 'wait'
+    return { result: validate(result), revision: 'fixture' }
+  },
+}))
+vi.mock('../../src/services/agent/websiteRepository', async original => ({
+  ...await original<typeof import('../../src/services/agent/websiteRepository')>(),
+  installedExperienceHost: (host: string) => host,
+  websiteToolsForHost: (host: string) => host === 'chaoxing.com'
+    ? [{ type: 'function', function: { name: 'browser_login_chaoxing' } }]
+    : host === 'zjooc.cn' ? ['browser_login_zjooc', 'browser_play_zjooc'].map(name => ({ type: 'function', function: { name } })) : [],
+}))
 vi.mock('../../src/services/agent/siteAccounts', () => ({ siteAccountsReady: Promise.resolve(), siteAccountOf }))
 const url = 'https://background.zjooc.cn/gxptLogin'
 const form = { kind: 'form', url, challenge: true, frameId: 'main', loaderId: 'doc' }
@@ -25,7 +44,7 @@ describe('在浙学登录', () => {
   it('routes an explicit login from an empty tab, including tool discovery and role restrictions', () => {
     expect(chaoxingStartup('帮我登录下在浙学', 'about:blank')).toEqual({ name: 'browser_login_zjooc', args: {} })
     for (const role of ['parent', 'execute', 'explore'] as const) {
-      const offered = assembleRoleTools({ role }).some(t => t.function.name === 'browser_login_zjooc')
+      const offered = assembleRoleTools({ role, url: 'https://www.zjooc.cn' }).some(t => t.function.name === 'browser_login_zjooc')
       expect(offered).toBe(role !== 'explore')
     }
   })

@@ -1,4 +1,5 @@
 import { siteAccountOf, siteAccountsReady } from '../siteAccounts'
+import { runWebsiteScript } from '../websiteScripts'
 import { pendingWebsiteVerification } from '../chatLogin'
 import { actOnLoginPage, type loginChaoxing } from './websiteLogin'
 
@@ -136,9 +137,20 @@ export async function loginZjooc(ctx: Context, restartAfterRejection = false): P
       await navigate(home)
       state = await read()
     }
+    const plan = async (state: State) => (await runWebsiteScript('zjooc.cn', 'zjooc', 'login', {
+      kind: state.kind, atForm: state.atForm, atHome: state.url?.origin === home,
+      frameReady: Boolean(state.frameId && state.loaderId), rejection: state.rejection,
+    }, proposal => {
+      if (typeof proposal !== 'string' || !['logged_in', 'reset_password', 'credentials', 'captcha', 'rejected', 'fill', 'open_form', 'wait'].includes(proposal)) {
+        throw new Error('在浙学登录脚本返回了未知操作。')
+      }
+      return proposal
+    }, { reuseForMs: 30_000 })).result
     let openedLogin = false
+    let action = 'wait'
     for (let poll = 0; poll < 40; poll++) {
-      if (inSpace(state)) return done(state)
+      action = await plan(state)
+      if (action === 'logged_in' && inSpace(state)) return done(state)
       if (reopeningPassport && (!state.atForm || state.loaderId === rejectedLoader)) {
         await ctx.wait(250)
         state = await read()
@@ -150,8 +162,8 @@ export async function loginZjooc(ctx: Context, restartAfterRejection = false): P
         if (state.rejection === 'captcha') return manual('在浙学提示验证码有误或已失效，请在网页刷新验证码后重试。')
         return manual('在浙学显示登录错误。请在当前页面核对提示并处理。')
       }
-      if (state.atForm && state.kind === 'form' && state.frameId && state.loaderId) break
-      if (!openedLogin && state.kind === 'guest' && state.url?.origin === home && state.frameId && state.loaderId) {
+      if (action === 'fill' && state.atForm && state.kind === 'form' && state.frameId && state.loaderId) break
+      if (action === 'open_form' && !openedLogin && state.kind === 'guest' && state.url?.origin === home && state.frameId && state.loaderId) {
         openedLogin = true
         const click = await actOnLoginPage(ctx, state.supportsLoginAction, {
           by: 'text', value: '请登录', exact: true, frameId: state.frameId, loaderId: state.loaderId,
@@ -162,7 +174,7 @@ export async function loginZjooc(ctx: Context, restartAfterRejection = false): P
       await ctx.wait(250)
       state = await read()
     }
-    if (!state.atForm || state.kind !== 'form' || !state.frameId || !state.loaderId || state.loaderId === rejectedLoader) {
+    if (action !== 'fill' || !state.atForm || state.kind !== 'form' || !state.frameId || !state.loaderId || state.loaderId === rejectedLoader) {
       if (reopeningPassport) return blocked('stale', '凭据已更新，但新的在浙学登录页还没就绪。重新打开登录页后再取验证码。')
       return manual('尚未确认在浙学的登录表单或个人中心，请核对当前页面。')
     }

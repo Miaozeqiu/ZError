@@ -859,7 +859,8 @@ export const readAgentSkillFileContent = async (id: string, relativePath: string
     const file = await readWebsiteRepositoryFile(repository.host, repository.path)
     if (file.content == null) return null
     const main = repository.path === SKILL_MAIN_FILE
-    const experienceSource = websiteRepositoryStates[repository.host]?.customUrl ? 'http' as const : 'online' as const
+    const source = websiteRepositoryStates[repository.host]?.source
+    const experienceSource = source === 'http' ? 'http' as const : source === 'offline' ? 'unavailable' as const : 'online' as const
     return { id, path, content: file.content, repository_version: file.version,
       experience_source: experienceSource,
       write_scope: main ? 'local_experience' as const : 'read_only' as const,

@@ -3,6 +3,7 @@ import { evalBrowserViewMain } from '../../browser/eval'
 import type { BrowserLocator } from '../../browser/engine'
 import { userControlsBrowser } from '../../browser/control'
 import { nativeWatchFor, parseNativeTick, startNativeWatch, stopNativeWatch } from '../../browser/videoWatch'
+import { runWebsiteScript } from '../websiteScripts'
 import playbackPage from '../../platform/zjooc/playbackPage.js?raw'
 
 type Video = { id: string; title: string; complete: boolean; locked: boolean }
@@ -64,7 +65,16 @@ export async function playZjoocVideos({ browserId, sessionId, args, role, wait, 
       if (Array.isArray(page?.videos)) { catalog = page; break }
     }
     if (!catalog) return fail('小节的视频页签尚未就绪。')
-    const items = catalog.videos.filter(v => mode === 'section' ? !v.complete : title ? v.title === title : v.id === catalog.active)
+    const videos = catalog.videos
+    const expected = videos.filter(v => mode === 'section' ? !v.complete : title ? v.title === title : v.id === catalog.active)
+    const { result: items } = await runWebsiteScript('zjooc.cn', 'zjooc', 'playback', {
+      mode, title, active: catalog.active, videos: videos.map(({ id, title, complete }) => ({ id, title, complete })),
+    }, proposal => {
+      if (!Array.isArray(proposal) || proposal.length !== expected.length || proposal.some((id, index) => id !== expected[index].id)) {
+        throw new Error('在浙学脚本选择的页签与当前任务不一致。')
+      }
+      return proposal.map(id => videos.find(video => video.id === id)!)
+    })
     if (mode !== 'section' && items.length !== 1) return fail(title ? '请核对视频名称，当前小节没有唯一匹配。' : '当前页签不是视频，请指定本小节的视频名称。')
     if (!catalog.videos.length) return fail('当前小节没有视频课件。')
     let from = catalog.active
@@ -140,6 +150,6 @@ export async function playZjoocVideos({ browserId, sessionId, args, role, wait, 
   } catch (error) {
     cleanup()
     if ((error instanceof DOMException && error.name === 'AbortError') || String(error).includes('BROWSER_USER_CONTROL')) throw error
-    return fail('读取在浙学播放器失败，请核对当前页面。', ended)
+    return fail(error instanceof Error ? error.message : '读取在浙学播放器失败，请核对当前页面。', ended)
   }
 }

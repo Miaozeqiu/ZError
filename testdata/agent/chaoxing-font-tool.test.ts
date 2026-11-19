@@ -1,13 +1,17 @@
 import { describe, expect, it, vi } from 'vitest'
 const decode = vi.hoisted(() => vi.fn())
 vi.mock('../../src/services/agent/fontDecrypt/chaoxing', () => ({ CHAOXING_FONT_PROBE: 'probe', decodeChaoxingProbe: decode }))
+vi.mock('../../src/services/agent/websiteRepository', async original => ({
+  ...await original<typeof import('../../src/services/agent/websiteRepository')>(),
+  websiteToolsForHost: (host: string) => host === 'chaoxing.com' ? [{ type: 'function', function: { name: 'browser_decode_chaoxing_font' } }] : [],
+}))
 import { handlePageTools } from '../../src/services/agent/tools/page'
 import { assembleRoleTools } from '../../src/services/agent/subagent/tools'
 
 describe('混淆字体浏览器工具', () => {
   it('提供给主 Agent 和探索 Agent', () => {
     for (const role of ['parent', 'explore'] as const) {
-      expect(assembleRoleTools({ role }).map(t => t.function.name)).toContain('browser_decode_chaoxing_font')
+      expect(assembleRoleTools({ role, startupHost: 'chaoxing.com' }).map(t => t.function.name)).toContain('browser_decode_chaoxing_font')
     }
   })
   it('解码成功时返回对应框的文本', async () => {

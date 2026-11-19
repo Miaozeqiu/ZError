@@ -2,6 +2,7 @@ import type { BrowserLocator } from '../../browser/engine'
 import { CHAOXING_LOGIN_URL } from '../../browser/skills/chaoxingLogin'
 import { chaoxingUrl } from '../../platform/chaoxing/studentCourses'
 import { isSecretReference } from '../../security/secureStore'
+import { runWebsiteScript } from '../websiteScripts'
 import { siteAccountOf, siteAccountsReady } from '../siteAccounts'
 import type { handleWebsiteCourseTools } from './websiteCourses'
 
@@ -56,28 +57,38 @@ export async function loginChaoxing(ctx: Context): Promise<string> {
   const onPassport = (state: State) => state.url?.hostname === 'passport2.chaoxing.com'
   const inSpace = (state: State) => state.kind === 'space'
     && (state.url?.hostname === 'i.chaoxing.com' || state.url?.hostname === 'i.mooc.chaoxing.com')
+  const plan = async (state: State) => (await runWebsiteScript('chaoxing.com', site, 'login', {
+    kind: state.kind, host: state.url?.hostname || '', modern: state.modern, frameReady: Boolean(state.frameId && state.loaderId),
+  }, proposal => {
+    if (typeof proposal !== 'string' || !['logged_in', 'verify', 'open_space', 'open_form', 'fill', 'wait'].includes(proposal)) {
+      throw new Error('学习通登录脚本返回了未知操作。')
+    }
+    return proposal
+  }, { reuseForMs: 30_000 })).result
   let submitted = false
   try {
     let state = await read()
     if (state.kind === 'unsupported') {
       return fail('invalid', '当前浏览器不支持自动安全填写。请在浏览器手动登录学习通。', { userActionRequired: true })
     }
-    if (inSpace(state)) return done(state, true)
+    let action = await plan(state)
+    if (action === 'logged_in' && inSpace(state)) return done(state, true)
     if (state.kind === 'challenge') return challenge()
     let openedLogin = false
-    if (!onPassport(state) && state.kind !== 'loading') await navigate(space)
+    if (action === 'open_space' && !onPassport(state) && state.kind !== 'loading') await navigate(space)
     for (let attempt = 0; attempt < 20; attempt++) {
-      if (inSpace(state)) return done(state, true)
+      if (action === 'logged_in' && inSpace(state)) return done(state, true)
       if (state.kind === 'challenge') return challenge()
-      if (onPassport(state) && state.kind === 'form' && state.modern && state.frameId && state.loaderId) break
-      if (!openedLogin && onPassport(state) && (state.kind === 'passport' || (state.kind === 'form' && !state.modern))) {
+      if (action === 'fill' && onPassport(state) && state.kind === 'form' && state.modern && state.frameId && state.loaderId) break
+      if (action === 'open_form' && !openedLogin && onPassport(state) && (state.kind === 'passport' || (state.kind === 'form' && !state.modern))) {
         await navigate(CHAOXING_LOGIN_URL)
         openedLogin = true
       }
       await ctx.wait(250)
       state = await read()
+      action = await plan(state)
     }
-    if (!onPassport(state) || state.kind !== 'form' || !state.modern || !state.frameId || !state.loaderId) {
+    if (action !== 'fill' || !onPassport(state) || state.kind !== 'form' || !state.modern || !state.frameId || !state.loaderId) {
       return fail('verification_required', '未确认学习通登录表单或已登录空间。请核对浏览器当前页面。')
     }
 

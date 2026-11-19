@@ -6,6 +6,25 @@ import { evalBrowserViewMain } from '../../src/services/browser/eval'
 import { nativeWatchFor, resetNativeWatches } from '../../src/services/browser/videoWatch'
 import { assembleRoleTools } from '../../src/services/agent/subagent/tools'
 
+vi.mock('../../src/services/agent/websiteScripts', () => ({
+  runWebsiteScript: async (_host: string, _site: string, capability: string, input: any, validate: (value: unknown) => unknown) => {
+    let result: unknown
+    if (capability === 'homework') result = input.questions.map((q: any) => ({ index: q.index, action: !q.supported ? 'needs_review' : q.answered ? 'existing_answer' : 'resolve' }))
+    else if (capability === 'playback') result = input.videos.filter((video: any) => input.mode === 'section' ? !video.complete : input.title ? video.title === input.title : video.id === input.active).map((video: any) => video.id)
+    else if (_site === 'chaoxing') result = input.kind === 'space' ? 'logged_in' : input.kind === 'challenge' ? 'verify'
+      : input.host !== 'passport2.chaoxing.com' ? input.kind === 'loading' ? 'wait' : 'open_space'
+      : input.kind === 'form' && input.modern && input.frameReady ? 'fill' : ['passport', 'form'].includes(input.kind) ? 'open_form' : 'wait'
+    else result = input.kind === 'space' ? 'logged_in' : input.kind === 'form' && input.atForm && input.frameReady ? 'fill' : input.kind === 'guest' && input.atHome ? 'open_form' : 'wait'
+    return { result: validate(result), revision: 'fixture' }
+  },
+}))
+vi.mock('../../src/services/agent/websiteRepository', async original => ({
+  ...await original<typeof import('../../src/services/agent/websiteRepository')>(),
+  installedExperienceHost: (host: string) => host,
+  websiteToolsForHost: (host: string) => host === 'chaoxing.com'
+    ? [{ type: 'function', function: { name: 'browser_login_chaoxing' } }]
+    : host === 'zjooc.cn' ? ['browser_login_zjooc', 'browser_play_zjooc'].map(name => ({ type: 'function', function: { name } })) : [],
+}))
 vi.mock('../../src/services/browser/eval', async original => ({
   ...await original<typeof import('../../src/services/browser/eval')>(), evalBrowserViewMain: vi.fn(),
 }))
@@ -54,7 +73,7 @@ describe('在浙学视频页签播放', () => {
     expect(chaoxingStartup('连续播放本小节', base + 'x')).toEqual({ name: 'browser_play_zjooc', args: { mode: 'section' } })
     expect(chaoxingStartup('连续播放本小节', 'about:blank')).toBeUndefined()
     for (const role of ['explore', 'execute', 'parent'] as const) {
-      expect(assembleRoleTools({ role }).some(t => t.function.name === 'browser_play_zjooc')).toBe(role !== 'explore')
+      expect(assembleRoleTools({ role, url: 'https://www.zjooc.cn' }).some(t => t.function.name === 'browser_play_zjooc')).toBe(role !== 'explore')
     }
   })
   it('advances only after each video ends and skips complete and document tabs', async () => {

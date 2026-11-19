@@ -10,6 +10,18 @@ import { captureReview } from '../../src/services/platform/zjooc/paperBank'
 import { chaoxingStartup } from '../../src/services/agent/chaoxingStartup'
 import { answerZjooc } from '../../src/services/agent/tools/zjoocAnswers'
 
+vi.mock('../../src/services/agent/websiteScripts', () => ({
+  runWebsiteScript: async (_host: string, _site: string, capability: string, input: any, validate: (value: unknown) => unknown) => {
+    let result: unknown
+    if (capability === 'homework') result = input.questions.map((q: any) => ({ index: q.index, action: !q.supported ? 'needs_review' : q.answered ? 'existing_answer' : 'resolve' }))
+    else if (capability === 'playback') result = input.videos.filter((video: any) => input.mode === 'section' ? !video.complete : input.title ? video.title === input.title : video.id === input.active).map((video: any) => video.id)
+    else if (_site === 'chaoxing') result = input.kind === 'space' ? 'logged_in' : input.kind === 'challenge' ? 'verify'
+      : input.host !== 'passport2.chaoxing.com' ? input.kind === 'loading' ? 'wait' : 'open_space'
+      : input.kind === 'form' && input.modern && input.frameReady ? 'fill' : ['passport', 'form'].includes(input.kind) ? 'open_form' : 'wait'
+    else result = input.kind === 'space' ? 'logged_in' : input.kind === 'form' && input.atForm && input.frameReady ? 'fill' : input.kind === 'guest' && input.atHome ? 'open_form' : 'wait'
+    return { result: validate(result), revision: 'fixture' }
+  },
+}))
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 vi.mock('../../src/services/browser/eval', () => ({ evalBrowserViewMain: vi.fn() }))
 vi.mock('../../src/services/app/auth', () => ({ authToken: { value: '' }, authUser: { value: null }, openLoginDialog: vi.fn() }))

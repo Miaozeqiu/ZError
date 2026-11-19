@@ -1,20 +1,22 @@
 import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { classifyBrowserPage } from '../../../src/services/agent/browserLoop'
 import { applyMeasuredGraphHeights, courseTabOf, noteCourseTab, resetCourseTab, siteGraphViewFromData, graphCardsOverlap } from '../../../src/services/browser/siteGraph'
-import { activeFrameOf, hydrateSite, pageRoleOfNode, parserPageKindOf, siteGraphNodeForUrl, siteGraphUrlFromFrames, type SiteGraphData } from '../../../src/services/browser/siteGraphCore'
+import { activeFrameOf, hydrateSite, pageRoleOfNode, parserPageKindOf, replaceLiveSite, siteGraphNodeForUrl, siteGraphUrlFromFrames, type SiteGraphData } from '../../../src/services/browser/siteGraphCore'
 import { chaoxingPageRole } from '../../../src/services/platform/chaoxing/nav'
 
 const data = JSON.parse(
   readFileSync(
-    resolve(dirname(fileURLToPath(import.meta.url)), '../../../src/services/agent/skills/bundled/chaoxing/site-graph.json'),
+    resolve(dirname(fileURLToPath(import.meta.url)), '../../sites/fixtures/chaoxing-graph.json'),
     'utf8',
   ),
 ) as SiteGraphData
 
 describe('site graph space iframe', () => {
+  beforeEach(() => replaceLiveSite(data))
+
   it('我教的课 / 我学的课是空间里的页签，不是单独节点', () => {
     const site = hydrateSite(data)
     expect(site.nodes.map((node) => node.id)).not.toContain('taught')

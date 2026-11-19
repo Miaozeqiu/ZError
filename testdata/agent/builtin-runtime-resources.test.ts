@@ -4,17 +4,13 @@ import { isBuiltinRuntimeSkillFile } from '../../src/services/agent/skillRuntime
 import { nextSkillFileHint, skillFileWriteError } from '../../src/services/agent/agentSkills'
 
 describe('builtin website resources for end users', () => {
-  it('bundles website guidance and maps without developer samples', () => {
-    for (const id of ['chaoxing', 'site-learn']) {
-      const files = listBundledSkillFiles(id)
-      expect(files).toContain('SKILL.md')
-      expect(files.some(file => file.endsWith('site-graph.json'))).toBe(id === 'chaoxing')
-      expect(files.every(isBuiltinRuntimeSkillFile)).toBe(true)
-      expect(files.some(file => /fixtures|parsers|\.html$/i.test(file))).toBe(false)
-    }
-    expect(readBundledSkillFile('chaoxing', 'fixtures/studentstudy.html')).toBeNull()
-    expect(readBundledSkillFile('chaoxing', 'parsers/homework/fixture.html')).toBeNull()
-    expect(readBundledSkillFile('site-learn', 'sites/zhihuishu.com/fixtures/list.html')).toBeNull()
+  it('bundles the generic learning workflow without official website experience', () => {
+    expect(listBundledSkillFiles('chaoxing')).toEqual([])
+    expect(readBundledSkillFile('chaoxing', 'site-graph.json')).toBeNull()
+    const files = listBundledSkillFiles('site-learn')
+    expect(files).toContain('SKILL.md')
+    expect(files.every(isBuiltinRuntimeSkillFile)).toBe(true)
+    expect(files.some(file => /^sites\//.test(file))).toBe(false)
   })
 
   it('does not recommend stale samples even if an old path is supplied', () => {

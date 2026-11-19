@@ -55,13 +55,6 @@ describe('skill 渐进披露', () => {
     expect(text).not.toContain('see.json')
   })
 
-  it('chaoxing 主文件只留索引，细则在 references', () => {
-    const text = readFileSync(resolve(bundled, 'chaoxing/SKILL.md'), 'utf8')
-    expect(text).toContain('references/study.md')
-    expect(text).not.toContain('schema.catalog.json')
-    expect(text).not.toContain('禁止 eval')
-  })
-
   it('read_agent_skill 只露出 SKILL 和本站入口，不列出 see.json', async () => {
     const { listBundledSkillFiles } = await import('../../src/services/agent/skills/builtinSkillAssets')
     const { nextSkillFileHint, skillSurfaceFiles } = await import('../../src/services/agent/agentSkills')

@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { normalizeLegacySkillMarkdown, parseSkillFrontmatter, prepareSkillMarkdown, validateSkillMarkdown } from '../../src/services/agent/skillFormat'
@@ -96,8 +96,8 @@ metadata:
 
   it('validates every bundled root while retaining Chinese display names and tool dependencies', () => {
     const root = resolve('src/services/agent/skills/bundled')
-    const ids = readdirSync(root, { withFileTypes: true }).filter(entry => entry.isDirectory()).map(entry => entry.name)
-    expect(ids).toHaveLength(9)
+    const ids = readdirSync(root, { withFileTypes: true }).filter(entry => entry.isDirectory() && existsSync(resolve(root, entry.name, 'SKILL.md'))).map(entry => entry.name)
+    expect(ids).toHaveLength(8)
     for (const id of ids) {
       const raw = readFileSync(resolve(root, id, 'SKILL.md'), 'utf8')
       expect(validateSkillMarkdown(raw, id), id).toEqual([])

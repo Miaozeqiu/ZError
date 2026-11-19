@@ -10,8 +10,8 @@
 <script type="module">
   import { createApp, h, nextTick } from 'vue'
   import Graph from '/src/components/browser/BrowserSiteGraphPanel.vue'
-  import chaoxing from '/src/services/agent/skills/bundled/chaoxing/site-graph.json'
-  import zjooc from '/src/services/agent/skills/bundled/site-learn/sites/zjooc.cn/site-graph.json'
+  import chaoxing from '/testdata/sites/fixtures/chaoxing-graph.json'
+  import zjooc from '/testdata/sites/fixtures/zjooc-graph.json'
   const data = new URLSearchParams(location.search).get('site') === 'zjooc' ? zjooc : chaoxing
 
   createApp({ render: () => h(Graph, { preview: true, data }) }).mount('#app')
