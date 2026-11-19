@@ -1,0 +1,135 @@
+name: Test Windows code signing with SignPath
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/signpath-setup]
+    paths:
+      - '.github/workflows/signpath-test.yml'
+      - 'scripts/verify-signpath-test.ps1'
+      - 'docs/signpath/**'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: signpath-test-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    if: github.repository == 'Miaozeqiu/ZError'
+    runs-on: windows-2025
+    environment: signpath-test
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      SIGNPATH_ORGANIZATION_ID: e801fc0a-464b-43f1-a450-178cfef99316
+      SIGNPATH_PROJECT_SLUG: ZError
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check signing credentials
+        env:
+          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:SIGNPATH_API_TOKEN)) {
+            throw 'Set SIGNPATH_API_TOKEN in the signpath-test environment before running.'
+          }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          cache-on-failure: true
+      - run: npm ci
+      - name: Configure test build
+        run: |
+          '{"bundle":{"createUpdaterArtifacts":false}}' | Set-Content .tauri-ci.json
+      - name: Build the Windows executable
+        run: npm exec -- tauri build --ci --target x86_64-pc-windows-msvc --no-bundle --config .tauri-ci.json -- --locked
+      - name: Upload executable for origin verification
+        id: unsigned-app
+        uses: actions/upload-artifact@v4
+        with:
+          name: signpath-unsigned-app-${{ github.run_id }}-${{ github.run_attempt }}
+          path: src-tauri/target/x86_64-pc-windows-msvc/release/zerror.exe
+          if-no-files-found: error
+          retention-days: 7
+      - name: Test-sign the application
+        id: sign-app
+        uses: signpath/github-action-submit-signing-request@4a84eb4ad763290f059275786f2deed97c2c672b # v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ env.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ env.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: test-signing
+          artifact-configuration-slug: windows-exe
+          github-artifact-id: ${{ steps.unsigned-app.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed-app
+      - name: Verify and stage the signed application
+        timeout-minutes: 5
+        run: |
+          ./scripts/verify-signpath-test.ps1 -Path signed-app/zerror.exe
+          Copy-Item signed-app/zerror.exe src-tauri/target/x86_64-pc-windows-msvc/release/zerror.exe -Force
+      - name: Package the signed application in NSIS
+        run: npm exec -- tauri bundle --ci --target x86_64-pc-windows-msvc --bundles nsis --config .tauri-ci.json
+      - name: Upload installer for origin verification
+        id: unsigned-installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: signpath-unsigned-installer-${{ github.run_id }}-${{ github.run_attempt }}
+          path: src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+          if-no-files-found: error
+          retention-days: 7
+      - name: Test-sign the installer
+        id: sign-installer
+        uses: signpath/github-action-submit-signing-request@4a84eb4ad763290f059275786f2deed97c2c672b # v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ env.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ env.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: test-signing
+          artifact-configuration-slug: windows-exe
+          github-artifact-id: ${{ steps.unsigned-installer.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed-installer
+      - name: Verify the installer and write the signing report
+        timeout-minutes: 5
+        env:
+          APP_REQUEST_URL: ${{ steps.sign-app.outputs.signing-request-web-url }}
+          INSTALLER_REQUEST_URL: ${{ steps.sign-installer.outputs.signing-request-web-url }}
+        run: |
+          $installers = @(Get-ChildItem signed-installer -Filter '*.exe' -File)
+          if ($installers.Count -ne 1) { throw 'Expected exactly one signed NSIS installer.' }
+          ./scripts/verify-signpath-test.ps1 -Path $installers[0].FullName
+          @(
+            '# SignPath test signing'
+            ''
+            'Self-signed test certificate only. These artifacts are not public releases.'
+            ''
+            "Application signing request: $env:APP_REQUEST_URL"
+            "Installer signing request: $env:INSTALLER_REQUEST_URL"
+          ) | Set-Content signed-installer/TEST-SIGNING.txt
+          Get-FileHash signed-app/zerror.exe, $installers[0].FullName -Algorithm SHA256 |
+            Format-Table -AutoSize | Out-String | Add-Content signed-installer/TEST-SIGNING.txt
+          Get-Content signed-installer/TEST-SIGNING.txt | Add-Content $env:GITHUB_STEP_SUMMARY
+      - name: Upload test-signed packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: ZError-TEST-SIGNED-windows-x64-${{ github.run_id }}
+          path: |
+            signed-app/zerror.exe
+            signed-installer/*
+          if-no-files-found: error
+          retention-days: 7
