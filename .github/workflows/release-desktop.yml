@@ -1,0 +1,167 @@
+name: Build and publish desktop release
+
+on:
+  push:
+    branches: [master]
+    paths: [src-tauri/tauri.conf.json]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish this version after verification
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  plan:
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check the release version
+        id: version
+        env:
+          PREVIOUS_SHA: ${{ github.event.before }}
+        run: |
+          config=src-tauri/tauri.conf.json
+          version=$(jq -er .version "$config")
+          if [[ "$GITHUB_EVENT_NAME" == push ]]; then
+            previous_version=$(git show "$PREVIOUS_SHA:$config" | jq -er .version)
+            if [[ "$version" == "$previous_version" ]]; then
+              exit 0
+            fi
+          fi
+          [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+
+  build-desktop:
+    needs: plan
+    if: needs.plan.outputs.version != ''
+    uses: ./.github/workflows/build-desktop.yml
+    permissions:
+      contents: read
+      packages: read
+    with:
+      macos: true
+
+  sign:
+    needs: [plan, build-desktop]
+    name: Sign and verify the updater packages
+    environment: desktop-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Install updater signature verifier
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y minisign
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ZError-*-${{ github.run_id }}
+          path: installers
+          merge-multiple: true
+      - name: Collect installers
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          mkdir staged
+          for asset in \
+            "ZError_${VERSION}_x64-setup.exe" \
+            "ZError_${VERSION}_aarch64.dmg" \
+            "ZError_${VERSION}_aarch64.app.tar.gz" \
+            "ZError_${VERSION}_amd64.AppImage" \
+            "ZError_${VERSION}_amd64.deb"; do
+            mapfile -t matches < <(find installers -type f -name "$asset")
+            test "${#matches[@]}" -eq 1
+            test -s "${matches[0]}"
+            mv "${matches[0]}" "staged/$asset"
+          done
+      - name: Sign final updater packages
+        env:
+          TAURI_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          test -n "$TAURI_PRIVATE_KEY"
+          for asset in staged/*-setup.exe staged/*.app.tar.gz staged/*.AppImage; do
+            npm exec -- tauri signer sign --password= "$asset" >/dev/null
+          done
+      - name: Verify signatures with the app public key
+        run: |
+          check_dir=$(mktemp -d)
+          trap 'rm -rf "$check_dir"' EXIT
+          jq -er .plugins.updater.pubkey src-tauri/tauri.conf.json | base64 --decode > "$check_dir/updater.pub"
+          for asset in staged/*-setup.exe staged/*.app.tar.gz staged/*.AppImage; do
+            base64 --decode "$asset.sig" > "$check_dir/updater.minisig"
+            minisign -Vm "$asset" -p "$check_dir/updater.pub" -x "$check_dir/updater.minisig"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: verified-desktop-${{ github.run_id }}
+          path: staged/*
+          if-no-files-found: error
+          retention-days: 14
+          overwrite: true
+
+  publish:
+    needs: [plan, sign]
+    if: github.event_name == 'push' || inputs.publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: publish-desktop-release
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: verified-desktop-${{ github.run_id }}
+          path: staged
+      - name: Publish the verified installers and update packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: v${{ needs.plan.outputs.version }}
+        run: |
+          tag_commit=$(git ls-remote origin "refs/tags/$TAG" "refs/tags/$TAG^{}" | tail -n 1 | cut -f 1)
+          if [[ -n "$tag_commit" ]]; then
+            test "$tag_commit" = "$GITHUB_SHA"
+          fi
+
+          latest=$(gh release view --json tagName --jq .tagName)
+          if [[ "$TAG" == "$latest" ]]; then
+            exit 0
+          fi
+          test "$(printf '%s\n' "$latest" "$TAG" | sort -V | tail -n 1)" = "$TAG"
+
+          if [[ -z "$tag_commit" ]]; then
+            gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$TAG" -f sha="$GITHUB_SHA" >/dev/null
+          fi
+          if draft=$(gh release view "$TAG" --json isDraft --jq .isDraft); then
+            test "$draft" = true
+            gh release upload "$TAG" staged/* --clobber
+          else
+            gh release create "$TAG" staged/* --draft --verify-tag --title "ZError $TAG" --generate-notes
+          fi
+
+          assets=$(gh release view "$TAG" --json assets)
+          for path in staged/*; do
+            jq -e --arg name "${path##*/}" --argjson size "$(stat -c %s "$path")" \
+              'any(.assets[]; .name == $name and .size == $size)' <<< "$assets" >/dev/null
+          done
+          gh release edit "$TAG" --draft=false --latest
