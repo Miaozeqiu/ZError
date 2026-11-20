@@ -1,3 +1,4 @@
+import { dispatchSiteBrowserTool, siteNavigationFor } from '../browser/siteCapabilities'
 /** Agent 浏览器工具。页面身份看网站地图，进度监控用 browser_watch。 */
 import {
   clickBrowserElement,
@@ -22,33 +23,25 @@ import { captchaScreenshotHint, collectPageCaptchaHits, materializeCaptchaImages
 import { asObject, evalBrowserFrames, evalBrowserViewMain, isEvalActBusy, waitMs } from '../browser/eval'
 import { notePageProbe, resetPageProbe } from './pageProbe'
 
-const wait = waitMs
-import { actOnceOnBrowser, clickByLocator, cssSelectorFromArgs, fillByLocator, listCachedPageRefs, looksLikeCssSelector, observeAfterClick, pageHostMatches, pageHostOf, readPageSnapshot, resolveRefLocator } from '../browser/engine'
+import {
+  actOnceOnBrowser,
+  clickByLocator,
+  cssSelectorFromArgs,
+  fillByLocator,
+  listCachedPageRefs,
+  looksLikeCssSelector,
+  observeAfterClick,
+  pageHostMatches,
+  pageHostOf,
+  readPageSnapshot,
+  resolveRefLocator,
+} from '../browser/engine'
 import { callProtocol, evaluate } from '../browser/protocol'
 import { rememberLoginTyped } from './siteAccounts'
 import { browserTaskIntent } from './browserTask'
 import { compactStudyPanel, displaySiteName, formatSlimRefs, readBrowserLoop } from './browserLoop'
 import { inspectEvalScript } from './browserEvalGuard'
-import { isCourseChromeTab, readCourseTab, sameChaoxingCourse } from '../platform/chaoxing/courseTab'
-import { isSpaceListTopUrl } from '../platform/chaoxing/spaceTab'
 import { siteGraphForUrl, siteGraphNodeForUrl, siteGraphUrlFromFrames } from '../browser/siteGraphCore'
-import {
-  COURSE_HW_HINT,
-  IFRAME_NAV_HINT,
-  SPACE_HINT,
-  chaoxingCoursePageHeader,
-  chaoxingNodeId,
-  isChaoxingCourseUrl,
-  isChaoxingHomeworkListUrl,
-  isChaoxingHost,
-  isChaoxingIframeNavUrl,
-  isChaoxingPlayableUrl,
-  isChaoxingPlayerUrl,
-  isChaoxingSpaceShell,
-  isChaoxingStudentCourseList,
-  readChaoxingSpaceContext,
-  waitForChaoxingPlayer,
-} from '../platform/chaoxing/nav'
 import { getAgentPolicy } from './agentPolicy'
 import { handleActTools } from './tools/act'
 import { handleNavTools } from './tools/nav'
@@ -63,8 +56,7 @@ import { missingNeedsNote, nextStep } from './nextStep'
 const TYPE_DONE_HINT = '已写入输入框，没有按回车。'
 const emptyPageSnaps = new Map<string, number>()
 
-const graphNodeId = (url: string) => chaoxingNodeId(url) || siteGraphNodeForUrl(url)?.id || ''
-const isShellNode = (id: string, url = '') => isChaoxingSpaceShell(id, url)
+const graphNodeId = (url: string) => siteGraphNodeForUrl(url)?.id || ''
 
 const withBudget = async <T,>(task: Promise<T>, ms: number, fallback: T) => {
   let timer = 0
@@ -221,19 +213,18 @@ export const executeBrowserTool = async (input: {
     chapterResume, chapterQuiz,
     currentUrl, graphUrlOf, liveHref, resetPageProbe,
     notePageProbe, readBrowserPage, getBrowserState, peekAppBrowserUrl, emptyPageSnaps, callProtocol,
-    graphNodeId, siteGraphNodeForUrl, isShellNode, SPACE_HINT, COURSE_HW_HINT,
-    browserTaskIntent, sameChaoxingCourse, isChaoxingIframeNavUrl, isSpaceListTopUrl,
-    IFRAME_NAV_HINT, navigateBrowserView, evalBrowserView, pageHostMatches, pageHostOf, reloadBrowserView,
+    graphNodeId, siteGraphNodeForUrl, navigation: siteNavigationFor(loop.url),
+    browserTaskIntent, navigateBrowserView, evalBrowserView, pageHostMatches, pageHostOf, reloadBrowserView,
     goBackBrowserView, goForwardBrowserView, formatMissRefsHint, cssSelectorFromArgs, looksLikeCssSelector,
     resolveRefLocator, actOnceOnBrowser, clickByLocator, clickBrowserElement, clickBrowserText, observeAfterClick, asObject,
-    rememberLoginTyped, typeBrowserElement, fillByLocator, waitMs, listAppBrowsers, readChaoxingSpaceContext,
+    rememberLoginTyped, typeBrowserElement, fillByLocator, waitMs, listAppBrowsers,
     readPageSnapshot, isEvalActBusy, displaySiteName, missingHostNeeds, missingNeedsNote, nextStep,
     screenshotBrowserView, collectPageCaptchaHits, materializeCaptchaImages, captchaScreenshotHint,
     evaluate, inspectEvalScript, readBrowserLoop, listCachedPageRefs, hostnameOf,
     siteGraphForUrl,
     syncPeekedUrl, patchAppBrowser, scrollBrowserView, typedResult,
-    evalBrowserFrames, isCourseChromeTab,
-    withBudget, isChaoxingStudentCourseList, readCourseTab,
+    evalBrowserFrames,
+    withBudget,
     compactStudyPanel,
   }
   return dispatchBrowserTool(toolCtx)
@@ -245,52 +236,12 @@ export const dispatchBrowserTool = async (ctx: Record<string, any>): Promise<str
     const { handleBrowserHomeShortcuts } = await import('./tools/browserHomeShortcuts')
     return handleBrowserHomeShortcuts(ctx as Parameters<typeof handleBrowserHomeShortcuts>[0])
   }
-  if (ctx.name === 'browser_answer_zjooc') {
-    const { answerZjooc } = await import('./tools/zjoocAnswers')
-    return answerZjooc(ctx as Parameters<typeof answerZjooc>[0])
-  }
-  if (ctx.name === 'browser_play_zjooc') {
-    const { playWebsiteVideos } = await import('./tools/websitePlayback')
-    return playWebsiteVideos('zjooc.cn', 'zjooc', ctx as Parameters<typeof playWebsiteVideos>[2])
-  }
-  if (['browser_request_credentials', 'browser_login_zjooc', 'browser_login_chaoxing'].includes(ctx.name)) {
+  if (ctx.name === 'browser_request_credentials') {
     const { handleLoginTool } = await import('./tools/websiteLogin')
     return handleLoginTool(ctx as Parameters<typeof handleLoginTool>[0])
   }
-  if (ctx.name === 'browser_list_courses' || ctx.name === 'browser_open_course') {
-    const { handleWebsiteCourseTools } = await import('./tools/websiteCourses')
-    return (await handleWebsiteCourseTools(ctx as Parameters<typeof handleWebsiteCourseTools>[0]))!
-  }
-  if (ctx.name === 'browser_list_homework' || ctx.name === 'browser_open_homework') {
-    const { handleWebsiteHomeworkTools } = await import('./tools/websiteHomework')
-    return (await handleWebsiteHomeworkTools(ctx as Parameters<typeof handleWebsiteHomeworkTools>[0]))!
-  }
-  if (ctx.name === 'browser_answer_homework' || ctx.name === 'browser_review_homework') {
-    const { handleWebsiteHomeworkAnswerTools } = await import('./tools/websiteHomeworkAnswers')
-    return handleWebsiteHomeworkAnswerTools(ctx as Parameters<typeof handleWebsiteHomeworkAnswerTools>[0])
-  }
-  if (ctx.name === 'browser_review_chapter_discussion' || ctx.name === 'browser_reply_chapter_discussion') {
-    const { handleWebsiteChapterDiscussion } = await import('./tools/websiteChapterDiscussion')
-    return handleWebsiteChapterDiscussion(ctx as Parameters<typeof handleWebsiteChapterDiscussion>[0])
-  }
-  if (ctx.name === 'browser_start_chapter_tasks') {
-    const { startWebsiteChapterTasks } = await import('./tools/websiteChapterStart')
-    const { prepareWebsiteChapterQuiz } = await import('./tools/websiteChapterQuiz')
-    const chapter = ctx as Parameters<typeof startWebsiteChapterTasks>[0]
-    return startWebsiteChapterTasks({ ...chapter,
-      processQuiz: ctx.chapterQuiz && ctx.policy?.permissionMode !== 'strict'
-        ? (chapterKey, jobId) => prepareWebsiteChapterQuiz(ctx as Parameters<typeof prepareWebsiteChapterQuiz>[0], chapterKey, jobId, ctx.chapterQuiz.range)
-        : undefined,
-    })
-  }
-  if (ctx.name === 'browser_open_pending_chapter') {
-    const { openNextWebsiteChapter } = await import('./tools/websiteChapterDirectory')
-    return openNextWebsiteChapter(ctx as Parameters<typeof openNextWebsiteChapter>[0])
-  }
-  if (ctx.name === 'browser_review_chapter' || ctx.name === 'browser_complete_chapter') {
-    const { handleWebsiteChapterTools } = await import('./tools/websiteChapters')
-    return handleWebsiteChapterTools(ctx as Parameters<typeof handleWebsiteChapterTools>[0])
-  }
+  const siteResult = await dispatchSiteBrowserTool(ctx)
+  if (siteResult != null) return siteResult
   const coursed = await handleCourseTools(ctx)
   if (coursed != null) return coursed
   const navved = await handleNavTools(ctx)

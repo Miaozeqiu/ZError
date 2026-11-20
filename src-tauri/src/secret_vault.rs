@@ -1,5 +1,12 @@
 //! Sensitive data never goes to ordinary configuration files. The encryption key is
 //! owned by the OS credential store; only ciphertext is written to the app directory.
+mod crypto;
+use crypto::*;
+mod migration;
+pub use migration::*;
+mod credentials;
+pub use credentials::*;
+
 use base64::{engine::general_purpose::STANDARD, Engine};
 use parking_lot::Mutex;
 use ring::{
@@ -15,7 +22,9 @@ use std::{
 };
 use zeroize::Zeroizing;
 
+#[cfg(any(target_os = "macos", all(target_os = "linux", not(test))))]
 const SERVICE: &str = "cc.zerror.credentials";
+#[cfg(all(not(test), target_os = "linux"))]
 const KEY_ACCOUNT: &str = "vault-master-v1";
 const PREFIX: &str = "zerror-secure-v1:";
 const DEEPSEEK_ORIGIN: &str = "https://api.deepseek.com";
@@ -71,11 +80,13 @@ impl MasterState {
     }
 }
 static MASTER: OnceLock<Mutex<MasterState>> = OnceLock::new();
+#[cfg(test)]
 fn root() -> PathBuf {
-    #[cfg(test)]
-    {
-        return std::env::temp_dir().join(format!("zerror-vault-tests-{}", std::process::id()));
-    }
+    std::env::temp_dir().join(format!("zerror-vault-tests-{}", std::process::id()))
+}
+
+#[cfg(not(test))]
+fn root() -> PathBuf {
     #[cfg(windows)]
     let home = std::env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
@@ -108,6 +119,7 @@ fn os_key(create: bool) -> Result<Vec<u8>, String> {
         validate_master,
     )
 }
+#[cfg(target_os = "macos")]
 fn validate_master(key: &[u8]) -> Result<(), String> {
     if key.len() != 32 {
         return Err("系统加密密钥无效，原数据已保留".into());
@@ -251,74 +263,8 @@ pub async fn secure_storage_authorize(webview: tauri::Webview) -> Result<(), Str
     })
     .await
 }
-fn seal(key: &[u8], name: &str, value: &[u8]) -> Result<String, String> {
-    let key = aead::LessSafeKey::new(
-        aead::UnboundKey::new(&aead::AES_256_GCM, key).map_err(|_| "加密密钥无效")?,
-    );
-    let mut nonce = [0; 12];
-    SystemRandom::new()
-        .fill(&mut nonce)
-        .map_err(|_| "安全随机源不可用")?;
-    let mut bytes = value.to_vec();
-    key.seal_in_place_append_tag(
-        aead::Nonce::assume_unique_for_key(nonce),
-        aead::Aad::from(name.as_bytes()),
-        &mut bytes,
-    )
-    .map_err(|_| "加密失败")?;
-    let mut output = nonce.to_vec();
-    output.extend(bytes);
-    Ok(format!("{}{}", PREFIX, STANDARD.encode(output)))
-}
-fn open(key: &[u8], name: &str, value: &str) -> Result<Zeroizing<Vec<u8>>, String> {
-    let mut bytes = Zeroizing::new(
-        STANDARD
-            .decode(value.strip_prefix(PREFIX).ok_or("不是安全存储格式")?)
-            .map_err(|_| "密文格式错误")?,
-    );
-    if bytes.len() < 28 {
-        return Err("密文已损坏".into());
-    }
-    let nonce = aead::Nonce::try_assume_unique_for_key(&bytes[..12]).map_err(|_| "密文已损坏")?;
-    let key = aead::LessSafeKey::new(
-        aead::UnboundKey::new(&aead::AES_256_GCM, key).map_err(|_| "加密密钥无效")?,
-    );
-    let plain = key
-        .open_in_place(nonce, aead::Aad::from(name.as_bytes()), &mut bytes[12..])
-        .map_err(|_| "解密校验失败，原数据已保留")?;
-    Ok(Zeroizing::new(plain.to_vec()))
-}
-fn atomic_write(path: &std::path::Path, bytes: &[u8]) -> Result<(), String> {
-    use std::io::Write;
-    let parent = path.parent().ok_or("存储路径无效")?;
-    std::fs::create_dir_all(parent).map_err(|_| "无法创建安全存储目录")?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))
-            .map_err(|_| "无法保护存储目录")?;
-    }
-    let tmp = parent.join(format!(".{}.tmp", uuid::Uuid::new_v4()));
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let result = (|| {
-        let mut file = options.open(&tmp).map_err(|_| "无法写入安全存储")?;
-        file.write_all(bytes)
-            .and_then(|_| file.sync_all())
-            .map_err(|_| "安全存储写入失败")?;
-        std::fs::rename(&tmp, path).map_err(|_| "无法替换安全存储文件")?;
-        Ok(())
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(tmp);
-    }
-    result
-}
+
+
 fn with_vault<T>(
     write: bool,
     f: impl FnOnce(&mut Vault) -> Result<T, String>,
@@ -870,70 +816,8 @@ fn valid_document(name: &str) -> bool {
     ]
     .contains(&name)
 }
-fn legacy_paths(name: &str) -> Vec<PathBuf> {
-    let exe = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(std::path::Path::to_path_buf));
-    match name {
-        "site_accounts" => vec![root().join("site-accounts.json")],
-        "auth" => {
-            let stable = root().join("auth.json");
-            let mut paths = vec![stable.clone()];
-            if let Some(path) = exe.map(|p| p.join("auth.json")) {
-                if path != stable {
-                    paths.push(path);
-                }
-            }
-            paths
-        }
-        "model_settings" | "app_settings" => exe
-            .map(|p| {
-                p.join(if name == "model_settings" {
-                    "model_config.json"
-                } else {
-                    "config.json"
-                })
-            })
-            .into_iter()
-            .collect(),
-        _ => vec![],
-    }
-}
-fn retire_legacy(name: &str) -> Result<(), String> {
-    for path in legacy_paths(name) {
-        if path.exists() {
-            let bytes = Zeroizing::new(std::fs::read(&path).map_err(|_| "无法读取旧配置")?);
-            let backup = root().join("secure/migration").join(format!(
-                "{}-{}.enc",
-                name,
-                uuid::Uuid::new_v4()
-            ));
-            let cipher = with_key(|key| seal(key, name, &bytes))?;
-            atomic_write(&backup, cipher.as_bytes())?;
-            with_key(|key| {
-                if open(
-                    key,
-                    name,
-                    &std::fs::read_to_string(&backup).map_err(|_| "迁移备份无法读取")?,
-                )?
-                .as_slice()
-                    != bytes.as_slice()
-                {
-                    return Err("加密迁移备份校验失败".into());
-                }
-                Ok(())
-            })?;
-            std::fs::remove_file(path).map_err(|_| "旧明文配置清理失败")?;
-        }
-    }
-    Ok(())
-}
-fn scrub_stored_chats(v: &mut Vault) {
-    if let Some(mut chats) = v.documents.remove("agent_chats") {
-        redact_value(v, &mut chats);
-        v.documents.insert("agent_chats".into(), chats);
-    }
-}
+
+
 pub fn document_read(name: &str, legacy: Option<Value>) -> Result<Value, String> {
     if !valid_document(name) {
         return Err("无效的存储名称".into());
@@ -1033,244 +917,8 @@ pub async fn secure_redact(webview: tauri::Webview, value: Value) -> Result<Valu
     trusted_webview(&webview)?;
     storage_task(move || redact(value)).await
 }
-#[tauri::command]
-pub async fn secure_register(
-    webview: tauri::Webview,
-    site: String,
-    fields: BTreeMap<String, String>,
-) -> Result<Value, String> {
-    trusted_webview(&webview)?;
-    storage_task(move || register_inner(site, fields)).await
-}
-fn register_inner(site: String, fields: BTreeMap<String, String>) -> Result<Value, String> {
-    register_site_fields(site, fields, None)
-}
 
-// Called by the desktop credential form, separate from registration of secrets found in messages.
-#[tauri::command]
-pub async fn secure_save_chat_login(
-    webview: tauri::Webview,
-    site: String,
-    login_origin: String,
-    account: String,
-    password: String,
-) -> Result<(), String> {
-    trusted_webview(&webview)?;
-    let fields = BTreeMap::from([("account".into(), account), ("password".into(), password)]);
-    storage_task(move || register_site_fields(site, fields, Some(&login_origin)).map(|_| ())).await
-}
 
-fn register_site_fields(site: String, fields: BTreeMap<String, String>, login_origin: Option<&str>) -> Result<Value, String> {
-    if site.is_empty()
-        || site.len() > 253
-        || !site
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || ".-_".contains(c))
-    {
-        return Err("网站标识无效".into());
-    }
-    with_vault(true, |v| {
-        if let Some(target) = login_origin {
-            if !site_origins(&site).iter().any(|allowed| allowed == target) {
-                return Err("此登录域名未获准使用该网站的凭据".into());
-            }
-        }
-        let pending = login_origin.is_none() && !approved_site(v, &site);
-        let site = if pending && !site.starts_with("pending-") {
-            format!("pending-{}", uuid::Uuid::new_v4())
-        } else {
-            site.clone()
-        };
-        let clear_password = !fields.contains_key("password")
-            && fields
-                .get("account")
-                .is_some_and(|value| account_changed(v, &site, value));
-        let mut references = serde_json::Map::new();
-        for (field, value) in fields {
-            if !["account", "password"].contains(&field.as_str())
-                || value.is_empty()
-                || value.len() > 8192
-            {
-                return Err("凭据字段无效".into());
-            }
-            references.insert(
-                field.clone(),
-                Value::String(put_secret(
-                    v,
-                    &format!("site/{}/{}", site, field),
-                    &value,
-                    "site",
-                    site_origins(&site),
-                )?),
-            );
-        }
-        let mut row = v
-            .documents
-            .get("site_accounts")
-            .and_then(|d| d.get(&site))
-            .cloned()
-            .unwrap_or(json!({"note":""}));
-        for (key, value) in &references {
-            row[key] = value.clone();
-        }
-        if clear_password {
-            row["password"] = json!("");
-            v.secrets.remove(&format!("site/{}/password", site));
-        }
-        row["accountLabel"] = json!("已保存账号");
-        row["updatedAt"] = json!(chrono::Utc::now().timestamp_millis());
-        if !v.documents.contains_key("site_accounts") {
-            v.documents.insert("site_accounts".into(), json!({}));
-        }
-        v.documents.get_mut("site_accounts").unwrap()[&site] = row;
-        scrub_stored_chats(v);
-        Ok(json!({"ok":true,"site":site,"pending":pending,"references":references}))
-    })
-}
-pub fn resolve(reference: &str, kind: &str, target: &str) -> Result<Zeroizing<String>, String> {
-    with_vault(false, |v| resolve_in_vault(v, reference, kind, target))
-}
-#[cfg(any(windows, target_os = "macos"))]
-pub(crate) fn resolve_site_input(
-    reference: &str,
-    target: &str,
-    password_input: bool,
-) -> Result<Zeroizing<String>, String> {
-    with_vault(false, |vault| {
-        let canonical = vault.aliases.get(reference).map(String::as_str).unwrap_or(reference);
-        let id = token_id(canonical).ok_or("无效的凭据变量")?;
-        let field = if password_input { "/password" } else { "/account" };
-        if !id.starts_with("site/") || !id.ends_with(field) {
-            return Err("凭据类型与输入框不匹配，已阻止填写".into());
-        }
-        resolve_in_vault(vault, reference, "site", target)
-    })
-}
-
-// Username display is a separate UI projection: no secret-reference argument and
-// no password/API entries can be selected through this command.
-fn site_account_names_in_vault(vault: &Vault) -> BTreeMap<String, String> {
-    let mut names = BTreeMap::new();
-    if let Some(rows) = vault.documents.get("site_accounts").and_then(Value::as_object) {
-        for (site, row) in rows {
-            let Some(reference) = row.get("account").and_then(Value::as_str) else { continue; };
-            let reference = vault.aliases.get(reference).map(String::as_str).unwrap_or(reference);
-            let Some(id) = token_id(reference) else { continue; };
-            if id != format!("site/{}/account", site) { continue; }
-            if let Some(secret) = vault.secrets.get(id).filter(|secret| secret.kind == "site") {
-                names.insert(site.clone(), secret.value.clone());
-            }
-        }
-    }
-    names
-}
-// Mutate only these website records under the vault lock. Other windows may
-// have saved new credentials since the settings page loaded its account list.
-#[tauri::command]
-pub async fn secure_remove_site_accounts(webview: tauri::Webview, ids: Vec<String>) -> Result<(), String> {
-    trusted_webview(&webview)?;
-    if ids.is_empty() || ids.iter().any(|id| id.is_empty() || id.len() > 253 ||
-        !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-')) {
-        return Err("无效的网站标识".into());
-    }
-    storage_task(move || with_vault(true, |vault| {
-        if let Some(rows) = vault.documents.get_mut("site_accounts").and_then(Value::as_object_mut) {
-            for id in &ids { rows.remove(id); }
-        }
-        for id in &ids {
-            for field in ["account", "password"] {
-                let key = format!("site/{id}/{field}");
-                let reference = token(&key);
-                vault.secrets.remove(&key);
-                vault.retired.retain(|(_, target)| target != &reference);
-                vault.aliases.retain(|alias, target| alias != &reference && target != &reference);
-            }
-        }
-        Ok(())
-    })).await
-}
-
-#[tauri::command]
-pub async fn secure_site_account_names(webview: tauri::Webview) -> Result<BTreeMap<String, String>, String> {
-    trusted_webview(&webview)?;
-    storage_task(|| with_vault(false, |vault| Ok(site_account_names_in_vault(vault)))).await
-}
-
-fn site_password_length(vault: &Vault, reference: &str) -> Result<usize, String> {
-    let reference = vault.aliases.get(reference).map(String::as_str).unwrap_or(reference);
-    let id = token_id(reference).ok_or("无效的凭据变量")?;
-    let password = vault.secrets.get(id)
-        .filter(|secret| secret.kind == "site" && id.starts_with("site/") && id.ends_with("/password"))
-        .ok_or("网站密码已删除或尚未配置")?;
-    Ok(password.value.chars().count())
-}
-
-#[tauri::command]
-pub async fn secure_site_password_length(webview: tauri::Webview, reference: String) -> Result<usize, String> {
-    trusted_webview(&webview)?;
-    storage_task(move || with_vault(false, |vault| site_password_length(vault, &reference))).await
-}
-
-#[tauri::command]
-pub async fn secure_api_key_length(
-    webview: tauri::Webview,
-    reference: String,
-) -> Result<usize, String> {
-    trusted_webview(&webview)?;
-    storage_task(move || {
-        with_vault(false, |vault| {
-            let id = token_id(&reference).ok_or("无效的凭据变量")?;
-            let key = vault
-                .secrets
-                .get(id)
-                .filter(|secret| secret.kind == "api")
-                .ok_or("API Key 已删除或尚未配置")?;
-            Ok(key.value.chars().count())
-        })
-    })
-    .await
-}
-
-// User-only retrieval. Never expose this as an IPC command or call from Agent tools.
-// The native verification boundary in secret_access must authorize every use.
-pub(crate) fn value_for_verified_user(reference: &str) -> Result<Zeroizing<String>, String> {
-    with_vault(false, |v| {
-        let reference = v
-            .aliases
-            .get(reference)
-            .map(String::as_str)
-            .unwrap_or(reference);
-        let id = token_id(reference).ok_or("无效的凭据变量")?;
-        let secret = v.secrets.get(id).ok_or("凭据已删除或尚未配置")?;
-        if !["site", "api"].contains(&secret.kind.as_str()) {
-            return Err("不支持查看此凭据".into());
-        }
-        Ok(Zeroizing::new(secret.value.clone()))
-    })
-}
-fn resolve_in_vault(
-    v: &Vault,
-    reference: &str,
-    kind: &str,
-    target: &str,
-) -> Result<Zeroizing<String>, String> {
-    let reference = v
-        .aliases
-        .get(reference)
-        .map(String::as_str)
-        .unwrap_or(reference);
-    let id = token_id(reference).ok_or("无效的凭据变量")?;
-    let secret = v.secrets.get(id).ok_or("凭据已删除或尚未配置")?;
-    let origin = origin(target).ok_or("目标地址无效")?;
-    if secret.kind != kind || !secret.origins.contains(&origin) {
-        return Err("凭据与当前网站或服务不匹配，已阻止填写或发送".into());
-    }
-    // Stored credentials may predate a domain removal.
-    if kind == "site" && !id.split('/').nth(1).is_some_and(|site| site_origins(site).contains(&origin)) {
-        return Err("凭据与当前网站或服务不匹配，已阻止填写或发送".into());
-    }
-    Ok(Zeroizing::new(secret.value.clone()))
-}
 pub fn redact(mut value: Value) -> Result<Value, String> {
     with_vault(false, |v| {
         redact_value(v, &mut value);
@@ -1338,67 +986,6 @@ mod tests {
     }
 }
 
-#[tauri::command]
-pub async fn secure_register_api(
-    webview: tauri::Webview,
-    provider: String,
-    value: String,
-) -> Result<Value, String> {
-    trusted_webview(&webview)?;
-    storage_task(move || register_api_inner(provider, value)).await
-}
-fn register_api_inner(provider: String, value: String) -> Result<Value, String> {
-    if value.is_empty() || value.len() > 8192 {
-        return Err("API Key 无效".into());
-    }
-    with_vault(true, |v| {
-        let search_provider = SEARCH_API_KEYS
-            .iter()
-            .find(|(id, _, _)| provider.strip_prefix("search/") == Some(*id))
-            .copied();
-        let (id, origins) = if let Some((_, field, endpoint)) = search_provider {
-            (format!("search/{}", field), vec![endpoint.into()])
-        } else {
-            let platform = v
-                .documents
-                .get("model_settings")
-                .and_then(|d| d["platforms"].as_array())
-                .and_then(|rows| rows.iter().find(|p| p["id"].as_str() == Some(&provider)));
-            let endpoint = platform
-                .and_then(|p| p["baseUrl"].as_str())
-                .and_then(origin)
-                .ok_or("请先在设置中配置对应模型平台，再登记 API Key")?;
-            if platform.is_some_and(is_official_deepseek) {
-                (DEEPSEEK_KEY_ID.into(), vec![endpoint])
-            } else {
-                (format!("model/{}/apiKey", provider), vec![endpoint])
-            }
-        };
-        let reference = put_secret(v, &id, &value, "api", origins)?;
-        if id == DEEPSEEK_KEY_ID {
-            let settings = v.documents.entry("model_settings".into())
-                .or_insert_with(|| json!({"platforms": []}));
-            settings[DEEPSEEK_KEY_FIELD] = json!(reference);
-        } else if let Some((_, field, _)) = search_provider {
-            if let Some(settings) = v.documents.get_mut("app_settings") {
-                settings["search"][field] = json!(reference);
-            }
-        } else if let Some(rows) = v
-            .documents
-            .get_mut("model_settings")
-            .and_then(|d| d["platforms"].as_array_mut())
-        {
-            if let Some(platform) = rows
-                .iter_mut()
-                .find(|p| p["id"].as_str() == Some(&provider))
-            {
-                platform["apiKey"] = json!(reference);
-            }
-        }
-        scrub_stored_chats(v);
-        Ok(json!({"ok":true,"references":{"api_key":reference}}))
-    })
-}
 
 pub(crate) fn trusted_webview(webview: &tauri::Webview) -> Result<(), String> {
     // The host can also contain native browser tabs. Only the app's own view
@@ -1409,191 +996,6 @@ pub(crate) fn trusted_webview(webview: &tauri::Webview) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
-pub async fn secure_archive_legacy(
-    webview: tauri::Webview,
-    values: BTreeMap<String, Value>,
-) -> Result<(), String> {
-    trusted_webview(&webview)?;
-    storage_task(move || archive_legacy_inner(values)).await
-}
-fn archive_legacy_inner(values: BTreeMap<String, Value>) -> Result<(), String> {
-    with_vault(true, |v| {
-        for (name, value) in values {
-            if !name.starts_with("zerror-site-accounts-") {
-                return Err("不支持的旧存储名称".into());
-            }
-            v.documents
-                .entry("legacy_archives".into())
-                .or_insert(json!({}))[name] = value;
-        }
-        Ok(())
-    })
-}
-fn archive_file(path: &std::path::Path) -> Result<(), String> {
-    let bytes = Zeroizing::new(std::fs::read(path).map_err(|_| "旧敏感文件无法读取")?);
-    let archive = root()
-        .join("secure/migration")
-        .join(format!("archive-{}.enc", uuid::Uuid::new_v4()));
-    let encrypted = with_key(|key| seal(key, "legacy-archive", &bytes))?;
-    atomic_write(&archive, encrypted.as_bytes())?;
-    with_key(|key| {
-        let check = std::fs::read_to_string(&archive).map_err(|_| "迁移归档无法读取")?;
-        if open(key, "legacy-archive", &check)?.as_slice() != bytes.as_slice() {
-            return Err("加密归档校验失败".into());
-        }
-        Ok(())
-    })?;
-    std::fs::remove_file(path).map_err(|_| "旧敏感文件清理失败".to_string())
-}
-fn clean_tree(dir: &std::path::Path, mode: &str, depth: usize) -> Result<usize, String> {
-    if depth > 12 || !dir.exists() {
-        return Ok(0);
-    }
-    let mut count = 0;
-    for entry in std::fs::read_dir(dir).map_err(|_| "无法扫描旧敏感文件")? {
-        let entry = entry.map_err(|_| "无法扫描旧敏感文件")?;
-        let kind = entry.file_type().map_err(|_| "无法识别旧文件")?;
-        if kind.is_symlink() {
-            continue;
-        }
-        if kind.is_dir() {
-            count += clean_tree(&entry.path(), mode, depth + 1)?;
-            continue;
-        }
-        if !kind.is_file() {
-            continue;
-        }
-        let name = entry.file_name().to_string_lossy().to_string();
-        if mode == "logs"
-            || (mode == "accounts" && name.starts_with("site-accounts") && name.ends_with(".json"))
-        {
-            archive_file(&entry.path())?;
-            count += 1;
-        } else if mode == "skills"
-            && ["md", "json"].contains(
-                &entry
-                    .path()
-                    .extension()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or(""),
-            )
-        {
-            let raw = std::fs::read_to_string(entry.path()).map_err(|_| "旧经验文件无法读取")?;
-            let safe = with_vault(false, |v| Ok(redact_text(v, &raw)))?;
-            if safe != raw {
-                // Encrypted recovery copy must exist before replacing an old experience file.
-                let encrypted = with_key(|key| seal(key, "legacy-archive", raw.as_bytes()))?;
-                atomic_write(
-                    &root()
-                        .join("secure/migration")
-                        .join(format!("experience-{}.enc", uuid::Uuid::new_v4())),
-                    encrypted.as_bytes(),
-                )?;
-                atomic_write(&entry.path(), safe.as_bytes())?;
-                count += 1;
-            }
-        }
-    }
-    Ok(count)
-}
-#[tauri::command]
-pub async fn secure_cleanup_legacy(webview: tauri::Webview) -> Result<Value, String> {
-    trusted_webview(&webview)?;
-    tauri::async_runtime::spawn_blocking(cleanup_legacy)
-        .await
-        .map_err(|_| "敏感数据迁移任务失败".to_string())?
-}
-fn cleanup_legacy() -> Result<Value, String> {
-    let mut count = clean_tree(&root().join("backups"), "accounts", 0)?;
-    for directory in ["skills", "skill-overrides"] {
-        count += clean_tree(&root().join(directory), "skills", 0)?;
-    }
-    #[cfg(debug_assertions)]
-    {
-        let project = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .ok_or("开发目录无效")?;
-        count += clean_tree(&project.join("logs/agent-chat"), "logs", 0)?;
-    }
-    Ok(json!({"ok":true,"files":count}))
-}
-
-#[tauri::command]
-pub async fn secure_bind_pending(
-    webview: tauri::Webview,
-    pending: String,
-    site: String,
-) -> Result<Value, String> {
-    trusted_webview(&webview)?;
-    storage_task(move || bind_pending_inner(pending, site)).await
-}
-fn bind_pending_inner(pending: String, site: String) -> Result<Value, String> {
-    if !pending.starts_with("pending-")
-        || site.starts_with("pending-")
-        || site.is_empty()
-        || site.len() > 253
-        || !site
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || ".-_".contains(c))
-    {
-        return Err("待关联凭据或网站无效".into());
-    }
-    with_vault(true, |v| {
-        let mut row = v
-            .documents
-            .get("site_accounts")
-            .and_then(|d| d.get(&site))
-            .cloned()
-            .unwrap_or(json!({"note":""}));
-        let clear_password = !v
-            .secrets
-            .contains_key(&format!("site/{}/password", pending))
-            && v.secrets
-                .get(&format!("site/{}/account", pending))
-                .is_some_and(|secret| account_changed(v, &site, &secret.value));
-        let mut count = 0;
-        for field in ["account", "password"] {
-            let old_id = format!("site/{}/{}", pending, field);
-            if let Some(secret) = v.secrets.get(&old_id).cloned() {
-                let reference = put_secret(
-                    v,
-                    &format!("site/{}/{}", site, field),
-                    &secret.value,
-                    "site",
-                    site_origins(&site),
-                )?;
-                v.aliases.insert(token(&old_id), reference.clone());
-                for (_, retired) in &mut v.retired {
-                    if *retired == token(&old_id) {
-                        *retired = reference.clone();
-                    }
-                }
-                row[field] = json!(reference);
-                v.secrets.remove(&old_id);
-                count += 1;
-            }
-        }
-        if count == 0 {
-            return Err("待关联凭据不存在".into());
-        }
-        if clear_password {
-            row["password"] = json!("");
-            v.secrets.remove(&format!("site/{}/password", site));
-        }
-        row["accountLabel"] = json!("已保存账号");
-        row["updatedAt"] = json!(chrono::Utc::now().timestamp_millis());
-        v.documents
-            .get_mut("site_accounts")
-            .unwrap()
-            .as_object_mut()
-            .unwrap()
-            .remove(&pending);
-        v.documents.get_mut("site_accounts").unwrap()[&site] = row;
-        scrub_stored_chats(v);
-        Ok(json!({"ok":true}))
-    })
-}
 
 #[cfg(test)]
 mod credential_tests {

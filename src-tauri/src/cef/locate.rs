@@ -4,8 +4,7 @@
 use crate::cdp_client::CdpConn;
 use crate::cef::{bind_page, dispatch_click, owner_of_session_exact};
 use serde_json::{json, Value};
-use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
+use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 use tauri::AppHandle;
 
@@ -109,23 +108,19 @@ fn ax_bool(node: &Value, name: &str) -> bool {
   })
 }
 
-fn last_boxes() -> &'static Mutex<HashMap<String, String>> {
-  static MAP: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
-  MAP.get_or_init(|| Mutex::new(HashMap::new()))
-}
+/// Last observed positions for recently used locators in one live tab.
+#[derive(Default)]
+pub(super) struct LocatorBoxes(VecDeque<(String, String)>);
 
-fn remember_box(id: &str, loc: &Locator, box_key: &str) -> bool {
-  let key = format!("{}:{}", id, loc.sig());
-  if let Ok(mut map) = last_boxes().lock() {
-    if let Some(prev) = map.get(&key) {
-      if prev != box_key {
-        map.insert(key, box_key.to_string());
-        return false;
-      }
-    }
-    map.insert(key, box_key.to_string());
+impl LocatorBoxes {
+  fn remember(&mut self, key: String, position: String) -> bool {
+    let previous = self.0.iter().position(|(stored, _)| stored == &key)
+      .and_then(|index| self.0.remove(index));
+    let stable = previous.is_none_or(|(_, old)| old == position);
+    if self.0.len() >= 256 { self.0.pop_front(); }
+    self.0.push_back((key, position));
+    stable
   }
-  true
 }
 
 #[cfg(test)]
@@ -279,47 +274,6 @@ async fn node_box(conn: &CdpConn, session: Option<&str>, node_id: i64) -> Option
   Some((x, y, w * h))
 }
 
-/// 边框盒 (x1, y1, x2, y2)，视口坐标。
-async fn border_rect(conn: &CdpConn, session: Option<&str>, node_id: i64) -> Option<(f64, f64, f64, f64)> {
-  let model = conn
-    .call("DOM.getBoxModel", json!({ "nodeId": node_id }), session)
-    .await
-    .ok()?;
-  let border = model.get("model").and_then(|v| v.get("border")).and_then(|v| v.as_array())?;
-  let nums: Vec<f64> = border.iter().filter_map(|v| v.as_f64()).collect();
-  if nums.len() < 8 {
-    return None;
-  }
-  let xs = [nums[0], nums[2], nums[4], nums[6]];
-  let ys = [nums[1], nums[3], nums[5], nums[7]];
-  let min = |arr: &[f64; 4]| arr.iter().cloned().fold(f64::INFINITY, f64::min);
-  let max = |arr: &[f64; 4]| arr.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-  Some((min(&xs), min(&ys), max(&xs), max(&ys)))
-}
-
-fn rect_inside(inner: (f64, f64, f64, f64), outer: (f64, f64, f64, f64), slack: f64) -> bool {
-  inner.0 >= outer.0 - slack
-    && inner.1 >= outer.1 - slack
-    && inner.2 <= outer.2 + slack
-    && inner.3 <= outer.3 + slack
-}
-
-/// 目标中心点命中的若是别的节点，先看它的盒子是否整个落在目标盒子里。
-/// 落在里面的多半是自己的文字 span / 图标（`.posCatalog_select` 里的 `.posCatalog_name`），不算挡；
-/// 伸出目标盒子的才是真正的遮罩 / 弹层。
-/// 目标是文字节点（AX StaticText）时，命中的是包着它的元素，盒子反过来包住文字，也不算挡。
-async fn covered(
-  conn: &CdpConn,
-  session: Option<&str>,
-  backend: i64,
-  node_id: i64,
-  is_text: bool,
-  x: f64,
-  y: f64,
-) -> Option<String> {
-  crate::cef::click_landed_elsewhere(conn, session, backend, x, y).await
-}
-
 struct Ready {
   x: f64,
   y: f64,
@@ -331,9 +285,7 @@ struct Ready {
 async fn ready_of(
   conn: &CdpConn,
   session: Option<&str>,
-  node_id: i64,
   backend: i64,
-  is_text: bool,
   text: &str,
   disabled: bool,
   readonly: bool,
@@ -353,7 +305,7 @@ async fn ready_of(
   let Some((x, y, _area)) = node_box(conn, session, node_id).await else {
     return Err(fail("hidden", json!({ "text": text })));
   };
-  if let Some(cover) = covered(conn, session, backend, node_id, is_text, x, y).await {
+  if let Some(cover) = crate::cef::click_landed_elsewhere(conn, session, backend, x, y).await {
     return Err(fail("covered", json!({ "text": text, "cover": cover })));
   }
   Ok(Ready {
@@ -384,7 +336,7 @@ async fn css_in_root(conn: &CdpConn, session: Option<&str>, root: i64, loc: &Loc
       .ok()
       .and_then(|v| v.get("node").and_then(|n| n.get("backendNodeId")).and_then(|b| b.as_i64()))
       .unwrap_or(0);
-    ready.push(ready_of(conn, session, node_id, backend, false, &loc.value, false, false).await);
+    ready.push(ready_of(conn, session, backend, &loc.value, false, false).await);
   }
   ready
 }
@@ -397,17 +349,10 @@ async fn ax_in_root(conn: &CdpConn, session: Option<&str>, frame_id: &str, loc: 
     Ok(rows) => rows, Err(error) => return vec![Err(error)],
   };
   for (backend, name, disabled, readonly) in candidates {
-    let Some(node_id) = push_backend(conn, session, backend).await else {
+    if push_backend(conn, session, backend).await.is_none() {
       continue;
-    };
-    // StaticText 对应 DOM 文字节点（nodeType 3），中心点命中的会是父元素。
-    let is_text = conn
-      .call("DOM.describeNode", json!({ "nodeId": node_id }), session)
-      .await
-      .ok()
-      .and_then(|v| v.get("node").and_then(|n| n.get("nodeType")).and_then(|t| t.as_i64()))
-      == Some(3);
-    ready.push(ready_of(conn, session, node_id, backend, is_text, &name, disabled, readonly).await);
+    }
+    ready.push(ready_of(conn, session, backend, &name, disabled, readonly).await);
   }
   ready
 }
@@ -415,12 +360,12 @@ async fn ax_in_root(conn: &CdpConn, session: Option<&str>, frame_id: &str, loc: 
 async fn rows_in_doc(conn: &CdpConn, session: Option<&str>, doc: &DocRoot, loc: &Locator) -> Vec<Result<Ready, Value>> {
   let mut rows = if loc.backend > 0 {
     // frame / loader 身份已在 cdp_find 中验证。ref 指向这一颗节点，不能再按同名 nth 改找别的。
-    let Some(node_id) = push_backend(conn, session, loc.backend).await else {
+    if push_backend(conn, session, loc.backend).await.is_none() {
       return vec![Err(fail("invalid", json!({ "error": "快照节点已移除，请重新读取页面" })))];
-    };
+    }
     let partial = conn.call("Accessibility.getPartialAXTree", json!({ "backendNodeId": loc.backend, "fetchRelatives": false }), session).await.unwrap_or(Value::Null);
     let node = partial["nodes"].as_array().and_then(|nodes| nodes.iter().find(|n| n["backendDOMNodeId"].as_i64() == Some(loc.backend)));
-    vec![ready_of(conn, session, node_id, loc.backend, false, if loc.name.is_empty() { &loc.value } else { &loc.name },
+    vec![ready_of(conn, session, loc.backend, if loc.name.is_empty() { &loc.value } else { &loc.name },
       node.is_some_and(|n| ax_bool(n, "disabled")), node.is_some_and(|n| ax_bool(n, "readonly"))).await]
   } else if loc.by == "css" {
     css_in_root(conn, session, doc.node_id, loc).await
@@ -521,8 +466,8 @@ fn locators_of(raw: &Value) -> Vec<Locator> {
     .collect()
 }
 
-async fn finish_find(
-  id: &str,
+fn finish_find(
+  boxes: &mut LocatorBoxes,
   loc: &Locator,
   session: Option<String>,
   rows: Vec<Result<Ready, Value>>,
@@ -532,7 +477,7 @@ async fn finish_find(
     Err(err) => return Ok(err),
   };
   let box_key = format!("{},{}", picked.x.round() as i64, picked.y.round() as i64);
-  if !remember_box(id, loc, &box_key) {
+  if !boxes.remember(loc.sig(), box_key.clone()) {
     return Ok(fail("unstable", json!({ "text": picked.text, "box": box_key })));
   }
   Ok(json!({
@@ -553,10 +498,10 @@ pub async fn cdp_find(_app: AppHandle, id: String, locator: Value) -> Result<Val
   if locs.is_empty() {
     return Ok(fail("invalid", json!({ "retry": false })));
   }
+  let lock = crate::cef::browser::locator_boxes(&id)?;
   let page = bind_page(&id).await?;
   // getDocument → nodeId 链路要独占，否则被并发的整帧读 HTML 作废 nodeId。
-  let lock = crate::cef::dom_lock(&id);
-  let _held = lock.lock().await;
+  let mut boxes = lock.lock().await;
   let contexts = crate::cef::frames::contexts(&page).await?;
   let mut last = fail("not_found", json!({}));
   let mut settled: Option<Value> = None;
@@ -588,7 +533,7 @@ pub async fn cdp_find(_app: AppHandle, id: String, locator: Value) -> Result<Val
       target.loader_id = frame.loader_id.clone();
       match locate_frame(&page.conn, frame.session.as_deref(), &target).await {
         Ok(rows) => {
-          let hit = finish_find(&id, &target, frame.session.clone(), rows).await?;
+          let hit = finish_find(&mut boxes, &target, frame.session.clone(), rows)?;
           if hit["ok"].as_bool() == Some(true) || find_wait_done(&hit) { return Ok(hit); }
           if settled.is_none() && hit["reason"].as_str() != Some("not_found") { settled = Some(hit.clone()); }
           last = hit;

@@ -409,6 +409,7 @@ export const commitNewChatDraft = () => {
   const session = ensureNewChatDraft()
   const browserIds = [...new Set([...(session.browserIds || []), session.browserId || ''].filter(Boolean))]
   if (browserIds.length) saveTemporaryBrowsers(browserIds)
+  for (const old of sessions.value.slice(39)) removeChat(old.id)
   sessions.value = [session, ...sessions.value].slice(0, 40)
   activeId.value = session.id
   newChatDraft.value = null
@@ -418,6 +419,7 @@ export const commitNewChatDraft = () => {
 export const createChat = (init?: NewChatOptions) => {
   if (init?.activate !== false) composerAttachments.value = []
   const session = makeChatSession(init)
+  for (const old of sessions.value.slice(39)) removeChat(old.id)
   sessions.value = [session, ...sessions.value].slice(0, 40)
   if (init?.activate !== false) activeId.value = session.id
   persistSoon()
@@ -541,17 +543,27 @@ export const ensureBrowserChat = (input: { browserId: string; title?: string }) 
   })
 }
 
+const releaseChatMemory = (id: string) => {
+  void Promise.all([
+    import('./toolShared').then(mod => mod.clearListedQuestions(id)),
+    import('./browserTask').then(mod => mod.clearBrowserTaskIntent(id)),
+    import('./failGate').then(mod => mod.clearFailGate(id)),
+    import('./browserTodo').then(mod => mod.clearTodoRounds(id)),
+    import('./chatStudy').then(mod => mod.clearStudyEvalCooldown(id)),
+  ]).catch(error => console.error('[agent] 会话缓存清理失败', error))
+}
+
 export const removeChat = (id: string) => {
   const current = sessions.value.find(session => session.id === id)
   const browserIds = [...new Set([...(current?.browserIds || []), current?.browserId || ''].filter(Boolean))]
-  if (sessionIsStreaming(sessions.value.find((session) => session.id === id))) {
-    stopChat(id)
-  }
+  stopChat(id)
+  releaseChatMemory(id)
   sessions.value = sessions.value.filter((session) => session.id !== id)
   if (activeId.value === id) activeId.value = sessions.value.find((session) => !session.parentId)?.id || null
   persist()
   if (browserIds.length) {
     void import('./agentBrowser').then(({ releaseChatBrowsers }) => releaseChatBrowsers(browserIds))
+      .catch(error => console.error('[agent] 浏览器释放失败', error))
   }
 }
 

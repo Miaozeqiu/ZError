@@ -43,10 +43,9 @@ import { isModelStopped, runTextModel, type ModelToolCall, type RunTextModelOpti
 import { parseToolArgs } from '../toolArgs'
 import { scheduleStudyProgressEval } from '../chatStudy'
 import { createBrowserControlGate } from '../browserControlGate'
-import { createLearningCompletionCheck } from '../siteLearningReview'
 import { peekAppBrowserUrl } from '../../browser/appBrowser'
 import { createWatchContinuation } from '../watchContinuation'
-import { createTaskCompletionCheck, type AgentTaskOutcome } from '../taskCompletion'
+import { canReviewFinalReply, createTaskCompletionCheck, type AgentTaskOutcome } from '../taskCompletion'
 import { videoWatchFor } from '../../platform/panelAccess'
 import type { ChapterWorkflowResume } from '../tools/websiteChapterStart'
 
@@ -147,17 +146,6 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
     todos: liveMessage()?.todos || [],
     steps: liveMessage()?.steps || [],
   }))
-  const learningCheck = createLearningCompletionCheck(() => {
-    const session = liveSession(sessionId)
-    const steps = liveMessage()?.steps || []
-    const todos = session?.todos || []
-    return {
-      url: peekAppBrowserUrl(session?.browserId || ''), steps,
-      enabled: role === 'parent' && !abort.signal.aborted,
-      ready: (todos.some(item => item.status === 'done') && todos.every(item => item.status !== 'pending'))
-        || steps.some(step => step.name === 'browser_finish' && parseToolArgs(step.result || '').learningRequired === true),
-    }
-  })
   const visibleText = (text?: string) => Boolean(String(text || '').replace(/\u200B/g, '').trim())
   const stripMarks = (text: string) => redactText(String(text || '').replace(/\u200B/g, ''))
   let consultedSitePath = ''
@@ -282,9 +270,16 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
     await flushChatCheckpoint()
     let startupContext = ''
     let startupCaptchaPending = false
-    const loginToolGuidance = '本轮只使用已提供的 browser_login_zjooc 和 browser_finish。空参数调用用于获取当前验证码图。根据最新工具回执报告结果，避免推测失败原因或复述验证码。'
+    const loginToolGuidance = '验证码登录尚未确认时，只使用已提供的 browser_login_zjooc 和 browser_finish。空参数调用用于获取当前验证码图，按最新回执处理。宿主确认 loggedIn=true 后会恢复正常工具目录，再按用户原始任务继续。避免推测失败原因或复述验证码。'
     const projectTools = (available: unknown[]) => modelAgentTools([...toolRegistry(available).values()], liveSession(sessionId))
     const currentCatalog = async () => await liveTools?.() ?? tools
+    const currentModelTools = async () => {
+      const catalog = [...toolRegistry(await currentCatalog()).values()]
+      if (startupCaptchaPending) {
+        return catalog.filter(tool => tool.function.name === 'browser_login_zjooc' || tool.function.name === 'browser_finish')
+      }
+      return input.deferTools ? projectTools(catalog) : catalog
+    }
     const modelOptions: RunTextModelOptions = {
       timeoutMs,
       validateTools: true,
@@ -292,17 +287,24 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
       userContent,
       signal: abort.signal,
       tools: input.deferTools ? projectTools(tools) : tools,
-      liveTools: input.deferTools ? async () => projectTools(await currentCatalog()) : liveTools,
+      liveTools: currentModelTools,
       systemPrompt,
       useAgentModel: true,
       history,
       maxRounds,
       liveContext: () => controlGate.liveContext(async () => [startupContext, await liveContext?.() || '', run.context(), taskStateContext(liveSession(sessionId), assistantId)].join('\n')),
-      beforeComplete: async remaining => {
+      beforeComplete: async (remaining, response) => {
         const recovery = !completion.terminal() ? run.beforeComplete() : undefined
         if (recovery) return recovery
         const continuation = await continueVideo()
-        return completion.beforeComplete(remaining, continuation) || learningCheck.beforeComplete(remaining)
+        const message = liveMessage()
+        if (role === 'parent' && response && !continuation && !startupCaptchaPending && message
+          && !completion.terminal() && canReviewFinalReply({ steps: message.steps, todos: message.todos || [] })
+          && toolRegistry(await currentCatalog()).has('browser_finish')) {
+          const receipt = await hostTool('browser_finish', { status: 'done', summary: response.slice(0, 600) })
+          if (!receipt.finished && receipt.error) return String(receipt.error)
+        }
+        return completion.beforeComplete(remaining, continuation)
       },
       subscribePause: listener => {
         pauseListeners.add(listener); listener(waitingForVideo || waitingForApproval || runningChapterWorkflow)
@@ -316,10 +318,6 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
         })
       },
       executeTool: async (call: ModelToolCall) => {
-        if (startupCaptchaPending && call.name === 'browser_login_zjooc') {
-          startupCaptchaPending = false
-          startupContext = loginToolGuidance
-        }
         if (input.deferTools && call.name === LOAD_AGENT_TOOLS) {
           return run.execute(call, async () => loadAgentTools([...toolRegistry(await currentCatalog()).values()], parseToolArgs(call.arguments).names))
         }
@@ -410,6 +408,15 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
           }
         }
         const result = await dispatch()
+        if (startupCaptchaPending && call.name === 'browser_login_zjooc') {
+          const receipt = parseToolArgs(result)
+          if (receipt.ok === true && receipt.loggedIn === true && !receipt.error && receipt.denied !== true) {
+            startupCaptchaPending = false
+            startupContext = '【登录已确认】在浙学登录成功，验证码阶段已结束，当前工具目录已恢复。若用户只要求登录，直接回复登录结果；还有后续要求则按需加载工具继续。'
+          } else {
+            startupContext = loginToolGuidance
+          }
+        }
         if (role === 'parent' && call.name === 'browser_complete_chapter') {
           const chapter = parseToolArgs(result)
           if (chapter.ok === true && chapter.watching === true) {
@@ -554,9 +561,9 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
         }
       },
     }
+    const hostTool = createHostToolRunner({ ...modelOptions, tools }, assistantId)
     if (role === 'parent') {
       const registry = toolRegistry(tools)
-      const hostTool = createHostToolRunner({ ...modelOptions, tools }, assistantId)
       if (input.chapterResume && registry.has('browser_complete_chapter')) {
         startupContext = await runChapterResume(input.chapterResume, hostTool)
       } else if (input.startupCommand) {
@@ -570,7 +577,6 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
               modelOptions.tools = [registry.get('browser_login_zjooc')!]
               const finish = registry.get('browser_finish')
               if (finish) modelOptions.tools.push(finish)
-              modelOptions.liveTools = undefined
               modelOptions.userContent = [
                 ...(Array.isArray(userContent) ? userContent : [{ type: 'text', text: modelPrompt }]),
                 ...visionAttachParts(images),
@@ -596,8 +602,7 @@ ${loginToolGuidance}
             ? loginOnly ? `${siteName}已登录。` : `${startup.args.course_name}的章节已完成。目录确认了 ${result.completed} 个已完成小节。`
             : loginOnly && !startupContext && typeof result.error === 'string' ? result.error : ''
           if (summary && registry.has('browser_finish')) {
-            const finish = await hostTool('browser_finish', { status: success ? 'done' : 'blocked', summary,
-              ...(success && !loginOnly ? { learning: { decision: 'no_new', reason: '宿主按已内置的章节工作流完成，未新增可复用步骤。' } } : {}) })
+            const finish = await hostTool('browser_finish', { status: success ? 'done' : 'blocked', summary })
             if (finish.finished === true) {
               await run.finish(success ? 'completed' : 'blocked')
               return { text: summary, aborted: false, taskOutcome: success ? 'completed' : 'blocked' }
@@ -620,7 +625,7 @@ ${loginToolGuidance}
       ? liveNow
       : joinRound(finalText || '')
     await run.finish(completion.outcome === 'blocked' || completion.outcome === 'incomplete' ? 'blocked' : 'completed')
-    return { text: learningCheck.deferred ? `${assistantContent}\n\n本轮新的站点经验未确认保存到 Skill。` : assistantContent,
+    return { text: assistantContent,
       aborted: false, taskOutcome: completion.outcome }
   } catch (error) {
     if (abort.signal.aborted || isModelStopped(error)) {

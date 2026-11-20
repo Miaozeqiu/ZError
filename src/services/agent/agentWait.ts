@@ -1,3 +1,5 @@
+import { registerAgentWait, unregisterAgentWait } from './core/waitEvents'
+export { hasAgentWait, wakeAgentWait } from './core/waitEvents'
 import { evalBrowserViewInFrame, evalBrowserViewMainIdle, withSameFrames } from '../browser/eval'
 import { peekAppBrowserUrl } from '../browser/appBrowser'
 import { isWaitTruthy, waitForResponse } from '../browser/engine'
@@ -44,6 +46,15 @@ type Waiter = {
 
 const waiters = new Map<string, Waiter>()
 
+const addWaiter = (sessionId: string, waiter: Waiter) => {
+  waiters.set(sessionId, waiter)
+  registerAgentWait(sessionId, event => wakeWaiter(sessionId, event))
+}
+const removeWaiter = (sessionId: string) => {
+  waiters.delete(sessionId)
+  unregisterAgentWait(sessionId)
+}
+
 /** 等宿主监控事件，不轮询页面、不占模型请求，也不另开一轮对话。 */
 export const waitForAgentWatchEvent = (input: {
   sessionId: string; browserId: string; signal: AbortSignal; onStart?: () => void
@@ -52,17 +63,16 @@ export const waitForAgentWatchEvent = (input: {
   if (signal.aborted) { reject(new DOMException('已停止', 'AbortError')); return }
   if (waiters.has(sessionId)) { reject(new Error('当前任务已有事件等待器')); return }
   const clean = () => {
-    if (waiters.get(sessionId) === waiter) waiters.delete(sessionId)
+    if (waiters.get(sessionId) === waiter) removeWaiter(sessionId)
     signal.removeEventListener('abort', stop)
   }
   const stop = () => { clean(); reject(new DOMException('已停止', 'AbortError')) }
   const waiter: Waiter = { browserId, started: Date.now(), until: 'panel', resolve: result => { clean(); resolve(result) } }
-  waiters.set(sessionId, waiter)
+  addWaiter(sessionId, waiter)
   signal.addEventListener('abort', stop, { once: true })
   try { input.onStart?.() } catch (error) { clean(); reject(error) }
 })
 
-export const hasAgentWait = (sessionId: string) => waiters.has(sessionId)
 
 export const panelNeedsTakeover = (panel: ReturnType<typeof packAgentPanel>) => (
   panel?.event === 'quiz_left'
@@ -141,7 +151,7 @@ const topFrameIdle = async (browserId: string): Promise<boolean | null> => {
   return truthyEval(raw)
 }
 
-export const wakeAgentWait = (
+const wakeWaiter = (
   sessionId: string,
   extra: Omit<Partial<AgentWaitResult>, 'ok' | 'waited'> = {},
 ): boolean => {
@@ -149,7 +159,7 @@ export const wakeAgentWait = (
   if (!waiter) return false
   const reason = extra.reason || (panelNeedsTakeover(extra.panel ?? packAgentPanel(waiter.browserId)) ? 'panel' : 'watch')
   if (waiter.until !== 'panel' && (reason === 'watch' || reason === 'panel')) return false
-  waiters.delete(sessionId)
+  removeWaiter(sessionId)
   const panel = extra.panel ?? packAgentPanel(waiter.browserId)
   waiter.resolve({
     ok: true,
@@ -199,7 +209,7 @@ export const runAgentWait = async (input: AgentWaitInput): Promise<AgentWaitResu
     settle = resolve
   })
 
-  waiters.set(sessionId, {
+  addWaiter(sessionId, {
     browserId,
     started,
     until,
@@ -208,7 +218,7 @@ export const runAgentWait = async (input: AgentWaitInput): Promise<AgentWaitResu
   onStart?.(sessionId)
 
   const finish = (result: AgentWaitResult) => {
-    waiters.delete(sessionId)
+    removeWaiter(sessionId)
     if (result.panel && panelNeedsTakeover(result.panel)) onPanel?.(result.panel)
     return result
   }
@@ -342,7 +352,7 @@ export const runAgentWait = async (input: AgentWaitInput): Promise<AgentWaitResu
         wait(left).then(() => ({ via: 'tick' as const })),
       ])
       if (raced.via === 'wake') {
-        waiters.delete(sessionId)
+        removeWaiter(sessionId)
         if (raced.result.panel && panelNeedsTakeover(raced.result.panel)) {
           onPanel?.(raced.result.panel)
         }
@@ -376,7 +386,7 @@ export const runAgentWait = async (input: AgentWaitInput): Promise<AgentWaitResu
       panel: last,
     }))
   } catch (error) {
-    waiters.delete(sessionId)
+    removeWaiter(sessionId)
     throw error
   }
 }

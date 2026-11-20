@@ -1,3 +1,4 @@
+import { ensureSiteHooks } from '../../src/services/platform'
 import { describe, expect, it } from 'vitest'
 import { validateToolCall, toolRegistry } from '../../src/services/agent/core/tools'
 import { composePrompt } from '../../src/services/agent/core/prompt'
@@ -6,6 +7,8 @@ import { intentFromText } from '../../src/services/agent/browserTask'
 import { websitePrimaryHost, websiteAccountId } from '../../src/services/agent/websiteIdentity'
 import { hostCapabilitiesFor } from '../../src/services/agent/hostCapabilities'
 const definitions = [{ type: 'function', function: { name: 'click', parameters: { type: 'object', required: ['ref'], properties: { ref: { type: 'string' }, nth: { type: 'integer', minimum: 1 } } } } }]
+ensureSiteHooks()
+
 describe('runtime extension contracts', () => {
   it('rejects unavailable tools and malformed arguments before execution', () => {
     expect(validateToolCall(definitions, { name: 'delete_everything', arguments: '{}' })).toBeTruthy()

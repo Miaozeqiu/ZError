@@ -213,7 +213,7 @@
                   </div>
                   <div class="thinking-effort-labels">
                     <button
-                      v-for="(opt, index) in thinkingEffortOptions"
+                      v-for="opt in thinkingEffortOptions"
                       :key="opt.value"
                       type="button"
                       class="thinking-effort-label"
@@ -262,7 +262,54 @@ const emit = defineEmits<Emits>()
 const formId = useId()
 
 const {
-  thinkingEffortOptions, effortMatrixRaf, effortMatrixStop, effortMatrixIo, effortMatrixRo, stopEffortMatrixFx, startEffortMatrixFx, bindEffortMatrix, modelDropdownAnchorRef, modelIdInputRef, modelDropdownRef, modelDropdownStyle, isFetchingModels, showModelDropdown, fetchedModelList, formData, isEditing, isRemote, effortMaxIndex, EFFORT_THUMB_PX, effortBarRef, effortSlide, isDraggingEffort, effortIndex, isMaxEffort, effortThumbOffset, effortFillWidth, effortStopLeft, effortThumbLeft, snapEffortValue, applyEffortMagnet, slideEffortFromClientX, suppressEffortSelectStart, lockEffortTextSelect, onEffortPointerDown, onEffortPointerMove, onEffortPointerUp, onEffortKeydown, dialogTitle, requiresModelId, isChatProtocol, isResponsesProtocol, isMessagesProtocol, isFormValid, filteredFetchedModels, groupedFetchedModels, updateModelDropdownPosition, modelDropdownBlurTimer, clearModelDropdownBlurTimer, openModelDropdown, closeModelDropdown, normalizeBaseUrl, modelsCacheByBaseUrl, fetchModelsGeneration, tauriFetchPromise, getTauriFetch, applyFetchedModels, restoreModelsFromCache, handleModelIdFocus, toggleModelDropdown, handleModelIdBlur, handleModelIdInput, handleModelDropdownOutsideClick, handleModelDropdownViewportChange, parseModelsResponse, fetchModels, selectFetchedModel, DEFAULT_JS_CODE, DEFAULT_VISION_JS_CODE, thinkingPresetOptions, buildCurrentPresetJsCode, syncPresetJsCode, EFFORT_VALUES, normalizeEffort, normalizeOffResponsesEffort, createDialogFormData, readEnableThinkingFromJsCode, applyEnableThinkingToJsCode, deriveEnableThinking, showAdvancedCode, applyModelIdToJsCode, onDialogAfterLeave, cmContainerRef, cmView, themeObserver, rebuildEditorWithDoc, jsSyntaxLinter, initCodeMirror, setEditorDoc, handleOverlayClick, handleSubmit, isTestingModel, modelTestStatus, modelTestMessage, modelTestElapsedMs, modelTestAbort, canTestModel, modelTestCardClass, modelTestTitle, modelTestTooltip, modelTestMeta, resetModelTestState, isAbortError, collectProcessModelOutput, testModelAvailability
+  thinkingEffortOptions,
+  bindEffortMatrix,
+  modelDropdownAnchorRef,
+  modelIdInputRef,
+  modelDropdownRef,
+  modelDropdownStyle,
+  showModelDropdown,
+  fetchedModelList,
+  formData,
+  isEditing,
+  isRemote,
+  effortMaxIndex,
+  effortBarRef,
+  effortSlide,
+  isDraggingEffort,
+  effortIndex,
+  isMaxEffort,
+  effortFillWidth,
+  effortStopLeft,
+  effortThumbLeft,
+  onEffortPointerDown,
+  onEffortPointerMove,
+  onEffortPointerUp,
+  onEffortKeydown,
+  dialogTitle,
+  isChatProtocol,
+  isResponsesProtocol,
+  isMessagesProtocol,
+  isFormValid,
+  filteredFetchedModels,
+  groupedFetchedModels,
+  handleModelIdFocus,
+  toggleModelDropdown,
+  handleModelIdBlur,
+  handleModelIdInput,
+  selectFetchedModel,
+  showAdvancedCode,
+  onDialogAfterLeave,
+  cmContainerRef,
+  handleOverlayClick,
+  handleSubmit,
+  isTestingModel,
+  canTestModel,
+  modelTestCardClass,
+  modelTestTitle,
+  modelTestTooltip,
+  modelTestMeta,
+  testModelAvailability,
 } = useModelConfigDialog(props, emit)
 
 </script>

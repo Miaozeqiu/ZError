@@ -72,8 +72,7 @@ describe('one settings card per website', () => {
     expect(items.every(item => item.querySelector('.menu-icon svg'))).toBe(true)
     expect(menuItem('删除网站')).toBe(items[3])
     menuItem('操作经验').click()
-    await nextTick()
-    expect(root.querySelector('[data-editor-path]')?.getAttribute('data-editor-path')).toBe('SKILL.md')
+    await vi.waitFor(() => expect(root.querySelector('[data-editor-path]')?.getAttribute('data-editor-path')).toBe('SKILL.md'))
   })
 
   it('retries a newly saved icon even if the old favicon failed earlier', async () => {
@@ -216,8 +215,7 @@ describe('one settings card per website', () => {
     expect(root.textContent).not.toContain('cx-secret')
     expect(root.textContent).not.toContain('zj-secret')
     await choose(site('zjooc'), '账号密码')
-    await nextTick()
-    expect(document.querySelector('.account-site-label')!.textContent).toContain('在浙学 · zjooc.cn')
+    await vi.waitFor(() => expect(document.querySelector('.account-site-label')?.textContent).toContain('在浙学 · zjooc.cn'))
     expect(document.querySelector('#agent-acc-platform')).toBeNull()
     const account = document.querySelector<HTMLInputElement>('#agent-acc-account')!
     const password = document.querySelector<HTMLInputElement>('#agent-acc-password')!
@@ -301,12 +299,14 @@ describe('one settings card per website', () => {
 
   it('routes the experience menu entry to the clicked website even when they share a Skill', async () => {
     await choose(site('zhihuishu'), '操作经验')
+    await vi.dynamicImportSettled()
     await nextTick()
     expect(root.querySelector('[data-editor-host]')?.getAttribute('data-editor-host')).toBe('zhihuishu.com')
     expect(root.querySelector('[data-editor-path]')?.getAttribute('data-editor-path')).toBe('sites/zhihuishu.com/SKILL.md')
     root.querySelector<HTMLButtonElement>('[data-editor-host]')!.click()
     await nextTick()
     await choose(site('zjooc'), '操作经验')
+    await vi.dynamicImportSettled()
     await nextTick()
     expect(root.querySelector('[data-editor-path]')?.getAttribute('data-editor-path')).toBe('sites/zjooc.cn/SKILL.md')
   })

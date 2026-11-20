@@ -2,10 +2,10 @@ import { registerClickText, registerNavigateGuard } from '../../browser/pageHook
 import { clickSpaceTab, isSpaceListTopUrl } from './spaceTab'
 
 export const bindChaoxingPageHooks = () => {
-  registerNavigateGuard((url) => (
+  const stopNavigate = registerNavigateGuard((url) => (
     isSpaceListTopUrl(url) ? '禁止顶层打开课表地址。只点 iframe 里的「我学的课」页签。' : null
   ))
-  registerClickText(async (id, text) => {
+  const stopClick = registerClickText(async (id, text) => {
     const want = String(text || '').trim()
     if (/^(我学的课|已学的课|我教的课)$/.test(want)) {
       return clickSpaceTab(id, want === '我教的课' ? 'taught' : 'student')
@@ -14,4 +14,5 @@ export const bindChaoxingPageHooks = () => {
     if (isCourseChromeTab(want)) return clickCourseTab(id, want)
     return null
   })
+  return () => { stopNavigate(); stopClick() }
 }

@@ -263,7 +263,6 @@ const isDragOver = ref(false);
 const dragPosition = ref<'top' | 'center' | 'bottom' | null>(null);
 const dragExpandTimer = ref<number | null>(null); // 拖拽展开定时器
 const nodeContent = ref<HTMLElement | null>(null);
-const dragImageEl = ref<HTMLElement | null>(null);
 const dragOverlayEl = ref<HTMLDivElement | null>(null);
 const dragCursorOffsetX = ref(0);
 const dragCursorOffsetY = ref(0);
@@ -271,13 +270,6 @@ const dragStarted = ref(false);
 const dragStartX = ref(0);
 const dragStartY = ref(0);
 const DRAG_START_THRESHOLD = 6;
-const onDragMove = (e: DragEvent) => {
-  if (dragOverlayEl.value) {
-    const x = e.clientX - dragCursorOffsetX.value;
-    const y = e.clientY - dragCursorOffsetY.value;
-    dragOverlayEl.value.style.transform = `translate(${x}px, ${y}px)`;
-  }
-};
 const currentHoverId = ref<string | null>(null);
 
 const propsHoverTargetId = computed(() => props.hoverTargetId ?? null);
@@ -349,8 +341,6 @@ const hasChildren = computed(() => {
   return props.node.children && props.node.children.length > 0;
 });
 
-
-
 const handleClick = () => {
   if (props.node.type === 'folder' && hasChildren.value && !isExpanded.value) {
     emit('expand-folder', props.node.id);
@@ -358,8 +348,6 @@ const handleClick = () => {
 
   emit('select', props.node.id);
 };
-
-
 
 const handleArrowClick = (event: MouseEvent) => {
   event.stopPropagation(); // 阻止事件冒泡
@@ -374,257 +362,6 @@ const handleRightClick = (event: MouseEvent) => {
     x: event.clientX,
     y: event.clientY
   });
-};
-
-// 拖拽事件处理函数
-const handleDragStart = (event: DragEvent) => {
-  console.log(`FileTreeNode[${props.node.id}]: dragstart 事件触发`, {
-    nodeId: props.node.id,
-    nodeName: props.node.name,
-    nodeType: props.node.type
-  });
-  
-  if (props.node.type !== 'folder' || isPinnedFolder.value) {
-    event.preventDefault();
-    return;
-  }
-  
-  isDragging.value = true;
-  
-  // 立即发送 drag-start 事件到父组件
-  console.log(`FileTreeNode[${props.node.id}]: 即将 emit drag-start 事件`, props.node.id);
-  emit('drag-start', props.node.id);
-  console.log(`FileTreeNode[${props.node.id}]: drag-start 事件已发送`);
-  
-  // 简化拖拽数据传输 - 只设置必要的数据
-  if (event.dataTransfer) {
-    event.dataTransfer.effectAllowed = 'move';
-    event.dataTransfer.setData('text/plain', props.node.id);
-    
-    event.dataTransfer.setData('application/json', JSON.stringify({
-      id: props.node.id,
-      name: props.node.name,
-      type: props.node.type
-    }));
-    
-    console.log(`FileTreeNode[${props.node.id}]: 拖拽数据已设置`, {
-      id: props.node.id,
-      name: props.node.name,
-      type: props.node.type
-    });
-
-    if (nodeContent.value) {
-      const overlay = document.createElement('div');
-      overlay.style.position = 'fixed';
-      overlay.style.top = '0px';
-      overlay.style.left = '0px';
-      overlay.style.transform = 'translate(-9999px, -9999px)';
-      overlay.style.zIndex = '9999';
-      overlay.style.pointerEvents = 'none';
-      const cloned = nodeContent.value.cloneNode(true) as HTMLElement;
-      const lines = cloned.querySelector('.level-lines') as HTMLElement | null;
-      if (lines) lines.remove();
-      cloned.style.width = nodeContent.value.offsetWidth + 'px';
-      cloned.style.height = nodeContent.value.offsetHeight + 'px';
-      cloned.classList.add('dragging');
-      overlay.appendChild(cloned);
-      document.body.appendChild(overlay);
-      dragOverlayEl.value = overlay;
-      const transparent = new Image();
-      transparent.src = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9cGxG50AAAAASUVORK5CYII=';
-      event.dataTransfer.setDragImage(transparent, 0, 0);
-      document.addEventListener('dragover', onDragMove);
-    }
-  }
-};
-
-const handleDragEnd = () => {
-  console.log('FileTreeNode: dragend 事件触发', {
-    nodeId: props.node.id,
-    draggedNodeId: props.draggedNodeId
-  });
-  
-  isDragging.value = false;
-  isDragOver.value = false;
-  dragPosition.value = null;
-  
-  // 通过 emit 通知父组件清理拖拽状态
-  emit('drag-end');
-  
-  console.log('FileTreeNode: 通知父组件清理拖拽状态');
-
-  if (dragImageEl.value) {
-    document.body.removeChild(dragImageEl.value);
-    dragImageEl.value = null;
-  }
-  if (dragOverlayEl.value) {
-    document.body.removeChild(dragOverlayEl.value);
-    dragOverlayEl.value = null;
-  }
-  document.removeEventListener('dragover', onDragMove);
-};
-
-const handleDragOver = (event: DragEvent) => {
-  // 总是阻止默认行为，这样才能正确控制光标
-  event.preventDefault();
-  event.stopPropagation();
-  
-  console.log(`FileTreeNode[${props.node.id}]: dragover 事件触发`, { 
-    draggedNodeId: props.draggedNodeId, 
-    currentNodeId: props.node.id,
-    currentNodeName: props.node.name,
-    componentInstance: `FileTreeNode-${props.node.id}`,
-    dataTransfer: event.dataTransfer ? Array.from(event.dataTransfer.types) : []
-  });
-  
-  if (props.draggedNodeId && props.draggedNodeId === props.node.id) {
-    if (event.dataTransfer) {
-      event.dataTransfer.dropEffect = 'none';
-    }
-    return;
-  }
-  
-  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
-  const y = event.clientY - rect.top;
-  const height = rect.height;
-  
-  // 根据鼠标位置确定放置位置
-  if (y < height * 0.25) {
-    dragPosition.value = 'top';
-  } else if (y > height * 0.75) {
-    dragPosition.value = 'bottom';
-  } else {
-    dragPosition.value = 'center';
-  }
-  
-  isDragOver.value = true;
-  
-  // 拖拽自动展开逻辑
-  if (props.node.type === 'folder' && 
-      hasChildren.value && 
-      !isExpanded.value && 
-      dragPosition.value === 'center') {
-    
-    // 如果还没有设置定时器，则设置一个延迟展开
-    if (!dragExpandTimer.value) {
-      console.log(`FileTreeNode[${props.node.id}]: 设置拖拽展开定时器`);
-      dragExpandTimer.value = window.setTimeout(() => {
-        console.log(`FileTreeNode[${props.node.id}]: 拖拽展开定时器触发，展开文件夹`);
-        emit('expand-folder', props.node.id);
-        dragExpandTimer.value = null;
-      }, 300); // 800ms 延迟
-    }
-  } else {
-    // 如果不是拖拽到文件夹中心，清除定时器
-    if (dragExpandTimer.value) {
-      console.log(`FileTreeNode[${props.node.id}]: 清除拖拽展开定时器`);
-      clearTimeout(dragExpandTimer.value);
-      dragExpandTimer.value = null;
-    }
-  }
-  
-  // 设置允许移动的光标
-  if (event.dataTransfer) {
-    event.dataTransfer.dropEffect = 'move';
-    console.log('FileTreeNode: 设置 dropEffect 为 move', {
-      position: dragPosition.value,
-      targetNode: props.node.name,
-      afterSet: event.dataTransfer.dropEffect
-    });
-  }
-};
-
-const handleDragEnter = (event: DragEvent) => {
-  event.preventDefault();
-  event.stopPropagation();
-  
-  console.log('FileTreeNode: dragenter 事件触发', { 
-    nodeId: props.node.id,
-    nodeName: props.node.name,
-    draggedNodeId: props.draggedNodeId
-  });
-  
-  // 确保 dropEffect 正确设置
-  if (event.dataTransfer && props.draggedNodeId && props.draggedNodeId !== props.node.id) {
-    event.dataTransfer.dropEffect = 'move';
-  }
-  if (props.draggedNodeId && props.draggedNodeId !== props.node.id) {
-    isDragOver.value = true;
-  }
-};
-
-const handleDragLeave = (event: DragEvent) => {
-  console.log('FileTreeNode: dragleave 事件触发', { 
-    nodeId: props.node.id,
-    draggedNodeId: props.draggedNodeId,
-    relatedTarget: event.relatedTarget
-  });
-  
-  // 检查是否真正离开了元素（而不是进入子元素）
-  const currentElement = event.currentTarget as HTMLElement;
-  const relatedTarget = event.relatedTarget as HTMLElement;
-  
-  if (!currentElement.contains(relatedTarget)) {
-    isDragOver.value = false;
-    dragPosition.value = null;
-    console.log('FileTreeNode: 真正离开元素，清理拖拽状态');
-    
-    // 清除拖拽展开定时器
-    if (dragExpandTimer.value) {
-      console.log(`FileTreeNode[${props.node.id}]: 拖拽离开，清除展开定时器`);
-      clearTimeout(dragExpandTimer.value);
-      dragExpandTimer.value = null;
-    }
-  }
-};
-
-const handleDrop = (event: DragEvent) => {
-  event.preventDefault();
-  event.stopPropagation();
-  
-  console.log(`FileTreeNode[${props.node.id}]: drop 事件触发`, { 
-    draggedNodeId: props.draggedNodeId, 
-    targetNodeId: props.node.id,
-    position: dragPosition.value
-  });
-  
-  if (!props.draggedNodeId || props.draggedNodeId === props.node.id) {
-    console.log('FileTreeNode: drop 被阻止 - 无效的拖拽源或拖拽到自己');
-    return;
-  }
-  
-  // 清除拖拽展开定时器
-  if (dragExpandTimer.value) {
-    console.log(`FileTreeNode[${props.node.id}]: drop 时清除展开定时器`);
-    clearTimeout(dragExpandTimer.value);
-    dragExpandTimer.value = null;
-  }
-  
-  let position: 'before' | 'after' | 'inside';
-  
-  if (dragPosition.value === 'top') {
-    position = 'before';
-  } else if (dragPosition.value === 'bottom') {
-    position = 'after';
-  } else {
-    position = 'inside';
-  }
-  
-  console.log('FileTreeNode: 触发 move-folder 事件', {
-    sourceId: props.draggedNodeId,
-    targetId: props.node.id,
-    position
-  });
-  
-  emit('move-folder', {
-    sourceId: props.draggedNodeId,
-    targetId: props.node.id,
-    position
-  });
-  
-  // 清理拖拽状态
-  isDragOver.value = false;
-  dragPosition.value = null;
 };
 
 // 手动拖拽（替代 HTML5 Drag API）

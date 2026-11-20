@@ -2,11 +2,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { isTauri } from './env'
 import {
-  emitStudyActivityUpdated,
-  mockQuestionKnowledge,
-  mockStudyGraphs,
-  mockStudySubjects,
-  pushMockActivity,
+  emitStudyActivityUpdated, mockQuestionKnowledge, mockStudyGraphs, pushMockActivity,
 } from './mock'
 import type {
   PracticeMarks,

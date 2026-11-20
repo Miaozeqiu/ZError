@@ -189,7 +189,7 @@ export const quizReviewsFor = (messages: AgentChatMessage[]) => {
   return reviews
 }
 
-export const quizStatFor = (message: AgentChatMessage, stepId: string, cards: QuizCard[], browse = false) => {
+export const quizStatFor = (message: AgentChatMessage, _stepId: string, cards: QuizCard[], browse = false) => {
   if (browse) return `${cards.length} 题`
   const done = new Set((message.quizAttempts || []).map((item) => item.uid))
   const answered = cards.filter((card) => done.has(card.uid)).length

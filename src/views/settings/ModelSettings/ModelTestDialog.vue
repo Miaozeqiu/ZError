@@ -77,10 +77,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
-import AIOutputRender from '../../../components/agent/AIOutputRender.vue'
+import { defineAsyncComponent, computed, ref, watch } from 'vue'
 import ModelResponseHint from '../../../components/ui/ModelResponseHint.vue'
 import type { ModelTestMetrics, ModelTestResult } from './testModel'
+
+const AIOutputRender = defineAsyncComponent(() => import('../../../components/agent/AIOutputRender.vue').then(module => module.default))
 
 const props = defineProps<{
   visible: boolean

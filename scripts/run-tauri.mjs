@@ -84,9 +84,9 @@ if (process.platform === "darwin") {
   }
 }
 
-const child = spawn("tauri", args, {
+const child = spawn(process.execPath, [path.join(here, 'tauri-cli.mjs'), ...args], {
   stdio: "inherit",
-  shell: true,
+  shell: false,
   env: process.env,
 });
 

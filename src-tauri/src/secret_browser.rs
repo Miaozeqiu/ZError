@@ -35,7 +35,7 @@ pub async fn guard(_app: &tauri::AppHandle, id: &str) -> Result<(), String> {
         .unwrap_or_else(|e| e.into_inner())
         .get(id)
         .cloned();
-    let Some(previous) = previous else {
+    let Some(_previous) = previous else {
         return Ok(());
     };
     #[cfg(target_os = "macos")]
@@ -43,13 +43,13 @@ pub async fn guard(_app: &tauri::AppHandle, id: &str) -> Result<(), String> {
     #[cfg(windows)]
     let current = crate::webview2_secrets::loader(_app, id).await;
     #[cfg(any(target_os = "macos", windows))]
-    if current.is_ok_and(|current| current != previous) && !previous.is_empty() {
+    if current.is_ok_and(|current| current != _previous) && !_previous.is_empty() {
         let mut documents = DOCUMENTS
             .get()
             .unwrap()
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        if documents.get(id) == Some(&previous) {
+        if documents.get(id) == Some(&_previous) {
             documents.remove(id);
         }
         if !documents.contains_key(id) {

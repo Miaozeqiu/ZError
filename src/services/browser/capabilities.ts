@@ -3,9 +3,6 @@ import { invoke } from '@tauri-apps/api/core'
 export type BrowserCapabilities = {
   secureFill: boolean
   audioMute: boolean
-  scriptCat: boolean
-  scriptCatPermissions: boolean
-  nativeVideoOverlay: boolean
 }
 
 let cached: BrowserCapabilities | undefined
@@ -17,9 +14,6 @@ export const browserCapabilities = async (): Promise<BrowserCapabilities> => {
   const capabilities = {
     secureFill: raw?.secureFill === true,
     audioMute: raw?.audioMute === true,
-    scriptCat: raw?.scriptCat === true,
-    scriptCatPermissions: raw?.scriptCatPermissions === true,
-    nativeVideoOverlay: raw?.nativeVideoOverlay === true,
   }
   if (raw) cached = capabilities
   return capabilities

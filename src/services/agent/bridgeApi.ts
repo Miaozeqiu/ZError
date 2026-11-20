@@ -1,3 +1,4 @@
+import { coursePlanFor } from '../browser/coursePlan'
 /** 软件外 Agent 用的浏览器 / 解析器接口。开发桥 127.0.0.1:1429 */
 
 import {
@@ -16,7 +17,6 @@ import {
   scrollBrowserView,
   typeBrowserElement,
   getSelectedBrowserId,
-  peekAppBrowserUrl,
 } from '../browser/appBrowser'
 import { evalBrowserView, evalBrowserViewMain, waitMs } from '../browser/eval'
 import { siteGraphAgentSnap } from '../browser/siteGraph'
@@ -34,7 +34,7 @@ export type BridgeCmd = {
 export const BRIDGE_ACTIONS = [
   { name: 'help', group: 'meta', hint: '列出全部动作' },
   { name: 'health', group: 'meta', hint: '查看开发版加载状态，不返回凭据或聊天正文' },
-  { name: 'website_repository', group: 'meta', hint: '网站经验验收：op=status|refresh|preview|import，不返回经验正文。' },
+  { name: 'website_repository', group: 'meta', hint: '网站经验验收：op=status|refresh|preview|import|remove（仅移除经验），不返回经验正文。' },
   { name: 'list', group: 'meta', hint: '列出应用内浏览器标签' },
   { name: 'state', group: 'meta', hint: '当前页 + 章节解析器全文 + 任务点' },
   { name: 'goto', group: 'browser', hint: '打开网址。args.url', alias: ['navigate'] },
@@ -60,6 +60,7 @@ export const BRIDGE_ACTIONS = [
   { name: 'inspect', group: 'parser', hint: '读作业/测验题卡' },
   { name: 'homework', group: 'parser', hint: '题卡。args.action=inspect|list|open|fill|guess|save|submit' },
   { name: 'captcha', group: 'parser', hint: '填验证码。args.code' },
+  { name: 'new_chat', group: 'agent', hint: '新建测试对话和独立标签，args.title、url 可选，不发送消息。' },
   { name: 'send', group: 'agent', hint: '给应用内浏览器 Agent 发一句', alias: ['prompt'] },
   { name: 'chat', group: 'agent', hint: '读应用内 Agent 最近一条' },
   { name: 'stop', group: 'agent', hint: '停下应用内 Agent' },
@@ -243,6 +244,7 @@ export const runBridgeAction = async (cmd: BridgeCmd) => {
     const repositories = await import('./websiteRepository')
     const op = arg(args, 'op') || 'status'
     const host = arg(args, 'host')
+    if (op === 'remove' && import.meta.env.DEV) await repositories.removeWebsiteRepository(host)
     if (op === 'refresh') { await repositories.ensureWebsiteRepository(host); await repositories.refreshWebsiteRepository(host, true) }
     if (op === 'preview' || op === 'import') {
       const candidates = await repositories.previewWebsiteRepository(arg(args, 'url'))
@@ -253,6 +255,18 @@ export const runBridgeAction = async (cmd: BridgeCmd) => {
     }
     const hosts = await repositories.websiteRepositoryHosts()
     return { ok: true, id, action, repositories: hosts.map(host => ({ host, ...repositories.websiteRepositoryStates[host], customUrl: undefined, iconUrl: undefined, hasIcon: Boolean(repositories.websiteRepositoryStates[host]?.iconUrl) })) }
+  }
+
+  if (action === 'new_chat' && import.meta.env.DEV) {
+    const { createChat, selectChat, chatStoreReady } = await import('./chatStore')
+    const { createChatBrowserTab, ensureAgentBrowser } = await import('./agentBrowser')
+    await chatStoreReady
+    const session = createChat({ title: arg(args, 'title') || '浏览器测试' })
+    const tab = createChatBrowserTab(session.id, { url: arg(args, 'url') || 'zerror://home' })
+    selectChat(session.id)
+    window.dispatchEvent(new CustomEvent('navigate-tab', { detail: 'agent' }))
+    await ensureAgentBrowser(session.id)
+    return { ok: true, id, action, sessionId: session.id, browserId: tab.id }
   }
 
   if (action === 'list') {
@@ -313,7 +327,6 @@ export const runBridgeAction = async (cmd: BridgeCmd) => {
     const { resolveContextBudget } = await import('../model/contextBudget')
     const selectedModel = modelConfigManager.getSelectedAgentModel() || modelConfigManager.getSelectedTextModel()
     const { videoWatchFor } = await import('../platform/panelAccess')
-    const { coursePlanFor } = await import('../browser/coursePlan')
     const { hasAgentWait } = await import('./agentWait')
     const watchId = session?.browserId || browserId
     const watch = videoWatchFor(watchId)

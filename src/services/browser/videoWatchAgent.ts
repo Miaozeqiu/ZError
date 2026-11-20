@@ -1,5 +1,6 @@
+import type { WatchBindings } from '../agent/core/watchEvents'
 /** 原生 video 监测叫醒同一会话。不要走学习通配方。 */
-import { hasAgentWait, wakeAgentWait } from '../agent/agentWait'
+import { hasAgentWait, wakeAgentWait } from '../agent/core/waitEvents'
 import {
   formatNativeClock,
   setNativeWatchHandler,
@@ -7,13 +8,10 @@ import {
   type NativeWatchKind,
 } from './videoWatch'
 
-type WatchNotify = (
-  sessionId: string,
-  display: string,
-  modelText: string,
-) => void
-type WatchGate = (sessionId: string) => 'missing' | 'busy' | 'ready'
+type WatchNotify = WatchBindings['notify']
+type WatchGate = WatchBindings['gate']
 
+let watchGeneration = 0
 let notifyWatchImpl: WatchNotify | null = null
 let sessionGateImpl: WatchGate | null = null
 const queuedWatchChecks = new Map<string, NativeWatchCheck>()
@@ -122,14 +120,21 @@ export const flushNativeWatchAfterTurn = (sessionId: string) => {
     })
     return
   }
-  window.setTimeout(() => enqueueWatchCheck(queued), 0)
+  const generation = watchGeneration
+  window.setTimeout(() => { if (generation === watchGeneration) enqueueWatchCheck(queued) }, 0)
 }
 
-export const bindNativeWatchAgent = (input: {
-  notify: WatchNotify
-  gate: WatchGate
-}) => {
+export const bindNativeWatchAgent = (input: WatchBindings) => {
+  const generation = ++watchGeneration
   notifyWatchImpl = input.notify
   sessionGateImpl = input.gate
   setNativeWatchHandler(enqueueWatchCheck)
+  return () => {
+    if (generation !== watchGeneration) return
+    watchGeneration++
+    notifyWatchImpl = null
+    sessionGateImpl = null
+    queuedWatchChecks.clear()
+    setNativeWatchHandler(null)
+  }
 }

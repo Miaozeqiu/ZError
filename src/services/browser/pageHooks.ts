@@ -19,10 +19,12 @@ let clickTextHook: ClickTextHook | null = null
 
 export const registerNavigateGuard = (fn: NavigateGuard | null) => {
   navigateGuard = fn
+  return () => { if (navigateGuard === fn) navigateGuard = null }
 }
 
 export const registerClickText = (fn: ClickTextHook | null) => {
   clickTextHook = fn
+  return () => { if (clickTextHook === fn) clickTextHook = null }
 }
 
 export const guardNavigate = (url: string) => {

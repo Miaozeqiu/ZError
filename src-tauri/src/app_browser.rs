@@ -1,3 +1,8 @@
+mod evaluation;
+pub use evaluation::*;
+mod protocol;
+pub use protocol::*;
+
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
@@ -6,7 +11,6 @@ use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, WebviewUr
 use tauri::webview::{NewWindowResponse, PageLoadEvent, WebviewBuilder};
 use url::Url;
 
-const SCRIPTCAT_OPTIONS: &str = "chrome-extension://biodkpbccbdobbjiandalbldblopjkhe/src/options.html";
 const LABEL_PREFIX: &str = "app-browser-";
 const SAFARI_UA: &str =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Safari/605.1.15";
@@ -90,9 +94,6 @@ pub(crate) fn parse_url(raw: &str) -> Result<Url, String> {
     return Ok(home_nav_url());
   }
   let trimmed = raw.trim();
-  if trimmed == "zerror://scriptcat" || trimmed.split('#').next() == Some(SCRIPTCAT_OPTIONS) {
-    return Url::parse(if trimmed == "zerror://scriptcat" { SCRIPTCAT_OPTIONS } else { trimmed }).map_err(|e| e.to_string());
-  }
   let candidate = if trimmed.contains("://") {
     trimmed.to_string()
   } else {
@@ -225,7 +226,8 @@ fn mark_hidden(id: &str) {
   }
 }
 
-fn forget_view(id: &str) {
+pub(crate) fn forget_view(id: &str) {
+  if let Ok(mut urls) = last_urls().lock() { urls.remove(id); }
   #[cfg(windows)]
   crate::webview2::forget_preview(id);
   if let Ok(mut map) = hidden_since().lock() {
@@ -380,6 +382,7 @@ pub(crate) fn is_iframe_document_url(raw: &str) -> bool {
 }
 
 /// 作业作答 / 打开一份作业的地址。工具识别用；点击弹窗不再靠这份名单放行。
+#[cfg(test)]
 pub(crate) fn is_homework_do_url(raw: &str) -> bool {
   let lower = raw.to_ascii_lowercase();
   if lower.contains("/work/list") {
@@ -472,337 +475,6 @@ const BROWSER_HOME_LAUNCH: &str = r#"(function(){
     } catch (e4) {}
     location.replace(href);
   }, true);
-})();"#;
-
-/// 旧跨域快照桥。CDP `browser_cdp_snapshot` 已替代，不再注入每个站点。
-#[allow(dead_code)]
-const CHAOXING_FRAME_BRIDGE: &str = r#"(function(){
-  if (window.__ZE_FRAME_BRIDGE__) return;
-  window.__ZE_FRAME_BRIDGE__ = true;
-  var isTop = false;
-  try { isTop = window === window.top; } catch (e) { isTop = false; }
-
-  function kindOf(href, text){
-    var h = String(href || '');
-    var t = String(text || '');
-    if (/studentcourse|已完成任务点|#coursetree|posCatalog_/i.test(h + t)) return 'catalog';
-    if (/doHomeWork|dowork|\/work\/|作业列表|待做|未交|未提交/i.test(h + t)) return 'work';
-    if (/暂无任务|默认班级/.test(t) && !/已完成任务点/.test(t)) return 'task';
-    if (/ananas|insertvideo|knowledge\/cards/i.test(h)) return 'player';
-    return 'other';
-  }
-
-  function snapRefs(){
-    var out = [];
-    var seen = {};
-    var nodes = [];
-    try {
-      nodes = document.querySelectorAll('a, button, [role="tab"], [role="button"], [role="link"], input, textarea, h2, h3, h4, li.course, .course-name, .color1, [data-url], [title], [data-id], [onclick*="pageHeader"]');
-    } catch (e0) { return out; }
-    function chromeName(el){
-      var hook = '';
-      try { hook = String(el.getAttribute('data-url') || el.getAttribute('onclick') || el.getAttribute('href') || ''); } catch (eH) {}
-      if (/pageHeader=8|\/mooc2\/work|\/work\/list|studentwork|workEnc/i.test(hook)) return '作业';
-      if (/pageHeader=1|studentcourse/i.test(hook)) return '章节';
-      if (/pageHeader=0|stuActiveList/i.test(hook)) return '任务';
-      var id = '';
-      try { id = String(el.getAttribute('data-id') || el.getAttribute('data-header') || ''); } catch (eI) {}
-      if (id === '8') return '作业';
-      var attr = '';
-      try { attr = String(el.getAttribute('aria-label') || el.getAttribute('title') || el.getAttribute('alt') || '').replace(/\s+/g, ' ').trim(); } catch (eA) {}
-      if (/^(章节|作业|任务|统计|资料|考试|讨论|通知)$/.test(attr)) return attr;
-      return '';
-    }
-    for (var i = 0; i < nodes.length && out.length < 80; i++) {
-      var el = nodes[i];
-      var tag = String(el.tagName || '').toLowerCase();
-      var type = '';
-      try { type = String(el.type || '').toLowerCase(); } catch (e1) {}
-      if (type === 'hidden' || type === 'checkbox' || type === 'radio') continue;
-      var role = tag === 'a' ? 'link' : (tag === 'button' ? 'button' : ((tag === 'input' || tag === 'textarea') ? 'textbox' : (/^h[1-4]$/.test(tag) ? 'heading' : 'button')));
-      var name = chromeName(el);
-      if (!name) {
-        try {
-          name = String(el.getAttribute('aria-label') || el.getAttribute('placeholder') || el.getAttribute('title') || el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
-        } catch (e2) {}
-      }
-      if (!name || name.length < 2 || name.length > 40) continue;
-      if (seen[name]) continue;
-      seen[name] = 1;
-      var value = '';
-      if (role === 'textbox' && type !== 'password') {
-        try { value = String(el.value || '').replace(/\s+/g, ' ').trim().slice(0, 80); } catch (e3) {}
-      }
-      out.push({ role: role, name: name, value: value });
-    }
-    return out;
-  }
-
-  function worksFromRefs(refs){
-    var out = [];
-    var seen = {};
-    for (var i = 0; i < refs.length; i++) {
-      var name = String((refs[i] && refs[i].name) || '').replace(/\s+/g, ' ').trim();
-      var m = name.match(/^(.*?)(?:\s*[;；|]\s*|\s+)(待做|未做|未完成|未交|未提交|待交|待批阅|已完成|已批阅|已交)\s*$/);
-      if (!m) continue;
-      var title = String(m[1] || '').replace(/\s+/g, ' ').trim();
-      if (!title || title.length < 2 || title.length > 80) continue;
-      if (/^作业$|^测验$|^考试$|^默认班级$|^章节$|^任务$/.test(title)) continue;
-      if (seen[title]) continue;
-      seen[title] = 1;
-      var raw = m[2];
-      var status = /待批阅/.test(raw) ? '待批阅' : ((/已完成|已批阅|已交/.test(raw) && !/未交|未提交|待交/.test(raw)) ? '已完成' : '待做');
-      out.push({ title: title, status: status });
-    }
-    return out;
-  }
-
-  function snapSelf(){
-    var text = '';
-    try { text = String((document.body && document.body.innerText) || '').trim(); } catch (e) {}
-    var href = '';
-    try { href = String(location.href || ''); } catch (e2) {}
-    var title = '';
-    try { title = String(document.title || ''); } catch (e3) {}
-    var refs = snapRefs();
-    return {
-      href: href.slice(0, 400),
-      title: title.slice(0, 120),
-      text: text.slice(0, 4000),
-      refs: refs,
-      works: worksFromRefs(refs),
-      kind: kindOf(href, text)
-    };
-  }
-
-  function postTop(msg){
-    try { window.top.postMessage(msg, '*'); return; } catch (e) {}
-    try { window.parent.postMessage(msg, '*'); } catch (e2) {}
-  }
-
-  function forwardAsk(msg){
-    try {
-      var list = document.querySelectorAll('iframe');
-      for (var i = 0; i < list.length; i++) {
-        try { list[i].contentWindow.postMessage(msg, '*'); } catch (e) {}
-      }
-    } catch (e2) {}
-  }
-
-  function compact(s){ return String(s || '').replace(/\s+/g, ''); }
-  function bareOf(s){
-    return compact(s).replace(/[;；].*$/, '').replace(/(待做|未做|未完成|未交|未提交|待交|待批阅|已完成|已批阅|已交)$/, '');
-  }
-  function clickable(el){
-    var cur = el;
-    for (var u = 0; u < 5 && cur; u++) {
-      var tag = String(cur.tagName || '').toLowerCase();
-      if (tag === 'a' || tag === 'button' || tag === 'label') return cur;
-      try {
-        var role = String(cur.getAttribute('role') || '');
-        if (role === 'tab' || role === 'button' || role === 'link') return cur;
-        if (cur.getAttribute('coursetype') || /\btab-item\b/.test(String(cur.className || ''))) return cur;
-        if (cur.getAttribute('onclick') || cur.getAttribute('data-url') || cur.getAttribute('href')) return cur;
-      } catch (eU) {}
-      if (tag === 'li' || tag === 'td') {
-        var innerA = null;
-        try { innerA = cur.querySelector('a, button, [onclick], [data-url], .titTxt a, .workName a'); } catch (eA) {}
-        if (innerA) return innerA;
-      }
-      var parent = cur.parentElement;
-      if (!parent || (parent.childElementCount || 0) > 8) return cur;
-      cur = parent;
-    }
-    return el;
-  }
-  function clickByText(want){
-    var target = compact(want);
-    if (!target) return null;
-    var bare = bareOf(want);
-    var known = {
-      '我学的课': ['.tab-item[coursetype="1"]', '[coursetype="1"]', '.tab-item'],
-      '我教的课': ['.tab-item[coursetype="0"]', '[coursetype="0"]', '.tab-item'],
-      '作业': ['[title="作业"]', '[aria-label="作业"]', '[onclick*="pageHeader=8"]', '[data-url*="work"]', '[data-id="8"]'],
-      '章节': ['[title="章节"]', '[aria-label="章节"]', '[data-url*="studentcourse"]'],
-    };
-    function labelOf(el){
-      var t = '';
-      try { t = el.getAttribute('aria-label') || el.getAttribute('title') || ''; } catch (eL) {}
-      t = compact(t);
-      if (t) return t;
-      try { return compact(el.innerText || el.textContent || ''); } catch (eL2) { return ''; }
-    }
-    function labelOk(want, label){
-      var a = compact(want);
-      var b = compact(label);
-      if (!a || !b) return false;
-      if (b.indexOf('删除') >= 0 && a.indexOf('删除') < 0) return false;
-      if ((a === '我学的课' || a === '已学的课') && (b === '我学的课' || b === '已学的课')) return true;
-      return b === a || b.indexOf(a) === 0;
-    }
-    var sels = known[target] || known[bare] || [];
-    for (var s = 0; s < sels.length; s++) {
-      try {
-        var nodes = document.querySelectorAll(sels[s]);
-        for (var k = 0; k < nodes.length; k++) {
-          var found = nodes[k];
-          var foundHref = '';
-          try { foundHref = String(found.href || found.getAttribute('href') || found.getAttribute('data-url') || ''); } catch (eH) {}
-          if (/visit\/(?:courses|interaction)|courselist/i.test(foundHref)) continue;
-          if (String(found.tagName || '').toLowerCase() === 'a' && (target === '我学的课' || target === '我教的课' || target === '已学的课')) continue;
-          if (!labelOk(target, labelOf(found)) && !labelOk(bare, labelOf(found))) continue;
-          found.scrollIntoView({ block: 'center', inline: 'nearest' });
-          var view0 = (found.ownerDocument && found.ownerDocument.defaultView) || window;
-          found.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: view0 }));
-          if (typeof found.click === 'function') found.click();
-          return { text: labelOf(found) || target, href: String(found.href || found.getAttribute('href') || found.getAttribute('data-url') || '') };
-        }
-      } catch (eK) {}
-    }
-    var walker = null;
-    try { walker = document.body && document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null); } catch (eW) {}
-    var exact = null;
-    var fuzzy = null;
-    var exactScore = 1e9;
-    var fuzzyScore = 1e9;
-    var n = null;
-    var seen = 0;
-    while (walker && (n = walker.nextNode())) {
-      if (++seen > 4000) break;
-      var tx = compact(n.nodeValue);
-      if (!tx || tx.length > 64) continue;
-      if (tx.indexOf('删除') >= 0 && target.indexOf('删除') < 0 && bare.indexOf('删除') < 0) continue;
-      var hitExact = tx === target || tx === bare || bareOf(tx) === target || bareOf(tx) === bare;
-      var hitNear = !hitExact && bare && tx.length <= bare.length + 8 && tx.indexOf(bare) >= 0;
-      if (!hitExact && !hitNear) continue;
-      var el = n.parentElement;
-      if (!el) continue;
-      var kids = 0;
-      try { kids = el.childElementCount || 0; } catch (eC) { kids = 0; }
-      if (kids > 12) continue;
-      var score = tx.length + kids;
-      if (hitExact && score < exactScore) { exact = el; exactScore = score; }
-      else if (hitNear && score < fuzzyScore) { fuzzy = el; fuzzyScore = score; }
-      if (hitExact && kids <= 1 && tx === target) break;
-    }
-    var hit = exact || fuzzy;
-    if (!hit) return null;
-    hit = clickable(hit);
-    try {
-      hit.scrollIntoView({ block: 'center', inline: 'nearest' });
-      var view = (hit.ownerDocument && hit.ownerDocument.defaultView) || window;
-      hit.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: view }));
-      if (typeof hit.click === 'function') hit.click();
-    } catch (e2) {}
-    var text = '';
-    var href = '';
-    try { text = String(hit.getAttribute('title') || hit.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 80); } catch (e3) {}
-    try {
-      var a = hit.tagName === 'A' ? hit : (hit.closest ? hit.closest('a') : null);
-      href = a ? String(a.href || a.getAttribute('href') || '') : '';
-    } catch (e4) {}
-    return { text: text || want, href: href };
-  }
-
-  function fillByText(sel, text){
-    var el = null;
-    try { if (sel) el = document.querySelector(sel); } catch (e) {}
-    if (!el) {
-      var boxes = [];
-      try { boxes = document.querySelectorAll('input, textarea, [contenteditable="true"]'); } catch (e2) { return null; }
-      for (var i = 0; i < boxes.length; i++) {
-        var box = boxes[i];
-        var label = '';
-        try { label = String(box.getAttribute('placeholder') || box.getAttribute('aria-label') || box.getAttribute('title') || ''); } catch (e3) {}
-        if (sel && label && label.indexOf(sel) >= 0) { el = box; break; }
-        if (!sel && !el) el = box;
-      }
-    }
-    if (!el) return null;
-    try {
-      try { el.click(); } catch (eC) {}
-      el.focus();
-      try { if (typeof el.select === 'function') el.select(); } catch (eS) {}
-      var proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-      var desc = Object.getOwnPropertyDescriptor(proto, 'value');
-      var apply = function(value){
-        if (desc && desc.set) desc.set.call(el, value);
-        else el.value = value;
-      };
-      apply('');
-      el.dispatchEvent(new Event('input', { bubbles: true }));
-      apply(text);
-      try {
-        el.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, composed: true, data: text, inputType: 'insertFromPaste' }));
-      } catch (eIn) {
-        el.dispatchEvent(new Event('input', { bubbles: true }));
-      }
-      el.dispatchEvent(new Event('change', { bubbles: true }));
-    } catch (e4) { return null; }
-    return { text: text };
-  }
-
-  window.addEventListener('message', function(ev){
-    var d = ev && ev.data;
-    if (!d || d.__ze !== 1) return;
-    if (d.type === 'ask') {
-      if (d.op === 'snap' || !d.op) {
-        postTop({ __ze: 1, type: 'snap', req: d.req, snap: snapSelf() });
-      } else if (d.op === 'click') {
-        var want = String((d.extra && d.extra.text) || '');
-        var hit = clickByText(want);
-        if (hit) postTop({ __ze: 1, type: 'clicked', req: d.req, text: hit.text, href: hit.href || '' });
-      } else if (d.op === 'fill') {
-        var filled = fillByText(String((d.extra && d.extra.selector) || ''), String((d.extra && d.extra.text) || ''));
-        if (filled) postTop({ __ze: 1, type: 'filled', req: d.req, text: filled.text });
-      }
-      forwardAsk(d);
-      return;
-    }
-    if (!isTop) return;
-    if (d.type === 'snap' && d.snap) {
-      if (!window.__ZE_FRAME_SNAPS__) window.__ZE_FRAME_SNAPS__ = [];
-      window.__ZE_FRAME_SNAPS__.push(d.snap);
-      return;
-    }
-    if (d.type === 'clicked') {
-      window.__ZE_CLICKED__ = String(d.text || '');
-      window.__ZE_CLICKED_HREF__ = String(d.href || '');
-    }
-    if (d.type === 'filled') {
-      window.__ZE_FILLED__ = String(d.text || '');
-    }
-  });
-
-  if (isTop) {
-    window.__ZE_FRAME_SNAPS__ = window.__ZE_FRAME_SNAPS__ || [];
-    window.__ZE_ASK_FRAMES__ = function(op, extra){
-      var req = String(Date.now()) + '-' + Math.random().toString(16).slice(2);
-      window.__ZE_FRAME_SNAPS__ = [];
-      window.__ZE_CLICKED__ = '';
-      window.__ZE_CLICKED_HREF__ = '';
-      window.__ZE_FILLED__ = '';
-      var msg = { __ze: 1, type: 'ask', op: op || 'snap', req: req, extra: extra || {} };
-      // 顶层自己也记一份（同源子树仍由 __sameFrames 扫；这里补跨域）
-      try { window.__ZE_FRAME_SNAPS__.push(snapSelf()); } catch (e) {}
-      if (op === 'click') {
-        try {
-          var selfHit = clickByText(String((extra && extra.text) || ''));
-          if (selfHit) {
-            window.__ZE_CLICKED__ = String(selfHit.text || '');
-            window.__ZE_CLICKED_HREF__ = String(selfHit.href || '');
-          }
-        } catch (eC) {}
-      }
-      forwardAsk(msg);
-      return true;
-    };
-  } else {
-    // 子 frame 就绪后主动报一次，方便顶层缓存
-    try {
-      postTop({ __ze: 1, type: 'snap', req: 'boot', snap: snapSelf() });
-    } catch (e) {}
-  }
 })();"#;
 
 /// 学习通讨论模块是套了两层 iframe 的卡片。拦掉子 frame 之后，
@@ -987,15 +659,13 @@ pub async fn browser_open(
 
   let window = parent_window(&app)?;
   let data_dir = shared_data_dir(&app)?;
-  #[cfg(windows)]
-  let install_record = data_dir.join("scriptcat-install.json");
   let state_id = id.clone();
   let title_id = id.clone();
   let popup_app = app.clone();
   let popup_id = id.clone();
   remember_url(&id, &url);
 
-  let mut builder = WebviewBuilder::new(&label, parsed)
+  let builder = WebviewBuilder::new(&label, parsed)
     .data_directory(data_dir)
     .focused(!hidden.unwrap_or(false))
     .accept_first_mouse(true)
@@ -1042,24 +712,8 @@ pub async fn browser_open(
     });
 
   #[cfg(debug_assertions)]
-  {
-    builder = builder.devtools(true);
-  }
+  let builder = builder.devtools(true);
 
-  #[cfg(windows)]
-  let pending_install = {
-    let extensions = app.path().resource_dir().map_err(|e| e.to_string())?.join("browser-extensions");
-    // WebView2 persists extensions in this profile. Reinstall only for a new bundle or path.
-    let stamp = serde_json::to_vec(&(env!("SCRIPTCAT_RELEASE_SHA256"), &extensions))
-      .map_err(|err| err.to_string())?;
-    builder = builder.browser_extensions_enabled(true);
-    if std::fs::read(&install_record).ok().as_ref() == Some(&stamp) {
-      None
-    } else {
-      builder = builder.extensions_path(extensions);
-      Some(stamp)
-    }
-  };
   let webview = match window.add_child(
     builder,
     LogicalPosition::new(x.max(0.0), y.max(0.0)),
@@ -1082,11 +736,6 @@ pub async fn browser_open(
   };
   #[cfg(windows)]
   {
-    if let Some(stamp) = pending_install {
-      if let Err(err) = std::fs::write(install_record, stamp) {
-        eprintln!("无法记录脚本猫安装状态: {err}");
-      }
-    }
     crate::browser_theme::apply_webview(&webview)?;
     if let Err(error) = crate::webview2::set_audio_muted(&webview, true).await {
       let _ = webview.close();
@@ -1384,9 +1033,6 @@ pub fn browser_capabilities() -> serde_json::Value {
   serde_json::json!({
     "secureFill": chromium,
     "audioMute": chromium,
-    "scriptCat": chromium,
-    "scriptCatPermissions": cef,
-    "nativeVideoOverlay": cef,
   })
 }
 
@@ -1658,50 +1304,6 @@ pub async fn browser_cdp_type_focused(
 }
 
 #[tauri::command]
-pub async fn browser_video_overlay_tick(app: AppHandle, id: String) -> Result<serde_json::Value, String> {
-  #[cfg(target_os = "macos")]
-  if crate::cef_runtime::cef_enabled() {
-    let state = crate::macos_video_overlay::tick(app, id).await?;
-    return serde_json::to_value(state).map_err(|e| e.to_string());
-  }
-  let _ = (app, id);
-  Ok(serde_json::json!({ "found": false, "active": false }))
-}
-
-#[tauri::command]
-pub async fn browser_video_overlay_state(app: AppHandle, id: String) -> Result<serde_json::Value, String> {
-  #[cfg(target_os = "macos")]
-  if crate::cef_runtime::cef_enabled() {
-    let state = crate::macos_video_overlay::state(app, id)?;
-    return serde_json::to_value(state).map_err(|e| e.to_string());
-  }
-  let _ = (app, id);
-  Ok(serde_json::json!({ "found": false, "active": false }))
-}
-
-#[tauri::command]
-pub async fn browser_video_overlay_play(app: AppHandle, id: String) -> Result<serde_json::Value, String> {
-  #[cfg(target_os = "macos")]
-  if crate::cef_runtime::cef_enabled() {
-    let state = crate::macos_video_overlay::play(app, id)?;
-    return serde_json::to_value(state).map_err(|e| e.to_string());
-  }
-  let _ = (app, id);
-  Ok(serde_json::json!({ "found": false, "active": false }))
-}
-
-#[tauri::command]
-pub async fn browser_video_overlay_hide(app: AppHandle, id: String) -> Result<(), String> {
-  #[cfg(target_os = "macos")]
-  if crate::cef_runtime::cef_enabled() {
-    crate::macos_video_overlay::hide_tab(&app, &id);
-    return Ok(());
-  }
-  let _ = (app, id);
-  Ok(())
-}
-
-#[tauri::command]
 pub async fn browser_cdp_snapshot(
   app: AppHandle,
   id: String,
@@ -1786,6 +1388,7 @@ pub async fn browser_cookies(
   Err("当前平台浏览区不是 Chromium".into())
 }
 
+#[cfg(target_os = "macos")]
 fn cookie_target(id: &str, url: Option<String>) -> String {
   let raw = url.unwrap_or_default();
   if raw.trim().is_empty() {
@@ -1803,12 +1406,12 @@ pub async fn browser_set_cookies(
   url: Option<String>, expected_epoch: Option<u64>) -> Result<serde_json::Value, String> {
   let control_id = id.clone();
   crate::browser_control::run_at(&control_id, false, expected_epoch, async move {
-  let target = cookie_target(&id, url);
   #[cfg(target_os = "macos")]
   if crate::cef_runtime::cef_enabled() {
+    let target = cookie_target(&id, url);
     return crate::cef::set_cookies(&id, cookies, &target).await;
   }
-  let _ = (app, cookies);
+  let _ = (app, cookies, url, id);
   Err("当前平台浏览区不是 Chromium".into())
 
   }).await
@@ -1844,238 +1447,17 @@ pub async fn browser_clear_cookies(
   domain: Option<String>, expected_epoch: Option<u64>) -> Result<serde_json::Value, String> {
   let control_id = id.clone();
   crate::browser_control::run_at(&control_id, false, expected_epoch, async move {
-  let target = cookie_target(&id, url);
   #[cfg(target_os = "macos")]
   if crate::cef_runtime::cef_enabled() {
+    let target = cookie_target(&id, url);
     return crate::cef::clear_cookies(&id, &target, name, domain).await;
   }
-  let _ = (app, name, domain);
+  let _ = (app, name, domain, url, id);
   Err("当前平台浏览区不是 Chromium".into())
 
   }).await
 }
 
-/// Agent 用：在每个 CDP frame 执行同一脚本，返回多帧结果（内部工具仍用 browser_eval 取 best）。
-#[tauri::command]
-pub async fn browser_eval_frames(
-  app: AppHandle,
-  id: String,
-  script: String, expected_epoch: Option<u64>) -> Result<serde_json::Value, String> {
-  crate::secret_browser::guard(&app, &id).await?;
-  let control_id = id.clone();
-  crate::browser_control::run_at(&control_id, false, expected_epoch, async move {
-  #[cfg(target_os = "macos")]
-  if crate::cef_runtime::cef_enabled() {
-    return crate::cef::eval_script_frames(app, id, script).await;
-  }
-  {
-    let value = browser_eval(app, id, script, None).await?;
-    let parsed: serde_json::Value =
-      serde_json::from_str(&value).unwrap_or_else(|_| serde_json::Value::String(value));
-    Ok(serde_json::json!({
-      "frames": [{ "url": "", "result": parsed, "error": null }],
-      "result": parsed,
-      "hint": "当前内核未走多帧 CDP；不要写 iframe.contentDocument。"
-    }))
-  }
-
-  }).await
-}
-
-/// 只把深度 0 上的 return / const / let / 分号当成语句。嵌在函数里的 return 仍是表达式。
-fn top_level_statement(script: &str) -> bool {
-  let chars: Vec<char> = script.chars().collect();
-  let mut i = 0;
-  let mut depth = 0i32;
-  let mut quote = '\0';
-  while i < chars.len() {
-    let ch = chars[i];
-    if quote != '\0' {
-      if ch == '\\' {
-        i += 2;
-        continue;
-      }
-      if ch == quote {
-        quote = '\0';
-      }
-      i += 1;
-      continue;
-    }
-    if ch == '"' || ch == '\'' || ch == '`' {
-      quote = ch;
-      i += 1;
-      continue;
-    }
-    if ch == '/' && i + 1 < chars.len() && chars[i + 1] == '/' {
-      while i < chars.len() && chars[i] != '\n' {
-        i += 1;
-      }
-      continue;
-    }
-    if ch == '/' && i + 1 < chars.len() && chars[i + 1] == '*' {
-      i += 2;
-      while i + 1 < chars.len() && !(chars[i] == '*' && chars[i + 1] == '/') {
-        i += 1;
-      }
-      i = (i + 2).min(chars.len());
-      continue;
-    }
-    if ch == '(' || ch == '{' || ch == '[' {
-      depth += 1;
-      i += 1;
-      continue;
-    }
-    if ch == ')' || ch == '}' || ch == ']' {
-      depth = (depth - 1).max(0);
-      i += 1;
-      continue;
-    }
-    if depth == 0 {
-      if ch == ';' {
-        return true;
-      }
-      if ch == '_' || ch == '$' || ch.is_ascii_alphabetic() {
-        let start = i;
-        i += 1;
-        while i < chars.len()
-          && (chars[i] == '_' || chars[i] == '$' || chars[i].is_ascii_alphanumeric())
-        {
-          i += 1;
-        }
-        let word: String = chars[start..i].iter().collect();
-        if matches!(
-          word.as_str(),
-          "return"
-            | "const"
-            | "let"
-            | "var"
-            | "function"
-            | "class"
-            | "if"
-            | "for"
-            | "while"
-            | "do"
-            | "switch"
-            | "try"
-            | "throw"
-        ) {
-          return true;
-        }
-        continue;
-      }
-    }
-    i += 1;
-  }
-  false
-}
-
-pub(crate) fn prepare_eval_script(script: &str) -> String {
-  let trimmed = script.trim();
-  if trimmed.is_empty() {
-    return trimmed.to_string();
-  }
-  // 只有整段已是 IIFE 表达式时才原样代入。
-  // 不能单靠 ends_with(")()")：`function foo(){} (function(){})()` 也会命中。
-  let already = trimmed.starts_with("(function")
-    || trimmed.starts_with("(()=>")
-    || trimmed.starts_with("(() =>")
-    || trimmed.starts_with("(async");
-  if already {
-    return trimmed.to_string();
-  }
-  // 顶层 return / const / let 才包成函数体。嵌套 return 仍按表达式 return。
-  if top_level_statement(trimmed) {
-    return format!("(function(){{\n{trimmed}\n}})()");
-  }
-  format!("(function(){{ return ({trimmed}); }})()")
-}
-
-fn syntax_place(raw: &str, script: &str) -> String {
-  let col = serde_json::from_str::<serde_json::Value>(raw)
-    .ok()
-    .and_then(|v| {
-      v.get("columnNumber")
-        .and_then(|n| n.as_u64())
-        .or_else(|| v.pointer("/exceptionDetails/columnNumber").and_then(|n| n.as_u64()))
-    });
-  let Some(col) = col else {
-    return "脚本里".into();
-  };
-  let chars: Vec<char> = script.chars().collect();
-  if chars.is_empty() {
-    return format!("第 {col} 列");
-  }
-  let idx = (col as usize).min(chars.len().saturating_sub(1));
-  let start = idx.saturating_sub(10);
-  let end = (idx + 10).min(chars.len());
-  let near: String = chars[start..end].iter().collect();
-  if near.is_empty() {
-    format!("第 {col} 列")
-  } else {
-    format!("第 {col} 列附近「{near}」")
-  }
-}
-
-/// 把 CDP exceptionDetails JSON 收成短中文，方便 Agent 看。
-pub(crate) fn format_eval_error(raw: &str) -> String {
-  format_eval_error_near(raw, "")
-}
-
-pub(crate) fn format_eval_error_near(raw: &str, script: &str) -> String {
-  let lower = raw.to_ascii_lowercase();
-  let syntax = lower.contains("syntaxerror")
-    || lower.contains("unexpected token")
-    || lower.contains("illegal return");
-  let place = syntax_place(raw, script);
-  if lower.contains("illegal return statement") {
-    return format!(
-      "脚本语法错：顶层不能写 return。错在{place}。多数信息在 get_page 的 video 行、[done] 标记里。"
-    );
-  }
-  if syntax {
-    let desc = serde_json::from_str::<serde_json::Value>(raw)
-      .ok()
-      .and_then(|v| {
-        v.pointer("/exception/description")
-          .or_else(|| v.pointer("/exception/value"))
-          .and_then(|x| x.as_str())
-          .map(|text| text.chars().take(120).collect::<String>())
-      })
-      .filter(|text| !text.is_empty())
-      .unwrap_or_else(|| "脚本语法错".into());
-    return format!("{desc}。错在{place}。多数信息在 get_page 的 video 行、[done] 标记里。");
-  }
-  if raw.contains("contentDocument")
-    || raw.contains("Blocked a frame")
-    || lower.contains("cross-origin")
-    || raw.contains("iframe not accessible")
-  {
-    return "不要读 iframe.contentDocument。CDP 会在每个 frame 内执行脚本，直接用 document / querySelector。".into();
-  }
-  if let Ok(v) = serde_json::from_str::<serde_json::Value>(raw) {
-    let desc = v
-      .pointer("/exception/description")
-      .or_else(|| v.pointer("/exception/value"))
-      .or_else(|| v.get("text"))
-      .and_then(|x| x.as_str())
-      .unwrap_or("");
-    if !desc.is_empty() {
-      return desc.chars().take(240).collect();
-    }
-  }
-  raw.chars().take(240).collect()
-}
-
-fn new_eval_token() -> String {
-  format!(
-    "{:x}{:x}",
-    std::time::SystemTime::now()
-      .duration_since(std::time::UNIX_EPOCH)
-      .map(|value| value.as_nanos())
-      .unwrap_or(0),
-    std::process::id()
-  )
-}
 
 async fn eval_wait_title(
   webview: &tauri::Webview,
@@ -2101,134 +1483,6 @@ async fn eval_wait_title(
   }
 }
 
-#[tauri::command]
-pub async fn browser_eval_main(app: AppHandle, id: String, script: String, expected_epoch: Option<u64>) -> Result<String, String> {
-  crate::secret_browser::guard(&app, &id).await?;
-  let control_id = id.clone();
-  crate::browser_control::run_at(&control_id, false, expected_epoch, async move {
-  #[cfg(target_os = "macos")]
-  if crate::cef_runtime::cef_enabled() {
-    return crate::cef::eval_script_main(app, id, script).await;
-  }
-  browser_eval(app, id, script, None).await
-
-  }).await
-}
-
-#[tauri::command]
-pub async fn browser_eval(app: AppHandle, id: String, script: String, expected_epoch: Option<u64>) -> Result<String, String> {
-  #[cfg(windows)]
-  let _operation = crate::webview2_secrets::lock(&id).await;
-  crate::secret_browser::guard(&app, &id).await?;
-  let control_id = id.clone();
-  crate::browser_control::run_at(&control_id, false, expected_epoch, async move {
-  #[cfg(target_os = "macos")]
-  if crate::cef_runtime::cef_enabled() {
-    return crate::cef::eval_script(app, id, script).await;
-  }
-  {
-  let script = script.trim();
-  if script.is_empty() {
-    return Err("脚本不能为空".into());
-  }
-  if script.len() > 400_000 {
-    return Err("脚本过长".into());
-  }
-  let webview = find_browser(&app, &id)?;
-  let token = new_eval_token();
-  let prepared = prepare_eval_script(script);
-  let mut wrapped = String::from("(function(){\n  var prev = document.title;\n  try {\n    var value = ");
-  wrapped.push_str(&prepared);
-  wrapped.push_str(";\n    window.__ZE_EVAL_MAP__ = window.__ZE_EVAL_MAP__ || {};\n    window.__ZE_EVAL_MAP__[\"");
-  wrapped.push_str(&token);
-  wrapped.push_str("\"] = { buf: JSON.stringify(value === undefined ? null : value), off: 0 };\n    document.title = \"ZRRESULT:");
-  wrapped.push_str(&token);
-  wrapped.push_str(":__READY__\";\n  } catch (e) {\n    window.__ZE_EVAL_MAP__ = window.__ZE_EVAL_MAP__ || {};\n    window.__ZE_EVAL_MAP__[\"");
-  wrapped.push_str(&token);
-  wrapped.push_str("\"] = { buf: JSON.stringify({__error: String(e && e.message || e)}), off: 0 };\n    document.title = \"ZRRESULT:");
-  wrapped.push_str(&token);
-  wrapped.push_str(":__READY__\";\n  }\n  setTimeout(function(){ document.title = prev; }, 30);\n})();");
-  let first = eval_wait_title(&webview, token.clone(), wrapped).await?;
-  if first != "__READY__" {
-    return Ok(first);
-  }
-  let mut out = String::new();
-  for _ in 0..200 {
-    let chunk_token = new_eval_token();
-    let chunk_js = format!(
-      r#"(function(){{
-  var prev = document.title;
-  var slot = (window.__ZE_EVAL_MAP__ || {{}})["{src}"];
-  var s = slot ? String(slot.buf || '') : '';
-  var off = slot ? (slot.off | 0) : 0;
-  var chunk = s.slice(off, off + 360);
-  if (slot) slot.off = off + chunk.length;
-  document.title = "ZRRESULT:{chunk_token}:" + JSON.stringify({{c: chunk, d: !slot || slot.off >= s.length}});
-  setTimeout(function(){{ document.title = prev; }}, 20);
-}})();"#,
-      src = token,
-      chunk_token = chunk_token
-    );
-    let raw = eval_wait_title(&webview, chunk_token, chunk_js).await?;
-    let parsed: serde_json::Value =
-      serde_json::from_str(&raw).map_err(|_| "读取执行结果失败".to_string())?;
-    if let Some(chunk) = parsed.get("c").and_then(|v| v.as_str()) {
-      out.push_str(chunk);
-    }
-    if parsed.get("d").and_then(|v| v.as_bool()).unwrap_or(false) {
-      let _ = webview.eval(&format!(
-        r#"(function(){{ try {{ if (window.__ZE_EVAL_MAP__) delete window.__ZE_EVAL_MAP__["{token}"]; }} catch (e) {{}} }})();"#
-      ));
-      return Ok(out);
-    }
-  }
-  Err("执行结果过长".into())
-  }
-
-  }).await
-}
-
-fn protocol_arg_str(args: &serde_json::Value, key: &str) -> Option<String> {
-  args.get(key).and_then(|v| v.as_str()).map(str::to_string).filter(|s| !s.is_empty())
-}
-
-fn protocol_arg_f64(args: &serde_json::Value, key: &str) -> f64 {
-  args
-    .get(key)
-    .and_then(|v| v.as_f64().or_else(|| v.as_i64().map(|n| n as f64)))
-    .unwrap_or(0.0)
-}
-
-fn protocol_json<T: serde::Serialize>(value: T) -> Result<serde_json::Value, String> {
-  serde_json::to_value(value).map_err(|err| err.to_string())
-}
-
-#[tauri::command]
-pub async fn browser_protocol(
-  app: AppHandle,
-  id: String,
-  op: String,
-  args: Option<serde_json::Value>, expected_epoch: Option<u64>) -> Result<serde_json::Value, String> {
-  let control_id = id.clone();
-  crate::browser_control::run_at(&control_id, false, expected_epoch, async move {
-  let args = args.unwrap_or(serde_json::Value::Null);
-  let first = dispatch_browser_protocol(app.clone(), id.clone(), op.clone(), args.clone()).await.map(crate::secret_vault::redact_best_effort);
-  #[cfg(target_os = "macos")]
-  if let Err(err) = &first {
-    if crate::cef_runtime::cef_enabled() && crate::cdp_client::is_session_dead(err) {
-      crate::cef::drop_page_bind(&id);
-      return match dispatch_browser_protocol(app, id, op, args).await {
-        Err(again) if crate::cdp_client::is_session_dead(&again) => {
-          Err(crate::cdp_client::HOST_CHANNEL_DOWN.into())
-        }
-        other => other.map(crate::secret_vault::redact_best_effort),
-      };
-    }
-  }
-  first
-
-  }).await
-}
 
 async fn dispatch_browser_protocol(
   app: AppHandle,

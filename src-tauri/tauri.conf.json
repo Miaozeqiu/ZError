@@ -31,9 +31,6 @@
       "icons/icon.png"
     ],
     "resources": {
-      "target/scriptcat-v1.5.2": "browser-extensions/scriptcat",
-      "vendor/scriptcat/LICENSE": "licenses/scriptcat/LICENSE",
-      "vendor/scriptcat/SOURCE.txt": "licenses/scriptcat/SOURCE.txt",
       "../public/browser-home.html": "browser-home.html",
       "../public/browser-home": "browser-home",
       "infoplist/zh-Hans.lproj/InfoPlist.strings": "zh-Hans.lproj/InfoPlist.strings",

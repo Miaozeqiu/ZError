@@ -184,11 +184,10 @@
 
 <script setup lang="ts">
 import { invoke } from '@tauri-apps/api/core'
-import { computed, nextTick, reactive, ref, watch } from 'vue'
+import { defineAsyncComponent, computed, nextTick, reactive, ref, watch } from 'vue'
 import { Icon } from '@iconify/vue/offline'
 import '../../utils/ui/agentIcons'
 import UnifiedContextMenu, { type MenuItem } from '../../components/ui/UnifiedContextMenu.vue'
-import AgentSkillDetail from './AgentSkillDetail.vue'
 import AgentBehaviorSettings from './AgentBehaviorSettings.vue'
 import { agentSkillsState } from '../../services/agent/agentSkills'
 import SecureSecretInput from '../../components/ui/SecureSecretInput.vue'
@@ -196,7 +195,18 @@ import { isNativeSecureStore, isSecretReference } from '../../services/security/
 import { forgetSiteAccount, rememberSiteAccount, siteAccountsState, refreshSiteAccounts } from '../../services/agent/siteAccounts'
 import { addWebsiteSettings, listWebsiteSettings, deleteWebsiteSettings, type WebsiteSettingsItem } from '../../services/agent/websiteSettings'
 import { normalizeWebsiteHost, websiteIdentityState } from '../../services/agent/websiteIdentity'
-import { isRequiredWebsiteRepository, websiteIdentityLocked, websiteRepositoryStates, repositoryRegistryState, previewWebsiteRepository, importWebsiteRepository, setWebsiteExperienceUrl, type WebsiteRepositoryCandidate } from '../../services/agent/websiteRepository'
+import {
+  isRequiredWebsiteRepository,
+  websiteIdentityLocked,
+  websiteRepositoryStates,
+  repositoryRegistryState,
+  previewWebsiteRepository,
+  importWebsiteRepository,
+  setWebsiteExperienceUrl,
+  type WebsiteRepositoryCandidate,
+} from '../../services/agent/websiteRepository'
+
+const AgentSkillDetail = defineAsyncComponent(() => import('./AgentSkillDetail.vue').then(module => module.default))
 
 const emit = defineEmits<{ 'skill-detail-change': [open: boolean] }>()
 const websites = ref<WebsiteSettingsItem[]>([])

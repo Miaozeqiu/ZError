@@ -131,8 +131,9 @@
 </template>
 
 <script setup lang="ts">
+import { useWorkspaceEvent } from '../composables/useWorkspaceEvent'
 import BrowserAgentWatchBar from '../components/browser/BrowserAgentWatchBar.vue'
-import { computed, defineComponent, h, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import {
   activeChat,
   activeChatId,
@@ -168,11 +169,6 @@ import ModelSelectorDialog from './home/ModelSelectorDialog.vue'
 import { isTauriEnvironment } from '../services/app/environmentDetector'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
-import {
-  InfographicBlockNode,
-  MermaidBlockNode,
-  setCustomComponents,
-} from 'markstream-vue'
 import AgentApprovalBar from '../components/agent/AgentApprovalBar.vue'
 import { agentApprovalState } from '../services/agent/agentApproval'
 import AgentChatComposer from './agentChat/AgentChatComposer.vue'
@@ -183,9 +179,6 @@ import AgentBrowserPane from './agentChat/AgentBrowserPane.vue'
 import { agentBrowserExpanded, agentBrowserRevealRequest, currentAgentBrowser, currentAgentBrowserOpen } from '../services/agent/agentBrowser'
 import { watchBrowserChapters } from '../services/agent/browserChapterProgress'
 import { watchBrowserHomework } from '../services/agent/browserHomeworkProgress'
-import AgentD2Block from '../components/agent/AgentD2Block.vue'
-import AgentHtmlBlock from '../components/agent/AgentHtmlBlock.vue'
-import AgentCodeBlock from '../components/agent/AgentCodeBlock.vue'
 import {
   bindAgentChatPanes,
   browserPaneVisible,
@@ -203,28 +196,7 @@ import {
   revealBrowserPane,
   selectedAgentPane,
 } from './agentChat/useAgentChatPanes'
-import '../services/model/markstream'
-import 'markstream-vue/index.css'
-import 'katex/dist/katex.min.css'
 import 'highlight.js/styles/github.css'
-
-const ThematicBreak = defineComponent({
-  name: 'AgentThematicBreak',
-  inheritAttrs: false,
-  setup() {
-    return () => h('hr', { class: 'agent-hr' })
-  },
-})
-
-setCustomComponents('agent-chat', {
-  thematic_break: ThematicBreak,
-  mermaid: MermaidBlockNode,
-  d2: AgentD2Block,
-  d2lang: AgentD2Block,
-  infographic: InfographicBlockNode,
-  html_block: AgentHtmlBlock,
-  code_block: AgentCodeBlock,
-})
 
 defineEmits<{
   'open-folder': [folderId: number]
@@ -715,17 +687,15 @@ if (isTauriEnvironment()) {
 
 onMounted(() => {
   document.addEventListener('keydown', onPreviewKeydown)
-  window.addEventListener('prefill-agent-composer', onComposerPrefill)
   window.addEventListener('study-graph-updated', onStudyGraphUpdated)
-  window.addEventListener('open-study-graph', onOpenStudyGraph)
 })
 
 onUnmounted(() => {
   document.removeEventListener('keydown', onPreviewKeydown)
-  window.removeEventListener('prefill-agent-composer', onComposerPrefill)
   window.removeEventListener('study-graph-updated', onStudyGraphUpdated)
-  window.removeEventListener('open-study-graph', onOpenStudyGraph)
 })
+useWorkspaceEvent('agent', 'prefill-agent-composer', onComposerPrefill)
+useWorkspaceEvent('agent', 'open-study-graph', onOpenStudyGraph)
 </script>
 
 <style scoped>

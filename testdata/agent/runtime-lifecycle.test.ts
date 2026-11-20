@@ -1,0 +1,20 @@
+import { describe, expect, it, vi } from 'vitest'
+const stopWatch = vi.hoisted(() => vi.fn())
+const stopSites = vi.hoisted(() => vi.fn())
+const initialize = vi.hoisted(() => vi.fn(() => stopWatch))
+const install = vi.hoisted(() => vi.fn(() => stopSites))
+vi.mock('../../src/services/agent/chatLoop', () => ({ initializeChatRuntime: initialize }))
+vi.mock('../../src/services/platform', () => ({ ensureSiteHooks: install }))
+import { startAgentRuntime } from '../../src/services/agent/runtime'
+it('the app owns one runtime and obsolete cleanup cannot stop a later lifecycle', () => {
+  const oldStop = startAgentRuntime()
+  expect(startAgentRuntime()).toBe(oldStop)
+  expect(initialize).toHaveBeenCalledOnce(); expect(install).toHaveBeenCalledOnce()
+  oldStop(); oldStop()
+  expect(stopWatch).toHaveBeenCalledOnce(); expect(stopSites).toHaveBeenCalledOnce()
+  const stop = startAgentRuntime()
+  oldStop()
+  expect(stopWatch).toHaveBeenCalledOnce()
+  stop()
+  expect(stopWatch).toHaveBeenCalledTimes(2); expect(stopSites).toHaveBeenCalledTimes(2)
+})

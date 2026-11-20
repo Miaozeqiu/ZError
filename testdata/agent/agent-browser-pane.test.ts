@@ -34,7 +34,7 @@ vi.mock('../../src/services/browser/appBrowser', async () => {
     setBrowserAudioMuted: native.audio, setBrowserBounds: native.bounds, setBrowserZoom: vi.fn(), showBrowserView: native.show,
   }
 })
-vi.mock('../../src/services/browser/capabilities', () => ({ browserCapabilities: async () => ({ secureFill: true, audioMute: true, scriptCat: true, scriptCatPermissions: false }) }))
+vi.mock('../../src/services/browser/capabilities', () => ({ browserCapabilities: async () => ({ secureFill: true, audioMute: true }) }))
 vi.mock('../../src/services/app/environmentDetector', () => ({ isTauriEnvironment: () => true }))
 vi.mock('../../src/services/browser/control', async () => {
   const { ref } = await import('vue')

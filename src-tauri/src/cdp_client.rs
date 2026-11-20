@@ -92,6 +92,10 @@ pub fn snapshot_stats() -> Value {
   })
 }
 
+fn prune_cancelled_waiters(waiters: &mut HashMap<u64, oneshot::Sender<Result<Value, String>>>) {
+  waiters.retain(|_, reply| !reply.is_closed());
+}
+
 fn fail_waiters(waiters: HashMap<u64, oneshot::Sender<Result<Value, String>>>) {
   for (_, reply) in waiters {
     let _ = reply.send(Err("CDP 连接断开".into()));
@@ -140,8 +144,11 @@ impl CdpConn {
     let flag = alive.clone();
     tokio::spawn(async move {
       let mut waiters: HashMap<u64, oneshot::Sender<Result<Value, String>>> = HashMap::new();
+      let mut cleanup = tokio::time::interval(Duration::from_secs(1));
+      cleanup.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
       loop {
         tokio::select! {
+          _ = cleanup.tick() => prune_cancelled_waiters(&mut waiters),
           incoming = reader.next() => {
             match incoming {
               None => break,
@@ -167,6 +174,7 @@ impl CdpConn {
           }
           job = rx.recv() => {
             let Some(mut job) = job else { break };
+            if job.reply.is_closed() { continue; }
             if let Err(error) = crate::browser_control::guard_cdp(&job.permit, &job.method, &mut job.params) {
               let _ = job.reply.send(Err(error));
               continue;
@@ -360,6 +368,17 @@ mod tests {
     ) -> std::task::Poll<Result<(), Self::Error>> {
       std::task::Poll::Ready(Ok(()))
     }
+  }
+
+  #[test]
+  fn timed_out_waiters_are_released_without_dropping_live_requests() {
+    let (cancelled, abandoned) = oneshot::channel();
+    let (live, _receiver) = oneshot::channel();
+    let mut waiters = HashMap::from([(1, cancelled), (2, live)]);
+    drop(abandoned);
+    prune_cancelled_waiters(&mut waiters);
+    assert_eq!(waiters.len(), 1);
+    assert!(waiters.contains_key(&2));
   }
 
   #[tokio::test]

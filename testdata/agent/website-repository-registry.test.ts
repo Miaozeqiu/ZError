@@ -262,6 +262,43 @@ describe('website repository registry', () => {
       expect(await mod.websiteRepositoryHosts()).toContain(host)
       expect(storage.value.removedOpenHosts).not.toContain(host)
     })
+  it('reinstalls a removed Open repository for an explicit task while passive visits keep it removed', async () => {
+    const root = 'https://open.zerrorai.com/v1/website-experience'
+    const host = 'zjooc.cn'
+    const selected = candidate('zjooc', host)
+    const cloud = { ...snapshot('zjooc', host), tools: [{ type: 'function', function: {
+      name: 'browser_login_zjooc', description: 'Login', parameters: { type: 'object' },
+    } }], scriptManifest: '/v1/website-experience/zjooc.cn/script-manifest.json' }
+    let fail = false
+    const fetcher = vi.fn(async (url: string) => url === root
+      ? Response.json({ sites: [{ ...selected.website, ...selected.source }] })
+      : fail ? new Response(null, { status: 503 }) : Response.json(cloud))
+    vi.stubGlobal('fetch', fetcher)
+    let mod = await import('../../src/services/agent/websiteRepository')
+    await mod.experienceHostForPage('https://www.zjooc.cn/')
+    await mod.removeWebsiteRepository(host)
+    vi.resetModules()
+    mod = await import('../../src/services/agent/websiteRepository')
+    fetcher.mockClear()
+    await mod.experienceHostForPage('https://www.zjooc.cn/login')
+    expect(mod.hasWebsiteRepository(host)).toBe(false)
+    expect(mod.websiteToolsForHost(host)).toEqual([])
+    expect(fetcher).not.toHaveBeenCalled()
+
+    // An unavailable source must preserve the uninstall marker and permit an explicit retry.
+    fail = true
+    await mod.experienceHostForTask('https://www.zjooc.cn/login')
+    expect(mod.hasWebsiteRepository(host)).toBe(false)
+    expect(storage.value.removedOpenHosts).toContain(host)
+    fail = false
+    expect(await mod.experienceHostForTask('https://background.zjooc.cn/login')).toBe(host)
+    expect(mod.isOpenWebsiteRepository(host)).toBe(true)
+    expect(mod.websiteToolsForHost(host)).toEqual(cloud.tools)
+    expect(await mod.websiteScriptSource(host)).toMatchObject({ url: root + '/' + host })
+    expect(storage.value.removedOpenHosts).not.toContain(host)
+    expect(await mod.websiteRepositoryHosts()).toEqual(['chaoxing.com', host])
+    expect(fetcher.mock.calls.every(([url]) => url === root || url === root + '/' + host)).toBe(true)
+  })
   it('installs only the visited catalog site, shares concurrent requests and refreshes through Open after restart', async () => {
     const root = 'https://open.zerrorai.com/v1/website-experience'
     const host = 'school.example'

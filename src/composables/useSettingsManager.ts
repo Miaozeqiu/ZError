@@ -1,4 +1,4 @@
-import { computed, ref, watch } from 'vue'
+import { computed, ref } from 'vue'
 import { settingsManager, type AppSettings } from '../services/app/settings'
 
 /**
@@ -236,7 +236,7 @@ export function useSettingsManager() {
  * 用于在组件间同步设置状态
  */
 export function useSettingsSync() {
-  const { settings, addSettingsListener } = useSettingsManager()
+  const { settings } = useSettingsManager()
   
   // 设置同步状态
   const syncStatus = ref<'idle' | 'syncing' | 'synced' | 'error'>('idle')

@@ -1,9 +1,12 @@
 import { defineConfig, type Plugin } from "vite";
 import vue from "@vitejs/plugin-vue";
+import { d2Assets } from './scripts/vite/d2Assets';
+import { mermaidParser } from './scripts/vite/mermaidParser';
+import { sharedChunks } from './scripts/vite/sharedChunks';
 import { resolve } from 'path';
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import type { IconifyJSON } from '@iconify/types';
 
-// @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
 
 // IDE regression pages stay available during development and never ship in the app.
@@ -80,9 +83,73 @@ const agentDebugLogPlugin = (): Plugin => ({
   },
 })
 
+// Include only the offline Lucide icons used by the app.
+const agentIconNames = [
+  'globe',
+  'github',
+  'settings-2',
+  'square-pen',
+  'key-round',
+  'external-link',
+  'trash',
+  'monitor',
+  'maximize-2',
+  'minimize-2',
+  'x',
+  'plus',
+  'paperclip',
+  'folder-plus',
+  'search',
+  'eye',
+  'copy',
+  'quote',
+  'eye-off',
+  'volume-2',
+  'volume-x',
+  'link',
+  'refresh-cw',
+  'chevron-left',
+  'chevron-right',
+  'chevron-down',
+  'mouse-pointer-click',
+  'square-mouse-pointer',
+  'keyboard',
+  'arrow-up-down',
+  'code-xml',
+  'camera',
+  'list-checks',
+  'workflow',
+  'network',
+  'share-2',
+  'clock',
+  'check',
+  'play',
+  'book-open',
+  'notebook-pen',
+  'shield',
+  'circle-dot',
+  'circle-check',
+  'circle-minus',
+  'circle',
+] as const
+const lucide: IconifyJSON = JSON.parse(readFileSync(
+  resolve(__dirname, 'node_modules/@iconify-json/lucide/icons.json'), 'utf8',
+));
+const agentLucideIcons: IconifyJSON = {
+  prefix: lucide.prefix,
+  width: lucide.width,
+  height: lucide.height,
+  icons: Object.fromEntries(agentIconNames.map(name => {
+    const icon = lucide.icons[name];
+    if (!icon) throw new Error(`Unknown Lucide icon: ${name}`);
+    return [name, icon];
+  })),
+};
+
 // https://vitejs.dev/config/
 export default defineConfig(async () => ({
-  plugins: [vue(), agentDebugLogPlugin(), devRegressionPagesPlugin()],
+  plugins: [vue(), d2Assets(), mermaidParser(), agentDebugLogPlugin(), devRegressionPagesPlugin()],
+  define: { __AGENT_LUCIDE_ICONS__: JSON.stringify(agentLucideIcons) },
   
   resolve: {
     alias: {
@@ -92,8 +159,8 @@ export default defineConfig(async () => ({
   },
 
   build: {
-    // 禁用类型检查以加快构建速度
     rollupOptions: {
+      output: { manualChunks: sharedChunks },
       onwarn(warning, warn) {
         // 忽略 TypeScript 相关的警告
         if (warning.code === 'UNUSED_EXTERNAL_IMPORT') return;

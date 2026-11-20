@@ -47,8 +47,6 @@
         <button class="browser-icon-button" type="button" title="前进" aria-label="前进" :disabled="!canInteract || !currentAgentBrowser || busy" @click="runNavigation('forward')"><Icon icon="lucide:chevron-right" width="15" height="15" /></button>
         <button class="browser-icon-button" type="button" title="刷新" aria-label="刷新" :disabled="!canInteract || !currentAgentBrowser || busy" @click="runNavigation('reload')"><Icon icon="lucide:refresh-cw" width="14" height="14" /></button>
         <input v-model="address" class="browser-address" aria-label="网址" :disabled="!canInteract" placeholder="输入网址，按回车打开" spellcheck="false" autocomplete="off" @focus="focusAddress" @blur="blurAddress" @keydown.esc="blurAddress" />
-        <button v-if="capabilities.scriptCatPermissions && onScriptCatPage" class="browser-zoom" type="button" :disabled="!canInteract" @click="openScriptCatPermissions">脚本权限</button>
-        <button v-if="capabilities.scriptCat" class="browser-icon-button" type="button" title="脚本猫管理" aria-label="脚本猫管理" :disabled="!canInteract || currentAgentBrowsers.length >= 16" @click="newTab('zerror://scriptcat', '脚本猫')"><Icon icon="lucide:puzzle" width="15" height="15" /></button>
         <button class="browser-zoom" type="button" :disabled="!canInteract" :title="`当前缩放 ${zoomPercent}%，点击切换`" @click="cycleZoom">{{ zoomPercent }}%</button>
       </form>
       <div v-if="loading" class="browser-loading" role="progressbar" aria-label="网页加载中" />
@@ -77,7 +75,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { Icon } from '@iconify/vue/offline'
-import { invoke } from '@tauri-apps/api/core'
 import '../../utils/ui/agentIcons'
 import BrowserAgentWatchBar from '../../components/browser/BrowserAgentWatchBar.vue'
 import AgentTaskHistory from './AgentTaskHistory.vue'
@@ -119,17 +116,7 @@ const address = ref('')
 const addressFocused = ref(false)
 const error = ref('')
 const busy = ref(false)
-const capabilities = ref<BrowserCapabilities>({ secureFill: false, audioMute: false, scriptCat: false, scriptCatPermissions: false, nativeVideoOverlay: false })
-const onScriptCatPage = computed(() => {
-  const url = currentAgentBrowser.value?.url || ''
-  return url === 'zerror://scriptcat' || url.startsWith('chrome-extension://biodkpbccbdobbjiandalbldblopjkhe/')
-})
-const openScriptCatPermissions = async () => {
-  try {
-    requireUserControl()
-    await invoke('browser_scriptcat_permissions', { id: currentAgentBrowser.value?.id })
-  } catch (value) { showError(value) }
-}
+const capabilities = ref<BrowserCapabilities>({ secureFill: false, audioMute: false })
 const audioBusy = ref(false)
 const loading = ref(false)
 const showBrowserChrome = ref(false)
@@ -189,11 +176,11 @@ const changeControl = async () => {
 const selectTab = async (id: string) => {
   try { requireUserControl(); bindChatBrowser(requireSession(), id) } catch (value) { showError(value) }
 }
-const newTab = async (url = browserHomeUrl(), title = '导航') => {
+const newTab = () => {
   if (currentAgentBrowsers.value.length >= 16) return
   try {
     requireUserControl()
-    createChatBrowserTab(requireSession(), { url, title })
+    createChatBrowserTab(requireSession(), { url: browserHomeUrl(), title: '导航' })
   } catch (value) { showError(value) }
 }
 const closeTab = async (id: string) => {

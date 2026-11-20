@@ -16,8 +16,6 @@ pub mod cef;
 #[cfg(target_os = "macos")]
 pub mod cef_runtime;
 #[cfg(target_os = "macos")]
-pub mod macos_video_overlay;
-#[cfg(target_os = "macos")]
 mod macos_wheel;
 pub mod commands;
 pub mod database;
@@ -172,16 +170,7 @@ pub fn run() {
     ensure_tmpdir_same_volume_as_exe();
 
     let mut builder = tauri::Builder::default()
-        .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { .. } = event {
-                if window.label() == "main" {
-                    // 直接关闭，不隐藏到系统托盘
-                }
-            }
-        })
         .plugin(tauri_plugin_opener::init())
-        // tauri-plugin-sql removed - using rusqlite directly
-        // .plugin(tauri_plugin_sql::Builder::default().build())
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
@@ -326,8 +315,6 @@ pub fn run() {
             crate::app_browser::browser_set_app_above_page,
             crate::app_browser::browser_engine,
             crate::app_browser::browser_capabilities,
-            #[cfg(target_os = "macos")]
-            crate::cef::browser_scriptcat_permissions,
             crate::app_browser::browser_protocol,
             crate::browser_control::browser_control_register,
             crate::browser_control::browser_control_set,
@@ -335,10 +322,6 @@ pub fn run() {
             crate::app_browser::browser_cookies,
             crate::app_browser::browser_set_cookies,
             crate::app_browser::browser_clear_cookies,
-            crate::app_browser::browser_video_overlay_tick,
-            crate::app_browser::browser_video_overlay_state,
-            crate::app_browser::browser_video_overlay_play,
-            crate::app_browser::browser_video_overlay_hide,
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]

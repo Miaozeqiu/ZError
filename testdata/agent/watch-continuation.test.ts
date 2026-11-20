@@ -3,7 +3,7 @@ vi.mock('../../src/services/model/providers', () => ({ createBuiltinProvider: ()
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const api = vi.hoisted(() => ({
-  read: vi.fn(), write: vi.fn(), redact: vi.fn(), subjects: vi.fn(), run: vi.fn(), claim: vi.fn(), fetch: vi.fn(), tick: vi.fn(), watchRead: vi.fn(), bind: vi.fn(), flush: vi.fn(), drop: vi.fn(), stopWatch: vi.fn(), execute: vi.fn(), recoverPause: vi.fn(), pageUrl: vi.fn(),
+  vision: false, disabledTools: new Set<string>(), read: vi.fn(), write: vi.fn(), redact: vi.fn(), subjects: vi.fn(), run: vi.fn(), claim: vi.fn(), fetch: vi.fn(), tick: vi.fn(), watchRead: vi.fn(), bind: vi.fn(), flush: vi.fn(), drop: vi.fn(), stopWatch: vi.fn(), execute: vi.fn(), recoverPause: vi.fn(), pageUrl: vi.fn(),
 }))
 vi.mock('../../src/services/security/secureStore', () => ({
   readSecureDocument: api.read, writeSecureDocument: api.write, redactNative: api.redact,
@@ -12,7 +12,7 @@ vi.mock('../../src/services/app/database', () => ({ databaseService: { listStudy
 vi.mock('../../src/services/browser/appBrowser', () => ({ peekAppBrowserUrl: api.pageUrl }))
 vi.mock('../../src/services/agent/agentBrowser', () => ({
   ensureAgentBrowser: async () => 'watched-video',
-  requestAgentBrowserReveal: vi.fn(),
+  requestAgentBrowserReveal: vi.fn(), releaseChatBrowsers: vi.fn(),
 }))
 vi.mock('../../src/services/browser/control', async () => {
   const state: Record<string, any> = (await import('vue')).reactive({})
@@ -20,20 +20,20 @@ vi.mock('../../src/services/browser/control', async () => {
     controlForSession: (id: string) => state[id], userControlsBrowser: (id: string) => state[id]?.owner === 'user' }
 })
 vi.mock('../../src/services/model/config', () => ({
-  modelHasVision: () => false,
+  modelHasVision: () => api.vision,
   modelConfigManager: { ready: Promise.resolve(), getPlatformApiKey: () => 'test-key', getSelectedAgentModel: () => ({ id: 'test-model' }),
     getSelectedTextModel: () => ({ id: 'test-model' }),
     getSettings: () => ({ platforms: [{ id: 'test', apiKey: 'test-key', baseUrl: 'https://model.test', models: [{ id: 'test-model' }] }] }) },
 }))
 vi.mock('../../src/services/model/protocol', () => ({ resolveRuntimeModelId: () => 'test-model',
-  resolveExecutableModelJsCode: () => "async function processModel(input, config, fetch, signal) { return fetch('https://model.test', {signal, body: JSON.stringify({ tools: input.tools })}); }" }))
+  resolveExecutableModelJsCode: () => "async function processModel(input, config, fetch, signal) { return fetch('https://model.test', {signal, body: JSON.stringify({ tools: input.tools, messages: input.messages })}); }" }))
 vi.mock('../../src/services/security/secureFetch', () => ({ secureFetch: api.fetch }))
 vi.mock('../../src/services/study/graphStream', () => ({ studyGraphStream: { value: null }, finishStudyGraphStream: vi.fn() }))
 vi.mock('../../src/services/study/timelineSummary', () => ({ finalizeStudySessionSummary: vi.fn() }))
 vi.mock('../../src/services/agent/agentProfiles', () => ({ getActiveAgentProfile: () => ({}) }))
 vi.mock('../../src/services/agent/agentSkills', () => ({ getEnabledSkillCatalog: () => [] }))
 vi.mock('../../src/services/agent/browserLoop', () => ({ formatBrowserLiveContext: () => '' }))
-vi.mock('../../src/services/agent/browserTask', () => ({ rememberBrowserTaskIntent: vi.fn() }))
+vi.mock('../../src/services/agent/browserTask', () => ({ rememberBrowserTaskIntent: vi.fn(), clearBrowserTaskIntent: vi.fn() }))
 vi.mock('../../src/services/platform', () => ({ bindAllWatchAgents: api.bind, flushAllWatchAfterTurn: api.flush, dropAllWatchQueues: api.drop }))
 vi.mock('../../src/services/platform/panelAccess', async () => ({
   packAgentPanel: () => null,
@@ -43,7 +43,6 @@ vi.mock('../../src/services/platform/panelAccess', async () => ({
 vi.mock('../../src/services/platform/watchBind', () => ({ flushAllWatchAfterTurn: api.flush }))
 vi.mock('../../src/services/agent/activity', () => ({ describeActivity: (name: string) => ({ label: name }) }))
 vi.mock('../../src/services/agent/import', () => ({ parseQuestions: () => [] }))
-vi.mock('../../src/services/agent/siteLearningReview', () => ({ createLearningCompletionCheck: () => ({ deferred: false, beforeComplete: () => undefined }) }))
 vi.mock('../../src/utils/question/quizPractice', () => ({ getQuizCards: () => [], parseQuizCards: () => [], resolveQuizTitle: () => '', saveQuizTitle: vi.fn() }))
 vi.mock('../../src/services/agent/executeChatTool', () => ({ executeChatTool: async ({ call, ctx }: any) => {
   if (api.execute.getMockImplementation()) return api.execute(call, ctx)
@@ -64,7 +63,7 @@ vi.mock('../../src/services/agent/subagent/owner', () => ({ abortChildrenOf: vi.
 vi.mock('../../src/services/agent/chatStudy', () => ({
   browserStatePrefix: async () => '', studyStatePrefix: async () => '', lastUserText: () => '',
   loadLiveExploreRefs: vi.fn(), maybeCompactContext: vi.fn(), modelUserContent: (text: string) => text,
-  scheduleStudyProgressEval: vi.fn(), shouldAutoEvalStudy: () => ({ yes: false }), toMultimodalUserContent: vi.fn(),
+  scheduleStudyProgressEval: vi.fn(), clearStudyEvalCooldown: vi.fn(), shouldAutoEvalStudy: () => ({ yes: false }), toMultimodalUserContent: vi.fn(),
 }))
 vi.mock('../../src/services/agent/context', () => ({
   contextSummaryPrompt: () => '', splitCompactedHistory: () => ({ kept: [] }),
@@ -74,7 +73,7 @@ vi.mock('../../src/services/agent/tools', async () => {
   const { BROWSER_PRIMITIVE_TOOLS } = await import('../../src/services/agent/toolDefs/browserPrimitiveTools')
   const { websiteToolNames } = await import('../../src/services/agent/websiteToolDefinitions')
   return { assembleAgentTools: () => [...BROWSER_PRIMITIVE_TOOLS,
-    ...websiteToolNames.map(name => ({ type: 'function', function: { name } }))], availableAgentTools: (tools: unknown[]) => tools }
+    ...websiteToolNames.map(name => ({ type: 'function', function: { name } }))], availableAgentTools: (tools: any[]) => tools.filter(tool => !api.disabledTools.has(tool.function.name)) }
 })
 vi.mock('../../src/services/app/settings', () => ({ useSettings: () => ({ settings: {} }), settingsManager: { get: () => 0 } }))
 
@@ -101,6 +100,7 @@ let send: typeof import('../../src/services/agent/chatLoop')['sendChatMessage']
 beforeEach(async () => {
   vi.resetModules(); vi.clearAllMocks(); vi.useFakeTimers()
   hydration = deferred()
+  api.vision = false; api.disabledTools.clear()
   api.read.mockReturnValue(hydration.promise)
   api.write.mockResolvedValue(undefined)
   api.redact.mockImplementation(async value => value)
@@ -159,6 +159,107 @@ describe('same task completion through the real chat loop and model runner', () 
     expect(schemas[0]).not.toContain('browser_find')
     expect(schemas[1]).toContain('browser_find')
     expect(api.execute.mock.calls.map(([call]) => call.name)).toEqual(['browser_find'])
+  })
+  it.each([
+    { ok: true, loggedIn: false, challenge: 'image_captcha', captcha_id: 'retry-image' },
+    { ok: false, loggedIn: false, reason: 'invalid', error: '验证码错误' },
+    { ok: false, loggedIn: true, reason: 'invalid', error: '登录失败' },
+  ])('restores discovery after confirmed captcha login, retaining restrictions for receipt %j', async retry => {
+    hydration.resolve(null); await store.chatStoreReady
+    store.createChat({ browserId: 'watched-video' })
+    api.vision = true
+    const image = 'data:image/png;base64,' + 'a'.repeat(64)
+    let loginCalls = 0
+    api.execute.mockImplementation(async (call) => {
+      if (call.name === 'browser_login_zjooc') {
+        loginCalls++
+        if (loginCalls === 1) return JSON.stringify({ ok: true, loggedIn: false, challenge: 'image_captcha', captcha_id: 'initial-image', captchaImage: image })
+        if (loginCalls === 2) return JSON.stringify(retry)
+        // A settings change during login must remain effective after the tool directory is restored.
+        api.disabledTools.add('browser_scroll')
+        return '{"ok":true,"loggedIn":true}'
+      }
+      if (call.name === 'browser_finish') return '{"ok":true,"finished":true,"status":"done"}'
+      return '{"ok":true,"snapshot":"课程已找到"}'
+    })
+    const schemas: any[][] = []
+    const contexts: string[] = []
+    const replies = [
+      tool('browser_login_zjooc', 'captcha-retry', { captcha_id: 'initial-image', captcha_code: '12345' }),
+      tool('browser_login_zjooc', 'captcha-success', { captcha_id: 'retry-image', captcha_code: '54321' }),
+      tool('load_agent_tools', 'after-login-load', { names: ['browser_find'] }),
+      tool('browser_find', 'after-login-find', { query: '课程' }),
+      { content: '已登录并核对课程。' },
+    ]
+    api.fetch.mockImplementation(async (_url, options) => {
+      const request = JSON.parse(options.body)
+      schemas.push(request.tools)
+      contexts.push(JSON.stringify(request.messages))
+      return replies.shift()
+    })
+    const pending = send('登录在浙学')
+    await vi.advanceTimersByTimeAsync(0); await pending
+    expect(schemas).toHaveLength(5)
+    for (const round of schemas.slice(0, 2)) {
+      expect(new Set(round.map(tool => tool.function.name))).toEqual(new Set(['browser_login_zjooc', 'browser_finish']))
+    }
+    const restored = schemas[2].map(tool => tool.function.name)
+    expect(restored).toContain('load_agent_tools')
+    expect(restored).not.toContain('browser_find')
+    const directory = schemas[2].find(tool => tool.function.name === 'load_agent_tools')
+    expect(directory.function.parameters.properties.names.items.enum).not.toContain('browser_scroll')
+    expect(contexts[2]).toContain('【登录已确认】')
+    expect(schemas[3].map(tool => tool.function.name)).toContain('browser_find')
+    const message = store.activeChat.value!.messages.at(-1)!
+    expect(message).toMatchObject({ status: 'done' })
+    expect(message.steps.find(step => step.id === 'after-login-load')).toMatchObject({ status: 'done' })
+    expect(message.steps.find(step => step.id === 'after-login-find')).toMatchObject({ status: 'done' })
+    expect(api.execute.mock.calls.filter(([call]) => call.name === 'browser_find')).toHaveLength(1)
+  })
+  it('accepts the first final reply after a verified login through the normal finish gate', async () => {
+    hydration.resolve(null); await store.chatStoreReady
+    store.createChat({ browserId: 'watched-video' })
+    api.vision = true
+    const image = 'data:image/png;base64,' + 'a'.repeat(64)
+    api.execute.mockResolvedValueOnce(JSON.stringify({ ok: true, loggedIn: false, challenge: 'image_captcha', captcha_id: 'initial', captchaImage: image }))
+      .mockResolvedValueOnce('{"ok":true,"loggedIn":true}')
+      .mockResolvedValueOnce('{"ok":true,"finished":true,"status":"done"}')
+    api.fetch.mockResolvedValueOnce(tool('browser_login_zjooc', 'login', { captcha_id: 'initial', captcha_code: '12345' }))
+      .mockResolvedValueOnce({ content: '已登录。' })
+    const pending = send('登录在浙学')
+    await vi.advanceTimersByTimeAsync(0); await pending
+    expect(store.activeChat.value!.messages.at(-1)).toMatchObject({ taskOutcome: 'completed', content: '已登录。' })
+    expect(api.execute.mock.calls.map(([call]) => call.name)).toEqual(['browser_login_zjooc', 'browser_login_zjooc', 'browser_finish'])
+    expect(api.fetch).toHaveBeenCalledTimes(2)
+  })
+  it('删除会话和触及列表上限时释放会话的题目列表与工具计数', async () => {
+    const session = await init()
+    const { rememberListed, listedQuestionsOf } = await import('../../src/services/agent/toolShared')
+    const { noteToolRoundForTodo, toolRoundsWithoutTodoOf } = await import('../../src/services/agent/browserTodo')
+    const { noteFailAttempt, failCountOf } = await import('../../src/services/agent/failGate')
+    const seed = (id: string) => {
+      rememberListed(id, [{ id: 42 }])
+      noteToolRoundForTodo(id, false, false)
+      noteFailAttempt(id, 'browser_click', {}, false)
+    }
+    seed(session.id)
+    expect(listedQuestionsOf(session.id)).toHaveLength(1)
+    store.removeChat(session.id)
+    expect(api.stopWatch).toHaveBeenCalledWith('task-browser')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(listedQuestionsOf(session.id)).toHaveLength(0)
+    expect(toolRoundsWithoutTodoOf(session.id)).toBe(0)
+    expect(failCountOf(session.id, 'browser_click', {})).toBe(0)
+    const old = store.createChat()
+    seed(old.id)
+    for (let index = 0; index < 40; index++) {
+      await vi.advanceTimersByTimeAsync(1)
+      store.createChat()
+    }
+    await vi.advanceTimersByTimeAsync(0)
+    expect(store.sessions.value.some(item => item.id === old.id)).toBe(false)
+    expect(listedQuestionsOf(old.id)).toHaveLength(0)
+    expect(toolRoundsWithoutTodoOf(old.id)).toBe(0)
   })
   it('completion storage failure is reported as failed and a new turn can recover the original run', async () => {
     await init()

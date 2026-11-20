@@ -10,7 +10,6 @@ import {
   isChaoxingStudyUrl,
   pageRoleForUrl,
 } from '../platform/chaoxing/nav'
-import '../platform'
 
 /** 抽象层角色跟网站地图节点走。旧 id 如 chaoxing-study 已废弃，请用 role。 */
 export type BrowserAbstractionRole = string

@@ -1,10 +1,8 @@
 /** 面板点播放 / 下一节。Agent 经 adapter 进来，不要从 chat.ts 直调。 */
 import { startChaoxingChapterParser } from './chapters'
 import {
-  applyVideo,
   chapterStateFor,
   findChapterInPanel,
-  ingestChapterSnap,
   isCatalogSectionTitle,
   openChapterFromCard,
   playChapterFromCard,
@@ -14,7 +12,7 @@ import {
   type ChapterItem,
   type ChapterJobItem,
 } from './chapters'
-import { liveStudyHref, parseChaoxingChapters, waitForStudyPlayerReady } from '../study'
+import { liveStudyHref, waitForStudyPlayerReady } from '../study'
 import { pauseChaoxingVideo, readChaoxingVideoTick, tapChaoxingPlay, videoTickHasPlayer } from '../study/video'
 import { waitMs } from '../../browser/eval'
 import { kickParserClock } from '../../browser/pageClock'

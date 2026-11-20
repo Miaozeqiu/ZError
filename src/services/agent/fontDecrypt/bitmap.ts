@@ -250,7 +250,7 @@ export async function crackFont(
 	// 字体 URL 无响应时 load() 可能永不 settle，必须加超时防止无限等待
 	await Promise.race([
 		face.load(),
-		new Promise<never>((resolve, reject) => setTimeout(() => reject(new Error('[font-decrypt] 字体加载超时')), 15_000))
+		new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error('[font-decrypt] 字体加载超时')), 15_000))
 	]);
 	// 项目 tsconfig 的 DOM lib 版本较旧，缺少 FontFaceSet.add 的类型定义，这里做最小断言
 	(document.fonts as unknown as { add(font: FontFace): void }).add(face);

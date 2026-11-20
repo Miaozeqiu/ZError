@@ -64,6 +64,25 @@ mod drag_drop;
 mod synthetic_mouse_events;
 mod web_context;
 
+fn evaluate_script(
+  webview: &WebView,
+  script: &str,
+  callback: impl FnOnce(Option<javascriptcore::Value>) + 'static,
+) {
+  #[cfg(feature = "linux-body")]
+  webview.evaluate_javascript(script, None, None, None::<&Cancellable>, move |result| {
+    callback(result.ok());
+  });
+
+  // The base Wry backend still supports WebKitGTK 2.38. The newer API is
+  // available when the build already requires 2.40 via the linux-body feature.
+  #[cfg(not(feature = "linux-body"))]
+  #[allow(deprecated)]
+  webview.run_javascript(script, None::<&Cancellable>, move |result| {
+    callback(result.ok().and_then(|result| result.js_value()));
+  });
+}
+
 #[cfg(feature = "x11")]
 struct X11Data {
   is_child: bool,
@@ -351,9 +370,8 @@ impl InnerWebView {
       if let LoadEvent::Committed = event {
         let mut pending_scripts_ = pending_scripts.lock().unwrap();
         if let Some(pending_scripts) = pending_scripts_.take() {
-          let cancellable: Option<&Cancellable> = None;
           for script in pending_scripts {
-            webview.run_javascript(&script, cancellable, |_| ());
+            evaluate_script(webview, &script, |_| ());
           }
         }
       }
@@ -691,22 +709,18 @@ impl InnerWebView {
     if let Some(pending_scripts) = &mut *self.pending_scripts.lock().unwrap() {
       pending_scripts.push(js.into());
     } else {
-      let cancellable: Option<&Cancellable> = None;
-
       #[cfg(feature = "tracing")]
       let span = SendEnteredSpan(tracing::debug_span!("wry::eval").entered());
 
-      self.webview.run_javascript(js, cancellable, |result| {
+      evaluate_script(&self.webview, js, |result| {
         #[cfg(feature = "tracing")]
         drop(span);
 
         if let Some(callback) = callback {
           let result = result
-            .map(|r| r.js_value().and_then(|js| js.to_json(0)))
-            .unwrap_or_default()
+            .and_then(|value| value.to_json(0))
             .unwrap_or_default()
             .to_string();
-
           callback(result);
         }
       });

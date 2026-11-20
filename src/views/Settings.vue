@@ -67,7 +67,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch } from 'vue'
+import { useWorkspaceEvent } from '../composables/useWorkspaceEvent'
+import { ref, watch } from 'vue'
 import GeneralSettings from './settings/GeneralSettings.vue'
 import AgentSettings from './settings/AgentSettings.vue'
 import ModelSettings from './settings/ModelSettings.vue'
@@ -94,13 +95,6 @@ const handleOpenQuestionFolder = (folderId: number) => {
   emit('open-question-folder', folderId)
 }
 
-onMounted(() => {
-  window.addEventListener('open-model-settings', handleOpenModelSettings)
-})
-
-onUnmounted(() => {
-  window.removeEventListener('open-model-settings', handleOpenModelSettings)
-})
 
 // 常规设置自定义滚动条
 const generalScrollContent = ref<HTMLElement | null>(null)
@@ -253,6 +247,7 @@ const onAboutScrollbarMouseup = () => {
   document.removeEventListener('mousemove', onAboutScrollbarMousemove)
   document.removeEventListener('mouseup', onAboutScrollbarMouseup)
 }
+useWorkspaceEvent('settings', 'open-model-settings', handleOpenModelSettings)
 </script>
 
 <style>

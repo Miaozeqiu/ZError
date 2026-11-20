@@ -54,7 +54,7 @@ import { runAgentTurnLoop } from './subagent/runtime'
 import { assembleAgentTools, availableAgentTools } from './tools'
 import { useSettings } from '../app/settings'
 import { claimBrowserForNewMessage } from '../browser/control'
-import { experienceHostForPage, websiteRepositoryHosts } from './websiteRepository'
+import { experienceHostForTask, experienceHostForPage, websiteRepositoryHosts } from './websiteRepository'
 import { websiteToolHost } from './websiteToolDefinitions'
 import { chaoxingStartup } from './chaoxingStartup'
 
@@ -93,6 +93,7 @@ export const sendChatMessage = async (
   files?: AgentChatAttachment[],
   options?: { sessionId?: string; kind?: 'watch'; modelText?: string; quizAttemptRef?: AgentQuizAttemptRef; quizOptionQuotes?: AgentQuizOptionQuote[] },
 ) => {
+  initializeChatRuntime()
   let content = redactText(text.trim())
   let quizOptionQuotes = options?.quizOptionQuotes?.length ? redactObject(options.quizOptionQuotes) : undefined
   if (!content && !quizOptionQuotes) return
@@ -260,7 +261,7 @@ export const sendChatMessage = async (
     const startupHost = startup ? websiteToolHost(startup.name) : undefined
     await prepareTurn(abort.signal, () => Promise.all([
       experienceHostForPage(currentUrl).catch(() => ''),
-      startupHost ? experienceHostForPage(`https://${startupHost}`).catch(() => '') : Promise.resolve(''),
+      startupHost ? experienceHostForTask(`https://${startupHost}`).catch(() => '') : Promise.resolve(''),
     ]))
     const currentTools = () => availableAgentTools(assembleAgentTools(peekAppBrowserUrl(liveBrowserId()), startupHost), useSettings().settings.search)
     const loop = await runAgentTurnLoop({
@@ -385,7 +386,7 @@ export const sendChatMessage = async (
   }
 }
 
-bindAllWatchAgents({
+const bindChatWatch = () => bindAllWatchAgents({
   notify: (sessionId, display, modelText, files) => {
     void sendChatMessage(display, files as AgentChatAttachment[] | undefined, { sessionId, kind: 'watch', modelText })
   },
@@ -396,3 +397,16 @@ bindAllWatchAgents({
     return 'ready'
   },
 })
+
+let stopWatchBindings: (() => void) | null = null
+export const initializeChatRuntime = () => {
+  if (!stopWatchBindings) {
+    const stop = bindChatWatch()
+    const dispose = () => {
+      if (stopWatchBindings !== dispose) return
+      stop?.(); stopWatchBindings = null
+    }
+    stopWatchBindings = dispose
+  }
+  return stopWatchBindings
+}

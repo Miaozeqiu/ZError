@@ -1,5 +1,6 @@
 import { SAME_ORIGIN_FRAMES, asObject, evalBrowserView } from '../eval'
 import { rememberPageRefs, type PageRef } from './refs'
+import { beginPageSnap, rememberPageSnap } from './pageSnap'
 
 const SNAPSHOT_LIMIT = 220
 
@@ -444,6 +445,7 @@ export const formatAriaSnapshot = (refs: PageRef[], frames: SnapFrameInfo[] = []
 }
 
 export const readPageSnapshot = async (browserId: string) => {
+  const generation = beginPageSnap(browserId)
   const raw = asObject(await evalBrowserView(browserId, SNAPSHOT_SCRIPT).catch(() => ({ refs: [] })))
   const refs = (Array.isArray(raw.refs) ? raw.refs : []).map((item, index) => {
     const row = asObject(item)
@@ -467,7 +469,6 @@ export const readPageSnapshot = async (browserId: string) => {
       },
     } satisfies PageRef
   }).filter((item) => item.locator.value)
-  rememberPageRefs(browserId, refs)
   const iframes = (Array.isArray(raw.iframes) ? raw.iframes : []).map((item) => {
     const row = asObject(item)
     return {
@@ -480,7 +481,7 @@ export const readPageSnapshot = async (browserId: string) => {
       hidden: Boolean(row.hidden),
     }
   }).filter((item) => item.src || item.path)
-  return {
+  const page = {
     url: String(raw.url || ''),
     title: String(raw.title || ''),
     captcha: Boolean(raw.captcha),
@@ -488,4 +489,9 @@ export const readPageSnapshot = async (browserId: string) => {
     refs,
     snapshot: formatAriaSnapshot(refs, iframes),
   }
+  if (!rememberPageSnap(browserId, page, generation)) {
+    return { ...page, refs: [], snapshot: '', error: '页面快照已过期，请重新读取。' }
+  }
+  rememberPageRefs(browserId, refs)
+  return page
 }

@@ -1,3 +1,5 @@
+import ts from 'typescript'
+import { staticServiceCycles } from '../../scripts/architecture-graph.mjs'
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -17,32 +19,26 @@ const walk = (dir: string): string[] => {
 }
 
 describe('agent 层边界', () => {
-  it('不直接 import chaoxing/browser 或 chaoxing/study', () => {
-    const allowed = new Set([
-      'bridgeApi.ts',
-      'chatLoop.ts',
-      'chatWatch.ts',
-      'finishGate.ts',
-      'task.ts',
-      'page.ts',
-    ])
-    const hits: string[] = []
-    for (const file of walk(agentRoot)) {
-      const text = readFileSync(file, 'utf8')
-      const name = file.split('/').pop() || ''
-      if (allowed.has(name)) continue
-      if (/from ['"][^'"]*chaoxing\/(browser|study)/.test(text)) hits.push(file)
-      if (/import\(['"][^'"]*chaoxing\/(browser|study)/.test(text)) hits.push(file)
-    }
-    expect(hits).toEqual([])
+  it('service runtime imports contain no static dependency cycle', () => {
+    expect(staticServiceCycles()).toEqual([])
   })
 
-  it('通用浏览器工具不直接 import 学习通', () => {
-    const tools = join(agentRoot, 'tools')
+  it('generic tool dispatch and core contracts do not import concrete site implementations', () => {
+    const generic = [
+      ...walk(join(agentRoot, 'core')),
+      ...['browserTools.ts', 'hostCapabilities.ts', 'tools/nav.ts', 'tools/act.ts', 'tools/page.ts', 'tools/course.ts']
+        .map(file => join(agentRoot, file)),
+    ]
     const hits: string[] = []
-    for (const name of ['nav.ts', 'act.ts']) {
-      const text = readFileSync(join(tools, name), 'utf8')
-      if (/platform\/chaoxing\//.test(text)) hits.push(name)
+    for (const file of generic) {
+      const ast = ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true)
+      const visit = (node: ts.Node) => {
+        const specifier = ts.isImportDeclaration(node) || ts.isExportDeclaration(node) ? node.moduleSpecifier
+          : ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword ? node.arguments[0] : undefined
+        if (specifier && ts.isStringLiteral(specifier) && /(?:chaoxing|zjooc)\//.test(specifier.text)) hits.push(file)
+        ts.forEachChild(node, visit)
+      }
+      visit(ast)
     }
     expect(hits).toEqual([])
   })

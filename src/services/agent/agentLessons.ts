@@ -31,16 +31,6 @@ const hostOf = (url?: string) => {
 
 const clipError = (raw: unknown) => String(raw || '').replace(/\s+/g, ' ').trim().slice(0, 120)
 
-const handleOf = (body: Record<string, unknown>) => {
-  const raw = body.handle
-  if (!raw || typeof raw !== 'object') return ''
-  const row = raw as Record<string, unknown>
-  const kind = String(row.kind || '').trim()
-  const title = String(row.title || row.label || row.name || '').trim()
-  if (!kind) return ''
-  return title ? `${kind}:${title}` : kind
-}
-
 const asLesson = (raw: unknown): AgentLesson | null => {
   const row = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {}
   const host = String(row.host || '').trim()

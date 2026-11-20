@@ -27,19 +27,14 @@ metadata:
 ## 默认顺序
 
 1. `get_state` 看网址、图谱节点、已有经验和快照。
-2. 用快照里的 ref 或 `click_text` 点。点中并确认页面变了，再写下这一步。
-3. 本轮用 `read_agent_skill_file(skill_id=site-learn)` 读取 `sites/<主网站域名>/SKILL.md`，按返回的 `write_scope` 保存。使用在线仓库或自定义 HTTP 接口时，只允许编辑 `local_experience`，把完整的本地笔记传给 `content`，并在 `base_version` 中传入 `repository_version`。使用应用内经验的自建网站可更新完整文件，`exists=false` 时可首次创建。登录经验归入主网站，以工具结果的 `id/path` 为准。
+2. 用快照里的 ref 或 `click_text` 点。核对页面是否按预期变化。
+3. 发现已验证、可复用的新步骤或用户要求记住入口时，用 `read_agent_skill_file(skill_id=site-learn)` 读取 `sites/<主网站域名>/SKILL.md`，按返回的 `write_scope` 保存。使用在线仓库或自定义 HTTP 接口时，只允许编辑 `local_experience`，把完整的本地笔记传给 `content`，并在 `base_version` 中传入 `repository_version`。使用应用内经验的自建网站可更新完整文件，`exists=false` 时可首次创建。登录经验归入主网站，以工具结果的 `id/path` 为准。
 4. `editable=true` 的图谱用 `browser_site_graph` 逐条修改，修改自动保存。仓库或自定义 HTTP 接口中的参考文件和图谱只读，导航补充可写入「本地经验」。
 5. 视频播起来之后 `browser_watch`。
 
 ## 任务收尾
 
-多步网页任务在 `browser_finish(done)` 中提供 `learning.decision` 和具体 `reason`：
-
-- `updated`：本轮读过原文，合并已验证的新经验并实际写入成功。
-- `covered`：读过本站文件，新经验已被某一节覆盖，说明位置，不重复写。
-- `no_new`：只是复用已知步骤，没有新的可复用发现。
-- `deferred`：写入被拒绝、禁止或失败，说明未保存；不要为保存经验重复申请权限或重做网页任务。
+按已知流程完成时，直接反馈结果。只有发现可复用的变化或用户要求保存时才核对本站文件，写入成功后报告已保存。
 
 失败后的恢复步骤、结构化读取的修正值得检查；只看到工具返回成功还不能证明方法有效。具体写法和核对要求见 [references/workflow.md](references/workflow.md)。
 

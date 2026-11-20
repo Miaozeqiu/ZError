@@ -1,4 +1,5 @@
-import { hasAgentWait, wakeAgentWait } from '../../agent/agentWait'
+import type { WatchBindings } from '../../agent/core/watchEvents'
+import { hasAgentWait, wakeAgentWait } from '../../agent/core/waitEvents'
 import { readChaoxingVideo, videoIsPlaying } from '../study/video'
 import { packAgentPanel, playPanelStudy } from './panelStudy'
 import { solveChaoxingCaptcha } from './captcha'
@@ -9,16 +10,11 @@ import {
   videoWatchFor,
   type VideoWatchCheck,
 } from './watch'
-import type { AgentChatAttachment } from '../../agent/chatTypes'
 
-type WatchNotify = (
-  sessionId: string,
-  display: string,
-  modelText: string,
-  files?: AgentChatAttachment[],
-) => void
-type WatchGate = (sessionId: string) => 'missing' | 'busy' | 'ready'
+type WatchNotify = WatchBindings['notify']
+type WatchGate = WatchBindings['gate']
 
+let watchGeneration = 0
 let notifyWatchImpl: WatchNotify | null = null
 let sessionGateImpl: WatchGate | null = null
 
@@ -90,12 +86,6 @@ const formatWatchPrompt = (check: VideoWatchCheck) => {
 const recoveringBrowsers = new Set<string>()
 const recoverAttempts = new Map<string, number>()
 const panelEventOnce = new Set<string>()
-
-const forgetPanelEvents = (browserId: string) => {
-  for (const key of [...panelEventOnce]) {
-    if (key.startsWith(`${browserId}:`)) panelEventOnce.delete(key)
-  }
-}
 
 const formatPanelForAgent = (browserId: string) => {
   const panel = packAgentPanel(browserId)
@@ -220,6 +210,8 @@ const seedFromPlayed = (played: Record<string, unknown>, fallback?: VideoWatchCh
 })
 
 const recoverPlayback = async (check: VideoWatchCheck) => {
+  const generation = watchGeneration
+  const current = () => generation === watchGeneration
   const { browserId, sessionId } = check
   if (!browserId || recoveringBrowsers.has(browserId)) return
   recoveringBrowsers.add(browserId)
@@ -227,6 +219,7 @@ const recoverPlayback = async (check: VideoWatchCheck) => {
   recoverAttempts.set(browserId, attempts)
   try {
     const snap = await readChaoxingVideo(browserId).catch(() => null)
+    if (!current()) return
     if (snap?.captcha) {
       void handleCaptchaWatch({ ...check, kind: 'captcha' })
       return
@@ -236,6 +229,7 @@ const recoverPlayback = async (check: VideoWatchCheck) => {
       return
     }
     const played = await playPanelStudy(browserId, { resume: true }) as Record<string, unknown>
+    if (!current()) return
     if (videoIsPlaying(played)) {
       recoverAttempts.set(browserId, 0)
       startChaoxingWatch(browserId, sessionId, seedFromPlayed({
@@ -251,27 +245,33 @@ const recoverPlayback = async (check: VideoWatchCheck) => {
       `${formatWatchPrompt(check)}\n系统已自动点过播放仍没起来（第 ${attempts} 次）。立刻再 看快照；页面不对就回目录 click_text 节名再 play。不要问用户。`,
     )
   } catch (error) {
+    if (!current()) return
     notifyWatch(
       sessionId,
       formatWatchDisplay(check),
       `${formatWatchPrompt(check)}\n自动恢复失败：${error instanceof Error ? error.message : String(error)}。立刻 看快照；页面不对就回目录点节名。`,
     )
   } finally {
-    recoveringBrowsers.delete(browserId)
+    if (current()) recoveringBrowsers.delete(browserId)
   }
 }
 
 const handleCaptchaWatch = async (check: VideoWatchCheck) => {
+  const generation = watchGeneration
+  const current = () => generation === watchGeneration
   const { browserId, sessionId } = check
   if (!browserId) return
   const solved = await solveChaoxingCaptcha(browserId)
+  if (!current()) return
   if (solved.ok) {
     pendingCaptchaNotices.delete(sessionId)
     const played = await playPanelStudy(browserId, { resume: true }) as Record<string, unknown>
+    if (!current()) return
     if (played?.captcha) {
       notifyCaptchaWithImage(sessionId, solved.image, '提交后验证码还在')
       return
     }
+    if (!current()) return
     if (videoIsPlaying(played)) {
       recoverAttempts.set(browserId, 0)
       startChaoxingWatch(browserId, sessionId, seedFromPlayed({
@@ -402,6 +402,7 @@ export const flushWatchIntoWait = (sessionId: string) => {
 }
 
 export const flushWatchAfterTurn = (sessionId: string) => {
+  const generation = watchGeneration
   if (hasAgentWait(sessionId)) {
     flushWatchIntoWait(sessionId)
     return
@@ -410,21 +411,36 @@ export const flushWatchAfterTurn = (sessionId: string) => {
   const pendingImage = pendingCaptchaNotices.get(sessionId)
   if (pendingImage && (!queued || queued.kind !== 'captcha')) {
     pendingCaptchaNotices.delete(sessionId)
-    window.setTimeout(() => notifyCaptchaWithImage(sessionId, pendingImage), 0)
+    window.setTimeout(() => { if (generation === watchGeneration) notifyCaptchaWithImage(sessionId, pendingImage) }, 0)
   }
   if (queued) {
     queuedWatchChecks.delete(sessionId)
-    window.setTimeout(() => enqueueWatchCheck(queued), 0)
+    window.setTimeout(() => { if (generation === watchGeneration) enqueueWatchCheck(queued) }, 0)
   }
 }
 
-export const bindChaoxingWatchAgent = (input: {
-  notify: WatchNotify
-  gate: WatchGate
-}) => {
+export const bindChaoxingWatchAgent = (input: WatchBindings) => {
+  const generation = ++watchGeneration
+  queuedWatchChecks.clear()
+  pendingCaptchaNotices.clear()
+  recoveringBrowsers.clear()
+  recoverAttempts.clear()
+  panelEventOnce.clear()
   notifyWatchImpl = input.notify
   sessionGateImpl = input.gate
   setChaoxingWatchHandler(enqueueWatchCheck)
+  return () => {
+    if (generation !== watchGeneration) return
+    watchGeneration++
+    notifyWatchImpl = null
+    sessionGateImpl = null
+    queuedWatchChecks.clear()
+    pendingCaptchaNotices.clear()
+    recoveringBrowsers.clear()
+    recoverAttempts.clear()
+    panelEventOnce.clear()
+    setChaoxingWatchHandler(null)
+  }
 }
 
 export { runAfterCaptcha }

@@ -1,3 +1,5 @@
+import { ensureSiteHooks } from '../../src/services/platform'
+import { siteNavigationFor } from '../../src/services/browser/siteCapabilities'
 import { describe, expect, it, vi } from 'vitest'
 import { websiteToolNames } from '../../src/services/agent/websiteToolDefinitions'
 import { BROWSER_PRIMITIVE_TOOLS } from '../../src/services/agent/toolDefs/browserPrimitiveTools'
@@ -18,6 +20,7 @@ const handledOutside = new Set([
 const mockCtx = (name: string) => {
   const base: Record<string, unknown> = {
     name,
+    navigation: siteNavigationFor('https://example.com'),
     args: name === 'browser_wait' ? { until: 'idle', seconds: 1 } : {},
     browserId: 'b1',
     sessionId: 's1',
@@ -57,6 +60,8 @@ const mockCtx = (name: string) => {
   })
 }
 
+ensureSiteHooks()
+
 describe('浏览器工具都能分发', () => {
   it('导航交给浏览器后立即通知工作区，失败时不通知', async () => {
     const url = 'https://example.com/next'
@@ -64,9 +69,6 @@ describe('浏览器工具都能分发', () => {
     const onNavigation = vi.fn()
     const ctx = Object.assign(mockCtx('browser_navigate'), {
       args: { url },
-      sameChaoxingCourse: () => false,
-      isChaoxingIframeNavUrl: () => false,
-      isSpaceListTopUrl: () => false,
       resolveChaoxingLoginUrl: (target: string) => target,
       navigateBrowserView: navigate,
       evalBrowserView: async () => url,

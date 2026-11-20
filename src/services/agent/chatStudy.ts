@@ -493,3 +493,5 @@ export const scheduleStudyProgressEval = (input: {
     markEvalEnd(sessionKey)
   })
 }
+
+export const clearStudyEvalCooldown = (sessionId: string) => { evalStartedAt.delete(sessionId) }

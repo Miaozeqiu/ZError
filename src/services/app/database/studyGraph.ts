@@ -1,13 +1,7 @@
 /** 知识图谱 / 遗忘。SQL 在 src-tauri/src/database/study_graph.rs。 */
 import { invoke } from '@tauri-apps/api/core'
 import {
-  applyForgettingToNode,
-  clampForgettingStage,
-  effectiveMastery,
-  nextForgettingStage,
-  parseStudyQuality,
-  reviewedAtForQuality,
-  reviewedAtFromDaysAgo,
+  clampForgettingStage, effectiveMastery, nextForgettingStage, parseStudyQuality, reviewedAtForQuality, reviewedAtFromDaysAgo,
 } from '../../../utils/study/studyForgetting'
 import { isTauri } from './env'
 import {

@@ -1,5 +1,4 @@
 import { invoke } from '@tauri-apps/api/core'
-import * as pdfjsLib from 'pdfjs-dist'
 import { databaseService } from '../app/database'
 import { associateQuestionsToKnowledge } from '../study/questionKnowledge'
 import { parseDifficulty, parseImportance, parseMastery } from '../../utils/question/questionMetrics'
@@ -12,11 +11,6 @@ import {
 } from '../app/importTasks'
 import { runTextModel, type ModelToolCall } from '../model/runner'
 import { IMPORT_AGENT_SYSTEM_PROMPT } from './skills/questionImport'
-
-pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
-  'pdfjs-dist/build/pdf.worker.mjs',
-  import.meta.url
-).toString()
 
 export interface ExtractedQuestion {
   question: string
@@ -149,9 +143,11 @@ const decodeBase64Bytes = (base64: string) => {
 }
 
 const openPdf = async (path: string) => {
-  const base64 = await invoke<string>('read_file_bytes', { path })
-  const data = decodeBase64Bytes(base64)
-  return pdfjsLib.getDocument({ data }).promise
+  const [{ getDocument }, base64] = await Promise.all([
+    import('../../utils/ui/pdfDocument'),
+    invoke<string>('read_file_bytes', { path }),
+  ])
+  return getDocument({ data: decodeBase64Bytes(base64) }).promise
 }
 
 const readPdfPage = async (pdf: any, index: number) => {

@@ -17,3 +17,5 @@ export const videoWatchFor = (browserId?: string) => (
 export const agentWatchBusy = (browserId?: string) => (
   chaoxingWatchBusy(browserId) || nativeWatchBusy(browserId)
 )
+
+export { flushWatchIntoWait, notePanelEvent } from '../chaoxing/browser/watchAgent'

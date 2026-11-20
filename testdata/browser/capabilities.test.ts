@@ -8,21 +8,17 @@ beforeEach(() => {
   invoke.mockReset()
 })
 
-it.each([false, true])('uses backend capabilities with native overlay = %s', async overlay => {
-  invoke.mockImplementation(async command => command === 'browser_capabilities'
-    ? { secureFill: true, audioMute: true, scriptCat: true, scriptCatPermissions: overlay, nativeVideoOverlay: overlay }
-    : { found: true, active: true })
+it('uses and caches backend capabilities independently of the engine label', async () => {
+  invoke.mockResolvedValue({ secureFill: true, audioMute: true })
   const { browserCapabilities } = await import('../../src/services/browser/capabilities')
-  const { readNativeVideo } = await import('../../src/services/browser/nativeVideo')
-  expect(await browserCapabilities()).toMatchObject({ secureFill: true, audioMute: true })
-  expect(await readNativeVideo('tab')).toMatchObject({ found: overlay })
-  expect(invoke.mock.calls.filter(([command]) => command === 'browser_capabilities')).toHaveLength(1)
-  expect(invoke.mock.calls.some(([command]) => command === 'browser_video_overlay_state')).toBe(overlay)
+  expect(await browserCapabilities()).toEqual({ secureFill: true, audioMute: true })
+  expect(await browserCapabilities()).toEqual({ secureFill: true, audioMute: true })
+  expect(invoke).toHaveBeenCalledExactlyOnceWith('browser_capabilities')
 })
 
 it('keeps operations disabled on query failure and retries when the backend recovers', async () => {
   invoke.mockRejectedValueOnce(new Error('IPC unavailable')).mockResolvedValueOnce({ secureFill: true })
   const { browserCapabilities } = await import('../../src/services/browser/capabilities')
-  expect(await browserCapabilities()).toMatchObject({ secureFill: false, audioMute: false, nativeVideoOverlay: false })
+  expect(await browserCapabilities()).toMatchObject({ secureFill: false, audioMute: false })
   expect(await browserCapabilities()).toMatchObject({ secureFill: true, audioMute: false })
 })

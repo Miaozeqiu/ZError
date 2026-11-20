@@ -1,3 +1,4 @@
+import { locatorsForHomeworkControl, locatorsForStudyControl } from '../../chaoxing/host/selectors'
 import { invoke } from '@tauri-apps/api/core'
 import { asObject, evalBrowserViewMain, evalBrowserViewMainNow, waitMs } from '../../browser/eval'
 import { liveGraphHref, liveSpaceTab, noteCourseTab } from '../../browser/siteGraph'
@@ -202,7 +203,6 @@ const clickCourseTabNow = async (id: string, want: string, before: string) => {
 
   const control = CONTROL_OF[want] || ''
   const { clickByLocator } = await import('../../browser/engine')
-  const { locatorsForHomeworkControl, locatorsForStudyControl } = await import('../../chaoxing/host/selectors')
   const queries = control === 'homework-tab'
     ? locatorsForHomeworkControl(control)
     : locatorsForStudyControl(control)

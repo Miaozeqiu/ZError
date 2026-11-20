@@ -45,7 +45,7 @@
 </template>
 
 <script setup lang="ts">
-const props = defineProps<{ modelValue: boolean }>()
+defineProps<{ modelValue: boolean }>()
 const emit = defineEmits<{ (e: 'update:modelValue', v: boolean): void }>()
 const onChange = (e: Event) => {
   emit('update:modelValue', (e.target as HTMLInputElement).checked)

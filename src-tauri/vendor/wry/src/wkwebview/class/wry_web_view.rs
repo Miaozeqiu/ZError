@@ -6,7 +6,9 @@ use std::{collections::HashMap, sync::Mutex};
 
 #[cfg(target_os = "macos")]
 use objc2::runtime::ProtocolObject;
-use objc2::{define_class, rc::Retained, runtime::Bool, AllocAnyThread, DeclaredClass};
+#[cfg(target_os = "ios")]
+use objc2::AllocAnyThread;
+use objc2::{define_class, rc::Retained, runtime::Bool, DeclaredClass};
 #[cfg(target_os = "macos")]
 use objc2_app_kit::{NSDraggingDestination, NSEvent};
 use objc2_foundation::{NSObjectProtocol, NSUUID};

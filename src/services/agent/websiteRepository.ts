@@ -421,12 +421,12 @@ export function installedExperienceHost(host: string) {
 
 const installRetryAt = new Map<string, number>()
 
-/** Resolve only the Agent's current page. Discovery failures leave ordinary browsing available. */
-export async function experienceHostForPage(url: string): Promise<string> {
+/** Resolve a visited or explicitly requested site; discovery failures leave browsing available. */
+async function resolvePageExperience(url: string, reinstallRemoved: boolean): Promise<string> {
   if (!/^https?:\/\//i.test(url)) return ''
   await Promise.all([loadRegistry(), loadWebsiteIdentities()])
   const host = websitePrimaryHost(url)
-  if (!host || wasRemovedFromOpen(host)) return host
+  if (!host || (!reinstallRemoved && wasRemovedFromOpen(host))) return host
   const installed = installedExperienceHost(host)
   if (installed) {
     await ensureWebsiteRepository(installed)
@@ -436,9 +436,9 @@ export async function experienceHostForPage(url: string): Promise<string> {
   const entry = await findOpenWebsite(host, fetcher)
   if (!entry) return host
   return changeSource(entry.host, async () => {
-    if (wasRemovedFromOpen(entry.host)) return host
+    if (!reinstallRemoved && wasRemovedFromOpen(entry.host)) return host
     if (hasWebsiteRepository(entry.host)) return entry.host
-    if (Date.now() < (installRetryAt.get(entry.host) ?? 0)) return host
+    if (!reinstallRemoved && Date.now() < (installRetryAt.get(entry.host) ?? 0)) return host
     try {
       const snapshot = await downloadOpenWebsiteExperience(entry, { revision: '', checkedAt: 0, files: {} }, fetcher)
       await installWebsiteSnapshot({ ...entry, name: snapshot.website!.name, open: true }, snapshot)
@@ -450,3 +450,9 @@ export async function experienceHostForPage(url: string): Promise<string> {
     }
   })
 }
+
+/** Passive visits retain the user's uninstall choice. */
+export const experienceHostForPage = (url: string) => resolvePageExperience(url, false)
+
+/** An explicit website task may reinstall its Open repository; credentials remain separately authorized. */
+export const experienceHostForTask = (url: string) => resolvePageExperience(url, true)

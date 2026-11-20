@@ -1,11 +1,11 @@
-import { listCachedPageRefs, type BrowserLocator } from '../../browser/engine'
+import { listCachedPageRefs } from '../../browser/engine'
 import { evalBrowserViewInFrame } from '../../browser/eval'
 import { homeworkListRules, isStudentHomeworkList, readStudentHomeworkScript, studentHomeworkUrl } from '../../platform/chaoxing/studentHomework'
 import { chaoxingUrl, studentCourseUrl } from '../../platform/chaoxing/studentCourses'
 import { runWebsiteScript, hasWebsiteScriptManifest } from '../websiteScripts'
 import { handleWebsiteCourseTools } from './websiteCourses'
 
-type Course = NonNullable<ReturnType<typeof studentCourseUrl>>
+
 type Frame = { url: string; frameId?: string; loaderId?: string; snapshot?: string }
 type Entry = { title: string; status: string; address: string }
 type List = { frame: Frame; entries: Entry[]; page: number; previous: boolean; next: boolean }

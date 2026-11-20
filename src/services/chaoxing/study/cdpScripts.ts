@@ -1,9 +1,6 @@
 /** 刷课页内脚本。认节 / 任务点 / 播放器在宿主 `chaoxing/host/study/`。 */
 import {
-  studyHelpersSource,
-  studyLocateScript,
-  studyPageScript,
-  studyTickScript,
+  studyHelpersSource, studyLocateScript, studyTickScript,
 } from '../host/studyHost'
 
 /** 测试用：helpers 里的 collectSteps / boxOf。 */

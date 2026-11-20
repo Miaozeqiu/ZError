@@ -1,5 +1,5 @@
 import { isImageAttachment } from './folderTokens'
-import { messageHistoryText } from './modelHistory'
+
 import { browserWorkflowInstructions, buildAgentSystemPrompt } from './prompts'
 import { getEnabledSkillCatalog } from './agentSkills'
 import { getActiveAgentProfile } from './agentProfiles'

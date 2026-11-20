@@ -1,3 +1,4 @@
+import { siteNavigationFor } from '../../src/services/browser/siteCapabilities'
 import { describe, expect, it, vi } from 'vitest'
 vi.mock('../../src/services/browser/engine', () => ({ observedJson: async (_id: string, body: unknown) => JSON.stringify(body) }))
 import { handleActTools } from '../../src/services/agent/tools/act'
@@ -10,7 +11,7 @@ import { cachedPageSnap, rememberPageSnap } from '../../src/services/browser/eng
 
 const base = () => ({
   browserId: 'frames-b', sessionId: 'frames-s', loop: {}, policy: { permissionMode: 'explore' },
-  currentUrl: async () => 'https://example.com', graphUrlOf: async () => '', graphNodeId: () => '', isShellNode: () => false,
+  navigation: siteNavigationFor('https://example.com'), currentUrl: async () => 'https://example.com', graphUrlOf: async () => '', graphNodeId: () => '', isShellNode: () => false,
   cssSelectorFromArgs, looksLikeCssSelector, rememberLoginTyped: vi.fn(),
   observeAfterClick: async (_id: string, body: unknown) => body, formatMissRefsHint: () => '',
 })

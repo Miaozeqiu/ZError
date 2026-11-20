@@ -14,7 +14,6 @@ import {
   readChaoxingVideoTick,
   videoIsPlaying,
   videoTickHasPlayer,
-  installChaoxingVideoHook,
   liveStudyHref,
   waitForStudentStudyPage,
   waitForStudyPlayerReady,

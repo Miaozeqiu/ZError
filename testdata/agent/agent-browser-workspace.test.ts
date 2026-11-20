@@ -136,6 +136,21 @@ describe('统一 Agent 浏览器工作区', () => {
     ])
   })
 
+  it('恢复旧扩展标签时打开导航页，并保留浏览器和对话的关联', async () => {
+    const tabs = await vi.importActual<typeof import('../../src/services/browser/appBrowser')>('../../src/services/browser/appBrowser')
+    const saved = [
+      { id: 'old-shortcut', url: 'zerror://scriptcat', name: '脚本猫', createdAt: 1 },
+      { id: 'old-options', url: 'chrome-extension://biodkpbccbdobbjiandalbldblopjkhe/src/options.html#settings', title: '脚本猫', createdAt: 2 },
+      { id: 'other-site', url: 'https://example.com/', title: '已有网页', createdAt: 3 },
+    ]
+    localStorage.setItem('zerror-app-browsers', JSON.stringify(saved))
+    expect(tabs.listAppBrowsers()).toEqual([
+      expect.objectContaining({ id: 'old-shortcut', url: tabs.browserHomeUrl(), title: '导航' }),
+      expect.objectContaining({ id: 'old-options', url: tabs.browserHomeUrl(), title: '导航' }),
+      expect.objectContaining({ id: 'other-site', url: 'https://example.com/', title: '已有网页' }),
+    ])
+  })
+
   it('切换对话不会复用另一个对话的网页，后台工具不会改变前台对话', async () => {
     const first = createChat()
     const firstId = await ensureAgentBrowser(first.id)

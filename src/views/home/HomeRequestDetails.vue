@@ -294,8 +294,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import AIOutputRender from '../../components/agent/AIOutputRender.vue'
+import { defineAsyncComponent, computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import ModelResponseHint from '../../components/ui/ModelResponseHint.vue'
 import { useCustomScrollbar } from '../../composables/useCustomScrollbar'
 import JsonCodeViewer from './JsonCodeViewer.vue'
@@ -307,6 +306,8 @@ import {
   isModelResponseErrorText,
 } from './requestLogDisplay'
 import type { MultiModelResponse, RequestLog } from './types'
+
+const AIOutputRender = defineAsyncComponent(() => import('../../components/agent/AIOutputRender.vue').then(module => module.default))
 
 const props = defineProps<{
   log: RequestLog

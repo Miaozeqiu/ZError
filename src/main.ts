@@ -1,8 +1,9 @@
+import { installWorkspaceEventBuffer } from './services/ui/workspaceEvents';
+import { startAgentRuntime } from './services/agent/runtime';
 import { createApp } from "vue";
 import "./styles/themes.css";
 import App from "./App.vue";
 import { initGlobalTheme } from "./composables/useTheme";
-import "./services/model/markstream";
 
 // 等待Tauri初始化完成
 async function initApp() {
@@ -52,6 +53,10 @@ async function initApp() {
     });
   });
   
+  const stopWorkspaceEvents = installWorkspaceEventBuffer();
+  const stopAgentRuntime = startAgentRuntime();
+  window.addEventListener('beforeunload', stopAgentRuntime, { once: true });
+  import.meta.hot?.dispose(() => { window.removeEventListener('beforeunload', stopAgentRuntime); stopAgentRuntime(); stopWorkspaceEvents(); });
   createApp(App).mount("#app");
 
   if (import.meta.env.DEV) {

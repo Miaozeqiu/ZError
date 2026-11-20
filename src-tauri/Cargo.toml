@@ -15,16 +15,11 @@ name = "zerror_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-zip = { version = "0.6", default-features = false, features = ["deflate"] }
-serde_json = "1"
-ring = "0.17"
 tauri-build = { version = "2.0", features = [] }
 
 [dependencies]
 tauri = { version = "2.0", features = [ "macos-private-api", "devtools", "tray-icon", "webview-data-url", "image-png", "unstable"] }
 tauri-plugin-opener = "2.0"
-# tauri-plugin-sql removed - using rusqlite directly
-# tauri-plugin-sql = { version = "2.0", features = ["sqlite"] }
 # 关掉 http2：rustls+h2 对部分国内 CDN/网关（如 EdgeOne）会偶发
 # “error sending request”，HTTP/1.1 更稳。其余沿用插件默认能力。
 tauri-plugin-http = { version = "2.0", default-features = false, features = [
@@ -78,9 +73,6 @@ block2 = "0.6"
 objc2-foundation = { version = "0.3", features = ["NSProcessInfo", "NSString", "NSObject", "NSUserDefaults", "NSArray", "NSGeometry"] }
 objc2-app-kit = { version = "0.3", features = ["NSView", "NSWindow", "NSGraphics"] }
 objc2-quartz-core = { version = "0.3.2", default-features = false, features = ["CALayer", "CATransaction", "objc2-core-foundation"] }
-objc2-av-foundation = { version = "0.3.2", features = ["AVPlayer", "AVPlayerItem", "AVAsset", "objc2-core-media"] }
-objc2-av-kit = { version = "0.3.2", features = ["AVPlayerView"] }
-objc2-core-media = { version = "0.3.2", features = ["CMTime"] }
 objc2-core-graphics = { version = "0.3.2", default-features = false, features = ["std", "CGEvent", "CGEventTypes"] }
 raw-window-handle = "0.6"
 cef = "151.8.0"

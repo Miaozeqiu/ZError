@@ -1,3 +1,4 @@
+import { siteBrowserAdapterFor } from '../browser/siteCapabilities'
 /** 宿主能力按能力注册，不按站点假装学习通工具可用。 */
 
 export type HostCapabilities = {
@@ -20,17 +21,10 @@ export const emptyHostCapabilities = (): HostCapabilities => ({
   login: true,
 })
 
-/** 视频进度监控任何站都有。目录和面板只在学习通这种已经接过宿主的站上打开。 */
+/** Baseline browser capabilities plus the current application-installed adapter. */
 export const hostCapabilitiesFor = (url: string): HostCapabilities => {
   const caps = emptyHostCapabilities()
-  let chaoxing = false
-  try { const parsed = new URL(url); chaoxing = /^https?:$/.test(parsed.protocol) && (parsed.hostname === 'chaoxing.com' || parsed.hostname.endsWith('.chaoxing.com')) } catch { /* invalid URL */ }
-  if (chaoxing) {
-    caps.catalog = true
-    caps.panel = true
-    caps.captcha = true
-    caps.capture = true
-  }
+  Object.assign(caps, siteBrowserAdapterFor(url)?.capabilities)
   return caps
 }
 

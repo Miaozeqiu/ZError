@@ -18,7 +18,7 @@ config="$(mktemp -d)"
 trap 'rm -rf "$config"' EXIT
 printf '%s\n' '{"bundle":{"createUpdaterArtifacts":false}}' > "$config/tauri.conf.json"
 
-npm exec -- tauri build --ci --target "$target" --bundles app --config "$config/tauri.conf.json" -- --locked
+node scripts/tauri-cli.mjs build --ci --target "$target" --bundles app --config "$config/tauri.conf.json" -- --locked
 bundle="$root/src-tauri/target/$target/release/bundle"
 app="$bundle/macos/ZError.app"
 test -d "$app"

@@ -20,7 +20,6 @@ static FRAMEWORK_LOADED: OnceLock<()> = OnceLock::new();
 static READY: AtomicBool = AtomicBool::new(false);
 static DEBUG_PORT: AtomicI32 = AtomicI32::new(0);
 static PUMP_STARTED: AtomicBool = AtomicBool::new(false);
-static PUMP_QUEUED: AtomicBool = AtomicBool::new(false);
 static HANDLING_SEND_EVENT: AtomicBool = AtomicBool::new(false);
 static ORIG_SEND_EVENT: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 static SEND_EVENT_WRAPPED: AtomicBool = AtomicBool::new(false);
@@ -133,7 +132,6 @@ wrap_browser_process_handler! {
 wrap_app! {
   pub struct ZeCefApp {
     process: BrowserProcessHandler,
-    scriptcat: Option<String>,
   }
 
   impl App {
@@ -143,9 +141,6 @@ wrap_app! {
       command_line: Option<&mut CommandLine>,
     ) {
       let Some(cmd) = command_line else { return };
-      if let Some(path) = &self.scriptcat {
-        cmd.append_switch_with_value(Some(&CefString::from("load-extension")), Some(&CefString::from(path.as_str())));
-      }
       for flag in [
         "disable-gpu-shader-disk-cache",
         "no-first-run",
@@ -205,25 +200,6 @@ extern "C" {
 extern "C" fn on_runloop_pump(_timer: *mut c_void, _info: *mut c_void) {
   if READY.load(Ordering::SeqCst) {
     do_message_loop_work();
-  }
-}
-
-/// 主线程上最多挂一笔 CEF 泵。给 create_browser 等一次性唤醒用。
-fn queue_pump(app: &tauri::AppHandle) {
-  if PUMP_QUEUED.swap(true, Ordering::SeqCst) {
-    return;
-  }
-  let app = app.clone();
-  if app
-    .run_on_main_thread(move || {
-      if READY.load(Ordering::SeqCst) {
-        do_message_loop_work();
-      }
-      PUMP_QUEUED.store(false, Ordering::SeqCst);
-    })
-    .is_err()
-  {
-    PUMP_QUEUED.store(false, Ordering::SeqCst);
   }
 }
 
@@ -546,7 +522,7 @@ pub fn maybe_run_helper() -> bool {
   }
   bind_api_version();
   let cef_args = args::Args::new();
-  let mut app = ZeCefApp::new(ZeBrowserProcess::new(), None);
+  let mut app = ZeCefApp::new(ZeBrowserProcess::new());
   let code = execute_process(
     Some(cef_args.as_main_args()),
     Some(&mut app),
@@ -606,8 +582,7 @@ pub fn initialize_browser_process(app: &tauri::AppHandle) -> Result<(), String> 
   let port = DEFAULT_DEBUG_PORT;
 
   let cef_args = args::Args::new();
-  let scriptcat = app.path().resource_dir().map_err(|e| e.to_string())?.join("browser-extensions/scriptcat");
-  let mut application = ZeCefApp::new(ZeBrowserProcess::new(), Some(scriptcat.to_string_lossy().into_owned()));
+  let mut application = ZeCefApp::new(ZeBrowserProcess::new());
   let settings = Settings {
     no_sandbox: 1,
     external_message_pump: 1,

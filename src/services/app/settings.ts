@@ -1,6 +1,6 @@
 import { reactive, watch } from 'vue'
 import { readSecureDocument, writeSecureDocument } from '../security/secureStore'
-import { environmentDetector } from './environmentDetector'
+
 import { DEFAULT_SEARCH_SETTINGS, normalizeSearchSettings, SEARCH_PROVIDERS, type SearchSettings } from '../searchProviders'
 
 export { DEFAULT_SEARCH_SETTINGS, normalizeSearchSettings, type SearchSettings } from '../searchProviders'

@@ -504,25 +504,6 @@ const onAnswerInput = (e: Event) => {
   if (el) autoResize(el)
 }
 
-const toBase64 = (bytes: Uint8Array) => {
-  let binary = ''
-  const chunk = 0x8000
-  for (let i = 0; i < bytes.length; i += chunk) {
-    const sub = bytes.subarray(i, i + chunk)
-    binary += String.fromCharCode.apply(null, Array.from(sub) as any)
-  }
-  return btoa(binary)
-}
-
-const getMime = (url: string) => {
-  const ext = (url.split('.').pop() || '').toLowerCase()
-  if (ext === 'png') return 'image/png'
-  if (ext === 'jpg') return 'image/jpeg'
-  if (ext === 'webp') return 'image/webp'
-  if (ext === 'gif') return 'image/gif'
-  return 'application/octet-stream'
-}
-
 const fetchImages = async (urls: string[]) => {
   if (!urls.length) { imageSrcMap.value = {}; return }
   const unique = Array.from(new Set(urls))
