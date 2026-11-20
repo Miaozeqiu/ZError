@@ -1088,6 +1088,10 @@ pub async fn browser_open(
       }
     }
     crate::browser_theme::apply_webview(&webview)?;
+    if let Err(error) = crate::webview2::set_audio_muted(&webview, true).await {
+      let _ = webview.close();
+      return Err(error);
+    }
     if let Err(error) = apply_bounds(&webview, &id, (x, y, width, height), false).await {
       let _ = webview.close();
       return Err(error);
@@ -1324,8 +1328,13 @@ pub async fn browser_set_audio_muted(app: AppHandle, id: String, muted: bool) ->
   if crate::cef_runtime::cef_enabled() {
     return crate::cef::set_audio_muted(app, id, muted);
   }
-  let _ = (app, id, muted);
-  Err("当前浏览器引擎暂不支持整页静音".into())
+  #[cfg(windows)]
+  return crate::webview2::set_audio_muted(&find_browser(&app, &id)?, muted).await;
+  #[cfg(not(windows))]
+  {
+    let _ = (app, id, muted);
+    Err("当前浏览器引擎暂不支持整页静音".into())
+  }
 }
 
 #[tauri::command]
@@ -1363,6 +1372,22 @@ pub async fn browser_engine() -> Result<String, String> {
     return Ok("cef".into());
   }
   Ok("webview".into())
+}
+
+#[tauri::command]
+pub fn browser_capabilities() -> serde_json::Value {
+  #[cfg(not(target_os = "macos"))]
+  let cef = false;
+  #[cfg(target_os = "macos")]
+  let cef = crate::cef_runtime::cef_enabled();
+  let chromium = cef || cfg!(windows);
+  serde_json::json!({
+    "secureFill": chromium,
+    "audioMute": chromium,
+    "scriptCat": chromium,
+    "scriptCatPermissions": cef,
+    "nativeVideoOverlay": cef,
+  })
 }
 
 #[tauri::command]
@@ -1708,11 +1733,16 @@ pub async fn browser_screenshot(
   app: AppHandle,
   id: String,
 ) -> Result<serde_json::Value, String> {
+  #[cfg(windows)]
+  let _operation = crate::webview2_secrets::lock(&id).await;
   crate::secret_browser::guard(&app, &id).await?;
   #[cfg(target_os = "macos")]
   if crate::cef_runtime::cef_enabled() {
     return crate::cef::cdp_screenshot(app, id).await;
   }
+  #[cfg(windows)]
+  return crate::webview2::screenshot(&find_browser(&app, &id)?).await;
+  #[cfg(not(windows))]
   {
     let _ = (app, id);
     Err("当前平台浏览区不是 Chromium".into())

@@ -33,8 +33,16 @@ const validate = (value: unknown, schema: Record<string, any>, path: string): st
   return undefined
 }
 export const validateToolCall = (definitions: unknown[], call: { name: string; arguments: string }) => {
-  const tool = toolRegistry(definitions).get(call.name)
-  if (!tool) return '工具未在本轮注册，不能执行；请只使用当前提供的工具。'
+  const registry = toolRegistry(definitions)
+  const tool = registry.get(call.name)
+  if (!tool) {
+    const directory = registry.get('load_agent_tools')
+    const deferred = directory?.function.parameters?.properties?.names?.items?.enum
+    if (Array.isArray(deferred) && deferred.includes(call.name)) {
+      return `工具尚未加载。请先调用 load_agent_tools，参数为 ${JSON.stringify({ names: [call.name] })}，收到加载成功回执后在下一轮调用此工具。`
+    }
+    return '工具未在本轮注册，不能执行；请只使用当前提供的工具。'
+  }
   let args: unknown
   try { args = JSON.parse(call.arguments || '{}') } catch { return '工具参数不是合法 JSON；请根据工具定义修正，不会尝试执行。' }
   return validate(args, tool.function.parameters || { type: 'object' }, '参数')

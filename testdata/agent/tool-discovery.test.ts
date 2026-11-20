@@ -4,6 +4,7 @@ import { availableAgentTools, assembleAgentTools } from '../../src/services/agen
 import { LOAD_AGENT_TOOLS, loadAgentTools, modelAgentTools } from '../../src/services/agent/toolDiscovery'
 import { buildAgentSystemPrompt } from '../../src/services/agent/prompts'
 import { getEnabledSkillCatalog } from '../../src/services/agent/agentSkills'
+import { validateToolCall } from '../../src/services/agent/core/tools'
 
 vi.mock('../../src/services/agent/websiteRepository', async original => ({
   ...await original<typeof import('../../src/services/agent/websiteRepository')>(),
@@ -44,4 +45,24 @@ it('offers the follow-up login tool after the host detects an image captcha', ()
   }] }] }
   const names = modelAgentTools(assembleAgentTools('', 'zjooc.cn'), session as any).map(tool => tool.function.name)
   expect(names).toContain('browser_login_zjooc')
+})
+
+it('retains loaded website tools on the next user turn and after reopening a conversation', () => {
+  const catalog = assembleAgentTools('', 'zjooc.cn')
+  const session = { messages: [
+    { role: 'assistant', status: 'done', steps: [{ kind: 'tool', name: LOAD_AGENT_TOOLS, status: 'done', result: '{"loaded":["browser_login_zjooc"]}' }] },
+    { role: 'user', status: 'done', steps: [] },
+    { role: 'assistant', status: 'streaming', steps: [] },
+  ] }
+  const tools = modelAgentTools(catalog, JSON.parse(JSON.stringify(session)))
+  expect(tools.map(tool => tool.function.name)).toContain('browser_login_zjooc')
+  expect(validateToolCall(tools, { name: 'browser_login_zjooc', arguments: '{}' })).toBeUndefined()
+  const removed = catalog.filter(tool => tool.function.name !== 'browser_login_zjooc')
+  expect(modelAgentTools(removed, session as any).map(tool => tool.function.name)).not.toContain('browser_login_zjooc')
+})
+
+it('explains how to load a deferred tool and continues rejecting unknown tools', () => {
+  const tools = modelAgentTools(assembleAgentTools('', 'zjooc.cn'))
+  expect(validateToolCall(tools, { name: 'browser_login_zjooc', arguments: '{}' })).toContain('load_agent_tools')
+  expect(validateToolCall(tools, { name: 'unregistered_tool', arguments: '{}' })).toContain('未在本轮注册')
 })

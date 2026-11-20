@@ -325,6 +325,7 @@ pub fn run() {
             crate::app_browser::browser_eval_frames,
             crate::app_browser::browser_set_app_above_page,
             crate::app_browser::browser_engine,
+            crate::app_browser::browser_capabilities,
             #[cfg(target_os = "macos")]
             crate::cef::browser_scriptcat_permissions,
             crate::app_browser::browser_protocol,

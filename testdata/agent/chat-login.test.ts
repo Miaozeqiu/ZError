@@ -6,7 +6,7 @@ import AgentLoginForm from '../../src/components/agent/AgentLoginForm.vue'
 import { cancelChatLogin, chatLoginRequests, requestChatLogin, submitChatLogin } from '../../src/services/agent/chatLogin'
 import { handleLoginTool } from '../../src/services/agent/tools/websiteLogin'
 
-const io = vi.hoisted(() => ({ invoke: vi.fn(), page: vi.fn(), account: vi.fn() }))
+const io = vi.hoisted(() => ({ invoke: vi.fn(), page: vi.fn(), account: vi.fn(), capabilities: vi.fn() }))
 vi.mock('../../src/services/agent/tools/websiteLoginObservation', () => ({
   loginObserver: (call: Function, id: string) => (captureCaptcha = false) =>
     call(id, 'login_observe', captureCaptcha ? { captureCaptcha } : undefined),
@@ -16,7 +16,7 @@ vi.mock('../../src/services/agent/websiteScripts', () => ({ runWebsiteWorkflow: 
 
 vi.mock('@tauri-apps/api/core', async original => ({ ...await original<typeof import('@tauri-apps/api/core')>(), invoke: io.invoke }))
 vi.mock('../../src/services/browser/appBrowser', () => ({ getBrowserState: io.page }))
-vi.mock('../../src/services/browser/eval', async original => ({ ...await original<typeof import('../../src/services/browser/eval')>(), isCefEngine: async () => true }))
+vi.mock('../../src/services/browser/capabilities', () => ({ browserCapabilities: io.capabilities }))
 vi.mock('../../src/services/security/secureStore', async original => ({ ...await original<typeof import('../../src/services/security/secureStore')>(), isNativeSecureStore: () => true }))
 vi.mock('../../src/services/agent/siteAccounts', () => ({ siteAccountOf: io.account, refreshSiteAccounts: async () => {}, siteAccountsReady: Promise.resolve() }))
 
@@ -26,6 +26,7 @@ beforeEach(() => {
   io.page.mockReset().mockResolvedValue({ url: origin + '/login' })
   io.account.mockReset().mockReturnValue(null)
   io.invoke.mockReset()
+  io.capabilities.mockReset().mockResolvedValue({ secureFill: true })
 })
 const pending = async () => {
   await vi.waitFor(() => expect(chatLoginRequests.has('chat')).toBe(true))
@@ -122,4 +123,14 @@ it('reuses existing references and keeps cancellation, navigation and abort out 
   await submitChatLogin(stale, 'private-account', 'private-password')
   expect(io.invoke.mock.calls.some(([command]) => command === 'secure_save_chat_login')).toBe(false)
   expect(chatLoginRequests.size).toBe(0)
+})
+
+it('allows the native WebView credential form and rejects hosts without secure fill', async () => {
+  const receipt = requestChatLogin('chat', 'tab')
+  cancelChatLogin((await pending()).id)
+  expect(await receipt).toMatchObject({ denied: true })
+  io.capabilities.mockResolvedValue({ secureFill: false })
+  expect(await requestChatLogin('chat', 'tab')).toMatchObject({ ok: false, error: expect.stringContaining('不支持安全填写') })
+  expect(chatLoginRequests.size).toBe(0)
+  expect(io.invoke).not.toHaveBeenCalled()
 })

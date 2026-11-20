@@ -27,13 +27,14 @@ vi.mock('../../src/services/browser/appBrowser', async () => {
     browserAudioMuted: state.audioMuted, browserHomeUrl: () => 'about:blank', closeBrowserView: native.close,
     createAppBrowser: vi.fn(), goBackBrowserView: vi.fn(), goForwardBrowserView: vi.fn(),
     hideAllBrowserViews: native.hide, hostBounds: () => ({ ...native.rect }),
-    hostnameOf: () => 'example.com', isBrowserHome: () => false, isCefEngine: async () => true,
+    hostnameOf: () => 'example.com', isBrowserHome: () => false, isCefEngine: async () => false,
     listenBrowserLoad: vi.fn().mockResolvedValue(() => undefined),
     navigateBrowserView: vi.fn(), normalizeBrowserUrl: (url: string) => url, patchAppBrowser: vi.fn(),
     reloadBrowserView: vi.fn(), removeAppBrowser: vi.fn(), screenshotBrowserView: vi.fn().mockResolvedValue({ image: 'data:image/png;base64,AA==' }),
     setBrowserAudioMuted: native.audio, setBrowserBounds: native.bounds, setBrowserZoom: vi.fn(), showBrowserView: native.show,
   }
 })
+vi.mock('../../src/services/browser/capabilities', () => ({ browserCapabilities: async () => ({ secureFill: true, audioMute: true, scriptCat: true, scriptCatPermissions: false }) }))
 vi.mock('../../src/services/app/environmentDetector', () => ({ isTauriEnvironment: () => true }))
 vi.mock('../../src/services/browser/control', async () => {
   const { ref } = await import('vue')
@@ -189,7 +190,7 @@ describe('浏览器小窗原生视图生命周期', () => {
     expect(native.control).toHaveBeenLastCalledWith('tab-one', 'chat-one', 'agent')
   })
 
-  it('默认静音，仅观看时也可以开启或关闭声音', async () => {
+  it('WebView2 默认静音，仅观看时也可以开启或关闭声音', async () => {
     state.expanded.value = true
     native.audio.mockImplementation(async (id: string, muted: boolean) => {
       state.audioMuted.value[id] = muted

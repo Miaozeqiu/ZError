@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { shallowReactive } from 'vue'
 import { getBrowserState } from '../browser/appBrowser'
-import { isCefEngine } from '../browser/eval'
+import { browserCapabilities } from '../browser/capabilities'
 import { isNativeSecureStore } from '../security/secureStore'
 import { refreshSiteAccounts, siteAccountOf, siteAccountsReady } from './siteAccounts'
 import { loadWebsiteIdentities, websiteAccountId, websiteIdentityForHost } from './websiteIdentity'
@@ -36,7 +36,7 @@ export async function requestChatLogin(
   signal?: AbortSignal,
   { expectedOrigin, replacingRejectedCredentials = false }: { expectedOrigin?: string; replacingRejectedCredentials?: boolean } = {},
 ): Promise<Receipt> {
-  if (!isNativeSecureStore() || !await isCefEngine()) return failed('当前浏览器不支持安全填写，请在网站登录页手动登录。')
+  if (!isNativeSecureStore() || !(await browserCapabilities()).secureFill) return failed('当前浏览器不支持安全填写，请在网站登录页手动登录。')
   await Promise.all([loadWebsiteIdentities(), siteAccountsReady])
   const origin = await pageOrigin(browserId)
   const identity = websiteIdentityForHost(origin)

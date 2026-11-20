@@ -13,9 +13,11 @@ export function modelAgentTools<T extends NamedTool>(available: T[], session?: A
     for (const name of ['browser_get_page', 'browser_click', 'browser_todo', 'browser_finish', 'browser_watch',
       'browser_complete_chapter', 'browser_start_chapter_tasks']) selected.add(name)
   }
-  const last = session?.messages.at(-1)
-  if (last?.role === 'assistant' && last.status === 'streaming') {
-    for (const step of last.steps || []) {
+  // A conversation retains discovered tools across user turns. The live host
+  // catalog below still removes tools that were disabled or uninstalled.
+  for (const message of session?.messages || []) {
+    if (message.role !== 'assistant') continue
+    for (const step of message.steps || []) {
       if (step.name === LOAD_AGENT_TOOLS && step.status === 'done') {
         const loaded = parseToolArgs(step.result || '').loaded
         if (Array.isArray(loaded)) {

@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
-import { asObject, isCefEngine } from './eval'
+import { asObject } from './eval'
+import { browserCapabilities } from './capabilities'
 
 export type NativeVideoState = {
   found: boolean
@@ -35,17 +36,17 @@ const empty = (): NativeVideoState => ({
 })
 
 export const tickNativeVideo = async (id: string) => {
-  if (!(await isCefEngine())) return empty()
+  if (!(await browserCapabilities()).nativeVideoOverlay) return empty()
   return asState(await invoke('browser_video_overlay_tick', { id }).catch(() => null))
 }
 
 export const readNativeVideo = async (id: string) => {
-  if (!(await isCefEngine())) return empty()
+  if (!(await browserCapabilities()).nativeVideoOverlay) return empty()
   return asState(await invoke('browser_video_overlay_state', { id }).catch(() => null))
 }
 
 export const playNativeVideo = async (id: string) => {
-  if (!(await isCefEngine())) return empty()
+  if (!(await browserCapabilities()).nativeVideoOverlay) return empty()
   return asState(await invoke('browser_video_overlay_play', { id }).catch(() => null))
 }
 

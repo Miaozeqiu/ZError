@@ -9,7 +9,7 @@ import { clickLabelMatches } from './engine/clickFind'
 import { beginPageSnap, rememberPageSnap } from './engine/pageSnap'
 import { publicRefs, rememberPageRefs, type PageRef } from './engine/refs'
 import { formatAriaSnapshot } from './engine/snapshot'
-import { askFrames, asObject, evalBrowserView, isCefEngine, waitMs } from './eval'
+import { askFrames, asObject, evalBrowserView, waitMs } from './eval'
 import { claimClickText, guardNavigate } from './pageHooks'
 import { act, clearCookies, cookies, setCookies, wait } from './protocol'
 
