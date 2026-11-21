@@ -75,6 +75,11 @@ class NativeFrames(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.directory = tempfile.TemporaryDirectory(prefix="zerror-webkit-test-")
+        # Hosted runners have no audio hardware. ALSA's null device still runs
+        # the real GStreamer clock/decoder so media play/pause/end are exercised.
+        audio_config = Path(cls.directory.name) / "alsa.conf"
+        audio_config.write_text("pcm.!default { type null }\n")
+        os.environ.setdefault("ALSA_CONFIG_PATH", str(audio_config))
         flags = shlex.split(subprocess.check_output(
             ["pkg-config", "--cflags", "--libs", "webkit2gtk-web-extension-4.1"], text=True))
         subprocess.run([os.environ.get("CC", "cc"), "-shared", "-fPIC", "-fvisibility=hidden",
@@ -215,6 +220,17 @@ class NativeFrames(unittest.TestCase):
                 self.rpc("evaluate", self.a, "document.body.textContent", view=other)
         finally:
             window.destroy()
+
+    def test_media_play_pause_and_end(self):
+        self.run_fixed(self.a, action="media_mute", selector="#media", muted=True)
+        playing = self.run_fixed(self.a, action="media_play", selector="#media")
+        self.assertFalse(playing["paused"])
+        self.assertTrue(self.run_fixed(self.a, action="media_pause", selector="#media")["paused"])
+        self.run_fixed(self.a, action="media_play", selector="#media")
+        ended = self.run_fixed(self.a, action="media_wait", selector="#media", until="ended",
+                               timeoutMs=5000, wait_id="audio-end")
+        self.assertEqual(ended["event"], "ended")
+        self.assertTrue(ended["ended"])
 
     def test_async_errors_and_detached_requests_do_not_exhaust_budget(self):
         with self.assertRaises(RuntimeError):
