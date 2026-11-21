@@ -696,6 +696,36 @@ mod tests {
         assert!(select(&rows, &json!({"document":doc}), "another.example").is_err());
     }
     #[test]
+    fn sibling_frames_and_external_frames_cannot_reuse_document_authority() {
+        let first = Document {
+            frame_id: "gtk:process:child-one".into(),
+            loader_id: "document-one".into(),
+            url: "https://lessons.academy.example/shared".into(),
+            session: None,
+        };
+        let second = Document {
+            frame_id: "gtk:process:child-two".into(),
+            loader_id: "document-two".into(),
+            ..first.clone()
+        };
+        let external = Document {
+            url: "https://outside.example/shared".into(),
+            ..first.clone()
+        };
+        let rows = vec![first.clone(), second.clone(), external.clone()];
+        assert_eq!(
+            select(&rows, &json!({"document":second}), "academy.example").unwrap(),
+            &second
+        );
+        let mixed = Document {
+            loader_id: second.loader_id.clone(),
+            ..first.clone()
+        };
+        assert!(select(&rows, &json!({"document":mixed}), "academy.example").is_err());
+        assert!(select(&rows, &json!({"document":external}), "academy.example").is_err());
+        assert!(select(&[second], &json!({"document":first}), "academy.example").is_err());
+    }
+    #[test]
     fn rejects_unbounded_or_unknown_dom_actions() {
         assert!(validate_action(&json!({"action":"query","selector":"p","limit":40})).is_ok());
         for args in [

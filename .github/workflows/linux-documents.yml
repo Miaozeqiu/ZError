@@ -32,13 +32,13 @@ jobs:
       - name: Install WebKitGTK and headless display
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev python3-gi gir1.2-webkit2-4.1 xvfb
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev python3-gi gir1.2-webkit2-4.1 xvfb gstreamer1.0-plugins-bad
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri -> target
       - name: Test native cross-origin frames in WebKitGTK
-        run: xvfb-run -a /usr/bin/python3 scripts/test-linux-documents.py
+        run: NO_AT_BRIDGE=1 xvfb-run -a /usr/bin/python3 scripts/test-linux-documents.py
       - name: Check Linux application and native tests
         working-directory: src-tauri
         run: cargo check --locked --tests

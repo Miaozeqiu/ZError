@@ -30,6 +30,7 @@ typedef struct {
     WebKitUserMessage *message;
     gchar *loader;
     gchar *url;
+    gint64 deadline;
     guint timeout;
     gboolean done;
 } Request;
@@ -158,8 +159,14 @@ static void finish(Request *request, gboolean ok, const gchar *text)
 static gboolean expired(gpointer data)
 {
     Request *request = data;
+    WebKitWebPage *page = g_weak_ref_get(&request->page);
+    WebKitFrame *frame = g_weak_ref_get(&request->frame);
+    gboolean stale = !page || !frame || !current(page, frame, request->loader, request->url);
+    g_clear_object(&frame);
+    g_clear_object(&page);
+    if (!stale && g_get_monotonic_time() < request->deadline) return G_SOURCE_CONTINUE;
     request->timeout = 0;
-    finish(request, FALSE, "Linux 文档操作超时");
+    finish(request, FALSE, stale ? STALE : "Linux 文档操作超时");
     return G_SOURCE_REMOVE;
 }
 
@@ -382,7 +389,10 @@ static gboolean received(WebKitWebPage *page, WebKitUserMessage *message, gpoint
     request->loader = g_strdup(loader);
     request->url = g_strdup(url);
     g_hash_table_insert(state->pending, request, request_ref(request));
-    request->timeout = g_timeout_add_seconds_full(G_PRIORITY_DEFAULT, 34, expired,
+    request->deadline = g_get_monotonic_time() + 34 * G_TIME_SPAN_SECOND;
+    /* Detached documents may suspend JS timers without destroying their world.
+     * Observe native liveness only while a request is outstanding. */
+    request->timeout = g_timeout_add_full(G_PRIORITY_DEFAULT, 500, expired,
         request_ref(request), request_unref);
     JSCContext *context = webkit_frame_get_js_context_for_script_world(frame, world);
     JSCValue *callback = jsc_value_new_function(context, NULL, G_CALLBACK(resolved),

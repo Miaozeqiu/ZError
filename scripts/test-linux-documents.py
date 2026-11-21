@@ -53,13 +53,12 @@ class Handler(BaseHTTPRequestHandler):
                 <iframe id="b" src="{CHILD}/child"></iframe>'''
             elif self.path.startswith("/child"):
                 html = f'''<h1>child</h1><textarea id="answer">before</textarea>
-                <input id="password" type="password" value="never-return-this">
                 <button id="click" onclick="document.querySelector('h1').textContent='clicked'">click</button>
                 <audio id="media" src="{CHILD}/audio.wav" preload="auto"></audio>
                 <iframe id="nested" src="{TOP}/nested"></iframe>
                 <script>document[Symbol.for('zerror.document.identity.v2')]='forged';</script>'''
             else:
-                html = "<h1>nested</h1>"
+                html = '<h1>nested</h1><input id="password" type="password" value="never-return-this">'
             data, mime = ("<!doctype html><meta charset=utf-8>" + html).encode(), "text/html"
         self.send_response(200)
         self.send_header("Content-Type", mime)
@@ -159,8 +158,8 @@ class NativeFrames(unittest.TestCase):
         self.assertEqual(self.run_fixed(self.b, action="value", selector="#answer")["value"], "before")
         self.run_fixed(self.a, action="click", selector="#click")
         self.assertEqual(self.run_fixed(self.a, action="query", selector="h1", limit=1)["nodes"][0]["text"], "clicked")
-        self.assertNotIn("never-return-this", json.dumps(self.run_fixed(self.a, action="query", selector="input", limit=1)))
-        self.assertFalse(self.run_fixed(self.a, action="fill", selector="#password", text="denied")["ok"])
+        self.assertNotIn("never-return-this", json.dumps(self.run_fixed(nested, action="query", selector="input", limit=1)))
+        self.assertFalse(self.run_fixed(nested, action="fill", selector="#password", text="denied")["ok"])
         # Page-world symbols cannot forge native identities or interfere with the isolated world.
         with self.assertRaises(RuntimeError):
             self.run_fixed({**self.a, "loaderId": "forged"}, action="query", selector="h1", limit=1)
