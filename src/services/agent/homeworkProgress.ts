@@ -1,4 +1,9 @@
-import type { PageHomeworkQuestion } from '../chaoxing/host/courseHomeworkAnswers'
+type PageHomeworkQuestion = {
+  id: string | null; order: number; number: number; stem: string
+  type: 'single' | 'multiple' | 'judgement' | 'completion' | 'unsupported'; issue: string | null
+  options: Array<{ label: string; text: string; selected: boolean }>
+  blanks: Array<{ text: string }>
+}
 
 export type HomeworkAnswer = { choices: string[] } | { blanks: string[] }
 

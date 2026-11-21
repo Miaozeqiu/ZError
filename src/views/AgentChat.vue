@@ -176,9 +176,8 @@ import AgentChatSidebar from './agentChat/AgentChatSidebar.vue'
 import AgentChatThread from './agentChat/AgentChatThread.vue'
 import AgentChatWritePane from './agentChat/AgentChatWritePane.vue'
 import AgentBrowserPane from './agentChat/AgentBrowserPane.vue'
-import { agentBrowserExpanded, agentBrowserRevealRequest, currentAgentBrowser, currentAgentBrowserOpen } from '../services/agent/agentBrowser'
-import { watchBrowserChapters } from '../services/agent/browserChapterProgress'
-import { watchBrowserHomework } from '../services/agent/browserHomeworkProgress'
+import { currentWebsiteQuestions } from '../services/agent/websiteRuntime/observations'
+import { agentBrowserExpanded, agentBrowserRevealRequest, currentAgentBrowser } from '../services/agent/agentBrowser'
 import {
   bindAgentChatPanes,
   browserPaneVisible,
@@ -673,17 +672,12 @@ watch(activeChatId, () => {
 })
 
 bindAgentChatPanes()
-if (isTauriEnvironment()) {
-  const browserSource = () => {
-    const browser = currentAgentBrowser.value
-    const sessionId = activeChatId.value
-    return props.active && sessionId && browser && currentAgentBrowserOpen.value
-      ? { sessionId, browserId: browser.id, url: browser.url }
-      : null
-  }
-  watchBrowserHomework(browserSource, openHomeworkPane)
-  watchBrowserChapters(browserSource)
-}
+watch([() => props.active, () => activeChatId.value, () => {
+  const browser = currentAgentBrowser.value
+  return browser && activeChatId.value ? currentWebsiteQuestions(browser.id, activeChatId.value, browser.url) : undefined
+}], ([active, , assignment]) => {
+  if (active && typeof assignment === 'string' && assignment) openHomeworkPane(assignment)
+}, { immediate: true })
 
 onMounted(() => {
   document.addEventListener('keydown', onPreviewKeydown)

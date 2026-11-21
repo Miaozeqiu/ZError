@@ -1,6 +1,5 @@
 import { createHostToolRunner } from '../hostToolRunner'
-import { runChapterResume, type chapterResumePlan } from '../chapterResume'
-import { chaoxingStartup } from '../chaoxingStartup'
+import { isWebsiteRuntimeToolName } from '../websiteRuntime/protocol'
 import { LOAD_AGENT_TOOLS, loadAgentTools, modelAgentTools } from '../toolDiscovery'
 import { toolRegistry } from '../core/tools'
 import { WEBSITE_HOST_TOOLS } from '../websiteRuntime/hostTools'
@@ -47,8 +46,6 @@ import { createBrowserControlGate } from '../browserControlGate'
 import { peekAppBrowserUrl } from '../../browser/appBrowser'
 import { createWatchContinuation } from '../watchContinuation'
 import { canReviewFinalReply, createTaskCompletionCheck, type AgentTaskOutcome } from '../taskCompletion'
-import { videoWatchFor } from '../../platform/panelAccess'
-import type { ChapterWorkflowResume } from '../tools/websiteChapterStart'
 
 export type RunAgentTurnLoopInput = {
   sessionId: string
@@ -71,8 +68,6 @@ export type RunAgentTurnLoopInput = {
   parentStepId?: string
   jobId?: string
   streamSubjectId?: number
-  chapterResume?: ReturnType<typeof chapterResumePlan>
-  startupCommand?: string
   onDrawingGraph?: () => void
 }
 
@@ -254,7 +249,7 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
   const continueVideo = role === 'parent' ? createWatchContinuation({
     sessionId, signal: abort.signal,
     browserId: () => liveSession(sessionId)?.browserId || '',
-    expectedWatch: () => [...(liveMessage()?.steps || [])].reverse().find(step => ['browser_watch', 'browser_complete_chapter', 'browser_start_chapter_tasks'].includes(step.name || '')
+    expectedWatch: () => [...(liveMessage()?.steps || [])].reverse().find(step => step.name === 'browser_watch'
       && step.status === 'done' && parseToolArgs(step.result || '').watching === true)?.id,
     canFinish: () => Boolean(completion.terminal()),
     waiting: value => {
@@ -318,14 +313,13 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
         if (input.deferTools && call.name === LOAD_AGENT_TOOLS) {
           return run.execute(call, async () => loadAgentTools([...toolRegistry(await currentCatalog()).values()], parseToolArgs(call.arguments).names))
         }
-        const dispatch = (chapterResume?: ChapterWorkflowResume) => controlGate.runTool(call, browserEpoch => run.execute(call, expectedBrowserId => executeChatTool({
+        const dispatch = () => controlGate.runTool(call, browserEpoch => run.execute(call, expectedBrowserId => executeChatTool({
           call,
           ctx: {
             sessionId,
             assistantId,
             abort: abort.signal,
             browserEpoch,
-            chapterResume,
             role,
             parentSessionId,
             parentAssistantId,
@@ -374,41 +368,15 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
             },
           },
         })))
-        if (role === 'parent' && call.name === 'browser_start_chapter_tasks') {
+        let result: string
+        if (isWebsiteRuntimeToolName(call.name)) {
+          // Package invocation enforces its own active deadline. Media/form waits
+          // must also pause the parent model deadline for every website.
           runningChapterWorkflow = true
           updateTimeout()
-          try {
-            let result = await dispatch()
-            while (true) {
-              const chapter = parseToolArgs(result)
-              if (chapter.ok !== true || chapter.watching !== true) return result
-              const watchedBrowser = liveSession(sessionId)?.browserId || ''
-              patchStep(sessionId, assistantId, call.id, { result: projectToolResult(result, TOOL_RESULT_KEEP, call.id) })
-              const continuation = await continueVideo()
-              if (!continuation) return result
-              const watch = videoWatchFor(watchedBrowser)
-              if (liveSession(sessionId)?.browserId !== watchedBrowser || watch?.sessionId !== sessionId
-                || watch.status !== 'done' || !('mid' in watch) || watch.mid !== chapter.videoMid
-                || typeof chapter.chapterKey !== 'string' || typeof chapter.videoMid !== 'string') {
-                return JSON.stringify({ ...chapter, watching: false, status: 'video_event', hint: continuation })
-              }
-              result = await dispatch({ chapterKey: chapter.chapterKey, videoMid: chapter.videoMid })
-            }
-          } finally {
-            runningChapterWorkflow = false
-            updateTimeout()
-          }
-        }
-        const result = await dispatch()
-        if (role === 'parent' && call.name === 'browser_complete_chapter') {
-          const chapter = parseToolArgs(result)
-          if (chapter.ok === true && chapter.watching === true) {
-            // Preserve the verified playback receipt even if the wait is interrupted.
-            patchStep(sessionId, assistantId, call.id, { result: projectToolResult(result, TOOL_RESULT_KEEP, call.id) })
-            const continuation = await continueVideo()
-            if (continuation) return JSON.stringify({ ...chapter, watching: false, status: 'video_event', hint: continuation })
-          }
-        }
+          try { result = await dispatch() }
+          finally { runningChapterWorkflow = false; updateTimeout() }
+        } else result = await dispatch()
         const finished = call.name === 'browser_finish' ? parseToolArgs(result) : null
         if (role === 'parent' && finished?.ok === true && finished.status === 'watching') {
           const continuation = await continueVideo()
@@ -545,43 +513,11 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
       },
     }
     const hostTool = createHostToolRunner({ ...modelOptions, tools, liveTools: async () => [...await currentCatalog(), ...WEBSITE_HOST_TOOLS] }, assistantId)
-    let workflowStorageReady = true
     const pendingWorkflows = await websiteCheckpoints.list(sessionId).catch(() => {
-      workflowStorageReady = false
       startupContext = '【网站检查点暂不可读】普通对话可继续。本轮关闭网站快捷启动，不自动恢复或覆盖未读状态；网站流程需先解决安全存储错误。'
       return []
     })
     if (pendingWorkflows.length) startupContext = `【网站流程检查点】${JSON.stringify(pendingWorkflows.map(({ id, name, browserId }) => ({ id, name, browserId })))}。结合用户本轮目标决定是否使用 browser_workflows 恢复或丢弃；恢复须先读取实际页面，不能重复已完成的提交。`
-    if (role === 'parent' && workflowStorageReady && !pendingWorkflows.length) {
-      const registry = toolRegistry(tools)
-      if (input.chapterResume && registry.has('browser_complete_chapter')) {
-        startupContext = await runChapterResume(input.chapterResume, hostTool)
-      } else if (input.startupCommand) {
-        const startup = chaoxingStartup(input.startupCommand, peekAppBrowserUrl(liveSession(sessionId)?.browserId || ''))
-        if (startup && registry.has(startup.name)) {
-          let result = await hostTool(startup.name, startup.args)
-          if (result.loginRequired === true && startup.name === 'browser_start_chapter_tasks' &&
-            result.clickDispatched !== true && registry.has('browser_login_chaoxing')) {
-            const login = await hostTool('browser_login_chaoxing', {})
-            result = login.loggedIn === true ? await hostTool(startup.name, startup.args) : login
-          }
-          const loginOnly = startup.name === 'browser_login_chaoxing'
-          const siteName = '学习通'
-          const success = loginOnly ? result.loggedIn === true : result.courseComplete === true
-          const summary = success
-            ? loginOnly ? `${siteName}已登录。` : `${startup.args.course_name}的章节已完成。目录确认了 ${result.completed} 个已完成小节。`
-            : loginOnly && !startupContext && typeof result.error === 'string' ? result.error : ''
-          if (summary && registry.has('browser_finish')) {
-            const finish = await hostTool('browser_finish', { status: success ? 'done' : 'blocked', summary })
-            if (finish.finished === true) {
-              await run.finish(success ? 'completed' : 'blocked')
-              return { text: summary, aborted: false, taskOutcome: success ? 'completed' : 'blocked' }
-            }
-          }
-          startupContext ||= `【宿主已执行本轮起始操作】${startup.name}，最新回执如下。直接处理剩余步骤，无需重复已完成操作或另建清单。\n${JSON.stringify(result)}`
-        }
-      }
-    }
     const finalText = await runTextModel(modelPrompt, (delta) => {
       if (abort.signal.aborted || liveMessage()?.status !== 'streaming') return
       streamText(delta)

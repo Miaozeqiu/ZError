@@ -80,7 +80,7 @@ export const createRunController = (input: {
         return JSON.stringify({ ok: true, outcome: args.outcome, hint: args.outcome === 'completed' ? '不要重复已完成的操作。' : '页面证据已核对；仅在用户授权范围内重试。' })
       }
       const mutates = browserMutation(call.name) || (call.name === 'browser_eval' && !isReadOnlyBrowserScript(String(object(call.arguments).script || '')))
-      if ((mutates || call.name === 'browser_watch' || call.name === 'browser_course_plan' || (call.name === 'browser_finish' && object(call.arguments).status === 'done')) && run.needsObservation) return blocked('任务恢复后先读取当前页面或截图。学习通章节页可以用 browser_review_chapter。')
+      if ((mutates || call.name === 'browser_watch' || call.name === 'browser_course_plan' || (call.name === 'browser_finish' && object(call.arguments).status === 'done')) && run.needsObservation) return blocked('任务恢复后先读取当前页面、截图或仓库只读工具。')
       if ((mutates || (call.name === 'browser_finish' && object(call.arguments).status === 'done')) && run.operations.some(op => op.state === 'uncertain' || op.state === 'pending')) return blocked('存在结果不确定的网页操作。先观察原标签中的页面回执，再 browser_verify_operation；不可直接重试或声明完成。')
       if (mutates) {
         browserId = input.prepareBrowser ? await input.prepareBrowser() : browserId
@@ -137,20 +137,9 @@ export const createRunController = (input: {
         ? typeof result.image === 'string' && result.image.startsWith('data:image/')
         : call.name === 'browser_package_read'
           ? result.ok === true && ['query', 'media_read'].includes(String(object(call.arguments).action))
-        : call.name === 'browser_login_chaoxing'
-          ? result.ok === true && result.loggedIn === true
         : /^browser_site_[a-z0-9_]+__[a-z][a-z0-9_]{0,23}$/.test(call.name)
           ? result.ok === true && result.observed === true
-        : call.name === 'browser_review_chapter'
-          ? result.ok === true && typeof result.chapterKey === 'string'
-        : call.name === 'browser_review_homework'
-          ? result.ok === true && typeof result.assignment_id === 'string' && Array.isArray(result.questions) && result.questions.length > 0
-        : call.name === 'browser_review_chapter_discussion' || call.name === 'browser_reply_chapter_discussion'
-          ? result.ok === true && typeof result.chapterKey === 'string' && typeof result.discussion_id === 'string'
-        : call.name === 'browser_start_chapter_tasks'
-          ? result.ok === true && (result.courseComplete === true || result.chapterComplete === true)
           : typeof result.snapshot === 'string' && Boolean(result.snapshot.trim()) && !result.empty
-          && (!(call.name === 'browser_open_course' || call.name === 'browser_open_homework') || result.opened === true)
       if (!failed && observationTool(call.name) && hasObservation && browserId === input.browserId()) {
         run.needsObservation = false
         run.observation = { id: call.id, browserId: input.browserId(), at: Date.now(), sequence: run.sequence + 1 }

@@ -8,8 +8,7 @@ import { finishStudyGraphStream, studyGraphStream } from '../study/graphStream'
 import { finalizeStudySessionSummary } from '../study/timelineSummary'
 import { getActiveAgentProfile } from './agentProfiles'
 import { getEnabledSkillCatalog } from './agentSkills'
-import { browserChapterContext } from './browserChapterProgress'
-import { chapterResumePlan } from './chapterResume'
+import { browserChapterContext } from './websiteRuntime/observations'
 import { formatBrowserLiveContext } from './browserLoop'
 import { rememberBrowserTaskIntent } from './browserTask'
 import { bindAllWatchAgents, flushAllWatchAfterTurn } from '../platform'
@@ -54,9 +53,7 @@ import { runAgentTurnLoop } from './subagent/runtime'
 import { assembleAgentTools, availableAgentTools } from './tools'
 import { useSettings } from '../app/settings'
 import { claimBrowserForNewMessage } from '../browser/control'
-import { experienceHostForTask, experienceHostForPage, websiteRepositoryHosts } from './websiteRepository'
-import { websiteToolHost } from './websiteToolDefinitions'
-import { chaoxingStartup } from './chaoxingStartup'
+import { experienceHostForPage, websiteRepositoryHosts } from './websiteRepository'
 
 const matchSubjectInText = <T extends { id: number; name: string }>(text: string, subjects: T[]) => {
   const raw = String(text || '')
@@ -255,15 +252,11 @@ export const sendChatMessage = async (
       : undefined
 
     const liveBrowserId = () => String(sessions.value.find(item => item.id === sessionId)?.browserId || '').trim()
-    const plainCommand = !attachments?.length && !quizOptionQuotes?.length && !options?.kind && !modelFacing
     const currentUrl = peekAppBrowserUrl(liveBrowserId())
-    const startup = plainCommand && !recovery ? chaoxingStartup(content, currentUrl) : undefined
-    const startupHost = startup ? websiteToolHost(startup.name) : undefined
     await prepareTurn(abort.signal, () => Promise.all([
       experienceHostForPage(currentUrl).catch(() => ''),
-      startupHost ? experienceHostForTask(`https://${startupHost}`).catch(() => '') : Promise.resolve(''),
     ]))
-    const currentTools = () => availableAgentTools(assembleAgentTools(peekAppBrowserUrl(liveBrowserId()), startupHost), useSettings().settings.search)
+    const currentTools = () => availableAgentTools(assembleAgentTools(peekAppBrowserUrl(liveBrowserId())), useSettings().settings.search)
     const loop = await runAgentTurnLoop({
       sessionId,
       assistantId,
@@ -274,10 +267,6 @@ export const sendChatMessage = async (
       systemPrompt: turnSystemPrompt,
       tools: currentTools(),
       deferTools: true,
-      startupCommand: plainCommand && !recovery ? content : undefined,
-      chapterResume: plainCommand
-        ? chapterResumePlan({ command: content, browserId, url: peekAppBrowserUrl(browserId), previous: recoveryMessage, current: assistantMessage })
-        : undefined,
       liveTools: currentTools,
       liveContext: async () => {
         const current = sessions.value.find(item => item.id === sessionId)

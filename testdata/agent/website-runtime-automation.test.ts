@@ -49,7 +49,7 @@ describe('经验仓库页面自动任务', () => {
     expect(run).toHaveBeenCalledTimes(3)
     expect(vi.getTimerCount()).toBe(0)
   })
-  it('繁忙时稍后重试，持续失败和持续加载均有截止时间', async () => {
+  it('繁忙时稍后重试，持续失败有上限，健康的页面订阅直到关闭才停止', async () => {
     vi.useFakeTimers()
     const run = vi.fn().mockResolvedValueOnce({ ok: false, reason: 'busy' }).mockRejectedValue(new Error('offline'))
     const scheduler = createWebsiteAutomationScheduler({ resolve: async () => ['sync'], run })
@@ -65,9 +65,10 @@ describe('经验仓库页面自动任务', () => {
     const bounded = createWebsiteAutomationScheduler({ resolve: async () => ['sync'], run: loading })
     bounded.schedule(page)
     await vi.advanceTimersByTimeAsync(11 * 60_000)
-    expect(loading.mock.calls.length).toBeLessThanOrEqual(21)
-    expect(vi.getTimerCount()).toBe(0)
+    expect(loading.mock.calls.length).toBeGreaterThan(21)
+    expect(vi.getTimerCount()).toBe(1)
     bounded.dispose()
+    expect(vi.getTimerCount()).toBe(0)
   })
   it('自动任务只能引用存在的被动工具，不允许网页写入、凭据或模型能力', () => {
     const runtime = runtimeFixture()
@@ -79,4 +80,23 @@ describe('经验仓库页面自动任务', () => {
     }
     expect(() => validateWebsiteRuntime({ ...candidate, automations: [{ event: 'page', tool: 'missing' }] }, 'academy')).toThrow()
   })
+})
+
+it('后台分页沿用仓库游标，完整复核后从头开始；其他任务成功不会重置失败任务的重试上限', async () => {
+  vi.useFakeTimers()
+  const run = vi.fn(async (_page, name, _signal, args) => name === 'broken'
+    ? { ok: false }
+    : { ok: true, result: { retryAfterMs: 1000, next_offset: args.offset === 8 ? -1 : 8 } })
+  const scheduler = createWebsiteAutomationScheduler({ resolve: async () => ['broken','questions'], run })
+  scheduler.schedule(page)
+  await vi.advanceTimersByTimeAsync(300)
+  await vi.advanceTimersByTimeAsync(1000)
+  await vi.advanceTimersByTimeAsync(2000)
+  const batches = run.mock.calls.filter(row => row[1] === 'questions')
+  expect(batches.slice(0,3).map(row=>row[3])).toEqual([{}, {offset:8}, {}])
+  await vi.advanceTimersByTimeAsync(3 * 60_000)
+  expect(run.mock.calls.filter(row => row[1] === 'broken')).toHaveLength(7)
+  expect(run.mock.calls.filter(row => row[1] === 'questions').length).toBeGreaterThan(7)
+  scheduler.dispose()
+  expect(vi.getTimerCount()).toBe(0)
 })

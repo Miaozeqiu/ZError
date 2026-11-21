@@ -3,7 +3,7 @@ export { hasAgentWait, wakeAgentWait } from './core/waitEvents'
 import { evalBrowserViewInFrame, evalBrowserViewMainIdle, withSameFrames } from '../browser/eval'
 import { peekAppBrowserUrl } from '../browser/appBrowser'
 import { isWaitTruthy, waitForResponse } from '../browser/engine'
-import { chapterStateFor, packAgentPanel, videoWatchFor } from '../platform/panelAccess'
+import { packAgentPanel, videoWatchFor } from '../platform/panelAccess'
 
 export type AgentWaitUntil = 'panel' | 'url' | 'selector' | 'idle' | 'fn' | 'response'
 
@@ -125,7 +125,7 @@ const urlMatches = (href: string, pattern: string) => {
 const truthyEval = (value: unknown) => value === true || value === 'true' || value === 1
 
 const cachedHref = (browserId: string) => (
-  String(chapterStateFor(browserId)?.url || peekAppBrowserUrl(browserId) || '')
+  String(peekAppBrowserUrl(browserId) || '')
 )
 
 const selectorPresent = async (browserId: string, selector: string): Promise<boolean | null> => {

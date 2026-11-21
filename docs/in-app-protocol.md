@@ -156,7 +156,7 @@ Rust 里已经具备 Playwright 内核在做的事：
 
 1. 加 `src/services/browser/protocol.ts`（上面三个函数）。
 2. 先迁两条最短路径，证明调用方不再直接碰 CDP 命令名：
-   - `src/services/chaoxing/homework/act.ts` → `evaluate` + `act({ op:'click', x, y })`
+   - 网站运行包 → 有界 document 命令 → 原生文档身份校验；不接受站点页面脚本或坐标猜测。
    - `clickBrowserText` / `appBrowser.ts` 里的 `click_text` → `act({ op:'click', at:{ by:'text' } })`
 3. `read` 先包 `evalBrowserView` + `READ_PAGE_DOM`，作业 `inspect.ts` 改走 `read(id, 'homework')`。
 4. **不改** Agent 工具表、不改 CEF、不装 Playwright、不加 Node sidecar。

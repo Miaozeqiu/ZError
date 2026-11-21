@@ -20,8 +20,7 @@ mod snapshot;
 pub use snapshot::*;
 
 use crate::app_browser::{
-  emit_load, emit_opened, emit_state, format_eval_error_near, is_course_entry_url, is_iframe_document_url,
-  is_space_list_url, new_browser_id, popup_should_drop, prepare_eval_script, remember_url,
+  emit_load, emit_opened, emit_state, format_eval_error_near, new_browser_id, popup_should_drop, prepare_eval_script, remember_url,
   remembered_url, CdpActResult,
 };
 use crate::cdp_client::{connect_loop, CdpConn};
@@ -395,25 +394,8 @@ wrap_life_span_handler! {
         return 1;
       }
       let id = browser.as_ref().and_then(|b| {
-        let bid = b.identifier();
-        registry()
-          .lock()
-          .ok()
-          .and_then(|reg| reg.by_browser.get(&bid).cloned())
+        registry().lock().ok().and_then(|reg| reg.by_browser.get(&b.identifier()).cloned())
       });
-      // 进课：当前标签打开；其它顶层弹出：新标签 + 前端自动选中
-      if is_course_entry_url(&raw) {
-        if let Some(id) = id {
-          navigate_tab(&id, &raw);
-        } else if let Ok(reg) = registry().lock() {
-          if let Some(tab) = reg.tabs.values().next() {
-            let id = tab.id.clone();
-            drop(reg);
-            navigate_tab(&id, &raw);
-          }
-        }
-        return 1;
-      }
       if let Ok(h) = app_handle().lock() {
         if let Some(app) = h.as_ref() {
           let new_id = new_browser_id();

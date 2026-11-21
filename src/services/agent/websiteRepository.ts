@@ -1,13 +1,13 @@
 import { validateWebsiteRuntime, verifyWebsiteRuntime, websiteToolName, type InstalledWebsiteTool } from './websiteRuntime/protocol'
 import { reactive } from 'vue'
 import type { ToolDefinition } from './core/tools'
-import { validateWebsiteTools, websiteHasSupportedTools } from './websiteToolDefinitions'
+import { validateWebsiteTools } from './websiteToolDefinitions'
 import { readSecureDocument, writeSecureDocument, redactNative, isNativeSecureStore } from '../security/secureStore'
 import { redactObject } from '../security/secretRedaction'
 import { createSkillMarkdown, normalizeLegacySkillMarkdown, parseSkillFrontmatter } from './skillFormat'
 import { createWebsiteRepository, repositoryPath, validateWebsiteSnapshot, type StoredWebsiteRepositoryDocument, type WebsiteRepositoryDocument, type WebsiteSnapshot } from './websiteRepositoryCore'
 import { CHAOXING_REPOSITORY, ZJOOC_REPOSITORY, ZHIHUISHU_REPOSITORY, downloadWebsiteRepository, discoverWebsiteRepositories, WebsiteRepositoryHttpError, type WebsiteRepositoryCandidate } from './websiteRepositoryGitHub'
-import { findOpenWebsite, customWebsiteExperienceUrl, downloadCustomWebsiteExperience, downloadOpenWebsiteExperience, openWebsiteExperienceUrl } from './websiteRepositoryOpen'
+import { findOpenWebsite, customWebsiteExperienceUrl, downloadCustomWebsiteExperience, downloadOpenWebsiteExperience } from './websiteRepositoryOpen'
 import { parseGitHubWebsiteUrl, type GitHubWebsiteSource } from './websiteRepositoryManifest'
 import { BUILTIN_WEBSITES, normalizeWebsiteHost, loadWebsiteIdentities, websiteIdentityForHost, websitePrimaryHost } from './websiteIdentity'
 export { CHAOXING_REPOSITORY, ZJOOC_REPOSITORY }
@@ -152,7 +152,7 @@ export function installedWebsiteRuntimeTool(name: string): InstalledWebsiteTool 
 }
 export function websitePageAutomationTools(host: string) {
   const runtime = runtimePackages.get(host)
-  return runtime ? (runtime.runtime.automations || []).map(row => ({ name: websiteToolName(runtime.siteId, row.tool), revision: `${runtime.authority}:${runtime.runtime.bundle.sha256}` })) : []
+  return runtime ? (runtime.runtime.automations || []).map(row => ({ name: websiteToolName(runtime.siteId, row.tool), revision: `${runtime.authority}:${runtime.revision}:${runtime.runtime.bundle.sha256}` })) : []
 }
 export const websiteRuntimeAuthorityActive = (tool: InstalledWebsiteTool) =>
   runtimePackages.get(tool.host)?.authority === tool.authority
@@ -239,18 +239,6 @@ const wasRemovedFromOpen = (host: string) => registry.removedOpenHosts?.includes
 export const repositorySourceFor = (host: string) => configurations.get(host)?.source
 export const websiteRepositoryHosts = async () => { await loadRegistry(); return [...configurations.keys()] }
 
-export const websiteScriptSource = async (host: string) => {
-  await loadRegistry()
-  const entry = registry.entries[host]
-  const custom = customSourceOf(entry)
-  if (custom) return custom.snapshot.scriptManifest ? { url: custom.url, manifest: custom.snapshot.scriptManifest } : null
-  const manifest = entry?.document.upstream.scriptManifest
-  const configuration = entry?.configuration
-  if (manifest && configuration?.source && usesOpenExperience(configuration, configuration.source)) {
-    return { url: openWebsiteExperienceUrl(host), manifest }
-  }
-  return null
-}
 const pending = new Map<string, Promise<void>>()
 const lastCustomCheck = new Map<string, number>()
 export const refreshWebsiteRepository = async (host: string, force = false) => {
@@ -264,8 +252,7 @@ export const refreshWebsiteRepository = async (host: string, force = false) => {
     lastCustomCheck.set(host, now)
   } else {
     const cached = repository.inspect().upstream
-    if (!configurations.get(host)?.source || now < state.retryAt || (!force && cached.website && cached.icon && now - cached.checkedAt < CACHE_TTL
-      && (cached.tools !== undefined || !websiteHasSupportedTools(host)))) return
+    if (!configurations.get(host)?.source || now < state.retryAt || (!force && cached.website && cached.icon && now - cached.checkedAt < CACHE_TTL)) return
   }
   const usingCustomSource = Boolean(state.customUrl)
   state.refreshing = true
@@ -310,7 +297,7 @@ export const ensureWebsiteRepository = async (host: string, checkOnOpen = false)
     const refresh = refreshWebsiteRepository(host, checkOnOpen).catch(error => {
       if (hasWebsiteRepository(host)) websiteRepositoryStates[host].error = error instanceof Error ? error.message : '网站仓库无法加载'
     })
-    if (websiteRepositoryStates[host].source === 'offline' || (websiteHasSupportedTools(host) && repositoryForHost(host).inspect().upstream.tools === undefined)) await refresh
+    if (websiteRepositoryStates[host].source === 'offline') await refresh
   }
 }
 export const readWebsiteRepositoryFile = async (host: string, path: string) => { await ensureWebsiteRepository(host); return repositoryForHost(host).read(path) }

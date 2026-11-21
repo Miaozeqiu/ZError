@@ -1,3 +1,5 @@
+import { publishWebsiteQuestions } from './observations'
+import { browserDocuments, documentRecord, sameBrowserDocument } from '../../browser/documents'
 import type { ChatToolContext } from '../toolContext'
 import { createWebsiteServiceBroker, serviceMutation, type ServiceIdentity } from './serviceBroker'
 import { packageState } from './packageState'
@@ -6,7 +8,7 @@ import type { HomeworkProgressUpdate } from '../homeworkProgress'
 type Entry = { sessionId: string; browserId: string; execute: ReturnType<typeof createWebsiteServiceBroker>['execute'] }
 const scopes = new Map<string, Entry>()
 
-export function registerWebsiteServices(input: { ctx: ChatToolContext; browserId: string; owner: string; signal: AbortSignal; pause: () => void; resume: () => void; background?: boolean }) {
+export function registerWebsiteServices(input: { ctx: ChatToolContext; browserId: string; host: string; owner: string; signal: AbortSignal; pause: () => void; resume: () => void; background?: boolean }) {
   const { ctx, signal } = input
   const stateOwner = input.owner
   const identity = async () => {
@@ -51,7 +53,12 @@ export function registerWebsiteServices(input: { ctx: ChatToolContext; browserId
       const { recordHomeworkProgress, liveSession } = await import('../chatStore')
       const session = ctx.parentSessionId || ctx.sessionId
       if (!liveSession(session)) throw new Error('对话已删除')
+      const document = documentRecord((value as Record<string, unknown>).document)
+      const fresh = (await browserDocuments(input.browserId, input.host)).documents
+      signal.throwIfAborted()
+      if (!fresh.some(row => sameBrowserDocument(row, document))) throw new Error('题目文档已更换，未发布旧题目')
       recordHomeworkProgress(session, ctx.parentAssistantId || ctx.assistantId || undefined, value as HomeworkProgressUpdate)
+      publishWebsiteQuestions(input.browserId, session, fresh[0].url, (value as HomeworkProgressUpdate).assignmentId)
     },
     readStates: (principal, keys) => packageState.readMany(stateOwner, principal, keys),
     readState: (principal, key) => packageState.read(stateOwner, principal, key),

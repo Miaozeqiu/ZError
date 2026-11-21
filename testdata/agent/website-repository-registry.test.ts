@@ -286,33 +286,7 @@ describe('website repository registry', () => {
     expect(fetcher.mock.calls.filter(([url]) => url !== customUrl)).toHaveLength(2)
   })
 
-  it('uses the selected manifest on save, upgrade and restore, including a previously disabled source', async () => {
-    const host = 'chaoxing.com'
-    const customUrl = 'http://127.0.0.1:8123/experience.json'
-    const openUrl = 'https://open.zerrorai.com/v1/website-experience/' + host
-    const base = snapshot('chaoxing', host)
-    const cloud = { ...base, scriptManifest: './official-manifest.json' }
-    vi.stubGlobal('fetch', vi.fn(async (url: string) => Response.json(url === openUrl + '' ? cloud : url === customUrl
-      ? { ...base, scriptManifest: './dev-manifest.json' } : base)))
-    let mod = await import('../../src/services/agent/websiteRepository')
-    await mod.refreshWebsiteRepository(host, true)
-    expect(await mod.websiteScriptSource(host)).toEqual({ url: openUrl, manifest: cloud.scriptManifest })
-    await mod.setWebsiteExperienceUrl(host, customUrl)
-    const expected = { url: customUrl, manifest: './dev-manifest.json' }
-    expect(await mod.websiteScriptSource(host)).toEqual(expected)
 
-    storage.value.entries[host].document.customSource.scriptsEnabled = false
-    vi.resetModules()
-    mod = await import('../../src/services/agent/websiteRepository')
-    await mod.ensureWebsiteRepository(host)
-    expect(await mod.websiteScriptSource(host)).toEqual(expected)
-    expect(storage.value.entries[host].document.customSource).not.toHaveProperty('scriptsEnabled')
-
-    await mod.setWebsiteExperienceUrl(host, customUrl + '?docs-only')
-    expect(await mod.websiteScriptSource(host)).toBeNull()
-    await mod.setWebsiteExperienceUrl(host, '')
-    expect(await mod.websiteScriptSource(host)).toEqual({ url: openUrl, manifest: cloud.scriptManifest })
-  })
 
   it('can switch an app-managed site to a development server and back', async () => {
     const host = 'example.com'

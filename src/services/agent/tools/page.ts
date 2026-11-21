@@ -96,7 +96,7 @@ export const handlePageTools = async (ctx: Record<string, any>): Promise<string 
         ref: mediaRef || undefined,
         hint: mediaRef
           ? '这个 ref 是视频。先点它播放，再 browser_watch。'
-          : '先打开播放页并点播放，再 browser_watch。不要抄学习通 study_watch。',
+          : '先打开播放页并点播放，再 browser_watch。',
       })
     }
     if (tick.paused && !tick.ended) {
@@ -130,7 +130,7 @@ export const handlePageTools = async (ctx: Record<string, any>): Promise<string 
     }
     const fallbackSeconds = until === 'panel' ? 8 : 8
     const seconds = Math.min(600, Math.max(1, Number(args.seconds) || fallbackSeconds))
-    const { videoWatchFor, flushWatchIntoWait, notePanelEvent } = await import('../../platform/panelAccess')
+    const { videoWatchFor } = await import('../../platform/panelAccess')
     const watchLive = (row: { sessionId?: string; status?: string } | null | undefined) => (
       Boolean(row?.sessionId && (row.status === 'watching' || row.status === 'paused' || row.status === 'stalled'))
     )
@@ -151,8 +151,6 @@ export const handlePageTools = async (ctx: Record<string, any>): Promise<string 
       response: args.response != null ? String(args.response) : undefined,
       frame: args.frame != null ? String(args.frame) : undefined,
       idleMs: Number(args.idleMs) || undefined,
-      onStart: until === 'panel' ? () => flushWatchIntoWait(sessionId) : undefined,
-      onPanel: (panel) => notePanelEvent(browserId, panel),
     })
     return JSON.stringify({
       ...result,

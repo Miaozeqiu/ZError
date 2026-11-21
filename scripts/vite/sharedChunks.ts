@@ -5,16 +5,13 @@ const sharedModules = new Set([
   'security/secureStore', 'security/secureFetch', 'app/settings', 'model/config',
   'browser/control', 'browser/eval', 'browser/protocol', 'browser/appBrowser',
   'browser/videoWatch', 'browser/siteGraphCore', 'browser/siteGraphSave', 'browser/siteGraph',
-  'platform/chaoxing/spaceTab', 'platform/chaoxing/nav', 'platform/chaoxing/courseTab',
-  'chaoxing/study/video', 'chaoxing/study/chapters', 'chaoxing/study/debug', 'chaoxing/browser/watch',
   'agent/websiteRepository', 'agent/skillRuntime', 'agent/chatWatch', 'agent/chatStore',
   'agent/agentSkills', 'agent/agentLessons', 'agent/finishGate', 'agent/agentBrowser',
   'agent/executeChatTool', 'agent/subagent/runtime',
 ])
 // Runtime services are acyclic and may be loaded independently.
 const watchModules = new Set([
-  'chaoxing/browser/watchAgent', 'chaoxing/browser/panelStudy', 'chaoxing/browser/chapterPlay',
-  'browser/abstractions', 'chaoxing/browser/chapterSync', 'chaoxing/browser/chapters',
+  'browser/abstractions',
   'platform/panelAccess', 'agent/agentWait', 'browser/videoWatchAgent',
   'platform/watchBind', 'platform/index',
 ])

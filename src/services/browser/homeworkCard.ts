@@ -22,7 +22,7 @@ export type HomeworkQuestion = {
   readBy?: string
 }
 
-export type HomeworkCard = {
+export type HomeworkCardSnap = {
   page?: string
   url?: string
   works?: Array<{ title: string; status: string; score?: string; due?: string; href?: string }>
@@ -43,11 +43,3 @@ export type HomeworkCard = {
   skippedVision?: boolean
 }
 
-/** @deprecated 用 HomeworkCard */
-export type ChaoxingHomeworkInfo = HomeworkCard
-
-export type HomeworkLiveState = {
-  ts?: number
-  count?: number
-  states?: Array<{ index: number; selected?: string; filled?: boolean }>
-}

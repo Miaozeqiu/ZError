@@ -1,7 +1,5 @@
-import { ensureSiteHooks } from '../../src/services/platform'
 import { siteNavigationFor } from '../../src/services/browser/siteCapabilities'
 import { describe, expect, it, vi } from 'vitest'
-import { websiteToolNames } from '../../src/services/agent/websiteToolDefinitions'
 import { BROWSER_PRIMITIVE_TOOLS } from '../../src/services/agent/toolDefs/browserPrimitiveTools'
 import { dispatchBrowserTool } from '../../src/services/agent/browserTools'
 
@@ -61,7 +59,6 @@ const mockCtx = (name: string) => {
   })
 }
 
-ensureSiteHooks()
 
 describe('浏览器工具都能分发', () => {
   it('导航交给浏览器后立即通知工作区，失败时不通知', async () => {
@@ -87,7 +84,7 @@ describe('浏览器工具都能分发', () => {
   })
 
   it('注册过的 browser_* 不会回未知工具', async () => {
-    const names = [...BROWSER_PRIMITIVE_TOOLS.map((tool) => tool.function.name), ...websiteToolNames]
+    const names = [...BROWSER_PRIMITIVE_TOOLS.map((tool) => tool.function.name)]
       .filter((name) => name.startsWith('browser_') && !handledOutside.has(name))
     const unknown: string[] = []
     for (const name of names) {

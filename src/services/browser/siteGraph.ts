@@ -328,7 +328,6 @@ export const courseTabOf = (
 ) => {
   const href = String(url || '')
   if (node && node.id && node.id !== 'course') return ''
-  if (/studentcourse/i.test(href)) return '章节'
   if (/\/work\/(?:list|index|view)/i.test(href)) return '作业'
   if (/stuActiveList|\/active\/stu/i.test(href)) return '任务'
   const header = (href.match(/[?&]pageHeader=(\d+)/i) || [])[1] || ''

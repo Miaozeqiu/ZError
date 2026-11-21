@@ -1,3 +1,6 @@
+import type { ChatToolContext } from './toolContext'
+import { websiteObservation } from './websiteRuntime/observations'
+import { readNativeVideoTick } from '../browser/videoWatch'
 import { coursePlanFor } from '../browser/coursePlan'
 /** 软件外 Agent 用的浏览器 / 解析器接口。开发桥 127.0.0.1:1429 */
 
@@ -20,9 +23,6 @@ import {
 } from '../browser/appBrowser'
 import { evalBrowserView, evalBrowserViewMain, waitMs } from '../browser/eval'
 import { siteGraphAgentSnap } from '../browser/siteGraph'
-import { ensurePanelStudy, nextPanelStudy, openPanelChapter, playPanelStudy, readPanelStudy } from '../chaoxing/browser/panelStudy'
-import { fillChaoxingCaptcha, readChaoxingVideoTick } from '../chaoxing/study'
-import { runPanelHomework } from '../chaoxing/homework/panelHomework'
 import { redactObject, redactText } from '../security/secretRedaction'
 
 export type BridgeCmd = {
@@ -51,15 +51,10 @@ export const BRIDGE_ACTIONS = [
   { name: 'screenshot', group: 'browser', hint: '截图，返回 data URL' },
   { name: 'snapshot', group: 'browser', hint: 'Playwright 风格无障碍快照', alias: ['get_page', 'page'] },
   { name: 'eval', group: 'browser', hint: '在页面跑 JS。args.script' },
+  { name: 'website_tools', group: 'parser', hint: '列出当前仓库的工具' },
+  { name: 'website_tool', group: 'parser', hint: '运行已安装仓库工具。args.name、input；默认只读，readOnly=false 才允许修改。' },
   { name: 'chapter', group: 'parser', hint: '强制读目录，返回完整章节树和本节任务点' },
-  { name: 'chapter_open', group: 'parser', hint: '打开一节。args.title / index / chapterId' },
-  { name: 'play', group: 'parser', hint: '播任务点。args.videoIndex / label / title' },
-  { name: 'pause', group: 'parser', hint: '暂停当前视频' },
-  { name: 'next', group: 'parser', hint: '下一未完成视频或下一节' },
   { name: 'probe', group: 'parser', hint: '读当前视频进度', alias: ['watch'] },
-  { name: 'inspect', group: 'parser', hint: '读作业/测验题卡' },
-  { name: 'homework', group: 'parser', hint: '题卡。args.action=inspect|list|open|fill|guess|save|submit' },
-  { name: 'captcha', group: 'parser', hint: '填验证码。args.code' },
   { name: 'new_chat', group: 'agent', hint: '新建测试对话和独立标签，args.title、url 可选，不发送消息。' },
   { name: 'send', group: 'agent', hint: '给应用内浏览器 Agent 发一句', alias: ['prompt'] },
   { name: 'chat', group: 'agent', hint: '读应用内 Agent 最近一条' },
@@ -108,8 +103,6 @@ const resolveBrowserId = async (want?: string) => {
   if (asked) return asked
   const selected = getSelectedBrowserId()
   if (selected && list.some((item) => item.id === selected)) return selected
-  const chaoxing = [...list].reverse().find((item) => /chaoxing\.com/i.test(item.url || ''))
-  if (chaoxing) return chaoxing.id
   const latest = [...list].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))[0]
   return latest?.id || list[0]?.id || ''
 }
@@ -133,10 +126,7 @@ const pageSnap = async (browserId: string, withImage: boolean) => {
   }
 }
 
-const parserSnap = async (browserId: string, refresh = false) => {
-  if (refresh) await ensurePanelStudy(browserId).catch(() => null)
-  return readPanelStudy(browserId)
-}
+const parserSnap = async (browserId: string, _refresh = false) => websiteObservation(browserId)
 
 const waitFor = async (
   browserId: string,
@@ -170,21 +160,6 @@ const waitFor = async (
     await waitMs(200)
   }
   return { ok: false, error: '等待超时', url: last, selector, text }
-}
-
-const homeworkOf = async (
-  browserId: string,
-  action: string,
-  args: Record<string, unknown>,
-) => {
-  const hwAction = ['list', 'open', 'inspect', 'fill', 'guess', 'save', 'submit'].includes(action)
-    ? action
-    : 'inspect'
-  return runPanelHomework(browserId, {
-    action: hwAction,
-    title: arg(args, 'title') || undefined,
-    answers: args.answers ?? args.answer,
-  })
 }
 
 const sendInApp = async (browserId: string, text: string) => {
@@ -522,52 +497,29 @@ export const runBridgeAction = async (cmd: BridgeCmd) => {
     }
   }
 
-  if (action === 'chapter_open') {
-    const opened = await openPanelChapter(browserId, {
-      title: arg(args, 'title'),
-      index: arg(args, 'index'),
-      chapterId: arg(args, 'chapterId'),
-    })
-    return { id, action, browserId, ...opened, chapter: await parserSnap(browserId, false) }
+  if (action === 'website_tools') {
+    const { installedExperienceHost, websiteToolsForHost } = await import('./websiteRepository')
+    const { websitePrimaryHost } = await import('./websiteIdentity')
+    const page = await getBrowserState(browserId)
+    return { ok: true, id, action, tools: websiteToolsForHost(installedExperienceHost(websitePrimaryHost(page.url))) }
   }
-
-  if (action === 'play') {
-    const played = await playPanelStudy(browserId, {
-      action: 'play',
-      title: arg(args, 'title') || undefined,
-      index: arg(args, 'index') || undefined,
-      chapterId: arg(args, 'chapterId') || undefined,
-      videoIndex: num(args, 'videoIndex') || undefined,
-      label: arg(args, 'label') || undefined,
-      skipIfDone: args.skipIfDone !== false,
-    })
-    return { id, action, browserId, ...played, chapter: await parserSnap(browserId, false) }
+  if (action === 'website_tool') {
+    const { ensureBrowserChat } = await import('./chat')
+    const { executeInstalledWebsiteTool } = await import('./websiteRuntime/installedTool')
+    const { executeWebsiteHostTool } = await import('./websiteRuntime/hostTools')
+    const session = ensureBrowserChat({ browserId })
+    if (!session) return { ok: false, error: '没有当前标签的对话' }
+    const controller = new AbortController()
+    const ctx: ChatToolContext = { attachment: () => null, folders: () => [], studySubjectId: () => undefined, setStudySubject: () => {}, markDrawingGraph: () => {}, scheduleEval: () => {}, sessionId: session.id, assistantId: '', abort: controller.signal,
+      browserId: () => listAppBrowsers().some(row => row.id === browserId) ? browserId : '',
+      role: args.readOnly === false ? 'execute' as const : 'explore' as const,
+      invokeHostTool: async (name: string, input: Record<string, unknown>): Promise<Record<string, unknown>> => JSON.parse(await executeWebsiteHostTool(name, input, ctx, browserId)),
+    }
+    return JSON.parse(await executeInstalledWebsiteTool(arg(args,'name'), args.input || {}, ctx, browserId))
   }
-
-  if (action === 'pause') {
-    const paused = await playPanelStudy(browserId, { action: 'pause' })
-    return { id, action, browserId, ...paused }
-  }
-
-  if (action === 'next') {
-    const moved = await nextPanelStudy(browserId, { skipQuiz: args.skipQuiz === true })
-    return { id, action, browserId, ...moved, chapter: await parserSnap(browserId, false) }
-  }
-
   if (action === 'probe') {
-    const tick = await readChaoxingVideoTick(browserId).catch(() => null)
-    return { ok: Boolean(tick?.hasVideo), id, action, browserId, tick, chapter: await parserSnap(browserId, false) }
-  }
-
-  if (action === 'inspect') {
-    const card = await homeworkOf(browserId, 'inspect', args)
-    return { ok: true, id, action, browserId, card }
-  }
-
-  if (action === 'homework') {
-    const hwAction = arg(args, 'action') || 'inspect'
-    const card = await homeworkOf(browserId, hwAction, args)
-    return { ok: true, id, action, browserId, homework: hwAction, card }
+    const tick = await readNativeVideoTick(browserId).catch(() => null)
+    return { ok: Boolean(tick?.hasVideo), id, action, browserId, tick, context: websiteObservation(browserId) }
   }
 
   if (action === 'protocol') {
@@ -579,13 +531,6 @@ export const runBridgeAction = async (cmd: BridgeCmd) => {
     const { callProtocol } = await import('../browser/protocol')
     const result = await callProtocol(browserId, op, extra)
     return { ok: result.ok !== false, id, action, browserId, op, ...result }
-  }
-
-  if (action === 'captcha') {
-    const code = arg(args, 'code', 'text')
-    if (!code) return { ok: false, id, action, error: '缺少 code' }
-    const filled = await fillChaoxingCaptcha(browserId, code)
-    return { id, action, browserId, ...filled }
   }
 
   return { ok: false, id, action, error: `未知动作 ${action}` }

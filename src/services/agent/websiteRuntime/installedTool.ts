@@ -75,7 +75,7 @@ async function runInstalledWebsiteTool(name: string, args: unknown, ctx: ChatToo
   }
   const pause = () => { clearTimeout(deadline); remaining -= performance.now() - started }
   resume()
-  const services = registerWebsiteServices({ ctx, browserId, owner: pinned.host + '\n' + (pinned.source || ''), signal: scope.signal, pause, resume, background })
+  const services = registerWebsiteServices({ ctx, browserId, host: pinned.host, owner: pinned.host + '\n' + (pinned.source || ''), signal: scope.signal, pause, resume, background })
   const scoped = scopedWebsiteHost({ serviceScope: services.id, host: installed.host, browserId, ctx, signal: scope.signal, pause, resume })
   try {
     const result = await executeWebsitePackage(pinned, args, {

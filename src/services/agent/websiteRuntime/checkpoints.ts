@@ -17,7 +17,7 @@ export function createWebsiteCheckpointStore(io: { read: () => Promise<Document 
     const document = await io.read()
     if (!document) return { version: 1, entries: [] }
     if (document.version !== 1 || !Array.isArray(document.entries) || document.entries.length > 16
-      || bytes(document) > 2 * 1024 * 1024) throw new Error('网站流程检查点格式无效，已保留原数据')
+      || bytes(document) > 8 * 1024 * 1024) throw new Error('网站流程检查点格式无效，已保留原数据')
     const ids = new Set<string>()
     for (const entry of document.entries) {
       if (!entry || !['id', 'sessionId', 'browserId', 'name'].every(key => typeof entry[key as keyof WebsiteCheckpoint] === 'string')
@@ -33,7 +33,7 @@ export function createWebsiteCheckpointStore(io: { read: () => Promise<Document 
     const next = pending.catch(() => undefined).then(async () => {
       const document = await read()
       update(document)
-      if (document.entries.length > 16 || bytes(document) > 2 * 1024 * 1024) throw new Error('网站检查点存储已满，请先处理未完成流程')
+      if (document.entries.length > 16 || bytes(document) > 8 * 1024 * 1024) throw new Error('网站检查点存储已满，请先处理未完成流程')
       await io.write(document)
     })
     pending = next

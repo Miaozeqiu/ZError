@@ -10,8 +10,7 @@ export function modelAgentTools<T extends NamedTool>(available: T[], session?: A
   const selected = new Set(core)
   if (session?.browserId) {
     // Keep direct browser interaction and event-driven chapter continuation on their fast path.
-    for (const name of ['browser_get_page', 'browser_click', 'browser_todo', 'browser_finish', 'browser_watch',
-      'browser_complete_chapter', 'browser_start_chapter_tasks']) selected.add(name)
+    for (const name of ['browser_get_page', 'browser_click', 'browser_todo', 'browser_finish', 'browser_watch']) selected.add(name)
   }
   // A conversation retains discovered tools across user turns. The live host
   // catalog below still removes tools that were disabled or uninstalled.

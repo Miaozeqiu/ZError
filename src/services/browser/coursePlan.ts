@@ -202,21 +202,6 @@ export const parseRecipe = (raw: unknown): { ok: true; recipe: CourseRecipe } | 
   }
 }
 
-/** 学习通目录的已知事实。新站不走这里，由模型点通后保存。 */
-export const builtinRecipeFor = (host: string): CourseRecipe | null => {
-  const name = String(host || '').replace(/^www\./i, '')
-  if (/chaoxing\.com|mooc1\.|i\.chaoxing/i.test(name) || name === 'chaoxing') {
-    return {
-      item: { role: 'treeitem' },
-      current: '.posCatalog_active',
-      done: { text: '已完成' },
-      next: 'next-undone',
-      inner: 'videos-in-order',
-    }
-  }
-  return null
-}
-
 export type PageSignal =
   | 'locked'
   | 'login'

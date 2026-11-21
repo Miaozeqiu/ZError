@@ -10,7 +10,6 @@ export type ChatToolContext = {
   browserId: () => string
   ensureBrowser?: () => Promise<string>
   onBrowserNavigation?: () => void
-  chapterResume?: import('./tools/websiteChapterStart').ChapterWorkflowResume
   invokeHostTool?: (name: string, args: Record<string, unknown>) => Promise<Record<string, unknown>>
   browserEpoch?: number
   attachment: () => AgentChatAttachment | null

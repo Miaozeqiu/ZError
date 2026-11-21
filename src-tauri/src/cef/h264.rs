@@ -91,7 +91,7 @@ pub const CLAIM_H264: &str = r#"(function(){
   var wrap = function (url) {
     url = String(url || '');
     if (!url || url.indexOf('127.0.0.1:1430') >= 0 || url.indexOf('blob:') === 0 || url.indexOf('data:') === 0) return url;
-    if (!/mp4|m3u8|mpegurl|cldisk|ananas|chaoxing|aliyuncs|aliyunvod|noteynb/i.test(url)) return url;
+    if (!/mp4|m3u8|mpegurl/i.test(url)) return url;
     return proxy + encodeURIComponent(url);
   };
   var desc = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'src');
@@ -146,15 +146,6 @@ pub const CLAIM_H264: &str = r#"(function(){
   setTimeout(bustFlash, 1800);
 })()"#;
 
-/// 学习通页自己会读这两个桩；只在 chaoxing host 上挂。
-pub const CLAIM_H264_CX: &str = r#"(function(){
-  try {
-    if (!/chaoxing\.com/i.test(String(location.host || location.hostname || ''))) return;
-    window.isStuH5Page = true;
-    window.flashChecker = function () { return { hasFlash: 0, version: 0 }; };
-  } catch (e) {}
-})()"#;
-
 pub fn claim_h264_bundle() -> String {
-  format!("{CLAIM_H264}\n{CLAIM_H264_CX}")
+    CLAIM_H264.to_owned()
 }

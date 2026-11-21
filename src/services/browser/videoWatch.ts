@@ -20,6 +20,7 @@ export type NativeVideoTick = {
 export type NativeWatchStatus = 'watching' | 'paused' | 'stalled' | 'done' | 'lost'
 
 export type NativeWatchState = {
+  watchId?: number
   browserId: string
   sessionId: string
   title: string
@@ -65,6 +66,7 @@ const LIVE_MS = 200
 const POLL_MS = 1000
 const INTERPOLATE_MS = 12_000
 
+let nextWatchId = 0
 const nativeWatches = ref<Record<string, NativeWatchState>>({})
 const scopedReaders = new Map<string, () => Promise<NativeVideoTick | null>>()
 const timers = new Map<string, number[]>()
@@ -365,6 +367,7 @@ export const startNativeWatch = (
   const current = Math.max(0, Number(seed?.current) || 0)
   const done = Boolean(seed?.ended)
   const state: NativeWatchState = {
+    watchId: ++nextWatchId,
     browserId: id,
     sessionId: sid,
     title: String(seed?.title || prev?.title || '').trim(),

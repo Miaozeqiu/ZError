@@ -41,9 +41,11 @@ describe('隔离凭据及文档宿主', () => {
     api.documents = [{ ...document, loaderId: 'two' }]
     await expect(host.execute('credentials.fill', args)).rejects.toThrow('文档已更换')
     api.documents = [document]; host.dispose()
-    await expect(host.execute('credentials.fill', args)).rejects.toThrow('不匹配')
+    await expect(host.execute('credentials.fill', args)).rejects.toThrow('已释放')
     api.login.mockResolvedValueOnce({ ok: false, denied: true, error: '用户取消' })
-    expect(await host.execute('credentials.request', { document })).toMatchObject({ ok: false, denied: true })
+    const next = makeHost()
+    expect(await next.execute('credentials.request', { document })).toMatchObject({ ok: false, denied: true })
+    next.dispose()
     expect(host.invoke).not.toHaveBeenCalled()
   })
   it('媒体等待采用私有事件标识，取消时清理同一订阅', async () => {

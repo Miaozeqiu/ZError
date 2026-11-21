@@ -9,12 +9,12 @@ export const WEBSITE_HOST_TOOLS: ToolDefinition[] = ['browser_package_read', 'br
   type: 'function', function: { name, parameters: { type: 'object', properties: {
     service_scope: { type: 'string' }, service_op: { type: 'string' }, request: { type: 'object' }, host: { type: 'string' }, action: { type: 'string' }, document: { type: 'object' },
     amount: { type: 'integer' }, index: { type: 'integer' }, url: { type: 'string' }, offset: { type: 'integer' }, selector: { type: 'string' }, nth: { type: 'integer' }, limit: { type: 'integer' },
-    text: { type: 'string' }, muted: { type: 'boolean' }, secret_ref: { type: 'string' },
+    attributes: { type: 'array', items: { type: 'string' }, maxItems: 12 }, characters: { type: 'string' }, raster: { type: 'object' }, text: { type: 'string' }, muted: { type: 'boolean' }, secret_ref: { type: 'string' },
     until: { type: 'string' }, timeoutMs: { type: 'integer' }, wait_id: { type: 'string' },
   }, required: ['host', 'action'], additionalProperties: false } },
 }))
-const reads = new Set(['service', 'list', 'query', 'value', 'image', 'compare', 'media_read', 'media_wait', 'media_cancel'])
-const writes = new Set(['service', 'scroll', 'select', 'navigate', 'click', 'fill', 'fill_secret', 'media_play', 'media_pause', 'media_mute'])
+const reads = new Set(['service', 'list', 'frames', 'query', 'glyphs', 'value', 'image', 'compare', 'media_read', 'media_wait', 'media_cancel'])
+const writes = new Set(['service', 'reveal', 'scroll', 'select', 'navigate', 'click', 'fill', 'fill_secret', 'media_play', 'media_pause', 'media_mute'])
 export async function executeWebsiteHostTool(name: string, args: Record<string, unknown>, ctx: ChatToolContext, browserId: string) {
   const read = name === 'browser_package_read'
   if (!(read ? reads : writes).has(String(args.action))) return JSON.stringify({ ok: false, reason: 'invalid', error: '宿主文档操作类型不匹配' })

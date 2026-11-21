@@ -23,6 +23,8 @@ const target = { ref: string }
 const document = objectSchema({ frameId: string, loaderId: string, url: string }, ['frameId', 'loaderId', 'url'])
 const element = { document, selector: string, nth: { type: 'integer', minimum: 1, maximum: 100 } }
 const commands: Record<WebsiteCommandName, { tool?: string; scoped?: boolean; mutates: boolean; schema: Record<string, unknown> }> = {
+  'context.publish': { scoped: true, mutates: false, schema: objectSchema({ document, json: string }, ['document', 'json']) },
+  'resource.read': { scoped: true, mutates: false, schema: objectSchema({ id: string, offset: { type: 'integer', minimum: 0, maximum: 1048576 }, length: { type: 'integer', minimum: 1, maximum: 8192 } }, ['id', 'offset', 'length']) },
   'browser.observe': { tool: 'browser_get_page', mutates: false, schema: objectSchema({}) },
   'browser.navigate': { tool: 'browser_navigate', mutates: true, schema: objectSchema({ url: string }, ['url']) },
   'browser.click': { tool: 'browser_click', mutates: true, schema: objectSchema(target, ['ref']) },
@@ -32,7 +34,11 @@ const commands: Record<WebsiteCommandName, { tool?: string; scoped?: boolean; mu
   'browser.wait': { mutates: false, schema: objectSchema({ ms: { type: 'integer', minimum: 0, maximum: 30000 } }, ['ms']) },
   'page.wait': { mutates: false, schema: objectSchema({ timeoutMs: { type: 'integer', minimum: 1, maximum: 30000 } }, ['timeoutMs']) },
   'document.list': { scoped: true, mutates: false, schema: objectSchema({}) },
-  'document.query': { scoped: true, mutates: false, schema: objectSchema({ ...element, limit: { type: 'integer', minimum: 1, maximum: 40 }, offset: { type: 'integer', minimum: 0, maximum: 10000 } }, ['document', 'selector', 'limit']) },
+  'document.frames': { scoped: true, mutates: false, schema: objectSchema(element, ['document', 'selector']) },
+  'document.query': { scoped: true, mutates: false, schema: objectSchema({ ...element, attributes: { type: 'array', maxItems: 12, items: string }, limit: { type: 'integer', minimum: 1, maximum: 40 }, offset: { type: 'integer', minimum: 0, maximum: 10000 } }, ['document', 'selector', 'limit']) },
+  'document.glyphs': { scoped: true, mutates: false, schema: objectSchema({ ...element, characters: string,
+    raster: objectSchema({ size: { type: 'integer', minimum: 32, maximum: 512 }, fontSize: { type: 'integer', minimum: 16, maximum: 512 }, baseline: { type: 'integer', minimum: 0, maximum: 512 }, threshold: { type: 'integer', minimum: 0, maximum: 255 }, coarse: { type: 'integer', minimum: 8, maximum: 32 }, fine: { type: 'integer', minimum: 8, maximum: 32 } }, ['size', 'fontSize', 'baseline', 'threshold', 'coarse', 'fine']) }, ['document', 'selector', 'characters', 'raster']) },
+  'document.reveal': { scoped: true, mutates: true, schema: objectSchema(element, ['document', 'selector']) },
   'document.scroll': { scoped: true, mutates: true, schema: objectSchema({ ...element, amount: { type: 'integer', minimum: -10000, maximum: 10000 } }, ['document', 'selector', 'amount']) },
   'document.select': { scoped: true, mutates: true, schema: objectSchema({ ...element, index: { type: 'integer', minimum: 1, maximum: 10000 } }, ['document', 'selector', 'index']) },
   'document.value': { scoped: true, mutates: false, schema: objectSchema(element, ['document', 'selector']) },
@@ -60,9 +66,9 @@ const commands: Record<WebsiteCommandName, { tool?: string; scoped?: boolean; mu
   'state.write': { scoped: true, mutates: true, schema: objectSchema({ session_id: string, key: string, json: { anyOf: [string, { type: 'null' }] } }, ['session_id', 'key', 'json']) },
   'knowledge.search': { scoped: true, mutates: false, schema: objectSchema({ title: string, type: { type: 'string', enum: ['single', 'multiple', 'judgement', 'completion'] }, options: string }, ['title', 'type']) },
   'model.generate': { scoped: true, mutates: true, schema: objectSchema({ prompt: string, system: string }, ['prompt', 'system']) },
-  'questions.publish': { scoped: true, mutates: false, schema: objectSchema({ assignmentId: string, title: string, total: { type: 'integer', minimum: 0, maximum: 10000 }, phase: { type: 'string', enum: ['read', 'result'] },
+  'questions.publish': { scoped: true, mutates: false, schema: objectSchema({ document, assignmentId: string, title: string, total: { type: 'integer', minimum: 0, maximum: 10000 }, phase: { type: 'string', enum: ['read', 'result'] },
     questions: { type: 'array', maxItems: 8, items: objectSchema({ question_id: string, number: { type: 'integer', minimum: 1 }, order: { type: 'integer', minimum: 1 }, type: string, stem: string, status: string, source: { type: 'string', enum: ['bank', 'agent'] },
-      options: { type: 'array', maxItems: 32, items: objectSchema({ label: string, text: string }, ['label', 'text']) }, actual: objectSchema({ choices: { type: 'array', maxItems: 32, items: string }, blanks: { type: 'array', maxItems: 32, items: string } }) }, ['question_id', 'number', 'order', 'type', 'stem', 'status', 'options', 'actual']) } }, ['assignmentId', 'total', 'phase', 'questions']) },
+      options: { type: 'array', maxItems: 32, items: objectSchema({ label: string, text: string }, ['label', 'text']) }, actual: objectSchema({ choices: { type: 'array', maxItems: 32, items: string }, blanks: { type: 'array', maxItems: 32, items: string } }) }, ['question_id', 'number', 'order', 'type', 'stem', 'status', 'options', 'actual']) } }, ['document', 'assignmentId', 'total', 'phase', 'questions']) },
   'workflow.checkpoint': { scoped: true, mutates: false, schema: objectSchema({ state: { type: 'object' } }, ['state']) },
 }
 const sameSite = (raw: string, host: string) => {
@@ -83,6 +89,7 @@ export async function executeWebsitePackage(binding: InstalledWebsiteTool, input
   active()
   validateWebsiteValue(input, pinned.tool.parameters, '网站工具参数')
   await verifyWebsiteRuntime(pinned.runtime)
+  const resourceBytes = new Map<string, Uint8Array>()
   active()
   return withWebsiteSandbox(async evaluate => {
     active()
@@ -107,13 +114,25 @@ export async function executeWebsitePackage(binding: InstalledWebsiteTool, input
       if ((spec.mutates || serviceMutation(command.op, args)) && host.readOnly()) throw new Error('当前权限只允许网站工具读取页面')
       if ((spec.mutates || serviceMutation(command.op, args)) && requiresResumeRead) throw new Error('流程恢复后先读取实际页面，不得直接重放操作')
       if (command.op === 'workflow.checkpoint' && requiresResumeRead) throw new Error('恢复核对前不能覆盖检查点')
-      if (!sameSite(await websiteHostAwait(host.signal, () => host.currentUrl(spec.scoped || ['browser.wait', 'page.wait'].includes(String(command.op)))), pinned.host)
-        || ['browser.navigate', 'document.navigate'].includes(command.op) && !sameSite(String(args.url), pinned.host)) {
+      const localResource = command.op === 'resource.read'
+      // Public, hash-pinned package assets do not access a tab. Avoid a native
+      // frame-tree round trip for every small resource page; real DOM operations
+      // still revalidate the current realm and exact document below.
+      if (!localResource && (!sameSite(await websiteHostAwait(host.signal, () => host.currentUrl(spec.scoped || ['browser.wait', 'page.wait'].includes(String(command.op)))), pinned.host)
+        || ['browser.navigate', 'document.navigate'].includes(command.op) && !sameSite(String(args.url), pinned.host))) {
         throw new Error('网站工具试图操作其域名范围之外的网页')
       }
       active()
       if (spec.mutates && /^(?:browser\.|document\.|media\.|credentials\.)/.test(command.op)) observed = false
-      if (command.op === 'workflow.checkpoint') {
+      if (command.op === 'resource.read') {
+        const resource = pinned.runtime.resources?.find(row => row.id === args.id)
+        if (!resource) throw new Error('运行包未声明此资源')
+        let bytes = resourceBytes.get(resource.id)
+        if (!bytes) { bytes = Uint8Array.from(atob(resource.data), ch => ch.charCodeAt(0)); resourceBytes.set(resource.id, bytes) }
+        const offset = Number(args.offset), end = Math.min(bytes.length, offset + Number(args.length))
+        if (offset >= bytes.length) throw new Error('网站资源读取越界')
+        response = { ok: true, bytes: Array.from(bytes.subarray(offset, end)), total: bytes.length, next_offset: end < bytes.length ? end : -1 }
+      } else if (command.op === 'workflow.checkpoint') {
         if (!host.checkpoint) throw new Error('宿主未提供持久流程检查点')
         response = await websiteHostAwait(host.signal, () => host.checkpoint!(args.state as Record<string, unknown>))
       } else if (spec.scoped) {
@@ -134,7 +153,7 @@ export async function executeWebsitePackage(binding: InstalledWebsiteTool, input
         : (command.op === 'document.query' || command.op === 'media.read') && receipt?.ok === true
       if (actualRead && receipt?.ok !== false && !receipt?.error && receipt?.denied !== true) { requiresResumeRead = false; observed = true }
       // A redirect must be checked before any page data is returned to package code.
-      if (!sameSite(await websiteHostAwait(host.signal, () => host.currentUrl(spec.scoped || ['browser.wait', 'page.wait'].includes(String(command.op)))), pinned.host)) throw new Error('网页已离开网站工具的域名范围，请重新核对')
+      if (!localResource && !sameSite(await websiteHostAwait(host.signal, () => host.currentUrl(spec.scoped || ['browser.wait', 'page.wait'].includes(String(command.op)))), pinned.host)) throw new Error('网页已离开网站工具的域名范围，请重新核对')
       const serialized = JSON.stringify(response)
       if (new TextEncoder().encode(serialized).length > 128 * 1024) throw new Error('网站命令结果超过大小限制')
     }

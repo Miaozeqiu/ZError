@@ -1,5 +1,5 @@
 import { validateWebsiteRuntime, verifyWebsiteRuntime } from './websiteRuntime/protocol'
-import { validateWebsiteTools, websiteHasSupportedTools } from './websiteToolDefinitions'
+import { validateWebsiteTools } from './websiteToolDefinitions'
 import { ZERROR_OPEN_ORIGIN } from '../app/openApi'
 import { validateWebsiteSnapshot, type WebsiteSnapshot } from './websiteRepositoryCore'
 import { limitedJson, WebsiteRepositoryHttpError } from './websiteRepositoryGitHub'
@@ -77,9 +77,8 @@ async function fetchWebsiteExperience(
   request: typeof fetch,
   previous?: WebsiteSnapshot,
 ): Promise<WebsiteSnapshot> {
-  const needsTools = websiteHasSupportedTools(identity.host)
   const revision = previous?.website && previous.icon
-    && (!needsTools || previous.tools !== undefined) && commitSha.test(previous.revision) ? previous.revision : ''
+    && commitSha.test(previous.revision) ? previous.revision : ''
   const url = new URL(endpoint)
   if (revision) url.searchParams.set('revision', revision)
   const headers = previous ? { Accept: 'application/json' } : { Accept: 'application/json', 'Cache-Control': 'no-cache' }

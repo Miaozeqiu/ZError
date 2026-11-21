@@ -176,6 +176,13 @@ export default defineConfig(async () => ({
 
   // 配置静态资源目录
   publicDir: 'public',
+
+  // Restrict test discovery before traversal: native build trees and local logs
+  // contain many files and are unrelated to frontend contract tests.
+  test: {
+    include: ['testdata/**/*.test.ts'],
+    exclude: ['**/node_modules/**', '**/target/**', '**/logs/**', '**/dist/**'],
+  },
   
   // 确保 src/assets 中的文件被处理
   assetsInclude: ['**/*.png', '**/*.jpg', '**/*.jpeg', '**/*.gif', '**/*.svg', '**/*.webp', '**/*.wasm'],

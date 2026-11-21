@@ -114,7 +114,7 @@ export const downloadWebsiteRepository = async (source: GitHubWebsiteSource, pre
     if (website.id !== expected.id || website.host !== expected.host) throw new Error('网站仓库变更了网站身份，已保留原缓存')
     const entries = tree.filter(entry => typeof entry.path === 'string' && entry.path.startsWith(prefix) && entry.type !== 'tree')
     const runtimeEntry = entries.find(entry => entry.path === prefix + 'runtime.json')
-    const runtime = runtimeEntry ? validateWebsiteRuntime(JSON.parse(reader.text(await reader.blob(runtimeEntry, 512 * 1024))), website.id) : undefined
+    const runtime = runtimeEntry ? validateWebsiteRuntime(JSON.parse(reader.text(await reader.blob(runtimeEntry, 2 * 1024 * 1024))), website.id) : undefined
     if (runtime) await verifyWebsiteRuntime(runtime)
     const files: Record<string, string> = {}
     let total = 0

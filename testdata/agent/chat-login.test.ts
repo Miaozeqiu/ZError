@@ -1,22 +1,14 @@
-import { runLoginCommands } from './fixtures/loginCommands'
 // @vitest-environment jsdom
 import { createApp, h, nextTick } from 'vue'
 import { beforeEach, expect, it, vi } from 'vitest'
 import AgentLoginForm from '../../src/components/agent/AgentLoginForm.vue'
 import { cancelChatLogin, chatLoginRequests, requestChatLogin, submitChatLogin } from '../../src/services/agent/chatLogin'
-import { handleLoginTool } from '../../src/services/agent/tools/websiteLogin'
+import { scopedWebsiteHost } from '../../src/services/agent/websiteRuntime/scopedHost'
 
 const io = vi.hoisted(() => ({ invoke: vi.fn(), page: vi.fn(), account: vi.fn(), capabilities: vi.fn(), documents: vi.fn() }))
 vi.mock('../../src/services/browser/documents', async original => ({
   ...await original<typeof import('../../src/services/browser/documents')>(), browserDocuments: io.documents,
 }))
-vi.mock('../../src/services/agent/tools/websiteLoginObservation', () => ({
-  loginObserver: (call: Function, id: string) => (captureCaptcha = false) =>
-    call(id, 'login_observe', captureCaptcha ? { captureCaptcha } : undefined),
-}))
-
-vi.mock('../../src/services/agent/websiteScripts', () => ({ runWebsiteWorkflow: runLoginCommands }))
-
 vi.mock('@tauri-apps/api/core', async original => ({ ...await original<typeof import('@tauri-apps/api/core')>(), invoke: io.invoke }))
 vi.mock('../../src/services/browser/appBrowser', () => ({ getBrowserState: io.page }))
 vi.mock('../../src/services/browser/capabilities', () => ({ browserCapabilities: io.capabilities }))
@@ -37,14 +29,16 @@ const pending = async () => {
 }
 
 it('continues a login from the chat form and sends only references to the browser tool', async () => {
-  const form = { kind: 'form', url: origin + '/login?newversion=true', modern: true, frameId: 'top', loaderId: 'doc' }
-  let clicked = false
-  const protocol = vi.fn(async (_id: string, op: string, _args?: unknown) => {
-    if (op === 'fill_secret') return { ok: true, filled: true }
-    return clicked ? { kind: 'space', url: 'https://i.chaoxing.com/' } : form
-  })
-  const run = handleLoginTool({ name: 'browser_login_chaoxing', args: {}, browserId: 'tab', sessionId: 'chat',
-    navigateBrowserView: vi.fn(), callProtocol: protocol, wait: async () => {}, actOnceOnBrowser: async () => { clicked = true; return { dispatched: true } } })
+  const target = { frameId: 'top', loaderId: 'doc', url: origin + '/login' }
+  io.documents.mockResolvedValue({ documents: [target] })
+  const protocol = vi.fn(async (_name: string, _args: Record<string,unknown>) => ({ ok: true, filled: true }))
+  const scoped = scopedWebsiteHost({ host: 'chaoxing.com', browserId: 'tab', signal: new AbortController().signal,
+    pause: () => {}, resume: () => {}, ctx: { sessionId:'chat', invokeHostTool: protocol } as any })
+  const run = (async () => {
+    const grant = await scoped.execute('credentials.request', { document: target })
+    for (const field of ['account','password']) await scoped.execute('credentials.fill', { document: target, selector: '#' + field, credential_id: grant.credential_id, field })
+    return { ok: true }
+  })()
   const request = await pending()
   const root = document.createElement('div')
   const app = createApp({ render: () => h(AgentLoginForm, { request }) })
@@ -59,13 +53,13 @@ it('continues a login from the chat form and sends only references to the browse
       if (command === 'secure_save_chat_login') io.account.mockReturnValue(refs)
     })
     root.querySelector('form')!.dispatchEvent(new Event('submit', { cancelable: true }))
-    expect(JSON.parse(await run)).toMatchObject({ ok: true, loggedIn: true })
+    expect(await run).toEqual({ ok: true })
     await nextTick()
     expect(io.invoke).toHaveBeenCalledWith('secure_save_chat_login', { site: 'chaoxing', loginOrigin: origin, account: 'private-account', password: ' private-password! ' })
-    expect(protocol.mock.calls.filter(([, op]) => op === 'fill_secret').map(([, , args]) => (args as any).secret_ref)).toEqual(Object.values(refs))
+    expect(protocol.mock.calls.filter(([, args]) => args.action === 'fill_secret').map(([, args]) => args.secret_ref)).toEqual(Object.values(refs))
     expect(JSON.stringify([protocol.mock.calls, request, await run])).not.toMatch(/private-account|private-password/)
     expect(chatLoginRequests.size).toBe(0)
-  } finally { app.unmount() }
+  } finally { app.unmount(); scoped.dispose() }
 })
 
 it('replaces a rejected password using the generic credential form without exposing values', async () => {

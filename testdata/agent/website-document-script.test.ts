@@ -81,3 +81,39 @@ it('只允许导出有界图片元素，不截取普通容器或密码控件', a
   document.querySelector('img')!.width = 5000
   expect(run({ action: 'image', selector: '#image' })).toMatchObject({ ok: false, reason: 'image_size' })
 })
+
+it('额外 DOM 属性只有通过原生凭据隔离后才投影，私密属性和值始终排除', () => {
+  document.body.innerHTML = '<div id="row" data-course="42" onclick="openCourse(42)" value="private" style="color:red">课程</div>'
+  const args = { action: 'query', selector: '#row', limit: 1, attributes: ['data-course','onclick','value','style'] }
+  expect(run(args).nodes[0].attributes['data-course']).toBeUndefined()
+  const row = run({ ...args, allowFlags: true }).nodes[0]
+  expect(row.attributes['data-course']).toBe('42')
+  expect(row.attributes.onclick).toBe('openCourse(42)')
+  expect(row.attributes.value).toBeUndefined()
+  expect(row.attributes.style).toBeUndefined()
+  document.querySelector('#row')!.setAttribute('data-zerror-private','true')
+  const hidden = run({ ...args, allowFlags: true }).nodes[0]
+  expect(hidden.text).toBe('')
+  expect(hidden.attributes['data-course']).toBeUndefined()
+})
+
+it('字形读取拒绝登录文档和无效光栅，只输出所选字体的有界位图特征', async () => {
+  const raster = { size:48, fontSize:36, baseline:38, threshold:30, coarse:16, fine:24 }
+  document.body.insertAdjacentHTML('beforeend','<div id="glyph" style="font-family:fixture-font">甲</div>')
+  const args = { action:'glyphs', selector:'#glyph', characters:'甲', raster }
+  expect(await run(args)).toMatchObject({ok:false,reason:'private_input'})
+  document.querySelector('#password')!.remove()
+  expect(await run({...args,characters:'甲'.repeat(17)})).toMatchObject({ok:false,reason:'invalid_raster'})
+  Object.defineProperty(document,'fonts',{configurable:true,value:{load:async()=>[{status:'loaded'}]}})
+  vi.spyOn(HTMLCanvasElement.prototype,'getContext').mockImplementation(function(this:HTMLCanvasElement) {
+    const canvas=this
+    return { clearRect:()=>{}, fillText:()=>{}, measureText:()=>({width:10}), getImageData:()=>({data:new Uint8ClampedArray(canvas.width*canvas.height*4).fill(255)}) } as any
+  })
+  const response = await run(args)
+  expect(response).toMatchObject({ok:true,family:'fixture-font',webFont:true,glyphs:[{character:'甲',covered:true,empty:false}]})
+  expect(response.glyphs[0].coarse).toHaveLength(32)
+  expect(response.glyphs[0].fine).toHaveLength(72)
+  expect(new Set(response.glyphs[0].coarse)).toEqual(new Set([255]))
+  Object.defineProperty(document,'fonts',{configurable:true,value:{load:async()=>[]}})
+  expect(await run(args)).toMatchObject({ok:true,webFont:false})
+})

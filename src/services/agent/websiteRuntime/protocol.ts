@@ -6,9 +6,9 @@ export const WEBSITE_TOOL_TIMEOUT_MS = 120_000
 export const WEBSITE_TOOL_PREFIX = 'browser_site_'
 export const isWebsiteHostCommand = (name: string) => name === 'browser_package_read' || name === 'browser_package_act'
 export const isWebsiteRuntimeToolName = (name: string) => /^browser_site_[a-z0-9_]+__[a-z][a-z0-9_]{0,23}$/.test(name) && name.length <= 63
-export const WEBSITE_COMMANDS = ['browser.observe', 'browser.navigate', 'browser.click', 'browser.fill',
+export const WEBSITE_COMMANDS = ['context.publish', 'resource.read', 'browser.observe', 'browser.navigate', 'browser.click', 'browser.fill',
   'browser.press', 'browser.scroll', 'browser.wait', 'page.wait',
-  'document.list', 'document.query', 'document.value', 'document.scroll', 'document.select', 'document.image', 'document.compare', 'document.navigate', 'document.click', 'document.fill',
+  'document.list', 'document.frames', 'document.query', 'document.glyphs', 'document.value', 'document.reveal', 'document.scroll', 'document.select', 'document.image', 'document.compare', 'document.navigate', 'document.click', 'document.fill',
   'media.read', 'media.play', 'media.pause', 'media.mute', 'media.wait', 'credentials.request', 'credentials.fill', 'workflow.checkpoint', 'service.session', 'service.check', 'service.request', 'service.read',
   'payload.from_state', 'payload.create', 'payload.append', 'state.read', 'state.write', 'knowledge.search', 'model.generate', 'questions.publish'] as const
 export type WebsiteCommandName = typeof WEBSITE_COMMANDS[number]
@@ -18,8 +18,9 @@ export type WebsitePackageTool = {
   commands: WebsiteCommandName[]
 }
 export type WebsiteAutomation = { event: 'page'; tool: string }
-export const PASSIVE_WEBSITE_COMMANDS = new Set<string>(['document.list','document.query','document.value','document.compare','browser.wait', 'service.session','service.check','service.request','service.read','state.read','state.write','payload.create','payload.append','payload.from_state'])
+export const PASSIVE_WEBSITE_COMMANDS = new Set<string>(['context.publish','resource.read','document.frames','document.glyphs','questions.publish','document.list','document.query','document.value','document.compare','browser.wait', 'service.session','service.check','service.request','service.read','state.read','state.write','payload.create','payload.append','payload.from_state'])
 export type WebsiteRuntimePackage = {
+  resources?: Array<{ id: string; size: number; sha256: string; data: string }>
   automations?: WebsiteAutomation[]
   apiVersion: 2
   bundle: { code: string; sha256: string }
@@ -77,6 +78,21 @@ export function validateWebsiteRuntime(value: unknown, siteId: string): WebsiteR
     || !Array.isArray(value.tools) || !value.tools.length || value.tools.length > 32
     || new TextEncoder().encode(JSON.stringify(value.tools)).length > 64 * 1024) throw new Error('网站运行包格式或宿主 API 不兼容')
   const names = new Set<string>()
+  let resources: WebsiteRuntimePackage['resources']
+  if (value.resources !== undefined) {
+    if (!Array.isArray(value.resources) || value.resources.length > 4) throw new Error('网站资源清单无效')
+    const ids = new Set<string>(); let total = 0
+    resources = value.resources.map(raw => {
+      if (!record(raw) || Object.keys(raw).some(key => !['id', 'size', 'sha256', 'data'].includes(key))
+        || typeof raw.id !== 'string' || !/^[a-z][a-z0-9_-]{0,63}$/.test(raw.id) || ids.has(raw.id)
+        || !Number.isSafeInteger(raw.size) || Number(raw.size) < 1 || Number(raw.size) > 1024 * 1024
+        || (total += Number(raw.size)) > 1024 * 1024 || typeof raw.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(raw.sha256)
+        || typeof raw.data !== 'string' || raw.data.length !== Math.ceil(Number(raw.size) / 3) * 4
+        || !/^[A-Za-z0-9+/]+={0,2}$/.test(raw.data)) throw new Error('网站资源格式或容量无效')
+      ids.add(raw.id)
+      return { id: raw.id, size: Number(raw.size), sha256: raw.sha256, data: raw.data }
+    })
+  }
   const tools = value.tools.map(raw => {
     if (!record(raw) || typeof raw.name !== 'string' || typeof raw.description !== 'string'
       || !raw.description.trim() || raw.description.length > 1000
@@ -104,7 +120,7 @@ export function validateWebsiteRuntime(value: unknown, siteId: string): WebsiteR
       return { event: 'page' as const, tool: raw.tool }
     })
   }
-  return { ...(automations ? { automations } : {}), apiVersion: 2, bundle: { code: value.bundle.code, sha256: value.bundle.sha256 }, tools }
+  return { ...(resources ? { resources } : {}), ...(automations ? { automations } : {}), apiVersion: 2, bundle: { code: value.bundle.code, sha256: value.bundle.sha256 }, tools }
 }
 
 export const websiteRuntimeTools = (siteId: string, runtime: WebsiteRuntimePackage): ToolDefinition[] => runtime.tools.map(tool => ({
@@ -115,6 +131,12 @@ export async function verifyWebsiteRuntime(runtime: WebsiteRuntimePackage) {
   const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(runtime.bundle.code))
   const actual = Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, '0')).join('')
   if (actual !== runtime.bundle.sha256) throw new Error('网站编译产物哈希不匹配')
+  for (const resource of runtime.resources || []) {
+    const bytes = Uint8Array.from(atob(resource.data), ch => ch.charCodeAt(0))
+    if (bytes.length !== resource.size) throw new Error('网站资源大小不匹配')
+    const digest = await crypto.subtle.digest('SHA-256', bytes)
+    if (Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('') !== resource.sha256) throw new Error('网站资源哈希不匹配')
+  }
 }
 
 export function validateWebsiteValue(value: unknown, schema: Record<string, unknown>, label: string) {

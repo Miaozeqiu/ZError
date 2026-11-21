@@ -43,9 +43,6 @@ pub async fn open(
   height: f64,
   hidden: bool,
 ) -> Result<(), String> {
-  if is_space_list_url(&url) {
-    return Err("禁止顶层打开课表地址。只点 iframe 里的「我学的课」页签。".into());
-  }
   remember_handle(&app);
   let exists = registry()
     .lock()
@@ -295,12 +292,6 @@ pub(super) fn browser_by_id(id: i32) -> Option<Browser> {
 }
 
 pub async fn navigate(app: AppHandle, id: String, url: String) -> Result<(), String> {
-  if is_space_list_url(&url) {
-    return Err("禁止顶层打开课表地址。只点 iframe 里的「我学的课」页签。".into());
-  }
-  if is_iframe_document_url(&url) {
-    return Err("这是学习通 iframe 里的页面，不能当顶层打开。留在当前课页，在页面里点章节/作业。".into());
-  }
   let parsed = crate::app_browser::parse_browser_url(&url)?;
   let target = cef_target_url(&app, &url, &parsed)?;
   let from_home = crate::app_browser::is_home(&remembered_url(&id));

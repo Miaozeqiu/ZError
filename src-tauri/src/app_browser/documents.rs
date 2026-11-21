@@ -48,6 +48,75 @@ struct Engine {
 }
 
 impl Engine {
+    async fn command(
+        &self,
+        _doc: &Document,
+        _method: &'static str,
+        _args: Value,
+    ) -> Result<Value, String> {
+        #[cfg(target_os = "macos")]
+        {
+            return self
+                .page
+                .conn
+                .call(_method, _args, _doc.session.as_deref())
+                .await;
+        }
+        #[cfg(windows)]
+        {
+            return self.call(_method, _args).await;
+        }
+        #[allow(unreachable_code)]
+        Err("当前浏览器不支持子文档绑定".into())
+    }
+
+    async fn child_frame(&self, doc: &Document, selector: &str) -> Result<Option<String>, String> {
+        let world = self
+            .command(
+                doc,
+                "Page.createIsolatedWorld",
+                json!({ "frameId": doc.frame_id, "worldName": "zerror-document-v2" }),
+            )
+            .await?;
+        if !self.documents().await?.contains(doc) {
+            return Err(STALE.into());
+        }
+        let context = world["executionContextId"].as_i64().ok_or(STALE)?;
+        let expression = format!("(()=>{{if(location.href!=={})throw Error('Document changed');const nodes=document.querySelectorAll({});return nodes.length===1&&/^(IFRAME|FRAME)$/.test(nodes[0].tagName)?nodes[0]:null;}})()", json!(doc.url), json!(selector));
+        let object = self
+            .command(
+                doc,
+                "Runtime.evaluate",
+                json!({ "contextId":context, "expression":expression, "returnByValue":false }),
+            )
+            .await?;
+        if object.get("exceptionDetails").is_some() {
+            return Err(STALE.into());
+        }
+        let Some(object_id) = object.pointer("/result/objectId").and_then(Value::as_str) else {
+            return Ok(None);
+        };
+        let described = self
+            .command(
+                doc,
+                "DOM.describeNode",
+                json!({ "objectId":object_id, "depth":1 }),
+            )
+            .await;
+        let _ = self
+            .command(
+                doc,
+                "Runtime.releaseObject",
+                json!({ "objectId":object_id }),
+            )
+            .await;
+        let described = described?;
+        Ok(described
+            .pointer("/node/frameId")
+            .or_else(|| described.pointer("/node/contentDocument/frameId"))
+            .and_then(Value::as_str)
+            .map(str::to_owned))
+    }
     async fn open(_app: &AppHandle, _id: &str) -> Result<Option<Self>, String> {
         #[cfg(target_os = "macos")]
         if crate::cef_runtime::cef_enabled() {
@@ -317,6 +386,27 @@ pub(super) async fn dispatch(app: &AppHandle, id: &str, args: &Value) -> Result<
     }
     validate_action(args)?;
     let doc = select(&rows, args, host)?.clone();
+    if action == "frames" {
+        let Some(engine) = &engine else {
+            return Ok(json!({ "ok":false,"reason":"frames_unsupported" }));
+        };
+        let frame_id = engine
+            .child_frame(&doc, args["selector"].as_str().ok_or("缺少 iframe 选择器")?)
+            .await?;
+        let fresh = engine.documents().await?;
+        if !fresh.contains(&doc) || !fresh.first().is_some_and(|root| allowed(&root.url, host)) {
+            return Err(STALE.into());
+        }
+        let documents: Vec<_> = fresh
+            .iter()
+            .filter(|row| {
+                row.frame_id != doc.frame_id
+                    && Some(&row.frame_id) == frame_id.as_ref()
+                    && allowed(&row.url, host)
+            })
+            .collect();
+        return Ok(json!({ "ok":true,"documents":documents }));
+    }
     if action == "fill_secret" {
         let locator = json!({ "by": "css", "value": args["selector"], "nth": args["nth"], "frameId": doc.frame_id, "loaderId": doc.loader_id });
         let reference = args["secret_ref"].as_str().ok_or("缺少凭据引用")?;
@@ -339,7 +429,7 @@ pub(super) async fn dispatch(app: &AppHandle, id: &str, args: &Value) -> Result<
     #[cfg(windows)]
     drop(_lock);
     // Comparison is not a credential-guessing oracle, even if page code removes a DOM marker.
-    if matches!(action, "compare" | "value") {
+    if matches!(action, "compare" | "value" | "glyphs") {
         crate::secret_browser::guard(app, id).await?;
     }
     let mut projected = args.clone();
@@ -361,7 +451,7 @@ pub(super) async fn dispatch(app: &AppHandle, id: &str, args: &Value) -> Result<
     };
     if matches!(
         action,
-        "query" | "value" | "image" | "compare" | "media_read" | "media_wait"
+        "query" | "glyphs" | "value" | "image" | "compare" | "media_read" | "media_wait"
     ) {
         let fresh = if let Some(engine) = &engine {
             engine.documents().await?
@@ -371,7 +461,7 @@ pub(super) async fn dispatch(app: &AppHandle, id: &str, args: &Value) -> Result<
             )
             .map_err(|_| STALE)?]
         };
-        if !fresh.contains(&doc) || !allowed(&fresh[0].url, host) {
+        if !fresh.contains(&doc) || !fresh.first().is_some_and(|root| allowed(&root.url, host)) {
             return Err(STALE.into());
         }
     }
@@ -383,6 +473,9 @@ fn validate_action(args: &Value) -> Result<(), String> {
         args["action"].as_str(),
         Some(
             "query"
+                | "reveal"
+                | "frames"
+                | "glyphs"
                 | "scroll"
                 | "select"
                 | "value"
@@ -424,6 +517,50 @@ fn validate_action(args: &Value) -> Result<(), String> {
         && !args["text"].as_str().is_some_and(|s| s.len() <= 8192)
     {
         return Err("填写内容无效".into());
+    }
+    if let Some(attributes) = args.get("attributes") {
+        if !attributes.as_array().is_some_and(|rows| {
+            rows.len() <= 12
+                && rows.iter().all(|row| {
+                    row.as_str().is_some_and(|name| {
+                        !name.is_empty()
+                            && name.len() <= 64
+                            && name.bytes().all(|byte| {
+                                byte.is_ascii_lowercase()
+                                    || byte.is_ascii_digit()
+                                    || byte == b'-'
+                                    || byte == b'_'
+                            })
+                            && !["value", "style", "srcdoc", "password", "content", "nonce"]
+                                .contains(&name)
+                    })
+                })
+        }) {
+            return Err("文档属性请求无效".into());
+        }
+    }
+    if args["action"] == "glyphs" {
+        let raster = &args["raster"];
+        let size = raster["size"].as_u64().unwrap_or(0);
+        let valid_grid = |key: &str| {
+            raster[key]
+                .as_u64()
+                .is_some_and(|n| (8..=32).contains(&n) && size % n == 0 && n * n % 8 == 0)
+        };
+        if !args["characters"]
+            .as_str()
+            .is_some_and(|text| (1..=16).contains(&text.chars().count()))
+            || !(32..=512).contains(&size)
+            || !valid_grid("coarse")
+            || !valid_grid("fine")
+            || !raster["fontSize"]
+                .as_u64()
+                .is_some_and(|n| (16..=512).contains(&n))
+            || !raster["baseline"].as_u64().is_some_and(|n| n <= size)
+            || !raster["threshold"].as_u64().is_some_and(|n| n <= 255)
+        {
+            return Err("字形读取参数无效".into());
+        }
     }
     if args["action"] == "scroll"
         && !args["amount"]

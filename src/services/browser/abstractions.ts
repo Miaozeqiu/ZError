@@ -1,17 +1,7 @@
 import { computed, ref, shallowRef, watch } from 'vue'
 import { contentParserIdsOf, parserPageKindOf, siteGraphForUrl, siteGraphNodeForUrl } from './siteGraphCore'
-import {
-  isChaoxingCourseUrl,
-  isChaoxingHomeworkDoUrl,
-  isChaoxingHomeworkListUrl,
-  isChaoxingHomeworkUrl,
-  isChaoxingLoginUrl,
-  isChaoxingPlayerUrl,
-  isChaoxingStudyUrl,
-  pageRoleForUrl,
-} from '../platform/chaoxing/nav'
-
-/** 抽象层角色跟网站地图节点走。旧 id 如 chaoxing-study 已废弃，请用 role。 */
+import { pageRoleOfNode } from './siteGraphCore'
+/** 抽象层角色跟网站地图节点走。使用 role 标识页面。 */
 export type BrowserAbstractionRole = string
 export type BrowserAbstractionId = BrowserAbstractionRole
 
@@ -26,17 +16,19 @@ export type BrowserAbstraction = {
   match: (url: string) => boolean
 }
 
-export type HomeworkCardSnap = import('../chaoxing/homework/types').HomeworkCard
+export type { HomeworkCardSnap } from './homeworkCard'
+import type { HomeworkCardSnap } from './homeworkCard'
+const pageRoleForUrl = (url: string) => pageRoleOfNode(siteGraphNodeForUrl(url))
 
-export const isPlayerUrl = (url: string) => isChaoxingPlayerUrl(url)
-export const isCourseUrl = (url: string) => isChaoxingCourseUrl(url)
-export const isHomeworkDoUrl = (url: string) => isChaoxingHomeworkDoUrl(url)
-export const isHomeworkListUrl = (url: string) => isChaoxingHomeworkListUrl(url)
-export const isHomeworkUrl = (url: string) => isChaoxingHomeworkUrl(url)
+export const isPlayerUrl = (url: string) => pageRoleForUrl(url) === 'study'
+export const isCourseUrl = (url: string) => pageRoleForUrl(url) === 'course'
+export const isHomeworkDoUrl = (url: string) => siteGraphNodeForUrl(url)?.id === 'homework-do'
+export const isHomeworkListUrl = (url: string) => siteGraphNodeForUrl(url)?.id === 'homework-list'
+export const isHomeworkUrl = (url: string) => pageRoleForUrl(url) === 'homework'
 export const isChapterWorkUrl = (url: string) => isPlayerUrl(url)
 export const canUseHomeworkTools = (url: string) => isHomeworkUrl(url) || isChapterWorkUrl(url)
-export const isStudyUrl = (url: string) => isChaoxingStudyUrl(url)
-export const isLoginUrl = (url: string) => isChaoxingLoginUrl(url)
+export const isStudyUrl = (url: string) => pageRoleForUrl(url) === 'study'
+export const isLoginUrl = (url: string) => pageRoleForUrl(url) === 'login'
 
 const ROLE_META: Record<string, { name: string; tool: string; extraTools?: string[]; summary: string }> = {
   homework: {
@@ -165,11 +157,11 @@ export const abstractionRole = (layer: { id?: string; role?: BrowserAbstractionR
   if (!layer) return null
   if (layer.role) return layer.role
   const id = String(layer.id || '')
-  if (id === 'homework' || id.endsWith('-homework') || id === 'chaoxing-homework') return 'homework'
-  if (id === 'study' || id.endsWith('-study') || id === 'chaoxing-study') return 'study'
-  if (id === 'login' || id.endsWith('-login') || id === 'chaoxing-login') return 'login'
-  if (id === 'course' || id.endsWith('-course') || id === 'chaoxing-course') return 'course'
-  if (id === 'captcha' || id.endsWith('-captcha') || id === 'chaoxing-captcha') return 'captcha'
+  if (id === 'homework' || id.endsWith('-homework')) return 'homework'
+  if (id === 'study' || id.endsWith('-study')) return 'study'
+  if (id === 'login' || id.endsWith('-login')) return 'login'
+  if (id === 'course' || id.endsWith('-course')) return 'course'
+  if (id === 'captcha' || id.endsWith('-captcha')) return 'captcha'
   return null
 }
 
@@ -275,7 +267,7 @@ export const clearAbstractionDrill = (browserId?: string) => {
 watch(currentBrowserUrl, (url) => {
   const drill = abstractionDrill.value
   if (!drill) return
-  if (!/studentstudy/i.test(url || '')) clearAbstractionDrill(drill.browserId)
+  if (!isStudyUrl(url)) clearAbstractionDrill(drill.browserId)
 })
 
 export const abstractionPanelTitle = computed(() => {

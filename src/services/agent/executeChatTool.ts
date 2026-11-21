@@ -1,6 +1,3 @@
-import { requestedHomeworkQuestionRange } from './homeworkQuestionRange'
-import { permitsChapterQuizAnswers, permitsHomeworkAnswers } from './homeworkAnswerEvidence'
-import { permitsChapterDiscussionReply } from './chapterDiscussionIntent'
 import { SUBAGENTS_ENABLED, SUBAGENT_DISABLED_HINT } from './subagent/enabled'
 import { protectCredentials } from './credentialTools'
 import { redactObject } from '../security/secretRedaction'
@@ -360,36 +357,6 @@ export const executeChatTool = async (input: {
         return JSON.stringify({ ok: true, finished: judged.status !== 'watching', status: judged.status, summary: judged.summary, learning,
           ...(judged.status === 'watching' ? { awaitingVideo: true, taskComplete: false } : {}) })
       }
-      const homeworkTool = call.name === 'browser_answer_homework' || call.name === 'browser_review_homework'
-      const chapterTool = call.name === 'browser_start_chapter_tasks'
-      if (call.name === 'browser_reply_chapter_discussion') {
-        const { liveSession } = await import('./chatStore')
-        const session = liveSession(gateSession)
-        const current = session?.messages.find(message => message.id === (ctx.parentAssistantId || ctx.assistantId))
-        const goal = session?.messages.find(message => message.role === 'user' && message.id === current?.run?.goalMessageId)
-        if (!goal || !permitsChapterDiscussionReply(goal.content)) {
-          return JSON.stringify({ ok: false, reason: 'invalid', error: '只有当前用户要求回复讨论或完成包含该任务点的章节时才可发送。' })
-        }
-      }
-      const homeworkStore = homeworkTool || chapterTool ? await import('./chatStore') : undefined
-      let chapterQuiz: Parameters<typeof executeBrowserTool>[0]['chapterQuiz']
-      if (homeworkStore) {
-        const session = homeworkStore.liveSession(gateSession)
-        const current = session?.messages.find(message => message.id === (ctx.parentAssistantId || ctx.assistantId))
-        const goal = session?.messages.find(message => message.role === 'user' && message.id === current?.run?.goalMessageId)
-        if (call.name === 'browser_answer_homework') {
-          const permits = args.chapter_key !== undefined || args.quiz_job_id !== undefined ? permitsChapterQuizAnswers : permitsHomeworkAnswers
-          if (!goal || !permits(goal.content)) {
-            return JSON.stringify({ ok: false, reason: 'invalid', error: '当前用户请求未授权填写这些题目。可用 browser_review_homework 查看。' })
-          }
-        }
-        const range = goal && requestedHomeworkQuestionRange(goal.content)
-        if (range && homeworkTool) args.question_range = range
-        if (chapterTool && goal && args.video_only !== true
-          && /完成|学完|做完|答题|作答|填写|刷课|做(?:下|一下)|^(?:请)?(?:继续|接着)/.test(goal.content)) {
-          if (permitsChapterQuizAnswers(goal.content)) chapterQuiz = { range }
-        }
-      }
       const blocked = shouldBlockRepeatFail(gateSession, call.name, args)
       if (blocked.block) {
         return JSON.stringify({ ok: false, error: blocked.hint, failGate: true })
@@ -402,9 +369,6 @@ export const executeChatTool = async (input: {
         signal: ctx.abort,
         wait: waitWithAbort(ctx.abort),
         onNavigation: ctx.onBrowserNavigation,
-        onHomeworkProgress: homeworkStore && (update => homeworkStore.recordHomeworkProgress(gateSession, ctx.parentAssistantId || ctx.assistantId, update)),
-        chapterResume: ctx.chapterResume,
-        chapterQuiz,
         role: ctx.role,
         jobId: ctx.jobId,
       })

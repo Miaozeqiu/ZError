@@ -348,76 +348,9 @@ pub(crate) fn remembered_url(id: &str) -> String {
     .unwrap_or_default()
 }
 
-fn is_studentstudy(raw: &str) -> bool {
-  let lower = raw.to_ascii_lowercase();
-  lower.contains("/mycourse/studentstudy") || lower.contains("studentstudy?")
-}
-
-/// 空间课表地址。禁止顶层打开，禁止当「我学的课」去点。
-pub(crate) fn is_space_list_url(raw: &str) -> bool {
-  let lower = raw.to_ascii_lowercase();
-  let list = lower.contains("visit/courses")
-    || lower.contains("visit/interaction")
-    || lower.contains("courselist");
-  let course = lower.contains("stucoursemiddle")
-    || lower.contains("mycourse/stu")
-    || lower.contains("courseid=");
-  list && !course
-}
-
-/// 学习通嵌在 iframe 里的文档地址。整窗由我们控制，也绝不把这些当顶层打开。
-/// 注意：stucoursemiddle / mycourse/stu 是「进课」中间页或课程壳，不是嵌套 iframe，必须能顶层打开。
-pub(crate) fn is_iframe_document_url(raw: &str) -> bool {
-  let lower = raw.to_ascii_lowercase();
-  lower.contains("/mycourse/studentcourse")
-    || lower.contains("studentcourse?")
-    || lower.contains("/knowledge/cards")
-    || lower.contains("ananas/modules")
-    || lower.contains("insertvideo")
-    || lower.contains("insertdoc")
-    || lower.contains("insertaudio")
-    || lower.contains("insertbbs")
-    || lower.contains("insertbook")
-    || lower.contains("insertflash")
-    || lower.contains("/mooc-ans/bbscircle/")
-}
-
-/// 作业作答 / 打开一份作业的地址。工具识别用；点击弹窗不再靠这份名单放行。
-#[cfg(test)]
-pub(crate) fn is_homework_do_url(raw: &str) -> bool {
-  let lower = raw.to_ascii_lowercase();
-  if lower.contains("/work/list") {
-    return false;
-  }
-  lower.contains("dohomework")
-    || lower.contains("/work/do")
-    || lower.contains("dowork")
-    || lower.contains("do-work")
-    || lower.contains("/work/preview")
-    || lower.contains("/work/task")
-    || lower.contains("/work/view")
-    || (lower.contains("/work/") && lower.contains("workid="))
-}
-
-/// 页面自己点开的地址应留在当前窗口。只有空地址、播放器嵌套页、课表外路丢掉。
-/// 工具 `navigate` / `open` 另拦，不走这里。
-pub(crate) fn popup_should_drop(opener: &str, raw: &str) -> bool {
-  let lower = raw.trim().to_ascii_lowercase();
-  if lower.is_empty() || lower.starts_with("about:") || lower.starts_with("javascript:") {
-    return true;
-  }
-  if is_iframe_document_url(raw) || is_space_list_url(raw) {
-    return true;
-  }
-  is_studentstudy(opener) && is_studentstudy(raw)
-}
-
-/// 从空间课表点进一门课：中间页或课程壳。应在当前窗口打开，不能吞掉，也不宜另开标签。
-pub(crate) fn is_course_entry_url(raw: &str) -> bool {
-  let lower = raw.to_ascii_lowercase();
-  lower.contains("stucoursemiddle")
-    || lower.contains("/mycourse/stu")
-    || lower.contains("mooc2-ans.chaoxing.com/mooc2-ans/mycourse/stu")
+/// Popup protocol validation is generic; page navigation rules belong to packages.
+pub(crate) fn popup_should_drop(_opener: &str, raw: &str) -> bool {
+  !url::Url::parse(raw.trim()).is_ok_and(|url| matches!(url.scheme(), "https" | "http") && url.host_str().is_some() && url.username().is_empty() && url.password().is_none())
 }
 
 fn defer_off_webview(app: AppHandle, job: impl FnOnce(&AppHandle) + Send + 'static) {
@@ -431,17 +364,6 @@ fn handle_deferred_popup(app: &AppHandle, opener_id: &str, opener_url: &str, raw
   if popup_should_drop(opener_url, raw) {
     return;
   }
-  // 进课：在当前窗口打开，Agent 仍挂着这个 browserId
-  if is_course_entry_url(raw) {
-    if let Ok(target) = parse_url(raw) {
-      if let Ok(webview) = find_browser(app, opener_id) {
-        remember_url(opener_id, raw);
-        let _ = webview.navigate(target);
-      }
-    }
-    return;
-  }
-  // 作业等真实顶层页：开新标签并让前端自动切过去
   emit_opened(app, &new_browser_id(), raw.to_string(), Some(opener_id));
 }
 
@@ -476,123 +398,6 @@ const BROWSER_HOME_LAUNCH: &str = r#"(function(){
     } catch (e4) {}
     location.replace(href);
   }, true);
-})();"#;
-
-/// 学习通讨论模块是套了两层 iframe 的卡片。拦掉子 frame 之后，
-/// 在 knowledge/cards 里用附件数据画成同样的卡片，点击仍 window.open。
-const CHAOXING_BBS_CARDS: &str = r#"(function(){
-  try {
-    if (!/\/knowledge\/cards/i.test(location.href)) return;
-  } catch (e) { return; }
-  if (window.__ZE_BBS_CARDS__) return;
-  window.__ZE_BBS_CARDS__ = true;
-  function esc(s){
-    return String(s || '').replace(/[&<>"']/g, function(c){
-      return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c];
-    });
-  }
-  function parseData(el){
-    try { return JSON.parse(el.getAttribute('data') || '{}') || {}; } catch (e) { return {}; }
-  }
-  function attachments(){
-    return (window.AttachmentSetting && AttachmentSetting.attachments) || [];
-  }
-  function defaults(){
-    return (window.AttachmentSetting && AttachmentSetting.defaults) || {};
-  }
-  function isBbs(item){
-    var t = String((item && (item.type || item.attachmentType || (item.property && (item.property.module || item.property.type)))) || '');
-    return /bbs|topic|discuss/i.test(t);
-  }
-  function findAttach(iframe, data){
-    var mid = String(data.mid || '');
-    var list = attachments();
-    var i;
-    if (mid) {
-      for (i = 0; i < list.length; i++) {
-        var p = list[i] && list[i].property;
-        if (p && String(p.mid) === mid) return list[i];
-      }
-    }
-    var frames = document.querySelectorAll('iframe[src*="insertbbs"], iframe[class*="insertbbs"]');
-    var idx = -1;
-    for (i = 0; i < frames.length; i++) if (frames[i] === iframe) idx = i;
-    var bbs = [];
-    for (i = 0; i < list.length; i++) if (isBbs(list[i])) bbs.push(list[i]);
-    return idx >= 0 && bbs[idx] ? bbs[idx] : null;
-  }
-  function titleOf(data, attach){
-    var p = (attach && attach.property) || {};
-    return p.talkTitle || p.title || p.name || p.content || data.talkTitle || data.title || '讨论';
-  }
-  function subOf(data, attach){
-    var p = (attach && attach.property) || {};
-    return p.discussTitle || p.subtitle || p.desc || '';
-  }
-  function hrefOf(data, attach){
-    var p = (attach && attach.property) || {};
-    if (p.topicUrl) return String(p.topicUrl);
-    if (p.url && /groupweb|topic|bbs|replysList/i.test(String(p.url))) return String(p.url);
-    var def = defaults();
-    var courseid = data.courseid || def.courseid || '';
-    var clazzId = def.clazzId || '';
-    if (p.bbsid && (p.uuid || p.topicId || p.tid)) {
-      return 'https://groupweb.chaoxing.com/course/topic/v3/bbs/' + p.bbsid + '/' + (p.uuid || p.topicId || p.tid) + '/replysList?courseId=' + courseid + '&classId=' + clazzId;
-    }
-    var mid = data.mid || p.mid || '';
-    if (!mid) return '';
-    return 'https://mooc1.chaoxing.com/mooc-ans/bbscircle/chapter?mtopicid=' + encodeURIComponent(mid)
-      + '&jobid=' + encodeURIComponent(data.jobid || data._jobid || '')
-      + '&isPortal=false&knowledgeid=' + encodeURIComponent(def.knowledgeid || '')
-      + '&ut=s&clazzId=' + encodeURIComponent(clazzId)
-      + '&courseid=' + encodeURIComponent(courseid)
-      + '&isJob=false';
-  }
-  function paint(iframe){
-    if (iframe.getAttribute('data-ze-bbs') === '1') return;
-    var src = String(iframe.getAttribute('src') || iframe.src || '');
-    var cls = String(iframe.className || '');
-    if (!/insertbbs/i.test(src) && !/insertbbs/i.test(cls)) return;
-    iframe.setAttribute('data-ze-bbs', '1');
-    var data = parseData(iframe);
-    var attach = findAttach(iframe, data);
-    var href = hrefOf(data, attach);
-    var title = titleOf(data, attach);
-    var sub = subOf(data, attach);
-    var card = document.createElement('div');
-    card.className = 'ze-bbs-card';
-    card.setAttribute('role', 'link');
-    card.innerHTML = '<img class="ze-bbs-icon" src="//mooc1.chaoxing.com/mooc-ans/css/images/tl-new.png" alt="">'
-      + '<div class="ze-bbs-text"><p>' + esc(title) + '</p>'
-      + (sub ? '<span>' + esc(sub) + '</span>' : '') + '</div>';
-    if (href) card.onclick = function(){ window.open(href); };
-    iframe.style.cssText = 'display:none!important;height:0!important;border:0;';
-    iframe.insertAdjacentElement('afterend', card);
-    var box = iframe.closest ? (iframe.closest('.ans-attach-ct, .ans-cc, .moduleDiv') || iframe.parentElement) : iframe.parentElement;
-    if (box) { box.style.height = 'auto'; box.style.minHeight = '0'; }
-  }
-  function scan(){
-    var list = document.querySelectorAll('iframe');
-    for (var i = 0; i < list.length; i++) paint(list[i]);
-  }
-  var style = document.createElement('style');
-  style.textContent = '.ze-bbs-card{padding:16px;background:#F7F8FA;display:flex;align-items:center;border-radius:4px;cursor:pointer;margin:8px 0;box-sizing:border-box;}'
-    + '.ze-bbs-icon{width:42px;height:42px;margin-right:14px;flex:none;}'
-    + '.ze-bbs-text{flex:1;min-width:0;}'
-    + '.ze-bbs-text p{margin:0;line-height:1.5;font-size:14px;color:#131B26;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;}'
-    + '.ze-bbs-text span{display:block;color:#8A8B99;font-size:12px;line-height:18px;margin-top:2px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;}';
-  function boot(){
-    (document.head || document.documentElement).appendChild(style);
-    var n = 0;
-    function tick(){
-      scan();
-      n += 1;
-      if (n < 12) setTimeout(tick, 250);
-    }
-    tick();
-  }
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
-  else boot();
 })();"#;
 
 fn pending_evals() -> &'static Mutex<HashMap<String, tokio::sync::oneshot::Sender<String>>> {
@@ -637,9 +442,6 @@ pub async fn browser_open(
   height: f64,
   hidden: Option<bool>,
 ) -> Result<(), String> {
-  if is_space_list_url(&url) {
-    return Err("禁止顶层打开课表地址。只点 iframe 里的「我学的课」页签。".into());
-  }
   #[cfg(target_os = "macos")]
   if crate::cef_runtime::cef_enabled() {
     return crate::cef::open(app, id, url, x, y, width, height, hidden.unwrap_or(false)).await;
@@ -672,7 +474,6 @@ pub async fn browser_open(
     .accept_first_mouse(true)
     .user_agent(SAFARI_UA)
     .initialization_script_for_all_frames(BROWSER_HOME_LAUNCH)
-    .initialization_script_for_all_frames(CHAOXING_BBS_CARDS)
     .on_new_window(move |url, _features| {
       if url.scheme() != "http" && url.scheme() != "https" {
         return NewWindowResponse::Deny;
@@ -878,15 +679,6 @@ pub async fn browser_navigate(app: AppHandle, id: String, url: String, user_init
   let current = remembered_url(&id);
   let target = parse_url(&url)?;
   let target_raw = target.to_string();
-  if is_space_list_url(&target_raw) {
-    return Err("禁止顶层打开课表地址。只点 iframe 里的「我学的课」页签。".into());
-  }
-  if is_iframe_document_url(&target_raw) {
-    return Err(
-      "这是学习通 iframe 里的页面，不能当顶层打开。留在当前课页，在页面里点章节/作业。"
-        .into(),
-    );
-  }
   remember_url(&id, &url);
   // 导航页跑在 localhost / tauri://localhost。原生 navigate 会带 Referer，
   // 学习通会跳到「localhost 该域名未授权」。从首页离开时用页内跳转并配合 no-referrer。
@@ -1733,45 +1525,14 @@ async fn dispatch_browser_protocol(
 
 #[cfg(test)]
 mod tests {
-  use super::{is_course_entry_url, is_homework_do_url, is_space_list_url, popup_should_drop};
-
+  use super::popup_should_drop;
   #[test]
-  fn space_list_url_is_banned() {
-    assert!(is_space_list_url("https://mooc1-1.chaoxing.com/visit/courses?s=1"));
-    assert!(is_space_list_url("https://mooc1-1.chaoxing.com/visit/interaction"));
-    assert!(is_space_list_url("https://mooc1-1.chaoxing.com/visit/courselist"));
-    assert!(!is_space_list_url("https://i.chaoxing.com/base"));
-    assert!(!is_space_list_url("https://mooc2-ans.chaoxing.com/visit/stucoursemiddle?courseid=1"));
-  }
-
-  #[test]
-  fn homework_do_url_is_kept() {
-    assert!(is_homework_do_url("https://mooc1.chaoxing.com/mooc-ans/work/dowork?courseId=1"));
-    assert!(is_homework_do_url("https://mooc1.chaoxing.com/mooc2/work/doHomeWork?id=1"));
-    assert!(is_homework_do_url("https://mooc1.chaoxing.com/mooc-ans/mooc2/work/task?workId=1"));
-    assert!(!is_homework_do_url("https://mooc1.chaoxing.com/mooc2/work/list?courseId=1"));
-  }
-
-  #[test]
-  fn click_popup_stays_except_nested_or_space_list() {
-    let list = "https://mooc2-ans.chaoxing.com/mooc2-ans/mycourse/stu?pageHeader=8";
-    assert!(!popup_should_drop(
-      list,
-      "https://mooc1.chaoxing.com/mooc-ans/mooc2/work/task?courseId=1&workId=2"
-    ));
-    assert!(!popup_should_drop(list, "https://mooc1.chaoxing.com/mooc-ans/mooc2/work/dowork?id=1"));
-    assert!(is_course_entry_url("https://mooc2-ans.chaoxing.com/visit/stucoursemiddle?courseid=1"));
-    assert!(!popup_should_drop(
-      "https://i.chaoxing.com/base",
-      "https://mooc2-ans.chaoxing.com/visit/stucoursemiddle?courseid=1"
-    ));
-    assert!(popup_should_drop(list, "https://mooc1-1.chaoxing.com/visit/courses?s=1"));
-    assert!(popup_should_drop(list, "https://mooc1.chaoxing.com/knowledge/cards?clazzid=1"));
-    assert!(popup_should_drop(list, "about:blank"));
-    assert!(popup_should_drop(
-      "https://mooc1.chaoxing.com/mycourse/studentstudy?chapterId=1",
-      "https://mooc1.chaoxing.com/mycourse/studentstudy?chapterId=2"
-    ));
+  fn popups_validate_protocol_without_website_routes() {
+    assert!(!popup_should_drop("https://example.org/", "https://example.org/embedded/content"));
+    assert!(!popup_should_drop("https://example.org/", "https://other.example/courses?courseid=1"));
+    for url in ["", "about:blank", "javascript:alert(1)", "file:///tmp/a", "https://user:secret@example.org/"] {
+      assert!(popup_should_drop("https://example.org/", url));
+    }
   }
 
   #[test]

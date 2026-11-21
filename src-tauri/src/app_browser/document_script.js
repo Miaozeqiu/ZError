@@ -36,8 +36,10 @@
     return '';
   };
   if (action === 'query') {
+    const extra = args.allowFlags === true ? (args.attributes || []).filter(name => /^[a-z_][a-z0-9_-]{0,63}$/.test(name) && !['value','style','srcdoc','password','content','nonce'].includes(name)) : [];
     const offset = args.offset || 0;
     return { ok: true, nodes: Array.from(candidates).slice(offset, offset + args.limit).map((node, index) => ({
+      fontFamily: privateNode(node) ? '' : String(getComputedStyle(node).fontFamily || '').slice(0, 256), textTruncated: String(node.textContent || '').length > 2048,
       index: offset + index + 1, selector: locator(node), tag: node.tagName.toLowerCase(),
       text: privateNode(node) || node instanceof HTMLTextAreaElement ? '' : String(node.textContent || '').slice(0, 2048),
       visible: visible(node), disabled: Boolean(node.disabled), checked: Boolean(node.checked),
@@ -46,12 +48,94 @@
       hasValue: 'value' in node && Boolean(node.value),
       // A boolean flag is sufficient for hidden feature switches, never disclose their value.
       valueIsTrue: args.allowFlags === true && !privateNode(node) && node.type === 'hidden' && /^(?:1|true)$/i.test(node.value),
-      attributes: Object.fromEntries(['id', 'class', 'type', 'name', 'role', 'href', 'src', 'alt', 'title', 'aria-label', 'aria-checked', 'aria-selected', 'aria-disabled', 'placeholder'].map(key => [key, String(node.getAttribute(key) || '').slice(0, 2048)])),
+      attributes: Object.fromEntries([...new Set(['id', 'class', 'type', 'name', 'role', 'href', 'src', 'alt', 'title', 'aria-label', 'aria-checked', 'aria-selected', 'aria-disabled', 'placeholder', ...(!privateNode(node) ? extra : [])])].map(key => [key, String(node.getAttribute(key) || '').slice(0, 2048)])),
     })), total: candidates.length, truncated: candidates.length > offset + args.limit };
   }
   const node = args.nth ? matches[args.nth - 1] : matches.length === 1 ? matches[0] : null;
   if (!node || !node.isConnected || node.ownerDocument !== document || (['click','fill','select'].includes(action) && (node.disabled || node.readOnly))
     || ((action === 'click' || action === 'fill' || action === 'image') && !visible(node))) return { ok: false, reason: 'not_found', dispatched: false };
+  /*
+MIT License
+
+Copyright (c) 2022 enncy
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+  */
+  if (action === 'glyphs') {
+    if (privateNode(node) || node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement || document.querySelector('input[type=password],[data-zerror-private]')) return { ok: false, reason: 'private_input' };
+    const chars = Array.from(args.characters || '');
+    const r = args.raster || {};
+    if (!chars.length || chars.length > 16 || new Set(chars).size !== chars.length || !Number.isInteger(r.size) || r.size < 32 || r.size > 512
+      || !Number.isInteger(r.fontSize) || r.fontSize < 16 || r.fontSize > 512 || !Number.isInteger(r.baseline) || r.baseline < 0 || r.baseline > r.size
+      || !Number.isInteger(r.threshold) || r.threshold < 0 || r.threshold > 255
+      || [r.coarse,r.fine].some(n => !Number.isInteger(n) || n < 8 || n > 32 || r.size % n || n * n % 8)) return { ok: false, reason: 'invalid_raster' };
+    const family = String(getComputedStyle(node).fontFamily || '').split(',')[0].trim().replace(/^["']|["']$/g, '');
+    if (!family || !document.fonts?.load) return { ok: false, reason: 'font_unavailable' };
+    const quoted = '"' + family.replace(/[\\"]/g, '\\$&') + '"';
+    return (async () => {
+      let timer, loaded;
+      try {
+        loaded = await Promise.race([document.fonts.load(r.fontSize + 'px ' + quoted, chars.join('')), new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('font_timeout')), 2000); })]);
+      } catch { return { ok: false, reason: 'font_unavailable' }; }
+      finally { clearTimeout(timer); }
+      const canvas = document.createElement('canvas'), coverage = document.createElement('canvas');
+      canvas.width = canvas.height = r.size; coverage.width = coverage.height = 200;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true }), small = coverage.getContext('2d', { willReadFrequently: true });
+      if (!ctx || !small) return { ok: false, reason: 'canvas_unavailable' };
+      const covered = ch => {
+        const draw = fallback => {
+          small.clearRect(0, 0, 200, 200); small.fillStyle = '#fff'; small.font = '120px ' + quoted + ', ' + fallback; small.textBaseline = 'middle'; small.fillText(ch, 10, 100);
+          return small.getImageData(0, 0, 200, 200).data;
+        };
+        const a = draw('serif'), b = draw('sans-serif'); let diff = 0;
+        for (let index = 3; index < a.length; index += 4) diff += Math.abs(a[index] - b[index]);
+        return diff < 1000;
+      };
+      const glyphs = [];
+      try {
+        for (const character of chars) {
+          if (!covered(character)) { glyphs.push({ character, covered: false }); continue; }
+          ctx.clearRect(0, 0, r.size, r.size); ctx.fillStyle = '#fff'; ctx.font = r.fontSize + 'px ' + quoted; ctx.textBaseline = 'alphabetic';
+          ctx.fillText(character, (r.size - ctx.measureText(character).width) / 2, r.baseline);
+          const px = ctx.getImageData(0, 0, r.size, r.size).data, stride = r.size + 1, sum = new Uint32Array(stride * stride);
+          let ink = false;
+          for (let y = 0; y < r.size; y++) {
+            let row = 0;
+            for (let x = 0; x < r.size; x++) { const alpha = px[(y * r.size + x) * 4 + 3]; ink ||= alpha > 40; row += alpha; sum[(y + 1) * stride + x + 1] = sum[y * stride + x + 1] + row; }
+          }
+          if (!ink) { glyphs.push({ character, covered: true, empty: true }); continue; }
+          const feature = n => {
+            const block = r.size / n, bytes = new Uint8Array(n * n / 8);
+            for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+              const top = y * block, left = x * block;
+              const alpha = sum[(top + block) * stride + left + block] - sum[top * stride + left + block] - sum[(top + block) * stride + left] + sum[top * stride + left];
+              if (alpha / (block * block) > r.threshold) { const bit = y * n + x; bytes[bit >> 3] |= 1 << (7 - (bit & 7)); }
+            }
+            return Array.from(bytes);
+          };
+          glyphs.push({ character, covered: true, empty: false, coarse: feature(r.coarse), fine: feature(r.fine) });
+        }
+        return { ok: true, family, webFont: Array.isArray(loaded) && loaded.some(face => face.status === 'loaded'), glyphs };
+      } finally { canvas.width = coverage.width = 0; }
+    })();
+  }
+  if (action === 'reveal') { node.scrollIntoView({ block: 'center', behavior: 'instant' }); return { ok: true, dispatched: true }; }
   if (action === 'scroll') {
     node.scrollBy({ top: args.amount, behavior: 'instant' });
     return { ok: true, dispatched: true, top: node.scrollTop };
