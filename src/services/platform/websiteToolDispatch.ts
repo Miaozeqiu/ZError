@@ -1,17 +1,9 @@
 import type { SiteToolContext } from '../browser/siteCapabilities'
 /** Compatibility orchestration for repository-defined tools; host checks remain in Agent dispatch. */
 export async function dispatchWebsiteTool(ctx: SiteToolContext): Promise<string | null> {
-  if (ctx.name === 'browser_login_zjooc' || ctx.name === 'browser_login_chaoxing') {
+  if (ctx.name === 'browser_login_chaoxing') {
     const { handleLoginTool } = await import('../agent/tools/websiteLogin')
     return handleLoginTool(ctx as Parameters<typeof handleLoginTool>[0])
-  }
-  if (ctx.name === 'browser_answer_zjooc') {
-    const { answerZjooc } = await import('../agent/tools/zjoocAnswers')
-    return answerZjooc(ctx as Parameters<typeof answerZjooc>[0])
-  }
-  if (ctx.name === 'browser_play_zjooc') {
-    const { playWebsiteVideos } = await import('../agent/tools/websitePlayback')
-    return playWebsiteVideos('zjooc.cn', 'zjooc', ctx as Parameters<typeof playWebsiteVideos>[2])
   }
   if (ctx.name === 'browser_list_courses' || ctx.name === 'browser_open_course') {
     const { handleWebsiteCourseTools } = await import('../agent/tools/websiteCourses')

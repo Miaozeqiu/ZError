@@ -1,9 +1,10 @@
 /** Cached cloud experience with separately stored local additions. */
 import { validateWebsiteTools } from './websiteToolDefinitions'
 import type { ToolDefinition } from './core/tools'
+import type { WebsiteRuntimePackage } from './websiteRuntime/protocol'
 import { parseSkillFrontmatter, validateSkillMarkdown } from './skillFormat'
 import { websiteManifest, type WebsiteManifest, type WebsiteRepositoryIcon } from './websiteRepositoryManifest'
-export type WebsiteSnapshot = { revision: string; files: Record<string, string>; etag?: string; checkedAt: number; website?: WebsiteManifest; icon?: WebsiteRepositoryIcon; scriptManifest?: string; tools?: ToolDefinition[] }
+export type WebsiteSnapshot = { revision: string; files: Record<string, string>; etag?: string; checkedAt: number; website?: WebsiteManifest; icon?: WebsiteRepositoryIcon; scriptManifest?: string; tools?: ToolDefinition[]; runtime?: WebsiteRuntimePackage; hostApi?: 2 }
 type GraphRecord = Record<string, unknown>
 type GraphDelta = { nodes: Record<string, GraphRecord>; edges: GraphRecord[] }
 export type WebsiteRepositoryDocument = {
@@ -25,6 +26,7 @@ const own = (value: object, key: string) => Object.prototype.hasOwnProperty.call
 export const validateWebsiteSnapshot = (snapshot: WebsiteSnapshot, identity?: { id: string; host: string }) => {
   if (!snapshot || typeof snapshot.revision !== 'string' || !snapshot.revision || !Number.isFinite(snapshot.checkedAt)
     || !snapshot.files || typeof snapshot.files !== 'object' || Array.isArray(snapshot.files)) throw new Error('网站仓库快照无效')
+  if (snapshot.hostApi !== undefined && snapshot.hostApi !== 2) throw new Error('网站快照宿主 API 不兼容')
   const entries = Object.entries(snapshot.files)
   if (!entries.length || entries.length > 32 || !own(snapshot.files, 'SKILL.md') || !own(snapshot.files, 'site-graph.json')) throw new Error('网站仓库缺少完整入口或图谱')
   let bytes = 0
@@ -35,7 +37,7 @@ export const validateWebsiteSnapshot = (snapshot: WebsiteSnapshot, identity?: { 
   }
   const graph = JSON.parse(snapshot.files['site-graph.json'])
   const expected = identity || snapshot.website || { id: graph.id, host: graph.host }
-  validateWebsiteTools(expected.host, snapshot.tools)
+  validateWebsiteTools(expected.host, snapshot.tools, snapshot.runtime, expected.id)
   const errors = validateSkillMarkdown(snapshot.files['SKILL.md'], expected.id)
   if (errors.length) throw new Error(`网站仓库入口无效：${errors.join('；')}`)
   if (snapshot.website) {

@@ -83,6 +83,11 @@ export type BrowserBounds = {
 const STORAGE_KEY = 'zerror-app-browsers'
 const SELECTED_KEY = 'zerror-app-browser-selected'
 const temporaryBrowsers = new Map<string, AppBrowser>()
+const closeListeners = new Set<(id: string) => void>()
+export const onAppBrowserClosed = (listener: (id: string) => void) => {
+  closeListeners.add(listener)
+  return () => { closeListeners.delete(listener) }
+}
 
 const createId = () => {
   const raw = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`
@@ -259,6 +264,7 @@ export const removeAppBrowser = (id: string) => {
   forgetPageState(id)
   writeList(readList().filter((item) => item.id !== id))
   if (getSelectedBrowserId() === id) setSelectedBrowserId('')
+  for (const listener of closeListeners) listener(id)
 }
 
 export const hostBounds = (el: HTMLElement | null): BrowserBounds | null => {
@@ -305,6 +311,7 @@ export const hideBrowserView = (id: string) => invoke('browser_hide', { id })
 export const hideAllBrowserViews = () => invoke('browser_hide_all')
 export const closeBrowserView = async (id: string) => {
   await invoke('browser_close', { id })
+  for (const listener of closeListeners) listener(id)
   forgetPageState(id)
   const next = { ...browserAudioMuted.value }
   delete next[id]

@@ -1,3 +1,4 @@
+import { validateWebsiteRuntime, verifyWebsiteRuntime, websiteToolName, type InstalledWebsiteTool } from './websiteRuntime/protocol'
 import { reactive } from 'vue'
 import type { ToolDefinition } from './core/tools'
 import { validateWebsiteTools, websiteHasSupportedTools } from './websiteToolDefinitions'
@@ -65,6 +66,9 @@ const loadRegistry = async () => {
       validConfiguration(entry.configuration)
       if (entry.configuration.host !== host || (ids.has(entry.configuration.id) && ids.get(entry.configuration.id) !== host)) throw new Error('网站仓库索引身份冲突')
       validateWebsiteSnapshot(entry.document.upstream, entry.configuration)
+      if (entry.document.upstream.runtime) await verifyWebsiteRuntime(entry.document.upstream.runtime)
+      const customRuntime = customSourceOf(entry)?.snapshot.runtime
+      if (customRuntime) await verifyWebsiteRuntime(customRuntime)
       ids.set(entry.configuration.id, host)
     }
     const removed = new Set([...(next.removedBuiltins ?? []), ...(next.removedOpenHosts ?? [])])
@@ -138,6 +142,22 @@ const legacyFiles = async (configuration: Configuration, fallback: WebsiteSnapsh
 const toolDefinitions = reactive<Record<string, ToolDefinition[]>>({})
 export const websiteToolsForHost = (host: string): ToolDefinition[] => toolDefinitions[host] ?? []
 
+const runtimePackages = new Map<string, Omit<InstalledWebsiteTool, 'tool'> & { source: string }>()
+export function installedWebsiteRuntimeTool(name: string): InstalledWebsiteTool | undefined {
+  void repositoryRegistryState.revision
+  for (const runtime of runtimePackages.values()) {
+    const tool = runtime.runtime.tools.find(tool => websiteToolName(runtime.siteId, tool.name) === name)
+    if (tool) return { ...runtime, tool }
+  }
+}
+export function websitePageAutomationTools(host: string) {
+  const runtime = runtimePackages.get(host)
+  return runtime ? (runtime.runtime.automations || []).map(row => ({ name: websiteToolName(runtime.siteId, row.tool), revision: `${runtime.authority}:${runtime.runtime.bundle.sha256}` })) : []
+}
+export const websiteRuntimeAuthorityActive = (tool: InstalledWebsiteTool) =>
+  runtimePackages.get(tool.host)?.authority === tool.authority
+  && Boolean(toolDefinitions[tool.host]?.some(candidate => candidate.function.name === websiteToolName(tool.siteId, tool.tool.name)))
+
 const instances = new Map<string, ReturnType<typeof createWebsiteRepository>>()
 const sourceChanges = new Map<string, Promise<unknown>>()
 const changeSource = async <T>(host: string, change: () => Promise<T>) => {
@@ -185,7 +205,15 @@ export const repositoryForHost = (host: string) => {
     changed: document => {
       if (instances.get(host) !== repository) return
       const snapshot = document.customSource?.snapshot ?? document.upstream
-      toolDefinitions[host] = validateWebsiteTools(host, snapshot.tools)
+      toolDefinitions[host] = validateWebsiteTools(host, snapshot.tools, snapshot.runtime, initial.id)
+      if (snapshot.runtime) {
+        const customUrl = document.customSource?.url || ''
+        const source = JSON.stringify([initial.id, host, customUrl, configurations.get(host)?.source])
+        const previous = runtimePackages.get(host)
+        runtimePackages.set(host, { siteId: initial.id, host, revision: snapshot.revision,
+          source, authority: previous?.source === source ? previous.authority : crypto.randomUUID(),
+          runtime: validateWebsiteRuntime(snapshot.runtime, initial.id) })
+      } else runtimePackages.delete(host)
       Object.assign(websiteRepositoryStates[host] ||= initialState(), { ready: true, revision: snapshot.revision,
         version: `${host}:${snapshot.revision}:${document.generation}`, checkedAt: snapshot.checkedAt,
         source: document.customSource ? 'http' : snapshot.revision === EMPTY_REVISION ? 'offline' : 'repository',
@@ -322,6 +350,7 @@ export const setWebsiteExperienceUrl = (host: string, input: string) => changeSo
       instances.delete(host)
       delete websiteRepositoryStates[host]
       delete toolDefinitions[host]
+      runtimePackages.delete(host)
       repositoryRegistryState.revision++
       notifyWebsiteRepositoryChanged(host)
     } else {
@@ -359,19 +388,33 @@ export const removeWebsiteRepository = (host: string, removeLocalData?: () => Pr
   await loadRegistry()
   if (isRequiredWebsiteRepository(host)) throw new Error('学习通是默认仓库，不能删除')
   const fromOpen = isOpenWebsiteRepository(host)
-  await removeLocalData?.()
-  await saveRegistry(next => {
-    delete next.entries[host]
-    if (fromOpen) next.removedOpenHosts = [...new Set([...(next.removedOpenHosts ?? []), host])]
-  })
+  const priorRuntime = runtimePackages.get(host)
+  runtimePackages.delete(host)
+  notifyWebsiteRepositoryChanged(host)
+  try {
+    await removeLocalData?.()
+    const { packageState } = await import('./websiteRuntime/packageState')
+    await packageState.removeOwner(host)
+    await saveRegistry(next => {
+      delete next.entries[host]
+      if (fromOpen) next.removedOpenHosts = [...new Set([...(next.removedOpenHosts ?? []), host])]
+    })
+  } catch (error) {
+    if (priorRuntime) runtimePackages.set(host, { ...priorRuntime, authority: crypto.randomUUID() })
+    notifyWebsiteRepositoryChanged(host)
+    throw error
+  }
   configurations.delete(host)
   instances.delete(host)
   pending.delete(host)
   lastCustomCheck.delete(host)
   delete websiteRepositoryStates[host]
   delete toolDefinitions[host]
+  runtimePackages.delete(host)
   repositoryRegistryState.revision++
   notifyWebsiteRepositoryChanged(host)
+  const { websiteCheckpoints } = await import('./websiteRuntime/checkpoints')
+  await websiteCheckpoints.removeHost(host)
 })
 
 export const importWebsiteRepository = (candidate: WebsiteRepositoryCandidate) => changeSource(candidate.website.host, async () => {
@@ -395,6 +438,8 @@ export const importWebsiteRepository = (candidate: WebsiteRepositoryCandidate) =
 })
 
 async function installWebsiteSnapshot(configuration: Configuration, snapshot: WebsiteSnapshot) {
+  validateWebsiteSnapshot(snapshot, configuration)
+  if (snapshot.runtime) await verifyWebsiteRuntime(snapshot.runtime)
   await verifyIcon(snapshot.icon?.dataUrl)
   validConfiguration(configuration)
   const legacy = await legacyFiles(configuration, snapshot)

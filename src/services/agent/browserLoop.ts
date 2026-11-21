@@ -235,9 +235,6 @@ export const recipeForPage = (input: {
 }) => {
   const intent = input.intent || 'unknown'
   const chaoxing = input.siteId === 'chaoxing'
-  if (input.siteId === 'zjooc' && input.kind === 'login') return '需要登录在浙学时调用 browser_login_zjooc，按回执提示完成验证。'
-  if (input.siteId === 'zjooc' && intent === 'homework') return '进入在浙学作答页后使用 browser_answer_zjooc；只读任务按页面快照核对。'
-  if (input.siteId === 'zjooc' && input.kind === 'player' && intent === 'play') return `在浙学播放页调用 browser_play_zjooc。指定视频时传页签全名，连续播放本小节时用 mode=section。${learnedSkillHint('zjooc.cn')}`
   if (!chaoxing) {
     return cardRecipe({ id: input.siteId, name: input.siteName, host: input.host }, input.kind, intent)
   }

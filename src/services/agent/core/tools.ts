@@ -17,16 +17,17 @@ const validate = (value: unknown, schema: Record<string, any>, path: string): st
   if (kind === 'object') {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return `${path} 必须是对象`
     const row = value as Record<string, unknown>
-    for (const key of schema.required || []) if (row[key] === undefined) return `${path}.${key} 缺失`
+    for (const key of schema.required || []) if (!Object.hasOwn(row, key) || row[key] === undefined) return `${path}.${key} 缺失`
     for (const [key, item] of Object.entries(row)) {
-      if (schema.properties?.[key]) { const error = validate(item, schema.properties[key], `${path}.${key}`); if (error) return error }
+      if (schema.properties && Object.hasOwn(schema.properties, key)) { const error = validate(item, schema.properties[key], `${path}.${key}`); if (error) return error }
       else if (schema.additionalProperties === false) return `${path}.${key} 未声明`
     }
   } else if (kind === 'array') {
     if (!Array.isArray(value)) return `${path} 必须是数组`
     if (value.length < (schema.minItems ?? 0) || value.length > (schema.maxItems ?? Infinity)) return `${path} 数量超出范围`
     for (let index = 0; index < value.length; index++) { const error = validate(value[index], schema.items || {}, `${path}[${index}]`); if (error) return error }
-  } else if (kind === 'string' && typeof value !== 'string') return `${path} 必须是字符串`
+  } else if (kind === 'null' && value !== null) return `${path} 必须是 null`
+  else if (kind === 'string' && typeof value !== 'string') return `${path} 必须是字符串`
   else if (kind === 'boolean' && typeof value !== 'boolean') return `${path} 必须是布尔值`
   else if ((kind === 'number' || kind === 'integer') && (typeof value !== 'number' || !Number.isFinite(value) || (kind === 'integer' && !Number.isInteger(value)))) return `${path} 必须是有效数字`
   if (typeof value === 'number' && (value < (schema.minimum ?? -Infinity) || value > (schema.maximum ?? Infinity))) return `${path} 数值超出范围`

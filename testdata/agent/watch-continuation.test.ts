@@ -73,7 +73,8 @@ vi.mock('../../src/services/agent/tools', async () => {
   const { BROWSER_PRIMITIVE_TOOLS } = await import('../../src/services/agent/toolDefs/browserPrimitiveTools')
   const { websiteToolNames } = await import('../../src/services/agent/websiteToolDefinitions')
   return { assembleAgentTools: () => [...BROWSER_PRIMITIVE_TOOLS,
-    ...websiteToolNames.map(name => ({ type: 'function', function: { name } }))], availableAgentTools: (tools: any[]) => tools.filter(tool => !api.disabledTools.has(tool.function.name)) }
+    ...websiteToolNames.map(name => ({ type: 'function', function: { name } })),
+    { type: 'function', function: { name: 'browser_site_academy__login', parameters: { type: 'object', properties: { captcha_id: { type: 'string' }, captcha_code: { type: 'string' } } } } }], availableAgentTools: (tools: any[]) => tools.filter(tool => !api.disabledTools.has(tool.function.name)) }
 })
 vi.mock('../../src/services/app/settings', () => ({ useSettings: () => ({ settings: {} }), settingsManager: { get: () => 0 } }))
 
@@ -161,76 +162,55 @@ describe('same task completion through the real chat loop and model runner', () 
     expect(api.execute.mock.calls.map(([call]) => call.name)).toEqual(['browser_find'])
   })
   it.each([
-    { ok: true, loggedIn: false, challenge: 'image_captcha', captcha_id: 'retry-image' },
-    { ok: false, loggedIn: false, reason: 'invalid', error: '验证码错误' },
-    { ok: false, loggedIn: true, reason: 'invalid', error: '登录失败' },
-  ])('restores discovery after confirmed captcha login, retaining restrictions for receipt %j', async retry => {
+    { loggedIn: false, status: 'captcha', captcha_id: 'retry-image' },
+    { loggedIn: false, status: 'rejected', message: '验证码错误' },
+  ])('repository login keeps normal tool discovery through captcha retries: %j', async retry => {
     hydration.resolve(null); await store.chatStoreReady
     store.createChat({ browserId: 'watched-video' })
-    api.vision = true
-    const image = 'data:image/png;base64,' + 'a'.repeat(64)
     let loginCalls = 0
-    api.execute.mockImplementation(async (call) => {
-      if (call.name === 'browser_login_zjooc') {
+    api.execute.mockImplementation(async call => {
+      if (call.name === 'browser_site_academy__login') {
         loginCalls++
-        if (loginCalls === 1) return JSON.stringify({ ok: true, loggedIn: false, challenge: 'image_captcha', captcha_id: 'initial-image', captchaImage: image })
-        if (loginCalls === 2) return JSON.stringify(retry)
-        // A settings change during login must remain effective after the tool directory is restored.
-        api.disabledTools.add('browser_scroll')
-        return '{"ok":true,"loggedIn":true}'
+        if (loginCalls === 3) api.disabledTools.add('browser_scroll')
+        return JSON.stringify({ ok: true, observed: true, repository: { id: 'academy' }, result: loginCalls < 3 ? retry : { loggedIn: true } })
       }
       if (call.name === 'browser_finish') return '{"ok":true,"finished":true,"status":"done"}'
       return '{"ok":true,"snapshot":"课程已找到"}'
     })
     const schemas: any[][] = []
-    const contexts: string[] = []
     const replies = [
-      tool('browser_login_zjooc', 'captcha-retry', { captcha_id: 'initial-image', captcha_code: '12345' }),
-      tool('browser_login_zjooc', 'captcha-success', { captcha_id: 'retry-image', captcha_code: '54321' }),
+      tool('load_agent_tools', 'load-login', { names: ['browser_site_academy__login'] }),
+      tool('browser_site_academy__login', 'login'),
+      tool('browser_site_academy__login', 'captcha-retry', { captcha_id: 'initial-image', captcha_code: '12345' }),
+      tool('browser_site_academy__login', 'captcha-success', { captcha_id: 'retry-image', captcha_code: '54321' }),
       tool('load_agent_tools', 'after-login-load', { names: ['browser_find'] }),
       tool('browser_find', 'after-login-find', { query: '课程' }),
       { content: '已登录并核对课程。' },
     ]
-    api.fetch.mockImplementation(async (_url, options) => {
-      const request = JSON.parse(options.body)
-      schemas.push(request.tools)
-      contexts.push(JSON.stringify(request.messages))
-      return replies.shift()
-    })
-    const pending = send('登录在浙学')
+    api.fetch.mockImplementation(async (_url, options) => { schemas.push(JSON.parse(options.body).tools); return replies.shift() })
+    const pending = send('登录后查找课程')
     await vi.advanceTimersByTimeAsync(0); await pending
-    expect(schemas).toHaveLength(5)
-    for (const round of schemas.slice(0, 2)) {
-      expect(new Set(round.map(tool => tool.function.name))).toEqual(new Set(['browser_login_zjooc', 'browser_finish']))
-    }
-    const restored = schemas[2].map(tool => tool.function.name)
-    expect(restored).toContain('load_agent_tools')
-    expect(restored).not.toContain('browser_find')
-    const directory = schemas[2].find(tool => tool.function.name === 'load_agent_tools')
-    expect(directory.function.parameters.properties.names.items.enum).not.toContain('browser_scroll')
-    expect(contexts[2]).toContain('【登录已确认】')
-    expect(schemas[3].map(tool => tool.function.name)).toContain('browser_find')
-    const message = store.activeChat.value!.messages.at(-1)!
-    expect(message).toMatchObject({ status: 'done' })
-    expect(message.steps.find(step => step.id === 'after-login-load')).toMatchObject({ status: 'done' })
-    expect(message.steps.find(step => step.id === 'after-login-find')).toMatchObject({ status: 'done' })
+    expect(schemas).toHaveLength(7)
+    expect(schemas[0].map(tool => tool.function.name)).toContain('load_agent_tools')
+    expect(schemas[1].map(tool => tool.function.name)).toContain('browser_site_academy__login')
+    expect(schemas[4].find(tool => tool.function.name === 'load_agent_tools').function.parameters.properties.names.items.enum).not.toContain('browser_scroll')
+    expect(schemas[5].map(tool => tool.function.name)).toContain('browser_find')
+    expect(store.activeChat.value!.messages.at(-1)).toMatchObject({ status: 'done' })
     expect(api.execute.mock.calls.filter(([call]) => call.name === 'browser_find')).toHaveLength(1)
   })
-  it('accepts the first final reply after a verified login through the normal finish gate', async () => {
+  it('accepts the first final reply after a repository login observation', async () => {
     hydration.resolve(null); await store.chatStoreReady
     store.createChat({ browserId: 'watched-video' })
-    api.vision = true
-    const image = 'data:image/png;base64,' + 'a'.repeat(64)
-    api.execute.mockResolvedValueOnce(JSON.stringify({ ok: true, loggedIn: false, challenge: 'image_captcha', captcha_id: 'initial', captchaImage: image }))
-      .mockResolvedValueOnce('{"ok":true,"loggedIn":true}')
+    api.execute.mockResolvedValueOnce('{"ok":true,"observed":true,"repository":{"id":"academy"},"result":{"loggedIn":true}}')
       .mockResolvedValueOnce('{"ok":true,"finished":true,"status":"done"}')
-    api.fetch.mockResolvedValueOnce(tool('browser_login_zjooc', 'login', { captcha_id: 'initial', captcha_code: '12345' }))
+    api.fetch.mockResolvedValueOnce(tool('load_agent_tools', 'load-login', { names: ['browser_site_academy__login'] }))
+      .mockResolvedValueOnce(tool('browser_site_academy__login', 'login'))
       .mockResolvedValueOnce({ content: '已登录。' })
-    const pending = send('登录在浙学')
+    const pending = send('登录网站')
     await vi.advanceTimersByTimeAsync(0); await pending
     expect(store.activeChat.value!.messages.at(-1)).toMatchObject({ taskOutcome: 'completed', content: '已登录。' })
-    expect(api.execute.mock.calls.map(([call]) => call.name)).toEqual(['browser_login_zjooc', 'browser_login_zjooc', 'browser_finish'])
-    expect(api.fetch).toHaveBeenCalledTimes(2)
+    expect(api.execute.mock.calls.map(([call]) => call.name)).toEqual(['browser_site_academy__login', 'browser_finish'])
+    expect(api.fetch).toHaveBeenCalledTimes(3)
   })
   it('删除会话和触及列表上限时释放会话的题目列表与工具计数', async () => {
     const session = await init()

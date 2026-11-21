@@ -34,6 +34,7 @@ export const executeToolNamesFor = (caps: HostCapabilities) => {
   const names: string[] = [
     'browser_select_tab',
     'browser_run_status',
+    'browser_workflows',
     'browser_verify_operation',
     'browser_get_state',
     'browser_find',

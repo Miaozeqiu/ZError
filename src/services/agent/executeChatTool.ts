@@ -15,6 +15,7 @@ import { studyToolHandlers } from './toolHandlers/study'
 import { searchToolHandlers } from './toolHandlers/search'
 import { parseToolArgs } from './toolArgs'
 import type { ChatToolContext, ChatToolHandler } from './toolContext'
+import { isWebsiteRuntimeToolName } from './websiteRuntime/protocol'
 import { getAgentPolicy } from './agentPolicy'
 import { campusWriteDenial } from './campusPolicy'
 import { requestAgentApproval } from './agentApproval'
@@ -119,6 +120,10 @@ export const executeChatTool = async (input: {
       : { ok: false, error: '当前对话不存在' })
   }
   let browserId = ctx.browserId()
+  if (call.name === 'browser_workflows') {
+    const { websiteWorkflowTool } = await import('./websiteRuntime/workflowTool')
+    return websiteWorkflowTool(args, ctx)
+  }
   if (call.name.startsWith('browser_') && ctx.ensureBrowser) {
     try {
       browserId = await ctx.ensureBrowser()
@@ -129,7 +134,17 @@ export const executeChatTool = async (input: {
     }
   }
 
+  if (isWebsiteRuntimeToolName(call.name)) {
+    const { executeInstalledWebsiteTool } = await import('./websiteRuntime/installedTool')
+    return executeInstalledWebsiteTool(call.name, args, ctx, browserId)
+  }
+
   if (call.name === 'protect_credentials') return protectCredentials({ call, args, ctx })
+
+  if (call.name === 'browser_package_read' || call.name === 'browser_package_act') {
+    const { executeWebsiteHostTool } = await import('./websiteRuntime/hostTools')
+    return executeWebsiteHostTool(call.name, args, ctx, browserId)
+  }
 
   if (call.name === 'list_agent_skills') {
     const { listAgentSkillsForAgent } = await import('./agentSkills')
@@ -345,7 +360,7 @@ export const executeChatTool = async (input: {
         return JSON.stringify({ ok: true, finished: judged.status !== 'watching', status: judged.status, summary: judged.summary, learning,
           ...(judged.status === 'watching' ? { awaitingVideo: true, taskComplete: false } : {}) })
       }
-      const homeworkTool = call.name === 'browser_answer_homework' || call.name === 'browser_review_homework' || call.name === 'browser_answer_zjooc'
+      const homeworkTool = call.name === 'browser_answer_homework' || call.name === 'browser_review_homework'
       const chapterTool = call.name === 'browser_start_chapter_tasks'
       if (call.name === 'browser_reply_chapter_discussion') {
         const { liveSession } = await import('./chatStore')
@@ -362,7 +377,7 @@ export const executeChatTool = async (input: {
         const session = homeworkStore.liveSession(gateSession)
         const current = session?.messages.find(message => message.id === (ctx.parentAssistantId || ctx.assistantId))
         const goal = session?.messages.find(message => message.role === 'user' && message.id === current?.run?.goalMessageId)
-        if (call.name === 'browser_answer_homework' || call.name === 'browser_answer_zjooc') {
+        if (call.name === 'browser_answer_homework') {
           const permits = args.chapter_key !== undefined || args.quiz_job_id !== undefined ? permitsChapterQuizAnswers : permitsHomeworkAnswers
           if (!goal || !permits(goal.content)) {
             return JSON.stringify({ ok: false, reason: 'invalid', error: '当前用户请求未授权填写这些题目。可用 browser_review_homework 查看。' })

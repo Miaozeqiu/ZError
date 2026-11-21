@@ -19,6 +19,21 @@ const walk = (dir: string): string[] => {
 }
 
 describe('agent 层边界', () => {
+  it('新网站运行器不直接依赖旧站点脚本或平台业务实现', () => {
+    const hits: string[] = []
+    for (const file of walk(join(agentRoot, 'websiteRuntime'))) {
+      const source = ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true)
+      const visit = (node: ts.Node) => {
+        const specifier = ts.isImportDeclaration(node) || ts.isExportDeclaration(node) ? node.moduleSpecifier
+          : ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword ? node.arguments[0] : undefined
+        if (specifier && ts.isStringLiteral(specifier)
+          && /(?:websiteScripts|legacyWebsiteTools|\/platform\/|\/chaoxing\/|\/zjooc\/)/.test(specifier.text)) hits.push(file)
+        ts.forEachChild(node, visit)
+      }
+      visit(source)
+    }
+    expect(hits).toEqual([])
+  })
   it('service runtime imports contain no static dependency cycle', () => {
     expect(staticServiceCycles()).toEqual([])
   })

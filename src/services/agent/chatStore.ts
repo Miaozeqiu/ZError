@@ -558,6 +558,8 @@ export const removeChat = (id: string) => {
   const browserIds = [...new Set([...(current?.browserIds || []), current?.browserId || ''].filter(Boolean))]
   stopChat(id)
   releaseChatMemory(id)
+  void import('./websiteRuntime/checkpoints').then(({ websiteCheckpoints }) => websiteCheckpoints.removeSession(id))
+    .catch(() => undefined)
   sessions.value = sessions.value.filter((session) => session.id !== id)
   if (activeId.value === id) activeId.value = sessions.value.find((session) => !session.parentId)?.id || null
   persist()

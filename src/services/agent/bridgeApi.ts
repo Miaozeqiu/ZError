@@ -365,11 +365,12 @@ export const runBridgeAction = async (cmd: BridgeCmd) => {
             let params: Record<string, unknown> = {}, result: Record<string, unknown> = {}
             try { params = JSON.parse(step.arguments || '{}') } catch { /* no arguments */ }
             try { result = JSON.parse(step.result || '{}') } catch { /* no JSON result */ }
+            const body = result.result && typeof result.result === 'object' ? result.result as Record<string, unknown> : result
             return { name: step.name, status: step.status,
               frame: params.frame, frameId: params.frameId, loaderId: params.loaderId,
               requestedStatus: params.status, watching: result.watching, finished: result.finished,
               resultStatus: result.status, ok: result.ok,
-              ...(step.name === 'browser_login_zjooc' ? { captchaImageCaptured: result.captchaImage === '[attached]' } : {}),
+              ...(body.captchaImage ? { captchaImageCaptured: body.captchaImage === '[attached]' } : {}),
               ...(args.details === true && step.finishedAt ? { elapsedMs: step.finishedAt - step.startedAt,
                 startedAfterMs: step.startedAt - (message.run?.trace[0]?.at ?? step.startedAt) } : {}),
               ...(args.details === true && (step.status === 'failed' || result.ok === false) ? {

@@ -19,6 +19,16 @@ pub(crate) async fn call(
     params: Zeroizing<String>,
     error: &'static str,
 ) -> Result<Value, String> {
+    call_ms(webview, method, params, error, 5000).await
+}
+
+pub(crate) async fn call_ms(
+    webview: &Webview,
+    method: &'static str,
+    params: Zeroizing<String>,
+    error: &'static str,
+    timeout_ms: u64,
+) -> Result<Value, String> {
     let (send, receive) = oneshot::channel();
     let permit = crate::browser_control::current_permit();
     webview
@@ -57,7 +67,7 @@ pub(crate) async fn call(
             };
         })
         .map_err(|_| error)?;
-    tokio::time::timeout(Duration::from_secs(5), receive)
+    tokio::time::timeout(Duration::from_millis(timeout_ms.clamp(80, 35000)), receive)
         .await
         .map_err(|_| error)?
         .map_err(|_| error)?

@@ -44,13 +44,13 @@ export function chapterResumePlan(input: {
 }
 
 export function createHostToolRunner(
-  options: Pick<RunTextModelOptions, 'tools' | 'executeTool' | 'onEvent' | 'onTurnTranscript'>,
+  options: Pick<RunTextModelOptions, 'tools' | 'liveTools' | 'executeTool' | 'onEvent' | 'onTurnTranscript'>,
   turnId: string,
 ) {
   let sequence = 0
   return async (name: string, args: Record<string, unknown>) => {
     const call = { id: `${turnId}-host-${++sequence}`, name, arguments: JSON.stringify(args) }
-    const invalid = validateToolCall(options.tools || [], call)
+    const invalid = validateToolCall(await options.liveTools?.() ?? options.tools ?? [], call)
     if (invalid) return { ok: false, error: invalid }
     if (!options.executeTool) return { ok: false, error: '当前没有可执行的工具。' }
     options.onEvent?.({ type: 'tool_start', ...call })

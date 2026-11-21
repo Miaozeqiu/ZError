@@ -11,8 +11,8 @@ beforeEach(() => {
 it('uses and caches backend capabilities independently of the engine label', async () => {
   invoke.mockResolvedValue({ secureFill: true, audioMute: true })
   const { browserCapabilities } = await import('../../src/services/browser/capabilities')
-  expect(await browserCapabilities()).toEqual({ secureFill: true, audioMute: true })
-  expect(await browserCapabilities()).toEqual({ secureFill: true, audioMute: true })
+  expect(await browserCapabilities()).toEqual({ secureFill: true, secureFillInFrames: false, audioMute: true })
+  expect(await browserCapabilities()).toEqual({ secureFill: true, secureFillInFrames: false, audioMute: true })
   expect(invoke).toHaveBeenCalledExactlyOnceWith('browser_capabilities')
 })
 

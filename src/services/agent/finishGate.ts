@@ -47,7 +47,6 @@ export type FinishEvidence = {
   reviewRequested?: boolean
   homeworkNavigation?: boolean
   chapterNavigation?: boolean
-  zjoocPlaybackDone?: boolean
   chapterWorkflowDone?: boolean
   homeworkReviewPending?: boolean
   homeShortcutsDone?: boolean
@@ -141,19 +140,6 @@ export const collectFinishEvidence = async (
         && result.observed_browser_id === id && result.observation_id === chapterReview.id
     } catch { /* Invalid receipts cannot establish navigation. */ }
   }
-  let zjoocPlaybackDone = false
-  const playback = extras?.steps?.filter(step => step.name === 'browser_play_zjooc').at(-1)
-  if (playback?.status === 'done' && !isWholeCourseScope(goal) && !targets.length &&
-    /播放|看完|播完|连播/.test(goal) && !/测验|作业|讨论|整门|所有章节|全部章节|下一节/.test(goal)) {
-    try {
-      const result = JSON.parse(playback.result || '{}')
-      const observedEnd = watch && 'requireEnded' in watch && watch.requireEnded && watch.sessionId === sessionId &&
-        watch.startedAt === result.startedAt && watch.status === 'done' && watch.ended
-      zjoocPlaybackDone = (result.playbackEnded === true || Boolean(result.watching && observedEnd)) && result.ok === true && result.observed_browser_id === id
-        && result.observation_id === playback.id && result.url === url.split(/[?#]/)[0]
-        && (result.scope === 'section' || !/连续|连播|所有|全部/.test(goal))
-    } catch { /* Only an observed playback receipt can finish this task. */ }
-  }
   const chapterJobsDone = chapterToolUsed || courseChapterFlow
     ? Boolean(chapterVerified && !isWholeCourseScope(extras?.goalText || '')
       && (!targets.length || (targets.length === 1 && targets[0] === chapter.header.number)))
@@ -200,7 +186,6 @@ export const collectFinishEvidence = async (
     homeworkNavigation: homeworkNavigationSucceeded(extras?.goalText, extras?.steps, id),
     chapterNavigation,
     chapterWorkflowDone,
-    zjoocPlaybackDone,
     homeworkReviewPending: pendingHomeworkReview(extras?.steps || []),
     homeShortcutsDone,
     discussionRequested,
@@ -247,7 +232,7 @@ export const judgeFinish = (
   if (want === 'done' && evidence.reviewRequested) {
     return { ok: false, error: '本次是只读复核，不要求完成整门课程。先在当前标签 browser_get_page / browser_screenshot 获取最新页面证据；滚动后重新读取。若本轮已执行填写、勾选、导航或写入，或仍有播放、监控、课程计划未完成，请说明具体阻塞，不要反复查询整课完成统计。' }
   }
-  if (want === 'done' && (evidence.chapterWorkflowDone || evidence.zjoocPlaybackDone) && !evidence.playing && !evidence.watching
+  if (want === 'done' && evidence.chapterWorkflowDone && !evidence.playing && !evidence.watching
     && (!(evidence.planTotal || 0) || evidence.planComplete)) {
     return { ok: true, status: want, summary: text }
   }

@@ -4,6 +4,7 @@ import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { websiteToolNames } from '../../src/services/agent/websiteToolDefinitions'
 import { BROWSER_PRIMITIVE_TOOLS } from '../../src/services/agent/toolDefs/browserPrimitiveTools'
+import { WEBSITE_HOST_TOOLS } from '../../src/services/agent/websiteRuntime/hostTools'
 
 const src = resolve(fileURLToPath(new URL('.', import.meta.url)), '../../src')
 const roots = [
@@ -26,7 +27,7 @@ const walk = (dir: string, out: string[] = []) => {
 describe('browser tool names', () => {
   it('模型能看见的 browser_* 都是已注册工具', () => {
     const registered = new Set(
-      [...BROWSER_PRIMITIVE_TOOLS.map((tool) => tool.function.name), ...websiteToolNames],
+      [...BROWSER_PRIMITIVE_TOOLS.map((tool) => tool.function.name), ...WEBSITE_HOST_TOOLS.map(tool => tool.function.name), ...websiteToolNames],
     )
     const allow = new Set([
       'browser_id',
@@ -48,5 +49,6 @@ describe('browser tool names', () => {
       }
     }
     expect([...unknown.entries()]).toEqual([])
+    for (const tool of WEBSITE_HOST_TOOLS) expect(BROWSER_PRIMITIVE_TOOLS.some(row => row.function.name === tool.function.name)).toBe(false)
   })
 })

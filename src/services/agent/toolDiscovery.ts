@@ -23,8 +23,7 @@ export function modelAgentTools<T extends NamedTool>(available: T[], session?: A
         if (Array.isArray(loaded)) {
           for (const name of loaded) if (typeof name === 'string') selected.add(name)
         }
-      } else if (step.kind === 'tool' && (step.status === 'done'
-        || (step.name === 'browser_login_zjooc' && parseToolArgs(step.result || '').challenge === 'image_captcha'))) {
+      } else if (step.kind === 'tool' && step.status === 'done') {
         selected.add(step.name)
       }
     }

@@ -22,6 +22,7 @@ vi.mock('../../src/services/browser/appBrowser', () => {
     patchAppBrowser: (id: string, patch: any) => localStorage.setItem('test-tabs', JSON.stringify(list().map((tab: any) => tab.id === id ? { ...tab, ...patch } : tab))),
     setSelectedBrowserId: vi.fn(),
     openBrowserView: (id: string, url: string, bounds: any, hidden: boolean) => native.invoke('browser_open', { id, url, ...bounds, hidden }),
+    listenBrowserLoad: async () => () => undefined,
     listenBrowserState: (handler: any) => native.listen('app-browser-state', (event: any) => handler(event.payload)),
     listenBrowserOpened: (handler: any) => native.listen('app-browser-opened', (event: any) => handler(event.payload)),
   }

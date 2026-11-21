@@ -56,6 +56,7 @@ const menuItem = (label: string) => [...document.querySelectorAll<HTMLElement>('
 const choose = async (row: Element, label: string) => {
   await openMenu(row)
   menuItem(label).click()
+  if (label === '网站设置') await vi.waitFor(() => expect(document.querySelector('[aria-labelledby="website-dialog-title"]')).not.toBeNull())
 }
 
 describe('one settings card per website', () => {

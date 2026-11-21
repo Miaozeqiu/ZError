@@ -1,6 +1,7 @@
 mod evaluation;
 pub use evaluation::*;
 mod protocol;
+mod documents;
 pub use protocol::*;
 
 use serde::Serialize;
@@ -1032,6 +1033,7 @@ pub fn browser_capabilities() -> serde_json::Value {
   let chromium = cef || cfg!(windows);
   serde_json::json!({
     "secureFill": chromium,
+    "secureFillInFrames": cef,
     "audioMute": chromium,
   })
 }
@@ -1491,6 +1493,7 @@ async fn dispatch_browser_protocol(
   args: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
   match op.as_str() {
+    "website_document" => documents::dispatch(&app, &id, &args).await,
     #[cfg(windows)]
     "login_observe" => crate::webview2_secrets::login_observe(&app, &id, &args).await,
     #[cfg(not(windows))]

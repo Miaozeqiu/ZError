@@ -8,6 +8,7 @@ import { dispatchBrowserTool } from '../../src/services/agent/browserTools'
 /** 这些名字在 executeChatTool 里分发，不进四个浏览器处理器。 */
 const handledOutside = new Set([
   'browser_site_graph',
+  'browser_workflows',
   'browser_todo',
   'browser_task',
   'read_agent_skill',

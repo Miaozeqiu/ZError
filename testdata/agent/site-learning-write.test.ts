@@ -1,6 +1,9 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 const api = vi.hoisted(() => ({ steps: [] as any[], read: vi.fn(), write: vi.fn(), saveFile: vi.fn(), approve: vi.fn(), policy: 'ask' }))
+vi.mock('../../src/services/agent/websiteRepositoryOpen', async original => ({
+  ...await original<typeof import('../../src/services/agent/websiteRepositoryOpen')>(), findOpenWebsite: async () => undefined,
+}))
 // These tool scenarios run after the user has installed the ZJOOC repository.
 vi.mock('../../src/services/agent/websiteRepository', async original => {
   const repo = await original<typeof import('../../src/services/agent/websiteRepository')>()

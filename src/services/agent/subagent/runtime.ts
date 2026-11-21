@@ -2,6 +2,8 @@ import { createHostToolRunner, runChapterResume, type chapterResumePlan } from '
 import { chaoxingStartup } from '../chaoxingStartup'
 import { LOAD_AGENT_TOOLS, loadAgentTools, modelAgentTools } from '../toolDiscovery'
 import { toolRegistry } from '../core/tools'
+import { WEBSITE_HOST_TOOLS } from '../websiteRuntime/hostTools'
+import { websiteCheckpoints } from '../websiteRuntime/checkpoints'
 import { websitePrimaryHost } from '../websiteIdentity'
 import { watch } from 'vue'
 import { chatLoginRequests, pendingWebsiteVerification } from '../chatLogin'
@@ -36,8 +38,6 @@ import { clipAgentDebug, logAgentDebug } from '../debugLog'
 import { executeChatTool } from '../executeChatTool'
 import { parseQuestions } from '../import'
 import { TOOL_RESULT_KEEP } from '../modelHistory'
-import { modelConfigManager, modelHasVision } from '../../model/config'
-import { takeToolImages, visionAttachParts } from '../../model/toolImages'
 import { projectToolResult } from '../../model/toolResultProjection'
 import { isModelStopped, runTextModel, type ModelToolCall, type RunTextModelOptions } from '../../model/runner'
 import { parseToolArgs } from '../toolArgs'
@@ -253,7 +253,7 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
   const continueVideo = role === 'parent' ? createWatchContinuation({
     sessionId, signal: abort.signal,
     browserId: () => liveSession(sessionId)?.browserId || '',
-    expectedWatch: () => [...(liveMessage()?.steps || [])].reverse().find(step => ['browser_watch', 'browser_play_zjooc', 'browser_complete_chapter', 'browser_start_chapter_tasks'].includes(step.name || '')
+    expectedWatch: () => [...(liveMessage()?.steps || [])].reverse().find(step => ['browser_watch', 'browser_complete_chapter', 'browser_start_chapter_tasks'].includes(step.name || '')
       && step.status === 'done' && parseToolArgs(step.result || '').watching === true)?.id,
     canFinish: () => Boolean(completion.terminal()),
     waiting: value => {
@@ -269,15 +269,11 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
   try {
     await flushChatCheckpoint()
     let startupContext = ''
-    let startupCaptchaPending = false
-    const loginToolGuidance = '验证码登录尚未确认时，只使用已提供的 browser_login_zjooc 和 browser_finish。空参数调用用于获取当前验证码图，按最新回执处理。宿主确认 loggedIn=true 后会恢复正常工具目录，再按用户原始任务继续。避免推测失败原因或复述验证码。'
+
     const projectTools = (available: unknown[]) => modelAgentTools([...toolRegistry(available).values()], liveSession(sessionId))
     const currentCatalog = async () => await liveTools?.() ?? tools
     const currentModelTools = async () => {
       const catalog = [...toolRegistry(await currentCatalog()).values()]
-      if (startupCaptchaPending) {
-        return catalog.filter(tool => tool.function.name === 'browser_login_zjooc' || tool.function.name === 'browser_finish')
-      }
       return input.deferTools ? projectTools(catalog) : catalog
     }
     const modelOptions: RunTextModelOptions = {
@@ -298,7 +294,7 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
         if (recovery) return recovery
         const continuation = await continueVideo()
         const message = liveMessage()
-        if (role === 'parent' && response && !continuation && !startupCaptchaPending && message
+        if (role === 'parent' && response && !continuation && message
           && !completion.terminal() && canReviewFinalReply({ steps: message.steps, todos: message.todos || [] })
           && toolRegistry(await currentCatalog()).has('browser_finish')) {
           const receipt = await hostTool('browser_finish', { status: 'done', summary: response.slice(0, 600) })
@@ -335,6 +331,7 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
             parentStepId,
             jobId,
             onBrowserNavigation,
+            invokeHostTool: (name, args) => hostTool(name, args),
             ensureBrowser: async () => {
               const { ensureAgentBrowser } = await import('../agentBrowser')
               const target = parentSessionId || sessionId
@@ -376,12 +373,6 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
             },
           },
         })))
-        if (call.name === 'browser_answer_zjooc' || (call.name === 'browser_play_zjooc' && parseToolArgs(call.arguments).mode === 'section')) {
-          runningChapterWorkflow = true
-          updateTimeout()
-          try { return await dispatch() }
-          finally { runningChapterWorkflow = false; updateTimeout() }
-        }
         if (role === 'parent' && call.name === 'browser_start_chapter_tasks') {
           runningChapterWorkflow = true
           updateTimeout()
@@ -408,15 +399,6 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
           }
         }
         const result = await dispatch()
-        if (startupCaptchaPending && call.name === 'browser_login_zjooc') {
-          const receipt = parseToolArgs(result)
-          if (receipt.ok === true && receipt.loggedIn === true && !receipt.error && receipt.denied !== true) {
-            startupCaptchaPending = false
-            startupContext = '【登录已确认】在浙学登录成功，验证码阶段已结束，当前工具目录已恢复。若用户只要求登录，直接回复登录结果；还有后续要求则按需加载工具继续。'
-          } else {
-            startupContext = loginToolGuidance
-          }
-        }
         if (role === 'parent' && call.name === 'browser_complete_chapter') {
           const chapter = parseToolArgs(result)
           if (chapter.ok === true && chapter.watching === true) {
@@ -561,8 +543,15 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
         }
       },
     }
-    const hostTool = createHostToolRunner({ ...modelOptions, tools }, assistantId)
-    if (role === 'parent') {
+    const hostTool = createHostToolRunner({ ...modelOptions, tools, liveTools: async () => [...await currentCatalog(), ...WEBSITE_HOST_TOOLS] }, assistantId)
+    let workflowStorageReady = true
+    const pendingWorkflows = await websiteCheckpoints.list(sessionId).catch(() => {
+      workflowStorageReady = false
+      startupContext = '【网站检查点暂不可读】普通对话可继续。本轮关闭网站快捷启动，不自动恢复或覆盖未读状态；网站流程需先解决安全存储错误。'
+      return []
+    })
+    if (pendingWorkflows.length) startupContext = `【网站流程检查点】${JSON.stringify(pendingWorkflows.map(({ id, name, browserId }) => ({ id, name, browserId })))}。结合用户本轮目标决定是否使用 browser_workflows 恢复或丢弃；恢复须先读取实际页面，不能重复已完成的提交。`
+    if (role === 'parent' && workflowStorageReady && !pendingWorkflows.length) {
       const registry = toolRegistry(tools)
       if (input.chapterResume && registry.has('browser_complete_chapter')) {
         startupContext = await runChapterResume(input.chapterResume, hostTool)
@@ -570,33 +559,13 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
         const startup = chaoxingStartup(input.startupCommand, peekAppBrowserUrl(liveSession(sessionId)?.browserId || ''))
         if (startup && registry.has(startup.name)) {
           let result = await hostTool(startup.name, startup.args)
-          if (startup.name === 'browser_login_zjooc' && result.challenge === 'image_captcha') {
-            const { text, images } = takeToolImages(JSON.stringify(result))
-            const model = modelConfigManager.getSelectedAgentModel() || modelConfigManager.getSelectedTextModel()
-            if (images.length && result.captcha_id && model && modelHasVision(model)) {
-              modelOptions.tools = [registry.get('browser_login_zjooc')!]
-              const finish = registry.get('browser_finish')
-              if (finish) modelOptions.tools.push(finish)
-              modelOptions.userContent = [
-                ...(Array.isArray(userContent) ? userContent : [{ type: 'text', text: modelPrompt }]),
-                ...visionAttachParts(images),
-              ]
-              startupCaptchaPending = true
-              startupContext = `【在浙学验证码】${text}
-${loginToolGuidance}
-识别小图中的 5 位验证码，直接调用 browser_login_zjooc，传回执里的 captcha_id 和识别出的 captcha_code。
-看不清时调用 browser_login_zjooc(wait_for_verification=true)。仅在工具确认 loggedIn=true 后报告登录成功。`
-            } else {
-              result = await hostTool('browser_login_zjooc', { wait_for_verification: true })
-            }
-          }
           if (result.loginRequired === true && startup.name === 'browser_start_chapter_tasks' &&
             result.clickDispatched !== true && registry.has('browser_login_chaoxing')) {
             const login = await hostTool('browser_login_chaoxing', {})
             result = login.loggedIn === true ? await hostTool(startup.name, startup.args) : login
           }
-          const loginOnly = startup.name === 'browser_login_chaoxing' || startup.name === 'browser_login_zjooc'
-          const siteName = startup.name === 'browser_login_zjooc' ? '在浙学' : '学习通'
+          const loginOnly = startup.name === 'browser_login_chaoxing'
+          const siteName = '学习通'
           const success = loginOnly ? result.loggedIn === true : result.courseComplete === true
           const summary = success
             ? loginOnly ? `${siteName}已登录。` : `${startup.args.course_name}的章节已完成。目录确认了 ${result.completed} 个已完成小节。`

@@ -812,6 +812,8 @@ fn valid_document(name: &str) -> bool {
         "site_accounts",
         "agent_chats",
         "website_repositories",
+        "website_workflows",
+        "website_package_state",
         "auth",
     ]
     .contains(&name)

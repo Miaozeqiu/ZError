@@ -185,7 +185,7 @@ export const executeBrowserTool = async (input: {
   if (website && !websiteToolsForHost(website).some(tool => tool.function.name === name)) {
     return JSON.stringify({ ok: false, reason: 'website_tool_unavailable', error: '当前网站经验未提供此工具，请先同步网站经验。' })
   }
-  if (website && installedExperienceHost(websitePrimaryHost(loop.url)) !== website && name !== 'browser_login_chaoxing' && name !== 'browser_login_zjooc'
+  if (website && installedExperienceHost(websitePrimaryHost(loop.url)) !== website && name !== 'browser_login_chaoxing'
     && name !== 'browser_start_chapter_tasks' && name !== 'browser_list_courses' && name !== 'browser_open_course') {
     return JSON.stringify({ ok: false, reason: 'wrong_website', error: '请先打开此工具所属网站。' })
   }
@@ -237,8 +237,9 @@ export const dispatchBrowserTool = async (ctx: Record<string, any>): Promise<str
     return handleBrowserHomeShortcuts(ctx as Parameters<typeof handleBrowserHomeShortcuts>[0])
   }
   if (ctx.name === 'browser_request_credentials') {
-    const { handleLoginTool } = await import('./tools/websiteLogin')
-    return handleLoginTool(ctx as Parameters<typeof handleLoginTool>[0])
+    if (ctx.role === 'explore' || Object.keys(ctx.args).length) return JSON.stringify({ ok: false, reason: 'invalid', error: '请在登录页执行此工具，无需参数。' })
+    const { requestChatLogin } = await import('./chatLogin')
+    return JSON.stringify(await requestChatLogin(ctx.sessionId, ctx.browserId, ctx.signal))
   }
   const siteResult = await dispatchSiteBrowserTool(ctx)
   if (siteResult != null) return siteResult

@@ -1,0 +1,716 @@
+{
+  "version": 1,
+  "baselineCommit": "fa9c4080",
+  "status": "migration-required",
+  "note": "这是暂存清单和只减不增的CI预算，文件减少不等于流程验收通过。",
+  "families": [
+    {
+      "id": "login",
+      "repository": "ZError-chaoxing / ZError-zjooc",
+      "entries": [
+        "agent/chaoxingStartup.ts",
+        "agent/tools/websiteLogin.ts",
+        "agent/tools/websiteLoginObservation.ts",
+        "subagent/runtime.ts"
+      ],
+      "checks": [
+        "退出后登录",
+        "验证码重取",
+        "错误密码更正",
+        "安全表单",
+        "登录后还有其他目标"
+      ]
+    },
+    {
+      "id": "course-navigation",
+      "repository": "ZError-chaoxing",
+      "entries": [
+        "platform/chaoxing",
+        "chaoxing/host/course",
+        "agent/tools/websiteCourses.ts",
+        "agent/tools/websiteHomework.ts"
+      ],
+      "checks": [
+        "学生和教师入口",
+        "唯一课程匹配",
+        "作业分页",
+        "SPA路由和iframe"
+      ]
+    },
+    {
+      "id": "chapter-playback",
+      "repository": "ZError-chaoxing / ZError-zjooc",
+      "entries": [
+        "chaoxing/browser",
+        "chaoxing/study",
+        "agent/tools/websiteChapterStart.ts",
+        "agent/tools/websitePlayback.ts"
+      ],
+      "checks": [
+        "已完成标记",
+        "章节范围",
+        "后台播放",
+        "首次静音",
+        "暂停恢复",
+        "自动下一节",
+        "接管和重启恢复"
+      ]
+    },
+    {
+      "id": "homework",
+      "repository": "ZError-chaoxing / ZError-zjooc",
+      "entries": [
+        "chaoxing/homework",
+        "chaoxing/host/homework",
+        "platform/zjooc/paperBank.ts",
+        "agent/tools/websiteHomeworkAnswers.ts",
+        "agent/tools/zjoocAnswers.ts"
+      ],
+      "checks": [
+        "读题填答复核",
+        "范围和续批",
+        "题库登录",
+        "答案监听上传",
+        "无答案模型回退",
+        "提交后重启不重放"
+      ]
+    },
+    {
+      "id": "reading-discussion-font",
+      "repository": "ZError-chaoxing",
+      "entries": [
+        "chaoxing/host/chapterDocument.ts",
+        "chaoxing/host/chapterDocumentViewer.js",
+        "chaoxing/host/chapterDiscussion.ts",
+        "chaoxing/host/chapterDiscussionPage.js",
+        "agent/fontDecrypt"
+      ],
+      "checks": [
+        "PDF/PPT/图书",
+        "讨论上下文和回复",
+        "字体混淆"
+      ]
+    },
+    {
+      "id": "host-coupling",
+      "repository": "客户端移除特判；通用能力保留宿主",
+      "entries": [
+        "agent/legacyWebsiteTools.ts",
+        "agent/finishGate.ts",
+        "agent/core/run.ts",
+        "browser/siteCapabilities.ts",
+        "src-tauri/src/app_browser.rs",
+        "src-tauri/src/cef/h264.rs"
+      ],
+      "checks": [
+        "动态工具注册",
+        "原生URL和导航规则迁出",
+        "通用证据与权限",
+        "生产包不含业务脚本"
+      ]
+    },
+    {
+      "id": "metadata-compatibility",
+      "repository": "客户端数据兼容",
+      "entries": [
+        "agent/websiteDefaults.ts",
+        "agent/websiteRepositoryManifest.ts",
+        "src-tauri/src/secret_vault.rs",
+        "public/browser-home"
+      ],
+      "checks": [
+        "默认安装策略",
+        "多域名和账号引用",
+        "旧数据迁移",
+        "导航图标元数据"
+      ],
+      "exception": "允许产品配置、品牌资源和旧数据转换；不允许夹带可执行站点规则"
+    }
+  ],
+  "files": {
+    "public/browser-home.html": {
+      "signals": 10
+    },
+    "src-tauri/src/app_browser.rs": {
+      "signals": 29
+    },
+    "src-tauri/src/cef/browser.rs": {
+      "signals": 18
+    },
+    "src-tauri/src/cef/browser/interaction.rs": {
+      "signals": 2
+    },
+    "src-tauri/src/cef/browser/tabs.rs": {
+      "signals": 2
+    },
+    "src-tauri/src/cef/h264.rs": {
+      "signals": 3
+    },
+    "src-tauri/src/cef/locate.rs": {
+      "signals": 1
+    },
+    "src-tauri/src/cef_runtime.rs": {
+      "signals": 1
+    },
+    "src-tauri/src/commands/images.rs": {
+      "signals": 4
+    },
+    "src-tauri/src/secret_vault.rs": {
+      "signals": 35
+    },
+    "src/components/browser/BrowserSiteGraphPanel.vue": {
+      "signals": 1
+    },
+    "src/services/agent/activity.ts": {
+      "signals": 14
+    },
+    "src/services/agent/agentSkills.ts": {
+      "signals": 50
+    },
+    "src/services/agent/bridgeApi.ts": {
+      "signals": 7
+    },
+    "src/services/agent/browserChapterProgress.ts": {
+      "signals": 3
+    },
+    "src/services/agent/browserHomeworkProgress.ts": {
+      "signals": 2
+    },
+    "src/services/agent/browserLoop.ts": {
+      "signals": 20
+    },
+    "src/services/agent/browserTools.ts": {
+      "signals": 2
+    },
+    "src/services/agent/campusPolicy.ts": {
+      "signals": 1
+    },
+    "src/services/agent/chaoxingStartup.ts": {
+      "signals": 8,
+      "maxLines": 14
+    },
+    "src/services/agent/chapterResume.ts": {
+      "signals": 1
+    },
+    "src/services/agent/chatLoop.ts": {
+      "signals": 2
+    },
+    "src/services/agent/chatWatch.ts": {
+      "signals": 2
+    },
+    "src/services/agent/core/controller.ts": {
+      "signals": 2
+    },
+    "src/services/agent/core/run.ts": {
+      "signals": 2
+    },
+    "src/services/agent/courseCompletionEvidence.ts": {
+      "signals": 1
+    },
+    "src/services/agent/executeChatTool.ts": {
+      "signals": 3
+    },
+    "src/services/agent/finishGate.ts": {
+      "signals": 7
+    },
+    "src/services/agent/fontDecrypt/chaoxing.ts": {
+      "signals": 3,
+      "maxLines": 27
+    },
+    "src/services/agent/homeworkGate.ts": {
+      "signals": 1
+    },
+    "src/services/agent/homeworkProgress.ts": {
+      "signals": 1
+    },
+    "src/services/agent/hostCapabilities.ts": {
+      "signals": 1
+    },
+    "src/services/agent/legacyWebsiteTools.ts": {
+      "signals": 3,
+      "maxLines": 13
+    },
+    "src/services/agent/observationReview.ts": {
+      "signals": 2
+    },
+    "src/services/agent/scopedCompletionEvidence.ts": {
+      "signals": 1
+    },
+    "src/services/agent/siteAccounts.ts": {
+      "signals": 2
+    },
+    "src/services/agent/sitePack.ts": {
+      "signals": 10
+    },
+    "src/services/agent/skillRuntime.ts": {
+      "signals": 20
+    },
+    "src/services/agent/skillTools.ts": {
+      "signals": 1
+    },
+    "src/services/agent/skills/builtinSkillAssets.ts": {
+      "signals": 1
+    },
+    "src/services/agent/skills/campusBank.ts": {
+      "signals": 1
+    },
+    "src/services/agent/skills/chaoxing.ts": {
+      "signals": 2,
+      "maxLines": 2
+    },
+    "src/services/agent/subagent/runtime.ts": {
+      "signals": 6
+    },
+    "src/services/agent/subagent/task.ts": {
+      "signals": 1
+    },
+    "src/services/agent/subagent/tools.ts": {
+      "signals": 2
+    },
+    "src/services/agent/taskCompletion.ts": {
+      "signals": 1
+    },
+    "src/services/agent/toolDefs/browserPrimitiveTools.ts": {
+      "signals": 1
+    },
+    "src/services/agent/toolDefs/campusTools.ts": {
+      "signals": 6
+    },
+    "src/services/agent/toolDefs/credentialTools.ts": {
+      "signals": 1
+    },
+    "src/services/agent/toolHandlers/campus.ts": {
+      "signals": 1
+    },
+    "src/services/agent/tools/page.ts": {
+      "signals": 1
+    },
+    "src/services/agent/tools/websiteChapterDirectory.ts": {
+      "signals": 3,
+      "maxLines": 88
+    },
+    "src/services/agent/tools/websiteChapterDiscussion.ts": {
+      "signals": 1,
+      "maxLines": 29
+    },
+    "src/services/agent/tools/websiteChapterQuiz.ts": {
+      "signals": 0,
+      "maxLines": 50
+    },
+    "src/services/agent/tools/websiteChapterStart.ts": {
+      "signals": 3,
+      "maxLines": 141
+    },
+    "src/services/agent/tools/websiteChapters.ts": {
+      "signals": 8,
+      "maxLines": 169
+    },
+    "src/services/agent/tools/websiteCourses.ts": {
+      "signals": 10,
+      "maxLines": 167
+    },
+    "src/services/agent/tools/websiteHomework.ts": {
+      "signals": 13,
+      "maxLines": 207
+    },
+    "src/services/agent/tools/websiteHomeworkAnswers.ts": {
+      "signals": 12,
+      "maxLines": 322
+    },
+    "src/services/agent/tools/websiteLogin.ts": {
+      "signals": 3,
+      "maxLines": 227
+    },
+    "src/services/agent/websiteDataMigration.ts": {
+      "signals": 6
+    },
+    "src/services/agent/websiteIcons.ts": {
+      "signals": 6
+    },
+    "src/services/agent/websiteIdentity.ts": {
+      "signals": 4
+    },
+    "src/services/agent/websiteRepository.ts": {
+      "signals": 17
+    },
+    "src/services/agent/websiteRepositoryGitHub.ts": {
+      "signals": 4
+    },
+    "src/services/agent/websiteRepositoryManifest.ts": {
+      "signals": 1
+    },
+    "src/services/agent/websiteRepositoryTarget.ts": {
+      "signals": 1
+    },
+    "src/services/agent/websiteSettings.ts": {
+      "signals": 5
+    },
+    "src/services/agent/websiteSkillTarget.ts": {
+      "signals": 2
+    },
+    "src/services/browser/abstractions.ts": {
+      "signals": 22
+    },
+    "src/services/browser/appBrowser.ts": {
+      "signals": 1
+    },
+    "src/services/browser/coursePlan.ts": {
+      "signals": 2
+    },
+    "src/services/browser/engine/locate.ts": {
+      "signals": 1
+    },
+    "src/services/browser/siteCapabilities.ts": {
+      "signals": 1
+    },
+    "src/services/browser/siteGraph.ts": {
+      "signals": 7
+    },
+    "src/services/browser/siteGraphCore.ts": {
+      "signals": 15
+    },
+    "src/services/browser/siteGraphSave.ts": {
+      "signals": 3
+    },
+    "src/services/browser/skills/chaoxingHomework.ts": {
+      "signals": 2
+    },
+    "src/services/browser/videoWatch.ts": {
+      "signals": 1
+    },
+    "src/services/browser/videoWatchAgent.ts": {
+      "signals": 1
+    },
+    "src/services/chaoxing/browser/captcha.ts": {
+      "signals": 11,
+      "maxLines": 55
+    },
+    "src/services/chaoxing/browser/chapterMatch.ts": {
+      "signals": 0,
+      "maxLines": 70
+    },
+    "src/services/chaoxing/browser/chapterPlay.ts": {
+      "signals": 24,
+      "maxLines": 328
+    },
+    "src/services/chaoxing/browser/chapterSync.ts": {
+      "signals": 30,
+      "maxLines": 929
+    },
+    "src/services/chaoxing/browser/chapterTypes.ts": {
+      "signals": 0,
+      "maxLines": 56
+    },
+    "src/services/chaoxing/browser/chapters.ts": {
+      "signals": 6,
+      "maxLines": 33
+    },
+    "src/services/chaoxing/browser/index.ts": {
+      "signals": 8,
+      "maxLines": 33
+    },
+    "src/services/chaoxing/browser/panelStudy.ts": {
+      "signals": 10,
+      "maxLines": 468
+    },
+    "src/services/chaoxing/browser/playback.ts": {
+      "signals": 2,
+      "maxLines": 93
+    },
+    "src/services/chaoxing/browser/watch.ts": {
+      "signals": 19,
+      "maxLines": 519
+    },
+    "src/services/chaoxing/browser/watchAgent.ts": {
+      "signals": 14,
+      "maxLines": 416
+    },
+    "src/services/chaoxing/homework/act.ts": {
+      "signals": 0,
+      "maxLines": 34
+    },
+    "src/services/chaoxing/homework/background.ts": {
+      "signals": 2,
+      "maxLines": 144
+    },
+    "src/services/chaoxing/homework/chapterQuiz.ts": {
+      "signals": 10,
+      "maxLines": 146
+    },
+    "src/services/chaoxing/homework/engine.ts": {
+      "signals": 11,
+      "maxLines": 25
+    },
+    "src/services/chaoxing/homework/fill.ts": {
+      "signals": 9,
+      "maxLines": 222
+    },
+    "src/services/chaoxing/homework/homeworkImages.ts": {
+      "signals": 1,
+      "maxLines": 78
+    },
+    "src/services/chaoxing/homework/homeworkVision.ts": {
+      "signals": 11,
+      "maxLines": 218
+    },
+    "src/services/chaoxing/homework/index.ts": {
+      "signals": 6,
+      "maxLines": 12
+    },
+    "src/services/chaoxing/homework/inspect.ts": {
+      "signals": 13,
+      "maxLines": 340
+    },
+    "src/services/chaoxing/homework/live.ts": {
+      "signals": 0,
+      "maxLines": 86
+    },
+    "src/services/chaoxing/homework/panelHomework.ts": {
+      "signals": 10,
+      "maxLines": 201
+    },
+    "src/services/chaoxing/homework/parse.ts": {
+      "signals": 15,
+      "maxLines": 282
+    },
+    "src/services/chaoxing/homework/pick.ts": {
+      "signals": 0,
+      "maxLines": 135
+    },
+    "src/services/chaoxing/homework/scripts.ts": {
+      "signals": 0,
+      "maxLines": 32
+    },
+    "src/services/chaoxing/homework/types.ts": {
+      "signals": 1,
+      "maxLines": 49
+    },
+    "src/services/chaoxing/host/catalog.ts": {
+      "signals": 0,
+      "maxLines": 97
+    },
+    "src/services/chaoxing/host/chapterDiscussion.ts": {
+      "signals": 6,
+      "maxLines": 204
+    },
+    "src/services/chaoxing/host/chapterDiscussionPage.js": {
+      "signals": 0,
+      "maxLines": 35
+    },
+    "src/services/chaoxing/host/chapterDocument.ts": {
+      "signals": 2,
+      "maxLines": 87
+    },
+    "src/services/chaoxing/host/chapterDocumentViewer.js": {
+      "signals": 0,
+      "maxLines": 60
+    },
+    "src/services/chaoxing/host/chapterQuizFrames.ts": {
+      "signals": 2,
+      "maxLines": 39
+    },
+    "src/services/chaoxing/host/chapterTasks.ts": {
+      "signals": 7,
+      "maxLines": 165
+    },
+    "src/services/chaoxing/host/course/helpers.js": {
+      "signals": 0,
+      "maxLines": 132
+    },
+    "src/services/chaoxing/host/course/locate.js": {
+      "signals": 0,
+      "maxLines": 14
+    },
+    "src/services/chaoxing/host/course/parse.js": {
+      "signals": 0,
+      "maxLines": 27
+    },
+    "src/services/chaoxing/host/courseHomeworkAnswers.ts": {
+      "signals": 1,
+      "maxLines": 46
+    },
+    "src/services/chaoxing/host/courseRuntime.ts": {
+      "signals": 0,
+      "maxLines": 7
+    },
+    "src/services/chaoxing/host/homework/capture.js": {
+      "signals": 0,
+      "maxLines": 18
+    },
+    "src/services/chaoxing/host/homework/helpers.js": {
+      "signals": 1,
+      "maxLines": 357
+    },
+    "src/services/chaoxing/host/homework/locate.js": {
+      "signals": 0,
+      "maxLines": 259
+    },
+    "src/services/chaoxing/host/homework/parse.js": {
+      "signals": 0,
+      "maxLines": 299
+    },
+    "src/services/chaoxing/host/homeworkHost.ts": {
+      "signals": 0,
+      "maxLines": 52
+    },
+    "src/services/chaoxing/host/index.ts": {
+      "signals": 1,
+      "maxLines": 5
+    },
+    "src/services/chaoxing/host/pageScript.ts": {
+      "signals": 1,
+      "maxLines": 72
+    },
+    "src/services/chaoxing/host/selectors.ts": {
+      "signals": 2,
+      "maxLines": 178
+    },
+    "src/services/chaoxing/host/study/catalog.js": {
+      "signals": 3,
+      "maxLines": 479
+    },
+    "src/services/chaoxing/host/study/helpers.js": {
+      "signals": 1,
+      "maxLines": 741
+    },
+    "src/services/chaoxing/host/study/locate.js": {
+      "signals": 0,
+      "maxLines": 294
+    },
+    "src/services/chaoxing/host/studyHost.ts": {
+      "signals": 2,
+      "maxLines": 52
+    },
+    "src/services/chaoxing/locators.ts": {
+      "signals": 2,
+      "maxLines": 11
+    },
+    "src/services/chaoxing/study/captcha.ts": {
+      "signals": 6,
+      "maxLines": 37
+    },
+    "src/services/chaoxing/study/cdpScripts.ts": {
+      "signals": 1,
+      "maxLines": 447
+    },
+    "src/services/chaoxing/study/chapters.ts": {
+      "signals": 46,
+      "maxLines": 675
+    },
+    "src/services/chaoxing/study/debug.ts": {
+      "signals": 0,
+      "maxLines": 146
+    },
+    "src/services/chaoxing/study/dump.ts": {
+      "signals": 4,
+      "maxLines": 125
+    },
+    "src/services/chaoxing/study/index.ts": {
+      "signals": 26,
+      "maxLines": 42
+    },
+    "src/services/chaoxing/study/localJobs.ts": {
+      "signals": 0,
+      "maxLines": 38
+    },
+    "src/services/chaoxing/study/parsePage.ts": {
+      "signals": 5,
+      "maxLines": 46
+    },
+    "src/services/chaoxing/study/types.ts": {
+      "signals": 3,
+      "maxLines": 62
+    },
+    "src/services/chaoxing/study/video.ts": {
+      "signals": 41,
+      "maxLines": 587
+    },
+    "src/services/model/runner.ts": {
+      "signals": 2
+    },
+    "src/services/platform/chaoxing/agentPageTools.ts": {
+      "signals": 14,
+      "maxLines": 101
+    },
+    "src/services/platform/chaoxing/browserAdapter.ts": {
+      "signals": 12,
+      "maxLines": 27
+    },
+    "src/services/platform/chaoxing/chapterPlayback.ts": {
+      "signals": 9,
+      "maxLines": 126
+    },
+    "src/services/platform/chaoxing/chrome.ts": {
+      "signals": 1,
+      "maxLines": 75
+    },
+    "src/services/platform/chaoxing/clickFind.ts": {
+      "signals": 1,
+      "maxLines": 187
+    },
+    "src/services/platform/chaoxing/courseHost.ts": {
+      "signals": 7,
+      "maxLines": 18
+    },
+    "src/services/platform/chaoxing/courseList.ts": {
+      "signals": 1,
+      "maxLines": 9
+    },
+    "src/services/platform/chaoxing/courseTab.ts": {
+      "signals": 9,
+      "maxLines": 219
+    },
+    "src/services/platform/chaoxing/fallback.ts": {
+      "signals": 7,
+      "maxLines": 22
+    },
+    "src/services/platform/chaoxing/nav.ts": {
+      "signals": 47,
+      "maxLines": 137
+    },
+    "src/services/platform/chaoxing/pageHooks.ts": {
+      "signals": 1,
+      "maxLines": 17
+    },
+    "src/services/platform/chaoxing/spaceTab.ts": {
+      "signals": 0,
+      "maxLines": 224
+    },
+    "src/services/platform/chaoxing/studentCourses.ts": {
+      "signals": 4,
+      "maxLines": 54
+    },
+    "src/services/platform/chaoxing/studentHomework.ts": {
+      "signals": 3,
+      "maxLines": 46
+    },
+    "src/services/platform/index.ts": {
+      "signals": 5
+    },
+    "src/services/platform/panelAccess.ts": {
+      "signals": 11
+    },
+    "src/services/platform/watchBind.ts": {
+      "signals": 4
+    },
+    "src/services/platform/websiteToolDispatch.ts": {
+      "signals": 1
+    },
+    "src/utils/ui/agentIcons.ts": {
+      "signals": 1
+    },
+    "src/views/settings/AgentSettings.vue": {
+      "signals": 1
+    },
+    "src/views/settings/AgentSkillDetail.vue": {
+      "signals": 2
+    }
+  },
+  "removedFiles": [
+    "src/services/agent/agentBrowser.ts",
+    "src/services/agent/toolDiscovery.ts",
+    "src/services/agent/tools/websitePlayback.ts",
+    "src/services/agent/tools/zjoocAnswers.ts",
+    "src/services/platform/zjooc/paperBank.ts"
+  ]
+}

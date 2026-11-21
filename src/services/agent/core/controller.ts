@@ -130,10 +130,10 @@ export const createRunController = (input: {
       if (failed) traceRun(run, 'failure', { tool: call.name, code: classifyFailure(result.error) })
       const hasObservation = call.name === 'browser_screenshot'
         ? typeof result.image === 'string' && result.image.startsWith('data:image/')
-        : (call.name === 'browser_login_chaoxing' || call.name === 'browser_login_zjooc')
+        : call.name === 'browser_login_chaoxing'
           ? result.ok === true && result.loggedIn === true
-        : call.name === 'browser_play_zjooc'
-          ? result.ok === true && (result.playbackEnded === true || (result.watching === true && result.playing === true))
+        : /^browser_site_[a-z0-9_]+__[a-z][a-z0-9_]{0,23}$/.test(call.name)
+          ? result.ok === true && result.observed === true
         : call.name === 'browser_review_chapter'
           ? result.ok === true && typeof result.chapterKey === 'string'
         : call.name === 'browser_review_homework'

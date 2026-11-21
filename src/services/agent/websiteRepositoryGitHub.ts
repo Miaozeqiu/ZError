@@ -1,3 +1,5 @@
+import { validateWebsiteRuntime, verifyWebsiteRuntime } from './websiteRuntime/protocol'
+import { validateWebsiteTools } from './websiteToolDefinitions'
 import { repositoryPath, validateWebsiteSnapshot, type WebsiteSnapshot } from './websiteRepositoryCore'
 import { parseGitHubWebsiteUrl, repositoryIcon, websiteManifest, type GitHubWebsiteSource, type WebsiteManifest, type WebsiteRepositoryIcon } from './websiteRepositoryManifest'
 export type { GitHubWebsiteSource } from './websiteRepositoryManifest'
@@ -111,17 +113,21 @@ export const downloadWebsiteRepository = async (source: GitHubWebsiteSource, pre
     const website = websiteManifest(JSON.parse(reader.text(await reader.blob(manifest, 16 * 1024))))
     if (website.id !== expected.id || website.host !== expected.host) throw new Error('网站仓库变更了网站身份，已保留原缓存')
     const entries = tree.filter(entry => typeof entry.path === 'string' && entry.path.startsWith(prefix) && entry.type !== 'tree')
+    const runtimeEntry = entries.find(entry => entry.path === prefix + 'runtime.json')
+    const runtime = runtimeEntry ? validateWebsiteRuntime(JSON.parse(reader.text(await reader.blob(runtimeEntry, 512 * 1024))), website.id) : undefined
+    if (runtime) await verifyWebsiteRuntime(runtime)
     const files: Record<string, string> = {}
     let total = 0
     for (const entry of entries) {
       const path = entry.path.slice(prefix.length)
-      if (path === 'website.json' || path === website?.icon || !source.root && /^(?:README\.md|LICENSE|package\.json|\.gitignore|\.github\/|scripts\/)/.test(path)) continue
+      if (path === 'website.json' || path === 'runtime.json' || path === website?.icon || !source.root && /^(?:README\.md|LICENSE|package\.json|\.gitignore|\.github\/|scripts\/)/.test(path)) continue
       if (!repositoryPath(path) || Object.hasOwn(files, path)) throw new Error('网站仓库含不支持的文件或链接')
       if (Object.keys(files).length >= 32 || !Number.isSafeInteger(entry.size) || (total += entry.size) > 2 * 1024 * 1024) throw new Error('网站仓库文件过多或过大')
       files[path] = reader.text(await reader.blob(entry))
     }
     const icon = repositoryIcon(website.icon, await reader.blob(tree.find(entry => entry.path === prefix + website.icon), 256 * 1024))
-    const snapshot = { revision, files, etag, checkedAt: now, website, icon }
+    const snapshot = { revision, files, etag, checkedAt: now, website, icon,
+      ...(runtime ? { runtime, tools: validateWebsiteTools(website.host, undefined, runtime, website.id) } : {}) }
     validateWebsiteSnapshot(snapshot, expected)
     return snapshot
   } finally { reader.close() }

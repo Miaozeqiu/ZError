@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 
 export type BrowserCapabilities = {
   secureFill: boolean
+  secureFillInFrames: boolean
   audioMute: boolean
 }
 
@@ -13,6 +14,7 @@ export const browserCapabilities = async (): Promise<BrowserCapabilities> => {
   const raw = await invoke<Partial<BrowserCapabilities>>('browser_capabilities').catch(() => null)
   const capabilities = {
     secureFill: raw?.secureFill === true,
+    secureFillInFrames: raw?.secureFillInFrames === true,
     audioMute: raw?.audioMute === true,
   }
   if (raw) cached = capabilities

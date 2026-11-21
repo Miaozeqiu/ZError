@@ -17,7 +17,6 @@ type Context = Pick<Parameters<typeof handleWebsiteCourseTools>[0],
 
 type SiteLogin = { host: string; site: string; credentialOrigin: string }
 const chaoxing: SiteLogin = { host: 'chaoxing.com', site: 'chaoxing', credentialOrigin: 'https://passport2.chaoxing.com' }
-const zjooc: SiteLogin = { host: 'zjooc.cn', site: 'zjooc', credentialOrigin: 'https://background.zjooc.cn' }
 const captchaChallenges = new WeakMap<AbortSignal, {
   id: string; browserId: string; site: string; url: string; frameId: string; loaderId: string; image: string
 }>()
@@ -216,14 +215,9 @@ async function runLogin(ctx: Context, profile: SiteLogin, restart: boolean): Pro
 }
 
 export const loginChaoxing = async (ctx: Context) => JSON.stringify(await runLogin(ctx, chaoxing, false))
-export const loginZjooc = async (ctx: Context) => JSON.stringify(await runLogin(ctx, zjooc, false))
 
 export async function handleLoginTool(ctx: Context & { name: string; sessionId: string }): Promise<string> {
-  if (ctx.name === 'browser_request_credentials') {
-    if (ctx.role === 'explore' || Object.keys(ctx.args).length) return JSON.stringify(fail('invalid', '请在登录页执行此工具，无需参数。'))
-    return JSON.stringify(await requestChatLogin(ctx.sessionId, ctx.browserId, ctx.signal))
-  }
-  const profile = ctx.name === 'browser_login_zjooc' ? zjooc : chaoxing
+  const profile = chaoxing
   let result = await runLogin(ctx, profile, false)
   while (result.credentialsRequired) {
     const receipt = await requestChatLogin(ctx.sessionId, ctx.browserId, ctx.signal, {

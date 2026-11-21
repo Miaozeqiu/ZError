@@ -41,6 +41,8 @@ Open 以提交为单位同步官方仓库并校验 Git blob 哈希。客户端�
 
 ### 网站脚本
 
+以下为现有 v1 实现。新的动态编译包、宿主命令与迁移限制见 [网站运行包 API 2](./website-runtime-v2.md)。旧版固定工具仍待迁移，不能将远程经验加载视为业务已完全外置。
+
 经验接口通过 `scriptManifest` 声明脚本清单。选用来源后，Agent 调用相关工具时自动加载脚本。学习通使用 [ZError-chaoxing 的开发服务](https://github.com/Miaozeqiu/ZError-chaoxing)，默认接口为 `http://127.0.0.1:8817/experience.json`。从网站仓库运行 `npm ci` 和 `npm run dev` 即可监听 TypeScript 变化。
 
 官方仓库通过 `site-tools/tools.json` 发布工具定义，并从同一 Git 提交的 `site-tools/*.js` 发布脚本。客户端按站点加载工具，切换经验来源或删除仓库时更新可用工具。脚本接收有限的观察数据，在隔离运行时返回站点决策。浏览器原语、凭据读取、页面授权校验和提交确认由客户端执行。

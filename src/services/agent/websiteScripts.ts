@@ -1,6 +1,4 @@
-import releaseSync from '@jitl/quickjs-wasmfile-release-sync'
-import releaseWasmUrl from '@jitl/quickjs-wasmfile-release-sync/wasm?url'
-import { memoizePromiseFactory, newQuickJSWASMModuleFromVariant, newVariant } from 'quickjs-emscripten-core'
+import { withWebsiteSandbox } from './websiteRuntime/sandbox'
 import { isNativeSecureStore } from '../security/secureStore'
 import { limitedJson } from './websiteRepositoryGitHub'
 import { websiteScriptSource } from './websiteRepository'
@@ -10,11 +8,6 @@ type SiteScriptSource = { url: string; manifest: string }
 const cached = new Map<string, Bundle>()
 const pending = new Map<string, Promise<Bundle>>()
 const bundleLimit = 256 * 1024
-// Vite prebundles the JS loader in development. Use the app's asset URL for its WASM.
-const getQuickJS = memoizePromiseFactory(() => newQuickJSWASMModuleFromVariant(
-  typeof window === 'undefined' ? releaseSync : newVariant(releaseSync, { wasmLocation: releaseWasmUrl }),
-))
-
 const scriptUrl = (relative: string, base: string, origin: string) => {
   const url = new URL(relative, base)
   if (url.origin !== origin || url.username || url.password || url.hash) throw new Error('脚本清单与产物必须使用已配置的 HTTP 来源。')
@@ -65,27 +58,8 @@ const fetchBundle = async (source: SiteScriptSource, siteId: string, capability:
   return { revision: data.revision, etag, sha256, checkedAt: Date.now(), code: new TextDecoder('utf-8', { fatal: true }).decode(bytes) }
 }
 
-async function withSandbox<T>(work: (evaluate: (source: string) => unknown) => T | Promise<T>): Promise<T> {
-  const quickjs = await getQuickJS()
-  const runtime = quickjs.newRuntime()
-  try {
-    runtime.setMemoryLimit(8 * 1024 * 1024)
-    runtime.setMaxStackSize(256 * 1024)
-    let deadline = 0
-    runtime.setInterruptHandler(() => performance.now() > deadline)
-    const context = runtime.newContext()
-    const evaluate = (source: string) => {
-      deadline = performance.now() + 100
-      const result = context.evalCode(source, 'website-adapter.js', { type: 'global' })
-      if (!('value' in result)) { result.error.dispose(); throw new Error('网站脚本执行失败或超时。') }
-      try { return JSON.parse(context.getString(result.value)) } finally { result.value.dispose() }
-    }
-    try { return await work(evaluate) } finally { context.dispose() }
-  } finally { runtime.dispose() }
-}
-
 export function runIsolatedWebsiteScript(code: string, input: unknown): Promise<unknown> {
-  return withSandbox(evaluate => evaluate(`${code}\n;JSON.stringify(ZErrorSiteScript.run(${JSON.stringify(input)}))`))
+  return withWebsiteSandbox(evaluate => evaluate(`${code}\n;JSON.stringify(ZErrorSiteScript.run(${JSON.stringify(input)}))`))
 }
 
 export const hasWebsiteScriptManifest = async (host: string) => Boolean(await websiteScriptSource(host))
@@ -138,7 +112,7 @@ export async function runWebsiteWorkflow(
   }
   if (!bundle) throw new Error('未取得网站流程脚本。')
   const selected = bundle
-  return withSandbox(async evaluate => {
+  return withWebsiteSandbox(async evaluate => {
     evaluate(`${selected.code}\n;const __workflow = ZErrorSiteScript.workflow(${JSON.stringify(input)}); JSON.stringify(true)`)
     let response: unknown = null
     for (let i = 0; i < 512; i++) {
