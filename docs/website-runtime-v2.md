@@ -1,6 +1,6 @@
 # 网站运行包 API 2：通用宿主与恢复协议
 
-这是当前开发分支的网站运行包协议。学习通与在浙学的页面规则和工作流由各自仓库编译分发；客户端旧平台业务入口已移除。Open 分发补丁仍只在隔离工作区验证，尚未部署到生产。
+这是当前开发分支的网站运行包协议。学习通与在浙学的页面规则和工作流由各自仓库编译分发；客户端旧平台业务入口已移除。Open 编译包分发接口已于 2026-11-21 部署到生产，两站官方仓库的对应编译产物已推送。
 
 ## 分发与注册
 
@@ -87,7 +87,7 @@ Linux 回归使用 `xvfb-run -a /usr/bin/python3 scripts/test-linux-documents.py
 
 媒体等待在原生文档中注册有限期事件监听，结束、错误或超时后释放；取消时尝试清理同一等待标识，导航会销毁旧文档。已发出的原生请求不能假定已被取消，兜底等待有 30 秒期限。等待媒体或用户安全表单时暂停工具的活动时间预算，避免正常播放或输入导致两分钟超时。
 
-限制包括：产物 256 KiB、`runtime.json` 512 KiB、最多 32 个工具、描述合计 64 KiB、参数与单次回执 128 KiB、每次调用最多 512 条命令且总时间最多 120 秒、首次初始化最多约 500 ms、之后每段同步执行最多约 100 ms、沙箱内存 8 MiB。宿主原有任务预算同时生效。
+限制包括：执行代码 256 KiB、`runtime.json` 2 MiB、最多 32 个工具、描述合计 64 KiB、参数与单次回执 128 KiB、每次调用最多 512 条命令且总时间最多 120 秒、首次初始化最多约 500 ms、之后每段同步执行最多约 100 ms、沙箱内存 8 MiB。宿主原有任务预算同时生效。
 
 ## 执行、更新与清理
 
@@ -113,7 +113,9 @@ Linux 回归使用 `xvfb-run -a /usr/bin/python3 scripts/test-linux-documents.py
 
 ## Open 分发
 
-继续使用现有 `/v1/website-experience/<host>` 和自定义 `experience.json` 地址，不新增 `/v2` 路径或版本选择参数。仓库仅发布一份 `runtime.json`，包内 `apiVersion:2` 用于格式校验。Open 校验同提交的 Git blob 和产物 SHA-256 后缓存完整快照；ETag 和 `revision` 对应该快照的提交。构建及文档不保留旧版脚本、旧版清单或回退流程。接口补丁尚未部署。
+继续使用现有 `/v1/website-experience/<host>` 和自定义 `experience.json` 地址，不新增 `/v2` 路径或版本选择参数。仓库仅发布一份 `runtime.json`，包内 `apiVersion:2` 用于格式校验。Open 校验同提交的 Git blob 和产物 SHA-256 后缓存完整快照；ETag 和 `revision` 对应该快照的提交。构建及文档不保留旧版脚本、旧版清单或回退流程。生产接口已支持编译包与资源分发；GitHub REST 配额耗尽时使用固定公开仓库的受限 Git 通道，保留同一套校验。
+
+2026-11-21 生产部署对应 Open 提交 `803bbbd`、学习通 `08d9c54`、在浙学 `317c118`。两站公网接口已通过真实客户端加载器的运行包、工具和资源校验，`revision` 增量查询正常。公网 CDN 可能对 ETag 条件请求返回完整的 200 响应，源站仍支持 304。现有正式发布列表和安装包范围下载同时验证通过，返回 206 并命中持久安装包缓存；此次未发布桌面客户端。
 
 ## 验证入口
 
@@ -149,7 +151,7 @@ Linux 回归使用 `xvfb-run -a /usr/bin/python3 scripts/test-linux-documents.py
 
 `runtime.json` 可包含最多四份 `resources`，每项为 `{id,size,sha256,data}`（base64），解码总量不超过 1 MiB。运行包文件最多 2 MiB，执行代码仍限制 256 KiB。Open 和客户端均核对资源大小与 SHA-256。资源不进入 QuickJS 初始化脚本或模型上下文；`resource.read({id,offset,length})` 每次返回最多 8192 字节，调用结束即释放解码缓存。公共资源读取不访问浏览器，也不构成网页观察证据；实际 DOM 命令仍逐次校验域名和文档，恢复前写入限制不受资源读取影响。含资源的固定版本检查点共用 8 MiB 总存储限制。
 
-`document.frames({document,selector})` 通过真实 iframe 元素取得所属子文档，再核对 frame/loader；同 URL 的另一个 iframe 不可替代它。CEF/WebView2 支持此原生绑定，其他引擎明确返回不支持。`document.reveal` 只滚动到指定元素以触发页面自己的懒加载。
+`document.frames({document,selector})` 通过真实 iframe 元素取得所属子文档，再核对 frame/loader；同 URL 的另一个 iframe 不可替代它。CEF、WebView2 和 Linux/WebKitGTK 支持此原生绑定，其他引擎明确返回不支持。`document.reveal` 只滚动到指定元素以触发页面自己的懒加载。
 
 `document.glyphs` 按调用方指定的有界光栅读取当前 DOM 字体，返回覆盖情况、WebFont 是否实际加载及打包位图特征。宿主不含字体标记、中文参考表或匹配决策，拒绝登录文档和私密控件。参考表、阈值、歧义处理及匹配算法在网站仓库。
 
