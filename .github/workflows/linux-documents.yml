@@ -1,0 +1,44 @@
+name: Linux native document host
+
+on:
+  push:
+    branches: [dev, dev-improvements, codex/linux-iframe-host]
+    paths:
+      - '.github/workflows/linux-documents.yml'
+      - 'src-tauri/Cargo*'
+      - 'src-tauri/build.rs'
+      - 'src-tauri/src/linux_documents*'
+      - 'src-tauri/src/linux_documents/**'
+      - 'src-tauri/src/app_browser*'
+      - 'src-tauri/src/app_browser/**'
+      - 'scripts/test-linux-documents.py'
+  pull_request:
+    paths:
+      - '.github/workflows/linux-documents.yml'
+      - 'src-tauri/src/linux_documents*'
+      - 'src-tauri/src/linux_documents/**'
+      - 'src-tauri/src/app_browser/documents.rs'
+      - 'scripts/test-linux-documents.py'
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install WebKitGTK and headless display
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev python3-gi gir1.2-webkit2-4.1 xvfb
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+      - name: Test native cross-origin frames in WebKitGTK
+        run: xvfb-run -a /usr/bin/python3 scripts/test-linux-documents.py
+      - name: Check Linux application and native tests
+        working-directory: src-tauri
+        run: cargo check --locked --tests

@@ -16,6 +16,8 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2.0", features = [] }
+cc = "1"
+pkg-config = "0.3"
 
 [dependencies]
 tauri = { version = "2.0", features = [ "macos-private-api", "devtools", "tray-icon", "webview-data-url", "image-png", "unstable"] }
@@ -59,6 +61,7 @@ strsim = "0.10"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 tempfile = "3"
+webkit2gtk = { version = "=2.0.1", features = ["v2_40"] }
 
 [target.'cfg(windows)'.dependencies]
 webview2-com = "0.38"

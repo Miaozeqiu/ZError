@@ -513,6 +513,9 @@ pub async fn browser_open(
       handle_title_change(webview.app_handle(), &title_id, url, title);
     });
 
+  #[cfg(target_os = "linux")]
+  let builder = builder.extensions_path(crate::linux_documents::extension_directory(&app)?);
+
   #[cfg(debug_assertions)]
   let builder = builder.devtools(true);
 

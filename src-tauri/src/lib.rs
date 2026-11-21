@@ -22,6 +22,8 @@ pub mod database;
 pub mod logger;
 #[cfg(target_os = "linux")]
 mod linux_elevation;
+#[cfg(target_os = "linux")]
+mod linux_documents;
 mod model_response;
 pub mod server;
 pub mod secret_vault;

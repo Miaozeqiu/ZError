@@ -45,9 +45,12 @@ struct Engine {
     page: crate::cef::PageBind,
     #[cfg(windows)]
     view: tauri::Webview,
+    #[cfg(target_os = "linux")]
+    view: tauri::Webview,
 }
 
 impl Engine {
+    #[cfg(not(target_os = "linux"))]
     async fn command(
         &self,
         _doc: &Document,
@@ -71,51 +74,72 @@ impl Engine {
     }
 
     async fn child_frame(&self, doc: &Document, selector: &str) -> Result<Option<String>, String> {
-        let world = self
-            .command(
-                doc,
-                "Page.createIsolatedWorld",
-                json!({ "frameId": doc.frame_id, "worldName": "zerror-document-v2" }),
+        #[cfg(target_os = "linux")]
+        {
+            let result = crate::linux_documents::request(
+                &self.view,
+                "zerror.documents.child",
+                &json!(doc),
+                selector.into(),
             )
             .await?;
-        if !self.documents().await?.contains(doc) {
-            return Err(STALE.into());
+            return if result.is_null() {
+                Ok(None)
+            } else {
+                result
+                    .as_str()
+                    .map(|id| Some(id.to_owned()))
+                    .ok_or_else(|| STALE.into())
+            };
         }
-        let context = world["executionContextId"].as_i64().ok_or(STALE)?;
-        let expression = format!("(()=>{{if(location.href!=={})throw Error('Document changed');const nodes=document.querySelectorAll({});return nodes.length===1&&/^(IFRAME|FRAME)$/.test(nodes[0].tagName)?nodes[0]:null;}})()", json!(doc.url), json!(selector));
-        let object = self
-            .command(
-                doc,
-                "Runtime.evaluate",
-                json!({ "contextId":context, "expression":expression, "returnByValue":false }),
-            )
-            .await?;
-        if object.get("exceptionDetails").is_some() {
-            return Err(STALE.into());
+        #[cfg(not(target_os = "linux"))]
+        {
+            let world = self
+                .command(
+                    doc,
+                    "Page.createIsolatedWorld",
+                    json!({ "frameId": doc.frame_id, "worldName": "zerror-document-v2" }),
+                )
+                .await?;
+            if !self.documents().await?.contains(doc) {
+                return Err(STALE.into());
+            }
+            let context = world["executionContextId"].as_i64().ok_or(STALE)?;
+            let expression = format!("(()=>{{if(location.href!=={})throw Error('Document changed');const nodes=document.querySelectorAll({});return nodes.length===1&&/^(IFRAME|FRAME)$/.test(nodes[0].tagName)?nodes[0]:null;}})()", json!(doc.url), json!(selector));
+            let object = self
+                .command(
+                    doc,
+                    "Runtime.evaluate",
+                    json!({ "contextId":context, "expression":expression, "returnByValue":false }),
+                )
+                .await?;
+            if object.get("exceptionDetails").is_some() {
+                return Err(STALE.into());
+            }
+            let Some(object_id) = object.pointer("/result/objectId").and_then(Value::as_str) else {
+                return Ok(None);
+            };
+            let described = self
+                .command(
+                    doc,
+                    "DOM.describeNode",
+                    json!({ "objectId":object_id, "depth":1 }),
+                )
+                .await;
+            let _ = self
+                .command(
+                    doc,
+                    "Runtime.releaseObject",
+                    json!({ "objectId":object_id }),
+                )
+                .await;
+            let described = described?;
+            Ok(described
+                .pointer("/node/frameId")
+                .or_else(|| described.pointer("/node/contentDocument/frameId"))
+                .and_then(Value::as_str)
+                .map(str::to_owned))
         }
-        let Some(object_id) = object.pointer("/result/objectId").and_then(Value::as_str) else {
-            return Ok(None);
-        };
-        let described = self
-            .command(
-                doc,
-                "DOM.describeNode",
-                json!({ "objectId":object_id, "depth":1 }),
-            )
-            .await;
-        let _ = self
-            .command(
-                doc,
-                "Runtime.releaseObject",
-                json!({ "objectId":object_id }),
-            )
-            .await;
-        let described = described?;
-        Ok(described
-            .pointer("/node/frameId")
-            .or_else(|| described.pointer("/node/contentDocument/frameId"))
-            .and_then(Value::as_str)
-            .map(str::to_owned))
     }
     async fn open(_app: &AppHandle, _id: &str) -> Result<Option<Self>, String> {
         #[cfg(target_os = "macos")]
@@ -125,6 +149,12 @@ impl Engine {
             }));
         }
         #[cfg(windows)]
+        {
+            return Ok(Some(Self {
+                view: super::find_browser(_app, _id)?,
+            }));
+        }
+        #[cfg(target_os = "linux")]
         {
             return Ok(Some(Self {
                 view: super::find_browser(_app, _id)?,
@@ -146,6 +176,21 @@ impl Engine {
     }
 
     async fn documents(&self) -> Result<Vec<Document>, String> {
+        #[cfg(target_os = "linux")]
+        {
+            let value = crate::linux_documents::request(
+                &self.view,
+                "zerror.documents.list",
+                &json!({}),
+                String::new(),
+            )
+            .await?;
+            let documents: Vec<Document> = serde_json::from_value(value).map_err(|_| STALE)?;
+            if documents.len() > 128 {
+                return Err("页面包含过多文档".into());
+            }
+            return Ok(documents);
+        }
         #[cfg(target_os = "macos")]
         {
             return Ok(crate::cef::frames::contexts(&self.page)
@@ -176,6 +221,23 @@ impl Engine {
         expression: String,
         user_gesture: bool,
     ) -> Result<Value, String> {
+        #[cfg(target_os = "linux")]
+        {
+            // WebKitGTK's isolated world does not expose a synthetic user-gesture API.
+            // Media promises report autoplay denial normally; never weaken web security.
+            let _ = user_gesture;
+            let reply = crate::linux_documents::request(
+                &self.view,
+                "zerror.documents.evaluate",
+                &json!(document),
+                expression,
+            )
+            .await?;
+            return reply
+                .get("value")
+                .cloned()
+                .ok_or_else(|| "页面未返回文档回执".into());
+        }
         #[cfg(target_os = "macos")]
         {
             let frame = crate::cef::frames::FrameContext {
