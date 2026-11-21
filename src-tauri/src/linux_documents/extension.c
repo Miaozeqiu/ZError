@@ -20,6 +20,7 @@ typedef struct {
 typedef struct {
     GHashTable *frames;
     GHashTable *pending;
+    GWeakRef main_frame;
 } Page;
 
 typedef struct {
@@ -75,10 +76,12 @@ static JSCValue *evaluate(JSCContext *context, const gchar *source)
  */
 static gboolean connected(WebKitWebPage *page, WebKitFrame *frame)
 {
-    WebKitFrame *main = webkit_web_page_get_main_frame(page);
+    Page *state = g_object_get_data(G_OBJECT(page), PAGE_STATE);
+    WebKitFrame *main = state ? g_weak_ref_get(&state->main_frame) : NULL;
     if (!main) return FALSE;
     JSCContext *root = webkit_frame_get_js_context_for_script_world(main, world);
     JSCContext *child = webkit_frame_get_js_context_for_script_world(frame, world);
+    g_object_unref(main);
     if (!root || !child) {
         g_clear_object(&root);
         g_clear_object(&child);
@@ -192,6 +195,7 @@ static void page_free(gpointer data)
     }
     g_hash_table_unref(state->pending);
     g_hash_table_unref(state->frames);
+    g_weak_ref_clear(&state->main_frame);
     g_free(state);
 }
 
@@ -213,7 +217,10 @@ static void window_cleared(WebKitScriptWorld *script_world, WebKitWebPage *page,
         g_clear_object(&owner);
     }
     g_list_free_full(requests, request_unref);
-    if (webkit_frame_is_main_frame(frame)) g_hash_table_remove_all(state->frames);
+    if (webkit_frame_is_main_frame(frame)) {
+        g_weak_ref_set(&state->main_frame, frame);
+        g_hash_table_remove_all(state->frames);
+    }
     g_autofree gchar *id = frame_id(frame);
     /* Weak frame references do not retain detached documents or JavaScript worlds. */
     GHashTableIter iter;
@@ -254,7 +261,7 @@ static gpointer copy_key(gconstpointer key, gpointer data)
 static void list(WebKitWebPage *page, WebKitUserMessage *message)
 {
     Page *state = g_object_get_data(G_OBJECT(page), PAGE_STATE);
-    WebKitFrame *main = webkit_web_page_get_main_frame(page);
+    WebKitFrame *main = g_weak_ref_get(&state->main_frame);
     if (!main) { reply(message, FALSE, STALE); return; }
     JSCContext *context = webkit_frame_get_js_context_for_script_world(main, world);
     g_clear_object(&context);
@@ -264,6 +271,7 @@ static void list(WebKitWebPage *page, WebKitUserMessage *message)
     GList *keys = g_list_copy_deep(borrowed, copy_key, NULL);
     g_list_free(borrowed);
     g_autofree gchar *main_id = frame_id(main);
+    g_object_unref(main);
     for (guint pass = 0; pass < 2; pass++) {
         for (GList *item = keys; item; item = item->next) {
             Frame *row = g_hash_table_lookup(state->frames, item->data);
@@ -403,6 +411,7 @@ static void page_created(WebKitWebExtension *extension, WebKitWebPage *page, gpo
     (void)extension;
     (void)data;
     Page *state = g_new0(Page, 1);
+    g_weak_ref_init(&state->main_frame, NULL);
     state->frames = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, frame_free);
     state->pending = g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL, request_unref);
     g_object_set_data_full(G_OBJECT(page), PAGE_STATE, state, page_free);
