@@ -158,15 +158,21 @@ static void finish(Request *request, gboolean ok, const gchar *text)
 
 static gboolean expired(gpointer data)
 {
-    Request *request = data;
+    /* Evaluating liveness can run microtasks and finish the same request. */
+    Request *request = request_ref(data);
     WebKitWebPage *page = g_weak_ref_get(&request->page);
     WebKitFrame *frame = g_weak_ref_get(&request->frame);
     gboolean stale = !page || !frame || !current(page, frame, request->loader, request->url);
     g_clear_object(&frame);
     g_clear_object(&page);
-    if (!stale && g_get_monotonic_time() < request->deadline) return G_SOURCE_CONTINUE;
+    if (request->done) { request_unref(request); return G_SOURCE_REMOVE; }
+    if (!stale && g_get_monotonic_time() < request->deadline) {
+        request_unref(request);
+        return G_SOURCE_CONTINUE;
+    }
     request->timeout = 0;
     finish(request, FALSE, stale ? STALE : "Linux 文档操作超时");
+    request_unref(request);
     return G_SOURCE_REMOVE;
 }
 

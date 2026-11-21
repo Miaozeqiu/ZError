@@ -165,8 +165,8 @@ class NativeFrames(unittest.TestCase):
             self.run_fixed({**self.a, "loaderId": "forged"}, action="query", selector="h1", limit=1)
 
     def test_reload_detach_and_pending_results_invalidate(self):
-        # Fixed clicks trigger real same-URL iframe navigation from the page world.
-        self.view.evaluate_javascript("document.querySelector('#a').src += '?reload=1'", -1, None, None, None, None, None)
+        # Reload the exact same URL: URL equality alone must never preserve authority.
+        self.view.evaluate_javascript("document.querySelector('#a').src = document.querySelector('#a').src", -1, None, None, None, None, None)
         pump_until(lambda: next((row for row in self.rpc("list") if row["frameId"] == self.a["frameId"]
                                  and row["loaderId"] != self.a["loaderId"]), None))
         with self.assertRaises(RuntimeError):
@@ -201,6 +201,30 @@ class NativeFrames(unittest.TestCase):
         self.assertEqual(result[1]["value"]["event"], "cancelled")
         with self.assertRaisesRegex(RuntimeError, "大小限制"):
             self.rpc("evaluate", self.a, "'x'.repeat(140000)")
+
+    def test_cross_tab_documents_are_rejected(self):
+        other = WebKit2.WebView.new_with_context(self.context)
+        window = Gtk.Window()
+        window.add(other)
+        window.show_all()
+        try:
+            other.load_uri(TOP + "/root")
+            pump_until(lambda: not other.is_loading())
+            pump_until(lambda: len(self.rpc("list", view=other)) == 5)
+            with self.assertRaises(RuntimeError):
+                self.rpc("evaluate", self.a, "document.body.textContent", view=other)
+        finally:
+            window.destroy()
+
+    def test_async_errors_and_detached_requests_do_not_exhaust_budget(self):
+        with self.assertRaises(RuntimeError):
+            self.rpc("evaluate", self.a, "Promise.reject(new Error('private error detail'))")
+        # More than the per-page request budget, sequentially: callbacks release slots.
+        for _ in range(36):
+            self.assertEqual(self.run_fixed(self.a, action="media_read", selector="#media")["ok"], True)
+        pending = self.begin("evaluate", self.a, "new Promise(()=>{})")
+        self.view.reload()
+        self.assertFalse(pump_until(lambda: pending[0] if pending else None)[0])
 
 
 if __name__ == "__main__":
