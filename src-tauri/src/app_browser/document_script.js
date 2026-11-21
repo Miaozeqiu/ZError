@@ -203,7 +203,10 @@ SOFTWARE.
         waits.delete(args.wait_id);
         resolve({ ...state(), event });
       };
-      const changed = event => { if (reached() || ['error', 'emptied'].includes(event.type)) finish(event.type); };
+      const changed = event => {
+        if (['error', 'emptied'].includes(event.type)) finish(event.type);
+        else if (reached()) finish(args.until);
+      };
       waits.set(args.wait_id, () => finish('cancelled'));
       for (const name of events) node.addEventListener(name, changed);
       timer = setTimeout(() => finish('timeout'), args.timeoutMs);

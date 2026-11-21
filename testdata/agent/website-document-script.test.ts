@@ -34,7 +34,8 @@ describe('原生固定文档脚本', () => {
     Object.defineProperty(media, 'ended', { get: () => ended })
     const args = { action: 'media_wait', selector: 'video', until: 'ended', timeoutMs: 30000, wait_id: 'one' }
     const pending = run(args)
-    ended = true; media.dispatchEvent(new Event('ended'))
+    // WebKit may dispatch pause before ended, with ended already true.
+    ended = true; media.dispatchEvent(new Event('pause'))
     expect(await pending).toMatchObject({ event: 'ended', ended: true })
     expect(vi.getTimerCount()).toBe(0)
     ended = false
