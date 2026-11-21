@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createHostToolRunner } from '../../src/services/agent/chapterResume'
+import { createHostToolRunner } from '../../src/services/agent/hostToolRunner'
 import { createRunController } from '../../src/services/agent/core/controller'
-import { newRun, type RunCheckpoint } from '../../src/services/agent/core/run'
+import { DEFAULT_RUN_LIMITS, newRun, type RunCheckpoint } from '../../src/services/agent/core/run'
+import { WEBSITE_HOST_TOOLS } from '../../src/services/agent/websiteRuntime/hostTools'
 import { executeWebsitePackage, type WebsiteHost } from '../../src/services/agent/websiteRuntime/execute'
 import { runtimeBinding, runtimeFixture } from './fixtures/websiteRuntime'
 
@@ -15,6 +16,53 @@ const makeRuntime = () => {
 }
 
 describe('网站包经过正式宿主操作路径', () => {
+  it('原生查询回执直接建立观察，服务分页不能冒充页面观察', async () => {
+    let state = newRun('native-observation')
+    const controller = createRunController({ run: state, changed: value => { state = value }, checkpoint: async () => {}, browserId: () => 'tab', signal: new AbortController().signal })
+    try {
+      const read = async (id: string, action: string) => JSON.parse(await controller.execute({ id, name: 'browser_package_read', arguments: JSON.stringify({ action }) }, async () => '{"ok":true,"nodes":[{"text":"网页数据"}]}'))
+      expect(await read('service', 'service')).not.toHaveProperty('observation_id')
+      expect(await read('query', 'query')).toMatchObject({ observation_id: 'query', observed_browser_id: 'tab' })
+      expect(state.observation?.id).toBe('query')
+      expect(await read('media', 'media_read')).toMatchObject({ observation_id: 'media' })
+    } finally { controller.dispose() }
+  })
+  it('内部读题不写入模型历史或界面步骤，预算只计算外层工具，内部写入仍有独立审计编号', async () => {
+    let state = newRun('bounded-paper')
+    const checkpoint = vi.fn(async () => undefined)
+    const controller = createRunController({ run: state, changed: value => { state = value }, checkpoint,
+      limits: { ...DEFAULT_RUN_LIMITS, tools: 1 }, browserId: () => 'tab', signal: new AbortController().signal })
+    const onEvent = vi.fn(), onTurnTranscript = vi.fn()
+    const effect = vi.fn(async () => JSON.stringify({ ok: true, content: '内部整卷数据'.repeat(1000) }))
+    const invoke = createHostToolRunner({ tools: WEBSITE_HOST_TOOLS, onEvent, onTurnTranscript,
+      executeTool: call => controller.execute(call, effect) }, 'private-host')
+    try {
+      const result = await controller.execute({ id: 'answer', name: 'browser_site_academy__auto_answer', arguments: '{}' }, async () => {
+        for (let index = 0; index < 8; index++) await invoke('browser_package_read', { host: 'academy.example', action: 'service' })
+        for (let index = 0; index < 2; index++) await invoke('browser_package_act', { host: 'academy.example', action: 'click' })
+        return JSON.stringify({ ok: true, result: { items: [{ status: 'verified' }] } })
+      })
+      expect(result).not.toContain('内部整卷数据')
+      expect(onEvent).not.toHaveBeenCalled(); expect(onTurnTranscript).not.toHaveBeenCalled()
+      expect(effect).toHaveBeenCalledTimes(10)
+      expect(state.usage).toMatchObject({ tools: 1, hostCommands: 10 })
+      expect(state.operations).toHaveLength(2)
+      expect(new Set(state.operations.map(op => op.id)).size).toBe(2)
+      expect(state.operations.every(op => op.state === 'dispatched')).toBe(true)
+      expect(checkpoint).toHaveBeenCalledTimes(4)
+      await expect(controller.execute({ id: 'over', name: 'browser_get_page', arguments: '{}' }, effect)).rejects.toThrow('执行预算')
+    } finally { controller.dispose() }
+  })
+  it('内部命令仍执行原生副作用前检查，写入检查点失败不会点击', async () => {
+    const effect = vi.fn(async () => '{"ok":true}')
+    const controller = createRunController({ run: newRun('private-guard'), changed: () => undefined,
+      checkpoint: async () => { throw new Error('checkpoint unavailable') }, browserId: () => 'tab', signal: new AbortController().signal })
+    const invoke = createHostToolRunner({ tools: WEBSITE_HOST_TOOLS, executeTool: call => controller.execute(call, effect) }, 'private-guard')
+    try {
+      await expect(invoke('browser_package_act', { host: 'academy.example', action: 'click' })).rejects.toThrow('checkpoint unavailable')
+      expect(effect).not.toHaveBeenCalled()
+    } finally { controller.dispose() }
+  })
   it('命令使用实时目录并在副作用发生前保存操作记录；包返回不等于任务完成', async () => {
     let state: RunCheckpoint = newRun('package-run')
     const checkpoint = vi.fn(async () => undefined)

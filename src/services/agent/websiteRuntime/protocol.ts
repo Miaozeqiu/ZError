@@ -4,6 +4,7 @@ import { validateToolCall } from '../core/tools'
 export const WEBSITE_HOST_API = 2
 export const WEBSITE_TOOL_TIMEOUT_MS = 120_000
 export const WEBSITE_TOOL_PREFIX = 'browser_site_'
+export const isWebsiteHostCommand = (name: string) => name === 'browser_package_read' || name === 'browser_package_act'
 export const isWebsiteRuntimeToolName = (name: string) => /^browser_site_[a-z0-9_]+__[a-z][a-z0-9_]{0,23}$/.test(name) && name.length <= 63
 export const WEBSITE_COMMANDS = ['browser.observe', 'browser.navigate', 'browser.click', 'browser.fill',
   'browser.press', 'browser.scroll', 'browser.wait', 'page.wait',

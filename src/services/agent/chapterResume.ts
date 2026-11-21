@@ -1,7 +1,5 @@
-import { takeToolImages } from '../model/toolImages'
+import { createHostToolRunner } from './hostToolRunner'
 import { studentChapterUrl } from '../chaoxing/host/chapterTasks'
-import type { RunTextModelOptions } from '../model/runner'
-import { validateToolCall } from './core/tools'
 import type { AgentChatMessage } from './chatTypes'
 
 const object = (value: string | undefined) => {
@@ -41,28 +39,6 @@ export function chapterResumePlan(input: {
       line.includes(`[ref=${ref}]`) && /\bbutton "(?:播放视频|播放|继续播放)"/.test(line)))
   })
   return { chapterKey: chapter.key, mid, operationIds: verified.length === unresolved.length ? verified.map(op => op.id) : null }
-}
-
-export function createHostToolRunner(
-  options: Pick<RunTextModelOptions, 'tools' | 'liveTools' | 'executeTool' | 'onEvent' | 'onTurnTranscript'>,
-  turnId: string,
-) {
-  let sequence = 0
-  return async (name: string, args: Record<string, unknown>) => {
-    const call = { id: `${turnId}-host-${++sequence}`, name, arguments: JSON.stringify(args) }
-    const invalid = validateToolCall(await options.liveTools?.() ?? options.tools ?? [], call)
-    if (invalid) return { ok: false, error: invalid }
-    if (!options.executeTool) return { ok: false, error: '当前没有可执行的工具。' }
-    options.onEvent?.({ type: 'tool_start', ...call })
-    const result = await options.executeTool(call)
-    const { text } = takeToolImages(result)
-    options.onEvent?.({ type: 'tool_end', id: call.id, name, result: text })
-    options.onTurnTranscript?.([
-      { role: 'assistant', content: '', tool_calls: [{ id: call.id, type: 'function', function: { name, arguments: call.arguments } }] },
-      { role: 'tool', tool_call_id: call.id, name, content: text },
-    ])
-    return object(result)
-  }
 }
 
 export async function runChapterResume(

@@ -22,6 +22,5 @@ export async function executeWebsiteHostTool(name: string, args: Record<string, 
   ctx.abort.throwIfAborted()
   if (args.action === 'service') return JSON.stringify(await executeWebsiteService(name, args, ctx, browserId))
   const result = await callProtocol(browserId, 'website_document', args, ctx.browserEpoch === undefined ? undefined : { expectedEpoch: ctx.browserEpoch })
-  if (read && ['query', 'media_read'].includes(String(args.action)) && result.ok === true) return JSON.stringify({ ...result, snapshot: JSON.stringify(result) })
   return JSON.stringify(result)
 }

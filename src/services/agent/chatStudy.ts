@@ -41,7 +41,8 @@ import {
   isImageAttachment,
   parseFolderTokens,
 } from './folderTokens'
-import { messageHistoryText } from './modelHistory'
+import { messageHistoryText, modelVisibleTranscript } from './modelHistory'
+import { isWebsiteHostCommand } from './websiteRuntime/protocol'
 import { resolveSitePackForUrl } from './sitePack'
 import { siteAccountsPrompt } from './siteAccounts'
 import { websiteDomains, websiteIdentityForHost, websitePrimaryHost } from './websiteIdentity'
@@ -265,7 +266,7 @@ const pickCompactBoundary = (kept: AgentChatMessage[], keepTokens = CONTEXT_KEEP
 
 const buildCompactTranscript = (messages: AgentChatMessage[]) => messages.map(message => JSON.stringify({
   id: message.id, role: message.role, content: message.modelContent || message.content,
-  transcript: message.transcript || message.steps.map(step => ({ id: step.id, tool: step.name, arguments: step.arguments, result: step.result, status: step.status })),
+  transcript: message.transcript ? modelVisibleTranscript(message.transcript) : message.steps.filter(step => !isWebsiteHostCommand(step.name || '')).map(step => ({ id: step.id, tool: step.name, arguments: step.arguments, result: step.result, status: step.status })),
   todos: message.todos, quizAttempts: message.quizAttempts, taskOutcome: message.taskOutcome,
 })).join('\n')
 

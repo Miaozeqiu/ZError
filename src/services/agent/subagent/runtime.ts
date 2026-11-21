@@ -1,4 +1,5 @@
-import { createHostToolRunner, runChapterResume, type chapterResumePlan } from '../chapterResume'
+import { createHostToolRunner } from '../hostToolRunner'
+import { runChapterResume, type chapterResumePlan } from '../chapterResume'
 import { chaoxingStartup } from '../chaoxingStartup'
 import { LOAD_AGENT_TOOLS, loadAgentTools, modelAgentTools } from '../toolDiscovery'
 import { toolRegistry } from '../core/tools'

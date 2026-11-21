@@ -7,7 +7,7 @@ export type RunCheckpoint = {
   version: 1; id: string; status: RunStatus; updatedAt: number; browserId?: string
   goalMessageId?: string; recoveredFrom?: string; needsObservation: boolean; observation?: { id: string; browserId: string; at: number; sequence: number }
   operations: Operation[]; trace: RunTrace[]; sequence: number
-  usage: { requests: number; inputTokens: number; outputTokens: number; tools: number; failures: number; noProgress?: number; compactions?: number; contextBefore?: number; contextAfter?: number }
+  usage: { requests: number; inputTokens: number; outputTokens: number; tools: number; hostCommands?: number; failures: number; noProgress?: number; compactions?: number; contextBefore?: number; contextAfter?: number }
   failure?: FailureCode
 }
 export type RunLimits = { requests: number; inputTokens: number; outputTokens: number; tools: number; consecutiveFailures: number; noProgressActions: number }

@@ -1,6 +1,7 @@
 import type { ImportTaskStep } from '../app/importTasks'
 import type { AgentChatMessage, AgentTranscriptItem } from './chatTypes'
 import { projectToolResult } from '../model/toolResultProjection'
+import { isWebsiteHostCommand } from './websiteRuntime/protocol'
 
 /** 落盘与近几轮回放的上限 */
 export const TOOL_ARGS_KEEP = 8000
@@ -27,15 +28,30 @@ const replayableTools = (steps: ImportTaskStep[] = []) => (
   steps.filter((step) => (
     (step.kind || 'tool') === 'tool'
     && step.name
+    && !isWebsiteHostCommand(step.name)
     && step.arguments != null
   ))
 )
+
+/** Keep durable audit data intact, but never replay package-internal page/service payloads. */
+export const modelVisibleTranscript = (items: ModelHistoryItem[]): ModelHistoryItem[] => {
+  const internal = new Set(items.flatMap(item => item.role === 'assistant'
+    ? (item.tool_calls || []).filter(call => isWebsiteHostCommand(call.function?.name || '')).map(call => call.id) : []))
+  return items.flatMap(item => {
+    if (item.role === 'tool' && (isWebsiteHostCommand(item.name || '') || internal.has(item.tool_call_id || ''))) return []
+    if (item.role !== 'assistant' || !item.tool_calls?.length) return [item]
+    const calls = item.tool_calls.filter(call => !isWebsiteHostCommand(call.function?.name || ''))
+    if (calls.length) return [{ ...item, tool_calls: calls }]
+    const { tool_calls: _calls, ...spoken } = item
+    return (typeof item.content === 'string' ? item.content.trim() : Array.isArray(item.content) && item.content.length) ? [spoken] : []
+  })
+}
 
 export const clipTranscript = (
   items: ModelHistoryItem[] = [],
   limits: ClipLimits = { args: TOOL_ARGS_KEEP, result: TOOL_RESULT_KEEP },
 ): ModelHistoryItem[] => (
-  items.map((item) => {
+  modelVisibleTranscript(items).map((item) => {
     if (item.role === 'tool') {
       return { ...item, content: projectToolResult(item.content, limits.result, item.tool_call_id) }
     }
@@ -91,7 +107,7 @@ export const assistantTurnToHistory = (
     }
   } else if (message.steps?.length) {
     const recap = message.steps
-      .filter((step) => step.name)
+      .filter((step) => step.name && !isWebsiteHostCommand(step.name))
       .map((step) => {
         const mark = step.status === 'failed' ? '失败' : step.status === 'running' ? '进行中' : '完成'
         return `- ${step.name} ${mark}${step.detail ? `：${step.detail}` : ''}`
@@ -133,7 +149,7 @@ export const buildModelHistory = (
 
 const transcriptAsText = (items: AgentTranscriptItem[]) => {
   const lines: string[] = []
-  for (const item of items) {
+  for (const item of modelVisibleTranscript(items)) {
     if (item.role === 'tool') {
       lines.push(`${item.name || 'tool'} 完成 → ${clipToolText(item.content, 1200)}`)
       continue
@@ -159,7 +175,7 @@ export const messageHistoryText = (message: AgentChatMessage) => {
     return [spoken, tools].filter(Boolean).join('\n')
   }
   const tools = (message.steps || [])
-    .filter((step) => step.name)
+    .filter((step) => step.name && !isWebsiteHostCommand(step.name))
     .map((step) => {
       const mark = step.status === 'failed' ? '失败' : '完成'
       const args = step.arguments ? ` ${clipToolText(step.arguments, 240)}` : ''
