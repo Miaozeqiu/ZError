@@ -169,6 +169,28 @@ class NativeFrames(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self.run_fixed({**self.a, "loaderId": "forged"}, action="query", selector="h1", limit=1)
 
+    def test_native_script_result_does_not_depend_on_title_events(self):
+        title = self.view.get_title()
+        result = []
+
+        def done(target, response, *_args):
+            try:
+                value = target.evaluate_javascript_finish(response)
+                result.append((True, json.loads(value.to_json(0))))
+            except Exception as error:
+                result.append((False, str(error)))
+
+        self.view.evaluate_javascript(
+            "({url:location.href,text:'中文'.repeat(4000),value:42})",
+            -1, None, None, None, done, None)
+        ok, value = pump_until(lambda: result[0] if result else None)
+        self.assertTrue(ok, value)
+        self.assertEqual(value, {"url": TOP + "/root", "text": "中文" * 4000, "value": 42})
+        self.assertEqual(self.view.get_title(), title)
+        result.clear()
+        self.view.evaluate_javascript("throw new Error('fixture failure')", -1, None, None, None, done, None)
+        self.assertFalse(pump_until(lambda: result[0] if result else None)[0])
+
     def test_reload_detach_and_pending_results_invalidate(self):
         # Reload the exact same URL: URL equality alone must never preserve authority.
         self.view.evaluate_javascript("document.querySelector('#a').src = document.querySelector('#a').src", -1, None, None, None, None, None)

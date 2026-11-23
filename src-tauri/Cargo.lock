@@ -7590,6 +7590,7 @@ dependencies = [
  "chrono",
  "futures",
  "futures-util",
+ "javascriptcore-rs",
  "jieba-rs",
  "objc2 0.6.3",
  "objc2-app-kit",

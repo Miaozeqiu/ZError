@@ -26,7 +26,7 @@ const cli = (args, input, expectedFailure = false) => new Promise((resolve, reje
       const parsed = JSON.parse(text);
       if (['agent', 'tools'].includes(args[0]) && args[1] === 'run' && parsed.result?.id) sessions.add(parsed.result.id);
       if (expectedFailure) { assert.notEqual(code, 0); assert.equal(parsed.ok, false); resolve(parsed); return; }
-      if (code !== 0 || !parsed.ok) throw new Error(`${args.slice(0, 2).join(' ')}: ${parsed.error || error || `exit ${code}`} ${parsed.result?.messages?.at(-1)?.error || ''}`);
+      if (code !== 0 || !parsed.ok) throw new Error(`${input?.name || args.slice(0, 2).join(' ')}: ${parsed.error || error || `exit ${code}`} ${parsed.result?.messages?.at(-1)?.error || ''}`);
       resolve(parsed.result);
     }
     catch (e) { reject(e); }

@@ -215,6 +215,7 @@ pub(crate) fn format_eval_error_near(raw: &str, script: &str) -> String {
   raw.chars().take(240).collect()
 }
 
+#[cfg(not(target_os = "linux"))]
 pub(super) fn new_eval_token() -> String {
   format!(
     "{:x}{:x}",
@@ -260,6 +261,10 @@ pub async fn browser_eval(app: AppHandle, id: String, script: String, expected_e
     return Err("脚本过长".into());
   }
   let webview = find_browser(&app, &id)?;
+  #[cfg(target_os = "linux")]
+  return super::evaluation_linux::evaluate(&webview, prepare_eval_script(script)).await;
+  #[cfg(not(target_os = "linux"))]
+  {
   let token = new_eval_token();
   let prepared = prepare_eval_script(script);
   let mut wrapped = String::from("(function(){\n  var prev = document.title;\n  try {\n    var value = ");
@@ -308,6 +313,7 @@ pub async fn browser_eval(app: AppHandle, id: String, script: String, expected_e
     }
   }
   Err("执行结果过长".into())
+  }
   }
 
   }).await
