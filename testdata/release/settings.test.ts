@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, h, nextTick, type App } from 'vue'
-const mocks = vi.hoisted(() => ({ invoke: vi.fn(), setSetting: vi.fn(), save: vi.fn(), theme: vi.fn() }))
+const mocks = vi.hoisted(() => ({ invoke: vi.fn(), setSetting: vi.fn(), save: vi.fn(), theme: vi.fn(), clipboard: vi.fn() }))
 vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }))
+vi.mock('@tauri-apps/plugin-clipboard-manager', () => ({ writeText: mocks.clipboard }))
 vi.mock('../../src/composables/useSettingsManager', async () => {
   const { ref } = await import('vue')
   return { useSettingsManager: () => ({ settings: ref({ theme: 'light', autoAddToQuestionBank: true, questionSaveFolderId: null, network: { serverPort: 3000, enableLanAccess: false, bindAddress: '127.0.0.1' } }), setSetting: mocks.setSetting, saveSettings: mocks.save }) }
@@ -25,21 +26,32 @@ describe('settings user flows before release', () => {
     const dark = root.querySelector<HTMLInputElement>('input[value="dark"]')!; dark.checked = true; dark.dispatchEvent(new Event('change', { bubbles: true })); await flush()
     expect(mocks.setSetting).toHaveBeenCalledWith('theme', 'dark'); expect(mocks.theme).toHaveBeenCalledWith('dark'); expect(mocks.save).toHaveBeenCalled()
   })
-  it('installs the selected external Agent skill, disables duplicate submission and displays the result', async () => {
-    let done!: (value: unknown) => void
-    mocks.invoke.mockReturnValue(new Promise(resolve => { done=resolve }))
-    const select = root.querySelector<HTMLSelectElement>('[aria-label="安装 Skill 的 Agent"]')!; select.value='claude'; select.dispatchEvent(new Event('change', { bubbles:true })); await flush()
-    button('安装').click(); await flush(); expect(button('安装').disabled).toBe(true)
-    expect(mocks.invoke).toHaveBeenCalledWith('cli_skill_install', { agent:'claude' })
-    done({version:'1.0.0',path:'/test/skills/zerror'}); await flush(); expect(root.textContent).toContain('已安装 v1.0.0'); expect(button('安装').disabled).toBe(false)
+  it('copies installation instructions without installing or choosing an Agent in the app', async () => {
+    let done!: () => void
+    mocks.clipboard.mockReturnValue(new Promise<void>(resolve => { done=resolve }))
+    const copy=button('复制安装语句');copy.click();await flush()
+    expect(copy.disabled).toBe(true)
+    const instruction=mocks.clipboard.mock.calls[0][0]
+    expect(root.querySelector('.skill-install-instruction')?.textContent).toBe(instruction)
+    expect(instruction).toContain('自行确定适合的安装方式和技能目录')
+    expect(instruction).not.toContain('--agent')
+    expect(instruction).not.toContain('--dir')
+    expect(instruction).toContain('https://open.zerrorai.com/v1/agent-skills/zerror')
+    expect(root.querySelector('[aria-label="安装 Skill 的 Agent"]')).toBeNull()
+    expect(root.textContent).not.toContain('更新已安装')
+    expect(mocks.invoke).not.toHaveBeenCalled()
+    done();await flush()
+    expect(root.querySelector('.skill-install-setting [role="status"]')).toBeNull()
+    expect(copy.disabled).toBe(false)
   })
-  it('shows partial update errors and allows a later retry', async () => {
-    mocks.invoke.mockResolvedValueOnce({ok:false,installations:[{ok:false,error:'本地修改已保留'}]})
-    button('更新已安装').click(); await flush(); expect(root.textContent).toContain('本地修改已保留')
-    mocks.invoke.mockResolvedValueOnce({ok:true,installations:[]}); button('更新已安装').click(); await flush(); expect(root.textContent).toContain('尚未安装 Skill')
-  })
-  it('recovers the install button after a native command failure', async () => {
-    mocks.invoke.mockRejectedValueOnce(new Error('Open unavailable'))
-    button('安装').click(); await flush(); expect(root.textContent).toContain('Open unavailable'); expect(button('安装').disabled).toBe(false)
+  it('allows retry after clipboard failure without claiming an installation', async () => {
+    mocks.clipboard.mockRejectedValueOnce(new Error('clipboard unavailable'))
+    button('复制安装语句').click();await flush()
+    expect(root.textContent).toContain('复制失败，请重试。')
+    expect(button('复制安装语句').disabled).toBe(false)
+    mocks.clipboard.mockResolvedValueOnce(undefined)
+    button('复制安装语句').click();await flush()
+    expect(root.querySelector('.skill-install-setting [role="status"]')).toBeNull()
+    expect(mocks.invoke).not.toHaveBeenCalled()
   })
 })

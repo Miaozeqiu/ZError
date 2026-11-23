@@ -2,6 +2,8 @@
 mod args;
 #[path = "client/platform.rs"]
 mod platform;
+#[path = "client/path_config.rs"]
+mod path_config;
 #[path = "skills/mod.rs"]
 pub(crate) mod skills;
 #[path = "client/transport.rs"]
@@ -9,6 +11,17 @@ pub(crate) mod transport;
 #[path = "client/wait.rs"]
 mod wait;
 pub use platform::install;
+
+/// Linux 安装包的 zerror 同时是桌面入口；只有明确的命令行参数才进入 CLI。
+pub fn is_cli_argument(argument: &str) -> bool {
+    matches!(argument, "--help" | "-h" | "--version" | "call" | "status" | "app" | "config" | "models" | "accounts" | "folders" | "questions" | "server" | "agent" | "browser" | "websites" | "tools" | "cli" | "skill" | "methods")
+}
+
+#[test]
+fn cli_arguments_do_not_capture_desktop_or_elevation_options() {
+    for argument in ["status", "config", "--help", "--version"] { assert!(is_cli_argument(argument)); }
+    for argument in ["", "--elevated", "--type=renderer", "--no-sandbox"] { assert!(!is_cli_argument(argument)); }
+}
 use serde_json::{json, Value};
 use std::{
     io::Read,

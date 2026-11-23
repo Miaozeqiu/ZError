@@ -58,6 +58,13 @@ jobs:
           if ($installer.ExitCode -ne 0) { throw "Installer failed: $($installer.ExitCode)" }
           $cli = Join-Path $directory 'zerror-cli.exe'
           if (!(Test-Path $cli)) { throw 'Native CLI missing from installed package' }
+          $launcher = Join-Path $env:LOCALAPPDATA 'ZError\bin\zerror.cmd'
+          if (!(Test-Path $launcher)) { throw 'CLI launcher was not installed automatically' }
+          $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
+          $command = Get-Command zerror -CommandType Application -ErrorAction Stop
+          if ($command.Source -ne $launcher) { throw 'Installed zerror is not discoverable through user PATH' }
+          zerror --version
+          if ($LASTEXITCODE -ne 0) { throw 'Installed zerror launcher failed' }
           "ZERROR_INSTALLED_CLI=$cli" >> $env:GITHUB_ENV
       - name: Installed desktop functional regression
         shell: pwsh
@@ -155,6 +162,10 @@ jobs:
           printf 'ZERROR_INSTALLED_CLI=%s\n' "$RUNNER_TEMP/ZError-installed.app/Contents/MacOS/zerror-cli" >> "$GITHUB_ENV"
       - name: Installed desktop functional regression
         run: npm run test:release -- --phase desktop --start --cli "$ZERROR_INSTALLED_CLI" --output output/release-desktop
+      - name: Verify automatic macOS CLI setup
+        run: |
+          test -x "$HOME/.local/bin/zerror"
+          /bin/zsh -lc 'zerror --version'
       - name: Upload regression evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -219,6 +230,7 @@ jobs:
           test "${#images[@]}" -eq 1
           sudo apt-get install -y "$(realpath "${packages[0]}")"
           test -x /usr/bin/zerror-cli
+          timeout 10s zerror --version
           "${images[0]}" cli --version
       - name: Installed desktop functional regression
         run: xvfb-run -a dbus-run-session -- npm run test:release -- --phase desktop --start --cli /usr/bin/zerror-cli --output output/release-desktop

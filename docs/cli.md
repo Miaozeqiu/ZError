@@ -4,22 +4,17 @@
 
 ## 安装命令
 
-在「设置 → 常规 → 命令行」点击「安装命令行」。macOS / Linux 会创建 `~/.local/bin/zerror`，Windows 会创建 `%LOCALAPPDATA%\ZError\bin\zerror.cmd`。已有同名命令不会被覆盖。安装位置会显示在设置页。
+Windows 安装结束时自动创建 `%LOCALAPPDATA%\ZError\bin\zerror.cmd` 并加入当前用户 PATH。Linux DEB 安装后可直接运行 `/usr/bin/zerror`，无参数仍打开桌面软件。macOS 拖拽安装和 Linux AppImage 在首次启动时自动创建 `~/.local/bin/zerror` 并配置用户终端；软件更新后自动检查修复，不覆盖其他同名命令。
 
-如果该目录不在 PATH 中，先通过完整路径运行，或将目录加入用户 PATH：
+已经打开的终端需要重新打开，之后可直接运行：
 
 ```sh
-# macOS / Linux；可按使用的 shell 将这一行加入 ~/.zshrc 或 ~/.bashrc
-export PATH="$HOME/.local/bin:$PATH"
 zerror --help
 ```
 
-```powershell
-# Windows：也可以在系统「环境变量」中把以下目录加入用户 Path
-& "$env:LOCALAPPDATA\ZError\bin\zerror.cmd" --help
-```
+macOS / Linux 自动配置支持 zsh（含 ZDOTDIR）、bash 的登录和交互配置，以及 fish（含 XDG_CONFIG_HOME）。配置使用独立标记块，保留原有内容，重复安装不重复追加。Windows 只更新用户 Path，保留现有项目和 `%变量%`，不修改系统 Path。
 
-也可以直接运行安装目录的 `zerror-cli cli install`。macOS 的程序位于 `ZError.app/Contents/MacOS/zerror-cli`；Linux AppImage 可运行 `./ZError.AppImage cli cli install`。AppImage 的启动器保留原始 AppImage 路径，更新时请保持该路径稳定，或重新安装命令。
+若命令不可用，在「设置 → 常规 → 命令行」点击「修复命令行」，或直接运行安装目录的 `zerror-cli cli install`。macOS 的程序位于 `ZError.app/Contents/MacOS/zerror-cli`；Linux AppImage 可运行 `./ZError.AppImage cli cli install`。AppImage 启动器保留原始 AppImage 路径，移动文件后重新打开软件即可修复。开发构建不自动接管正式安装的命令，可以通过上述入口手动配置。
 
 ## 常用命令
 
@@ -152,7 +147,7 @@ zerror skill update --agent codex
 zerror skill update --agent codex --no-auto-update
 ```
 
-设置 → 常规 → 外部 Agent 也可选择 Agent 安装或更新。`shared` 对应 `~/.agents/skills`，Codex 尊重 `CODEX_HOME`，OpenCode 尊重 `XDG_CONFIG_HOME`。`--dir` 指向 skills 根目录，实际安装到其下的 `zerror/`。安装和升级无需启动 GUI；软件运行时每六小时检查一次已登记的自动更新安装。`skill sync` 执行同样的到期检查，`skill update` 则立即检查。
+设置 → 常规 → 外部 Agent 提供“复制安装语句”，将语句发送给目标 Agent 后，由它识别自身类型、执行安装并读取 Skill。软件界面不再直接安装或更新 Skill。`shared` 对应 `~/.agents/skills`，Codex 尊重 `CODEX_HOME`，OpenCode 尊重 `XDG_CONFIG_HOME`。`--dir` 指向 skills 根目录，实际安装到其下的 `zerror/`。安装和升级无需启动 GUI；软件运行时每六小时检查一次已登记的自动更新安装。`skill sync` 执行同样的到期检查，`skill update` 则立即检查。
 
 Open 提供 `/v1/agent-skills`、`/v1/agent-skills/zerror` 以及 `/v1/agent-skills/zerror/SKILL.md`。发布包包含独立语义版本、CLI 协议要求、全部文本文件与 SHA-256。CLI 验证清单和内容，只从 HTTPS 来源下载（环回 HTTP 供本地测试），不接受重定向、路径逃逸或跨平台重名路径。`--source` 可指定可信 Open 镜像或本地测试服务，已登记安装不能换源覆盖。
 

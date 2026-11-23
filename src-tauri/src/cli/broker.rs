@@ -286,21 +286,6 @@ pub async fn cli_install(webview: tauri::Webview) -> Result<Value, String> {
         .map_err(|_| "CLI 安装未完成")?
 }
 
-#[tauri::command]
-pub async fn cli_skill_install(webview: tauri::Webview, agent: String) -> Result<Value, String> {
-    crate::secret_vault::trusted_webview(&webview)?;
-    tauri::async_runtime::spawn_blocking(move || super::client::skills::install_for_agent(agent))
-        .await
-        .map_err(|_| "Skill 安装任务未完成")?
-}
-#[tauri::command]
-pub async fn cli_skill_update(webview: tauri::Webview) -> Result<Value, String> {
-    crate::secret_vault::trusted_webview(&webview)?;
-    tauri::async_runtime::spawn_blocking(super::client::skills::update_registered)
-        .await
-        .map_err(|_| "Skill 更新任务未完成")?
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

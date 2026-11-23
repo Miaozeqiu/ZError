@@ -194,8 +194,6 @@ pub fn run() {
             crate::cli::broker::cli_request_active,
             crate::cli::broker::cli_complete,
             crate::cli::broker::cli_install,
-            crate::cli::broker::cli_skill_install,
-            crate::cli::broker::cli_skill_update,
             greet,
             load_cjk_system_font,
             app_update_target,
@@ -396,6 +394,15 @@ pub fn run() {
             }
 
             // CLI 使用独立且需要认证的环回接口，与题库 /query 服务分开。
+            // 拖拽安装/AppImage 没有安装后钩子，首次启动及更新后自动修复用户命令。
+            // 开发构建不接管用户正式安装的命令；需要时仍可在设置中手动修复。
+            if !cfg!(debug_assertions) {
+                tauri::async_runtime::spawn_blocking(|| {
+                    if let Err(error) = crate::cli::client::install() {
+                        eprintln!("CLI 自动配置未完成：{error}");
+                    }
+                });
+            }
             if let Err(error) = tauri::async_runtime::block_on(async { crate::cli::start(app.handle()) }) {
                 eprintln!("CLI 初始化失败：{error}");
             }

@@ -73,6 +73,10 @@ pub fn install() -> Result<Value, String> {
     if !source.is_file() {
         return Err("当前安装包缺少 zerror-cli，请重新安装完整软件".into());
     }
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("APPIMAGE").is_none() && source.parent() == Some(Path::new("/usr/bin")) {
+        return Ok(json!({"path":"/usr/bin/zerror","pathDirectory":"/usr/bin","onPath":true,"pathConfigured":true,"message":"已安装，可运行 zerror --help"}));
+    }
     #[cfg(windows)]
     let target = directory()?
         .parent()
@@ -115,7 +119,9 @@ pub fn install() -> Result<Value, String> {
             extra
         )
     };
-    fs::write(&target, content).map_err(|_| "无法安装用户命令")?;
+    if fs::read_to_string(&target).ok().as_deref() != Some(content.as_str()) {
+        fs::write(&target, content).map_err(|_| "无法安装用户命令")?;
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -123,10 +129,11 @@ pub fn install() -> Result<Value, String> {
             .map_err(|_| "无法设置命令执行权限")?;
     }
     let bin = target.parent().unwrap();
+    let profiles = super::path_config::configure(bin)?;
     let on_path = std::env::var_os("PATH")
         .map(|p| std::env::split_paths(&p).any(|p| p == bin))
         .unwrap_or(false);
     Ok(
-        json!({"path": target,"onPath":on_path,"message":if on_path {"已安装，可运行 zerror --help"} else {"已安装。请将此目录加入用户 PATH，或通过完整路径运行命令。"},"pathDirectory":bin}),
+        json!({"path": target,"onPath":on_path,"pathConfigured":true,"profiles":profiles,"message":if on_path {"已安装并配置，可运行 zerror --help"} else {"已安装并自动配置 PATH，重新打开终端后可运行 zerror --help。"},"pathDirectory":bin}),
     )
 }
