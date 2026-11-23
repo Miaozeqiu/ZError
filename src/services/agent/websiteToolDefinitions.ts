@@ -1,3 +1,4 @@
+import { sameDocumentValue } from '../security/documentPersistence'
 import type { ToolDefinition } from './core/tools'
 import { validateWebsiteRuntime, websiteRuntimeTools } from './websiteRuntime/protocol'
 /** Tool schemas can only come from their verified executable package. */
@@ -8,6 +9,6 @@ export function validateWebsiteTools(_host: string, value: unknown, runtime?: un
   }
   if (!siteId) throw new Error('网站运行包缺少身份')
   const tools = websiteRuntimeTools(siteId, validateWebsiteRuntime(runtime, siteId))
-  if (value !== undefined && JSON.stringify(value) !== JSON.stringify(tools)) throw new Error('网站工具定义与运行包不一致')
+  if (value !== undefined && !sameDocumentValue(value, tools)) throw new Error('网站工具定义与运行包不一致')
   return tools
 }

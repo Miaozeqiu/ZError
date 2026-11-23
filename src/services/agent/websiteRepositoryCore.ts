@@ -20,6 +20,21 @@ type MultiFileWebsiteRepositoryDocument = Omit<WebsiteRepositoryDocument, 'versi
   version: 2; supplements: Record<string, string>
 }
 export type StoredWebsiteRepositoryDocument = WebsiteRepositoryDocument | LegacyWebsiteRepositoryDocument | MultiFileWebsiteRepositoryDocument
+// 仅修复本地缓存：无运行包的旧工具定义不可执行，也不能阻断仓库重新同步。
+// 网络响应仍走完整校验；保留文本、图谱及本地补充，只失效远端执行元数据。
+export const recoverCachedWebsiteDocument = (stored: StoredWebsiteRepositoryDocument): StoredWebsiteRepositoryDocument => {
+  const recover = (snapshot: WebsiteSnapshot): WebsiteSnapshot => {
+    if (!snapshot || snapshot.runtime !== undefined || snapshot.tools === undefined
+      || (Array.isArray(snapshot.tools) && snapshot.tools.length === 0)) return snapshot
+    const { tools: _tools, scriptManifest: _manifest, etag: _etag, ...readable } = snapshot
+    // 清掉条件更新标识，避免服务器返回 unchanged 后继续缺少运行包。
+    return { ...readable, revision: 'unloaded:1', checkedAt: 0 }
+  }
+  const next = JSON.parse(JSON.stringify(stored)) as StoredWebsiteRepositoryDocument
+  next.upstream = recover(next.upstream)
+  if (next.version !== 1 && next.customSource) next.customSource.snapshot = recover(next.customSource.snapshot)
+  return next
+}
 export const repositoryPath = (path: string) => /^(?:SKILL\.md|site-graph\.json|references\/[a-z0-9][a-z0-9-]*\.md)$/.test(path)
 const copy = <T>(value: T): T => JSON.parse(JSON.stringify(value))
 const own = (value: object, key: string) => Object.prototype.hasOwnProperty.call(value, key)
@@ -197,7 +212,8 @@ export const createWebsiteRepository = (deps: {
   }
   const ready = async () => {
     loaded ||= mutate(async () => {
-      const stored = await deps.load()
+      const cached = await deps.load()
+      const stored = cached ? recoverCachedWebsiteDocument(cached) : null
       const next = copy(document)
       const oldNotes: Record<string, string> = {}
       if (stored) {

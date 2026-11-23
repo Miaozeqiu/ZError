@@ -25,3 +25,8 @@ describe('Open 网站运行包沿用原接口', () => {
     expect(previous.runtime.bundle.code).not.toContain('changed')
   })
 })
+
+it('服务器返回只有工具定义而没有运行包时仍严格拒绝，缓存恢复不能放宽下载校验', async () => {
+  const request=vi.fn(async()=>Response.json({...snapshot(),tools:[{type:'function',function:{name:'old_tool'}}]}))
+  await expect(downloadOpenWebsiteExperience(website,snapshot(),request as typeof fetch)).rejects.toThrow('已验证的编译运行包')
+})

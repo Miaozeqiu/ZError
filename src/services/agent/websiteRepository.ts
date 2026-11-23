@@ -5,7 +5,7 @@ import { validateWebsiteTools } from './websiteToolDefinitions'
 import { readSecureDocument, writeSecureDocument, redactNative, isNativeSecureStore } from '../security/secureStore'
 import { redactObject } from '../security/secretRedaction'
 import { createSkillMarkdown, normalizeLegacySkillMarkdown, parseSkillFrontmatter } from './skillFormat'
-import { createWebsiteRepository, repositoryPath, validateWebsiteSnapshot, type StoredWebsiteRepositoryDocument, type WebsiteRepositoryDocument, type WebsiteSnapshot } from './websiteRepositoryCore'
+import { createWebsiteRepository, recoverCachedWebsiteDocument, repositoryPath, validateWebsiteSnapshot, type StoredWebsiteRepositoryDocument, type WebsiteRepositoryDocument, type WebsiteSnapshot } from './websiteRepositoryCore'
 import { CHAOXING_REPOSITORY, ZJOOC_REPOSITORY, ZHIHUISHU_REPOSITORY, downloadWebsiteRepository, discoverWebsiteRepositories, WebsiteRepositoryHttpError, type WebsiteRepositoryCandidate } from './websiteRepositoryGitHub'
 import { findOpenWebsite, customWebsiteExperienceUrl, downloadCustomWebsiteExperience, downloadOpenWebsiteExperience } from './websiteRepositoryOpen'
 import { parseGitHubWebsiteUrl, type GitHubWebsiteSource } from './websiteRepositoryManifest'
@@ -65,6 +65,7 @@ const loadRegistry = async () => {
     for (const [host, entry] of Object.entries(next.entries)) {
       validConfiguration(entry.configuration)
       if (entry.configuration.host !== host || (ids.has(entry.configuration.id) && ids.get(entry.configuration.id) !== host)) throw new Error('网站仓库索引身份冲突')
+      entry.document = recoverCachedWebsiteDocument(entry.document)
       validateWebsiteSnapshot(entry.document.upstream, entry.configuration)
       if (entry.document.upstream.runtime) await verifyWebsiteRuntime(entry.document.upstream.runtime)
       const customRuntime = customSourceOf(entry)?.snapshot.runtime

@@ -35,6 +35,30 @@ beforeEach(() => {
 })
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
 describe('website repository registry', () => {
+  it('旧工具缓存不会阻断网站列表，重新从 Open 验证运行包后才恢复工具', async () => {
+    const { CHAOXING_REPOSITORY } = await import('../../src/services/agent/websiteRepositoryGitHub')
+    const host='chaoxing.com'
+    const cached = {version:3,generation:4,migrated:true,supplement:'保留我的本地经验',upstream:{
+      ...snapshot('chaoxing',host),tools:[{type:'function',function:{name:'old_tool'}}],
+    }}
+    storage.value={version:2,entries:{[host]:{configuration:{id:'chaoxing',name:'学习通',host,source:CHAOXING_REPOSITORY},document:cached}}}
+    const original=structuredClone(storage.value)
+    const runtime=runtimeFixture()
+    const fetch=vi.fn(async()=>Response.json({...snapshot('chaoxing',host),runtime}))
+    vi.stubGlobal('fetch',fetch)
+    const mod=await import('../../src/services/agent/websiteRepository')
+    expect(await mod.websiteRepositoryHosts()).toContain(host)
+    await mod.repositoryForHost(host).ready()
+    expect(mod.websiteToolsForHost(host)).toEqual([])
+    expect((await mod.repositoryForHost(host).read('SKILL.md')).content).toContain('保留我的本地经验')
+    expect(storage.value).toEqual(original)
+    await mod.refreshWebsiteRepository(host,true)
+    expect(fetch).toHaveBeenCalledWith('https://open.zerrorai.com/v1/website-experience/chaoxing.com',expect.anything())
+    expect(mod.websiteToolsForHost(host)[0].function.name).toBe('browser_site_chaoxing__read_catalog')
+    expect(storage.value.entries[host].document.supplement).toBe('保留我的本地经验')
+    expect(storage.value.entries[host].document.upstream.runtime).toEqual(runtime)
+  })
+
   it('前台跨会话接管同一标签时先取消后台实例并释放等待', async () => {
     const host = 'academy.example'
     const runtime = runtimeFixture("var ZErrorSitePackage={*create({tool}){if(tool==='sync_review'){yield {op:'browser.wait',args:{ms:30000}};return {title:'background'};}const page=yield {op:'browser.observe',args:{}};return {title:page.title};}};")

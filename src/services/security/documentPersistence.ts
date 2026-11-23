@@ -4,12 +4,12 @@ const copy = <T>(value: T): T => value === undefined ? value : JSON.parse(JSON.s
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value)
 // 原生 serde 映射可能调整对象键顺序；直接比较序列化字符串
 // 会导致已保存的文档被反复写入。
-const same = (a: unknown, b: unknown): boolean => {
+export const sameDocumentValue = (a: unknown, b: unknown): boolean => {
   if (Object.is(a, b)) return true
-  if (Array.isArray(a) && Array.isArray(b)) return a.length === b.length && a.every((item, index) => same(item, b[index]))
+  if (Array.isArray(a) && Array.isArray(b)) return a.length === b.length && a.every((item, index) => sameDocumentValue(item, b[index]))
   if (!record(a) || !record(b)) return false
   const keys = Object.keys(a).filter(key => a[key] !== undefined)
-  return keys.length === Object.keys(b).filter(key => b[key] !== undefined).length && keys.every(key => Object.hasOwn(b, key) && same(a[key], b[key]))
+  return keys.length === Object.keys(b).filter(key => b[key] !== undefined).length && keys.every(key => Object.hasOwn(b, key) && sameDocumentValue(a[key], b[key]))
 }
 const keyed = (rows: unknown[]): rows is Array<Record<string, unknown> & { id: string | number }> => rows.every(row => record(row) && (typeof row.id === 'string' || typeof row.id === 'number')) && new Set(rows.map(row => (row as { id: unknown }).id)).size === rows.length
 
@@ -19,7 +19,7 @@ export function replaceDocument<T extends object>(target: T, next: T): void {
 }
 
 export function mergeDocument(current: unknown, base: unknown, saved: unknown): unknown {
-  if (same(current, base)) return copy(saved)
+  if (sameDocumentValue(current, base)) return copy(saved)
   if (record(current) && record(base) && record(saved)) {
     const result = { ...current }
     for (const key of new Set([...Object.keys(base), ...Object.keys(saved)])) {
@@ -72,12 +72,12 @@ export function createDocumentPersistence<T extends object>(options: {
       // 写入期间产生的新修改也持久化后才返回成功；
       // 后续排队的自动保存会读到同一份已保存状态。
       for (;;) {
-        if (same(persisted, submitted) && !mutate) return copy(options.read())
+        if (sameDocumentValue(persisted, submitted) && !mutate) return copy(options.read())
         const saved = await options.write(submitted)
         options.apply(mergeDocument(options.read(), previous, saved) as T)
         persisted = copy(saved)
         const current = copy(options.read())
-        if (same(current, saved)) return current
+        if (sameDocumentValue(current, saved)) return current
         previous = current
         submitted = current
       }
