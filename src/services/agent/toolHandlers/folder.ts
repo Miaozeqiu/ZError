@@ -1,7 +1,5 @@
 import { databaseService } from '../../app/database'
 import { parseDifficulty, parseImportance, parseMastery } from '../../../utils/question/questionMetrics'
-import { inspectLocalFile, parseQuestions, readLocalFileRange } from '../import'
-import { saveQuestions } from '../quizTools'
 import type { ChatToolHandler } from '../toolContext'
 import {
   clipToolResult,
@@ -14,23 +12,6 @@ import {
 } from '../toolShared'
 
 export const folderToolHandlers: Record<string, ChatToolHandler> = {
-  get_file_info: async ({ args, ctx }) => {
-    const path = String(args.path || ctx.attachment()?.filePath || '')
-    if (!path) return JSON.stringify({ error: '当前对话没有附带文件' })
-    return JSON.stringify(await inspectLocalFile(path))
-  },
-
-  read_range: async ({ args, ctx }) => {
-    const path = String(args.path || ctx.attachment()?.filePath || '')
-    if (!path) return JSON.stringify({ error: '当前对话没有附带文件' })
-    const start = Number(args.start)
-    const end = Number(args.end)
-    if (!Number.isFinite(start) || !Number.isFinite(end)) {
-      return JSON.stringify({ error: 'start 和 end 必须是数字' })
-    }
-    return clipToolResult(JSON.stringify(await readLocalFileRange(path, start, end)))
-  },
-
   list_folders: async () => {
     const folders = await databaseService.getFolders()
     const stats = await databaseService.getFolderStats()
@@ -263,42 +244,7 @@ export const folderToolHandlers: Record<string, ChatToolHandler> = {
     })
   },
 
-  save_questions: async ({ args, ctx }) => {
-    const questions = parseQuestions(args.questions)
-    if (!questions.length) {
-      return JSON.stringify({ saved: 0, message: '没有有效题目，需要 question 和 answer' })
-    }
-    const attachedFolder = ctx.folders()[0]
-    const attachment = ctx.attachment()
-    const folder = (await resolveFolder(args.folder_id, args.folder_name))
-      || (attachedFolder?.folderId != null ? await resolveFolder(attachedFolder.folderId) : null)
-      || (attachment?.folderId != null ? await resolveFolder(attachment.folderId) : null)
-      || (await resolveFolder(0))
-    const attachedSubject = ctx.studySubjectId()
-    const result = await saveQuestions(
-      questions,
-      folder?.id ?? 0,
-      attachedSubject,
-    )
-    const linked = result.association.linked
-    return JSON.stringify({
-      saved: result.saved,
-      questionIds: result.questionIds,
-      folderId: folder?.id ?? 0,
-      folderName: folder?.name || '默认',
-      linked,
-      created_nodes: result.association.created,
-      knowledge: result.association.links.slice(0, 20).map((item) => ({
-        question_id: item.question_id,
-        node_id: item.node_id,
-        node_name: item.node_name,
-        subject_id: item.subject_id,
-      })),
-      message: linked
-        ? `已写入 ${result.saved} 道题目到「${folder?.name || '默认'}」，并关联了 ${linked} 个知识点`
-        : `已写入 ${result.saved} 道题目到「${folder?.name || '默认'}」`,
-    })
-  },
+
 
   update_question_metrics: async ({ args }) => {
     const ids = parseQuestionIds(args)

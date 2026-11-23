@@ -35,7 +35,7 @@
             <img :src="item.imageUrl" alt="" />
           </button>
           <button
-            class="composer-file-remove attachment-corner-remove"
+            class="attachment-corner-remove"
             type="button"
             title="移除"
             :aria-label="`移除图片 ${item.fileName}`"
@@ -60,7 +60,7 @@
           </span>
           <span class="composer-file-name">{{ item.fileName }}</span>
           <button
-            class="composer-file-remove"
+            class="attachment-corner-remove"
             type="button"
             title="移除"
             :aria-label="`移除文件 ${item.fileName}`"

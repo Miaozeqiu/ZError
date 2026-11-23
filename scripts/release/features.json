@@ -25,7 +25,16 @@
       "name": "题库导入导出、练习评分与学习统计",
       "tests": [
         "testdata/release/data-flows.test.ts",
-        "testdata/agent/quiz-explain.test.ts"
+        "testdata/agent/quiz-explain.test.ts",
+        "testdata/agent/file-reading.test.ts",
+        "testdata/agent/data-script.test.ts",
+        "testdata/agent/question-file-import.test.ts",
+        "testdata/agent/data-script-worker.test.ts",
+        "testdata/agent/import-templates.test.ts",
+        "testdata/agent/import-template-ui.test.ts",
+        "testdata/agent/import-template-refresh.test.ts",
+        "testdata/agent/import-template-sources.test.ts",
+        "testdata/build/data-script-worker.test.ts"
       ]
     },
     {
@@ -35,7 +44,10 @@
         "testdata/agent/run-core.test.ts",
         "testdata/agent/task-completion.test.ts",
         "testdata/agent/runtime-lifecycle.test.ts",
-        "testdata/cli/tasks.test.ts"
+        "testdata/cli/tasks.test.ts",
+        "testdata/agent/file-drop.test.ts",
+        "testdata/agent/composer-attachments.test.ts",
+        "testdata/agent/website-tool-validation.test.ts"
       ]
     },
     {

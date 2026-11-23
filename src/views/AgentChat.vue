@@ -3,7 +3,12 @@
     <AgentChatSidebar />
 
     <div class="chat-workspace">
-      <section class="chat-main" :style="{ '--chat-composer-height': `${composerHeight}px` }">
+      <section ref="fileDropTarget" class="chat-main" @dragenter="fileDrop.enter" @dragover="fileDrop.over" @dragleave="fileDrop.leave" @drop="fileDrop.drop" :style="{ '--chat-composer-height': `${composerHeight}px` }">
+        <Transition name="file-drop">
+          <div v-if="fileDrop.hovering.value" class="file-drop-overlay" :class="{ 'is-unsupported': !fileDrop.supported.value }" role="status" aria-live="polite">
+            <span class="file-drop-label">{{ fileDrop.message.value }}</span>
+          </div>
+        </Transition>
         <AgentChatThread
           ref="threadCompRef"
           v-model:pinned="threadPinned"
@@ -138,8 +143,6 @@ import {
   activeChat,
   activeChatId,
   chatListCollapsed,
-  addComposerAttachment,
-  addComposerImage,
   composerAttachments,
   consumeComposerAttachments,
   isImageAttachment,
@@ -163,8 +166,6 @@ import FolderPickerDialog from '../components/ui/FolderPickerDialog.vue'
 import { databaseService } from '../services/app/database'
 import type { AIModel } from '../services/model/config'
 import { modelHasVision, useModelConfig } from '../services/model/config'
-import { readFileBase64 } from '../utils/ui/fileReader'
-import { fileExtOf } from '../utils/ui/fileKind'
 import ModelSelectorDialog from './home/ModelSelectorDialog.vue'
 import { isTauriEnvironment } from '../services/app/environmentDetector'
 import { invoke } from '@tauri-apps/api/core'
@@ -172,6 +173,9 @@ import { open } from '@tauri-apps/plugin-dialog'
 import AgentApprovalBar from '../components/agent/AgentApprovalBar.vue'
 import { agentApprovalState } from '../services/agent/agentApproval'
 import AgentChatComposer from './agentChat/AgentChatComposer.vue'
+import { useComposerAttachments } from './agentChat/useComposerAttachments'
+import { useAgentFileDrop } from './agentChat/useAgentFileDrop'
+import { AGENT_DOCUMENT_EXTENSIONS as DOCUMENT_EXTS } from '../services/agent/attachmentFiles'
 import AgentChatSidebar from './agentChat/AgentChatSidebar.vue'
 import AgentChatThread from './agentChat/AgentChatThread.vue'
 import AgentChatWritePane from './agentChat/AgentChatWritePane.vue'
@@ -216,9 +220,10 @@ const {
 
 const showModelSelector = ref(false)
 const chooseVisionModel = ref(false)
-const imageError = ref('')
-const readingImages = ref(false)
 let composerVersion = 0
+const { imageError, readingImages, addAttachments, addAttachmentPaths, addDroppedFiles, pasteImages } = useComposerAttachments({
+  version: () => composerVersion, active: () => props.active,
+})
 
 const openModelSelector = (requireVision = false) => {
   chooseVisionModel.value = requireVision
@@ -235,98 +240,8 @@ const selectedFilePath = (selected: unknown): string => {
   return ''
 }
 
-const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp']
-const DOCUMENT_EXTS = ['txt', 'md', 'csv', 'xlsx', 'xls', 'docx', 'doc', 'pdf']
-
-const mimeFromName = (name: string) => {
-  const ext = fileExtOf(name)
-  if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg'
-  if (ext === 'gif') return 'image/gif'
-  if (ext === 'webp') return 'image/webp'
-  return 'image/png'
-}
-
-const addImageFromDataUrl = (imageUrl: string, fileName?: string, filePath?: string) => {
-  if (!/^data:image\/[^;,]+;base64,.+/i.test(imageUrl)) throw new Error('无法读取此图片')
-  const added = addComposerImage({
-    imageUrl,
-    fileName: fileName || '图片',
-    mimeType: imageUrl.slice(5, imageUrl.indexOf(';')) || 'image/png',
-    filePath,
-  })
-  if (!added) imageError.value = '一次最多附带 4 张图片'
-  return added
-}
-
-const addAttachments = async () => {
-  if (readingImages.value) return
-  if (!isTauriEnvironment()) {
-    alert('此功能仅在应用中可用')
-    return
-  }
-  const version = composerVersion
-  imageError.value = ''
-  readingImages.value = true
-  try {
-    const selected = await open({
-      title: '选择附件',
-      multiple: true,
-      directory: false,
-      filters: [{ name: '文件和图片', extensions: [...DOCUMENT_EXTS, ...IMAGE_EXTS] }],
-    })
-    const paths = Array.isArray(selected) ? selected : selected ? [selected] : []
-    for (const filePath of paths) {
-      if (composerVersion !== version) break
-      const fileName = filePath.split(/[\\/]/).pop() || '附件'
-      if (!IMAGE_EXTS.includes(fileExtOf(fileName))) {
-        addComposerAttachment(filePath)
-        continue
-      }
-      try {
-        const base64 = await readFileBase64(filePath)
-        if (composerVersion === version) {
-          addImageFromDataUrl(`data:${mimeFromName(fileName)};base64,${base64}`, fileName, filePath)
-        }
-      } catch (error) {
-        console.error('读取图片失败:', error)
-        if (composerVersion === version) imageError.value = '部分图片无法读取，请重新选择。'
-      }
-    }
-  } catch (error) {
-    console.error('选择附件失败:', error)
-    if (composerVersion === version) imageError.value = '无法选择附件，请重试。'
-  } finally {
-    readingImages.value = false
-  }
-}
-
-const pasteImages = async (files: File[]) => {
-  if (readingImages.value) return
-  const version = composerVersion
-  imageError.value = ''
-  readingImages.value = true
-  try {
-    for (const file of files) {
-      const imageUrl = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader()
-        reader.onload = () => resolve(String(reader.result || ''))
-        reader.onerror = () => reject(reader.error)
-        reader.readAsDataURL(file)
-      })
-      if (composerVersion !== version) break
-      if (!addImageFromDataUrl(imageUrl, file.name || '粘贴的图片')) break
-    }
-  } catch (error) {
-    console.error('粘贴图片失败:', error)
-    if (composerVersion === version) imageError.value = '无法读取剪贴板图片，请点加号选择「文件/图片」。'
-  } finally {
-    readingImages.value = false
-  }
-}
-
 const folderPickerVisible = ref(false)
-const folderPickerMode = ref<'mention' | 'organize' | 'import'>('mention')
-const pendingImportPath = ref<string | null>(null)
+const folderPickerMode = ref<'mention' | 'organize'>('mention')
 const folderPickerInitialId = computed(() => {
   const tokens = parseFolderTokens(draft.value)
   return tokens.at(-1)?.folderId ?? null
@@ -358,7 +273,6 @@ const openFolderPicker = () => {
 const cancelFolderPicker = () => {
   folderPickerVisible.value = false
   folderPickerMode.value = 'mention'
-  pendingImportPath.value = null
 }
 
 const resolvePickedFolderPath = async (folderId: number, folderName: string, folderPath: string) => {
@@ -377,7 +291,6 @@ const onFolderPicked = async (folderId: number, folderName: string, folderPath: 
   folderPickerVisible.value = false
   folderPickerMode.value = 'mention'
   if (!Number.isFinite(folderId) || folderId < 0) {
-    pendingImportPath.value = null
     return
   }
   const path = await resolvePickedFolderPath(folderId, folderName, folderPath)
@@ -387,13 +300,6 @@ const onFolderPicked = async (folderId: number, folderName: string, folderPath: 
       return
     }
     await startFolderOrganizeChat({ folderId, folderName, folderPath: path })
-    return
-  }
-  if (mode === 'import') {
-    const filePath = pendingImportPath.value
-    pendingImportPath.value = null
-    if (!filePath) return
-    await startFileImportChat({ filePath, folderId, folderName, folderPath: path })
     return
   }
   composerCompRef.value?.insertFolderMention({
@@ -416,14 +322,12 @@ const startImportFromCard = async () => {
       directory: false,
       filters: [{
         name: '文件',
-        extensions: ['txt', 'md', 'csv', 'xlsx', 'xls', 'docx', 'doc', 'pdf'],
+        extensions: DOCUMENT_EXTS,
       }],
     })
     const filePath = selectedFilePath(selected)
     if (!filePath) return
-    pendingImportPath.value = filePath
-    folderPickerMode.value = 'import'
-    folderPickerVisible.value = true
+    await startFileImportChat({ filePath })
   } catch (error) {
     console.error('选择导入文件失败:', error)
   }
@@ -538,6 +442,13 @@ const fileManagerLabel = /Mac/i.test(navigator.userAgent)
     : '在文件夹中显示'
 
 const previewImage = ref<{ imageUrl: string; fileName: string; filePath?: string } | null>(null)
+const fileDropTarget = ref<HTMLElement | null>(null)
+const fileDrop = useAgentFileDrop({
+  target: fileDropTarget,
+  enabled: () => props.active && !props.browserObscured && !agentBrowserExpanded.value && !showModelSelector.value && !folderPickerVisible.value && !previewImage.value,
+  paths: addAttachmentPaths, files: addDroppedFiles,
+  error: message => { imageError.value = message },
+})
 
 const openImagePreview = (item: { imageUrl?: string; fileName?: string; filePath?: string }) => {
   if (!item.imageUrl) return
@@ -698,6 +609,32 @@ useWorkspaceEvent('agent', 'open-study-graph', onOpenStudyGraph)
   display: flex;
   gap: 4px;
   background: var(--bg-primary, #f5f5f7);
+}
+
+.file-drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--accent-primary, #3b82f6) 11%, transparent);
+  pointer-events: none;
+}
+.file-drop-label {
+  padding: 12px 22px;
+  border-radius: 14px;
+  background: var(--bg-secondary, #fff);
+  color: var(--text-primary, #17212e);
+  font-size: 16px;
+  font-weight: 600;
+  box-shadow: 0 4px 18px rgb(0 0 0 / 12%);
+}
+.file-drop-overlay.is-unsupported .file-drop-label { color: var(--color-error, #c2410c); }
+.file-drop-enter-active, .file-drop-leave-active { transition: opacity 120ms cubic-bezier(0.23, 1, 0.32, 1); }
+.file-drop-enter-from, .file-drop-leave-to { opacity: 0; }
+@media (prefers-reduced-motion: reduce) {
+  .file-drop-enter-active, .file-drop-leave-active { transition: none; }
 }
 
 .chat-page.list-collapsed {

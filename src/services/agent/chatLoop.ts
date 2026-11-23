@@ -23,6 +23,7 @@ import {
   persistSoon,
   patchMessage,
   sessionFolders,
+  sessionAttachment,
   sessionIsStreaming,
   sessions,
   setChatStudySubject,
@@ -238,8 +239,12 @@ export const sendChatMessage = async (
       { id: 'recovery', priority: 40, trust: 'context', text: [runRecoveryContext(recovery), originalGoal ? `原任务目标（当前用户消息优先）：${originalGoal}` : ''].filter(Boolean).join('\n') },
       { id: 'environment', priority: 50, trust: 'context', text: envBlock },
     ])
+    const currentFiles = attachments?.length ? attachments.filter(isFileAttachment)
+      : (liveSession(sessionId)?.attachments || []).filter(isFileAttachment)
+    const rememberedFile = !attachments?.length ? sessionAttachment(sessionId) : null
+    const fileContext = currentFiles.length ? currentFiles : rememberedFile ? [rememberedFile] : []
     const promptBody = modelText()
-    const modelPrompt = `【消息ID：${userMessage.id}】\n${modelUserContent(promptBody, promptFolders)}`
+    const modelPrompt = `【消息ID：${userMessage.id}】\n${modelUserContent(promptBody, [...promptFolders, ...fileContext])}`
     const images = (attachments || []).filter((item) => isImageAttachment(item) && item.imageUrl)
     const userContent = images.length
       ? [

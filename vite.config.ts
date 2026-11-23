@@ -150,6 +150,8 @@ const agentLucideIcons: IconifyJSON = {
 export default defineConfig(async () => ({
   plugins: [vue(), d2Assets(), mermaidParser(), agentDebugLogPlugin(), devRegressionPagesPlugin()],
   define: { __AGENT_LUCIDE_ICONS__: JSON.stringify(agentLucideIcons) },
+  // 数据脚本的 WASM 加载器使用动态导入；合成单个经典 Worker，兼容旧版 WKWebView。
+  worker: { rollupOptions: { output: { inlineDynamicImports: true } } },
   
   resolve: {
     alias: {

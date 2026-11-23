@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
+import { MAX_AGENT_ATTACHMENT_BYTES } from './attachmentFiles'
 import { parseDifficulty, parseImportance, parseMastery } from '../../utils/question/questionMetrics'
 
 export interface ExtractedQuestion {
@@ -30,6 +31,9 @@ interface FileCache {
   pages?: string[]
   pdf?: any
   lines?: string[]
+  touched?: number
+  signature?: string
+  extending?: Promise<void>
 }
 
 const MAX_RANGE = {
@@ -44,10 +48,9 @@ const LOAD_CAP = {
   excel: 2000,
   docx: 2000,
   doc: 2000,
-  text: 8000,
 } as const
 
-const FILE_SIZE_MAX = 40 * 1024 * 1024
+const FILE_SIZE_MAX = MAX_AGENT_ATTACHMENT_BYTES
 const FILE_SIZE_WARN = 8 * 1024 * 1024
 
 const formatFileSize = (bytes: number) => {
@@ -90,19 +93,11 @@ const readPdfPage = async (pdf: any, index: number) => {
   return content.items.map((item: any) => item.str || '').join(' ').trim()
 }
 
-const statLocalFile = async (path: string) => {
-  try {
-    const info = await invoke<{ size: number }>('stat_local_file', { path })
-    return Number(info?.size || 0)
-  } catch {
-    return 0
-  }
-}
+const statLocalFile = (path: string) => invoke<{ size: number; modified?: number }>('stat_local_file', { path })
 
 const fileCaches = new Map<string, FileCache>()
 
-const loadFileCache = async (path: string): Promise<FileCache> => {
-  const fileSize = await statLocalFile(path)
+const loadFileCache = async (path: string, fileSize: number): Promise<FileCache> => {
   if (fileSize > FILE_SIZE_MAX) {
     throw new Error(`文件约 ${formatFileSize(fileSize)}，超过 40 MB，请先拆成更小的文件再导入`)
   }
@@ -152,27 +147,58 @@ const loadFileCache = async (path: string): Promise<FileCache> => {
 
   const text = (await invoke<string>('read_file_text', { path })).replace(/\u0000/g, '')
   const lines = text.split(/\r?\n/)
-  const truncated = lines.length > LOAD_CAP.text
+  const truncated = false
   return {
     path,
     kind: 'text',
     unit: '行',
-    total: Math.min(lines.length, LOAD_CAP.text),
+    total: lines.length,
     truncated,
     fileSize,
-    lines: truncated ? lines.slice(0, LOAD_CAP.text) : lines,
+    lines,
   }
 }
 
-const ensureFileCache = async (path: string) => {
-  const cached = fileCaches.get(path)
-  if (cached) return cached
-  const loaded = await loadFileCache(path)
-  fileCaches.set(path, loaded)
-  return loaded
+const pendingFiles = new Map<string, Promise<FileCache>>()
+const disposeCache = (cache: FileCache) => { void cache.pdf?.destroy()?.catch(() => {}) }
+export const clearFileCaches = () => {
+  for (const cache of fileCaches.values()) disposeCache(cache)
+  fileCaches.clear()
 }
 
-const extendLoadedRange = async (cache: FileCache, end: number) => {
+const ensureFileCache = async (path: string) => {
+  if (pendingFiles.has(path)) return pendingFiles.get(path)!
+  const pending = (async () => {
+    const info = await statLocalFile(path)
+    const signature = `${info.size}:${info.modified ?? ''}`
+    const now = Date.now()
+    for (const [key, cache] of fileCaches) {
+      if (now - (cache.touched || 0) > 10 * 60_000 || (key === path && cache.signature !== signature)) {
+        fileCaches.delete(key)
+        disposeCache(cache)
+      }
+    }
+    let cache = fileCaches.get(path)
+    if (!cache) {
+      cache = await loadFileCache(path, info.size)
+      cache.signature = signature
+    }
+    cache.touched = now
+    fileCaches.delete(path)
+    fileCaches.set(path, cache)
+    while (fileCaches.size > 4) {
+      const oldest = fileCaches.keys().next().value!
+      disposeCache(fileCaches.get(oldest)!)
+      fileCaches.delete(oldest)
+    }
+    return cache
+  })()
+  pendingFiles.set(path, pending)
+  try { return await pending } finally { pendingFiles.delete(path) }
+}
+
+const extendLoadedRangeUnlocked = async (cache: FileCache, end: number) => {
+  if (!cache.truncated) return
   if (cache.kind === 'excel') {
     const loaded = cache.rows?.length || 0
     if (end < loaded) return
@@ -206,6 +232,12 @@ const extendLoadedRange = async (cache: FileCache, end: number) => {
   }
 }
 
+const extendLoadedRange = async (cache: FileCache, end: number) => {
+  const operation = (cache.extending || Promise.resolve()).then(() => extendLoadedRangeUnlocked(cache, end))
+  cache.extending = operation.catch(() => {})
+  await operation
+}
+
 const fillPdfPages = async (cache: FileCache, start: number, end: number) => {
   if (!cache.pdf) return
   cache.pages = cache.pages || []
@@ -225,7 +257,7 @@ export const inspectLocalFile = async (path: string) => {
   const warning = cache.fileSize && cache.fileSize > FILE_SIZE_WARN
     ? `文件较大（${formatFileSize(cache.fileSize)}），请严格分段读取，每批保存。`
     : cache.truncated
-      ? `当前先处理前 ${cache.total} ${cache.unit}。读到末尾后如果 nextHint 还允许继续，就继续读；否则请提示用户拆分文件。`
+      ? `当前已预读 ${cache.total} ${cache.unit}，这是数量下限；按 nextStart 继续会自动加载后续内容。`
       : undefined
   return {
     fileName: fileNameOf(path),
@@ -237,68 +269,84 @@ export const inspectLocalFile = async (path: string) => {
     suggestedBatch: batch,
     estimatedBatches: Math.ceil(cache.total / batch),
     warning,
-    hint: `请用 read_range 分段读取，每次不超过 ${batch} ${cache.unit}。读完一段就 save_questions，直到读到末尾。一次写入不要超过 20 道。`,
+    hint: `由 Agent 自行选择：read_range 分段识题并每批保存最多 20 道；或先看样本，再 run_file_script 编写脚本/复用模板，核对后 save_questions(result_id)。每段最多 ${batch} ${cache.unit}。默认本地题库，目标按上下文和目录结构自行选择或创建。`,
   }
 }
 
-export const readLocalFileRange = async (path: string, start: number, end: number) => {
+const contentOf = (cache: FileCache, index: number) => cache.kind === 'excel'
+  ? (cache.rows?.[index] || []).join('\t')
+  : cache.kind === 'pdf' ? cache.pages?.[index] || ''
+    : (cache.kind === 'text' ? cache.lines?.[index] : cache.paragraphs?.[index]) || ''
+
+// 分页只截内容，不截 JSON；超长单段用字符游标续读，不能跳过余文。
+export const readLocalFileRange = async (path: string, start: number, end: number, offset = 0) => {
+  if (![start, end, offset].every(Number.isSafeInteger) || start < 0 || end < start || offset < 0) {
+    throw new Error('start、end、offset 必须是非负整数，且 end 不小于 start')
+  }
   const cache = await ensureFileCache(path)
-  const maxSpan = MAX_RANGE[cache.kind]
-  const last = Math.max(cache.total - 1, 0)
-  const safeStart = Math.max(0, Math.min(Number(start) || 0, last))
-  const safeEnd = Math.max(safeStart, Math.min(Number(end) || safeStart, safeStart + maxSpan - 1))
-  if (cache.kind === 'pdf') {
-    await fillPdfPages(cache, safeStart, Math.min(safeEnd, last))
-  } else if (cache.kind !== 'text') {
-    await extendLoadedRange(cache, safeEnd)
+  const requestedEnd = Math.min(end, start + MAX_RANGE[cache.kind] - 1)
+  if (cache.kind !== 'pdf' && cache.kind !== 'text') await extendLoadedRange(cache, requestedEnd)
+  const last = Math.min(requestedEnd, cache.total - 1)
+  if (cache.kind === 'pdf') await fillPdfPages(cache, start, last)
+  if (start < cache.total && offset > contentOf(cache, start).length) throw new Error('offset 超出当前段落长度')
+  const chunks: string[] = []
+  let remaining = 6000, jsonBudget = 10_000, nextStart = start, nextOffset = offset, actualEnd = start - 1
+  for (let index = start; index <= last; index++) {
+    const text = contentOf(cache, index)
+    const from = index === start ? offset : 0
+    let count = Math.min(text.length - from, remaining)
+    // 控制字符在 JSON 中会膨胀，保证完整回执也能放进模型的工具结果预算。
+    if (JSON.stringify(text.slice(from, from + count)).length > jsonBudget) {
+      let low = 0, high = count
+      while (low < high) {
+        const mid = Math.ceil((low + high) / 2)
+        if (JSON.stringify(text.slice(from, from + mid)).length <= jsonBudget) low = mid
+        else high = mid - 1
+      }
+      count = low
+    }
+    const piece = text.slice(from, from + count)
+    jsonBudget -= JSON.stringify(piece).length
+    chunks.push(piece)
+    actualEnd = index
+    remaining -= piece.length + 1
+    nextStart = index + 1
+    nextOffset = 0
+    if (from + piece.length < text.length) {
+      nextStart = index
+      nextOffset = from + piece.length
+      break
+    }
+    if (remaining <= 0 || jsonBudget <= 8) break
   }
-  const slice = sliceCache(cache, safeStart, safeEnd)
-  const nextEnd = Math.min(slice.end + maxSpan, Math.max(cache.total - 1, 0))
+  const hasMore = nextStart < cache.total || Boolean(cache.truncated)
   return {
-    ...slice,
-    truncated: Boolean(cache.truncated),
-    nextHint: slice.end + 1 < cache.total
-      ? `还可以继续从 ${slice.end + 1} 读到 ${nextEnd}`
-      : cache.truncated
-        ? '当前可读范围已经到末尾。如果题目明显还没读完，请提示用户把文件拆小后再导入。'
-        : '已经读到末尾',
+    start, end: actualEnd, offset, total: cache.total, unit: cache.unit,
+    content: chunks.join('\n'), truncated: Boolean(cache.truncated), hasMore,
+    nextStart: hasMore ? nextStart : null, nextOffset: hasMore ? nextOffset : 0,
+    nextHint: hasMore ? `继续 read_range(start=${nextStart}, end=${nextStart + MAX_RANGE[cache.kind] - 1}, offset=${nextOffset})` : '已经读到末尾',
   }
 }
 
-const sliceCache = (cache: FileCache, start: number, end: number) => {
-  const maxSpan = MAX_RANGE[cache.kind]
-  const last = Math.max((cache.kind === 'excel' ? cache.rows?.length : cache.kind === 'pdf' ? cache.total : cache.kind === 'text' ? cache.lines?.length : cache.paragraphs?.length) || cache.total, 1) - 1
-  const safeStart = Math.max(0, Math.min(start, last))
-  const safeEnd = Math.max(safeStart, Math.min(end, safeStart + maxSpan - 1, last))
-
-  if (cache.kind === 'excel') {
-    const rows = (cache.rows || []).slice(safeStart, safeEnd + 1)
-    return {
-      start: safeStart,
-      end: safeEnd,
-      total: cache.total,
-      unit: cache.unit,
-      content: rows.map((row) => row.join('\t')).join('\n'),
+// 脚本直接消费宿主提取的原文，不经模型转抄；超限明确报错，绝不把部分文件当作全文。
+export const readLocalFileDocument = async (path: string, signal?: AbortSignal) => {
+  const cache = await ensureFileCache(path)
+  let loaded = 0, characters = 0
+  const lines: string[] = []
+  while (loaded < cache.total || cache.truncated) {
+    signal?.throwIfAborted()
+    if (cache.kind === 'pdf') await fillPdfPages(cache, loaded, Math.min(loaded + 99, cache.total - 1))
+    else if (cache.kind !== 'text') await extendLoadedRange(cache, loaded + 1999)
+    if (cache.total > 20_000) throw new Error('脚本输入超过 20000 个文本单元，请拆分文件或分段导入')
+    const stop = Math.min(loaded + (cache.kind === 'pdf' ? 100 : 2000), cache.total)
+    for (; loaded < stop; loaded++) {
+      const text = contentOf(cache, loaded)
+      characters += text.length + 1
+      if (characters > 2_000_000) throw new Error('脚本输入超过 200 万字符，请拆分文件或分段导入')
+      lines.push(text)
     }
   }
-  if (cache.kind === 'pdf') {
-    const pages = (cache.pages || []).slice(safeStart, safeEnd + 1)
-    return {
-      start: safeStart,
-      end: safeEnd,
-      total: cache.total,
-      unit: cache.unit,
-      content: pages.map((page, index) => `--- 第 ${safeStart + index + 1} 页 ---\n${page || ''}`).join('\n\n'),
-    }
-  }
-  const items = (cache.kind === 'text' ? cache.lines : cache.paragraphs) || []
-  return {
-    start: safeStart,
-    end: safeEnd,
-    total: cache.total,
-    unit: cache.unit,
-    content: items.slice(safeStart, safeEnd + 1).join('\n'),
-  }
+  return { name: fileNameOf(path), type: kindLabel(cache.kind), unit: cache.unit, total: lines.length, lines, text: lines.join('\n'), ...(cache.rows ? { rows: cache.rows } : {}) }
 }
 
 export const parseQuestions = (raw: unknown): ExtractedQuestion[] => {
@@ -318,7 +366,7 @@ export const parseQuestions = (raw: unknown): ExtractedQuestion[] => {
         parent_name: String(item?.parent_name || item?.chapter || '').trim() || undefined,
         subject_id: Number(item?.subject_id || item?.subjectId) > 0 ? Number(item?.subject_id || item?.subjectId) : undefined,
       }))
-      .filter((item) => item.question && item.answer)
+      .filter((item) => item.question)
   }
 
   const text = String(raw || '').trim()

@@ -10,7 +10,7 @@ import { resolveWebsiteSkillTarget } from './websiteSkillTarget'
 import { ensureChaoxingRepository, listChaoxingRepositoryFiles, readChaoxingRepositoryFile,
   writeChaoxingRepositoryFile, websiteRepositoryState, onWebsiteRepositoryChanged, CHAOXING_REPOSITORY,
   websiteRepositoryHosts, listWebsiteRepositoryFiles, readWebsiteRepositoryFile, writeWebsiteRepositoryFile, writeWebsiteRepositorySupplement, repositoryForHost, websiteRepositoryStates, repositorySourceFor } from './websiteRepository'
-import { WEBSITE_REPOSITORY_READ_ONLY, websiteRepositoryTarget } from './websiteRepositoryTarget'
+import { WEBSITE_REPOSITORY_READ_ONLY, websiteRepositoryTarget, resolveWebsiteRepositoryTarget } from './websiteRepositoryTarget'
 import { repositoryPath as isRepositoryPath } from './websiteRepositoryCore'
 export { parseSkillFrontmatter } from './skillFormat'
 import {
@@ -406,7 +406,7 @@ const readSkillBody = async (id: string): Promise<string> => {
 
 const buildItems = async (config: SkillConfigFile): Promise<AgentSkillItem[]> => {
   const items: AgentSkillItem[] = []
-  const hosts = await websiteRepositoryHosts()
+  const hosts = await websiteRepositoryHosts().catch(() => [])
   for (const [id, def] of Object.entries(BUILTIN_SKILLS)) {
     if (id === 'chaoxing' && !hosts.includes('chaoxing.com')) continue
     const row = config.skills[id]
@@ -645,8 +645,8 @@ export const readAgentSkillFileContent = async (id: string, relativePath: string
   if (!item) return null
   const path = normalizeSkillRelativePath(relativePath)
   if (!path) return null
-  await websiteRepositoryHosts()
-  const repository = websiteRepositoryTarget(id, path)
+  // 通用 Skill 不依赖任何网站仓库的加载或缓存状态。
+  const repository = await resolveWebsiteRepositoryTarget(id, path)
   if (repository) {
     if (!isRepositoryPath(repository.path)) return null
     const file = await readWebsiteRepositoryFile(repository.host, repository.path)
@@ -812,8 +812,7 @@ export const getSkillFileContent = async (id: string, relativePath: string): Pro
   if (!item) return null
   const path = normalizeSkillRelativePath(relativePath || SKILL_MAIN_FILE)
   if (!path) return null
-  await websiteRepositoryHosts()
-  const repository = websiteRepositoryTarget(id, path)
+  const repository = await resolveWebsiteRepositoryTarget(id, path)
   if (repository) {
     if (!isRepositoryPath(repository.path)) return null
     const file = await readWebsiteRepositoryFile(repository.host, repository.path)
@@ -850,8 +849,7 @@ export const saveSkillFileContent = async (id: string, relativePath: string, con
   if (writeError) throw new Error(writeError)
   if (isParserScriptPath(path)) throw new Error('不要写解析脚本。把步骤写进 sites/<主网站域名>/SKILL.md。')
   const text = String(await redactNative(redactObject(String(content ?? ''))))
-  await websiteRepositoryHosts()
-  const repository = websiteRepositoryTarget(id, path)
+  const repository = await resolveWebsiteRepositoryTarget(id, path)
   if (repository && options?.agentWrite) {
     if (repository.path !== SKILL_MAIN_FILE) throw new Error(WEBSITE_REPOSITORY_READ_ONLY)
     if (!options.repositoryVersion) throw new Error('请先读取本站 SKILL.md，并将 repository_version 填入 base_version。')
@@ -982,8 +980,7 @@ export const resetSkillFileContent = async (id: string, relativePath: string, op
   if (!path) throw new Error('无效的文件路径')
   const writeError = skillFileWriteError(id, relativePath || SKILL_MAIN_FILE)
   if (writeError) throw new Error(writeError)
-  await websiteRepositoryHosts()
-  const repository = websiteRepositoryTarget(id, path)
+  const repository = await resolveWebsiteRepositoryTarget(id, path)
   if (repository && options?.agentWrite) throw new Error(WEBSITE_REPOSITORY_READ_ONLY)
   if (repository && id !== 'chaoxing') {
     await repositoryForHost(repository.host).reset(repository.path)

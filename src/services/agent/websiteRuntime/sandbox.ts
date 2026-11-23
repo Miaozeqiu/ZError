@@ -1,11 +1,4 @@
-import releaseSync from '@jitl/quickjs-wasmfile-release-sync'
-import releaseWasmUrl from '@jitl/quickjs-wasmfile-release-sync/wasm?url'
-import { memoizePromiseFactory, newQuickJSWASMModuleFromVariant, newVariant } from 'quickjs-emscripten-core'
-
-// Vite prebundles the JS loader in development. Use the app's asset URL for its WASM.
-const getQuickJS = memoizePromiseFactory(() => newQuickJSWASMModuleFromVariant(
-  typeof window === 'undefined' ? releaseSync : newVariant(releaseSync, { wasmLocation: releaseWasmUrl }),
-))
+import { getQuickJS } from '../../script/quickjs'
 
 export async function withWebsiteSandbox<T>(work: (evaluate: (source: string, initialize?: boolean) => unknown) => T | Promise<T>): Promise<T> {
   const quickjs = await getQuickJS()

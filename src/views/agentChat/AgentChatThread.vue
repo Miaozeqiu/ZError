@@ -301,6 +301,10 @@
                   </button>
                 </div>
 
+                <AgentImportTemplateOffer
+                  v-for="offer in message.importTemplateOffers || []" :key="offer.id"
+                  :session-id="activeChatId || ''" :message-id="message.id" :offer="offer"
+                />
                 <AgentLoginForm
                   v-if="loginRequest && message.status === 'streaming'"
                   :key="loginRequest.id"
@@ -347,6 +351,7 @@
 import { useThreadView } from './useThreadView'
 import { defineAsyncComponent, computed, ref, useId } from 'vue'
 import { Icon } from '@iconify/vue/offline'
+import AgentImportTemplateOffer from '../../components/agent/AgentImportTemplateOffer.vue'
 import AgentLoginForm from '../../components/agent/AgentLoginForm.vue'
 import { chatLoginRequests, pendingWebsiteVerification } from '../../services/agent/chatLogin'
 import { activeChat, activeChatId, parseMessageParts } from '../../services/agent/chat'

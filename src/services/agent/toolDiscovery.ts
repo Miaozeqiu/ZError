@@ -4,6 +4,10 @@ import { parseToolArgs } from './toolArgs'
 export const LOAD_AGENT_TOOLS = 'load_agent_tools'
 const core = ['protect_credentials', 'read_agent_skill', 'browser_navigate', 'web_search']
 type NamedTool = { function: { name: string } }
+const templateTools = ['run_file_script', 'list_import_templates', 'read_import_template', 'save_import_template']
+function includeTemplateTools(selected: Set<string>) {
+  if (templateTools.some(name => selected.has(name))) for (const name of templateTools) selected.add(name)
+}
 
 // The host registry remains authoritative. Selection only controls which schemas travel on the wire.
 export function modelAgentTools<T extends NamedTool>(available: T[], session?: AgentChatSession | null) {
@@ -24,9 +28,15 @@ export function modelAgentTools<T extends NamedTool>(available: T[], session?: A
         }
       } else if (step.kind === 'tool' && step.status === 'done') {
         selected.add(step.name)
+        // 文件概况已找到可用模板时，下一轮即可查询、检查或试跑，不再多走一次解锁。
+        if (step.name === 'get_file_info') {
+          const templates = parseToolArgs(step.result || '').import_templates
+          if (templates && typeof templates === 'object' && 'total' in templates && typeof templates.total === 'number' && templates.total > 0) selected.add('list_import_templates')
+        }
       }
     }
   }
+  includeTemplateTools(selected)
   const catalog = available.map(tool => tool.function.name).filter(name => !core.includes(name))
   const visible = available.filter(tool => selected.has(tool.function.name))
   if (!catalog.length) return visible
@@ -46,5 +56,6 @@ export function loadAgentTools(available: NamedTool[], names: unknown) {
   const requested = new Set(Array.isArray(names) ? names : [])
   const loaded = available.map(tool => tool.function.name).filter(name => requested.has(name))
   if (!loaded.length || loaded.length !== requested.size) return JSON.stringify({ error: '工具当前不可用，请从最新工具目录选择。' })
-  return JSON.stringify({ loaded })
+  includeTemplateTools(requested)
+  return JSON.stringify({ loaded: available.map(tool => tool.function.name).filter(name => requested.has(name)) })
 }

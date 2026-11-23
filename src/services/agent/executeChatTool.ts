@@ -1,3 +1,4 @@
+import { fileImportToolHandlers } from './toolHandlers/fileImport'
 import { SUBAGENTS_ENABLED, SUBAGENT_DISABLED_HINT } from './subagent/enabled'
 import { protectCredentials } from './credentialTools'
 import { redactObject } from '../security/secretRedaction'
@@ -61,6 +62,7 @@ const ensureApproved = async (
 
 const CHAT_TOOL_HANDLERS: Record<string, ChatToolHandler> = {
   ...folderToolHandlers,
+  ...fileImportToolHandlers,
   ...campusToolHandlers,
   ...quizToolHandlers,
   ...studyToolHandlers,

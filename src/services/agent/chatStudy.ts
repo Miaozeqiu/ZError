@@ -36,6 +36,7 @@ import {
   splitCompactedHistory,
 } from './context'
 import {
+  describeFileAttachments,
   expandFolderTokens,
   isFolderAttachment,
   isImageAttachment,
@@ -182,7 +183,7 @@ export const modelUserContent = (text: string, items?: AgentChatAttachment[]) =>
     && item.folderId != null
     && !mentioned.has(item.folderId)
   ))
-  return `${expanded}${describeFolders(extra)}`
+  return `${expanded}${describeFolders(extra)}${describeFileAttachments(items)}`
 }
 
 export const toMultimodalUserContent = (text: string, items?: AgentChatAttachment[]) => {

@@ -1,3 +1,4 @@
+import { defaultQuestionImportSettings, type QuestionImportSettings } from '../agent/importTemplateTypes'
 import { reactive, watch } from 'vue'
 import { readSecureDocument, writeSecureDocument } from '../security/secureStore'
 import { createDocumentPersistence, replaceDocument } from '../security/documentPersistence'
@@ -48,6 +49,7 @@ export interface AppSettings {
   questionSaveDir: string
   questionSaveFolderId: number | null
   algorithms: AlgorithmConfig[]
+  questionImport: QuestionImportSettings
   adminToken: string
   multiUser: {
     enabled: boolean
@@ -101,6 +103,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   , questionSaveDir: ''
   , questionSaveFolderId: null
   , algorithms: []
+  , questionImport: defaultQuestionImportSettings()
   , adminToken: ''
   , multiUser: {
     enabled: false
@@ -154,6 +157,7 @@ class SettingsManager {
         ...DEFAULT_SETTINGS, ...parsed,
         network: { ...DEFAULT_SETTINGS.network, ...(parsed.network || {}) },
         search: normalizeSearchSettings(parsed.search),
+        questionImport: { ...defaultQuestionImportSettings(), ...(parsed.questionImport || {}) },
       })
       this.hydrated = true
     } catch { /* leave encrypted data intact on unlock failures */ }
@@ -364,6 +368,7 @@ class SettingsManager {
       questionSaveDir: '题目保存目录',
       questionSaveFolderId: '题目默认保存文件夹 ID',
       algorithms: '算法配置列表',
+      questionImport: '题库导入算法模板与保存偏好',
       adminToken: '管理员令牌',
       multiUser: '多用户配置',
       defaultDifficulty: '默认题目难度',

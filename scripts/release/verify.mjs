@@ -67,6 +67,7 @@ try {
     await step('packaged-skill-install-update', process.execPath, ['scripts/test-cli-skills.mjs', binary])
     if (options.start) await step('desktop-startup', binary, ['status'], 90000)
     await step('desktop-real-workflows', process.execPath, ['scripts/test-cli-installed.mjs', binary], 5 * 60 * 1000)
+    await step('desktop-file-import', process.execPath, ['scripts/test-agent-file-import.mjs', binary], 5 * 60 * 1000)
   }
   report.status = 'passed'
 } catch (error) { report.status = 'failed'; report.error = String(error.message || error); process.exitCode = 1 }

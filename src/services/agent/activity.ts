@@ -239,6 +239,19 @@ export const describeActivity = (name: string, args: any, status: ImportTaskStep
               : '查看了文件概况',
     }
   }
+  if (name === 'run_file_script') {
+    return {
+      target: '文件题目',
+      label: status === 'running' ? '正在用脚本解析文件'
+        : status === 'failed' ? '脚本解析失败'
+          : `已解析 ${extra?.count ?? 0} 道题目，等待写入`,
+    }
+  }
+  if (name === 'save_import_template') {
+    return { target: '导入算法', label: status === 'running' ? '正在保存导入算法'
+      : status === 'failed' ? '导入算法保存失败'
+        : extra?.saved ? `已保存导入算法「${extra.name}」` : '导入算法尚未保存' }
+  }
   if (name === 'read_range') {
     const unit = extra?.unit || '段'
     const start = extra?.start ?? Number(args?.start ?? 0)
@@ -570,7 +583,7 @@ export const describeActivity = (name: string, args: any, status: ImportTaskStep
         status === 'running'
           ? `正在写入${target}`
           : status === 'failed'
-            ? `写入${target}失败`
+            ? `写入中断，已保存 ${extra?.total_saved ?? count} 道题目`
             : `写入了${target}到「${folder}」`,
     }
   }

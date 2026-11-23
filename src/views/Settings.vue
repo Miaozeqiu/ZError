@@ -147,6 +147,14 @@ const onGeneralScrollbarMouseup = () => {
 
 // Agent 设置自定义滚动条
 const agentScrollContent = ref<HTMLElement | null>(null)
+// 概览滚动到底部后进入详情，不能沿用旧滚动位置把返回和保存按钮裁掉。
+watch(agentSkillDetailOpen, () => {
+  const content = agentScrollContent.value
+  if (!content) return
+  content.scrollTop = 0
+  // 输入框聚焦或 scrollIntoView 也可能滚动外层隐藏容器，进入详情时一并复位。
+  content.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })
+}, { flush: 'post' })
 const agentScrollbar = ref<HTMLElement | null>(null)
 const agentScrollbarThumb = ref<HTMLElement | null>(null)
 const agentScrollbarVisible = ref(false)

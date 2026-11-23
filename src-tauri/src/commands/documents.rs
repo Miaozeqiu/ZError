@@ -21,7 +21,9 @@ pub async fn read_file_bytes(path: String) -> Result<String, String> {
 #[tauri::command]
 pub async fn stat_local_file(path: String) -> Result<serde_json::Value, String> {
     let meta = fs::metadata(&path).map_err(|e| format!("读取文件信息失败: {}", e))?;
-    Ok(serde_json::json!({ "size": meta.len() }))
+    let modified = meta.modified().ok().and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|duration| duration.as_millis());
+    Ok(serde_json::json!({ "size": meta.len(), "modified": modified, "isFile": meta.is_file() }))
 }
 
 #[tauri::command]
@@ -125,7 +127,8 @@ pub async fn read_excel_range(
         return Ok(vec![]);
     }
     let total = rows.len() as i32;
-    let s = start.max(0).min(total - 1);
+    let s = start.max(0);
+    if s >= total || end < s { return Ok(vec![]); }
     let e = end.max(s).min(total - 1);
     Ok(rows[(s as usize)..=(e as usize)].to_vec())
 }
@@ -140,39 +143,50 @@ pub(super) fn read_docx_paragraphs(path: &str) -> Result<Vec<String>, String> {
     use std::io::Read as _;
     file.read_to_string(&mut xml)
         .map_err(|e| format!("读取document.xml失败: {}", e))?;
-    let mut reader = XmlReader::from_str(&xml);
-    reader.trim_text(true);
+    parse_docx_xml(&xml)
+}
+
+fn parse_docx_xml(xml: &str) -> Result<Vec<String>, String> {
+    let mut reader = XmlReader::from_str(xml);
+    reader.trim_text(false);
     let mut buf = Vec::new();
     let mut paragraphs: Vec<String> = Vec::new();
     let mut current = String::new();
-    let mut _in_p = false;
+    let mut in_p = false;
     let mut in_text = false;
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(e)) => {
-                let name = e.name().as_ref().to_vec();
-                if name.ends_with(b"p") {
-                    _in_p = true;
+                let name = e.local_name().as_ref().to_vec();
+                if name == b"p" {
+                    in_p = true;
                     current.clear();
                 }
-                if name.ends_with(b"t") {
+                if name == b"t" {
                     in_text = true;
                 }
             }
             Ok(Event::Text(t)) => {
-                if in_text {
+                if in_p && in_text {
                     current.push_str(&t.unescape().unwrap_or_default().to_string());
                 }
             }
             Ok(Event::End(e)) => {
-                let name = e.name().as_ref().to_vec();
-                if name.ends_with(b"t") {
+                let name = e.local_name().as_ref().to_vec();
+                if name == b"t" {
                     in_text = false;
                 }
-                if name.ends_with(b"p") {
-                    _in_p = false;
+                if name == b"p" {
+                    in_p = false;
                     paragraphs.push(current.clone());
                     current.clear();
+                }
+            }
+            Ok(Event::Empty(e)) if in_p => {
+                match e.local_name().as_ref() {
+                    b"br" | b"cr" => current.push('\n'),
+                    b"tab" => current.push('\t'),
+                    _ => {}
                 }
             }
             Ok(Event::Eof) => break,
@@ -191,7 +205,8 @@ pub async fn read_docx_range(path: String, start: i32, end: i32) -> Result<Vec<S
         return Ok(vec![]);
     }
     let total = pars.len() as i32;
-    let s = start.max(0).min(total - 1);
+    let s = start.max(0);
+    if s >= total || end < s { return Ok(vec![]); }
     let e = end.max(s).min(total - 1);
     Ok(pars[(s as usize)..=(e as usize)].to_vec())
 }
@@ -348,7 +363,8 @@ pub async fn read_doc_range(path: String, start: i32, end: i32) -> Result<Vec<St
         return Ok(vec![]);
     }
     let total = pars.len() as i32;
-    let s = start.max(0).min(total - 1);
+    let s = start.max(0);
+    if s >= total || end < s { return Ok(vec![]); }
     let e = end.max(s).min(total - 1);
     Ok(pars[(s as usize)..=(e as usize)].to_vec())
 }
@@ -561,4 +577,45 @@ pub fn reveal_in_file_manager(path: String) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod document_import_tests {
+    use super::*;
+
+    #[test]
+    fn preserves_runs_spaces_breaks_tables_and_ignores_similar_element_names() {
+        let xml = r#"<w:document xmlns:w="urn:word"><w:body><w:p><w:r><w:t xml:space="preserve">A. first </w:t><w:tab/><w:t>option</w:t><w:br/><w:t>next &amp; line</w:t></w:r><w:customWrap><w:r><w:t> tail</w:t></w:r></w:customWrap></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>table question</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>"#;
+        assert_eq!(parse_docx_xml(xml).unwrap(), vec!["A. first \toption\nnext & line tail", "table question"]);
+        assert!(parse_docx_xml("<w:p><w:t>broken</w:p>").is_err());
+    }
+
+    #[tokio::test]
+    async fn docx_range_reaches_eof_without_repeating_the_last_paragraph() {
+        use std::io::Write;
+        let path = std::env::temp_dir().join(format!("zerror-document-test-{}.docx", uuid::Uuid::new_v4()));
+        let mut zip = zip::ZipWriter::new(File::create(&path).unwrap());
+        zip.start_file("word/document.xml", zip::write::FileOptions::default()).unwrap();
+        zip.write_all(b"<w:document xmlns:w=\"urn:word\"><w:p><w:r><w:t>first</w:t></w:r></w:p><w:p><w:r><w:t>last</w:t></w:r></w:p></w:document>").unwrap();
+        zip.finish().unwrap();
+        let name = path.to_string_lossy().to_string();
+        assert_eq!(read_docx_range(name.clone(), 0, 1).await.unwrap(), vec!["first", "last"]);
+        assert!(read_docx_range(name.clone(), 2, 50).await.unwrap().is_empty());
+        assert!(read_docx_range(name, 1, 0).await.unwrap().is_empty());
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn attachment_metadata_distinguishes_files_from_folders() {
+        let directory = std::env::temp_dir().join(format!("zerror-attachment-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&directory).unwrap();
+        let file = directory.join("questions.txt");
+        std::fs::write(&file, b"test").unwrap();
+        let meta = stat_local_file(file.to_string_lossy().to_string()).await.unwrap();
+        assert_eq!(meta["isFile"], true);
+        assert_eq!(meta["size"], 4);
+        assert_eq!(stat_local_file(directory.to_string_lossy().to_string()).await.unwrap()["isFile"], false);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
 }

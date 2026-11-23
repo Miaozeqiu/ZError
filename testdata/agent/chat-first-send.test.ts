@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const api = vi.hoisted(() => ({
-  read: vi.fn(), write: vi.fn(), redact: vi.fn(), subjects: vi.fn(), run: vi.fn(), claim: vi.fn(),
+  read: vi.fn(), write: vi.fn(), redact: vi.fn(), subjects: vi.fn(), run: vi.fn(), claim: vi.fn(), context: vi.fn((text: string) => text),
 }))
 vi.mock('../../src/services/security/secureStore', () => ({
   readSecureDocument: api.read, writeSecureDocument: api.write, redactNative: api.redact,
@@ -27,7 +27,7 @@ vi.mock('../../src/services/agent/agentWait', () => ({ wakeAgentWait: vi.fn() })
 vi.mock('../../src/services/agent/subagent/owner', () => ({ abortChildrenOf: vi.fn() }))
 vi.mock('../../src/services/agent/chatStudy', () => ({
   browserStatePrefix: async () => '', studyStatePrefix: async () => '', lastUserText: () => '',
-  loadLiveExploreRefs: vi.fn(), maybeCompactContext: vi.fn(), modelUserContent: (text: string) => text,
+  loadLiveExploreRefs: vi.fn(), maybeCompactContext: vi.fn(), modelUserContent: api.context,
   scheduleStudyProgressEval: vi.fn(), shouldAutoEvalStudy: () => ({ yes: false }), toMultimodalUserContent: vi.fn(),
 }))
 vi.mock('../../src/services/agent/context', () => ({
@@ -63,6 +63,20 @@ beforeEach(async () => {
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers() })
 
 describe('first message preparation', () => {
+  it('首页文件导入无需预选文件夹，交由 Agent 根据本地目录归类', async () => {
+    hydration.resolve(null); await store.chatStoreReady
+    const { startFileImportChat } = await import('../../src/services/agent/chatStarters')
+    const pending = startFileImportChat({ filePath: '/tmp/学习强国初赛题库.docx' })
+    await vi.advanceTimersByTimeAsync(0); await pending
+    expect(store.activeChat.value?.attachments).toEqual([
+      expect.objectContaining({ kind: 'file', fileName: '学习强国初赛题库.docx', folderId: undefined }),
+    ])
+    expect(api.run).toHaveBeenCalledWith(expect.objectContaining({
+      modelPrompt: expect.stringContaining('导入本地题库'),
+    }))
+    expect(api.context).toHaveBeenCalledWith(expect.stringContaining('自行选择合适的位置创建文件夹'), expect.anything())
+  })
+
   it('prefills a graph request for the selected subject without creating or sending a chat', async () => {
     hydration.resolve(null); await store.chatStoreReady
     const { draftStudyGraphChat } = await import('../../src/services/agent/chatStarters')
@@ -277,4 +291,14 @@ it('does not resurrect an older failed task when the latest run has already comp
   const pending = send('继续', undefined, { sessionId: 'old' })
   await vi.advanceTimersByTimeAsync(0); await pending
   expect(api.run.mock.calls[0][0].systemPrompt).not.toContain('任务恢复检查点')
+})
+
+it('短句导入仍携带当前对话已有附件引用，不要求用户再次提供文件',async()=>{
+  hydration.resolve(null);await store.chatStoreReady
+  const attachment={kind:'file' as const,fileName:'题库.docx',filePath:'/tmp/题库.docx'}
+  const session=store.createChat({attachments:[attachment]})
+  const pending=send('导入下',undefined,{sessionId:session.id})
+  await vi.advanceTimersByTimeAsync(0);await pending
+  // 真实上下文构建将既有附件继续交给 modelUserContent；不依赖历史消息是否被压缩。
+  expect(api.context).toHaveBeenCalledWith('导入下',expect.arrayContaining([expect.objectContaining({filePath:'/tmp/题库.docx'})]))
 })

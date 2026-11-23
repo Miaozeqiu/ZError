@@ -102,7 +102,7 @@ export function patchConfig<T extends object>(settings: T, key: string, value: u
   const next = JSON.parse(JSON.stringify(settings))
   const searchKeys = ['search.apiKey', 'search.deepseekApiKey', 'search.tavilyApiKey', 'search.braveApiKey', 'search.youApiKey']
   if (!searchKeys.includes(key)) configValue(next, key)
-  const enums: Record<string, unknown[]> = { theme: ['light', 'dark', 'auto'], language: ['zh-CN', 'en-US'], defaultDifficulty: ['easy', 'medium', 'hard'], 'search.provider': ['exa', 'deepseek', 'tavily', 'brave', 'you'] }
+  const enums: Record<string, unknown[]> = { 'questionImport.saveMode': ['ask', 'auto', 'never'], theme: ['light', 'dark', 'auto'], language: ['zh-CN', 'en-US'], defaultDifficulty: ['easy', 'medium', 'hard'], 'search.provider': ['exa', 'deepseek', 'tavily', 'brave', 'you'] }
   const booleans = ['autoSave', 'autoAddToQuestionBank', 'showExplanation', 'autoUpdate', 'enableNotifications', 'suppressNoModelWarning', 'network.enableLanAccess', 'search.enabled']
   const ranges: Record<string, [number, number]> = { modelResponseTimeout: [5, 600], modelRetryCount: [0, 10], itemsPerPage: [1, 200], 'network.serverPort': [1, 65535] }
   if (searchKeys.includes(key)) { if (typeof value !== 'string') throw new Error('搜索密钥必须是字符串') }

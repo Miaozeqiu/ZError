@@ -10,6 +10,8 @@
       @back="closeSkillDetail"
     />
 
+    <AgentImportTemplateManager v-else-if="importTemplatesOpen" @back="importTemplatesOpen = false" />
+
     <div v-else class="agent-settings-overview">
       <section aria-labelledby="agent-websites-heading">
         <div class="website-section-header">
@@ -59,7 +61,7 @@
 
       <section aria-labelledby="agent-behavior-heading">
         <h2 id="agent-behavior-heading" class="agent-section-title">行为与权限</h2>
-        <AgentBehaviorSettings />
+        <AgentBehaviorSettings @manage-import-templates="importTemplatesOpen = true" />
       </section>
     </div>
 
@@ -207,6 +209,7 @@ import {
 } from '../../services/agent/websiteRepository'
 
 const AgentSkillDetail = defineAsyncComponent(() => import('./AgentSkillDetail.vue').then(module => module.default))
+const AgentImportTemplateManager = defineAsyncComponent(() => import('./AgentImportTemplateManager.vue'))
 
 const emit = defineEmits<{ 'skill-detail-change': [open: boolean] }>()
 const websites = ref<WebsiteSettingsItem[]>([])
@@ -339,7 +342,8 @@ const accountName = (id: string) => {
 }
 
 const selectedWebsite = ref<WebsiteSettingsItem | null>(null)
-watch(selectedWebsite, site => emit('skill-detail-change', Boolean(site)))
+const importTemplatesOpen = ref(false)
+watch(() => Boolean(selectedWebsite.value) || importTemplatesOpen.value, open => emit('skill-detail-change', open))
 const siteMainPath = (site: WebsiteSettingsItem) => site.siteHost ? `sites/${site.siteHost}/SKILL.md` : 'SKILL.md'
 const openWebsiteExperience = async (site: WebsiteSettingsItem) => {
   if (site.files.includes(siteMainPath(site))) {

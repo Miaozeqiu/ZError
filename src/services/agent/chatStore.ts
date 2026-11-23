@@ -1,3 +1,4 @@
+import { MAX_AGENT_IMAGES as MAX_COMPOSER_IMAGES } from './attachmentFiles'
 import { interruptRun } from './core/run'
 /** 会话列表、持久化、作曲栏。发送循环在 chatLoop.ts，不要把模型调用写回这里。 */
 import { computed, ref, watch } from 'vue'
@@ -324,7 +325,6 @@ export const dropStep = (sessionId: string, messageId: string, stepId: string) =
 }
 
 const fileNameFromPath = (filePath: string) => filePath.split(/[\\/]/).pop() || '文件'
-const MAX_COMPOSER_IMAGES = 4
 
 export const addComposerAttachment = (filePath: string) => {
   const path = String(filePath || '').trim()
@@ -546,6 +546,7 @@ export const ensureBrowserChat = (input: { browserId: string; title?: string }) 
 const releaseChatMemory = (id: string) => {
   void Promise.all([
     import('./toolShared').then(mod => mod.clearListedQuestions(id)),
+    import('./questionImport').then(mod => mod.clearQuestionImportResults(id)),
     import('./browserTask').then(mod => mod.clearBrowserTaskIntent(id)),
     import('./failGate').then(mod => mod.clearFailGate(id)),
     import('./browserTodo').then(mod => mod.clearTodoRounds(id)),

@@ -256,6 +256,7 @@ export const iconPaths = (name: string) => {
   if (name === 'get_file_info') {
     return ['M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z', 'M14 2v6h6', 'M8 13h8', 'M8 17h5']
   }
+  if (name === 'run_file_script') return ['m16 18 6-6-6-6', 'm8 6-6 6 6 6', 'm14.5 4-5 16']
   if (name === 'read_range') {
     return ['M4 19.5A2.5 2.5 0 0 1 6.5 17H20', 'M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z']
   }
