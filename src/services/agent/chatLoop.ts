@@ -92,7 +92,7 @@ export const sendChatMessage = async (
   options?: { sessionId?: string; assistantId?: string; kind?: 'watch'; modelText?: string; quizAttemptRef?: AgentQuizAttemptRef; quizOptionQuotes?: AgentQuizOptionQuote[] },
 ) => {
   initializeChatRuntime()
-  let content = redactText(text.trim())
+  let content = redactText(text.trim(), { unboundSiteCredentials: options?.kind !== 'watch' })
   let quizOptionQuotes = options?.quizOptionQuotes?.length ? redactObject(options.quizOptionQuotes) : undefined
   if (!content && !quizOptionQuotes) return
 
@@ -177,7 +177,7 @@ export const sendChatMessage = async (
 
   try {
     await prepareTurn(abort.signal, () => chatStoreReady)
-    const safeContent = await prepareTurn(abort.signal, () => redactNative(content))
+    const safeContent = await prepareTurn(abort.signal, () => redactNative(content, { unboundSiteCredentials: options?.kind !== 'watch' }))
     if (quizOptionQuotes?.length) {
       const quotes = quizOptionQuotes
       const redacted = await prepareTurn(abort.signal, () => redactNative(quotes.map(({ question, text }) => ({ question, text }))))

@@ -1,7 +1,7 @@
 <template>
   <form class="login-card" aria-label="网站登录" @submit.prevent="submit">
     <header><strong>{{ request.name }}登录</strong><span>{{ request.origin }}</span></header>
-    <p v-if="request.replacingRejectedCredentials" role="status">网站提示账号或密码有误，请重新填写。</p>
+    <p v-if="request.replacingRejectedCredentials" role="status">请重新填写账号或密码。</p>
     <p>账号和密码将加密保存在本机，Agent 只能使用凭据引用。</p>
     <div class="fields">
       <label>

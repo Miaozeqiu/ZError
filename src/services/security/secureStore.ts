@@ -56,8 +56,8 @@ export const writeSecureDocument = <T>(name: string, value: T): Promise<T> => {
   queues.set(name, pending)
   return pending
 }
-export const redactNative = async <T>(value: T): Promise<T> => isNativeSecureStore()
-  ? invoke<T>('secure_redact', { value: clone(value) }) : value
+export const redactNative = async <T>(value: T, options?: { unboundSiteCredentials?: boolean }): Promise<T> => isNativeSecureStore()
+  ? invoke<T>('secure_redact', { value: clone(value), ...(options?.unboundSiteCredentials ? { unboundSiteCredentials: true } : {}) }) : value
 
 /** Only the explicit recovery button calls this; startup and Agent calls never do. */
 export const authorizeSecureStorage = async () => {

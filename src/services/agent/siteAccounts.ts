@@ -79,5 +79,5 @@ export const siteAccountsPrompt = (url = '') => {
   const site = platformFromUrl(url)
   const row = site && siteAccountOf(site)
   if (!site || !row) return ''
-  return `【凭据变量】${websiteLabel(site)}：账号 ${isSecretReference(row.account) ? row.account : '未配置'}，密码 ${isSecretReference(row.password) ? row.password : '未配置'}。只通过 browser_type(secret_ref=变量) 填写；不要读取真实值，也不要再次向用户索要已配置的凭据。`
+  return `【凭据变量】${websiteLabel(site)}：账号 ${isSecretReference(row.account) ? row.account : '未配置'}，密码 ${isSecretReference(row.password) ? row.password : '未配置'}。只通过 browser_type(secret_ref=变量) 填写，不读取真实值。未被拒绝时复用；网页提示账号或密码错误，或用户要求修改时，调用 browser_request_credentials(replace_rejected=true) 重新填写。`
 }

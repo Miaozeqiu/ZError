@@ -370,6 +370,7 @@ struct Redactor<'a> {
     vault: &'a Vault,
     entries: Vec<(String, String)>,
     matcher: Option<regex::Regex>,
+    unbound_site_credentials: bool,
 }
 impl<'a> Redactor<'a> {
   fn new(v: &'a Vault) -> Self {
@@ -388,7 +389,7 @@ impl<'a> Redactor<'a> {
             .collect::<Vec<_>>()
             .join("|"),
     ).expect("escaped credential literals")) };
-    Self { vault: v, entries, matcher }
+    Self { vault: v, entries, matcher, unbound_site_credentials: false }
   }
   fn text(&self, text: &str) -> String {
     static TOKENS: OnceLock<regex::Regex> = OnceLock::new();
@@ -414,6 +415,11 @@ impl<'a> Redactor<'a> {
                             .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_'))
                 {
                     return value.to_string();
+                }
+                // 新输入的相同密码不能自动继承旧网站的归属或填写授权。
+                if self.unbound_site_credentials && self.entries.iter().any(|(source, reference)|
+                    source == value && reference.starts_with("{{secret:site/")) {
+                    return "[已隐藏的网站凭据，请在目标网站的安全登录表单中重新填写]".into();
                 }
                 self.entries
                     .iter()
@@ -915,9 +921,18 @@ pub async fn secure_document_write(
     storage_task(move || document_write(&name, value)).await
 }
 #[tauri::command]
-pub async fn secure_redact(webview: tauri::Webview, value: Value) -> Result<Value, String> {
+pub async fn secure_redact(webview: tauri::Webview, value: Value, unbound_site_credentials: Option<bool>) -> Result<Value, String> {
     trusted_webview(&webview)?;
-    storage_task(move || redact(value)).await
+    storage_task(move || {
+        if !unbound_site_credentials.unwrap_or(false) { return redact(value); }
+        with_vault(false, |v| {
+            let mut value = value;
+            let mut redactor = Redactor::new(v);
+            redactor.unbound_site_credentials = true;
+            redactor.value(&mut value);
+            Ok(value)
+        })
+    }).await
 }
 
 
@@ -933,6 +948,24 @@ pub fn redact_best_effort(value: Value) -> Value {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn new_user_input_does_not_inherit_a_matching_passwords_website() {
+        let mut vault = Vault::default();
+        let shared = "shared-chat-password";
+        let first = put_secret(&mut vault, "site/first.example/password", shared, "site", vec![]).unwrap();
+        put_secret(&mut vault, "site/second.example/password", shared, "site", vec![]).unwrap();
+        let api = put_secret(&mut vault, "model/test/apiKey", "separate-model-key", "api", vec![]).unwrap();
+        let mut redactor = Redactor::new(&vault);
+        redactor.unbound_site_credentials = true;
+        let text = redactor.text(&format!("另一个网站的密码 {}，显式引用 {}，密钥 separate-model-key", shared, first));
+        assert_eq!(text, format!("另一个网站的密码 [已隐藏的网站凭据，请在目标网站的安全登录表单中重新填写]，显式引用 {}，密钥 {}", first, api));
+        assert!(!text.contains(shared));
+        assert_eq!(redact_text(&vault, &first), first);
+        put_secret(&mut vault, "site/first.example/password", "replacement-password", "site", vec![]).unwrap();
+        let mut redactor = Redactor::new(&vault);
+        redactor.unbound_site_credentials = true;
+        assert!(!redactor.text(shared).contains("first.example"));
+    }
     use super::*;
     #[test]
     fn encryption_is_authenticated_and_bound_to_document() {

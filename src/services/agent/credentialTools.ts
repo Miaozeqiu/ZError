@@ -1,10 +1,10 @@
 import { invoke } from '@tauri-apps/api/core'
 import type { ChatToolHandler } from './toolContext'
 import { liveSession, sessions, persistSoon } from './chatStore'
-import { redactObject, rememberRedaction } from '../security/secretRedaction'
+import { redactObject, rememberRedaction, UNBOUND_SITE_CREDENTIAL } from '../security/secretRedaction'
 import { isNativeSecureStore, redactNative, readSecureDocument } from '../security/secureStore'
 import { refreshSiteAccounts } from './siteAccounts'
-import { websiteAccountId } from './websiteIdentity'
+import { loadWebsiteIdentities, websiteAccountId } from './websiteIdentity'
 
 export const protectCredentials: ChatToolHandler = async ({ args, ctx }) => {
   if (!isNativeSecureStore()) return JSON.stringify({ ok: false, error: '凭据登记需要桌面应用的系统安全存储；尚未保存。' })
@@ -16,6 +16,9 @@ export const protectCredentials: ChatToolHandler = async ({ args, ctx }) => {
   const fields: Record<string,string> = {}
   for (const field of ['account', 'password', 'api_key']) {
     if (args[field] === undefined) continue
+    if (typeof args[field] === 'string' && args[field].includes(UNBOUND_SITE_CREDENTIAL)) {
+      return JSON.stringify({ ok: false, error: '凭据已隐藏，不能把占位提示当作账号或密码。请在目标登录页调用 browser_request_credentials(replace_rejected=true) 重新填写。' })
+    }
     if (typeof args[field] !== 'string' || !args[field] || /^\{\{secret:/.test(args[field]) || !source.content.includes(args[field])) {
       return JSON.stringify({ ok: false, error: '凭据必须精确出现在指定用户消息中，且不能是已有变量。请核对原文。' })
     }
@@ -24,15 +27,28 @@ export const protectCredentials: ChatToolHandler = async ({ args, ctx }) => {
   if (!Object.keys(fields).length) return JSON.stringify({ ok: false, error: '没有可登记的凭据。' })
   let references: Record<string,string> = {}
   let pending = false
+  let siteMismatch = false
   if (fields.api_key && (fields.account || fields.password)) return JSON.stringify({ ok: false, error: '网站账号与 API Key 请分别登记。' })
   if (fields.api_key) {
     const result = await invoke<{ references: Record<string,string> }>('secure_register_api', { provider: String(args.provider_id || ''), value: fields.api_key })
     references = result.references
   } else {
-    const site = args.site ? websiteAccountId(String(args.site)) : `pending-${ctx.sessionId}`
+    let site = args.site ? websiteAccountId(String(args.site)) : `pending-${ctx.sessionId}`
+    const browserId = ctx.browserId?.()
+    if (args.site && browserId) {
+      const { getBrowserState } = await import('../browser/appBrowser')
+      const page = await getBrowserState(browserId).catch(() => null)
+      if (page?.url && URL.canParse(page.url) && new URL(page.url).protocol === 'https:') {
+        await loadWebsiteIdentities()
+        site = websiteAccountId(String(args.site))
+        siteMismatch = websiteAccountId(page.url) !== site
+        // 归属冲突时先保护秘密，不能按模型猜测覆盖另一个网站的账号。
+        if (siteMismatch) site = `pending-${ctx.sessionId}`
+      }
+    }
     const result = await invoke<{ references: Record<string,string>; pending?: boolean }>('secure_register', { site, fields })
     references = result.references
-    pending = result.pending === true || !args.site
+    pending = result.pending === true || !args.site || siteMismatch
   }
   for (const [field, value] of Object.entries(fields)) rememberRedaction(value, references[field])
   // Includes historical messages, in-flight tool steps, titles, summaries and children.
@@ -57,6 +73,7 @@ export const protectCredentials: ChatToolHandler = async ({ args, ctx }) => {
   let cleanupPending = false
   try { await invoke('secure_cleanup_legacy') } catch { cleanupPending = true }
   persistSoon(true)
-  return JSON.stringify({ ok: true, references, history_replaced: true, cleanup_pending: cleanupPending,
-    hint: !pending ? '之后只使用这些变量；browser_type 使用 secret_ref。' : '已加密暂存。需要用户在网站设置中关联所属网站后才能填写。' })
+  return JSON.stringify({ ok: true, references, pending, history_replaced: true, cleanup_pending: cleanupPending,
+    hint: siteMismatch ? '所选网站与当前登录页不一致，已加密暂存，未修改所选网站的凭据。请核对目标网站，再调用 browser_request_credentials 显示该站安全表单。'
+      : !pending ? '之后只使用这些变量；browser_type 使用 secret_ref。' : '已加密暂存。需要用户在网站设置中关联所属网站后才能填写。' })
 }

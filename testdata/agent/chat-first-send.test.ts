@@ -63,6 +63,19 @@ beforeEach(async () => {
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers() })
 
 describe('first message preparation', () => {
+  it('聊天中重复输入其他网站的已知密码时，不把该站引用送给模型', async () => {
+    hydration.resolve(null); await store.chatStoreReady
+    const { rememberRedaction, UNBOUND_SITE_CREDENTIAL } = await import('../../src/services/security/secretRedaction')
+    rememberRedaction('known-password-in-new-chat', '{{secret:site/chaoxing/password}}')
+    const pending = send('在浙学的密码是 known-password-in-new-chat')
+    await vi.advanceTimersByTimeAsync(0); await pending
+    expect(api.redact).toHaveBeenCalledWith(expect.stringContaining(UNBOUND_SITE_CREDENTIAL), { unboundSiteCredentials: true })
+    expect(api.run.mock.calls[0][0].modelPrompt).toContain(UNBOUND_SITE_CREDENTIAL)
+    expect(JSON.stringify(api.run.mock.calls)).not.toContain('chaoxing/password')
+    expect(JSON.stringify(api.run.mock.calls)).not.toContain('known-password-in-new-chat')
+    expect(store.activeChat.value?.messages[0].content).toContain(UNBOUND_SITE_CREDENTIAL)
+  })
+
   it('首页文件导入无需预选文件夹，交由 Agent 根据本地目录归类', async () => {
     hydration.resolve(null); await store.chatStoreReady
     const { startFileImportChat } = await import('../../src/services/agent/chatStarters')

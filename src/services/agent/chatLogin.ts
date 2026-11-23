@@ -52,9 +52,9 @@ export async function requestChatLogin(
   if (!identity || !origin || (expectedOrigin && origin !== expectedOrigin)) return failed('请先打开目标网站的 HTTPS 登录页。')
   const site = websiteAccountId(origin)
   signal?.throwIfAborted()
+  if (chatLoginRequests.has(sessionId)) return failed('当前对话已有登录表单，请等待用户填写。')
   const existing = saved(site)
   if (existing && !replacingRejectedCredentials) return existing
-  if (chatLoginRequests.has(sessionId)) return failed('当前对话已有登录表单，请等待用户填写。')
   const request = {
     id: crypto.randomUUID(), sessionId, browserId, origin, site, name: identity.name,
     replacingRejectedCredentials, canReuseAccount: replacingRejectedCredentials && Boolean(existing),

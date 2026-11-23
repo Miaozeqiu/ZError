@@ -222,9 +222,14 @@ export const dispatchBrowserTool = async (ctx: Record<string, any>): Promise<str
     return handleBrowserHomeShortcuts(ctx as Parameters<typeof handleBrowserHomeShortcuts>[0])
   }
   if (ctx.name === 'browser_request_credentials') {
-    if (ctx.role === 'explore' || Object.keys(ctx.args).length) return JSON.stringify({ ok: false, reason: 'invalid', error: '请在登录页执行此工具，无需参数。' })
+    if (ctx.role === 'explore' || Object.keys(ctx.args).some(key => key !== 'replace_rejected')
+      || (ctx.args.replace_rejected !== undefined && typeof ctx.args.replace_rejected !== 'boolean')) {
+      return JSON.stringify({ ok: false, reason: 'invalid', error: '请在登录页执行此工具，仅支持布尔参数 replace_rejected。' })
+    }
     const { requestChatLogin } = await import('./chatLogin')
-    return JSON.stringify(await requestChatLogin(ctx.sessionId, ctx.browserId, ctx.signal))
+    return JSON.stringify(await requestChatLogin(ctx.sessionId, ctx.browserId, ctx.signal, {
+      replacingRejectedCredentials: ctx.args.replace_rejected === true,
+    }))
   }
   const siteResult = await dispatchSiteBrowserTool(ctx)
   if (siteResult != null) return siteResult

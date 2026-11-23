@@ -4,6 +4,8 @@ import { beforeEach, expect, it, vi } from 'vitest'
 import AgentLoginForm from '../../src/components/agent/AgentLoginForm.vue'
 import { cancelChatLogin, chatLoginRequests, requestChatLogin, submitChatLogin } from '../../src/services/agent/chatLogin'
 import { scopedWebsiteHost } from '../../src/services/agent/websiteRuntime/scopedHost'
+import { dispatchBrowserTool } from '../../src/services/agent/browserTools'
+import { BROWSER_PRIMITIVE_TOOLS } from '../../src/services/agent/toolDefs/browserPrimitiveTools'
 
 const io = vi.hoisted(() => ({ invoke: vi.fn(), page: vi.fn(), account: vi.fn(), capabilities: vi.fn(), documents: vi.fn() }))
 vi.mock('../../src/services/browser/documents', async original => ({
@@ -72,6 +74,60 @@ it('replaces a rejected password using the generic credential form without expos
   expect(io.invoke).toHaveBeenCalledWith('secure_save_chat_login', { site: 'chaoxing', loginOrigin: origin, account: refs.account, password: 'replacement password ' })
   expect(JSON.stringify([request, await receipt])).not.toContain('replacement password')
   expect(chatLoginRequests.size).toBe(0)
+})
+
+it('模型公开工具可以连续请求重填，保留账号且只返回引用', async () => {
+  const definition = BROWSER_PRIMITIVE_TOOLS.find(tool => tool.function.name === 'browser_request_credentials')!
+  expect(definition.function.parameters.properties).toHaveProperty('replace_rejected', { type: 'boolean', description: expect.any(String) })
+  io.account.mockReturnValue(refs)
+  const ctx = { name: 'browser_request_credentials', sessionId: 'chat', browserId: 'tab', role: 'parent', args: {} }
+  expect(JSON.parse(await dispatchBrowserTool(ctx))).toEqual({ ok: true, references: refs })
+  const ids = new Set<string>()
+  for (const password of ['second-attempt', 'third-attempt']) {
+    const run = dispatchBrowserTool({ ...ctx, args: { replace_rejected: true } })
+    const request = await pending()
+    expect(request).toMatchObject({ replacingRejectedCredentials: true, canReuseAccount: true })
+    ids.add(request.id)
+    await submitChatLogin(request, '', password)
+    const result = await run
+    expect(JSON.parse(result)).toEqual({ ok: true, references: refs })
+    expect(result).not.toContain(password)
+  }
+  expect(ids.size).toBe(2)
+  expect(chatLoginRequests.size).toBe(0)
+})
+
+it.each(['zjooc.cn', 'academy.example'])('重填表单按当前 %s 登录页归属，不使用学习通账号', async host => {
+  const site = host === 'zjooc.cn' ? 'zjooc' : host
+  const currentRefs = { account: `{{secret:site/${site}/account}}`, password: `{{secret:site/${site}/password}}` }
+  io.page.mockResolvedValue({ url: `https://${host}/login` })
+  io.account.mockImplementation(id => id === site ? currentRefs : refs)
+  const run = dispatchBrowserTool({ name: 'browser_request_credentials', sessionId: 'chat', browserId: 'tab', role: 'parent', args: { replace_rejected: true } })
+  const request = await pending()
+  expect(request).toMatchObject({ site, origin: `https://${host}` })
+  await submitChatLogin(request, '', 'new-private-password')
+  expect(JSON.parse(await run)).toEqual({ ok: true, references: currentRefs })
+  expect(io.invoke).toHaveBeenCalledWith('secure_save_chat_login', { site, loginOrigin: `https://${host}`, account: currentRefs.account, password: 'new-private-password' })
+})
+
+it('重填参数不接受字符串或未知字段，探索任务不能弹表单', async () => {
+  for (const patch of [{ args: { replace_rejected: 'true' } }, { args: { site: 'chaoxing' } }, { role: 'explore', args: { replace_rejected: true } }]) {
+    const raw = await dispatchBrowserTool({ name: 'browser_request_credentials', sessionId: 'chat', browserId: 'tab', role: 'parent', ...patch })
+    expect(JSON.parse(raw)).toMatchObject({ ok: false, reason: 'invalid' })
+  }
+  expect(chatLoginRequests.size).toBe(0)
+  expect(io.invoke).not.toHaveBeenCalled()
+})
+
+it('重填尚未结束时，并发请求不能拿到旧密码引用', async () => {
+  io.account.mockReturnValue(refs)
+  const run = requestChatLogin('chat', 'tab', undefined, { replacingRejectedCredentials: true })
+  const request = await pending()
+  expect(await requestChatLogin('chat', 'tab')).toMatchObject({ ok: false, error: expect.stringContaining('等待用户填写') })
+  expect(chatLoginRequests.get('chat')?.id).toBe(request.id)
+  cancelChatLogin(request.id)
+  expect(await run).toMatchObject({ ok: false, denied: true })
+  expect(io.invoke).not.toHaveBeenCalled()
 })
 
 it('reuses existing references and keeps cancellation, navigation and abort out of the vault', async () => {

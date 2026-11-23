@@ -2,16 +2,19 @@
 // this process. Durable storage and subsequent request redaction also run natively.
 const known = new Map<string, string>()
 const tokenPattern = /\{\{secret:[^{}]+\}\}/g
+export const UNBOUND_SITE_CREDENTIAL = '[已隐藏的网站凭据，请在目标网站的安全登录表单中重新填写]'
 export const rememberRedaction = (value: string, reference: string) => {
   if (value && value !== reference && !/^\{\{secret:/.test(value)) known.set(value, reference)
 }
-export const redactText = (text: string): string => {
+export const redactText = (text: string, options?: { unboundSiteCredentials?: boolean }): string => {
   if (!known.size) return text
   const entries = [...known].sort((a, b) => b[0].length - a[0].length)
   const matcher = new RegExp(entries.map(([value]) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'g')
   const replace = (part: string) => part.replace(matcher, (value, index: number) => {
     if (value.length <= 3 && (/[A-Za-z0-9_]/.test(part[index - 1] || '') || /[A-Za-z0-9_]/.test(part[index + value.length] || ''))) return value
-    return known.get(value)!
+    const reference = known.get(value)!
+    // 新消息中的相同文本不代表用户授权使用原网站的凭据。
+    return options?.unboundSiteCredentials && reference.startsWith('{{secret:site/') ? UNBOUND_SITE_CREDENTIAL : reference
   })
   let result = '', start = 0
   for (const match of text.matchAll(tokenPattern)) {
