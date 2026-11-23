@@ -44,7 +44,8 @@ describe('stable development code identity', () => {
     expect(rmSync).toHaveBeenLastCalledWith(directory, { recursive: true, force: true })
   })
   // 此启动器只供 macOS 使用；Unix 主机额外验证 bash 的实际参数传递。
-  it.runIf(process.platform !== 'win32')('preserves runner paths containing spaces or apostrophes', () => {
+  if (process.platform !== 'win32') {
+  it('preserves runner paths containing spaces or apostrophes', () => {
     const directory = mkdtempSync(path.join(tmpdir(), 'zerror-runner-test-'))
     const runnerFile = path.join(directory, "parent's project", 'runner.sh')
     mkdirSync(path.dirname(runnerFile))
@@ -58,4 +59,5 @@ describe('stable development code identity', () => {
       expect(result.stdout).toBe("/tmp/binary with spaces\nargument's value\n")
     } finally { runner.cleanup(); rmSync(directory, { recursive: true, force: true }) }
   })
+  }
 })
