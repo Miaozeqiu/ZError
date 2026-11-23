@@ -7,6 +7,12 @@ on:
         type: boolean
         default: false
   workflow_dispatch:
+    inputs:
+      platforms:
+        description: 本次手动验证的平台，自动发版仍构建全部平台
+        type: choice
+        default: all
+        options: [all, windows-linux, windows, linux, macos]
   push:
     branches: [dev-improvements]
     paths:
@@ -19,6 +25,7 @@ permissions:
 
 jobs:
   windows:
+    if: github.event_name != 'workflow_dispatch' || !inputs.platforms || inputs.platforms == 'all' || inputs.platforms == 'windows-linux' || inputs.platforms == 'windows'
     name: windows-x64
     runs-on: windows-2025
     timeout-minutes: 90
@@ -90,7 +97,7 @@ jobs:
           overwrite: true
 
   macos:
-    if: inputs.macos || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/dev-improvements')
+    if: inputs.macos || (github.event_name == 'workflow_dispatch' && (inputs.platforms == 'all' || inputs.platforms == 'macos')) || (github.event_name == 'push' && github.ref == 'refs/heads/dev-improvements')
     name: macos-arm64
     env:
       CARGO_BUILD_JOBS: 2
@@ -201,6 +208,7 @@ jobs:
           overwrite: true
 
   linux:
+    if: github.event_name != 'workflow_dispatch' || !inputs.platforms || inputs.platforms == 'all' || inputs.platforms == 'windows-linux' || inputs.platforms == 'linux'
     name: linux-x64
     runs-on: ubuntu-22.04
     timeout-minutes: 90

@@ -20,6 +20,27 @@ describe('release cannot bypass functional verification', () => {
     expect(checks.jobs.frontend.strategy.matrix.os).toEqual(expect.arrayContaining(['ubuntu-24.04','windows-2025','macos-15']))
     expect(checks.jobs.frontend.steps.some((s:any)=>s.run?.includes('test:release -- --phase frontend'))).toBe(true)
   })
+  it('手动验证可选择平台，自动发版仍启用三平台', () => {
+    const builds = workflow('build-desktop')
+    expect(builds.on.workflow_dispatch.inputs.platforms).toMatchObject({ default: 'all', options: expect.arrayContaining(['all', 'windows-linux', 'windows', 'linux', 'macos']) })
+    const selected = (event: string, platforms: string, macos = false) => {
+      const github = { event_name: event, ref: 'refs/heads/master' }, inputs = { platforms, macos }
+      return Object.fromEntries(['windows', 'linux', 'macos'].map(platform => {
+        // 条件只含本文件定义的标识和布尔比较，不接受外部输入作为代码。
+        const condition = builds.jobs[platform].if
+        expect(condition).toMatch(/^[\w\s.'=!|&()/-]+$/)
+        return [platform, Boolean(new Function('github', 'inputs', `return (${condition})`)(github, inputs))]
+      }))
+    }
+    expect(selected('workflow_dispatch', 'windows-linux')).toEqual({ windows: true, linux: true, macos: false })
+    expect(selected('workflow_dispatch', 'windows')).toEqual({ windows: true, linux: false, macos: false })
+    expect(selected('workflow_dispatch', 'linux')).toEqual({ windows: false, linux: true, macos: false })
+    expect(selected('workflow_dispatch', 'macos')).toEqual({ windows: false, linux: false, macos: true })
+    expect(selected('workflow_dispatch', 'all')).toEqual({ windows: true, linux: true, macos: true })
+    expect(selected('push', '')).toEqual({ windows: true, linux: true, macos: false })
+    expect(selected('push', '', true)).toEqual({ windows: true, linux: true, macos: true })
+    expect(selected('workflow_dispatch', '', true)).toEqual({ windows: true, linux: true, macos: true })
+  })
   it('requires native tests and real desktop smoke before uploading installers', () => {
     const builds=workflow('build-desktop')
     expect(builds.jobs.macos['runs-on']).toBe('macos-15')
