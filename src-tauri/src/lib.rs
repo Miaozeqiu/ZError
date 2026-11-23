@@ -18,6 +18,7 @@ pub mod cef_runtime;
 #[cfg(target_os = "macos")]
 mod macos_wheel;
 pub mod commands;
+pub mod cli;
 pub mod database;
 pub mod logger;
 #[cfg(target_os = "linux")]
@@ -188,6 +189,13 @@ pub fn run() {
 
     builder
         .invoke_handler(tauri::generate_handler![
+            crate::cli::broker::cli_connect,
+            crate::cli::broker::cli_take,
+            crate::cli::broker::cli_request_active,
+            crate::cli::broker::cli_complete,
+            crate::cli::broker::cli_install,
+            crate::cli::broker::cli_skill_install,
+            crate::cli::broker::cli_skill_update,
             greet,
             load_cjk_system_font,
             app_update_target,
@@ -387,6 +395,11 @@ pub fn run() {
                 }
             }
 
+            // CLI 使用独立且需要认证的环回接口，与题库 /query 服务分开。
+            if let Err(error) = tauri::async_runtime::block_on(async { crate::cli::start(app.handle()) }) {
+                eprintln!("CLI 初始化失败：{error}");
+            }
+
             // Linux/macOS database initialization
             #[cfg(not(target_os = "windows"))]
             {
@@ -403,7 +416,9 @@ pub fn run() {
                 }
             }
 
-            let is_dev = cfg!(debug_assertions);
+            // 调试安装包同样内嵌前端资源；仅 tauri dev 使用开发地址
+            // 及其对应的 IPC 来源白名单。
+            let is_dev = cfg!(dev);
             let url = if is_dev {
                 tauri::WebviewUrl::External("http://localhost:1420".parse().unwrap())
             } else {

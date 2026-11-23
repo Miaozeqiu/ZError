@@ -72,10 +72,3 @@ export type SkillCatalogEntry = {
   name: string
   description: string
 }
-
-export type SkillPromptBlock = {
-  id: string
-  triggerHint: string
-  prompt: string
-  preloaded?: boolean
-}

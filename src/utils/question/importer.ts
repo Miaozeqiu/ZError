@@ -206,11 +206,36 @@ const parsePDFByRegex = async (loadingTask: any): Promise<ImportedQuestion[]> =>
     return questions;
 };
 
+// 引号内的 CSV 字段可以包含分隔符和换行；先解析完整文本再映射列，
+// 直接按行切分会丢失或错置数据。
+const parseCSVRows = (text: string): string[][] => {
+    const rows: string[][] = [];
+    let row: string[] = [], field = '', quoted = false;
+    for (let i = 0; i < text.length; i++) {
+        const char = text[i];
+        if (quoted) {
+            if (char === '"' && text[i + 1] === '"') { field += '"'; i++; }
+            else if (char === '"') quoted = false;
+            else field += char;
+        } else if (char === '"' && field.length === 0) {
+            quoted = true;
+        } else if (char === ',') {
+            row.push(field); field = '';
+        } else if (char === '\r' || char === '\n') {
+            row.push(field); rows.push(row); row = []; field = '';
+            if (char === '\r' && text[i + 1] === '\n') i++;
+        } else field += char;
+    }
+    if (quoted) throw new Error('CSV 文件引号未闭合，未导入不完整数据');
+    if (field.length || row.length) { row.push(field); rows.push(row); }
+    return rows;
+};
+
 const parseCSV = async (filePath: string): Promise<ImportedQuestion[]> => {
     const content = await readFile(filePath);
     const text = new TextDecoder().decode(content);
-    const rows = text.split('\n').map(row => row.split(','));
-    const strip = (value = '') => value.replace(/^\uFEFF/, '').replace(/^"|"$/g, '').replace(/""/g, '"');
+    const rows = parseCSVRows(text);
+    const strip = (value = '') => value.replace(/^\uFEFF/, '');
     const header = (rows[0] || []).map(strip);
     const questionIdx = header.indexOf('题目');
     const optionsIdx = header.indexOf('选项');

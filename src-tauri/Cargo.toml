@@ -4,6 +4,11 @@ version = "2.2.9"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
+default-run = "zerror"
+
+[[bin]]
+name = "zerror-cli"
+path = "src/bin/zerror-cli.rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -48,7 +53,7 @@ rusqlite = { version = "0.32", features = ["bundled", "functions"] }
 regex = "1.0"
 ring = "0.17.14"
 zeroize = "1"
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", features = ["json", "blocking"] }
 bytes = "1"
 base64 = "0.22"
 urlencoding = "2.1"

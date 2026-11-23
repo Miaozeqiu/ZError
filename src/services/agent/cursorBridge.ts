@@ -73,26 +73,6 @@ const resolveBrowserId = async (want?: string) => {
   return list[0]?.id || ''
 }
 
-const snapshotOf = async (browserId: string, withImage: boolean) => {
-  const { getBrowserState, listAppBrowsers, screenshotBrowserView } = await import('../browser/appBrowser')
-  const { siteGraphAgentSnap } = await import('../browser/siteGraph')
-  const state = await getBrowserState(browserId).catch(() => null)
-  const item = listAppBrowsers().find((browser) => browser.id === browserId)
-  let image = ''
-  if (withImage) {
-    const shot = await screenshotBrowserView(browserId).catch(() => null)
-    image = shot?.image || ''
-  }
-  return {
-    ok: true,
-    browserId,
-    url: state?.url || item?.url || '',
-    title: state?.title || item?.title || item?.name || '',
-    siteGraph: siteGraphAgentSnap(state?.url || item?.url || ''),
-    image,
-  }
-}
-
 let pollTimer = 0
 let busy = false
 let liveTick = 0
@@ -155,12 +135,6 @@ const tick = async () => {
   } finally {
     busy = false
   }
-}
-
-export const dumpCursorSnapshot = async (browserId?: string) => {
-  const id = await resolveBrowserId(browserId)
-  if (!id) return
-  postResult(await snapshotOf(id, true))
 }
 
 const isTauriHost = () => Boolean(

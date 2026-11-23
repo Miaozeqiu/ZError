@@ -4394,6 +4394,7 @@ dependencies = [
  "cookie",
  "cookie_store 0.21.1",
  "encoding_rs",
+ "futures-channel",
  "futures-core",
  "futures-util",
  "h2 0.4.12",

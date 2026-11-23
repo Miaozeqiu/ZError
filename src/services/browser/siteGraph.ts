@@ -51,17 +51,6 @@ export type SiteGraphParser = {
   tool: string
 }
 
-/** @deprecated 种子在 Skill 的 site-graph.json；请改那个文件。 */
-export const DEFAULT_CHAOXING_SITE_GRAPH = liveSiteGraphs.value[0] || {
-  id: 'chaoxing',
-  name: '学习通',
-  host: 'chaoxing.com',
-  hostPattern: 'chaoxing\\.com',
-  notes: [],
-  nodes: [],
-  edges: [],
-}
-export const CHAOXING_SITE_GRAPH = hydrateSite(DEFAULT_CHAOXING_SITE_GRAPH)
 
 const parserOf = (id: BrowserAbstractionId | SiteGraphParserId): SiteGraphParser => {
   const item = BROWSER_ABSTRACTIONS.find((row) => row.id === id)

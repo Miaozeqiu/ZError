@@ -188,9 +188,6 @@
     "src/services/agent/skills/builtinSkillAssets.ts": {
       "signals": 1
     },
-    "src/services/agent/skills/campusBank.ts": {
-      "signals": 1
-    },
     "src/services/agent/skills/chaoxing.ts": {
       "signals": 2,
       "maxLines": 2
@@ -276,6 +273,7 @@
     "src/services/agent/toolDiscovery.ts",
     "src/services/agent/tools/websitePlayback.ts",
     "src/services/agent/tools/zjoocAnswers.ts",
-    "src/services/platform/zjooc/paperBank.ts"
+    "src/services/platform/zjooc/paperBank.ts",
+    "src/services/agent/skills/campusBank.ts"
   ]
 }

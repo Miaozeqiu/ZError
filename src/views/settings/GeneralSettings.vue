@@ -14,6 +14,43 @@
     </div>
 
     <div class="network-group">
+      <div class="group-title">命令行</div>
+      <div class="setting-item">
+        <div class="setting-info">
+          <h3 class="setting-title">ZError CLI</h3>
+          <p class="setting-description">通过终端配置软件、管理题库和运行 Agent 任务。</p>
+          <p v-if="cliMessage" class="setting-description cli-install-message" role="status">{{ cliMessage }}</p>
+        </div>
+        <div class="setting-control">
+          <button class="folder-action-btn select-folder-btn" :disabled="cliInstalling" @click="installCli">{{ cliInstalling ? '安装中…' : '安装命令行' }}</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="network-group">
+      <div class="group-title">外部 Agent</div>
+      <div class="setting-item">
+        <div class="setting-info">
+          <h3 class="setting-title">ZError Skill</h3>
+          <p class="setting-description">让其他 Agent 通过 CLI 使用软件。由 Open 分发，安装后自动检查更新。</p>
+          <p v-if="skillMessage" class="setting-description cli-install-message" role="status">{{ skillMessage }}</p>
+        </div>
+        <div class="setting-control skill-controls">
+          <select v-model="skillAgent" class="form-input" aria-label="安装 Skill 的 Agent" :disabled="skillBusy">
+            <option value="codex">Codex</option>
+            <option value="claude">Claude Code</option>
+            <option value="cursor">Cursor</option>
+            <option value="pi">Pi</option>
+            <option value="opencode">OpenCode</option>
+            <option value="shared">通用目录 ~/.agents/skills</option>
+          </select>
+          <button class="folder-action-btn select-folder-btn" :disabled="skillBusy" @click="manageSkill('install')">安装</button>
+          <button class="folder-action-btn select-folder-btn" :disabled="skillBusy" @click="manageSkill('update')">更新已安装</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="network-group">
       <div class="group-title">保存设置</div>
     <div class="setting-item">
       <div class="setting-info">
@@ -188,6 +225,37 @@
 <script setup lang="ts">
 
 import { computed, ref, onMounted } from 'vue'
+const cliInstalling = ref(false)
+const cliMessage = ref('')
+const installCli = async () => {
+  cliInstalling.value = true
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    const result = await invoke<{ message: string; pathDirectory: string; onPath: boolean }>('cli_install')
+    cliMessage.value = result.message + (result.onPath ? '' : ` 目录：${result.pathDirectory}`)
+  } catch (error) { cliMessage.value = String(error) }
+  finally { cliInstalling.value = false }
+}
+
+const skillAgent = ref('codex')
+const skillBusy = ref(false)
+const skillMessage = ref('')
+const manageSkill = async (action: 'install' | 'update') => {
+  skillBusy.value = true
+  skillMessage.value = action === 'install' ? '正在从 Open 安装…' : '正在检查更新…'
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    if (action === 'install') {
+      const result = await invoke<{ path: string; version: string }>('cli_skill_install', { agent: skillAgent.value })
+      skillMessage.value = `已安装 v${result.version}：${result.path}。请按 Agent 的重载方式刷新，或在新会话使用。`
+    } else {
+      const result = await invoke<{ ok: boolean; installations: { ok: boolean; error?: string }[] }>('cli_skill_update')
+      const errors = result.installations.filter(row => !row.ok).map(row => row.error).filter(Boolean)
+      skillMessage.value = !result.ok ? errors.join('；') || '部分 Skill 更新失败' : result.installations.length ? '已更新所有登记的 Skill。请按 Agent 的重载方式刷新。' : '尚未安装 Skill。'
+    }
+  } catch (error) { skillMessage.value = String(error) }
+  finally { skillBusy.value = false }
+}
 
 import { useSettingsManager } from '../../composables/useSettingsManager'
 
@@ -365,6 +433,9 @@ onMounted(() => {
   margin: 0;
   line-height: 1.4;
 }
+
+.skill-controls { flex-wrap: wrap; gap: 8px; }
+.skill-controls select { width: auto; max-width: 210px; }
 
 .setting-control {
   flex-shrink: 0;

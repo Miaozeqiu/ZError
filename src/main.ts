@@ -59,6 +59,16 @@ async function initApp() {
   import.meta.hot?.dispose(() => { window.removeEventListener('beforeunload', stopAgentRuntime); stopAgentRuntime(); stopWorkspaceEvents(); });
   createApp(App).mount("#app");
 
+  if (window.__TAURI_INTERNALS__) {
+    void import('./services/cli/runtime').then(async ({ startCliRuntime }) => {
+      const stop = await startCliRuntime()
+      window.addEventListener('beforeunload', stop, { once: true })
+      import.meta.hot?.dispose(() => { window.removeEventListener('beforeunload', stop); stop() })
+    }).catch(error => {
+      console.error('CLI 接口未能连接主界面', error)
+    })
+  }
+
   if (import.meta.env.DEV) {
     void import("./services/agent/cursorBridge")
       .then((mod) => mod.startCursorBridge())

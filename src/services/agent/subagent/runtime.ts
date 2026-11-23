@@ -1,3 +1,4 @@
+import { createChatToolContext } from '../chatToolContextFactory'
 import { createHostToolRunner } from '../hostToolRunner'
 import { isWebsiteRuntimeToolName } from '../websiteRuntime/protocol'
 import { LOAD_AGENT_TOOLS, loadAgentTools, modelAgentTools } from '../toolDiscovery'
@@ -27,12 +28,8 @@ import {
   liveSession,
   patchChildStep,
   patchMessage,
-  patchSession,
   patchStep,
-  sessionAttachment,
-  sessionFolders,
   sessions,
-  setChatStudySubject,
 } from '../chatStore'
 import { clipAgentDebug, logAgentDebug } from '../debugLog'
 import { executeChatTool } from '../executeChatTool'
@@ -41,7 +38,6 @@ import { TOOL_RESULT_KEEP } from '../modelHistory'
 import { projectToolResult } from '../../model/toolResultProjection'
 import { isModelStopped, runTextModel, type ModelToolCall, type RunTextModelOptions } from '../../model/runner'
 import { parseToolArgs } from '../toolArgs'
-import { scheduleStudyProgressEval } from '../chatStudy'
 import { createBrowserControlGate } from '../browserControlGate'
 import { peekAppBrowserUrl } from '../../browser/appBrowser'
 import { createWatchContinuation } from '../watchContinuation'
@@ -313,60 +309,14 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
         if (input.deferTools && call.name === LOAD_AGENT_TOOLS) {
           return run.execute(call, async () => loadAgentTools([...toolRegistry(await currentCatalog()).values()], parseToolArgs(call.arguments).names))
         }
-        const dispatch = () => controlGate.runTool(call, browserEpoch => run.execute(call, expectedBrowserId => executeChatTool({
+        const dispatch = () => controlGate.runTool(call, browserEpoch => run.execute(call, async expectedBrowserId => executeChatTool({
           call,
-          ctx: {
-            sessionId,
-            assistantId,
-            abort: abort.signal,
-            browserEpoch,
-            role,
-            parentSessionId,
-            parentAssistantId,
-            parentStepId,
-            jobId,
-            onBrowserNavigation,
+          ctx: await createChatToolContext({
+            call, sessionId, assistantId, abort: abort.signal, browserEpoch,
+            role, parentSessionId, parentAssistantId, parentStepId, jobId,
+            onBrowserNavigation, expectedBrowserId, onDrawingGraph,
             invokeHostTool: (name, args) => hostTool(name, args),
-            ensureBrowser: async () => {
-              const { ensureAgentBrowser } = await import('../agentBrowser')
-              const target = parentSessionId || sessionId
-              const id = await ensureAgentBrowser(target)
-              if (expectedBrowserId && id !== expectedBrowserId) throw new Error('网页操作未执行：当前标签页已改变，请重新读取页面。')
-
-              return id
-            },
-            browserId: () => String(
-              sessions.value.find((item) => item.id === (parentSessionId || sessionId))?.browserId
-              || sessions.value.find((item) => item.id === sessionId)?.browserId
-              || '',
-            ).trim(),
-            attachment: () => sessionAttachment(parentSessionId || sessionId),
-            folders: () => sessionFolders(parentSessionId || sessionId),
-            studySubjectId: () => {
-              const id = Number(sessions.value.find((item) => item.id === (parentSessionId || sessionId))?.studySubjectId)
-              return Number.isFinite(id) && id > 0 ? id : undefined
-            },
-            setStudySubject: (subjectId) => setChatStudySubject(subjectId, parentSessionId || sessionId),
-            markDrawingGraph: () => { onDrawingGraph?.() },
-            scheduleEval: (evalInput) => scheduleStudyProgressEval({
-              sessionId: parentSessionId || sessionId,
-              messageId: parentAssistantId || assistantId,
-              subjectId: evalInput.subjectId,
-              hint: evalInput.hint,
-              force: true,
-              stepId: evalInput.stepId,
-            }),
-            getTodos: () => parentSessionId
-              ? sessions.value.find(item => item.id === parentSessionId)?.todos || []
-              : liveMessage()?.todos ?? (call.name === 'browser_todo' && parseToolArgs(call.arguments).action !== 'set'
-                ? liveSession(sessionId)?.todos || [] : []),
-            setTodos: (todos) => {
-              const target = parentSessionId || sessionId
-              const messageId = parentAssistantId || assistantId
-              patchSession(target, (session) => ({ ...session, todos, updatedAt: Date.now() }))
-              patchMessage(target, messageId, { todos })
-            },
-          },
+          }),
         })))
         let result: string
         if (isWebsiteRuntimeToolName(call.name)) {

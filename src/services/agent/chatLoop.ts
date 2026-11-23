@@ -88,7 +88,7 @@ const prepareTurn = <T>(signal: AbortSignal, work: () => Promise<T>): Promise<T>
 export const sendChatMessage = async (
   text: string,
   files?: AgentChatAttachment[],
-  options?: { sessionId?: string; kind?: 'watch'; modelText?: string; quizAttemptRef?: AgentQuizAttemptRef; quizOptionQuotes?: AgentQuizOptionQuote[] },
+  options?: { sessionId?: string; assistantId?: string; kind?: 'watch'; modelText?: string; quizAttemptRef?: AgentQuizAttemptRef; quizOptionQuotes?: AgentQuizOptionQuote[] },
 ) => {
   initializeChatRuntime()
   let content = redactText(text.trim())
@@ -129,7 +129,7 @@ export const sendChatMessage = async (
   const latestRunMessage = [...session.messages].reverse().find(message => message.role === 'assistant' && message.run)
   const recoveryMessage = options?.kind !== 'watch' && /^(?:请|帮我)?(?:继续|接着|恢复|重试|再试)/.test(content) && latestRunMessage?.run?.status !== 'completed' ? latestRunMessage : undefined
   const recovery = recoveryMessage?.run
-  const assistantId = `assistant-${Date.now()}`
+  const assistantId = options?.assistantId || `assistant-${Date.now()}`
   const assistantMessage: AgentChatMessage = {
     id: assistantId,
     run: { ...newRun(assistantId, Date.now(), recovery), goalMessageId: recovery?.goalMessageId || userMessage.id },

@@ -1,5 +1,6 @@
 import { reactive, watch } from 'vue'
 import { readSecureDocument, writeSecureDocument } from '../security/secureStore'
+import { createDocumentPersistence, replaceDocument } from '../security/documentPersistence'
 
 import { DEFAULT_SEARCH_SETTINGS, normalizeSearchSettings, SEARCH_PROVIDERS, type SearchSettings } from '../searchProviders'
 
@@ -119,10 +120,18 @@ class SettingsManager {
   readonly ready: Promise<void>
   private hydrated = false
   private settings: AppSettings
+  private readonly persistence: ReturnType<typeof createDocumentPersistence<AppSettings>>
   private listeners: Set<(settings: AppSettings) => void> = new Set()
 
   constructor() {
     this.settings = reactive(this.loadSettings())
+    this.persistence = createDocumentPersistence({
+      ready: () => this.ready,
+      writable: () => this.hydrated,
+      read: () => this.settings,
+      apply: value => replaceDocument(this.settings, value),
+      write: value => writeSecureDocument('app_settings', value),
+    })
     this.setupAutoSave()
     // 异步从文件加载设置并合并
     this.ready = this.loadFromFile()
@@ -152,13 +161,8 @@ class SettingsManager {
 
   private saveSettings(): void {
     if (!this.hydrated) return
-    const snapshot = JSON.parse(JSON.stringify(this.settings)) as AppSettings
     this.notifyListeners()
-    void writeSecureDocument('app_settings', snapshot).then(saved => {
-      for (const { key } of SEARCH_PROVIDERS) {
-        if (this.settings.search[key] === snapshot.search[key] && this.settings.search[key] !== saved.search[key]) this.settings.search[key] = saved.search[key]
-      }
-    }).catch(() => undefined)
+    void this.persistence.save().catch(() => undefined)
   }
 
   /**
@@ -221,14 +225,11 @@ class SettingsManager {
    * 手动保存设置
    */
   save(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      try {
-        this.saveSettings()
-        resolve()
-      } catch (error) {
-        reject(error)
-      }
-    })
+    return this.persistence.save().then(() => { this.notifyListeners() })
+  }
+
+  commit(mutate: (draft: AppSettings) => void | Promise<void>): Promise<AppSettings> {
+    return this.persistence.commit(mutate).then(saved => { this.notifyListeners(); return saved })
   }
 
   /**

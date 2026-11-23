@@ -1,17 +1,10 @@
-type PageHomeworkQuestion = {
-  id: string | null; order: number; number: number; stem: string
-  type: 'single' | 'multiple' | 'judgement' | 'completion' | 'unsupported'; issue: string | null
-  options: Array<{ label: string; text: string; selected: boolean }>
-  blanks: Array<{ text: string }>
-}
-
 export type HomeworkAnswer = { choices: string[] } | { blanks: string[] }
 
 export type HomeworkQuestionProgress = {
   question_id: string | null
   number: number
   order: number
-  type: PageHomeworkQuestion['type']
+  type: 'single' | 'multiple' | 'judgement' | 'completion' | 'unsupported'
   stem: string
   options: Array<{ label: string; text: string }>
   actual: HomeworkAnswer
@@ -32,24 +25,6 @@ export type HomeworkProgressUpdate = {
 }
 
 export type HomeworkProgress = Omit<HomeworkProgressUpdate, 'phase'> & { messageId?: string }
-
-export const readHomeworkAnswer = (q: PageHomeworkQuestion): HomeworkAnswer => q.type === 'completion'
-  ? { blanks: q.blanks.map(item => item.text) }
-  : { choices: q.options.filter(option => option.selected).map(option => option.label).sort() }
-
-export const publicHomeworkQuestion = (q: PageHomeworkQuestion) => ({
-  question_id: q.id, number: q.number, order: q.order, type: q.type, stem: q.stem,
-  options: q.options.map(({ label, text }) => ({ label, text })), actual: readHomeworkAnswer(q),
-  ...(q.issue ? { issue: q.issue } : {}),
-})
-
-export const observeHomeworkQuestion = (q: PageHomeworkQuestion): HomeworkQuestionProgress => {
-  const row = publicHomeworkQuestion(q)
-  const answers = 'blanks' in row.actual ? row.actual.blanks : row.actual.choices
-  const answered = answers.filter(value => value.trim()).length
-  return { ...row, status: q.issue ? 'needs_review' : answered === 0 ? 'unanswered'
-    : q.type === 'completion' && answered < answers.length ? 'partial' : 'answered' }
-}
 
 const answerStates = new Set<HomeworkQuestionProgress['status']>([
   'filled', 'already_matches', 'existing_answer', 'no_match', 'conflict', 'unmatched',

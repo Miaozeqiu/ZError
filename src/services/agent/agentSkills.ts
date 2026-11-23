@@ -22,7 +22,7 @@ const isParserScriptPath = (path: string) => (
 )
 import { CHAOXING_SKILL_DESCRIPTION } from './skills/chaoxing'
 
-import type { SkillScope, AgentSkillItem, SkillDocument, SkillFileContent, SkillConfigRow, SkillConfigFile, SkillMetaFile, BuiltinSkillDef, SkillCatalogEntry, SkillPromptBlock } from './skills/skillTypes'
+import type { SkillScope, AgentSkillItem, SkillDocument, SkillFileContent, SkillConfigRow, SkillConfigFile, SkillMetaFile, BuiltinSkillDef, SkillCatalogEntry } from './skills/skillTypes'
 export type { SkillScope, AgentSkillItem, SkillDocument, SkillFileContent, SkillCatalogEntry } from './skills/skillTypes'
 
 const SKILLS_DIR = '.local/share/zerror/skills'
@@ -133,12 +133,6 @@ const migrateSkillConfig = (config: SkillConfigFile): SkillConfigFile => {
 }
 
 const { readLocal, writeLocal, persistFile, loadFile } = createSkillConfigStorage(migrateSkillConfig, config => { memoryConfig = config })
-
-const saveConfig = (config: SkillConfigFile) => {
-  writeLocal(config)
-  persistFile(config)
-  syncState()
-}
 
 const isEnabled = (id: string, row?: SkillConfigRow) => {
   if (typeof row?.enabled === 'boolean') return row.enabled
@@ -491,33 +485,6 @@ void loadFile().then(async (file) => {
 }).catch(skillLoadFailed)
 void syncState().catch(skillLoadFailed)
 
-export const refreshAgentSkills = async () => {
-  await syncState()
-}
-
-export const setSkillEnabled = (id: string, enabled: boolean) => {
-  const config = { ...memoryConfig, skills: { ...memoryConfig.skills } }
-  config.skills[id] = {
-    ...config.skills[id],
-    enabled,
-    updatedAt: Date.now(),
-  }
-  saveConfig(config)
-}
-
-export const uninstallSkill = async (id: string) => {
-  if (BUILTIN_SKILLS[id]) return
-  try {
-    const { remove, BaseDirectory } = await import('@tauri-apps/plugin-fs')
-    await remove(`${SKILLS_DIR}/${id}`, { baseDir: BaseDirectory.Home, recursive: true })
-  } catch {
-    // ignore
-  }
-  const config = { ...memoryConfig, skills: { ...memoryConfig.skills } }
-  delete config.skills[id]
-  saveConfig(config)
-}
-
 const promptCache = new Map<string, string>()
 
 const fallbackBuiltinItems = (): AgentSkillItem[] => (
@@ -554,37 +521,6 @@ export const getEnabledSkillCatalog = (scope?: AgentKindScope, allowedIds?: stri
   }))
 )
 
-const skillKeywords = (item: AgentSkillItem) => {
-  const builtin = BUILTIN_SKILLS[item.id]
-  const fromDesc = String(item.description || '')
-    .split(/[\s，。；、/|]+/)
-    .map((part) => part.trim())
-    .filter((part) => part.length >= 2)
-  const fromName = String(item.name || '').trim()
-  const fromId = item.id.replace(/-/g, ' ')
-  return [...(builtin?.matchKeywords || []), fromName, fromId, ...fromDesc]
-}
-
-const scoreSkill = (item: AgentSkillItem, text: string) => {
-  const hay = String(text || '').toLowerCase()
-  if (!hay.trim()) return 0
-  let score = 0
-  for (const keyword of skillKeywords(item)) {
-    const key = keyword.trim().toLowerCase()
-    if (key.length < 2) continue
-    if (hay.includes(key)) score += key.length >= 4 ? 3 : 2
-  }
-  return score
-}
-
-export const matchSkillsForText = (text: string, limit = 2) => {
-  const ranked = getEnabledSkillItems()
-    .map((item) => ({ id: item.id, score: scoreSkill(item, text) }))
-    .filter((row) => row.score >= 2)
-    .sort((a, b) => b.score - a.score)
-  return ranked.slice(0, limit).map((row) => row.id)
-}
-
 export const getSkillPromptBlock = async (item: AgentSkillItem): Promise<{ triggerHint: string; prompt: string } | null> => {
   const builtin = BUILTIN_SKILLS[item.id]
   if (builtin) {
@@ -619,24 +555,6 @@ export const getSkillPromptBlock = async (item: AgentSkillItem): Promise<{ trigg
     triggerHint: item.description ? `当符合以下条件时使用：${item.description}` : '按下面 Skill 说明执行。',
     prompt: `\n${body}\n`,
   }
-}
-
-export const getSkillPromptBlocksByIds = async (ids: string[]): Promise<SkillPromptBlock[]> => {
-  const enabled = getEnabledSkillItems()
-  const blocks: SkillPromptBlock[] = []
-  for (const id of ids) {
-    const item = enabled.find((row) => row.id === id)
-    if (!item) continue
-    const block = await getSkillPromptBlock(item)
-    if (!block) continue
-    blocks.push({
-      id: item.id,
-      triggerHint: block.triggerHint,
-      prompt: block.prompt,
-      preloaded: true,
-    })
-  }
-  return blocks
 }
 
 export const skillSurfaceFiles = (files: string[]) => files.filter((path) => {
@@ -1093,17 +1011,6 @@ export const resetSkillFileContent = async (id: string, relativePath: string, op
     const { reloadChaoxingImpl } = await import('./skillRuntime')
     await reloadChaoxingImpl(path)
   }
-}
-
-/** @deprecated 使用 getEnabledSkillCatalog + getSkillPromptBlocksByIds */
-export const getEnabledSkillPromptBlocks = async () => {
-  const enabled = getEnabledSkillItems()
-  const blocks: { triggerHint: string; prompt: string }[] = []
-  for (const item of enabled) {
-    const block = await getSkillPromptBlock(item)
-    if (block) blocks.push(block)
-  }
-  return blocks
 }
 
 const { installSkillFromGitHub, writeInstalledSkillMeta } = createSkillGitHubInstaller({

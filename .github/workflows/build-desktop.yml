@@ -21,7 +21,7 @@ jobs:
   windows:
     name: windows-x64
     runs-on: windows-2025
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -43,6 +43,36 @@ jobs:
       - name: Build Windows NSIS installer
         run: node scripts/tauri-cli.mjs build --ci --target x86_64-pc-windows-msvc --bundles nsis --config .tauri-ci.json -- --locked
 
+      - name: Verify native CLI
+        run: .\src-tauri\target\x86_64-pc-windows-msvc\release\zerror-cli.exe --version
+
+      - name: Native regression and skill update checks
+        run: npm run test:release -- --phase native --release --target x86_64-pc-windows-msvc --cli src-tauri/target/x86_64-pc-windows-msvc/release/zerror-cli.exe --output output/release-native
+      - name: Install the generated Windows package
+        shell: pwsh
+        run: |
+          $packages = @(Get-ChildItem src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe)
+          if ($packages.Count -ne 1) { throw "Expected exactly one installer" }
+          $directory = Join-Path $env:RUNNER_TEMP 'zerror-installed'
+          $installer = Start-Process -FilePath $packages[0].FullName -ArgumentList @('/S', "/D=$directory") -Wait -PassThru
+          if ($installer.ExitCode -ne 0) { throw "Installer failed: $($installer.ExitCode)" }
+          $cli = Join-Path $directory 'zerror-cli.exe'
+          if (!(Test-Path $cli)) { throw 'Native CLI missing from installed package' }
+          "ZERROR_INSTALLED_CLI=$cli" >> $env:GITHUB_ENV
+      - name: Installed desktop functional regression
+        shell: pwsh
+        run: npm run test:release -- --phase desktop --start --cli "$env:ZERROR_INSTALLED_CLI" --output output/release-desktop
+      - name: Upload regression evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-regression-x86_64-pc-windows-msvc-${{ github.run_id }}
+          path: |
+            output/release-native/
+            output/release-desktop/
+          if-no-files-found: warn
+          retention-days: 14
+
       - name: Upload installer
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -53,10 +83,13 @@ jobs:
           overwrite: true
 
   macos:
-    if: inputs.macos || (github.event_name == 'push' && github.ref == 'refs/heads/dev-improvements')
+    if: inputs.macos || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/dev-improvements')
     name: macos-arm64
-    runs-on: macos-15-intel
-    timeout-minutes: 60
+    env:
+      CARGO_BUILD_JOBS: 2
+      CMAKE_BUILD_PARALLEL_LEVEL: 2
+    runs-on: macos-15
+    timeout-minutes: 90
     permissions:
       contents: read
       packages: read
@@ -105,6 +138,34 @@ jobs:
         env:
           ZERROR_SKIP_UPDATER_SIGN: '1'
         run: bash scripts/build-release-macos.sh
+      - name: Verify bundled native CLI
+        run: src-tauri/target/aarch64-apple-darwin/release/bundle/macos/ZError.app/Contents/MacOS/zerror-cli --version
+      - name: Native regression and skill update checks
+        run: npm run test:release -- --phase native --release --target aarch64-apple-darwin --cli src-tauri/target/aarch64-apple-darwin/release/bundle/macos/ZError.app/Contents/MacOS/zerror-cli --output output/release-native
+      - name: Install the generated macOS disk image
+        run: |
+          images=(output/release-v*/*.dmg)
+          test "${#images[@]}" -eq 1
+          mount="$RUNNER_TEMP/zerror-install-volume"
+          mkdir -p "$mount"
+          hdiutil attach -nobrowse -mountpoint "$mount" "${images[0]}"
+          trap 'hdiutil detach "$mount" || true' EXIT
+          ditto "$mount/ZError.app" "$RUNNER_TEMP/ZError-installed.app"
+          test -x "$RUNNER_TEMP/ZError-installed.app/Contents/MacOS/zerror-cli"
+          printf 'ZERROR_INSTALLED_CLI=%s\n' "$RUNNER_TEMP/ZError-installed.app/Contents/MacOS/zerror-cli" >> "$GITHUB_ENV"
+      - name: Installed desktop functional regression
+        run: npm run test:release -- --phase desktop --start --cli "$ZERROR_INSTALLED_CLI" --output output/release-desktop
+      - name: Upload regression evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-regression-aarch64-apple-darwin-${{ github.run_id }}
+          path: |
+            output/release-native/
+            output/release-desktop/
+          if-no-files-found: warn
+          retention-days: 14
+
       - name: Upload macOS packages
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -119,13 +180,13 @@ jobs:
   linux:
     name: linux-x64
     runs-on: ubuntu-22.04
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install Linux build dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev patchelf libfuse2
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev patchelf libfuse2 xvfb dbus-x11
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
@@ -144,6 +205,34 @@ jobs:
         run: |
           printf '%s\n' '{"bundle":{"createUpdaterArtifacts":false}}' > .tauri-ci.json
           node scripts/tauri-cli.mjs build --ci --target x86_64-unknown-linux-gnu --bundles deb,appimage --config .tauri-ci.json -- --locked
+      - name: Verify native CLI
+        run: src-tauri/target/x86_64-unknown-linux-gnu/release/zerror-cli --version
+      - name: Native regression and skill update checks
+        run: npm run test:release -- --phase native --release --target x86_64-unknown-linux-gnu --cli src-tauri/target/x86_64-unknown-linux-gnu/release/zerror-cli --output output/release-native
+      - name: Install the generated Linux package and check AppImage entry
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: '1'
+        run: |
+          packages=(src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb)
+          images=(src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage)
+          test "${#packages[@]}" -eq 1
+          test "${#images[@]}" -eq 1
+          sudo apt-get install -y "$(realpath "${packages[0]}")"
+          test -x /usr/bin/zerror-cli
+          "${images[0]}" cli --version
+      - name: Installed desktop functional regression
+        run: xvfb-run -a dbus-run-session -- npm run test:release -- --phase desktop --start --cli /usr/bin/zerror-cli --output output/release-desktop
+      - name: Upload regression evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-regression-x86_64-unknown-linux-gnu-${{ github.run_id }}
+          path: |
+            output/release-native/
+            output/release-desktop/
+          if-no-files-found: warn
+          retention-days: 14
+
       - name: Upload Linux packages
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

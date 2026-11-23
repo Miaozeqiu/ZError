@@ -313,7 +313,6 @@ export const writeWebsiteRepositorySupplement = async (host: string, content: st
   return repositoryForHost(host).writeSupplement(String(await redactNative(redactObject(content))), expected)
 }
 export const ensureChaoxingRepository = () => ensureWebsiteRepository('chaoxing.com')
-export const refreshChaoxingRepository = (force = false) => refreshWebsiteRepository('chaoxing.com', force)
 export const readChaoxingRepositoryFile = (path: string) => readWebsiteRepositoryFile('chaoxing.com', path)
 export const listChaoxingRepositoryFiles = () => listWebsiteRepositoryFiles('chaoxing.com')
 export const writeChaoxingRepositoryFile = (path: string, content: string, version?: string) => writeWebsiteRepositoryFile('chaoxing.com', path, content, version)

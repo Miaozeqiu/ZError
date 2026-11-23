@@ -1,4 +1,6 @@
-# 软件外 Agent 接口
+# 开发期浏览器调试桥
+
+外部 Agent 统一使用[原生 CLI](./cli.md)和 Open 分发的 Skill。下面的桥仅供内部开发诊断，`package.json` 不再提供旧的 `agent:*` 快捷入口。
 
 开发模式（`npm run tauri:dev`）会在本机起桥。应用须停在 **Tauri 窗口** 的浏览页，不要用普通 Chrome 打开 `localhost:1420`。
 

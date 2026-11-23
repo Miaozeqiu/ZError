@@ -4,6 +4,7 @@ import { replaceSelectedModel } from './configSelection'
 /** 模型配置单例：本地存储、选中态、增删改平台/模型。远程拉取走 configRemote.ts。 */
 import { reactive, watch } from 'vue'
 import { readSecureDocument, writeSecureDocument } from '../security/secureStore'
+import { createDocumentPersistence, replaceDocument } from '../security/documentPersistence'
 import { settingsManager } from '../app/settings'
 import type { SearchSettings } from '../searchProviders'
 import type { AIModel, AIPlatform, ApiProtocol, ModelSettings } from './configTypes'
@@ -36,6 +37,7 @@ class ModelConfigManager {
   readonly ready: Promise<void>
   private hydrated = false
   private settings: ModelSettings
+  private readonly persistence: ReturnType<typeof createDocumentPersistence<ModelSettings>>
   private listeners: Set<(settings: ModelSettings) => void> = new Set()
   private remotePlatformsSyncAt = 0
   private pendingRemotePlatformsSync: Promise<void> | null = null
@@ -43,6 +45,13 @@ class ModelConfigManager {
 
   constructor() {
     this.settings = reactive(this.loadSettings())
+    this.persistence = createDocumentPersistence({
+      ready: () => this.ready,
+      writable: () => this.hydrated,
+      read: () => this.settings,
+      apply: value => replaceDocument(this.settings, value),
+      write: value => writeSecureDocument('model_settings', value),
+    })
     this.normalizeSelectedModels()
     this.ready = this.hydrate()
     this.setupAutoSave()
@@ -226,19 +235,16 @@ class ModelConfigManager {
    */
   private saveSettings(): void {
     if (!this.hydrated) return
-    const snapshot = JSON.parse(JSON.stringify(this.settings)) as ModelSettings
     this.notifyListeners()
-    void writeSecureDocument('model_settings', snapshot).then(saved => {
-      if (this.settings.deepseekApiKey === snapshot.deepseekApiKey && this.settings.deepseekApiKey !== saved.deepseekApiKey) {
-        this.settings.deepseekApiKey = saved.deepseekApiKey
-      }
-      for (const next of saved.platforms || []) {
-        const current = this.settings.platforms.find(platform => platform.id === next.id)
-        const submitted = snapshot.platforms.find(platform => platform.id === next.id)
-        if (current && submitted && current.apiKey === submitted.apiKey && current.apiKey !== next.apiKey) current.apiKey = next.apiKey
-        if (current && submitted && JSON.stringify(current.customHeaders) === JSON.stringify(submitted.customHeaders) && JSON.stringify(current.customHeaders) !== JSON.stringify(next.customHeaders)) current.customHeaders = next.customHeaders
-      }
-    }).catch(() => undefined)
+    void this.persistence.save().catch(() => undefined)
+  }
+
+  commit(mutate: (draft: ModelSettings) => void | Promise<void>): Promise<ModelSettings> {
+    return this.persistence.commit(mutate).then(saved => { this.notifyListeners(); return saved })
+  }
+
+  save(): Promise<void> {
+    return this.persistence.save().then(() => { this.notifyListeners() })
   }
 
   /**

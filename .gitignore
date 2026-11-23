@@ -57,3 +57,7 @@ src-tauri/keys/*.key
 # 本地开发助手 Skill，不进仓库
 /.agents/skills/
 skills-lock.json
+
+# 本地构建、测试产物和编辑器工作区不提交到仓库
+/output/
+/*.code-workspace

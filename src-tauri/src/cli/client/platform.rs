@@ -1,0 +1,132 @@
+use super::transport::{directory, private_directory};
+use serde_json::{json, Value};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    process::Command,
+};
+pub(super) fn launch() -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    if let Some(image) = std::env::var_os("APPIMAGE") {
+        return spawn(Path::new(&image));
+    }
+    let executable = std::env::current_exe().map_err(|_| "无法定位软件")?;
+    let parent = executable.parent().ok_or("无法定位软件目录")?;
+    #[cfg(windows)]
+    let names = ["ZError.exe", "zerror.exe"];
+    #[cfg(not(windows))]
+    let names = ["ZError", "zerror"];
+    for name in names {
+        let app = parent.join(name);
+        if app.is_file() && app != executable {
+            return spawn(&app);
+        }
+    }
+    Err("未找到同一安装目录的 ZError，请先启动软件".into())
+}
+fn spawn(path: &Path) -> Result<(), String> {
+    let mut command = Command::new(path);
+    command
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        // fork 与 exec 之间仅执行具备异步信号安全保证的 setsid 系统调用。
+        // 图形界面应在终端或 CLI 进程退出后继续运行，自动化调用也保持这一行为。
+        unsafe {
+            extern "C" {
+                fn setsid() -> std::os::raw::c_int;
+            }
+            command.pre_exec(|| {
+                if setsid() == -1 {
+                    Err(std::io::Error::last_os_error())
+                } else {
+                    Ok(())
+                }
+            });
+        }
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x00000008 | 0x00000200); // 分离进程并创建独立进程组。
+    }
+    command
+        .spawn()
+        .map(|_| ())
+        .map_err(|_| "无法启动 ZError，请手动启动软件后重试".into())
+}
+
+pub fn install() -> Result<Value, String> {
+    private_directory(&directory()?)?;
+    let source = std::env::current_exe().map_err(|_| "无法定位 CLI")?;
+    let source = source
+        .parent()
+        .ok_or("无法定位安装目录")?
+        .join(if cfg!(windows) {
+            "zerror-cli.exe"
+        } else {
+            "zerror-cli"
+        });
+    if !source.is_file() {
+        return Err("当前安装包缺少 zerror-cli，请重新安装完整软件".into());
+    }
+    #[cfg(windows)]
+    let target = directory()?
+        .parent()
+        .ok_or("无法定位用户目录")?
+        .join("bin/zerror.cmd");
+    #[cfg(not(windows))]
+    let target = PathBuf::from(std::env::var_os("HOME").ok_or("无法定位用户目录")?)
+        .join(".local/bin/zerror");
+    fs::create_dir_all(target.parent().unwrap()).map_err(|_| "无法创建命令目录")?;
+    if target.exists()
+        && !fs::read_to_string(&target)
+            .unwrap_or_default()
+            .contains("# ZError CLI launcher")
+    {
+        return Err("目标 zerror 命令已存在，未覆盖；请先检查用户命令目录".into());
+    }
+    #[cfg(windows)]
+    let content = {
+        let path = source.to_string_lossy();
+        if path.contains(['%', '\n', '\r', '"']) {
+            return Err("安装路径包含命令脚本不支持的字符".into());
+        }
+        // 按 UTF-8 读取启动器，兼容包含中文的 Windows 用户名。
+        format!("@echo off\r\nchcp 65001 >nul\r\nrem # ZError CLI launcher\r\n\"{path}\" %*\r\n")
+    };
+    #[cfg(not(windows))]
+    let content = {
+        #[cfg(target_os = "linux")]
+        let image = std::env::var_os("APPIMAGE");
+        #[cfg(not(target_os = "linux"))]
+        let image: Option<std::ffi::OsString> = None;
+        let (path, extra) = if let Some(ref image) = image {
+            (Path::new(image), " cli")
+        } else {
+            (source.as_path(), "")
+        };
+        format!(
+            "#!/bin/sh\n# ZError CLI launcher\nexec '{}'{} \"$@\"\n",
+            path.to_string_lossy().replace('\'', "'\\''"),
+            extra
+        )
+    };
+    fs::write(&target, content).map_err(|_| "无法安装用户命令")?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o755))
+            .map_err(|_| "无法设置命令执行权限")?;
+    }
+    let bin = target.parent().unwrap();
+    let on_path = std::env::var_os("PATH")
+        .map(|p| std::env::split_paths(&p).any(|p| p == bin))
+        .unwrap_or(false);
+    Ok(
+        json!({"path": target,"onPath":on_path,"message":if on_path {"已安装，可运行 zerror --help"} else {"已安装。请将此目录加入用户 PATH，或通过完整路径运行命令。"},"pathDirectory":bin}),
+    )
+}

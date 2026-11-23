@@ -1,4 +1,6 @@
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
@@ -48,4 +50,23 @@ describe('released application identity diagnostics', () => {
     expect(readFileSync('scripts/sign-macos-dev.mjs', 'utf8')).toContain('--identifier\', \'com.zerror.app')
     expect(readFileSync('src-tauri/src/secret_keychain.rs', 'utf8')).toContain('identifier "com.zerror.app"')
   })
+})
+
+
+describe('Tauri metadata commands do not launch development services', () => {
+  for (const args of [['--version'], ['signer', '--help'], ['dev', '--help'], ['build', '--help']]) {
+    it(`runs ${args.join(' ')} without Cargo, CEF or a signing identity`, () => {
+      const home = mkdtempSync(join(tmpdir(), 'zerror-cli-metadata-'))
+      try {
+        const result = spawnSync(process.execPath, ['scripts/run-tauri.mjs', ...args], {
+          env: { ...process.env, HOME: home, USERPROFILE: home, CEF_PATH: join(home, 'missing-cef'), ZERROR_MACOS_SIGNING_IDENTITY: '-' },
+          encoding: 'utf8', timeout: 10000,
+        })
+        expect(result.error).toBeUndefined()
+        expect(result.status, result.stderr).toBe(0)
+        expect(result.stdout).toMatch(/tauri-cli|Usage:/)
+        expect(result.stdout + result.stderr).not.toMatch(/\[run-tauri\]|\[agent-bridge\]|H\.264|setup-cef/)
+      } finally { rmSync(home, { recursive: true, force: true }) }
+    })
+  }
 })

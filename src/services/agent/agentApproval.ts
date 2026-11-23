@@ -100,7 +100,3 @@ export const cancelApprovalsForSession = (sessionId: string) => {
   drop(pending.id)
   waiter?.resolve(false)
 }
-
-export const approvalTitleOf = (kind: AgentApprovalKind) => (
-  kind === 'submit' ? '提交作业' : '写入 Skill'
-)
