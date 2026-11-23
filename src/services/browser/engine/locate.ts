@@ -70,6 +70,7 @@ function __zeLabel(el){
   var t = '';
   try { t = el.getAttribute('aria-label') || el.getAttribute('title') || el.getAttribute('alt') || ''; } catch (e) {}
   t = String(t || '').replace(/\\s+/g, ' ').trim();
+  if (String(el.type || '').toLowerCase() === 'password') return t || el.getAttribute('placeholder') || '密码';
   if (t && t.length <= 40) return t;
   try { t = String(el.innerText || el.textContent || el.value || el.getAttribute('placeholder') || '').replace(/\\s+/g, ' ').trim(); } catch (e2) { t = ''; }
   return t.slice(0, 80);

@@ -40,6 +40,11 @@ function __zeLabel(el){
   if (!skipValue) {
     try { ph = String(el.getAttribute('placeholder') || '').replace(/\\s+/g, ' ').trim(); } catch (ePh) { ph = ''; }
   }
+  // 用户手动输入、尚未登记到凭据库的密码也不能成为控件名称。
+  if (type === 'password') {
+    var passwordLabel = __zeAssocLabel(el);
+    return titled || ph || String(passwordLabel && passwordLabel.textContent || '').trim().slice(0, 40) || '密码';
+  }
   var t = '';
   if (ph && titled && ph !== titled && (tag === 'input' || tag === 'textarea')) t = ph;
   else t = titled;
@@ -444,9 +449,10 @@ export const formatAriaSnapshot = (refs: PageRef[], frames: SnapFrameInfo[] = []
   return lines.join('\n')
 }
 
-export const readPageSnapshot = async (browserId: string) => {
-  const generation = beginPageSnap(browserId)
-  const raw = asObject(await evalBrowserView(browserId, SNAPSHOT_SCRIPT).catch(() => ({ refs: [] })))
+export const readPageSnapshot = async (browserId: string, options: { gen?: number; controlEpoch?: number } = {}) => {
+  const generation = options.gen ?? beginPageSnap(browserId)
+  const raw = asObject(await evalBrowserView(browserId, SNAPSHOT_SCRIPT,
+    options.controlEpoch == null ? undefined : { expectedEpoch: options.controlEpoch }))
   const refs = (Array.isArray(raw.refs) ? raw.refs : []).map((item, index) => {
     const row = asObject(item)
     const locator = asObject(row.locator)

@@ -333,8 +333,8 @@ export const browserEngine = async () => {
 
 export const isCefEngine = async () => (await browserEngine()) === 'cef'
 
-const runEvalScript = async (id: string, script: string) => {
-  const raw = await invoke<string>('browser_eval', { id, script: wrapEvalExpression(script), ...browserAutomationArgs(id) })
+const runEvalScript = async (id: string, script: string, control?: { expectedEpoch: number }) => {
+  const raw = await invoke<string>('browser_eval', { id, script: wrapEvalExpression(script), ...(control || browserAutomationArgs(id)) })
   try {
     const parsed = JSON.parse(raw)
     if (parsed && typeof parsed === 'object' && '__error' in parsed) {
@@ -357,13 +357,13 @@ export const evalBrowserViewIdle = async (id: string, script: string) => {
   }
 }
 
-export const evalBrowserView = async (id: string, script: string) => {
+export const evalBrowserView = async (id: string, script: string, control?: { expectedEpoch: number }) => {
   const key = evalKey(id)
   if (!await acquireEval(key, 2500)) {
     throw new Error('页面正忙，eval 排队超时')
   }
   try {
-    return await runEvalScript(id, script)
+    return await runEvalScript(id, script, control)
   } finally {
     releaseEval(key)
   }

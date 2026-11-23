@@ -1,5 +1,7 @@
 import { asObject, waitMs } from '../eval'
 import { callProtocol } from '../protocol'
+import { browserCapabilities } from '../capabilities'
+import { pageScriptAction } from './scriptActions'
 import { buildLocateBoxScript, isRetryableReason, locatorsToTry } from './locate'
 import {
   ACT_MISS_TIMEOUT_MS,
@@ -237,6 +239,9 @@ export const actOnBrowser = async (
   if (!tried.length) return { ok: false, reason: 'invalid', error: '缺少定位条件' }
   const timeout = Math.min(20000, Math.max(400, input.timeout ?? ACT_TIMEOUT_MS))
   try {
+    if ((await browserCapabilities()).pageScriptActions) {
+      return finish(asResult(await pageScriptAction(id, input.op, tried, input.text, timeout)), locator)
+    }
     // 先扫一遍：完全没有就短等；别为一开始就不存在的文案空等满 8 秒
     const probe = await locateOnce(id, tried)
     if (probe.ready) {
@@ -303,6 +308,9 @@ export const probeOnBrowser = async (id: string, locator: BrowserLocator): Promi
   const value = String(locator.value || '').trim()
   if (!value) return { ok: false, reason: 'invalid', error: '缺少定位条件' }
   try {
+    if ((await browserCapabilities()).pageScriptActions) {
+      return asResult(await pageScriptAction(id, 'ready', [normalizeLocator(locator)], undefined, 0))
+    }
     const hit = await locateOnce(id, [{ ...locator, value }])
     return hit.result
   } catch (err) {
@@ -316,6 +324,11 @@ export const clickByLocator = (id: string, locator: BrowserLocator, timeout?: nu
 
 /** 幂等选项操作。发送一次点击后只读状态，不能在不确定时再次切换。 */
 export const setCheckedByLocator = async (id: string, locator: BrowserLocator, checked: boolean) => {
+  if ((await browserCapabilities()).pageScriptActions) {
+    const { evalBrowserView } = await import('../eval')
+    const { buildControlScript } = await import('./control')
+    return asObject(await evalBrowserView(id, buildControlScript(normalizeLocator(locator), checked ? 'check' : 'uncheck')))
+  }
   const locators = [normalizeLocator(locator)]
   let hit = await locateOnce(id, locators)
   // 仅在投递点击之前等滚动/遮挡稳定；点击一旦投递，就只读状态而不补点。
