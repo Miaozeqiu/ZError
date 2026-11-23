@@ -1,7 +1,7 @@
 import ts from 'typescript'
 import { staticServiceCycles } from '../../scripts/architecture-graph.mjs'
 import { readdirSync, readFileSync, statSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, relative, sep } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 const agentRoot = join(process.cwd(), 'src/services/agent')
@@ -72,8 +72,9 @@ describe('agent 层边界', () => {
     const cdpHits: string[] = []
     for (const file of walk(servicesRoot)) {
       const text = readFileSync(file, 'utf8')
-      if (text.includes("invoke('browser_protocol'")) protocolHits.push(file.replace(process.cwd(), ''))
-      if (/invoke\(['"]browser_cdp_/.test(text)) cdpHits.push(file.replace(process.cwd(), ''))
+      const sourcePath = '/' + relative(process.cwd(), file).split(sep).join('/')
+      if (text.includes("invoke('browser_protocol'")) protocolHits.push(sourcePath)
+      if (/invoke\(['"]browser_cdp_/.test(text)) cdpHits.push(sourcePath)
     }
     expect(cdpHits).toEqual([])
     expect(protocolHits).toEqual(['/src/services/browser/protocol.ts'])

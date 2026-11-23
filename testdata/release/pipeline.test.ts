@@ -1,8 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { parse } from 'yaml'
 const workflow = (file: string) => parse(readFileSync(new URL(`../../.github/workflows/${file}.yml`,import.meta.url),'utf8'))
 describe('release cannot bypass functional verification', () => {
+  it('所有 Actions 工作流都可以解析，避免未覆盖的入口因 YAML 语法错误无法启动', () => {
+    const directory = new URL('../../.github/workflows/', import.meta.url)
+    for (const file of readdirSync(directory).filter(name => /\.ya?ml$/.test(name))) {
+      expect(() => parse(readFileSync(new URL(file, directory), 'utf8')), file).not.toThrow()
+    }
+  })
   it('waits for frontend regressions and verified platform builds before signing', () => {
     const release=workflow('release-desktop')
     expect(release.jobs.regression.uses).toBe('./.github/workflows/release-checks.yml')
