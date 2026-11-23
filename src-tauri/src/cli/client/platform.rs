@@ -1,10 +1,8 @@
 use super::transport::{directory, private_directory};
 use serde_json::{json, Value};
-use std::{
-    fs,
-    path::{Path, PathBuf},
-    process::Command,
-};
+#[cfg(not(windows))]
+use std::path::PathBuf;
+use std::{fs, path::Path, process::Command};
 pub(super) fn launch() -> Result<(), String> {
     #[cfg(target_os = "linux")]
     if let Some(image) = std::env::var_os("APPIMAGE") {
@@ -75,7 +73,9 @@ pub fn install() -> Result<Value, String> {
     }
     #[cfg(target_os = "linux")]
     if std::env::var_os("APPIMAGE").is_none() && source.parent() == Some(Path::new("/usr/bin")) {
-        return Ok(json!({"path":"/usr/bin/zerror","pathDirectory":"/usr/bin","onPath":true,"pathConfigured":true,"message":"已安装，可运行 zerror --help"}));
+        return Ok(
+            json!({"path":"/usr/bin/zerror","pathDirectory":"/usr/bin","onPath":true,"pathConfigured":true,"message":"已安装，可运行 zerror --help"}),
+        );
     }
     #[cfg(windows)]
     let target = directory()?

@@ -2,7 +2,21 @@ fn main() {
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux") {
         build_linux_documents();
     }
-    tauri_build::build()
+    let mut attributes = tauri_build::Attributes::new();
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
+        && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc")
+    {
+        // Tauri 默认只给应用程序嵌入清单，库测试因此无法加载 Common Controls v6。
+        // 统一由链接器嵌入同一份清单，覆盖应用、CLI 和测试，避免重复资源。
+        let manifest = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap())
+            .join("windows-app.manifest");
+        println!("cargo:rerun-if-changed={}", manifest.display());
+        println!("cargo:rustc-link-arg=/MANIFEST:EMBED");
+        println!("cargo:rustc-link-arg=/MANIFESTINPUT:{}", manifest.display());
+        attributes = attributes
+            .windows_attributes(tauri_build::WindowsAttributes::new_without_app_manifest());
+    }
+    tauri_build::try_build(attributes).expect("build Tauri application resources");
 }
 
 fn build_linux_documents() {
