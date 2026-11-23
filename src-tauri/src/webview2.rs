@@ -45,15 +45,27 @@ pub(crate) async fn call_ms(
                 let _ = send.send(Err(error.into()));
                 return;
             };
+            let method_name = method;
             let method: Vec<u16> = method.encode_utf16().chain([0]).collect();
             let params = Zeroizing::new(params.encode_utf16().chain([0]).collect::<Vec<_>>());
             let completion = CallDevToolsProtocolMethodCompletedHandler::create(Box::new(
                 move |result, payload| {
-                    let parsed = result
-                        .ok()
-                        .and_then(|_| serde_json::from_str::<Value>(&payload).ok())
-                        .filter(|value| value.get("exceptionDetails").is_none() && value.get("error").is_none())
-                        .ok_or_else(|| error.into());
+                    // 只报告固定方法名、错误码和脚本位置，不回传参数或网页异常正文。
+                    let parsed = result.map_err(|cause| format!("{error} [{method_name}: HRESULT {:#x}]", cause.code().0)).and_then(|_| {
+                        let value: Value = serde_json::from_str(&payload)
+                            .map_err(|_| format!("{error} [{method_name}: invalid_json]"))?;
+                        if let Some(detail) = value.get("exceptionDetails") {
+                            let class = match detail.pointer("/exception/className").and_then(Value::as_str) {
+                                Some("TypeError") => "TypeError", Some("ReferenceError") => "ReferenceError",
+                                Some("SyntaxError") => "SyntaxError", Some("EvalError") => "EvalError", _ => "script_exception",
+                            };
+                            return Err(format!("{error} [{method_name}: {class} @{}:{}]", detail["lineNumber"].as_u64().unwrap_or(0), detail["columnNumber"].as_u64().unwrap_or(0)));
+                        }
+                        if let Some(detail) = value.get("error") {
+                            return Err(format!("{error} [{method_name}: CDP {}]", detail["code"].as_i64().unwrap_or(0)));
+                        }
+                        Ok(value)
+                    });
                     let _ = send.send(parsed);
                     Ok(())
                 },
