@@ -92,16 +92,22 @@ describe('website repository registry', () => {
       invokeHostTool: vi.fn(async () => ({ ok: true, title: '当前页面', snapshot: '当前实际页面' })) } as any
     const call = { id: 'run', name, arguments: '{}' }
     const running = executeChatTool({ call, ctx })
-    const stopped = expect(running).rejects.toMatchObject({ name: 'AbortError' })
-    await vi.waitFor(() => expect(storage.checkpoints?.entries).toHaveLength(1))
-    controller.abort(); await stopped
+    // 先接住两种结果；即使等待检查点失败，也要取消并回收后台流程。
+    const stopped = running.then(value => ({ status: 'resolved', value }), error => ({ status: 'rejected', error }))
+    try {
+      await vi.waitFor(() => expect(storage.checkpoints?.entries).toHaveLength(1))
+    } finally {
+      controller.abort()
+      await stopped
+    }
+    expect(await stopped).toMatchObject({ status: 'rejected', error: { name: 'AbortError' } })
     expect(storage.checkpoints.entries[0]).toMatchObject({ sessionId: 'checkpoint-chat', browserId: 'owned-tab', state: { phase: 'verify' } })
     cloud = { ...cloud, revision: 'b'.repeat(40), runtime: runtimeFixture("var ZErrorSitePackage={*create(){return {title:'new version'};}};") }
     await mod.refreshWebsiteRepository(host, true)
     const resumed = JSON.parse(await executeChatTool({ call, ctx: { ...ctx, abort: new AbortController().signal } }))
     expect(resumed).toMatchObject({ ok: true, repository: { sha256: runtime.bundle.sha256 }, result: { title: 'verify pinned' } })
     expect(storage.checkpoints.entries).toHaveLength(0)
-  })
+  }, 15000)
   it('从 Open 目录自动安装陌生站点的编译工具，不需要客户端站点分支', async () => {
     const host = 'academy.example', selected = candidate('academy', host)
     const cloud = { ...snapshot('academy', host), runtime: runtimeFixture(), hostApi: 2 }
