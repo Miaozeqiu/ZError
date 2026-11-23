@@ -161,7 +161,19 @@ jobs:
           test -x "$RUNNER_TEMP/ZError-installed.app/Contents/MacOS/zerror-cli"
           printf 'ZERROR_INSTALLED_CLI=%s\n' "$RUNNER_TEMP/ZError-installed.app/Contents/MacOS/zerror-cli" >> "$GITHUB_ENV"
       - name: Installed desktop functional regression
-        run: npm run test:release -- --phase desktop --start --cli "$ZERROR_INSTALLED_CLI" --output output/release-desktop
+        # 使用临时的真实钥匙串，避免依赖 runner 的桌面登录和默认钥匙串状态。
+        # 正式安装包仍走原生 Keychain API，不提供测试后门或明文存储。
+        env:
+          ZERROR_CI_KEYCHAIN: ${{ runner.temp }}/zerror-ci.keychain-db
+        run: |
+          keychain_password=$(openssl rand -hex 24)
+          security create-keychain -p "$keychain_password" "$ZERROR_CI_KEYCHAIN"
+          trap 'security delete-keychain "$ZERROR_CI_KEYCHAIN"' EXIT
+          security set-keychain-settings -lut 21600 "$ZERROR_CI_KEYCHAIN"
+          security unlock-keychain -p "$keychain_password" "$ZERROR_CI_KEYCHAIN"
+          security default-keychain -d user -s "$ZERROR_CI_KEYCHAIN"
+          security list-keychains -d user -s "$ZERROR_CI_KEYCHAIN"
+          npm run test:release -- --phase desktop --start --cli "$ZERROR_INSTALLED_CLI" --output output/release-desktop
       - name: Verify automatic macOS CLI setup
         run: |
           test -x "$HOME/.local/bin/zerror"
@@ -197,7 +209,7 @@ jobs:
       - name: Install Linux build dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev patchelf libfuse2 xvfb dbus-x11
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev patchelf libfuse2 xvfb dbus-x11 gnome-keyring libsecret-tools
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
@@ -233,7 +245,18 @@ jobs:
           timeout 10s zerror --version
           "${images[0]}" cli --version
       - name: Installed desktop functional regression
-        run: xvfb-run -a dbus-run-session -- npm run test:release -- --phase desktop --start --cli /usr/bin/zerror-cli --output output/release-desktop
+        run: |
+          xvfb-run -a dbus-run-session -- bash -euo pipefail <<'DESKTOP'
+          # 无桌面登录的 CI 需要真实且已解锁的 Secret Service，不能绕过凭据隔离。
+          desktop_runtime_dir=$(mktemp -d)
+          export XDG_RUNTIME_DIR="$desktop_runtime_dir"
+          trap 'rm -rf "$desktop_runtime_dir"' EXIT
+          printf '%s' 'zerror-ci-test-keyring' | gnome-keyring-daemon --daemonize --unlock --components=secrets
+          printf '%s' 'ready' | secret-tool store --label='ZError CI readiness' zerror-ci readiness
+          test "$(secret-tool lookup zerror-ci readiness)" = ready
+          secret-tool clear zerror-ci readiness
+          npm run test:release -- --phase desktop --start --cli /usr/bin/zerror-cli --output output/release-desktop
+          DESKTOP
       - name: Upload regression evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
