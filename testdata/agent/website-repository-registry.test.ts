@@ -433,16 +433,42 @@ describe('website repository registry', () => {
     // An unavailable source must preserve the uninstall marker and permit an explicit retry.
     fail = true
     await mod.experienceHostForTask('https://www.zjooc.cn/login')
+    await expect(mod.installWebsiteExperience('https://www.zjooc.cn/login')).rejects.toThrow('503')
     expect(mod.hasWebsiteRepository(host)).toBe(false)
     expect(storage.value.removedOpenHosts).toContain(host)
     fail = false
-    expect(await mod.experienceHostForTask('https://background.zjooc.cn/login')).toBe(host)
+    expect(await mod.installWebsiteExperience('https://background.zjooc.cn/login')).toMatchObject({
+      ok: true, installed: true, host, revision: cloud.revision, tools: tools.map(tool => tool.function.name),
+    })
     expect(mod.isOpenWebsiteRepository(host)).toBe(true)
     expect(mod.websiteToolsForHost(host)).toEqual(tools)
     expect(mod.installedWebsiteRuntimeTool(tools[0].function.name)?.runtime).toEqual(runtime)
     expect(storage.value.removedOpenHosts).not.toContain(host)
     expect(await mod.websiteRepositoryHosts()).toEqual(['chaoxing.com', host])
     expect(fetcher.mock.calls.every(([url]) => url === root || url === root + '/' + host + '')).toBe(true)
+  })
+  it('reports catalog failure and permits an immediate explicit retry without writing a local replacement', async () => {
+    const root = 'https://open.zerrorai.com/v1/website-experience'
+    const host = 'zjooc.cn'
+    const selected = candidate('zjooc', host)
+    const cloud = { ...snapshot('zjooc', host), runtime: runtimeFixture() }
+    const fetcher = vi.fn().mockResolvedValueOnce(new Response(null, { status: 503 }))
+      .mockImplementation(async (url: string) => url === root
+        ? Response.json({ sites: [{ ...selected.website, ...selected.source }] })
+        : Response.json(cloud))
+    vi.stubGlobal('fetch', fetcher)
+    const mod = await import('../../src/services/agent/websiteRepository')
+    await expect(mod.installWebsiteExperience('https://www.zjooc.cn/')).rejects.toThrow('503')
+    expect(mod.hasWebsiteRepository(host)).toBe(false)
+    expect(mod.websiteToolsForHost(host)).toEqual([])
+    expect(await mod.installWebsiteExperience('https://www.zjooc.cn/')).toMatchObject({ installed: true, host })
+    expect(fetcher).toHaveBeenCalledTimes(3)
+  })
+  it('reports missing official repositories as failed installations', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ sites: [] })))
+    const mod = await import('../../src/services/agent/websiteRepository')
+    await expect(mod.installWebsiteExperience('https://unknown.example/')).rejects.toThrow('Open 目录中没有')
+    expect(mod.hasWebsiteRepository('unknown.example')).toBe(false)
   })
   it('installs only the visited catalog site, shares concurrent requests and refreshes through Open after restart', async () => {
     const root = 'https://open.zerrorai.com/v1/website-experience'

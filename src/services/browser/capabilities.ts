@@ -6,6 +6,7 @@ export type BrowserCapabilities = {
   audioMute: boolean
   snapshotViaScript: boolean
   pageScriptActions: boolean
+  cdpInput: boolean
 }
 
 let cached: BrowserCapabilities | undefined
@@ -20,6 +21,7 @@ export const browserCapabilities = async (): Promise<BrowserCapabilities> => {
     audioMute: raw?.audioMute === true,
     snapshotViaScript: raw?.snapshotViaScript === true,
     pageScriptActions: raw?.pageScriptActions === true,
+    cdpInput: raw?.cdpInput === true,
   }
   if (raw) cached = capabilities
   return capabilities

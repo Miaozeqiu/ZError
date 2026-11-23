@@ -454,8 +454,12 @@ export function installedExperienceHost(host: string) {
 const installRetryAt = new Map<string, number>()
 
 /** Resolve a visited or explicitly requested site; discovery failures leave browsing available. */
-async function resolvePageExperience(url: string, reinstallRemoved: boolean): Promise<string> {
-  if (!/^https?:\/\//i.test(url)) return ''
+async function resolvePageExperience(url: string, reinstallRemoved: boolean, strict = false, signal?: AbortSignal): Promise<string> {
+  signal?.throwIfAborted()
+  if (!/^https?:\/\//i.test(url)) {
+    if (strict) throw new Error('请指定网站域名或先打开目标网站。')
+    return ''
+  }
   await Promise.all([loadRegistry(), loadWebsiteIdentities()])
   const host = websitePrimaryHost(url)
   if (!host || (!reinstallRemoved && wasRemovedFromOpen(host))) return host
@@ -465,19 +469,24 @@ async function resolvePageExperience(url: string, reinstallRemoved: boolean): Pr
     return installed
   }
   const fetcher = await request()
-  const entry = await findOpenWebsite(host, fetcher)
-  if (!entry) return host
+  const entry = await findOpenWebsite(host, fetcher, strict)
+  if (!entry) {
+    if (strict) throw new Error('Open 目录中没有该网站的经验仓库。')
+    return host
+  }
   return changeSource(entry.host, async () => {
     if (!reinstallRemoved && wasRemovedFromOpen(entry.host)) return host
     if (hasWebsiteRepository(entry.host)) return entry.host
     if (!reinstallRemoved && Date.now() < (installRetryAt.get(entry.host) ?? 0)) return host
     try {
       const snapshot = await downloadOpenWebsiteExperience(entry, { revision: '', checkedAt: 0, files: {} }, fetcher)
+      signal?.throwIfAborted()
       await installWebsiteSnapshot({ ...entry, name: snapshot.website!.name, open: true }, snapshot)
       installRetryAt.delete(entry.host)
       return entry.host
-    } catch {
+    } catch (error) {
       installRetryAt.set(entry.host, Date.now() + 60_000)
+      if (strict) throw error
       return host
     }
   })
@@ -488,3 +497,14 @@ export const experienceHostForPage = (url: string) => resolvePageExperience(url,
 
 /** An explicit website task may reinstall its Open repository; credentials remain separately authorized. */
 export const experienceHostForTask = (url: string) => resolvePageExperience(url, true)
+
+/** Explicit installs report success only after a validated snapshot has been registered. */
+export async function installWebsiteExperience(url: string, signal?: AbortSignal) {
+  const host = await resolvePageExperience(url, true, true, signal)
+  const state = websiteRepositoryStates[host]
+  if (!hasWebsiteRepository(host) || !state?.ready || state.source === 'offline') {
+    throw new Error(state?.error || '网站经验仓库尚未安装完成，请重试。')
+  }
+  return { ok: true, installed: true, host, source: state.source, revision: state.revision,
+    tools: websiteToolsForHost(host).map(tool => tool.function.name) }
+}

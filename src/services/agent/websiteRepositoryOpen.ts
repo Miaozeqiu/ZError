@@ -30,9 +30,10 @@ const catalogUrl = ZERROR_OPEN_ORIGIN + '/v1/website-experience'
 let catalog = new Map<string, OpenCatalogEntry>()
 let catalogExpires = 0
 let loadingCatalog: Promise<void> | undefined
+let catalogError: unknown
 
-export async function findOpenWebsite(host: string, request: typeof fetch) {
-  if (Date.now() >= catalogExpires) {
+export async function findOpenWebsite(host: string, request: typeof fetch, strict = false) {
+  if (Date.now() >= catalogExpires || (strict && catalogError)) {
     loadingCatalog ??= (async () => {
       const response = await request(catalogUrl, {
         headers: { Accept: 'application/json' }, credentials: 'omit', redirect: 'error', signal: AbortSignal.timeout(4000),
@@ -49,10 +50,12 @@ export async function findOpenWebsite(host: string, request: typeof fetch) {
         next.set(site.host, { ...site, source: { owner, name, url, branch: row.branch, root: row.root } })
       }
       catalog = next
+      catalogError = undefined
       catalogExpires = Date.now() + 300_000
-    })().catch(() => { catalogExpires = Date.now() + 30_000 }).finally(() => { loadingCatalog = undefined })
+    })().catch(error => { catalogError = error; catalogExpires = Date.now() + 30_000 }).finally(() => { loadingCatalog = undefined })
     await loadingCatalog
   }
+  if (strict && catalogError) throw catalogError
   // Match locally, most specific domain first. Never send the visited URL to Open.
   for (let suffix = host; suffix.includes('.'); suffix = suffix.slice(suffix.indexOf('.') + 1)) {
     const match = catalog.get(suffix)
@@ -68,7 +71,7 @@ export async function downloadOpenWebsiteExperience(
   previous: WebsiteSnapshot,
   request: typeof fetch,
 ): Promise<WebsiteSnapshot> {
-  return fetchWebsiteExperience(openWebsiteExperienceUrl(identity.host), identity, request, previous)
+  return fetchWebsiteExperience(openWebsiteExperienceUrl(identity.host), identity, request, previous, previous.website ? 16000 : 45000)
 }
 
 async function fetchWebsiteExperience(
@@ -76,6 +79,7 @@ async function fetchWebsiteExperience(
   identity: { id?: string; host: string },
   request: typeof fetch,
   previous?: WebsiteSnapshot,
+  timeoutMs?: number,
 ): Promise<WebsiteSnapshot> {
   const revision = previous?.website && previous.icon
     && commitSha.test(previous.revision) ? previous.revision : ''
@@ -84,7 +88,7 @@ async function fetchWebsiteExperience(
   const headers = previous ? { Accept: 'application/json' } : { Accept: 'application/json', 'Cache-Control': 'no-cache' }
   const init: RequestInit & { maxRedirections: number } = {
     headers,
-    signal: AbortSignal.timeout(previous ? 16000 : 8000),
+    signal: AbortSignal.timeout(timeoutMs ?? (previous ? 16000 : 8000)),
     redirect: 'error',
     maxRedirections: 0,
     credentials: 'omit',

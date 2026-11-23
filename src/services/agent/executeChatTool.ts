@@ -106,6 +106,10 @@ export const executeChatTool = async (input: {
   const denied = campusWriteDenial(call.name)
   if (denied) return JSON.stringify({ ok: false, denied: true, error: denied })
   const args = parseToolArgs(call.arguments)
+  if (call.name === 'install_website_repository') {
+    const { installWebsiteRepositoryTool } = await import('./websiteInstallTool')
+    return installWebsiteRepositoryTool(args, ctx)
+  }
   if (call.name === 'search_conversation_history' || call.name === 'read_conversation_history') {
     const { liveSession } = await import('./chatStore')
     const { conversationHistory } = await import('./conversationHistory')
@@ -263,7 +267,8 @@ export const executeChatTool = async (input: {
     const written = repository
       ? await writeAgentSkillFileContent(id, path, text, String(args.base_version))
       : await writeAgentSkillFileContent(id, path, text)
-    return JSON.stringify({ ...written, id, path })
+    const operation = repository || id === 'site-learn' ? 'save_local_experience' : 'write_skill_file'
+    return JSON.stringify({ ...written, id, path, operation })
   }
 
   if (call.name === 'reset_agent_skill_file') {

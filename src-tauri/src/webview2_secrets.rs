@@ -325,20 +325,7 @@ pub(crate) async fn login_action(app: &AppHandle, id: &str, args: &Value) -> Res
             let filled = write_input(&webview, object, code, &origin, "text").await?;
             return Ok(json!({"ok":filled, "filled":filled, "dispatched":filled}));
         }
-        let result = cdp(&webview, "Runtime.callFunctionOn", json!({
-            "objectId": object, "returnByValue": true, "silent": true, "arguments": [{"value":expected}],
-            "functionDeclaration": r#"function(expected) {
-                if (!this.isConnected || this.ownerDocument !== document || location.href !== expected
-                    || !this.matches('a, button, [role="button"], input[type=submit], input[type=button]')
-                    || this.matches(':disabled, [aria-disabled="true"]') || !this.getClientRects().length
-                    || getComputedStyle(this).visibility !== 'visible') return false;
-                this.click();
-                return true;
-            }"#
-        })).await;
-        // Navigation can destroy the context before the response reaches WebView2.
-        let dispatched = result.as_ref().map_or(true, |v| v["result"]["value"] == true);
-        Ok(json!({"ok":result.is_ok() && dispatched, "dispatched":dispatched}))
+        crate::webview2_input::click_object(&webview, object).await
     }.await;
     let _ = cdp(
         &webview,

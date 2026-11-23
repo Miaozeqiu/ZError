@@ -19,7 +19,7 @@ export type BrowserToolRole = AgentToolRole
 
 const LOOK_NAMES = [
   'search_conversation_history', 'read_conversation_history',
-  'set_website_icon',
+  'set_website_icon', 'install_website_repository',
   'browser_get_page',
   'browser_find',
   'browser_screenshot',

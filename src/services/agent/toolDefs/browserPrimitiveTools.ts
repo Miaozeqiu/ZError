@@ -1,5 +1,5 @@
 /** 通用浏览器原语。页面身份看网站地图，进度监控用 browser_watch。 */
-import { WEBSITE_ICON_TOOL } from './websiteTools'
+import { INSTALL_WEBSITE_REPOSITORY_TOOL, WEBSITE_ICON_TOOL } from './websiteTools'
 import { HISTORY_TOOLS } from './historyTools'
 import { WEBSITE_WORKFLOWS_TOOL } from '../websiteRuntime/workflowDefinition'
 import {
@@ -14,6 +14,7 @@ export const BROWSER_PRIMITIVE_TOOLS = [
   WEBSITE_WORKFLOWS_TOOL,
   ...HISTORY_TOOLS,
   WEBSITE_ICON_TOOL,
+  INSTALL_WEBSITE_REPOSITORY_TOOL,
   { type: 'function', function: { name: 'browser_home_shortcuts', description: '管理 ZError 浏览器「导航」首页的本地快捷入口。按用户要求查看、新增、改名、改网址或删除。必要时先打开导航页。', parameters: {
     type: 'object', properties: {
       action: { type: 'string', enum: ['list', 'add', 'update', 'remove'] },

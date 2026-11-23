@@ -1,3 +1,14 @@
+export const INSTALL_WEBSITE_REPOSITORY_TOOL = {
+  type: 'function' as const,
+  function: {
+    name: 'install_website_repository',
+    description: '从 Open 下载并安装网站经验仓库，支持重新安装已卸载的仓库。网站可填写域名或网址，省略时使用当前浏览器网站。成功回执含 installed、revision 和已注册工具；安装失败时报告具体错误。',
+    parameters: { type: 'object', properties: {
+      website: { type: 'string', description: '目标网站域名或网址，例如 zjooc.cn' },
+    }, additionalProperties: false },
+  },
+}
+
 export const WEBSITE_ICON_TOOL = {
   type: 'function' as const,
   function: {

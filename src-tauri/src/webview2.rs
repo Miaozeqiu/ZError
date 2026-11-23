@@ -51,7 +51,7 @@ pub(crate) async fn call_ms(
                     let parsed = result
                         .ok()
                         .and_then(|_| serde_json::from_str::<Value>(&payload).ok())
-                        .filter(|value| value.get("exceptionDetails").is_none())
+                        .filter(|value| value.get("exceptionDetails").is_none() && value.get("error").is_none())
                         .ok_or_else(|| error.into());
                     let _ = send.send(parsed);
                     Ok(())

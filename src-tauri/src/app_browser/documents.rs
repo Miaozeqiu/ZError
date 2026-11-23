@@ -489,6 +489,14 @@ pub(super) async fn dispatch(app: &AppHandle, id: &str, args: &Value) -> Result<
         }
     }
     #[cfg(windows)]
+    if action == "click" && doc == rows[0] {
+        drop(_lock);
+        return crate::webview2_input::dispatch(app,id,&json!({
+            "op":"click", "locators":[{"by":"css","value":args["selector"],"nth":args["nth"],
+                "frameId":doc.frame_id,"loaderId":doc.loader_id}],
+        })).await;
+    }
+    #[cfg(windows)]
     drop(_lock);
     // Comparison is not a credential-guessing oracle, even if page code removes a DOM marker.
     if matches!(action, "compare" | "value" | "glyphs") {
