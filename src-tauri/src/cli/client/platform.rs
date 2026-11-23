@@ -2,7 +2,9 @@ use super::transport::{directory, private_directory};
 use serde_json::{json, Value};
 #[cfg(not(windows))]
 use std::path::PathBuf;
-use std::{fs, path::Path, process::Command};
+#[cfg(not(windows))]
+use std::process::Command;
+use std::{fs, path::Path};
 pub(super) fn launch() -> Result<(), String> {
     #[cfg(target_os = "linux")]
     if let Some(image) = std::env::var_os("APPIMAGE") {
@@ -22,6 +24,48 @@ pub(super) fn launch() -> Result<(), String> {
     }
     Err("未找到同一安装目录的 ZError，请先启动软件".into())
 }
+#[cfg(windows)]
+fn spawn(path: &Path) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::{
+        core::{PCWSTR, PWSTR},
+        Win32::{
+            Foundation::CloseHandle,
+            System::Threading::{
+                CreateProcessW, CREATE_NEW_PROCESS_GROUP, DETACHED_PROCESS, PROCESS_INFORMATION,
+                STARTUPINFOW,
+            },
+        },
+    };
+    let executable: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    let startup = STARTUPINFOW {
+        cb: std::mem::size_of::<STARTUPINFOW>() as u32,
+        ..Default::default()
+    };
+    let mut process = PROCESS_INFORMATION::default();
+    // 桌面进程不能继承 CLI 调用方的管道；否则输出已返回，外部 Agent 仍等不到 EOF。
+    // 单独传入程序路径，避免空格、引号或中文路径被命令行再次解析。
+    unsafe {
+        CreateProcessW(
+            PCWSTR(executable.as_ptr()),
+            PWSTR::null(),
+            None,
+            None,
+            false,
+            DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
+            None,
+            PCWSTR::null(),
+            &startup,
+            &mut process,
+        )
+        .map_err(|_| "无法启动 ZError，请手动启动软件后重试")?;
+        let _ = CloseHandle(process.hThread);
+        let _ = CloseHandle(process.hProcess);
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
 fn spawn(path: &Path) -> Result<(), String> {
     let mut command = Command::new(path);
     command
@@ -45,11 +89,6 @@ fn spawn(path: &Path) -> Result<(), String> {
                 }
             });
         }
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x00000008 | 0x00000200); // 分离进程并创建独立进程组。
     }
     command
         .spawn()

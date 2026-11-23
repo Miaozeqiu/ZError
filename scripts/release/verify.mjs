@@ -1,8 +1,9 @@
-import { execFileSync, spawn } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { mkdir, readFile, writeFile, rm, appendFile } from 'node:fs/promises'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { featureResults, markdownReport } from './report.mjs'
+import { runReleaseProcess } from './process.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const options = { phase: 'source', output: 'output/release-checks', cli: '', start: false, release: false, target: '' }
@@ -27,17 +28,8 @@ async function step(id, executable, args, timeout = 15 * 60 * 1000) {
   const row = { id, status: 'running', startedAt: new Date().toISOString() }; report.steps.push(row); await persist()
   console.log(`[release] ${id}`)
   try {
-    await new Promise((done, fail) => {
-      const child = spawn(executable, args, { cwd: root, env: process.env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
-      let text = '', timer
-      for (const pipe of [child.stdout, child.stderr]) pipe.on('data', chunk => { text += chunk; process.stdout.write(chunk) })
-      child.once('error', error => { clearTimeout(timer); fail(error) })
-      timer = setTimeout(() => { child.kill(); fail(new Error(`${id} 超时`)) }, timeout)
-      child.once('close', async code => {
-        clearTimeout(timer)
-        try { await writeFile(resolve(output, `${id}.log`), text); code === 0 ? done() : fail(new Error(`${id} 退出码 ${code}`)) } catch (error) { fail(error) }
-      })
-    })
+    await runReleaseProcess(executable, args, { cwd: root, env: process.env, timeout,
+      label: id, logFile: resolve(output, `${id}.log`), onOutput: chunk => process.stdout.write(chunk) })
     row.status = 'passed'
   } catch (error) { row.status = 'failed'; row.error = String(error.message || error); throw error }
   finally { row.finishedAt = new Date().toISOString(); await persist() }

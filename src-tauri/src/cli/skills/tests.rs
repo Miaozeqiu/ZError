@@ -253,6 +253,20 @@ fn registry_failure_rolls_back_files() {
     assert!(!f.backup().exists());
 }
 #[test]
+fn waits_for_a_brief_lock_without_removing_or_replacing_it() {
+    let f = Fixture::new();
+    let guard = f.store.lock("registry").unwrap();
+    let release = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        drop(guard);
+    });
+    let acquired = f.store.lock("registry").unwrap();
+    release.join().unwrap();
+    assert!(f.store.lock("registry").is_err());
+    drop(acquired);
+    assert!(f.store.lock("registry").is_ok());
+}
+#[test]
 fn target_lock_blocks_concurrent_install_and_releases_on_drop() {
     let f = Fixture::new();
     let lock = f.store.lock(&f.target.to_string_lossy()).unwrap();

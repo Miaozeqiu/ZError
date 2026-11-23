@@ -6,7 +6,7 @@ use std::{
     fs,
     io::{Read, Write},
     path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 pub const RECEIPT: &str = ".zerror-skill.json";
 #[derive(Clone, Serialize, Deserialize)]
@@ -57,9 +57,21 @@ impl Store {
             options.mode(0o600);
         }
         let file = options.open(path).map_err(|_| "无法锁定 Skill 安装状态")?;
-        file.try_lock()
-            .map_err(|_| "另一进程正在管理 Skill，请稍后重试")?;
-        Ok(file)
+        // Unix 上 fork 到 exec 之间可能短暂继承另一个线程刚释放的锁。
+        // 只对锁竞争做有界重试；持久竞争和文件系统错误仍然停止写入。
+        let deadline = Instant::now() + Duration::from_millis(500);
+        loop {
+            match file.try_lock() {
+                Ok(()) => return Ok(file),
+                Err(fs::TryLockError::WouldBlock) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(fs::TryLockError::WouldBlock) => {
+                    return Err("另一进程正在管理 Skill，请稍后重试".into());
+                }
+                Err(_) => return Err("无法锁定 Skill 安装状态".into()),
+            }
+        }
     }
 }
 pub fn reject_symlink(path: &Path) -> Result<(), String> {
