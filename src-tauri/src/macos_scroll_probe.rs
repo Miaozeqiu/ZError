@@ -38,20 +38,20 @@ pub fn event(view: &NSView, stage: &str, event: &NSEvent) {
     EVENTS.with(|events|{let mut e=events.borrow_mut();e.push_back(entry);if e.len()>1500{e.remove(750);}});
     TIMER.with(|slot| {
         if slot.borrow().is_some(){return}
-        let view=unsafe{Retained::retain(view as *const NSView as *mut NSView)}.unwrap();
+        let view=Retained::retain(view as *const NSView as *mut NSView).unwrap();
         let callback=RcBlock::new(move |_:NonNull<NSTimer>| {
             TIMER.with(|slot|{slot.borrow_mut().take();});
             let native=EVENTS.with(|e|e.borrow().clone());
             let result=RcBlock::new(move |value:*mut AnyObject,error:*mut AnyObject| {
                 if !error.is_null() || value.is_null(){return}
-                let string=unsafe{&*(value as *const NSString)}.to_string();
+                let string=(&*(value as *const NSString)).to_string();
                 let js=serde_json::from_str::<serde_json::Value>(&string).unwrap_or_default();
                 if let Ok(json)=serde_json::to_vec(&serde_json::json!({"native":native,"js":js})) {
                     let _=std::fs::write("/tmp/zerror-scroll-trace.json",json);
                 }
             });
             let script=NSString::from_str(SCRIPT);
-            unsafe {let _:()=msg_send![&*view,evaluateJavaScript:&*script,completionHandler:&*result];}
+            let _:()=msg_send![&*view,evaluateJavaScript:&*script,completionHandler:&*result];
         });
         let delay=PRIMED.with(|p|if p.replace(true){0.5}else{0.001});
         let timer=NSTimer::timerWithTimeInterval_repeats_block(delay,false,&callback);

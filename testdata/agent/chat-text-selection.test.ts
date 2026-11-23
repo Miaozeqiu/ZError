@@ -20,7 +20,7 @@ vi.mock('../../src/views/agentChat/useAgentChatPanes', async () => ({
 }))
 vi.mock('../../src/views/agentChat/AgentChatFeatureCards.vue', () => ({ default: { render: () => null } }))
 vi.mock('../../src/composables/useTheme', () => ({ themeState: { isDark: false } }))
-vi.mock('markstream-vue', () => ({ default: { render: () => h('div', { class: 'markdown-renderer' }, [
+vi.mock('../../src/views/agentChat/markdown', () => ({ default: { render: () => h('div', { class: 'markdown-renderer' }, [
   h('p', { id: 'first' }, 'First paragraph'),
   h('ul', [h('li', { id: 'second' }, ['Second ', h('a', { href: '#example' }, 'link'), ' line'])]),
   h('p', { id: 'last' }, 'Last paragraph'),
@@ -53,7 +53,9 @@ beforeEach(async () => {
     showFeatureCards: false, fileManagerLabel: '文件', onQuote: quote, onAsk: ask,
     'onUpdate:pinned': (value: boolean) => { following = value },
   }) })
-  app.mount(root); await nextTick()
+  app.mount(root)
+  await vi.dynamicImportSettled()
+  await nextTick()
 })
 afterEach(() => {
   app.unmount(); root.remove()

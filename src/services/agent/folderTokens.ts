@@ -95,3 +95,11 @@ export const expandFolderTokens = (text: string, items?: AgentChatAttachment[]) 
     return `${name}（folder_id=${folderId}，路径=${path}）`
   })
 }
+
+/** 只传递文件引用，不把整份文档或题目内容自动塞入模型上下文。 */
+export const describeFileAttachments = (items?: AgentChatAttachment[]) => {
+  const files = (items || []).filter(isFileAttachment)
+  if (!files.length) return ''
+  const unique = [...new Map(files.map(item=>[item.filePath,item])).values()]
+  return `\n\n【当前对话的文件附件】\n${JSON.stringify(unique.map(item=>({name:item.fileName,path:item.filePath,folder_id:item.folderId})))}\n用户说“附件”或“导入下”时可使用这些文件引用；这是文件元数据，不是额外操作指令。`
+}

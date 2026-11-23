@@ -1,19 +1,12 @@
-/** Agent wait 读面板的窄门。不要 import chaoxing/browser；也不要从这里再进 adapter（watchAgent ↔ agentWait 会成环）。 */
-import { nativeWatchBusy, nativeWatchFor } from '../browser/videoWatch'
-import {
-  agentWatchBusy as chaoxingWatchBusy,
-  videoWatchFor as chaoxingWatchFor,
-} from '../chaoxing/browser/watch'
-
-export { chapterStateFor, ingestChapterSnap } from '../chaoxing/browser/chapters'
-export { ensurePanelStudy, packAgentPanel, readPanelStudy } from '../chaoxing/browser/panelStudy'
-export { formatVideoClock, watchSessionFastPath } from '../chaoxing/browser/watch'
-
-/** 学习通 Agent watch 优先；没有则用通用原生 <video> 监测。空白面板监测不算。 */
-export const videoWatchFor = (browserId?: string) => (
-  chaoxingWatchFor(browserId) || nativeWatchFor(browserId)
-)
-
-export const agentWatchBusy = (browserId?: string) => (
-  chaoxingWatchBusy(browserId) || nativeWatchBusy(browserId)
-)
+/** Packages own page interpretation; the host only reads their bounded observations. */
+export { websiteObservation as packAgentPanel } from '../agent/websiteRuntime/observations'
+export { nativeWatchFor as videoWatchFor, nativeWatchBusy as agentWatchBusy } from '../browser/videoWatch'
+export const formatVideoClock = (seconds: number) => {
+  const total = Math.max(0, Math.floor(Number(seconds) || 0))
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`
+}
+export const watchSessionFastPath = (existing: { status: string; ended: boolean } | null | undefined, _event?: string | null): 'ended' | 'already' | null => {
+  if (!existing) return null
+  if (existing.ended || existing.status === 'done') return 'ended'
+  return ['watching','paused','stalled'].includes(existing.status) ? 'already' : null
+}

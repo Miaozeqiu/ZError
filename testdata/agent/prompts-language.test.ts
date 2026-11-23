@@ -71,3 +71,11 @@ describe('skill 渐进披露', () => {
     expect(nextSkillFileHint('site-learn', 'sites/zjooc.cn/SKILL.md', all)).toMatch(/其中一条/)
   })
 })
+
+it('导入方式由 Agent 自主选择，默认本地并按目录结构自行定位，不向用户追问位置',()=>{
+  const prompt=buildLearningSystemPrompt()
+  expect(prompt).toContain('自主选择 JavaScript')
+  expect(prompt).toContain('普通导入默认本地题库')
+  expect(prompt).toContain('list_folders 看本地父子结构')
+  expect(prompt).toContain('不要仅因未指定保存位置而追问')
+})

@@ -1,8 +1,9 @@
+import { installWorkspaceEventBuffer } from './services/ui/workspaceEvents';
+import { startAgentRuntime } from './services/agent/runtime';
 import { createApp } from "vue";
 import "./styles/themes.css";
 import App from "./App.vue";
 import { initGlobalTheme } from "./composables/useTheme";
-import "./services/model/markstream";
 
 // 等待Tauri初始化完成
 async function initApp() {
@@ -52,7 +53,21 @@ async function initApp() {
     });
   });
   
+  const stopWorkspaceEvents = installWorkspaceEventBuffer();
+  const stopAgentRuntime = startAgentRuntime();
+  window.addEventListener('beforeunload', stopAgentRuntime, { once: true });
+  import.meta.hot?.dispose(() => { window.removeEventListener('beforeunload', stopAgentRuntime); stopAgentRuntime(); stopWorkspaceEvents(); });
   createApp(App).mount("#app");
+
+  if (window.__TAURI_INTERNALS__) {
+    void import('./services/cli/runtime').then(async ({ startCliRuntime }) => {
+      const stop = await startCliRuntime()
+      window.addEventListener('beforeunload', stop, { once: true })
+      import.meta.hot?.dispose(() => { window.removeEventListener('beforeunload', stop); stop() })
+    }).catch(error => {
+      console.error('CLI 接口未能连接主界面', error)
+    })
+  }
 
   if (import.meta.env.DEV) {
     void import("./services/agent/cursorBridge")

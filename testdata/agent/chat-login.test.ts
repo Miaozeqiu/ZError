@@ -1,22 +1,17 @@
-import { runLoginCommands } from './fixtures/loginCommands'
 // @vitest-environment jsdom
 import { createApp, h, nextTick } from 'vue'
 import { beforeEach, expect, it, vi } from 'vitest'
 import AgentLoginForm from '../../src/components/agent/AgentLoginForm.vue'
 import { cancelChatLogin, chatLoginRequests, requestChatLogin, submitChatLogin } from '../../src/services/agent/chatLogin'
-import { handleLoginTool } from '../../src/services/agent/tools/websiteLogin'
+import { scopedWebsiteHost } from '../../src/services/agent/websiteRuntime/scopedHost'
 
-const io = vi.hoisted(() => ({ invoke: vi.fn(), page: vi.fn(), account: vi.fn() }))
-vi.mock('../../src/services/agent/tools/websiteLoginObservation', () => ({
-  loginObserver: (call: Function, id: string) => (captureCaptcha = false) =>
-    call(id, 'login_observe', captureCaptcha ? { captureCaptcha } : undefined),
+const io = vi.hoisted(() => ({ invoke: vi.fn(), page: vi.fn(), account: vi.fn(), capabilities: vi.fn(), documents: vi.fn() }))
+vi.mock('../../src/services/browser/documents', async original => ({
+  ...await original<typeof import('../../src/services/browser/documents')>(), browserDocuments: io.documents,
 }))
-
-vi.mock('../../src/services/agent/websiteScripts', () => ({ runWebsiteWorkflow: runLoginCommands }))
-
 vi.mock('@tauri-apps/api/core', async original => ({ ...await original<typeof import('@tauri-apps/api/core')>(), invoke: io.invoke }))
 vi.mock('../../src/services/browser/appBrowser', () => ({ getBrowserState: io.page }))
-vi.mock('../../src/services/browser/eval', async original => ({ ...await original<typeof import('../../src/services/browser/eval')>(), isCefEngine: async () => true }))
+vi.mock('../../src/services/browser/capabilities', () => ({ browserCapabilities: io.capabilities }))
 vi.mock('../../src/services/security/secureStore', async original => ({ ...await original<typeof import('../../src/services/security/secureStore')>(), isNativeSecureStore: () => true }))
 vi.mock('../../src/services/agent/siteAccounts', () => ({ siteAccountOf: io.account, refreshSiteAccounts: async () => {}, siteAccountsReady: Promise.resolve() }))
 
@@ -26,6 +21,7 @@ beforeEach(() => {
   io.page.mockReset().mockResolvedValue({ url: origin + '/login' })
   io.account.mockReset().mockReturnValue(null)
   io.invoke.mockReset()
+  io.capabilities.mockReset().mockResolvedValue({ secureFill: true })
 })
 const pending = async () => {
   await vi.waitFor(() => expect(chatLoginRequests.has('chat')).toBe(true))
@@ -33,14 +29,16 @@ const pending = async () => {
 }
 
 it('continues a login from the chat form and sends only references to the browser tool', async () => {
-  const form = { kind: 'form', url: origin + '/login?newversion=true', modern: true, frameId: 'top', loaderId: 'doc' }
-  let clicked = false
-  const protocol = vi.fn(async (_id: string, op: string, _args?: unknown) => {
-    if (op === 'fill_secret') return { ok: true, filled: true }
-    return clicked ? { kind: 'space', url: 'https://i.chaoxing.com/' } : form
-  })
-  const run = handleLoginTool({ name: 'browser_login_chaoxing', args: {}, browserId: 'tab', sessionId: 'chat',
-    navigateBrowserView: vi.fn(), callProtocol: protocol, wait: async () => {}, actOnceOnBrowser: async () => { clicked = true; return { dispatched: true } } })
+  const target = { frameId: 'top', loaderId: 'doc', url: origin + '/login' }
+  io.documents.mockResolvedValue({ documents: [target] })
+  const protocol = vi.fn(async (_name: string, _args: Record<string,unknown>) => ({ ok: true, filled: true }))
+  const scoped = scopedWebsiteHost({ host: 'chaoxing.com', browserId: 'tab', signal: new AbortController().signal,
+    pause: () => {}, resume: () => {}, ctx: { sessionId:'chat', invokeHostTool: protocol } as any })
+  const run = (async () => {
+    const grant = await scoped.execute('credentials.request', { document: target })
+    for (const field of ['account','password']) await scoped.execute('credentials.fill', { document: target, selector: '#' + field, credential_id: grant.credential_id, field })
+    return { ok: true }
+  })()
   const request = await pending()
   const root = document.createElement('div')
   const app = createApp({ render: () => h(AgentLoginForm, { request }) })
@@ -55,50 +53,24 @@ it('continues a login from the chat form and sends only references to the browse
       if (command === 'secure_save_chat_login') io.account.mockReturnValue(refs)
     })
     root.querySelector('form')!.dispatchEvent(new Event('submit', { cancelable: true }))
-    expect(JSON.parse(await run)).toMatchObject({ ok: true, loggedIn: true })
+    expect(await run).toEqual({ ok: true })
     await nextTick()
     expect(io.invoke).toHaveBeenCalledWith('secure_save_chat_login', { site: 'chaoxing', loginOrigin: origin, account: 'private-account', password: ' private-password! ' })
-    expect(protocol.mock.calls.filter(([, op]) => op === 'fill_secret').map(([, , args]) => (args as any).secret_ref)).toEqual(Object.values(refs))
+    expect(protocol.mock.calls.filter(([, args]) => args.action === 'fill_secret').map(([, args]) => args.secret_ref)).toEqual(Object.values(refs))
     expect(JSON.stringify([protocol.mock.calls, request, await run])).not.toMatch(/private-account|private-password/)
     expect(chatLoginRequests.size).toBe(0)
-  } finally { app.unmount() }
+  } finally { app.unmount(); scoped.dispose() }
 })
 
-it('replaces a rejected ZJOOC password in the same verification flow', async () => {
-  const loginOrigin = 'https://background.zjooc.cn'
-  const url = loginOrigin + '/gxptLogin'
-  const oldForm = { kind: 'form', url, challenge: true, frameId: 'top', loaderId: 'old-doc' }
-  const rejected = { ...oldForm, kind: 'rejected', rejection: 'credentials' }
-  const newForm = { ...oldForm, loaderId: 'new-doc' }
-  const states = [
-    oldForm, rejected, rejected,
-    { kind: 'other', url: 'about:blank', loaderId: 'transient-doc' },
-    rejected, newForm, newForm, newForm, { kind: 'space', url: 'https://www.zjooc.cn/' },
-  ]
-  const account = '{{secret:site/zjooc/account}}'
-  io.account.mockReturnValue({ account, password: '{{secret:site/zjooc/password}}' })
-  io.page.mockResolvedValue({ url })
-  const protocol = vi.fn(async (_id: string, op: string, _args?: unknown) =>
-    op === 'login_observe' ? states.shift()! : { ok: true, filled: true })
-  const navigateBrowserView = vi.fn()
-  const actOnceOnBrowser = vi.fn()
-  const run = handleLoginTool({ name: 'browser_login_zjooc', args: { wait_for_verification: true },
-    browserId: 'tab', sessionId: 'chat', navigateBrowserView, callProtocol: protocol,
-    wait: async () => {}, actOnceOnBrowser })
+it('replaces a rejected password using the generic credential form without exposing values', async () => {
+  io.account.mockReturnValue(refs)
+  const receipt = requestChatLogin('chat', 'tab', undefined, { expectedOrigin: origin, replacingRejectedCredentials: true })
   const request = await pending()
-  expect(request).toMatchObject({ origin: loginOrigin, replacingRejectedCredentials: true, canReuseAccount: true })
-  expect(navigateBrowserView).not.toHaveBeenCalled()
-  expect(protocol.mock.calls.every(([, op]) => op === 'login_observe')).toBe(true)
+  expect(request).toMatchObject({ origin, replacingRejectedCredentials: true, canReuseAccount: true })
   await submitChatLogin(request, '', 'replacement password ')
-  expect(JSON.parse(await run)).toMatchObject({ loggedIn: true })
-  expect(io.invoke).toHaveBeenCalledWith('secure_save_chat_login', { site: 'zjooc', loginOrigin, account, password: 'replacement password ' })
-  expect(navigateBrowserView).toHaveBeenCalledExactlyOnceWith('tab', url)
-  expect(protocol.mock.calls.filter(([, op]) => op === 'fill_secret').map(([, , args]) => args))
-    .toEqual(['account', 'password'].map(field => ({
-      secret_ref: `{{secret:site/zjooc/${field}}}`,
-      locator: expect.objectContaining({ loaderId: 'new-doc' }),
-    })))
-  expect(actOnceOnBrowser).not.toHaveBeenCalled()
+  expect(await receipt).toEqual({ ok: true, references: refs })
+  expect(io.invoke).toHaveBeenCalledWith('secure_save_chat_login', { site: 'chaoxing', loginOrigin: origin, account: refs.account, password: 'replacement password ' })
+  expect(JSON.stringify([request, await receipt])).not.toContain('replacement password')
   expect(chatLoginRequests.size).toBe(0)
 })
 
@@ -121,5 +93,36 @@ it('reuses existing references and keeps cancellation, navigation and abort out 
   await expect(third).rejects.toMatchObject({ name: 'AbortError' })
   await submitChatLogin(stale, 'private-account', 'private-password')
   expect(io.invoke.mock.calls.some(([command]) => command === 'secure_save_chat_login')).toBe(false)
+  expect(chatLoginRequests.size).toBe(0)
+})
+
+it('allows the native WebView credential form and rejects hosts without secure fill', async () => {
+  const receipt = requestChatLogin('chat', 'tab')
+  cancelChatLogin((await pending()).id)
+  expect(await receipt).toMatchObject({ denied: true })
+  io.capabilities.mockResolvedValue({ secureFill: false })
+  expect(await requestChatLogin('chat', 'tab')).toMatchObject({ ok: false, error: expect.stringContaining('不支持安全填写') })
+  expect(chatLoginRequests.size).toBe(0)
+  expect(io.invoke).not.toHaveBeenCalled()
+})
+
+it('安全表单绑定目标文档，相同网址刷新后也不能保存或填写旧表单', async () => {
+  const document = { frameId: 'form', loaderId: 'one', url: origin + '/login' }
+  io.capabilities.mockResolvedValue({ secureFill: true, secureFillInFrames: true })
+  io.documents.mockResolvedValue({ documents: [document] })
+  const receipt = requestChatLogin('chat', 'tab', undefined, { expectedOrigin: origin, targetDocument: { host: 'chaoxing.com', document } })
+  const form = await pending()
+  io.documents.mockResolvedValue({ documents: [{ ...document, loaderId: 'new-document' }] })
+  await submitChatLogin(form, 'private-account', 'private-password')
+  expect(await receipt).toMatchObject({ ok: false, error: expect.stringContaining('登录页面已切换') })
+  expect(io.invoke.mock.calls.some(([name]) => name === 'secure_save_chat_login')).toBe(false)
+})
+
+it('不支持子页面安全填写的引擎不会先要求用户输入凭据', async () => {
+  const root = { frameId: 'root', loaderId: 'one', url: origin + '/login' }
+  const child = { ...root, frameId: 'child', loaderId: 'two' }
+  io.capabilities.mockResolvedValue({ secureFill: true, secureFillInFrames: false })
+  io.documents.mockResolvedValue({ documents: [root, child] })
+  expect(await requestChatLogin('chat', 'tab', undefined, { targetDocument: { host: 'chaoxing.com', document: child } })).toMatchObject({ ok: false, error: expect.stringContaining('子页面') })
   expect(chatLoginRequests.size).toBe(0)
 })

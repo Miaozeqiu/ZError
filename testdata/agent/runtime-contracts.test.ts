@@ -6,6 +6,7 @@ import { intentFromText } from '../../src/services/agent/browserTask'
 import { websitePrimaryHost, websiteAccountId } from '../../src/services/agent/websiteIdentity'
 import { hostCapabilitiesFor } from '../../src/services/agent/hostCapabilities'
 const definitions = [{ type: 'function', function: { name: 'click', parameters: { type: 'object', required: ['ref'], properties: { ref: { type: 'string' }, nth: { type: 'integer', minimum: 1 } } } } }]
+
 describe('runtime extension contracts', () => {
   it('rejects unavailable tools and malformed arguments before execution', () => {
     expect(validateToolCall(definitions, { name: 'delete_everything', arguments: '{}' })).toBeTruthy()
@@ -36,6 +37,6 @@ describe('runtime extension contracts', () => {
     expect(websiteAccountId('https://hike-teaching-center.polymas.com/')).toBe('zhihuishu')
     expect(websitePrimaryHost('https://polymas.com.evil.test/')).not.toBe('zhihuishu.com')
     expect(hostCapabilitiesFor('https://evil.test/?next=https://chaoxing.com').panel).toBe(false)
-    expect(hostCapabilitiesFor('https://mooc1.chaoxing.com/').panel).toBe(true)
+    expect(hostCapabilitiesFor('https://mooc1.chaoxing.com/').panel).toBe(false)
   })
 })

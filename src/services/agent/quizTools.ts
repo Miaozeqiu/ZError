@@ -147,21 +147,32 @@ export const resolveQuizCards = async (raw: unknown): Promise<QuizCard[]> => {
   return cards.slice(0, 10)
 }
 
-export const saveQuestions = async (items: ExtractedQuestion[], folderId: number, subjectId?: number) => {
+export const saveQuestions = async (items: ExtractedQuestion[], folderId: number, subjectId?: number, control?: { signal?: AbortSignal; onSaved?: (id: number) => void }) => {
+  let error: string | undefined
+  let warning: string | undefined
   const created: { id: number; item: ExtractedQuestion }[] = []
   for (const item of items) {
-    const question = await databaseService.addQuestion({
-      content: item.question,
-      options: item.options || '',
-      answer: item.answer,
-      question_type: normalizeType(item.question_type),
-      folderId,
-      isAi: 1,
-      importance: item.importance,
-      mastery: item.mastery,
-      difficulty: item.difficulty,
-    })
-    created.push({ id: question.id, item })
+    try {
+      control?.signal?.throwIfAborted()
+      const question = await databaseService.addQuestion({
+        content: item.question,
+        options: item.options || '',
+        answer: item.answer,
+        question_type: normalizeType(item.question_type),
+        folderId,
+        isAi: 1,
+        importance: item.importance,
+        mastery: item.mastery,
+        difficulty: item.difficulty,
+      })
+      created.push({ id: question.id, item })
+      // 写入成功立即记下 Id，即使后续取消或图谱关联失败，也不能重复插入。
+      control?.onSaved?.(question.id)
+    } catch (cause) {
+      if (!control) throw cause
+      error = control?.signal?.aborted ? '导入已停止' : (cause instanceof Error ? cause.message : String(cause))
+      break
+    }
   }
   const association = created.length
     ? await associateQuestionsToKnowledge(
@@ -175,7 +186,11 @@ export const saveQuestions = async (items: ExtractedQuestion[], folderId: number
         subject_id: item.subject_id,
       })),
       { subjectId, createMissing: true },
-    )
+    ).catch(cause => {
+      if (!control) throw cause
+      warning = `题目已经保存，知识点关联失败：${cause instanceof Error ? cause.message : String(cause)}`
+      return { linked: 0, created: 0, skipped: created.length, links: [] }
+    })
     : { linked: 0, created: 0, skipped: created.length, links: [] }
   if (created.length) {
     window.dispatchEvent(new CustomEvent('questions-imported', { detail: { folderId } }))
@@ -185,6 +200,8 @@ export const saveQuestions = async (items: ExtractedQuestion[], folderId: number
   }
   return {
     saved: created.length,
+    remaining: items.length - created.length,
+    error, warning,
     questionIds: created.map((item) => item.id),
     association,
   }

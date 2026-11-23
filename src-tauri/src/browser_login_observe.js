@@ -29,7 +29,10 @@ function (expectedUrl, rules) {
         return src.protocol === 'https:' ? src.origin + src.pathname : false
       }
       if (!(element instanceof HTMLImageElement) || !element.complete || !element.naturalWidth || element.naturalWidth > 400
-        || !element.naturalHeight || element.naturalHeight > 160 || new URL(element.currentSrc).origin !== location.origin) return false
+        || !element.naturalHeight || element.naturalHeight > 160) return false
+      const source = element.currentSrc || element.src
+      const inline = source.length <= 400000 && /^data:image\/(?:png|jpeg|gif|webp);base64,[a-z0-9+/]+={0,2}$/i.test(source)
+      if (!inline && new URL(source, location.href).origin !== location.origin) return false
       const canvas = document.createElement('canvas')
       canvas.width = element.naturalWidth
       canvas.height = element.naturalHeight

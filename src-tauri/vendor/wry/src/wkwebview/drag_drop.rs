@@ -2,42 +2,71 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-License-Identifier: MIT
 
-use std::{ffi::CStr, path::PathBuf};
+use std::{
+  ffi::{CStr, OsStr},
+  os::unix::ffi::OsStrExt,
+  path::PathBuf,
+};
 
 use objc2::{
   runtime::{Bool, ProtocolObject},
-  DeclaredClass,
+  ClassType, DeclaredClass,
 };
-use objc2_app_kit::{NSDragOperation, NSDraggingInfo, NSFilenamesPboardType};
-use objc2_foundation::{NSArray, NSPoint, NSRect, NSString};
+use objc2_app_kit::{NSDragOperation, NSDraggingInfo, NSPasteboard};
+use objc2_foundation::{NSArray, NSPoint, NSRect, NSString, NSURL};
 
 use crate::DragDropEvent;
 
 use super::WryWebView;
 
-pub(crate) unsafe fn collect_paths(drag_info: &ProtocolObject<dyn NSDraggingInfo>) -> Vec<PathBuf> {
-  let pb = drag_info.draggingPasteboard();
-  let mut drag_drop_paths = Vec::new();
-  let types = NSArray::arrayWithObject(NSFilenamesPboardType);
+fn collect_paths(drag_info: &ProtocolObject<dyn NSDraggingInfo>) -> Vec<PathBuf> {
+  let pasteboard = drag_info.draggingPasteboard();
+  let classes = NSArray::from_slice(&[NSURL::class()]);
+  let paths: Vec<_> = (unsafe { pasteboard.readObjectsForClasses_options(&classes, None) })
+    .into_iter()
+    .flat_map(|urls| urls.into_iter())
+    .filter_map(|object| {
+      let url = object.downcast::<NSURL>().ok()?;
+      if !url.isFileURL() {
+        return None;
+      }
+      let path = unsafe { CStr::from_ptr(url.fileSystemRepresentation().as_ptr()) };
+      Some(PathBuf::from(OsStr::from_bytes(path.to_bytes())))
+    })
+    .collect();
 
-  if pb.availableTypeFromArray(&types).is_some() {
-    let paths = pb.propertyListForType(NSFilenamesPboardType).unwrap();
-    let paths = paths.downcast::<NSArray>().unwrap();
-    for path in paths {
-      let path = path.downcast::<NSString>().unwrap();
-      let path = CStr::from_ptr(path.UTF8String()).to_string_lossy();
-      drag_drop_paths.push(PathBuf::from(path.into_owned()));
-    }
+  if paths.is_empty() {
+    legacy_file_paths(&pasteboard)
+  } else {
+    paths
   }
-  drag_drop_paths
+}
+
+// Some drag sources still provide only a legacy filename list.
+#[allow(deprecated)]
+fn legacy_file_paths(pasteboard: &NSPasteboard) -> Vec<PathBuf> {
+  // SAFETY: AppKit provides this immutable pasteboard type string.
+  let filename_type = unsafe { objc2_app_kit::NSFilenamesPboardType };
+  let Some(paths) = pasteboard
+    .propertyListForType(filename_type)
+    .and_then(|paths| paths.downcast::<NSArray>().ok())
+  else {
+    return Vec::new();
+  };
+
+  paths
+    .into_iter()
+    .filter_map(|path| path.downcast::<NSString>().ok())
+    .map(|path| PathBuf::from(path.to_string()))
+    .collect()
 }
 
 pub(crate) fn dragging_entered(
   this: &WryWebView,
   drag_info: &ProtocolObject<dyn NSDraggingInfo>,
 ) -> NSDragOperation {
-  let paths = unsafe { collect_paths(drag_info) };
-  let dl: NSPoint = unsafe { drag_info.draggingLocation() };
+  let paths = collect_paths(drag_info);
+  let dl: NSPoint = drag_info.draggingLocation();
   let frame: NSRect = this.frame();
   let position = (dl.x as i32, (frame.size.height - dl.y) as i32);
 
@@ -54,7 +83,7 @@ pub(crate) fn dragging_updated(
   this: &WryWebView,
   drag_info: &ProtocolObject<dyn NSDraggingInfo>,
 ) -> NSDragOperation {
-  let dl: NSPoint = unsafe { drag_info.draggingLocation() };
+  let dl: NSPoint = drag_info.draggingLocation();
   let frame: NSRect = this.frame();
   let position = (dl.x as i32, (frame.size.height - dl.y) as i32);
 
@@ -81,8 +110,8 @@ pub(crate) fn perform_drag_operation(
   this: &WryWebView,
   drag_info: &ProtocolObject<dyn NSDraggingInfo>,
 ) -> Bool {
-  let paths = unsafe { collect_paths(drag_info) };
-  let dl: NSPoint = unsafe { drag_info.draggingLocation() };
+  let paths = collect_paths(drag_info);
+  let dl: NSPoint = drag_info.draggingLocation();
   let frame: NSRect = this.frame();
   let position = (dl.x as i32, (frame.size.height - dl.y) as i32);
 

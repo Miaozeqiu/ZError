@@ -1,4 +1,4 @@
-import { ref, computed, watch, onMounted, readonly } from 'vue'
+import { ref, computed, watch, readonly } from 'vue'
 import { settingsManager } from '../services/app/settings'
 import { invoke, isTauri } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
@@ -182,7 +182,7 @@ export function useTheme() {
   }
   
   // 监听主题变化
-  watch(effectiveTheme, (newTheme) => {
+  watch(effectiveTheme, (_newTheme) => {
     applyTheme(currentTheme.value)
   })
   

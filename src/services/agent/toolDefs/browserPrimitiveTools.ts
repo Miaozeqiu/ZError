@@ -1,6 +1,7 @@
 /** 通用浏览器原语。页面身份看网站地图，进度监控用 browser_watch。 */
 import { WEBSITE_ICON_TOOL } from './websiteTools'
 import { HISTORY_TOOLS } from './historyTools'
+import { WEBSITE_WORKFLOWS_TOOL } from '../websiteRuntime/workflowDefinition'
 import {
   LIST_AGENT_SKILLS_TOOL,
   READ_AGENT_SKILL_FILE_TOOL,
@@ -10,6 +11,7 @@ import {
 } from '../skillTools'
 
 export const BROWSER_PRIMITIVE_TOOLS = [
+  WEBSITE_WORKFLOWS_TOOL,
   ...HISTORY_TOOLS,
   WEBSITE_ICON_TOOL,
   { type: 'function', function: { name: 'browser_home_shortcuts', description: '管理 ZError 浏览器「导航」首页的本地快捷入口。按用户要求查看、新增、改名、改网址或删除。必要时先打开导航页。', parameters: {
@@ -405,7 +407,7 @@ export const BROWSER_PRIMITIVE_TOOLS = [
     type: 'function',
     function: {
       name: 'browser_finish',
-      description: 'done/blocked 最终收尾；watching 仅进入当前任务的视频事件等待，视频播完或异常后会返回并继续原任务，不能提前输出最终结果。done 前检查本轮站点经验并填写 learning；新方法先读原 Skill、有增量才写入，实际保存成功才能填 updated。summary 概括实际状态。',
+      description: 'done/blocked 最终收尾；watching 仅进入当前任务的视频事件等待，视频播完或异常后会返回并继续原任务，不能提前输出最终结果。常规目标已验证可直接回复。仅在需要附上具体完成证据或报告受阻、等待时调用。summary 概括实际状态。',
       parameters: {
         type: 'object',
         properties: {
@@ -424,7 +426,7 @@ export const BROWSER_PRIMITIVE_TOOLS = [
             }, required: ['observation_id', 'targets', 'evidence'],
           },
           learning: {
-            type: 'object', description: '多步网页任务收尾检查；只复用旧步骤可 no_new，covered 必须读过本站 Skill，updated 必须先读后成功写入，deferred 需权限禁止/写入失败证据。',
+            type: 'object', description: '可选，仅报告实际处理过的经验；常规流程省略，covered 必须读过本站 Skill，updated 必须先读后成功写入，deferred 需权限禁止/写入失败证据。',
             properties: {
               decision: { type: 'string', enum: ['updated', 'covered', 'no_new', 'deferred'] },
               reason: { type: 'string', description: '具体的新经验、已有覆盖位置或不保存理由；不要把勾选成功当答案正确。' },

@@ -1,0 +1,279 @@
+{
+  "version": 1,
+  "baselineCommit": "fa9c4080",
+  "status": "business-migrated-dev-validation",
+  "note": "平台课程、章节、字体和页面流程已迁到仓库。客户端剩余清单为默认来源、显示元数据和用户数据迁移；测试预算不替代三端真实网页验收。",
+  "families": [
+    {
+      "id": "login",
+      "repository": "ZError-chaoxing / ZError-zjooc",
+      "entries": [
+        "agent/chaoxingStartup.ts",
+        "agent/tools/websiteLogin.ts",
+        "agent/tools/websiteLoginObservation.ts",
+        "subagent/runtime.ts"
+      ],
+      "checks": [
+        "退出后登录",
+        "验证码重取",
+        "错误密码更正",
+        "安全表单",
+        "登录后还有其他目标"
+      ]
+    },
+    {
+      "id": "course-navigation",
+      "repository": "ZError-chaoxing",
+      "entries": [
+        "platform/chaoxing",
+        "chaoxing/host/course",
+        "agent/tools/websiteCourses.ts",
+        "agent/tools/websiteHomework.ts"
+      ],
+      "checks": [
+        "学生和教师入口",
+        "唯一课程匹配",
+        "作业分页",
+        "SPA路由和iframe"
+      ]
+    },
+    {
+      "id": "chapter-playback",
+      "repository": "ZError-chaoxing / ZError-zjooc",
+      "entries": [
+        "chaoxing/browser",
+        "chaoxing/study",
+        "agent/tools/websiteChapterStart.ts",
+        "agent/tools/websitePlayback.ts"
+      ],
+      "checks": [
+        "已完成标记",
+        "章节范围",
+        "后台播放",
+        "首次静音",
+        "暂停恢复",
+        "自动下一节",
+        "接管和重启恢复"
+      ]
+    },
+    {
+      "id": "homework",
+      "repository": "ZError-chaoxing / ZError-zjooc",
+      "entries": [
+        "chaoxing/homework",
+        "chaoxing/host/homework",
+        "platform/zjooc/paperBank.ts",
+        "agent/tools/websiteHomeworkAnswers.ts",
+        "agent/tools/zjoocAnswers.ts"
+      ],
+      "checks": [
+        "读题填答复核",
+        "范围和续批",
+        "题库登录",
+        "答案监听上传",
+        "无答案模型回退",
+        "提交后重启不重放"
+      ]
+    },
+    {
+      "id": "reading-discussion-font",
+      "repository": "ZError-chaoxing",
+      "entries": [
+        "chaoxing/host/chapterDocument.ts",
+        "chaoxing/host/chapterDocumentViewer.js",
+        "chaoxing/host/chapterDiscussion.ts",
+        "chaoxing/host/chapterDiscussionPage.js",
+        "agent/fontDecrypt"
+      ],
+      "checks": [
+        "PDF/PPT/图书",
+        "讨论上下文和回复",
+        "字体混淆"
+      ]
+    },
+    {
+      "id": "host-coupling",
+      "repository": "客户端移除特判；通用能力保留宿主",
+      "entries": [
+        "agent/legacyWebsiteTools.ts",
+        "agent/finishGate.ts",
+        "agent/core/run.ts",
+        "browser/siteCapabilities.ts",
+        "src-tauri/src/app_browser.rs",
+        "src-tauri/src/cef/h264.rs"
+      ],
+      "checks": [
+        "动态工具注册",
+        "原生URL和导航规则迁出",
+        "通用证据与权限",
+        "生产包不含业务脚本"
+      ]
+    },
+    {
+      "id": "metadata-compatibility",
+      "repository": "客户端数据兼容",
+      "entries": [
+        "agent/websiteDefaults.ts",
+        "agent/websiteRepositoryManifest.ts",
+        "src-tauri/src/secret_vault.rs",
+        "public/browser-home"
+      ],
+      "checks": [
+        "默认安装策略",
+        "多域名和账号引用",
+        "旧数据迁移",
+        "导航图标元数据"
+      ],
+      "exception": "允许产品配置、品牌资源和旧数据转换；不允许夹带可执行站点规则"
+    }
+  ],
+  "files": {
+    "public/browser-home.html": {
+      "signals": 10
+    },
+    "src-tauri/src/app_browser.rs": {
+      "signals": 1
+    },
+    "src-tauri/src/cef/browser.rs": {
+      "signals": 18
+    },
+    "src-tauri/src/cef/browser/interaction.rs": {
+      "signals": 2
+    },
+    "src-tauri/src/cef/browser/tabs.rs": {
+      "signals": 1
+    },
+    "src-tauri/src/cef/locate.rs": {
+      "signals": 1
+    },
+    "src-tauri/src/cef_runtime.rs": {
+      "signals": 1
+    },
+    "src-tauri/src/commands/images.rs": {
+      "signals": 4
+    },
+    "src-tauri/src/secret_vault.rs": {
+      "signals": 35
+    },
+    "src/components/browser/BrowserSiteGraphPanel.vue": {
+      "signals": 1
+    },
+    "src/services/agent/activity.ts": {
+      "signals": 9
+    },
+    "src/services/agent/agentSkills.ts": {
+      "signals": 50
+    },
+    "src/services/agent/browserTools.ts": {
+      "signals": 1
+    },
+    "src/services/agent/campusPolicy.ts": {
+      "signals": 1
+    },
+    "src/services/agent/executeChatTool.ts": {
+      "signals": 3
+    },
+    "src/services/agent/hostCapabilities.ts": {
+      "signals": 1
+    },
+    "src/services/agent/siteAccounts.ts": {
+      "signals": 2
+    },
+    "src/services/agent/skillRuntime.ts": {
+      "signals": 20
+    },
+    "src/services/agent/skillTools.ts": {
+      "signals": 1
+    },
+    "src/services/agent/skills/builtinSkillAssets.ts": {
+      "signals": 1
+    },
+    "src/services/agent/skills/chaoxing.ts": {
+      "signals": 2,
+      "maxLines": 2
+    },
+    "src/services/agent/toolDefs/browserPrimitiveTools.ts": {
+      "signals": 1
+    },
+    "src/services/agent/toolDefs/campusTools.ts": {
+      "signals": 6
+    },
+    "src/services/agent/toolDefs/credentialTools.ts": {
+      "signals": 1
+    },
+    "src/services/agent/toolHandlers/campus.ts": {
+      "signals": 1
+    },
+    "src/services/agent/websiteDataMigration.ts": {
+      "signals": 6
+    },
+    "src/services/agent/websiteIcons.ts": {
+      "signals": 6
+    },
+    "src/services/agent/websiteIdentity.ts": {
+      "signals": 4
+    },
+    "src/services/agent/websiteRepository.ts": {
+      "signals": 17
+    },
+    "src/services/agent/websiteRepositoryGitHub.ts": {
+      "signals": 4
+    },
+    "src/services/agent/websiteRepositoryManifest.ts": {
+      "signals": 1
+    },
+    "src/services/agent/websiteRepositoryTarget.ts": {
+      "signals": 1
+    },
+    "src/services/agent/websiteSettings.ts": {
+      "signals": 5
+    },
+    "src/services/agent/websiteSkillTarget.ts": {
+      "signals": 2
+    },
+    "src/services/browser/appBrowser.ts": {
+      "signals": 1
+    },
+    "src/services/browser/engine/locate.ts": {
+      "signals": 1
+    },
+    "src/services/browser/siteCapabilities.ts": {
+      "signals": 1
+    },
+    "src/services/browser/siteGraph.ts": {
+      "signals": 7
+    },
+    "src/services/browser/siteGraphCore.ts": {
+      "signals": 15
+    },
+    "src/services/browser/siteGraphSave.ts": {
+      "signals": 3
+    },
+    "src/services/browser/videoWatch.ts": {
+      "signals": 1
+    },
+    "src/services/browser/videoWatchAgent.ts": {
+      "signals": 1
+    },
+    "src/services/model/runner.ts": {
+      "signals": 2
+    },
+    "src/utils/ui/agentIcons.ts": {
+      "signals": 1
+    },
+    "src/views/settings/AgentSettings.vue": {
+      "signals": 1
+    },
+    "src/views/settings/AgentSkillDetail.vue": {
+      "signals": 2
+    }
+  },
+  "removedFiles": [
+    "src/services/agent/agentBrowser.ts",
+    "src/services/agent/toolDiscovery.ts",
+    "src/services/agent/tools/websitePlayback.ts",
+    "src/services/agent/tools/zjoocAnswers.ts",
+    "src/services/platform/zjooc/paperBank.ts",
+    "src/services/agent/skills/campusBank.ts"
+  ]
+}

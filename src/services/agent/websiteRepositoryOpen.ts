@@ -1,4 +1,5 @@
-import { validateWebsiteTools, websiteHasSupportedTools } from './websiteToolDefinitions'
+import { validateWebsiteRuntime, verifyWebsiteRuntime } from './websiteRuntime/protocol'
+import { validateWebsiteTools } from './websiteToolDefinitions'
 import { ZERROR_OPEN_ORIGIN } from '../app/openApi'
 import { validateWebsiteSnapshot, type WebsiteSnapshot } from './websiteRepositoryCore'
 import { limitedJson, WebsiteRepositoryHttpError } from './websiteRepositoryGitHub'
@@ -76,8 +77,8 @@ async function fetchWebsiteExperience(
   request: typeof fetch,
   previous?: WebsiteSnapshot,
 ): Promise<WebsiteSnapshot> {
-  const needsTools = websiteHasSupportedTools(identity.host)
-  const revision = previous?.website && previous.icon && (!needsTools || previous.tools !== undefined) && commitSha.test(previous.revision) ? previous.revision : ''
+  const revision = previous?.website && previous.icon
+    && commitSha.test(previous.revision) ? previous.revision : ''
   const url = new URL(endpoint)
   if (revision) url.searchParams.set('revision', revision)
   const headers = previous ? { Accept: 'application/json' } : { Accept: 'application/json', 'Cache-Control': 'no-cache' }
@@ -115,13 +116,16 @@ async function fetchWebsiteExperience(
   if (website.host !== identity.host || (identity.id && website.id !== identity.id)) {
     throw new Error('响应中的网站标识或域名与当前网站不一致。')
   }
+  const runtime = data.runtime === undefined ? undefined : validateWebsiteRuntime(data.runtime, website.id)
+  if (runtime) await verifyWebsiteRuntime(runtime)
   const snapshot: WebsiteSnapshot = {
     revision: typeof data.revision === 'string' && data.revision.trim() && data.revision.length <= 128 ? data.revision : 'custom-http',
     files: data.files,
     website,
     icon: data.icon,
     checkedAt: Date.now(),
-    ...(data.tools !== undefined ? { tools: validateWebsiteTools(website.host, data.tools) } : {}),
+    ...(runtime ? { runtime } : {}),
+    ...(data.tools !== undefined || runtime ? { tools: validateWebsiteTools(website.host, data.tools, runtime, website.id) } : {}),
     ...(typeof data.scriptManifest === 'string' && data.scriptManifest.length <= 2048 ? { scriptManifest: data.scriptManifest } : {}),
   }
   validateWebsiteSnapshot(snapshot, website)

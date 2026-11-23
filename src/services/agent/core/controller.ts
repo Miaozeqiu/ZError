@@ -1,5 +1,6 @@
 import { assertBudget, browserMutation, classifyFailure, DEFAULT_RUN_LIMITS, interruptRun, observationTool, recoveryHint, traceRun, transitionRun, verifyOperation, type RunCheckpoint, type RunLimits, type RunStatus } from './run'
 import { isReadOnlyBrowserScript } from './scriptEffect'
+import { isWebsiteHostCommand } from '../websiteRuntime/protocol'
 export type CoreToolCall = { id: string; name: string; arguments: string }
 export type ToolMiddleware = { before?: (call: Readonly<CoreToolCall>) => void | Promise<void>; after?: (call: Readonly<CoreToolCall>, result: string) => void | Promise<void> }
 const object = (raw: string): Record<string, any> => { try { const value = JSON.parse(raw); return value && typeof value === 'object' && !Array.isArray(value) ? value : {} } catch { return {} } }
@@ -60,7 +61,10 @@ export const createRunController = (input: {
     context: () => `【宿主运行状态】${JSON.stringify({ runId: run.id, status: run.status, usage: run.usage, limits, needsObservation: run.needsObservation, unresolved: run.operations.filter(op => op.state === 'uncertain').map(op => ({ id: op.id, tool: op.tool, browserId: op.browserId })) })}`,
     execute: async (call: CoreToolCall, execute: (browserId?: string) => Promise<string>): Promise<string> => {
       if (input.signal.aborted) throw new DOMException('已停止', 'AbortError')
-      assertBudget(run, limits)
+      const internal = isWebsiteHostCommand(call.name)
+      // Deterministic package commands have their own invocation limit; one model tool
+      // must not consume hundreds of model-tool slots merely by reading a paper.
+      assertBudget(run, internal ? { ...limits, tools: Infinity } : limits)
       let browserId = input.browserId()
       if (call.name === 'browser_run_status') return JSON.stringify({ ok: true, run, tabs: input.browserTabs?.() || [], tokenAccounting: '输入为估算，输出优先使用服务回执；不包含计费金额。' })
       if (call.name === 'browser_select_tab') {
@@ -76,15 +80,16 @@ export const createRunController = (input: {
         return JSON.stringify({ ok: true, outcome: args.outcome, hint: args.outcome === 'completed' ? '不要重复已完成的操作。' : '页面证据已核对；仅在用户授权范围内重试。' })
       }
       const mutates = browserMutation(call.name) || (call.name === 'browser_eval' && !isReadOnlyBrowserScript(String(object(call.arguments).script || '')))
-      if ((mutates || call.name === 'browser_watch' || call.name === 'browser_course_plan' || (call.name === 'browser_finish' && object(call.arguments).status === 'done')) && run.needsObservation) return blocked('任务恢复后先读取当前页面或截图。学习通章节页可以用 browser_review_chapter。')
+      if ((mutates || call.name === 'browser_watch' || call.name === 'browser_course_plan' || (call.name === 'browser_finish' && object(call.arguments).status === 'done')) && run.needsObservation) return blocked('任务恢复后先读取当前页面、截图或仓库只读工具。')
       if ((mutates || (call.name === 'browser_finish' && object(call.arguments).status === 'done')) && run.operations.some(op => op.state === 'uncertain' || op.state === 'pending')) return blocked('存在结果不确定的网页操作。先观察原标签中的页面回执，再 browser_verify_operation；不可直接重试或声明完成。')
       if (mutates) {
         browserId = input.prepareBrowser ? await input.prepareBrowser() : browserId
         if (input.signal.aborted) throw new DOMException('已停止', 'AbortError')
         if (!browserId || browserId !== input.browserId()) return JSON.stringify({ ok: false, reason: 'invalid', error: '网页操作未执行：无法确认当前标签页，请重新读取页面。' })
       }
-      run.usage.tools++
-      const operationId = `${run.id}/operation/${run.usage.tools}`
+      if (internal) run.usage.hostCommands = (run.usage.hostCommands || 0) + 1
+      else run.usage.tools++
+      const operationId = `${run.id}/operation/${run.usage.tools}${internal ? '-host-' + run.usage.hostCommands : ''}`
       const op = mutates ? { id: operationId, tool: call.name, browserId, at: Date.now(), sequence: run.sequence + 1, state: 'pending' as const } : undefined
       if (op) {
         run.operations = run.operations.filter(item => item.state === 'uncertain' || item.state === 'pending' || item.at >= (run.observation?.at || 0)).slice(-80)
@@ -130,20 +135,11 @@ export const createRunController = (input: {
       if (failed) traceRun(run, 'failure', { tool: call.name, code: classifyFailure(result.error) })
       const hasObservation = call.name === 'browser_screenshot'
         ? typeof result.image === 'string' && result.image.startsWith('data:image/')
-        : (call.name === 'browser_login_chaoxing' || call.name === 'browser_login_zjooc')
-          ? result.ok === true && result.loggedIn === true
-        : call.name === 'browser_play_zjooc'
-          ? result.ok === true && (result.playbackEnded === true || (result.watching === true && result.playing === true))
-        : call.name === 'browser_review_chapter'
-          ? result.ok === true && typeof result.chapterKey === 'string'
-        : call.name === 'browser_review_homework'
-          ? result.ok === true && typeof result.assignment_id === 'string' && Array.isArray(result.questions) && result.questions.length > 0
-        : call.name === 'browser_review_chapter_discussion' || call.name === 'browser_reply_chapter_discussion'
-          ? result.ok === true && typeof result.chapterKey === 'string' && typeof result.discussion_id === 'string'
-        : call.name === 'browser_start_chapter_tasks'
-          ? result.ok === true && (result.courseComplete === true || result.chapterComplete === true)
+        : call.name === 'browser_package_read'
+          ? result.ok === true && ['query', 'media_read'].includes(String(object(call.arguments).action))
+        : /^browser_site_[a-z0-9_]+__[a-z][a-z0-9_]{0,23}$/.test(call.name)
+          ? result.ok === true && result.observed === true
           : typeof result.snapshot === 'string' && Boolean(result.snapshot.trim()) && !result.empty
-          && (!(call.name === 'browser_open_course' || call.name === 'browser_open_homework') || result.opened === true)
       if (!failed && observationTool(call.name) && hasObservation && browserId === input.browserId()) {
         run.needsObservation = false
         run.observation = { id: call.id, browserId: input.browserId(), at: Date.now(), sequence: run.sequence + 1 }

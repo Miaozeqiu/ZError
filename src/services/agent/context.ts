@@ -1,5 +1,5 @@
 import { isImageAttachment } from './folderTokens'
-import { messageHistoryText } from './modelHistory'
+
 import { browserWorkflowInstructions, buildAgentSystemPrompt } from './prompts'
 import { getEnabledSkillCatalog } from './agentSkills'
 import { getActiveAgentProfile } from './agentProfiles'
@@ -22,18 +22,6 @@ export const CONTEXT_KEEP_TOKENS = Math.floor(resolveContextBudget().target * 0.
 export const CONTEXT_KEEP_MIN_MESSAGES = 4
 export const CONTEXT_COMPACT_MIN_MESSAGES = 4
 const STUDY_PREFIX_SAMPLE = '【学习状态】当前对话挂着科目（subject_id=000）。掌握进度 00%，约 00 个知识点。讲解、出题、改图谱时默认用这个科目，不要另建同名科目。订正或复习错题时调用 list_recent_wrong_questions。\n\n'
-
-export const messagePlainText = (content: unknown) => {
-  if (typeof content === 'string') return content
-  if (Array.isArray(content)) {
-    return content.map((part) => {
-      if (typeof part === 'string') return part
-      if (part && typeof part === 'object' && 'text' in part) return String((part as { text?: unknown }).text || '')
-      return ''
-    }).join('\n')
-  }
-  return content == null ? '' : String(content)
-}
 
 let cachedToolSignature = ''
 let cachedToolTokens = 0

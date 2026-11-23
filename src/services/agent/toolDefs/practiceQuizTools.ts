@@ -28,14 +28,15 @@ export const PRACTICE_QUIZ_TOOLS = [
     type: 'function',
     function: {
       name: 'save_questions',
-      description: '把题目写入指定文件夹。用户要求保存、收录、导入题目时必须调用。一次不要超过 20 道，多的分批写入。不要编造用户没确认过的题目。',
+      description: '把题目写入指定文件夹。用户要求保存、收录、导入题目时必须调用。questions 每批 1–20 道；或传 run_file_script 的 result_id 自动保存全部解析结果（可取消、失败后用同一 result_id 续传）。两者只能传一个。无答案填空字符串，不要编造。以 complete 和 total_saved 核对是否完成。',
       parameters: {
         type: 'object',
         properties: {
-          folder_id: { type: 'integer', description: '文件夹 Id，默认 0' },
+          folder_id: { type: 'integer', description: '本地题库目标文件夹 Id；沿用上下文，未知时先查目录并自行选择或创建，不要求用户指定' },
           folder_name: { type: 'string', description: '文件夹名称，不知道 Id 时可用' },
+          result_id: { type: 'string', description: '当前会话 run_file_script 返回的解析结果，传此字段时不传 questions' },
           questions: {
-            type: 'array',
+            type: 'array', minItems: 1, maxItems: 20,
             items: {
               type: 'object',
               properties: {
@@ -56,7 +57,7 @@ export const PRACTICE_QUIZ_TOOLS = [
             },
           },
         },
-        required: ['questions'],
+        anyOf: [{ required: ['questions'] }, { required: ['result_id'] }],
       },
     },
   },

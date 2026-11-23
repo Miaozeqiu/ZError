@@ -1,11 +1,12 @@
+import { siteNavigationFor } from '../../src/services/browser/siteCapabilities'
 import { describe, expect, it, vi } from 'vitest'
-import { websiteToolNames } from '../../src/services/agent/websiteToolDefinitions'
 import { BROWSER_PRIMITIVE_TOOLS } from '../../src/services/agent/toolDefs/browserPrimitiveTools'
 import { dispatchBrowserTool } from '../../src/services/agent/browserTools'
 
 /** 这些名字在 executeChatTool 里分发，不进四个浏览器处理器。 */
 const handledOutside = new Set([
   'browser_site_graph',
+  'browser_workflows',
   'browser_todo',
   'browser_task',
   'read_agent_skill',
@@ -18,6 +19,7 @@ const handledOutside = new Set([
 const mockCtx = (name: string) => {
   const base: Record<string, unknown> = {
     name,
+    navigation: siteNavigationFor('https://example.com'),
     args: name === 'browser_wait' ? { until: 'idle', seconds: 1 } : {},
     browserId: 'b1',
     sessionId: 's1',
@@ -57,6 +59,7 @@ const mockCtx = (name: string) => {
   })
 }
 
+
 describe('浏览器工具都能分发', () => {
   it('导航交给浏览器后立即通知工作区，失败时不通知', async () => {
     const url = 'https://example.com/next'
@@ -64,9 +67,6 @@ describe('浏览器工具都能分发', () => {
     const onNavigation = vi.fn()
     const ctx = Object.assign(mockCtx('browser_navigate'), {
       args: { url },
-      sameChaoxingCourse: () => false,
-      isChaoxingIframeNavUrl: () => false,
-      isSpaceListTopUrl: () => false,
       resolveChaoxingLoginUrl: (target: string) => target,
       navigateBrowserView: navigate,
       evalBrowserView: async () => url,
@@ -84,7 +84,7 @@ describe('浏览器工具都能分发', () => {
   })
 
   it('注册过的 browser_* 不会回未知工具', async () => {
-    const names = [...BROWSER_PRIMITIVE_TOOLS.map((tool) => tool.function.name), ...websiteToolNames]
+    const names = [...BROWSER_PRIMITIVE_TOOLS.map((tool) => tool.function.name)]
       .filter((name) => name.startsWith('browser_') && !handledOutside.has(name))
     const unknown: string[] = []
     for (const name of names) {

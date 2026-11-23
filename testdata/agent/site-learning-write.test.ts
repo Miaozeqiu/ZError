@@ -1,6 +1,9 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 const api = vi.hoisted(() => ({ steps: [] as any[], read: vi.fn(), write: vi.fn(), saveFile: vi.fn(), approve: vi.fn(), policy: 'ask' }))
+vi.mock('../../src/services/agent/websiteRepositoryOpen', async original => ({
+  ...await original<typeof import('../../src/services/agent/websiteRepositoryOpen')>(), findOpenWebsite: async () => undefined,
+}))
 // These tool scenarios run after the user has installed the ZJOOC repository.
 vi.mock('../../src/services/agent/websiteRepository', async original => {
   const repo = await original<typeof import('../../src/services/agent/websiteRepository')>()
@@ -168,7 +171,7 @@ describe('站点 Skill 写入的真实工具入口', () => {
     expect(await run('新内容')).toMatchObject({ denied: true, id: 'site-learn', path })
     expect(api.write).not.toHaveBeenCalled()
   })
-  it('真实 finish 入口拦住漏检查，重复两次后只标记未保存，不再阻塞主任务', async () => {
+  it('真实 finish 入口无需学习声明或读取经验即可完成', async () => {
     vi.mocked(collectFinishEvidence).mockResolvedValue({ url: 'https://www.zjooc.cn/work' })
     vi.mocked(judgeFinish).mockReturnValue({ ok: true, status: 'done', summary: '任务已提交' })
     api.steps.push(...['browser_eval', 'browser_eval'].map((name, index) => ({
@@ -178,12 +181,7 @@ describe('站点 Skill 写入的真实工具入口', () => {
       call: { id: 'finish', name: 'browser_finish', arguments: JSON.stringify({ status: 'done', summary: '任务已提交' }) },
       ctx: { sessionId: 'chat', assistantId: 'answer', browserId: () => 'tab', abort: new AbortController().signal } as any,
     }))
-    for (let i = 0; i < 2; i++) {
-      const result = await finish()
-      expect(result).toMatchObject({ ok: false, finished: false, learningRequired: true })
-      api.steps.push({ id: `finish-${i}`, name: 'browser_finish', status: 'failed', result: JSON.stringify(result) })
-    }
-    expect(await finish()).toMatchObject({ ok: true, finished: true, learning: { decision: 'deferred' } })
+    expect(await finish()).toMatchObject({ ok: true, finished: true })
     expect(api.write).not.toHaveBeenCalled()
     expect(api.approve).not.toHaveBeenCalled()
   })

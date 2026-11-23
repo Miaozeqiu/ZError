@@ -132,3 +132,34 @@ describe('cloud website experience and local additions', () => {
     expect(legacy).toHaveBeenCalledOnce()
   })
 })
+
+it('旧缓存缺少运行包时禁用旧工具并恢复同步，保留本地笔记且不改写原缓存', async () => {
+  const cached: StoredWebsiteRepositoryDocument = { version:3, generation:7, migrated:true, supplement:'本地学习注记', upstream:{
+    ...snapshot(), etag:'stale-etag', tools:[{type:'function',function:{name:'old_tool'}}], scriptManifest:'old scripts',
+  } }
+  const original=structuredClone(cached)
+  const h=harness(cached), repo=h.create()
+  await repo.ready()
+  expect((await repo.read('SKILL.md')).content).toContain('本地学习注记')
+  expect(repo.inspect().upstream).toMatchObject({revision:'unloaded:1',checkedAt:0})
+  expect(repo.inspect().upstream.tools).toBeUndefined()
+  expect(repo.inspect().upstream.etag).toBeUndefined()
+  expect(repo.inspect().upstream.scriptManifest).toBeUndefined()
+  expect(h.disk()).toEqual(original)
+  await repo.refresh()
+  expect(h.download).toHaveBeenCalledWith(expect.objectContaining({revision:'unloaded:1'}))
+  expect((await repo.read('SKILL.md')).content).toContain('更新后的云端经验')
+  expect(repo.inspect().supplement).toBe('本地学习注记')
+})
+
+it('自定义来源的旧缓存也保留地址和笔记，离线时不暴露旧工具', async () => {
+  const cached: StoredWebsiteRepositoryDocument={version:3,generation:8,migrated:true,supplement:'个人笔记',upstream:snapshot(),customSource:{
+    url:'http://127.0.0.1:8817/experience.json',snapshot:{...snapshot(),tools:[{type:'function',function:{name:'old_custom_tool'}}]},
+  }}
+  const h=harness(cached),repo=h.create()
+  await repo.ready()
+  expect(repo.inspect().customSource).toMatchObject({url:cached.customSource!.url,snapshot:{revision:'unloaded:1',checkedAt:0}})
+  expect(repo.inspect().customSource!.snapshot.tools).toBeUndefined()
+  expect((await repo.read('SKILL.md')).content).toContain('个人笔记')
+  expect(h.disk()).toEqual(cached)
+})

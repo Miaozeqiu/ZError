@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createTaskCompletionCheck, currentTaskFinish, type CompletionStep } from '../../src/services/agent/taskCompletion'
+import { canReviewFinalReply, createTaskCompletionCheck, currentTaskFinish, type CompletionStep } from '../../src/services/agent/taskCompletion'
 import { applyBrowserTodo } from '../../src/services/agent/browserTodo'
 import type { AgentTodoItem } from '../../src/services/agent/chatTypes'
 
@@ -8,6 +8,17 @@ const step = (name: string, result: unknown = {}, id = name): CompletionStep => 
 const finish = (status = 'done') => step('browser_finish', { ok: true, finished: true, status })
 
 describe('task completion boundary', () => {
+  it('核对自然回复前排除等待、未通过的挑战、切换标签和失败的后续观察', () => {
+    const ok = step('browser_click', { ok: true })
+    for (const steps of [
+      [step('browser_login', { ok: true, loggedIn: false })],
+      [step('browser_play', { ok: true, watching: true })],
+      [ok, step('browser_select_tab', { ok: true })],
+      [ok, step('browser_get_page', { ok: false })],
+      [ok, step('browser_finish', { ok: false })],
+    ]) expect(canReviewFinalReply({ todos: [], steps })).toBe(false)
+    expect(canReviewFinalReply({ todos: [], steps: [ok, step('browser_get_page', { ok: true })] })).toBe(true)
+  })
   it('ordinary questions and read-only page questions can return without a finish tool', () => {
     for (const steps of [[], [step('web_search')], [step('browser_get_page')]]) {
       const check = createTaskCompletionCheck(() => ({ todos: [], steps }))

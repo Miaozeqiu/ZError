@@ -1,14 +1,16 @@
+import { createSkillGitHubInstaller } from './skills/skillGitHubInstaller'
+import { createSkillConfigStorage } from './skills/skillConfigStorage'
 import { redactNative } from '../security/secureStore'
 import { redactObject } from '../security/secretRedaction'
 import { reactive } from 'vue'
-import { createSkillMarkdown, normalizeLegacySkillMarkdown, parseSkillFrontmatter, prepareSkillMarkdown, validateSkillMarkdown } from './skillFormat'
+import { createSkillMarkdown, normalizeLegacySkillMarkdown, parseSkillFrontmatter, prepareSkillMarkdown } from './skillFormat'
 import { normalizeWebsiteHost, websitePrimaryHost } from './websiteIdentity'
 import { isBuiltinRuntimeSkillFile, WEBSITE_RUNTIME_FILE_HINT } from './skillRuntimeFiles'
 import { resolveWebsiteSkillTarget } from './websiteSkillTarget'
 import { ensureChaoxingRepository, listChaoxingRepositoryFiles, readChaoxingRepositoryFile,
   writeChaoxingRepositoryFile, websiteRepositoryState, onWebsiteRepositoryChanged, CHAOXING_REPOSITORY,
   websiteRepositoryHosts, listWebsiteRepositoryFiles, readWebsiteRepositoryFile, writeWebsiteRepositoryFile, writeWebsiteRepositorySupplement, repositoryForHost, websiteRepositoryStates, repositorySourceFor } from './websiteRepository'
-import { WEBSITE_REPOSITORY_READ_ONLY, websiteRepositoryTarget } from './websiteRepositoryTarget'
+import { WEBSITE_REPOSITORY_READ_ONLY, websiteRepositoryTarget, resolveWebsiteRepositoryTarget } from './websiteRepositoryTarget'
 import { repositoryPath as isRepositoryPath } from './websiteRepositoryCore'
 export { parseSkillFrontmatter } from './skillFormat'
 import {
@@ -20,90 +22,9 @@ const isParserScriptPath = (path: string) => (
 )
 import { CHAOXING_SKILL_DESCRIPTION } from './skills/chaoxing'
 
-export type SkillScope = 'browser' | 'learning' | 'both'
+import type { SkillScope, AgentSkillItem, SkillDocument, SkillFileContent, SkillConfigRow, SkillConfigFile, SkillMetaFile, BuiltinSkillDef, SkillCatalogEntry } from './skills/skillTypes'
+export type { SkillScope, AgentSkillItem, SkillDocument, SkillFileContent, SkillCatalogEntry } from './skills/skillTypes'
 
-export type AgentSkillItem = {
-  id: string
-  name: string
-  description: string
-  enabled: boolean
-  builtin: boolean
-  scope: SkillScope
-  customized?: boolean
-  source?: string
-  sourcePath?: string
-  installedAt?: number
-  updatedAt?: number
-}
-
-export type SkillDocument = {
-  id: string
-  name: string
-  description: string
-  markdown: string
-  builtin: boolean
-  customized: boolean
-  source?: string
-  sourcePath?: string
-  files?: string[]
-}
-
-export type SkillFileContent = {
-  id: string
-  path: string
-  content: string
-  readonly: boolean
-  repositoryVersion?: string
-}
-
-type SkillConfigRow = {
-  enabled?: boolean
-  source?: string
-  sourcePath?: string
-  installedAt?: number
-  updatedAt?: number
-}
-
-type SkillConfigFile = {
-  version: number
-  skills: Record<string, SkillConfigRow>
-}
-
-type SkillMetaFile = {
-  id: string
-  name: string
-  description: string
-  source: string
-  sourcePath: string
-  installedAt: number
-  updatedAt: number
-}
-
-type BuiltinSkillDef = {
-  name: string
-  description: string
-  triggerHint: string
-  defaultEnabled: boolean
-  scope: SkillScope
-  matchKeywords?: string[]
-  editable?: boolean
-}
-
-export type SkillCatalogEntry = {
-  id: string
-  name: string
-  description: string
-}
-
-export type SkillPromptBlock = {
-  id: string
-  triggerHint: string
-  prompt: string
-  preloaded?: boolean
-}
-
-const STORAGE_KEY = 'zerror-agent-skills'
-const CONFIG_FILE = 'agent-skills.json'
 const SKILLS_DIR = '.local/share/zerror/skills'
 const SKILL_OVERRIDES_DIR = '.local/share/zerror/skill-overrides'
 const SKILL_MAIN_FILE = 'SKILL.md'
@@ -196,7 +117,6 @@ export const agentSkillsState = reactive({
 let memoryConfig: SkillConfigFile = { version: 1, skills: {} }
 let fileReady = false
 
-const defaultConfig = (): SkillConfigFile => ({ version: 1, skills: {} })
 
 const migrateSkillConfig = (config: SkillConfigFile): SkillConfigFile => {
   const skills = { ...config.skills }
@@ -212,58 +132,7 @@ const migrateSkillConfig = (config: SkillConfigFile): SkillConfigFile => {
   return { ...config, skills }
 }
 
-const readLocal = (): SkillConfigFile => {
-  try {
-    const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}') as SkillConfigFile
-    if (!raw || typeof raw !== 'object') return defaultConfig()
-    return migrateSkillConfig({
-      version: Number(raw.version) || 1,
-      skills: raw.skills && typeof raw.skills === 'object' ? raw.skills : {},
-    })
-  } catch {
-    return defaultConfig()
-  }
-}
-
-const writeLocal = (config: SkillConfigFile) => {
-  memoryConfig = config
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(config))
-  } catch {
-    // quota
-  }
-}
-
-const persistFile = (config: SkillConfigFile) => {
-  void import('@tauri-apps/plugin-fs').then(async ({ writeTextFile, mkdir, BaseDirectory }) => {
-    await mkdir('.local/share/zerror', { baseDir: BaseDirectory.Home, recursive: true }).catch(() => undefined)
-    await writeTextFile(`.local/share/zerror/${CONFIG_FILE}`, JSON.stringify(config), {
-      baseDir: BaseDirectory.Home,
-    })
-  }).catch(() => undefined)
-}
-
-const loadFile = async (): Promise<SkillConfigFile> => {
-  try {
-    const { readTextFile, BaseDirectory } = await import('@tauri-apps/plugin-fs')
-    const raw = JSON.parse(await readTextFile(`.local/share/zerror/${CONFIG_FILE}`, {
-      baseDir: BaseDirectory.Home,
-    })) as SkillConfigFile
-    if (!raw || typeof raw !== 'object') return defaultConfig()
-    return migrateSkillConfig({
-      version: Number(raw.version) || 1,
-      skills: raw.skills && typeof raw.skills === 'object' ? raw.skills : {},
-    })
-  } catch {
-    return defaultConfig()
-  }
-}
-
-const saveConfig = (config: SkillConfigFile) => {
-  writeLocal(config)
-  persistFile(config)
-  syncState()
-}
+const { readLocal, writeLocal, persistFile, loadFile } = createSkillConfigStorage(migrateSkillConfig, config => { memoryConfig = config })
 
 const isEnabled = (id: string, row?: SkillConfigRow) => {
   if (typeof row?.enabled === 'boolean') return row.enabled
@@ -537,7 +406,7 @@ const readSkillBody = async (id: string): Promise<string> => {
 
 const buildItems = async (config: SkillConfigFile): Promise<AgentSkillItem[]> => {
   const items: AgentSkillItem[] = []
-  const hosts = await websiteRepositoryHosts()
+  const hosts = await websiteRepositoryHosts().catch(() => [])
   for (const [id, def] of Object.entries(BUILTIN_SKILLS)) {
     if (id === 'chaoxing' && !hosts.includes('chaoxing.com')) continue
     const row = config.skills[id]
@@ -616,33 +485,6 @@ void loadFile().then(async (file) => {
 }).catch(skillLoadFailed)
 void syncState().catch(skillLoadFailed)
 
-export const refreshAgentSkills = async () => {
-  await syncState()
-}
-
-export const setSkillEnabled = (id: string, enabled: boolean) => {
-  const config = { ...memoryConfig, skills: { ...memoryConfig.skills } }
-  config.skills[id] = {
-    ...config.skills[id],
-    enabled,
-    updatedAt: Date.now(),
-  }
-  saveConfig(config)
-}
-
-export const uninstallSkill = async (id: string) => {
-  if (BUILTIN_SKILLS[id]) return
-  try {
-    const { remove, BaseDirectory } = await import('@tauri-apps/plugin-fs')
-    await remove(`${SKILLS_DIR}/${id}`, { baseDir: BaseDirectory.Home, recursive: true })
-  } catch {
-    // ignore
-  }
-  const config = { ...memoryConfig, skills: { ...memoryConfig.skills } }
-  delete config.skills[id]
-  saveConfig(config)
-}
-
 const promptCache = new Map<string, string>()
 
 const fallbackBuiltinItems = (): AgentSkillItem[] => (
@@ -679,37 +521,6 @@ export const getEnabledSkillCatalog = (scope?: AgentKindScope, allowedIds?: stri
   }))
 )
 
-const skillKeywords = (item: AgentSkillItem) => {
-  const builtin = BUILTIN_SKILLS[item.id]
-  const fromDesc = String(item.description || '')
-    .split(/[\s，。；、/|]+/)
-    .map((part) => part.trim())
-    .filter((part) => part.length >= 2)
-  const fromName = String(item.name || '').trim()
-  const fromId = item.id.replace(/-/g, ' ')
-  return [...(builtin?.matchKeywords || []), fromName, fromId, ...fromDesc]
-}
-
-const scoreSkill = (item: AgentSkillItem, text: string) => {
-  const hay = String(text || '').toLowerCase()
-  if (!hay.trim()) return 0
-  let score = 0
-  for (const keyword of skillKeywords(item)) {
-    const key = keyword.trim().toLowerCase()
-    if (key.length < 2) continue
-    if (hay.includes(key)) score += key.length >= 4 ? 3 : 2
-  }
-  return score
-}
-
-export const matchSkillsForText = (text: string, limit = 2) => {
-  const ranked = getEnabledSkillItems()
-    .map((item) => ({ id: item.id, score: scoreSkill(item, text) }))
-    .filter((row) => row.score >= 2)
-    .sort((a, b) => b.score - a.score)
-  return ranked.slice(0, limit).map((row) => row.id)
-}
-
 export const getSkillPromptBlock = async (item: AgentSkillItem): Promise<{ triggerHint: string; prompt: string } | null> => {
   const builtin = BUILTIN_SKILLS[item.id]
   if (builtin) {
@@ -744,24 +555,6 @@ export const getSkillPromptBlock = async (item: AgentSkillItem): Promise<{ trigg
     triggerHint: item.description ? `当符合以下条件时使用：${item.description}` : '按下面 Skill 说明执行。',
     prompt: `\n${body}\n`,
   }
-}
-
-export const getSkillPromptBlocksByIds = async (ids: string[]): Promise<SkillPromptBlock[]> => {
-  const enabled = getEnabledSkillItems()
-  const blocks: SkillPromptBlock[] = []
-  for (const id of ids) {
-    const item = enabled.find((row) => row.id === id)
-    if (!item) continue
-    const block = await getSkillPromptBlock(item)
-    if (!block) continue
-    blocks.push({
-      id: item.id,
-      triggerHint: block.triggerHint,
-      prompt: block.prompt,
-      preloaded: true,
-    })
-  }
-  return blocks
 }
 
 export const skillSurfaceFiles = (files: string[]) => files.filter((path) => {
@@ -852,8 +645,8 @@ export const readAgentSkillFileContent = async (id: string, relativePath: string
   if (!item) return null
   const path = normalizeSkillRelativePath(relativePath)
   if (!path) return null
-  await websiteRepositoryHosts()
-  const repository = websiteRepositoryTarget(id, path)
+  // 通用 Skill 不依赖任何网站仓库的加载或缓存状态。
+  const repository = await resolveWebsiteRepositoryTarget(id, path)
   if (repository) {
     if (!isRepositoryPath(repository.path)) return null
     const file = await readWebsiteRepositoryFile(repository.host, repository.path)
@@ -943,7 +736,7 @@ export const writeAgentSkillFileContent = async (id: string, relativePath: strin
   }
   try {
     const changed = await saveSkillFileContent(id, path, text, { repositoryVersion, agentWrite: true })
-    if (changed === false) return { ok: true, id, path, unchanged: true, hint: '没有新增本地经验；收尾使用 covered。' }
+    if (changed === false) return { ok: true, id, path, unchanged: true, hint: '本地经验内容未变化。' }
     const files = await listSkillFiles(id)
     return {
       ok: true,
@@ -1019,8 +812,7 @@ export const getSkillFileContent = async (id: string, relativePath: string): Pro
   if (!item) return null
   const path = normalizeSkillRelativePath(relativePath || SKILL_MAIN_FILE)
   if (!path) return null
-  await websiteRepositoryHosts()
-  const repository = websiteRepositoryTarget(id, path)
+  const repository = await resolveWebsiteRepositoryTarget(id, path)
   if (repository) {
     if (!isRepositoryPath(repository.path)) return null
     const file = await readWebsiteRepositoryFile(repository.host, repository.path)
@@ -1057,8 +849,7 @@ export const saveSkillFileContent = async (id: string, relativePath: string, con
   if (writeError) throw new Error(writeError)
   if (isParserScriptPath(path)) throw new Error('不要写解析脚本。把步骤写进 sites/<主网站域名>/SKILL.md。')
   const text = String(await redactNative(redactObject(String(content ?? ''))))
-  await websiteRepositoryHosts()
-  const repository = websiteRepositoryTarget(id, path)
+  const repository = await resolveWebsiteRepositoryTarget(id, path)
   if (repository && options?.agentWrite) {
     if (repository.path !== SKILL_MAIN_FILE) throw new Error(WEBSITE_REPOSITORY_READ_ONLY)
     if (!options.repositoryVersion) throw new Error('请先读取本站 SKILL.md，并将 repository_version 填入 base_version。')
@@ -1189,8 +980,7 @@ export const resetSkillFileContent = async (id: string, relativePath: string, op
   if (!path) throw new Error('无效的文件路径')
   const writeError = skillFileWriteError(id, relativePath || SKILL_MAIN_FILE)
   if (writeError) throw new Error(writeError)
-  await websiteRepositoryHosts()
-  const repository = websiteRepositoryTarget(id, path)
+  const repository = await resolveWebsiteRepositoryTarget(id, path)
   if (repository && options?.agentWrite) throw new Error(WEBSITE_REPOSITORY_READ_ONLY)
   if (repository && id !== 'chaoxing') {
     await repositoryForHost(repository.host).reset(repository.path)
@@ -1220,234 +1010,11 @@ export const resetSkillFileContent = async (id: string, relativePath: string, op
   }
 }
 
-/** @deprecated 使用 getEnabledSkillCatalog + getSkillPromptBlocksByIds */
-export const getEnabledSkillPromptBlocks = async () => {
-  const enabled = getEnabledSkillItems()
-  const blocks: { triggerHint: string; prompt: string }[] = []
-  for (const item of enabled) {
-    const block = await getSkillPromptBlock(item)
-    if (block) blocks.push(block)
-  }
-  return blocks
-}
+const { installSkillFromGitHub, writeInstalledSkillMeta } = createSkillGitHubInstaller({
+  state: agentSkillsState, getConfig: () => memoryConfig,
+  persist: config => { memoryConfig = config; writeLocal(config); persistFile(config) },
+  readSkillMeta, isBuiltin: id => Boolean(BUILTIN_SKILLS[id]),
+  invalidatePrompt: id => promptCache.delete(id), refresh: syncState,
+})
 
-const httpFetch = async (url: string) => {
-  try {
-    const { fetch } = await import('@tauri-apps/plugin-http')
-    const res = await fetch(url, { method: 'GET' })
-    if (!res.ok) throw new Error(`${res.status}`)
-    return await res.text()
-  } catch {
-    const res = await globalThis.fetch(url)
-    if (!res.ok) throw new Error(`${res.status}`)
-    return await res.text()
-  }
-}
-
-const httpFetchJson = async <T,>(url: string): Promise<T> => {
-  const text = await httpFetch(url)
-  return JSON.parse(text) as T
-}
-
-type GitHubContentEntry = {
-  name: string
-  path: string
-  type: 'file' | 'dir'
-  download_url: string | null
-}
-
-const parseGitHubInput = (input: string) => {
-  const raw = String(input || '').trim()
-  if (!raw) return null
-
-  const urlMatch = raw.match(/github\.com\/([^/\s]+)\/([^/\s]+)(?:\/tree\/[^/]+\/(.+))?/i)
-  if (urlMatch) {
-    const owner = urlMatch[1]
-    const repo = urlMatch[2].replace(/\.git$/i, '')
-    const subPath = urlMatch[3]?.replace(/\/SKILL\.md$/i, '') || ''
-    if (subPath) {
-      const parts = subPath.split('/').filter(Boolean)
-      const skillName = parts[parts.length - 1]
-      const base = parts.slice(0, -1).join('/')
-      return { owner, repo, skillName, basePath: base || '.agents/skills' }
-    }
-    return { owner, repo, skillName: '', basePath: '.agents/skills' }
-  }
-
-  const slash = raw.replace(/^github:/i, '').split('/').filter(Boolean)
-  if (slash.length >= 2) {
-    const owner = slash[0]
-    const repo = slash[1].replace(/\.git$/i, '')
-    if (slash.length >= 3) {
-      return { owner, repo, skillName: slash[slash.length - 1], basePath: slash.slice(2, -1).join('/') || '.agents/skills' }
-    }
-    return { owner, repo, skillName: '', basePath: '.agents/skills' }
-  }
-  return null
-}
-
-const resolveSkillRoots = async (owner: string, repo: string, basePath: string) => {
-  const candidates = [basePath, '.agents/skills', '.claude/skills', 'skills'].filter((value, index, arr) => value && arr.indexOf(value) === index)
-  for (const candidate of candidates) {
-    try {
-      const url = `https://api.github.com/repos/${owner}/${repo}/contents/${candidate}`
-      const entries = await httpFetchJson<GitHubContentEntry[]>(url)
-      if (Array.isArray(entries) && entries.length) {
-        return { root: candidate, entries: entries.filter((entry) => entry.type === 'dir') }
-      }
-    } catch {
-      // try next
-    }
-  }
-  return { root: basePath, entries: [] as GitHubContentEntry[] }
-}
-
-const writeInstalledSkillMeta = async (id: string, meta: SkillMetaFile) => {
-  const { writeTextFile, mkdir, BaseDirectory } = await import('@tauri-apps/plugin-fs')
-  const dir = getInstalledSkillDir(id)
-  await mkdir(dir, { baseDir: BaseDirectory.Home, recursive: true })
-  await writeTextFile(`${dir}/${SKILL_META_FILE}`, JSON.stringify(meta, null, 2), { baseDir: BaseDirectory.Home })
-}
-
-const writeInstalledSkill = async (payload: {
-  id: string
-  files: Array<{ relativePath: string; content: string }>
-  meta: SkillMetaFile
-}) => {
-  const { writeTextFile, mkdir, remove, BaseDirectory } = await import('@tauri-apps/plugin-fs')
-  const dir = getInstalledSkillDir(payload.id)
-  await remove(dir, { baseDir: BaseDirectory.Home, recursive: true }).catch(() => undefined)
-  await mkdir(dir, { baseDir: BaseDirectory.Home, recursive: true })
-  for (const file of payload.files) {
-    const path = normalizeSkillRelativePath(file.relativePath)
-    if (!path || path === SKILL_META_FILE) continue
-    const full = `${dir}/${path}`
-    const parent = full.split('/').slice(0, -1).join('/')
-    if (parent !== dir) await mkdir(parent, { baseDir: BaseDirectory.Home, recursive: true })
-    await writeTextFile(full, file.content, { baseDir: BaseDirectory.Home })
-  }
-  await writeInstalledSkillMeta(payload.id, payload.meta)
-  promptCache.delete(payload.id)
-}
-
-const listGitHubContentsRecursive = async (
-  owner: string,
-  repo: string,
-  dirPath: string,
-): Promise<GitHubContentEntry[]> => {
-  const url = `https://api.github.com/repos/${owner}/${repo}/contents/${dirPath}`
-  let entries: GitHubContentEntry[]
-  try {
-    entries = await httpFetchJson<GitHubContentEntry[]>(url)
-  } catch {
-    return []
-  }
-  if (!Array.isArray(entries)) return []
-  const files: GitHubContentEntry[] = []
-  for (const entry of entries) {
-    if (entry.type === 'file') files.push(entry)
-    else if (entry.type === 'dir') {
-      files.push(...await listGitHubContentsRecursive(owner, repo, entry.path))
-    }
-  }
-  return files
-}
-
-const installOneSkillFromRepo = async (
-  owner: string,
-  repo: string,
-  root: string,
-  skillDirName: string,
-) => {
-  const remotePrefix = `${root}/${skillDirName}`.replace(/\/+/g, '/')
-  const remoteFiles = await listGitHubContentsRecursive(owner, repo, remotePrefix)
-  if (!remoteFiles.length) throw new Error(`目录 ${skillDirName} 为空`)
-
-  const prefix = `${remotePrefix}/`
-  const downloaded: Array<{ relativePath: string; content: string }> = []
-  let markdown = ''
-
-  for (const entry of remoteFiles) {
-    const relativePath = entry.path.startsWith(prefix) ? entry.path.slice(prefix.length) : entry.name
-    if (!relativePath || relativePath === SKILL_META_FILE || !isTextSkillFile(relativePath)) continue
-    const url = entry.download_url || `https://raw.githubusercontent.com/${owner}/${repo}/HEAD/${entry.path}`
-    const content = await httpFetch(url)
-    if (new TextEncoder().encode(content).length > MAX_SKILL_FILE_BYTES) throw new Error(`${relativePath} 超过文件大小限制`)
-    downloaded.push({ relativePath, content })
-    if (relativePath === SKILL_MAIN_FILE) markdown = content
-  }
-
-  if (!markdown) throw new Error(`${skillDirName} 缺少 SKILL.md`)
-
-  const parsed = parseSkillFrontmatter(markdown)
-  const errors = validateSkillMarkdown(markdown, skillDirName)
-  if (errors.length) throw new Error(`${skillDirName}: ${errors.join('；')}`)
-  const id = skillDirName
-  if (BUILTIN_SKILLS[id]) throw new Error(`不能覆盖内置 Skill：${id}`)
-  const existing = await readSkillMeta(id)
-  if (existing && (existing.source !== `${owner}/${repo}` || existing.sourcePath !== remotePrefix)) {
-    throw new Error(`Skill ID ${id} 已被其他来源使用`)
-  }
-  const now = Date.now()
-  const meta: SkillMetaFile = {
-    id,
-    name: parsed.displayName || skillDirName,
-    description: parsed.description || '',
-    source: `${owner}/${repo}`,
-    sourcePath: remotePrefix,
-    installedAt: now,
-    updatedAt: now,
-  }
-  await writeInstalledSkill({ id, files: downloaded, meta })
-  const config = { ...memoryConfig, skills: { ...memoryConfig.skills } }
-  config.skills[id] = {
-    ...config.skills[id],
-    enabled: config.skills[id]?.enabled ?? true,
-    source: meta.source,
-    sourcePath: meta.sourcePath,
-    installedAt: now,
-    updatedAt: now,
-  }
-  memoryConfig = config
-  writeLocal(memoryConfig)
-  persistFile(memoryConfig)
-  return id
-}
-
-export const installSkillFromGitHub = async (input: string) => {
-  agentSkillsState.installError = ''
-  agentSkillsState.installing = true
-  try {
-    const parsed = parseGitHubInput(input)
-    if (!parsed) throw new Error('请输入 owner/repo 或 GitHub 链接')
-
-    const installed: string[] = []
-    if (parsed.skillName) {
-      const base = parsed.basePath.replace(/\/$/, '')
-      const id = await installOneSkillFromRepo(parsed.owner, parsed.repo, base, parsed.skillName)
-      installed.push(id)
-    } else {
-      const { root, entries } = await resolveSkillRoots(parsed.owner, parsed.repo, parsed.basePath)
-      if (!entries.length) throw new Error('仓库里没找到 .agents/skills、.claude/skills 或 skills 目录')
-      const failures: string[] = []
-      for (const entry of entries) {
-        try {
-          const id = await installOneSkillFromRepo(parsed.owner, parsed.repo, root, entry.name)
-          installed.push(id)
-        } catch (error) {
-          failures.push(error instanceof Error ? error.message : `${entry.name} 安装失败`)
-        }
-      }
-      if (!installed.length) throw new Error(failures.join('\n') || '未能安装任何 Skill，请检查仓库结构')
-      agentSkillsState.installError = failures.join('\n')
-    }
-    await syncState()
-    return installed
-  } catch (error) {
-    const message = error instanceof Error ? error.message : '安装失败'
-    agentSkillsState.installError = message
-    throw error
-  } finally {
-    agentSkillsState.installing = false
-  }
-}
+export { installSkillFromGitHub }

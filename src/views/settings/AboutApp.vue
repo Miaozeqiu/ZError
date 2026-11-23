@@ -196,6 +196,7 @@
 </template>
 
 <script setup lang="ts">
+
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 
 type CSSProperties = Record<string, string>
@@ -673,15 +674,6 @@ onBeforeUnmount(() => {
     heatmapResizeFrame = 0
   }
 })
-
-const formatDateTime = (timestamp: number) => {
-  return new Date(timestamp).toLocaleString('zh-CN', {
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit'
-  })
-}
 
 const formatDateLabel = (dateKey: string) => {
   return parseDateKey(dateKey).toLocaleDateString('zh-CN', {

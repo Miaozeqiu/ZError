@@ -67,6 +67,7 @@ export type AgentTranscriptItem = {
 }
 
 export interface AgentChatMessage {
+  importTemplateOffers?: import('./importTemplateTypes').ImportTemplateOffer[]
   run?: import('./core/run').RunCheckpoint
   skillEvidence?: import('./core/experience').ExperienceEvidence[]
 

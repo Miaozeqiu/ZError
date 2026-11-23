@@ -1,19 +1,18 @@
+import type { WatchBindings } from '../agent/core/watchEvents'
 /** 原生 video 监测叫醒同一会话。不要走学习通配方。 */
-import { hasAgentWait, wakeAgentWait } from '../agent/agentWait'
+import { hasAgentWait, wakeAgentWait } from '../agent/core/waitEvents'
 import {
   formatNativeClock,
+  nativeWatchFor,
   setNativeWatchHandler,
   type NativeWatchCheck,
   type NativeWatchKind,
 } from './videoWatch'
 
-type WatchNotify = (
-  sessionId: string,
-  display: string,
-  modelText: string,
-) => void
-type WatchGate = (sessionId: string) => 'missing' | 'busy' | 'ready'
+type WatchNotify = WatchBindings['notify']
+type WatchGate = WatchBindings['gate']
 
+let watchGeneration = 0
 let notifyWatchImpl: WatchNotify | null = null
 let sessionGateImpl: WatchGate | null = null
 const queuedWatchChecks = new Map<string, NativeWatchCheck>()
@@ -79,8 +78,15 @@ export const setCourseWatchConsumer = (
   consumeCourseWatch = consumer
 }
 
+const currentCheck = (check: NativeWatchCheck) => {
+  const live = nativeWatchFor(check.browserId)
+  if (!live || live.sessionId !== check.sessionId || live.startedAt !== check.status.startedAt || live.watchId !== check.status.watchId) return false
+  if (check.kind === 'done') return live.ended || live.status === 'done'
+  if (check.kind === 'stalled') return !live.ended && live.current <= check.status.current + 0.25
+  return true
+}
 const enqueueWatchCheck = (check: NativeWatchCheck) => {
-  if (!check.sessionId) return
+  if (!check.sessionId || !currentCheck(check)) return
   const gate = sessionGateImpl?.(check.sessionId) || 'missing'
   const defer = shouldDeferWatchNotify(gate, hasAgentWait(check.sessionId))
   if (defer === 'drop') return
@@ -113,6 +119,7 @@ export const flushNativeWatchAfterTurn = (sessionId: string) => {
   const queued = queuedWatchChecks.get(sessionId)
   if (!queued) return
   queuedWatchChecks.delete(sessionId)
+  if (!currentCheck(queued)) return
   if (hasAgentWait(sessionId)) {
     wakeAgentWait(sessionId, {
       reason: 'watch',
@@ -122,14 +129,21 @@ export const flushNativeWatchAfterTurn = (sessionId: string) => {
     })
     return
   }
-  window.setTimeout(() => enqueueWatchCheck(queued), 0)
+  const generation = watchGeneration
+  window.setTimeout(() => { if (generation === watchGeneration) enqueueWatchCheck(queued) }, 0)
 }
 
-export const bindNativeWatchAgent = (input: {
-  notify: WatchNotify
-  gate: WatchGate
-}) => {
+export const bindNativeWatchAgent = (input: WatchBindings) => {
+  const generation = ++watchGeneration
   notifyWatchImpl = input.notify
   sessionGateImpl = input.gate
   setNativeWatchHandler(enqueueWatchCheck)
+  return () => {
+    if (generation !== watchGeneration) return
+    watchGeneration++
+    notifyWatchImpl = null
+    sessionGateImpl = null
+    queuedWatchChecks.clear()
+    setNativeWatchHandler(null)
+  }
 }

@@ -1,0 +1,137 @@
+{
+  "schemaVersion": 1,
+  "features": [
+    {
+      "id": "settings",
+      "name": "设置、模型配置与并发持久化",
+      "tests": [
+        "testdata/cli/document-persistence.test.ts",
+        "testdata/cli/managers.test.ts",
+        "testdata/model/config-vision.test.ts",
+        "testdata/release/settings.test.ts"
+      ]
+    },
+    {
+      "id": "questions",
+      "name": "题库、答题查询与搜索",
+      "tests": [
+        "testdata/answer/",
+        "testdata/mcp/",
+        "testdata/cli/commands.test.ts"
+      ]
+    },
+    {
+      "id": "data-round-trip",
+      "name": "题库导入导出、练习评分与学习统计",
+      "tests": [
+        "testdata/release/data-flows.test.ts",
+        "testdata/agent/quiz-explain.test.ts",
+        "testdata/agent/file-reading.test.ts",
+        "testdata/agent/data-script.test.ts",
+        "testdata/agent/question-file-import.test.ts",
+        "testdata/agent/data-script-worker.test.ts",
+        "testdata/agent/import-templates.test.ts",
+        "testdata/agent/import-template-ui.test.ts",
+        "testdata/agent/import-template-refresh.test.ts",
+        "testdata/agent/import-template-sources.test.ts",
+        "testdata/build/data-script-worker.test.ts"
+      ]
+    },
+    {
+      "id": "agent",
+      "name": "Agent 回合、停止、恢复与任务归属",
+      "tests": [
+        "testdata/agent/run-core.test.ts",
+        "testdata/agent/task-completion.test.ts",
+        "testdata/agent/runtime-lifecycle.test.ts",
+        "testdata/cli/tasks.test.ts",
+        "testdata/agent/file-drop.test.ts",
+        "testdata/agent/composer-attachments.test.ts",
+        "testdata/agent/website-tool-validation.test.ts"
+      ]
+    },
+    {
+      "id": "browser",
+      "name": "浏览器、iframe、定位、媒体与观察",
+      "tests": [
+        "testdata/browser/",
+        "testdata/e2e/"
+      ]
+    },
+    {
+      "id": "campus",
+      "name": "校园题库、课程与上传编辑权限",
+      "tests": [
+        "testdata/agent/campus-course.test.ts",
+        "testdata/agent/agent-behavior-settings.test.ts"
+      ]
+    },
+    {
+      "id": "websites",
+      "name": "Open 网站包分发、安装、更新与权限",
+      "tests": [
+        "testdata/agent/website-runtime-open.test.ts",
+        "testdata/agent/website-runtime-services.test.ts",
+        "testdata/agent/website-repository-registry.test.ts",
+        "testdata/agent/layer-boundary.test.ts"
+      ]
+    },
+    {
+      "id": "credentials",
+      "name": "登录输入、凭据隔离、脱敏与授权",
+      "tests": [
+        "testdata/security/",
+        "testdata/agent/agent-approval.test.ts",
+        "testdata/agent/chat-login.test.ts"
+      ]
+    },
+    {
+      "id": "models",
+      "name": "模型协议、流式输出、重试与上下文",
+      "tests": [
+        "testdata/model/"
+      ]
+    },
+    {
+      "id": "workspace",
+      "name": "导航、对话和工作区交互",
+      "tests": [
+        "testdata/ui/",
+        "testdata/agent/browser-home-shortcuts.test.ts",
+        "testdata/agent/agent-browser-pane.test.ts"
+      ]
+    },
+    {
+      "id": "updates",
+      "name": "更新下载、安装及重启决策",
+      "tests": [
+        "testdata/ui/app-update.test.ts",
+        "testdata/scripts/tauri-cli.test.ts",
+        "testdata/scripts/macos-signing.test.ts"
+      ]
+    },
+    {
+      "id": "rendering",
+      "name": "图表、Markdown 资源及构建兼容",
+      "tests": [
+        "testdata/build/",
+        "testdata/ui/thread-code-highlight.test.ts"
+      ]
+    },
+    {
+      "id": "cli",
+      "name": "CLI 协议、参数、持久化和任务等待",
+      "tests": [
+        "testdata/cli/"
+      ]
+    }
+  ],
+  "manual": [
+    "各系统首次安装、升级安装、卸载，以及旧版数据迁移",
+    "真实签名更新包：下载、点击更新并重启、版本与数据保留（包括 macOS）",
+    "真实网站账号登录、验证码识别、播放与下一节，确认网站仓库自身测试通过",
+    "系统凭据弹窗的允许、拒绝和取消；Linux polkit 取消及 AppImage 从原包重启",
+    "PDF/PPT/图书导入导出、校园题库远程服务，以及真实供应商连接",
+    "缩放、拖拽、深浅色、显示器切换和长时间运行的内存观察"
+  ]
+}

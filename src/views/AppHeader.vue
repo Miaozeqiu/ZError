@@ -123,6 +123,7 @@
 </template>
 
 <script setup lang="ts">
+
 import { ref, onMounted, computed, onUnmounted } from 'vue'
 import HeaderTutorialStepper from './appHeader/HeaderTutorialStepper.vue'
 import AgentPaneSwitcher from './agentChat/AgentPaneSwitcher.vue'

@@ -5,8 +5,8 @@ import { recipeForPage } from '../../src/services/agent/browserLoop'
 describe('cardRecipe', () => {
   it('未知页看快照，走通后写 SKILL', () => {
     const text = recipeForPage({ kind: 'unknown', siteId: 'demo' })
-    expect(text).toContain('快照')
-    expect(text).toContain('SKILL.md')
+    expect(text).toContain('仓库工具')
+    expect(text).toContain('ref')
     expect(text).not.toContain('see.json')
     expect(text).not.toContain('browser_invoke')
   })
@@ -14,7 +14,7 @@ describe('cardRecipe', () => {
   it('播放页按 iframe 分段点指定那条', () => {
     const text = recipeForPage({ kind: 'player', siteId: 'demo', intent: 'play' })
     expect(text).toContain('iframe')
-    expect(text).toContain('browser_watch')
+    expect(text).toContain('仓库工作流')
     expect(text).not.toContain('see.player.json')
   })
 })

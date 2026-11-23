@@ -1,7 +1,4 @@
 import { readFile } from '@tauri-apps/plugin-fs';
-import * as XLSX from 'xlsx';
-// @ts-ignore
-import mammoth from 'mammoth';
 
 export async function readFileText(path: string): Promise<string> {
   try {
@@ -48,7 +45,7 @@ export async function readExcelHeaders(path: string): Promise<string[]> {
 
 export async function readExcelRange(path: string, start: number, end: number): Promise<{ data: string[][], total: number }> {
   try {
-    const data = await readFile(path);
+    const [XLSX, data] = await Promise.all([import('xlsx'), readFile(path)]);
     const workbook = XLSX.read(data, { type: 'array' });
     const sheetName = workbook.SheetNames[0];
     if (!sheetName) return { data: [], total: 0 };
@@ -76,7 +73,7 @@ export async function readExcelRange(path: string, start: number, end: number): 
 
 export async function readDocxRange(path: string, start: number, end: number): Promise<{ data: string[], total: number }> {
   try {
-    const data = await readFile(path);
+    const [{ default: mammoth }, data] = await Promise.all([import('mammoth'), readFile(path)]);
     // mammoth extractRawText returns a promise with value
     const arrayBuffer = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
     const result = await mammoth.extractRawText({ arrayBuffer: arrayBuffer });

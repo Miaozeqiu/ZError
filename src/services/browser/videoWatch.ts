@@ -20,6 +20,7 @@ export type NativeVideoTick = {
 export type NativeWatchStatus = 'watching' | 'paused' | 'stalled' | 'done' | 'lost'
 
 export type NativeWatchState = {
+  watchId?: number
   browserId: string
   sessionId: string
   title: string
@@ -65,11 +66,12 @@ const LIVE_MS = 200
 const POLL_MS = 1000
 const INTERPOLATE_MS = 12_000
 
+let nextWatchId = 0
 const nativeWatches = ref<Record<string, NativeWatchState>>({})
 const scopedReaders = new Map<string, () => Promise<NativeVideoTick | null>>()
 const timers = new Map<string, number[]>()
 const inFlight = new Set<string>()
-const generations = new Map<string, number>()
+const generations = new Map<string, symbol>()
 const lastProgressAt = new Map<string, number>()
 const lastSeenAt = new Map<string, number>()
 const pausedAt = new Map<string, number>()
@@ -153,7 +155,7 @@ const patchWatch = (browserId: string, patch: Partial<NativeWatchState>) => {
 }
 
 const clearTimers = (browserId: string) => {
-  generations.set(browserId, (generations.get(browserId) || 0) + 1)
+  generations.delete(browserId)
   for (const timer of timers.get(browserId) || []) clearIntervalOf(timer)
   timers.delete(browserId)
   inFlight.delete(browserId)
@@ -350,6 +352,7 @@ export const startNativeWatch = (
   const prev = nativeWatches.value[id]
   const resume = Boolean(opts?.resume && prev)
   clearTimers(id)
+  generations.set(id, Symbol())
   if (opts?.readTick) scopedReaders.set(id, opts.readTick)
   else scopedReaders.delete(id)
   if (!resume) {
@@ -364,6 +367,7 @@ export const startNativeWatch = (
   const current = Math.max(0, Number(seed?.current) || 0)
   const done = Boolean(seed?.ended)
   const state: NativeWatchState = {
+    watchId: ++nextWatchId,
     browserId: id,
     sessionId: sid,
     title: String(seed?.title || prev?.title || '').trim(),

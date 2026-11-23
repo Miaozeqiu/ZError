@@ -15,10 +15,6 @@ export type CachedPageSnap = {
 const snaps = new Map<string, CachedPageSnap>()
 let genSeq = 0
 const activeGen = new Map<string, number>()
-const abandoned = new Set<string>()
-
-const genKey = (id: string, gen: number) => `${id}:${gen}`
-
 /** 快照编号变化不是页面内容变化。保留勾选、禁用、文字等实际状态的差异。 */
 export const snapshotContentChanged = (before: string, after: string) => {
   const content = (text: string) => text.replace(/\s*\[ref=e\d+\]/g, '')
@@ -32,25 +28,21 @@ export const beginPageSnap = (id: string) => {
 }
 
 export const abandonPageSnap = (id: string, gen: number) => {
-  abandoned.add(genKey(id, gen))
+  if (activeGen.get(id) === gen) activeGen.delete(id)
 }
-
-export const pageSnapAbandoned = (id: string, gen: number) => abandoned.has(genKey(id, gen))
 
 export const rememberPageSnap = (
   id: string,
   snap: Omit<CachedPageSnap, 'at'>,
   gen?: number,
 ) => {
-  if (gen != null && (pageSnapAbandoned(id, gen) || activeGen.get(id) !== gen)) return false
+  if (gen != null && activeGen.get(id) !== gen) return false
   snaps.set(id, { ...snap, at: Date.now() })
   return true
 }
 
 export const cachedPageSnap = (id: string) => snaps.get(id) || null
 export const invalidatePageSnap = (id: string) => {
-  const gen = activeGen.get(id)
-  if (gen != null) abandonPageSnap(id, gen)
   activeGen.delete(id)
   snaps.delete(id)
 }

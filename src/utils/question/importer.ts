@@ -1,15 +1,5 @@
-import * as XLSX from 'xlsx';
-import { databaseService } from '../../services/app/database';
-import mammoth from 'mammoth';
 import { readFile } from '@tauri-apps/plugin-fs';
-import * as pdfjsLib from 'pdfjs-dist';
 import { parseDifficulty, parseImportance, parseMastery } from './questionMetrics';
-
-// 设置 worker 路径
-pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
-  'pdfjs-dist/build/pdf.worker.mjs',
-  import.meta.url
-).toString();
 
 interface ImportedQuestion {
     question: string;
@@ -39,10 +29,10 @@ export const parseSoftwareExportedFile = async (filePath: string): Promise<Impor
 
 const parsePDF = async (filePath: string): Promise<ImportedQuestion[]> => {
     try {
-        const content = await readFile(filePath);
+        const [{ getDocument }, content] = await Promise.all([import('../ui/pdfDocument'), readFile(filePath)]);
         const arrayBuffer = content.buffer.slice(content.byteOffset, content.byteOffset + content.byteLength);
         
-        const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+        const loadingTask = getDocument({ data: arrayBuffer });
         const pdf = await loadingTask.promise;
         let fullText = '';
 
@@ -117,12 +107,6 @@ const parsePDF = async (filePath: string): Promise<ImportedQuestion[]> => {
 
         // 尝试解析文本内容
         if (!fullText.includes('--------------------------------------------------')) {
-             // ... (保留之前的启发式解析逻辑)
-             // 尝试逐行解析：ID 题目 选项 答案 类型 创建时间
-             const lines = fullText.split('\n');
-             const questions: ImportedQuestion[] = [];
-             // ...
-             // 这里我们可以直接调用 parsePDFByRegex，复用之前的逻辑
              return parsePDFByRegex(loadingTask);
         }
 
@@ -131,99 +115,6 @@ const parsePDF = async (filePath: string): Promise<ImportedQuestion[]> => {
         console.error('PDF parsing error:', error);
         throw new Error('PDF 解析失败: ' + (error as Error).message);
     }
-};
-
-const parsePDFWithCoordinates = async (loadingTask: any): Promise<ImportedQuestion[]> => {
-    const pdf = await loadingTask.promise;
-    const questions: ImportedQuestion[] = [];
-    
-    // 遍历所有页面
-    for (let i = 1; i <= pdf.numPages; i++) {
-        const page = await pdf.getPage(i);
-        const textContent = await page.getTextContent();
-        const items = textContent.items as any[];
-        
-        // 1. 按 Y 坐标分组（行）
-        const rows: { y: number, items: any[] }[] = [];
-        items.forEach(item => {
-            const y = item.transform[5];
-            const existingRow = rows.find(r => Math.abs(r.y - y) < 5);
-            if (existingRow) {
-                existingRow.items.push(item);
-            } else {
-                rows.push({ y, items: [item] });
-            }
-        });
-        
-        // 按 Y 坐标从上到下排序
-        rows.sort((a, b) => b.y - a.y);
-        
-        // 2. 识别列边界
-        // 假设第二行是表头（第一行通常是标题），我们可以从表头推断列的大致位置
-        // 但简单起见，我们假设列的相对顺序是固定的：ID, 题目, 选项, 答案, 类型, 创建时间
-        // 我们将每行中的 items 按 X 坐标排序
-        
-        rows.forEach(row => {
-            // 按 X 坐标排序
-            row.items.sort((a: any, b: any) => a.transform[4] - b.transform[4]);
-            
-            // 过滤掉表头和页码等
-            const rowText = row.items.map(item => item.str).join('');
-            if (rowText.includes('ID') && rowText.includes('题目') && rowText.includes('答案')) return;
-            if (rowText.trim() === '题目列表') return;
-            if (/^\d+\s*\/ \d+$/.test(rowText.trim())) return; // 页码
-            
-            // 尝试提取数据
-            // 策略：根据 items 的数量和位置进行推断
-            // 这种方法对于跨行的长文本（题目、选项）仍然有局限性，因为 PDF.js 会把长文本拆分成多个 items
-            // 但 jspdf-autotable 生成的表格，通常同一单元格内的文本会有相同的 X 坐标（对齐）
-            
-            // 简单的启发式：ID 是第一个且是数字
-            const firstItem = row.items[0];
-            if (!firstItem || !/^\d+$/.test(firstItem.str.trim())) return;
-            
-            // 这是一个新行的开始
-            // 我们需要收集这一行（逻辑行）的所有数据
-            // 实际上，jspdf-autotable 的一行可能对应 PDF 中的多个物理行（Y 坐标不同）
-            // 这是一个复杂的问题。
-            
-            // 简化处理：假设每一行就是一条记录（忽略长文本换行的情况，或者只提取第一行）
-            // 更好的处理：根据 X 坐标将 items 归类到 6 个桶（bucket）中
-            
-            // 定义列的大致 X 坐标范围（根据页面宽度和列宽比例估计）
-            // ID: 5%, 题目: 40%, 选项: 25%, 答案: 15%, 类型: 15%
-            // 假设页面宽度 A4 约 595pt
-            // ID: 0-30, 题目: 30-270, 选项: 270-420, 答案: 420-510, 类型: 510-595 (大致估计)
-            // 动态计算：取第一行 items 的 X 坐标作为参考？
-            
-            // 尝试直接根据 items 的相对顺序
-            // 如果 items 数量 >= 5，我们尝试映射
-            // [ID, 题目..., 选项..., 答案..., 类型..., 时间]
-            
-            // 这种基于位置的解析非常脆弱。
-            // 鉴于 PDF 解析的难度，我们尝试提取最核心的信息：题目和答案
-            
-            // 尝试构建文本行，然后用正则匹配
-            const lineText = row.items.map(it => it.str).join(' ');
-            
-            // 我们的目标是提取：题目、选项、答案
-            // 假设文本顺序是 ID 题目 选项 答案 类型 时间
-            // 我们可以尝试去除 ID 和 时间，剩下的就是中间部分
-            
-            // 这是一个非常粗糙的实现，只能作为最后的手段
-            // 实际上，要完美解析 PDF 表格，需要复杂的布局分析算法
-            
-            // 暂时只支持简单的一行一条记录的情况
-            if (row.items.length >= 4) {
-                // 假设 row.items[1] 是题目的一部分
-                // 这只是一个 placeholder，实际上很难通用
-            }
-        });
-    }
-    
-    // 如果上面的逻辑太复杂且不可靠，我们回退到基于全文本的正则匹配
-    // 但放宽正则的条件
-    return parsePDFByRegex(loadingTask);
 };
 
 const parsePDFByRegex = async (loadingTask: any): Promise<ImportedQuestion[]> => {
@@ -286,7 +177,6 @@ const parsePDFByRegex = async (loadingTask: any): Promise<ImportedQuestion[]> =>
             // 匹配 ID (开头)
             const idMatch = remaining.match(/^(\d+)\s+/);
             if (idMatch) {
-                const id = idMatch[1];
                 remaining = remaining.substring(idMatch[0].length).trim();
                 
                 // 剩下的就是 题目 + 选项
@@ -316,11 +206,36 @@ const parsePDFByRegex = async (loadingTask: any): Promise<ImportedQuestion[]> =>
     return questions;
 };
 
+// 引号内的 CSV 字段可以包含分隔符和换行；先解析完整文本再映射列，
+// 直接按行切分会丢失或错置数据。
+const parseCSVRows = (text: string): string[][] => {
+    const rows: string[][] = [];
+    let row: string[] = [], field = '', quoted = false;
+    for (let i = 0; i < text.length; i++) {
+        const char = text[i];
+        if (quoted) {
+            if (char === '"' && text[i + 1] === '"') { field += '"'; i++; }
+            else if (char === '"') quoted = false;
+            else field += char;
+        } else if (char === '"' && field.length === 0) {
+            quoted = true;
+        } else if (char === ',') {
+            row.push(field); field = '';
+        } else if (char === '\r' || char === '\n') {
+            row.push(field); rows.push(row); row = []; field = '';
+            if (char === '\r' && text[i + 1] === '\n') i++;
+        } else field += char;
+    }
+    if (quoted) throw new Error('CSV 文件引号未闭合，未导入不完整数据');
+    if (field.length || row.length) { row.push(field); rows.push(row); }
+    return rows;
+};
+
 const parseCSV = async (filePath: string): Promise<ImportedQuestion[]> => {
     const content = await readFile(filePath);
     const text = new TextDecoder().decode(content);
-    const rows = text.split('\n').map(row => row.split(','));
-    const strip = (value = '') => value.replace(/^\uFEFF/, '').replace(/^"|"$/g, '').replace(/""/g, '"');
+    const rows = parseCSVRows(text);
+    const strip = (value = '') => value.replace(/^\uFEFF/, '');
     const header = (rows[0] || []).map(strip);
     const questionIdx = header.indexOf('题目');
     const optionsIdx = header.indexOf('选项');
@@ -347,7 +262,7 @@ const parseCSV = async (filePath: string): Promise<ImportedQuestion[]> => {
 };
 
 const parseXLSX = async (filePath: string): Promise<ImportedQuestion[]> => {
-    const content = await readFile(filePath);
+    const [XLSX, content] = await Promise.all([import('xlsx'), readFile(filePath)]);
     const workbook = XLSX.read(content, { type: 'array' });
     const sheetName = workbook.SheetNames[0];
     const sheet = workbook.Sheets[sheetName];
@@ -365,7 +280,7 @@ const parseXLSX = async (filePath: string): Promise<ImportedQuestion[]> => {
 };
 
 const parseDOCX = async (filePath: string): Promise<ImportedQuestion[]> => {
-    const content = await readFile(filePath);
+    const [{ default: mammoth }, content] = await Promise.all([import('mammoth'), readFile(filePath)]);
     const arrayBuffer = content.buffer.slice(content.byteOffset, content.byteOffset + content.byteLength);
     
     try {

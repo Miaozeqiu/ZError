@@ -14,6 +14,35 @@
     </div>
 
     <div class="network-group">
+      <div class="group-title">命令行</div>
+      <div class="setting-item">
+        <div class="setting-info">
+          <h3 class="setting-title">ZError CLI</h3>
+          <p class="setting-description">安装后自动配置，可在终端使用 zerror 管理题库和运行 Agent。已有终端需要重新打开。</p>
+          <p v-if="cliMessage" class="setting-description cli-install-message" role="status">{{ cliMessage }}</p>
+        </div>
+        <div class="setting-control">
+          <button class="folder-action-btn select-folder-btn" :disabled="cliInstalling" @click="installCli">{{ cliInstalling ? '配置中…' : '修复命令行' }}</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="network-group">
+      <div class="group-title">外部 Agent</div>
+      <div class="setting-item skill-install-setting">
+        <div class="setting-info">
+          <h3 class="setting-title">ZError Skill</h3>
+          <p class="setting-description">复制安装语句并发送给其他 Agent，由它安装 Skill，通过 CLI 使用软件。安装后自动检查更新。</p>
+          <p v-if="skillMessage" class="setting-description cli-install-message" role="status">{{ skillMessage }}</p>
+        </div>
+        <div class="setting-control">
+          <button type="button" class="folder-action-btn select-folder-btn" :disabled="skillCopying" @click="copySkillInstruction">{{ skillCopying ? '复制中…' : '复制安装语句' }}</button>
+        </div>
+        <pre class="skill-install-instruction" aria-label="Skill 安装语句">{{ skillInstallInstruction }}</pre>
+      </div>
+    </div>
+
+    <div class="network-group">
       <div class="group-title">保存设置</div>
     <div class="setting-item">
       <div class="setting-info">
@@ -186,7 +215,40 @@
 </template>
 
 <script setup lang="ts">
+
 import { computed, ref, onMounted } from 'vue'
+const cliInstalling = ref(false)
+const cliMessage = ref('')
+const installCli = async () => {
+  cliInstalling.value = true
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    const result = await invoke<{ message: string }>('cli_install')
+    cliMessage.value = result.message
+  } catch (error) { cliMessage.value = String(error) }
+  finally { cliInstalling.value = false }
+}
+
+const skillCopying = ref(false)
+const skillMessage = ref('')
+const skillInstallInstruction = `请从 https://open.zerrorai.com/v1/agent-skills/zerror 为你自己安装 ZError Skill，让你能通过本机 ZError CLI 使用软件。请自行确定适合的安装方式和技能目录，并保留自动更新。安装后读取 SKILL.md，确认安装成功；如需刷新技能或开启新会话，请告诉我。`
+const copySkillInstruction = async () => {
+  if (skillCopying.value) return
+  skillCopying.value = true
+  skillMessage.value = ''
+  try {
+    if (environmentDetector.isTauriEnvironment) {
+      const { writeText } = await import('@tauri-apps/plugin-clipboard-manager')
+      await writeText(skillInstallInstruction)
+    } else {
+      await navigator.clipboard.writeText(skillInstallInstruction)
+    }
+  } catch {
+    skillMessage.value = '复制失败，请重试。'
+  } finally {
+    skillCopying.value = false
+  }
+}
 
 import { useSettingsManager } from '../../composables/useSettingsManager'
 
@@ -365,8 +427,34 @@ onMounted(() => {
   line-height: 1.4;
 }
 
+
 .setting-control {
   flex-shrink: 0;
+}
+
+.skill-install-setting {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  row-gap: 12px;
+}
+
+.skill-install-setting .setting-info { min-width: 0; }
+
+.skill-install-instruction {
+  grid-column: 1 / -1;
+  min-width: 0;
+  margin: 0;
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: var(--bg-tertiary, #f4f4f5);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 .prompt-editor-control {

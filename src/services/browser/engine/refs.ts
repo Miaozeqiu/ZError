@@ -15,6 +15,7 @@ type CachedLocator = BrowserLocator & { checked?: boolean; disabled?: boolean }
 const cache = new Map<string, Record<string, CachedLocator>>()
 
 export const rememberPageRefs = (browserId: string, refs: PageRef[]) => {
+  if (!refs.length) { cache.delete(browserId); return }
   const map: Record<string, CachedLocator> = {}
   for (const ref of refs) {
     const key = String(ref.id || '').trim()

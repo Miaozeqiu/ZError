@@ -8,7 +8,7 @@ use tauri::{LogicalPosition, LogicalSize, Rect, Webview};
 use tokio::sync::oneshot;
 use webview2_com::CallDevToolsProtocolMethodCompletedHandler;
 use windows::Win32::{Foundation::HWND, UI::Input::KeyboardAndMouse::EnableWindow};
-use windows_core::PCWSTR;
+use windows_core::{Interface, PCWSTR};
 use zeroize::Zeroizing;
 
 use crate::browser_geometry::{PAGE_H, PAGE_W};
@@ -18,6 +18,16 @@ pub(crate) async fn call(
     method: &'static str,
     params: Zeroizing<String>,
     error: &'static str,
+) -> Result<Value, String> {
+    call_ms(webview, method, params, error, 5000).await
+}
+
+pub(crate) async fn call_ms(
+    webview: &Webview,
+    method: &'static str,
+    params: Zeroizing<String>,
+    error: &'static str,
+    timeout_ms: u64,
 ) -> Result<Value, String> {
     let (send, receive) = oneshot::channel();
     let permit = crate::browser_control::current_permit();
@@ -57,13 +67,39 @@ pub(crate) async fn call(
             };
         })
         .map_err(|_| error)?;
-    tokio::time::timeout(Duration::from_secs(5), receive)
+    tokio::time::timeout(Duration::from_millis(timeout_ms.clamp(80, 35000)), receive)
         .await
         .map_err(|_| error)?
         .map_err(|_| error)?
 }
 
 static PREVIEWS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+
+pub(crate) async fn set_audio_muted(webview: &Webview, muted: bool) -> Result<(), String> {
+    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2_8;
+    let (send, receive) = oneshot::channel();
+    webview.with_webview(move |platform| {
+        let result = unsafe {
+            platform.controller().CoreWebView2()
+                .and_then(|core| core.cast::<ICoreWebView2_8>())
+                .and_then(|core| core.SetIsMuted(muted))
+        }.map_err(|err| format!("无法设置 Windows 浏览器静音: {err}"));
+        let _ = send.send(result);
+    }).map_err(|err| err.to_string())?;
+    receive.await.map_err(|err| err.to_string())?
+}
+
+pub(crate) async fn screenshot(webview: &Webview) -> Result<Value, String> {
+    let shot = call(webview, "Page.captureScreenshot", Zeroizing::new(json!({
+        "format": "jpeg", "quality": 55, "fromSurface": true,
+        "captureBeyondViewport": false,
+    }).to_string()), "Windows 浏览器截图失败").await?;
+    let data = shot["data"].as_str().filter(|data| !data.is_empty()).ok_or("截图为空")?;
+    Ok(json!({
+        "url": webview.url().map_err(|err| err.to_string())?.as_str(),
+        "image": format!("data:image/jpeg;base64,{data}"),
+    }))
+}
 
 fn previews() -> &'static Mutex<HashSet<String>> {
     PREVIEWS.get_or_init(Default::default)

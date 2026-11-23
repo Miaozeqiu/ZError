@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createLearningCompletionCheck, reviewSiteLearning } from '../../src/services/agent/siteLearningReview'
+import { reviewSiteLearning } from '../../src/services/agent/siteLearningReview'
 const path = 'sites/zjooc.cn/SKILL.md'
 const step = (id: string, name: string, args = {}, result = {}, status = 'done') => ({
   id, name, status, arguments: JSON.stringify(args), result: JSON.stringify(result),
@@ -43,27 +43,9 @@ describe('站点经验收尾', () => {
     const overview = step('overview', 'read_agent_skill', { skill_id: 'site-learn' }, { content: '# 总说明' })
     expect(check([...actions, overview, write], decision('updated')).ok).toBe(false)
   })
-  it('技能工具旧别名不计作网页操作', () => {
-    expect(check([
-      step('read', 'browser_read_agent_skill_file', { skill_id: 'site-learn', path }),
-      step('write', 'browser_write_agent_skill_file', { skill_id: 'site-learn', path }),
-    ]).required).toBe(false)
-  })
-  it('重现本轮：两次 eval 都返回成功，但读取方法发生改变，也必须检查经验', () => {
-    expect(check()).toMatchObject({ required: true, candidate: true, ok: false, path })
-    expect(check(actions, decision('no_new')).ok).toBe(false)
-  })
-  it('聊天、单步操作与本地导航不引入学习调用', () => {
-    expect(check([]).required).toBe(false)
-    expect(check([actions[2]]).required).toBe(false)
-    expect(reviewSiteLearning({ url: 'http://localhost:1420/browser-home.html', steps: actions }).required).toBe(false)
-  })
-  it('先失败再成功的恢复也不能未经检查就说无新经验', () => {
-    const steps = [step('fail', 'browser_click', {}, { error: '遮挡' }, 'failed'), step('ok', 'browser_click', {}, { ok: true }), actions[2]]
-    expect(check(steps)).toMatchObject({ candidate: true, ok: false })
-  })
-  it('没有新发现的常规流程可以给出理由后跳过', () => {
-    expect(check([step('a', 'browser_navigate'), actions[2]], decision('no_new')).ok).toBe(true)
+  it('正常重试、多个网页操作和切换读取方法都不强制学习', () => {
+    const retries = [step('fail', 'browser_click', {}, { error: '遮挡' }, 'failed'), step('ok', 'browser_click', {}, { ok: true })]
+    for (const steps of [actions, retries, []]) expect(check(steps)).toMatchObject({ ok: true, decision: 'no_new' })
   })
   it('不能凭口头声明已保存，也不能用别的站点或以前回合的写入当证据', () => {
     expect(check(actions, decision('updated')).ok).toBe(false)
@@ -93,20 +75,5 @@ describe('站点经验收尾', () => {
     const failed = { ...denied, result: JSON.stringify({ error: '磁盘写入失败' }) }
     expect(check([...actions, failed], decision('deferred')).ok).toBe(true)
     expect(check(actions, decision('deferred'), 'deny').ok).toBe(true)
-  })
-  it('没有 finish 就直接回答时最多提醒两次，不无限循环或冒充学习成功', () => {
-    const gate = createLearningCompletionCheck(() => ({ url: 'https://www.zjooc.cn/work', steps: actions, enabled: true }))
-    expect(gate.beforeComplete()).toContain(path)
-    expect(gate.beforeComplete()).toBeTruthy()
-    expect(gate.beforeComplete()).toBeUndefined()
-    expect(gate.deferred).toBe(true)
-  })
-  it('已成功收尾、子 Agent 或人工中止不启动额外学习', () => {
-    const finish = step('finish', 'browser_finish', {}, { ok: true, finished: true, learning: decision('covered') })
-    expect(createLearningCompletionCheck(() => ({ url: 'https://zjooc.cn/work', steps: [...actions, finish], enabled: true })).beforeComplete()).toBeUndefined()
-    expect(createLearningCompletionCheck(() => ({ url: 'https://zjooc.cn/work', steps: actions, enabled: false })).beforeComplete()).toBeUndefined()
-    expect(createLearningCompletionCheck(() => ({ url: 'https://zjooc.cn/work', steps: actions, enabled: true, ready: false })).beforeComplete()).toBeUndefined()
-    const deferredFinish = { ...finish, result: JSON.stringify({ finished: true, learning: decision('deferred') }) }
-    expect(createLearningCompletionCheck(() => ({ url: 'https://zjooc.cn/work', steps: [...actions, deferredFinish], enabled: true })).deferred).toBe(true)
   })
 })

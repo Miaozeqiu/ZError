@@ -6,7 +6,7 @@ import { applyBrowserTodo } from '../browserTodo'
 import { formatBrowserLiveContext } from '../browserLoop'
 import { loadLiveExploreRefs } from '../chatStudy'
 import { packAgentPanel } from '../../platform/panelAccess'
-import { liveStudyPlayback } from '../../chaoxing/browser/playback'
+import { nativeWatchFor } from '../../browser/videoWatch'
 import type { AgentChatMessage, AgentChatSession, AgentSubagentJob, AgentSubagentKind } from '../chatTypes'
 import {
   chatAborts,
@@ -201,7 +201,7 @@ export const runBrowserTask = async (input: {
 
     const childNow = liveSession(childId)
     const finish = lastFinishOf(childNow)
-    const playback = liveStudyPlayback(browserId)
+    const playback = nativeWatchFor(browserId)
     const ok = !result.failed && !result.aborted && finish?.ok !== false
     const summary = String(finish?.summary || childNow?.messages.find((item) => item.id === assistantId)?.content || result.text || goal)
       .replace(/\s+/g, ' ')
@@ -213,7 +213,7 @@ export const runBrowserTask = async (input: {
       summary: summary || (result.aborted ? '已中止' : result.failed || '子任务结束'),
       url: peekAppBrowserUrl(browserId) || url,
       error: result.failed || (result.aborted ? '已中止' : finish && finish.ok === false ? String(finish.error || '') : undefined),
-      playing: playback?.playing,
+      playing: playback ? !playback.paused && !playback.ended : undefined,
       jobs: packAgentPanel(browserId)?.jobLine,
       wrote: childNow?.messages.some((message) => (message.steps || []).some((step) => step.name === 'write_agent_skill_file' && step.status === 'done')),
     })

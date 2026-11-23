@@ -1,10 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
-import * as XLSX from 'xlsx';
-import { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, WidthType, AlignmentType } from 'docx';
-import { AIResponse } from '../../services/app/database';
+import type { AIResponse } from '../../services/app/database';
 import { difficultyLabel, importanceLabel, masteryLabel } from './questionMetrics';
-import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable';
 
 type SystemCjkFont = { family: string; data: string };
 
@@ -90,7 +86,8 @@ ${q.answer}
   return new TextEncoder().encode(content);
 };
 
-const generateXLSX = (questions: AIResponse[]): Uint8Array => {
+const generateXLSX = async (questions: AIResponse[]): Promise<Uint8Array> => {
+  const XLSX = await import('xlsx');
   const data = questions.map((q, index) => ({
     'ID': index + 1,
     '题目': q.question,
@@ -111,6 +108,7 @@ const generateXLSX = (questions: AIResponse[]): Uint8Array => {
 };
 
 const generateDOCX = async (questions: AIResponse[]): Promise<Uint8Array> => {
+  const { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, WidthType, AlignmentType } = await import('docx');
   const tableRows = [
     new TableRow({
       children: [
@@ -169,6 +167,7 @@ const generateDOCX = async (questions: AIResponse[]): Promise<Uint8Array> => {
 const generatePDF = async (questions: AIResponse[]): Promise<Uint8Array> => {
   try {
     const systemFont = await loadSystemCjkFont();
+    const [{ jsPDF }, { default: autoTable }] = await Promise.all([import('jspdf'), import('jspdf-autotable')]);
     const doc = new jsPDF();
     doc.addFileToVFS('SystemCJK.ttf', systemFont.data);
     doc.addFont('SystemCJK.ttf', 'SystemCJK', 'normal');

@@ -30,7 +30,7 @@ export const applyBrowserTodo = (
     return {
       ok: true,
       todos,
-      hint: `已记下 ${todos.length} 步。按清单做，做完一项就 check；全部完成再用自己的话 browser_finish。`,
+      hint: `已记下 ${todos.length} 步。按清单做，做完一项就 check；全部完成并核对后回复。`,
     }
   }
 
@@ -73,7 +73,7 @@ export const applyBrowserTodo = (
       todos,
       hint: pending
         ? `「${hit.text}」→ ${status}。还剩 ${pending} 项未完成。`
-        : `「${hit.text}」→ ${status}。清单已无待办，请核对实际结果再 browser_finish；取消的步骤不代表已完成。`,
+        : `「${hit.text}」→ ${status}。清单已无待办，请核对实际结果后回复；取消的步骤不代表已完成。`,
     }
   }
 
@@ -119,5 +119,7 @@ export const formatTodoNudge = (todos: AgentTodoItem[], opts?: { mustSet?: boole
   if (pending.length) {
     return `清单未完成：${pending.map((item) => item.text).join('、')}。做完一项就 check。没勾完不能 finish(done)。`
   }
-  return '清单项都已完成。用自己的话写 summary，再 browser_finish(status=done|watching|blocked)。'
+  return '清单项都已完成。核对实际结果后回复；仍在等待或受阻时用 browser_finish。'
 }
+
+export const clearTodoRounds = (sessionId: string) => { toolRoundsWithoutTodo.delete(sessionId) }

@@ -3,7 +3,6 @@ import { writeDebugDump } from '../agent/debugLog'
 import { setCourseWatchConsumer } from './videoWatchAgent'
 import {
   applySkips,
-  builtinRecipeFor,
   classifyPageSignal,
   coursePlanFor,
   courseProgress,
@@ -88,14 +87,13 @@ export const createCoursePlan = (input: {
   skips?: CoursePlan['skips']
 }): CoursePlan => {
   const host = String(input.host || '').replace(/^www\./i, '')
-  const builtin = builtinRecipeFor(host)
   const skips = input.skips || {}
   return {
     host,
     courseId: String(input.courseId || 'course'),
     items: applySkips(input.items, skips),
-    recipe: builtin || undefined,
-    recipeVerified: Boolean(builtin),
+    recipe: undefined,
+    recipeVerified: false,
     skips,
     updatedAt: Date.now(),
     spins: {},

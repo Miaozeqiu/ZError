@@ -16,14 +16,15 @@ pub mod cef;
 #[cfg(target_os = "macos")]
 pub mod cef_runtime;
 #[cfg(target_os = "macos")]
-pub mod macos_video_overlay;
-#[cfg(target_os = "macos")]
 mod macos_wheel;
 pub mod commands;
+pub mod cli;
 pub mod database;
 pub mod logger;
 #[cfg(target_os = "linux")]
 mod linux_elevation;
+#[cfg(target_os = "linux")]
+mod linux_documents;
 mod model_response;
 pub mod server;
 pub mod secret_vault;
@@ -172,16 +173,7 @@ pub fn run() {
     ensure_tmpdir_same_volume_as_exe();
 
     let mut builder = tauri::Builder::default()
-        .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { .. } = event {
-                if window.label() == "main" {
-                    // 直接关闭，不隐藏到系统托盘
-                }
-            }
-        })
         .plugin(tauri_plugin_opener::init())
-        // tauri-plugin-sql removed - using rusqlite directly
-        // .plugin(tauri_plugin_sql::Builder::default().build())
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
@@ -197,6 +189,11 @@ pub fn run() {
 
     builder
         .invoke_handler(tauri::generate_handler![
+            crate::cli::broker::cli_connect,
+            crate::cli::broker::cli_take,
+            crate::cli::broker::cli_request_active,
+            crate::cli::broker::cli_complete,
+            crate::cli::broker::cli_install,
             greet,
             load_cjk_system_font,
             app_update_target,
@@ -325,8 +322,7 @@ pub fn run() {
             crate::app_browser::browser_eval_frames,
             crate::app_browser::browser_set_app_above_page,
             crate::app_browser::browser_engine,
-            #[cfg(target_os = "macos")]
-            crate::cef::browser_scriptcat_permissions,
+            crate::app_browser::browser_capabilities,
             crate::app_browser::browser_protocol,
             crate::browser_control::browser_control_register,
             crate::browser_control::browser_control_set,
@@ -334,10 +330,6 @@ pub fn run() {
             crate::app_browser::browser_cookies,
             crate::app_browser::browser_set_cookies,
             crate::app_browser::browser_clear_cookies,
-            crate::app_browser::browser_video_overlay_tick,
-            crate::app_browser::browser_video_overlay_state,
-            crate::app_browser::browser_video_overlay_play,
-            crate::app_browser::browser_video_overlay_hide,
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]
@@ -401,6 +393,20 @@ pub fn run() {
                 }
             }
 
+            // CLI 使用独立且需要认证的环回接口，与题库 /query 服务分开。
+            // 拖拽安装/AppImage 没有安装后钩子，首次启动及更新后自动修复用户命令。
+            // 开发构建不接管用户正式安装的命令；需要时仍可在设置中手动修复。
+            if !cfg!(debug_assertions) {
+                tauri::async_runtime::spawn_blocking(|| {
+                    if let Err(error) = crate::cli::client::install() {
+                        eprintln!("CLI 自动配置未完成：{error}");
+                    }
+                });
+            }
+            if let Err(error) = tauri::async_runtime::block_on(async { crate::cli::start(app.handle()) }) {
+                eprintln!("CLI 初始化失败：{error}");
+            }
+
             // Linux/macOS database initialization
             #[cfg(not(target_os = "windows"))]
             {
@@ -417,7 +423,9 @@ pub fn run() {
                 }
             }
 
-            let is_dev = cfg!(debug_assertions);
+            // 调试安装包同样内嵌前端资源；仅 tauri dev 使用开发地址
+            // 及其对应的 IPC 来源白名单。
+            let is_dev = cfg!(dev);
             let url = if is_dev {
                 tauri::WebviewUrl::External("http://localhost:1420".parse().unwrap())
             } else {

@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-const source = readFileSync(resolve('src-tauri/src/cef/browser.rs'), 'utf8')
+const source = readFileSync(resolve('src-tauri/src/cef/browser/interaction.rs'), 'utf8')
 const extract = (start: string) => new Function(`return (${source.slice(source.indexOf(start)).match(/"functionDeclaration":\s*r#"([\s\S]*?)"#/)[1]})`)()
 const hit = extract('pub(crate) async fn click_landed_elsewhere(')
 const visible = extract('pub(crate) async fn visible_control_backend(')

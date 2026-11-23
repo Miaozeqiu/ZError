@@ -43,7 +43,7 @@
           </div>
 
           <div v-if="stack.length" class="layers">
-            <em v-for="(layer, idx) in stack" :key="layer">{{ compact && /^(?:https?:\/\/|\/|[\w.-]+\/)/i.test(layer) ? '内容区域' : layer }}</em>
+            <em v-for="layer in stack" :key="layer">{{ compact && /^(?:https?:\/\/|\/|[\w.-]+\/)/i.test(layer) ? '内容区域' : layer }}</em>
           </div>
           <p v-else class="doc">
             <span class="doc-name">{{ docTitle }}</span>

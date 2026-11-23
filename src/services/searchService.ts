@@ -44,15 +44,6 @@ const SEARCH_CACHE_MAX_ENTRIES = 50
 
 const searchCache = new Map<string, { at: number; outcome: WebSearchOutcome }>()
 
-const isTauriEnvironment = (): boolean => {
-  if (typeof window === 'undefined') return false
-  return (
-    !!(window as any).__TAURI__ ||
-    !!(window as any).__TAURI_INTERNALS__ ||
-    window.location.protocol === 'tauri:'
-  )
-}
-
 const getFetchImpl = async (): Promise<typeof fetch> => (await import('./security/secureFetch')).secureFetch
 
 const buildHeaders = (config: SearchSettings): Record<string, string> => ({

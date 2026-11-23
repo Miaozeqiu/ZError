@@ -11,7 +11,7 @@
     <header class="browser-pane-head" :data-tauri-drag-region="agentBrowserExpanded ? '' : undefined">
       <span class="browser-pane-title"><Icon icon="lucide:monitor" width="15" height="15" /><span>{{ agentBrowserExpanded ? currentAgentBrowser?.title || '浏览器' : '浏览器' }}</span></span>
       <button v-if="agentBrowserExpanded" class="browser-icon-button browser-chrome-toggle" type="button" title="显示或隐藏浏览器工具栏" aria-label="浏览器工具栏" :aria-expanded="showBrowserChrome" @click="showBrowserChrome = !showBrowserChrome"><Icon icon="lucide:globe" width="15" height="15" /></button>
-      <button v-if="agentBrowserExpanded && usesCef" class="browser-icon-button" type="button" :title="muted ? '开启声音' : '关闭声音'" :aria-label="muted ? '开启声音' : '关闭声音'" :aria-pressed="muted" :disabled="!currentAgentBrowser || audioBusy" @click="toggleAudio"><Icon :icon="muted ? 'lucide:volume-x' : 'lucide:volume-2'" width="15" height="15" /></button>
+      <button v-if="agentBrowserExpanded && capabilities.audioMute" class="browser-icon-button" type="button" :title="muted ? '开启声音' : '关闭声音'" :aria-label="muted ? '开启声音' : '关闭声音'" :aria-pressed="muted" :disabled="!currentAgentBrowser || audioBusy" @click="toggleAudio"><Icon :icon="muted ? 'lucide:volume-x' : 'lucide:volume-2'" width="15" height="15" /></button>
       <button ref="toggleRef" class="browser-icon-button" type="button" :title="agentBrowserExpanded ? '收起浏览器' : '放大浏览器'" :aria-label="agentBrowserExpanded ? '收起浏览器' : '放大浏览器'" :aria-expanded="agentBrowserExpanded" aria-controls="agent-browser-screen" @click="toggleBrowser">
         <Icon :icon="agentBrowserExpanded ? 'lucide:minimize-2' : 'lucide:maximize-2'" width="15" height="15" />
       </button>
@@ -47,8 +47,6 @@
         <button class="browser-icon-button" type="button" title="前进" aria-label="前进" :disabled="!canInteract || !currentAgentBrowser || busy" @click="runNavigation('forward')"><Icon icon="lucide:chevron-right" width="15" height="15" /></button>
         <button class="browser-icon-button" type="button" title="刷新" aria-label="刷新" :disabled="!canInteract || !currentAgentBrowser || busy" @click="runNavigation('reload')"><Icon icon="lucide:refresh-cw" width="14" height="14" /></button>
         <input v-model="address" class="browser-address" aria-label="网址" :disabled="!canInteract" placeholder="输入网址，按回车打开" spellcheck="false" autocomplete="off" @focus="focusAddress" @blur="blurAddress" @keydown.esc="blurAddress" />
-        <button v-if="usesCef && onScriptCatPage" class="browser-zoom" type="button" :disabled="!canInteract" @click="openScriptCatPermissions">脚本权限</button>
-        <button v-if="supportsScriptCat" class="browser-icon-button" type="button" title="脚本猫管理" aria-label="脚本猫管理" :disabled="!canInteract || currentAgentBrowsers.length >= 16" @click="newTab('zerror://scriptcat', '脚本猫')"><Icon icon="lucide:puzzle" width="15" height="15" /></button>
         <button class="browser-zoom" type="button" :disabled="!canInteract" :title="`当前缩放 ${zoomPercent}%，点击切换`" @click="cycleZoom">{{ zoomPercent }}%</button>
       </form>
       <div v-if="loading" class="browser-loading" role="progressbar" aria-label="网页加载中" />
@@ -77,7 +75,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { Icon } from '@iconify/vue/offline'
-import { invoke } from '@tauri-apps/api/core'
 import '../../utils/ui/agentIcons'
 import BrowserAgentWatchBar from '../../components/browser/BrowserAgentWatchBar.vue'
 import AgentTaskHistory from './AgentTaskHistory.vue'
@@ -89,11 +86,12 @@ import {
 } from '../../services/agent/agentBrowser'
 import {
   browserAudioMuted, browserHomeUrl, goBackBrowserView,
-  goForwardBrowserView, hideAllBrowserViews, hostBounds, hostnameOf, isBrowserHome, isCefEngine, listenBrowserLoad,
+  goForwardBrowserView, hideAllBrowserViews, hostBounds, hostnameOf, isBrowserHome, listenBrowserLoad,
   navigateBrowserView, normalizeBrowserUrl, patchAppBrowser, reloadBrowserView, removeAppBrowser,
   setBrowserAudioMuted, setBrowserBounds, setBrowserZoom, showBrowserView,
 } from '../../services/browser/appBrowser'
 import { isTauriEnvironment } from '../../services/app/environmentDetector'
+import { browserCapabilities, type BrowserCapabilities } from '../../services/browser/capabilities'
 import { setBrowserControl, userControlsBrowser } from '../../services/browser/control'
 
 const props = withDefaults(defineProps<{
@@ -118,18 +116,7 @@ const address = ref('')
 const addressFocused = ref(false)
 const error = ref('')
 const busy = ref(false)
-const usesCef = ref(false)
-const supportsScriptCat = computed(() => usesCef.value || (isTauriEnvironment() && /windows/i.test(navigator.userAgent)))
-const onScriptCatPage = computed(() => {
-  const url = currentAgentBrowser.value?.url || ''
-  return url === 'zerror://scriptcat' || url.startsWith('chrome-extension://biodkpbccbdobbjiandalbldblopjkhe/')
-})
-const openScriptCatPermissions = async () => {
-  try {
-    requireUserControl()
-    await invoke('browser_scriptcat_permissions', { id: currentAgentBrowser.value?.id })
-  } catch (value) { showError(value) }
-}
+const capabilities = ref<BrowserCapabilities>({ secureFill: false, secureFillInFrames: false, audioMute: false })
 const audioBusy = ref(false)
 const loading = ref(false)
 const showBrowserChrome = ref(false)
@@ -189,11 +176,11 @@ const changeControl = async () => {
 const selectTab = async (id: string) => {
   try { requireUserControl(); bindChatBrowser(requireSession(), id) } catch (value) { showError(value) }
 }
-const newTab = async (url = browserHomeUrl(), title = '导航') => {
+const newTab = () => {
   if (currentAgentBrowsers.value.length >= 16) return
   try {
     requireUserControl()
-    createChatBrowserTab(requireSession(), { url, title })
+    createChatBrowserTab(requireSession(), { url: browserHomeUrl(), title: '导航' })
   } catch (value) { showError(value) }
 }
 const closeTab = async (id: string) => {
@@ -362,7 +349,7 @@ onMounted(async () => {
   if (disposed) return
   if (import.meta.env.DEV) void import('../../services/agent/cursorBridge').then(m => m.startCursorBridge()).catch(() => undefined)
   if (isTauriEnvironment()) {
-    void isCefEngine().then(supported => { usesCef.value = supported })
+    void browserCapabilities().then(value => { if (!disposed) capabilities.value = value })
     const off = await listenBrowserLoad(state => {
       if (state.id !== currentAgentBrowser.value?.id) return
       loading.value = state.phase === 'started'

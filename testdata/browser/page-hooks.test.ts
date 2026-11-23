@@ -6,10 +6,9 @@ import {
   registerNavigateGuard,
 } from '../../src/services/browser/pageHooks'
 import { ensurePageBase } from '../../src/services/browser/pageDom'
-import { bindChaoxingPageHooks } from '../../src/services/platform/chaoxing/pageHooks'
 
 afterEach(() => {
-  bindChaoxingPageHooks()
+  registerNavigateGuard(null); registerClickText(null)
 })
 
 describe('pageHooks', () => {
@@ -32,11 +31,7 @@ describe('pageHooks', () => {
     registerClickText(null)
   })
 
-  it('学习通钩子拒绝顶层课表，其它站放行', () => {
-    bindChaoxingPageHooks()
-    expect(guardNavigate('https://mooc1-1.chaoxing.com/visit/courses?s=1')).toContain('课表')
-    expect(guardNavigate('https://example.com/login')).toBe('')
-  })
+
 })
 
 describe('pageDom', () => {

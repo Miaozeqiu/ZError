@@ -1,51 +1,66 @@
-use std::{fs, io::Cursor, path::Path};
-
-fn prepare_scriptcat() -> Result<(), Box<dyn std::error::Error>> {
-    const ARCHIVE: &str = "vendor/scriptcat/scriptcat-v1.5.2-chrome.zip";
-    const KEY: &str = "vendor/scriptcat/crx-public-key.txt";
-    println!("cargo:rerun-if-changed={ARCHIVE}");
-    println!("cargo:rerun-if-changed={KEY}");
-    let target = Path::new("target/scriptcat-v1.5.2");
-    let bytes = fs::read(ARCHIVE)?;
-    let digest = ring::digest::digest(&ring::digest::SHA256, &bytes);
-    let hex: String = digest
-        .as_ref()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect();
-    if hex != "72615ddc91aae40d9e4d36b44cf3ae27c69e94a3db81e44857eaa2f168748390" {
-        return Err("ScriptCat release checksum mismatch".into());
+fn main() {
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux") {
+        build_linux_documents();
     }
-    println!("cargo:rustc-env=SCRIPTCAT_RELEASE_SHA256={hex}");
-    let key = fs::read_to_string(KEY)?;
-    let mut archive = zip::ZipArchive::new(Cursor::new(bytes))?;
-    // Tauri also watches the staged resources. Only rewrite files that changed.
-    for index in 0..archive.len() {
-        use std::io::Read;
-        let mut entry = archive.by_index(index)?;
-        if entry.is_dir() {
-            continue;
-        }
-        let name = entry
-            .enclosed_name()
-            .ok_or("Invalid ScriptCat resource path")?;
-        let dest = target.join(name);
-        let mut data = Vec::new();
-        entry.read_to_end(&mut data)?;
-        if dest == target.join("manifest.json") {
-            let mut manifest: serde_json::Value = serde_json::from_slice(&data)?;
-            manifest["key"] = key.trim().into();
-            data = serde_json::to_vec(&manifest)?;
-        }
-        if fs::read(&dest).ok().as_ref() != Some(&data) {
-            fs::create_dir_all(dest.parent().unwrap())?;
-            fs::write(dest, data)?;
-        }
+    let mut attributes = tauri_build::Attributes::new();
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
+        && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc")
+    {
+        // Tauri 默认只给应用程序嵌入清单，库测试因此无法加载 Common Controls v6。
+        // 统一由链接器嵌入同一份清单，覆盖应用、CLI 和测试，避免重复资源。
+        let manifest = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap())
+            .join("windows-app.manifest");
+        println!("cargo:rerun-if-changed={}", manifest.display());
+        println!("cargo:rustc-link-arg=/MANIFEST:EMBED");
+        println!("cargo:rustc-link-arg=/MANIFESTINPUT:{}", manifest.display());
+        attributes = attributes
+            .windows_attributes(tauri_build::WindowsAttributes::new_without_app_manifest());
     }
-    Ok(())
+    tauri_build::try_build(attributes).expect("build Tauri application resources");
 }
 
-fn main() {
-    prepare_scriptcat().expect("prepare bundled ScriptCat extension");
-    tauri_build::build()
+fn build_linux_documents() {
+    let source = "src/linux_documents/extension.c";
+    println!("cargo:rerun-if-changed={source}");
+    let library = pkg_config::Config::new()
+        .cargo_metadata(false)
+        .atleast_version("2.40")
+        .probe("webkit2gtk-web-extension-4.1")
+        .expect("Linux document support requires libwebkit2gtk-4.1-dev (>= 2.40)");
+    let output = std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap())
+        .join("libzerror-documents.so");
+    let mut build = cc::Build::new();
+    build.includes(&library.include_paths);
+    let mut command = build.get_compiler().to_command();
+    command.args([
+        "-shared",
+        "-fPIC",
+        "-fvisibility=hidden",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+    ]);
+    for path in &library.include_paths {
+        command.arg("-I").arg(path);
+    }
+    for (key, value) in &library.defines {
+        command.arg(match value {
+            Some(value) => format!("-D{key}={value}"),
+            None => format!("-D{key}"),
+        });
+    }
+    command.arg(source).arg("-o").arg(&output);
+    for path in &library.link_paths {
+        command.arg("-L").arg(path);
+    }
+    for name in &library.libs {
+        command.arg(format!("-l{name}"));
+    }
+    assert!(
+        command
+            .status()
+            .expect("compile Linux document extension")
+            .success(),
+        "Linux document extension compilation failed"
+    );
 }

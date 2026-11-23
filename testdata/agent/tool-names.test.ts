@@ -2,13 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { websiteToolNames } from '../../src/services/agent/websiteToolDefinitions'
 import { BROWSER_PRIMITIVE_TOOLS } from '../../src/services/agent/toolDefs/browserPrimitiveTools'
+import { WEBSITE_HOST_TOOLS } from '../../src/services/agent/websiteRuntime/hostTools'
 
 const src = resolve(fileURLToPath(new URL('.', import.meta.url)), '../../src')
 const roots = [
   resolve(src, 'services/agent'),
-  resolve(src, 'services/chaoxing'),
   resolve(src, 'services/platform'),
 ]
 const skip = new Set(['activity.ts', 'agentIcons.ts'])
@@ -26,7 +25,7 @@ const walk = (dir: string, out: string[] = []) => {
 describe('browser tool names', () => {
   it('模型能看见的 browser_* 都是已注册工具', () => {
     const registered = new Set(
-      [...BROWSER_PRIMITIVE_TOOLS.map((tool) => tool.function.name), ...websiteToolNames],
+      [...BROWSER_PRIMITIVE_TOOLS.map((tool) => tool.function.name), ...WEBSITE_HOST_TOOLS.map(tool => tool.function.name)],
     )
     const allow = new Set([
       'browser_id',
@@ -48,5 +47,6 @@ describe('browser tool names', () => {
       }
     }
     expect([...unknown.entries()]).toEqual([])
+    for (const tool of WEBSITE_HOST_TOOLS) expect(BROWSER_PRIMITIVE_TOOLS.some(row => row.function.name === tool.function.name)).toBe(false)
   })
 })

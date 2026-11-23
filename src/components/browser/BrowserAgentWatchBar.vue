@@ -33,7 +33,7 @@ const progress = computed(() => {
 
 const clock = computed(() => {
   const live = watch.value
-  if (!active.value || !live || live.status === 'captcha' || live.status === 'quiz') return ''
+  if (!active.value || !live) return ''
   const duration = progress.value === null ? '正在读取视频时长' : formatVideoClock(live.duration)
   return `${formatVideoClock(live.current)} / ${duration}`
 })
@@ -44,9 +44,7 @@ const text = computed(() => {
   if (active.value && watch.value) {
     const live = watch.value
     const title = live.title || '视频'
-    if (live.status === 'captcha') liveText = `验证码 · ${title}`
-    else if (live.status === 'quiz') liveText = `测验将跳过 · ${title}`
-    else if (live.status === 'paused' || live.status === 'stalled') liveText = `已暂停 · ${title}`
+    if (live.status === 'paused' || live.status === 'stalled') liveText = `已暂停 · ${title}`
     else liveText = `监控中 · ${title}`
   }
   return [plan, liveText].filter(Boolean).join(' · ')

@@ -1,7 +1,10 @@
-import { createHostToolRunner, runChapterResume, type chapterResumePlan } from '../chapterResume'
-import { chaoxingStartup } from '../chaoxingStartup'
+import { createChatToolContext } from '../chatToolContextFactory'
+import { createHostToolRunner } from '../hostToolRunner'
+import { isWebsiteRuntimeToolName } from '../websiteRuntime/protocol'
 import { LOAD_AGENT_TOOLS, loadAgentTools, modelAgentTools } from '../toolDiscovery'
 import { toolRegistry } from '../core/tools'
+import { WEBSITE_HOST_TOOLS } from '../websiteRuntime/hostTools'
+import { websiteCheckpoints } from '../websiteRuntime/checkpoints'
 import { websitePrimaryHost } from '../websiteIdentity'
 import { watch } from 'vue'
 import { chatLoginRequests, pendingWebsiteVerification } from '../chatLogin'
@@ -25,30 +28,20 @@ import {
   liveSession,
   patchChildStep,
   patchMessage,
-  patchSession,
   patchStep,
-  sessionAttachment,
-  sessionFolders,
   sessions,
-  setChatStudySubject,
 } from '../chatStore'
 import { clipAgentDebug, logAgentDebug } from '../debugLog'
 import { executeChatTool } from '../executeChatTool'
 import { parseQuestions } from '../import'
 import { TOOL_RESULT_KEEP } from '../modelHistory'
-import { modelConfigManager, modelHasVision } from '../../model/config'
-import { takeToolImages, visionAttachParts } from '../../model/toolImages'
 import { projectToolResult } from '../../model/toolResultProjection'
 import { isModelStopped, runTextModel, type ModelToolCall, type RunTextModelOptions } from '../../model/runner'
 import { parseToolArgs } from '../toolArgs'
-import { scheduleStudyProgressEval } from '../chatStudy'
 import { createBrowserControlGate } from '../browserControlGate'
-import { createLearningCompletionCheck } from '../siteLearningReview'
 import { peekAppBrowserUrl } from '../../browser/appBrowser'
 import { createWatchContinuation } from '../watchContinuation'
-import { createTaskCompletionCheck, type AgentTaskOutcome } from '../taskCompletion'
-import { videoWatchFor } from '../../platform/panelAccess'
-import type { ChapterWorkflowResume } from '../tools/websiteChapterStart'
+import { canReviewFinalReply, createTaskCompletionCheck, type AgentTaskOutcome } from '../taskCompletion'
 
 export type RunAgentTurnLoopInput = {
   sessionId: string
@@ -71,8 +64,6 @@ export type RunAgentTurnLoopInput = {
   parentStepId?: string
   jobId?: string
   streamSubjectId?: number
-  chapterResume?: ReturnType<typeof chapterResumePlan>
-  startupCommand?: string
   onDrawingGraph?: () => void
 }
 
@@ -147,17 +138,6 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
     todos: liveMessage()?.todos || [],
     steps: liveMessage()?.steps || [],
   }))
-  const learningCheck = createLearningCompletionCheck(() => {
-    const session = liveSession(sessionId)
-    const steps = liveMessage()?.steps || []
-    const todos = session?.todos || []
-    return {
-      url: peekAppBrowserUrl(session?.browserId || ''), steps,
-      enabled: role === 'parent' && !abort.signal.aborted,
-      ready: (todos.some(item => item.status === 'done') && todos.every(item => item.status !== 'pending'))
-        || steps.some(step => step.name === 'browser_finish' && parseToolArgs(step.result || '').learningRequired === true),
-    }
-  })
   const visibleText = (text?: string) => Boolean(String(text || '').replace(/\u200B/g, '').trim())
   const stripMarks = (text: string) => redactText(String(text || '').replace(/\u200B/g, ''))
   let consultedSitePath = ''
@@ -265,7 +245,7 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
   const continueVideo = role === 'parent' ? createWatchContinuation({
     sessionId, signal: abort.signal,
     browserId: () => liveSession(sessionId)?.browserId || '',
-    expectedWatch: () => [...(liveMessage()?.steps || [])].reverse().find(step => ['browser_watch', 'browser_play_zjooc', 'browser_complete_chapter', 'browser_start_chapter_tasks'].includes(step.name || '')
+    expectedWatch: () => [...(liveMessage()?.steps || [])].reverse().find(step => step.name === 'browser_watch'
       && step.status === 'done' && parseToolArgs(step.result || '').watching === true)?.id,
     canFinish: () => Boolean(completion.terminal()),
     waiting: value => {
@@ -281,10 +261,13 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
   try {
     await flushChatCheckpoint()
     let startupContext = ''
-    let startupCaptchaPending = false
-    const loginToolGuidance = '本轮只使用已提供的 browser_login_zjooc 和 browser_finish。空参数调用用于获取当前验证码图。根据最新工具回执报告结果，避免推测失败原因或复述验证码。'
+
     const projectTools = (available: unknown[]) => modelAgentTools([...toolRegistry(available).values()], liveSession(sessionId))
     const currentCatalog = async () => await liveTools?.() ?? tools
+    const currentModelTools = async () => {
+      const catalog = [...toolRegistry(await currentCatalog()).values()]
+      return input.deferTools ? projectTools(catalog) : catalog
+    }
     const modelOptions: RunTextModelOptions = {
       timeoutMs,
       validateTools: true,
@@ -292,17 +275,24 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
       userContent,
       signal: abort.signal,
       tools: input.deferTools ? projectTools(tools) : tools,
-      liveTools: input.deferTools ? async () => projectTools(await currentCatalog()) : liveTools,
+      liveTools: currentModelTools,
       systemPrompt,
       useAgentModel: true,
       history,
       maxRounds,
       liveContext: () => controlGate.liveContext(async () => [startupContext, await liveContext?.() || '', run.context(), taskStateContext(liveSession(sessionId), assistantId)].join('\n')),
-      beforeComplete: async remaining => {
+      beforeComplete: async (remaining, response) => {
         const recovery = !completion.terminal() ? run.beforeComplete() : undefined
         if (recovery) return recovery
         const continuation = await continueVideo()
-        return completion.beforeComplete(remaining, continuation) || learningCheck.beforeComplete(remaining)
+        const message = liveMessage()
+        if (role === 'parent' && response && !continuation && message
+          && !completion.terminal() && canReviewFinalReply({ steps: message.steps, todos: message.todos || [] })
+          && toolRegistry(await currentCatalog()).has('browser_finish')) {
+          const receipt = await hostTool('browser_finish', { status: 'done', summary: response.slice(0, 600) })
+          if (!receipt.finished && receipt.error) return String(receipt.error)
+        }
+        return completion.beforeComplete(remaining, continuation)
       },
       subscribePause: listener => {
         pauseListeners.add(listener); listener(waitingForVideo || waitingForApproval || runningChapterWorkflow)
@@ -316,109 +306,27 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
         })
       },
       executeTool: async (call: ModelToolCall) => {
-        if (startupCaptchaPending && call.name === 'browser_login_zjooc') {
-          startupCaptchaPending = false
-          startupContext = loginToolGuidance
-        }
         if (input.deferTools && call.name === LOAD_AGENT_TOOLS) {
           return run.execute(call, async () => loadAgentTools([...toolRegistry(await currentCatalog()).values()], parseToolArgs(call.arguments).names))
         }
-        const dispatch = (chapterResume?: ChapterWorkflowResume) => controlGate.runTool(call, browserEpoch => run.execute(call, expectedBrowserId => executeChatTool({
+        const dispatch = () => controlGate.runTool(call, browserEpoch => run.execute(call, async expectedBrowserId => executeChatTool({
           call,
-          ctx: {
-            sessionId,
-            assistantId,
-            abort: abort.signal,
-            browserEpoch,
-            chapterResume,
-            role,
-            parentSessionId,
-            parentAssistantId,
-            parentStepId,
-            jobId,
-            onBrowserNavigation,
-            ensureBrowser: async () => {
-              const { ensureAgentBrowser } = await import('../agentBrowser')
-              const target = parentSessionId || sessionId
-              const id = await ensureAgentBrowser(target)
-              if (expectedBrowserId && id !== expectedBrowserId) throw new Error('网页操作未执行：当前标签页已改变，请重新读取页面。')
-
-              return id
-            },
-            browserId: () => String(
-              sessions.value.find((item) => item.id === (parentSessionId || sessionId))?.browserId
-              || sessions.value.find((item) => item.id === sessionId)?.browserId
-              || '',
-            ).trim(),
-            attachment: () => sessionAttachment(parentSessionId || sessionId),
-            folders: () => sessionFolders(parentSessionId || sessionId),
-            studySubjectId: () => {
-              const id = Number(sessions.value.find((item) => item.id === (parentSessionId || sessionId))?.studySubjectId)
-              return Number.isFinite(id) && id > 0 ? id : undefined
-            },
-            setStudySubject: (subjectId) => setChatStudySubject(subjectId, parentSessionId || sessionId),
-            markDrawingGraph: () => { onDrawingGraph?.() },
-            scheduleEval: (evalInput) => scheduleStudyProgressEval({
-              sessionId: parentSessionId || sessionId,
-              messageId: parentAssistantId || assistantId,
-              subjectId: evalInput.subjectId,
-              hint: evalInput.hint,
-              force: true,
-              stepId: evalInput.stepId,
-            }),
-            getTodos: () => parentSessionId
-              ? sessions.value.find(item => item.id === parentSessionId)?.todos || []
-              : liveMessage()?.todos ?? (call.name === 'browser_todo' && parseToolArgs(call.arguments).action !== 'set'
-                ? liveSession(sessionId)?.todos || [] : []),
-            setTodos: (todos) => {
-              const target = parentSessionId || sessionId
-              const messageId = parentAssistantId || assistantId
-              patchSession(target, (session) => ({ ...session, todos, updatedAt: Date.now() }))
-              patchMessage(target, messageId, { todos })
-            },
-          },
+          ctx: await createChatToolContext({
+            call, sessionId, assistantId, abort: abort.signal, browserEpoch,
+            role, parentSessionId, parentAssistantId, parentStepId, jobId,
+            onBrowserNavigation, expectedBrowserId, onDrawingGraph,
+            invokeHostTool: (name, args) => hostTool(name, args),
+          }),
         })))
-        if (call.name === 'browser_answer_zjooc' || (call.name === 'browser_play_zjooc' && parseToolArgs(call.arguments).mode === 'section')) {
+        let result: string
+        if (isWebsiteRuntimeToolName(call.name)) {
+          // Package invocation enforces its own active deadline. Media/form waits
+          // must also pause the parent model deadline for every website.
           runningChapterWorkflow = true
           updateTimeout()
-          try { return await dispatch() }
+          try { result = await dispatch() }
           finally { runningChapterWorkflow = false; updateTimeout() }
-        }
-        if (role === 'parent' && call.name === 'browser_start_chapter_tasks') {
-          runningChapterWorkflow = true
-          updateTimeout()
-          try {
-            let result = await dispatch()
-            while (true) {
-              const chapter = parseToolArgs(result)
-              if (chapter.ok !== true || chapter.watching !== true) return result
-              const watchedBrowser = liveSession(sessionId)?.browserId || ''
-              patchStep(sessionId, assistantId, call.id, { result: projectToolResult(result, TOOL_RESULT_KEEP, call.id) })
-              const continuation = await continueVideo()
-              if (!continuation) return result
-              const watch = videoWatchFor(watchedBrowser)
-              if (liveSession(sessionId)?.browserId !== watchedBrowser || watch?.sessionId !== sessionId
-                || watch.status !== 'done' || !('mid' in watch) || watch.mid !== chapter.videoMid
-                || typeof chapter.chapterKey !== 'string' || typeof chapter.videoMid !== 'string') {
-                return JSON.stringify({ ...chapter, watching: false, status: 'video_event', hint: continuation })
-              }
-              result = await dispatch({ chapterKey: chapter.chapterKey, videoMid: chapter.videoMid })
-            }
-          } finally {
-            runningChapterWorkflow = false
-            updateTimeout()
-          }
-        }
-        const result = await dispatch()
-        if (role === 'parent' && call.name === 'browser_complete_chapter') {
-          const chapter = parseToolArgs(result)
-          if (chapter.ok === true && chapter.watching === true) {
-            // Preserve the verified playback receipt even if the wait is interrupted.
-            patchStep(sessionId, assistantId, call.id, { result: projectToolResult(result, TOOL_RESULT_KEEP, call.id) })
-            const continuation = await continueVideo()
-            if (continuation) return JSON.stringify({ ...chapter, watching: false, status: 'video_event', hint: continuation })
-          }
-        }
+        } else result = await dispatch()
         const finished = call.name === 'browser_finish' ? parseToolArgs(result) : null
         if (role === 'parent' && finished?.ok === true && finished.status === 'watching') {
           const continuation = await continueVideo()
@@ -554,59 +462,12 @@ export const runAgentTurnLoop = async (input: RunAgentTurnLoopInput): Promise<Ru
         }
       },
     }
-    if (role === 'parent') {
-      const registry = toolRegistry(tools)
-      const hostTool = createHostToolRunner({ ...modelOptions, tools }, assistantId)
-      if (input.chapterResume && registry.has('browser_complete_chapter')) {
-        startupContext = await runChapterResume(input.chapterResume, hostTool)
-      } else if (input.startupCommand) {
-        const startup = chaoxingStartup(input.startupCommand, peekAppBrowserUrl(liveSession(sessionId)?.browserId || ''))
-        if (startup && registry.has(startup.name)) {
-          let result = await hostTool(startup.name, startup.args)
-          if (startup.name === 'browser_login_zjooc' && result.challenge === 'image_captcha') {
-            const { text, images } = takeToolImages(JSON.stringify(result))
-            const model = modelConfigManager.getSelectedAgentModel() || modelConfigManager.getSelectedTextModel()
-            if (images.length && result.captcha_id && model && modelHasVision(model)) {
-              modelOptions.tools = [registry.get('browser_login_zjooc')!]
-              const finish = registry.get('browser_finish')
-              if (finish) modelOptions.tools.push(finish)
-              modelOptions.liveTools = undefined
-              modelOptions.userContent = [
-                ...(Array.isArray(userContent) ? userContent : [{ type: 'text', text: modelPrompt }]),
-                ...visionAttachParts(images),
-              ]
-              startupCaptchaPending = true
-              startupContext = `【在浙学验证码】${text}
-${loginToolGuidance}
-识别小图中的 5 位验证码，直接调用 browser_login_zjooc，传回执里的 captcha_id 和识别出的 captcha_code。
-看不清时调用 browser_login_zjooc(wait_for_verification=true)。仅在工具确认 loggedIn=true 后报告登录成功。`
-            } else {
-              result = await hostTool('browser_login_zjooc', { wait_for_verification: true })
-            }
-          }
-          if (result.loginRequired === true && startup.name === 'browser_start_chapter_tasks' &&
-            result.clickDispatched !== true && registry.has('browser_login_chaoxing')) {
-            const login = await hostTool('browser_login_chaoxing', {})
-            result = login.loggedIn === true ? await hostTool(startup.name, startup.args) : login
-          }
-          const loginOnly = startup.name === 'browser_login_chaoxing' || startup.name === 'browser_login_zjooc'
-          const siteName = startup.name === 'browser_login_zjooc' ? '在浙学' : '学习通'
-          const success = loginOnly ? result.loggedIn === true : result.courseComplete === true
-          const summary = success
-            ? loginOnly ? `${siteName}已登录。` : `${startup.args.course_name}的章节已完成。目录确认了 ${result.completed} 个已完成小节。`
-            : loginOnly && !startupContext && typeof result.error === 'string' ? result.error : ''
-          if (summary && registry.has('browser_finish')) {
-            const finish = await hostTool('browser_finish', { status: success ? 'done' : 'blocked', summary,
-              ...(success && !loginOnly ? { learning: { decision: 'no_new', reason: '宿主按已内置的章节工作流完成，未新增可复用步骤。' } } : {}) })
-            if (finish.finished === true) {
-              await run.finish(success ? 'completed' : 'blocked')
-              return { text: summary, aborted: false, taskOutcome: success ? 'completed' : 'blocked' }
-            }
-          }
-          startupContext ||= `【宿主已执行本轮起始操作】${startup.name}，最新回执如下。直接处理剩余步骤，无需重复已完成操作或另建清单。\n${JSON.stringify(result)}`
-        }
-      }
-    }
+    const hostTool = createHostToolRunner({ ...modelOptions, tools, liveTools: async () => [...await currentCatalog(), ...WEBSITE_HOST_TOOLS] }, assistantId)
+    const pendingWorkflows = await websiteCheckpoints.list(sessionId).catch(() => {
+      startupContext = '【网站检查点暂不可读】普通对话可继续。本轮关闭网站快捷启动，不自动恢复或覆盖未读状态；网站流程需先解决安全存储错误。'
+      return []
+    })
+    if (pendingWorkflows.length) startupContext = `【网站流程检查点】${JSON.stringify(pendingWorkflows.map(({ id, name, browserId }) => ({ id, name, browserId })))}。结合用户本轮目标决定是否使用 browser_workflows 恢复或丢弃；恢复须先读取实际页面，不能重复已完成的提交。`
     const finalText = await runTextModel(modelPrompt, (delta) => {
       if (abort.signal.aborted || liveMessage()?.status !== 'streaming') return
       streamText(delta)
@@ -620,7 +481,7 @@ ${loginToolGuidance}
       ? liveNow
       : joinRound(finalText || '')
     await run.finish(completion.outcome === 'blocked' || completion.outcome === 'incomplete' ? 'blocked' : 'completed')
-    return { text: learningCheck.deferred ? `${assistantContent}\n\n本轮新的站点经验未确认保存到 Skill。` : assistantContent,
+    return { text: assistantContent,
       aborted: false, taskOutcome: completion.outcome }
   } catch (error) {
     if (abort.signal.aborted || isModelStopped(error)) {

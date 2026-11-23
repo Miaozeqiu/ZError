@@ -199,6 +199,7 @@
 }
 
 .composer-file {
+  position: relative;
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
@@ -273,26 +274,6 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-primary, #2d3748);
-}
-
-.composer-file-remove {
-  flex-shrink: 0;
-  width: 16px;
-  height: 16px;
-  padding: 0;
-  border: none;
-  border-radius: 50%;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: transparent;
-  color: var(--text-secondary, #718096);
-  cursor: pointer;
-}
-
-.composer-file-remove:hover {
-  color: var(--text-primary, #2d3748);
-  background: color-mix(in srgb, var(--text-primary, #2d3748) 8%, transparent);
 }
 
 .composer-input {
