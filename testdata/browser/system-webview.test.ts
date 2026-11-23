@@ -51,6 +51,18 @@ it('点击只派发一次，填写保留中文和引号并触发页面事件', a
   expect(changes).toBe(1)
 })
 
+it('未登记的手动密码也不进入快照名称、引用或填写回执', async () => {
+  const input = dom.window.document.createElement('input')
+  input.type = 'password'; input.id = 'password'; input.value = 'private-manual-value'
+  dom.window.document.body.appendChild(input)
+  const { readBrowserPage } = await import('../../src/services/browser/appBrowser')
+  const { fillByLocator } = await import('../../src/services/browser/engine/act')
+  expect(JSON.stringify(await readBrowserPage('system'))).not.toContain('private-manual-value')
+  const result = await fillByLocator('system', { by: 'css', value: '#password' }, 'new-private-value')
+  expect(result).toMatchObject({ ok: true, password: true, length: 17 })
+  expect(JSON.stringify(result)).not.toContain('private-value')
+})
+
 it('同名控件需要明确序号，不会擅自点击第一个', async () => {
   const { clickByLocator } = await import('../../src/services/browser/engine/act')
   dom.window.document.body.innerHTML = '<button>重复</button><button>重复</button>'

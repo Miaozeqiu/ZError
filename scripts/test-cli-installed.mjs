@@ -121,18 +121,32 @@ try {
 
   const browser = await call('browser.open', { url }); sessions.add(browser.sessionId);
   assert.equal((await call('browser.state', { id: browser.id })).id, browser.id);
-  const page = await cli(['tools', 'run', '--wait', '--timeout', '25', '--json', '-'], { sessionId: browser.sessionId, name: 'browser_get_page', args: {} });
-  assert.ok(page.messages.some(m => m.content.includes('CLI button')));
-  await cli(['tools', 'run', '--wait', '--timeout', '25', '--json', '-'], { sessionId: browser.sessionId, name: 'browser_click', args: { text: 'CLI button' } });
-  const verified = await cli(['tools', 'run', '--wait', '--timeout', '25', '--json', '-'], { sessionId: browser.sessionId, name: 'browser_get_page', args: {} });
-  assert.ok(verified.messages.some(m => m.content.includes('CLI clicked'))); checks.push('native browser observe, click and verify');
-  await cli(['tools','run','--wait','--timeout','25','--json','-'],{sessionId:browser.sessionId,name:'browser_type',args:{selector:'#fixture-input',text:'Fixture typed'}});
-  await cli(['tools','run','--wait','--timeout','25','--json','-'],{sessionId:browser.sessionId,name:'browser_click',args:{text:'CLI clicked'}});
-  const typed=await cli(['tools','run','--wait','--timeout','25','--json','-'],{sessionId:browser.sessionId,name:'browser_get_page',args:{}});
-  assert.ok(typed.messages.some(m=>m.content.includes('CLI clickedFixture typed'))); checks.push('native browser input and DOM event propagation');
-  await cli(['tools','run','--wait','--timeout','25','--json','-'],{sessionId:browser.sessionId,name:'browser_click',args:{text:'Frame button',frame:'fixture-child'}});
-  const framed=await cli(['tools','run','--wait','--timeout','25','--json','-'],{sessionId:browser.sessionId,name:'browser_get_page',args:{}});
-  assert.ok(framed.messages.some(m=>m.content.includes('Frame verified'))); checks.push('native child iframe observation and action');
+  const browserTool = async (name, args = {}) => {
+    const task = await cli(['tools', 'run', '--wait', '--timeout', '25', '--json', '-'], { sessionId: browser.sessionId, name, args });
+    const receipt = await call('tools.result', { id: task.id, messageId: task.messageId });
+    assert.equal(receipt.status, 'done', receipt.error);
+    assert.notEqual(receipt.result?.ok, false, JSON.stringify(receipt.result));
+    return receipt.result;
+  };
+  // 打开标签是异步加载；只轮询读取，不重放点击。每次核对本次消息的回执，防止旧历史误通过。
+  const verifyPage = async expected => {
+    const deadline = Date.now() + 10000;
+    let result;
+    do {
+      result = await browserTool('browser_get_page');
+      if (String(result.snapshot || '').includes(expected)) return;
+      await new Promise(resolve => setTimeout(resolve, 150));
+    } while (Date.now() < deadline);
+    assert.fail(`页面未出现 ${expected}: ${JSON.stringify(result).slice(0, 1500)}`);
+  };
+  await verifyPage('CLI button');
+  await browserTool('browser_click', { text: 'CLI button' });
+  await verifyPage('CLI clicked'); checks.push('native browser observe, click and verify');
+  await browserTool('browser_type', { selector: '#fixture-input', text: 'Fixture typed' });
+  await browserTool('browser_click', { text: 'CLI clicked' });
+  await verifyPage('CLI clickedFixture typed'); checks.push('native browser input and DOM event propagation');
+  await browserTool('browser_click', { text: 'Frame button', frame: 'fixture-child' });
+  await verifyPage('Frame verified'); checks.push('native child iframe observation and action');
   assert.ok(JSON.stringify((await call('tools.result', { id: browser.sessionId })).result).includes('CLI clicked')); checks.push('complete tool result');
   await call('questions.delete',{id:questionId,confirm:true});
   assert.ok(!JSON.stringify(await call('questions.search',{folderId,keyword:'CLI integration unique fixture'})).includes('CLI integration unique fixture')); checks.push('question deletion and database readback');
