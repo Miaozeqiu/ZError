@@ -6,6 +6,22 @@ pub(crate) const PAGE_W: f64 = 1920.0;
 #[cfg(any(windows, target_os = "macos"))]
 pub(crate) const PAGE_H: f64 = 1080.0;
 
+/// 将固定网页 CSS 坐标换算为缩放后的 CDP 输入坐标，撤销操作的释放落点保持在页面外。
+#[cfg(any(windows, test))]
+pub(crate) fn project_mouse_coordinates(params: &mut serde_json::Value, scale: f64) -> Result<(), String> {
+  if params["type"] == "mouseReleased" && params["x"] == -1 && params["y"] == -1 && params["clickCount"] == 0 {
+    return Ok(());
+  }
+  let x = params["x"].as_f64().ok_or("缺少鼠标横坐标")?;
+  let y = params["y"].as_f64().ok_or("缺少鼠标纵坐标")?;
+  if !scale.is_finite() || scale <= 0.0 || !(x * scale).is_finite() || !(y * scale).is_finite() {
+    return Err("浏览器缩放或鼠标坐标无效".into());
+  }
+  params["x"] = serde_json::json!(x * scale);
+  params["y"] = serde_json::json!(y * scale);
+  Ok(())
+}
+
 #[derive(Clone, Copy, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BrowserViewportLayout {
@@ -107,6 +123,25 @@ impl AnchoredBrowserGeometry {
 #[cfg(test)]
 mod tests {
   use super::*;
+  #[test]
+  fn mouse_input_follows_preview_and_full_view_scales() {
+    for scale in [1.0, 0.5, 0.1875, 1.25] {
+      for kind in ["mouseMoved", "mousePressed", "mouseReleased"] {
+        let mut event = serde_json::json!({ "type":kind, "x":800.0, "y":240.0, "button":"left", "clickCount":1 });
+        project_mouse_coordinates(&mut event, scale).unwrap();
+        assert_eq!(event["x"].as_f64(), Some(800.0 * scale));
+        assert_eq!(event["y"].as_f64(), Some(240.0 * scale));
+        assert_eq!(event["button"], "left"); assert_eq!(event["clickCount"], 1);
+      }
+    }
+  }
+  #[test]
+  fn cancelled_input_releases_off_page_even_if_layout_is_unavailable() {
+    let mut event = serde_json::json!({"type":"mouseReleased","x":-1,"y":-1,"clickCount":0});
+    project_mouse_coordinates(&mut event, f64::NAN).unwrap();
+    assert_eq!(event["x"], -1); assert_eq!(event["y"], -1); assert_eq!(event["clickCount"], 0);
+    assert!(project_mouse_coordinates(&mut serde_json::json!({"x":1,"y":2}), 0.0).is_err());
+  }
   fn rule() -> BrowserViewportLayout {
     BrowserViewportLayout { viewport_width: 1200.0, viewport_height: 800.0, padding_ratio: 0.07,
       padding_min: 16.0, padding_max: 144.0, compact_breakpoint: 760.0, compact_padding: 12.0, preview: None }
