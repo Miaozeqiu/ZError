@@ -45,7 +45,7 @@
 
   <!-- OCS配置对话框 -->
 
-  <OCSConfigDialog :visible="showOCSConfig" :current-port="configuredPort" @close="showOCSConfig = false"
+  <OCSConfigDialog v-if="showOCSConfig" :visible="showOCSConfig" :current-port="configuredPort" @close="showOCSConfig = false"
     @test="testOCSConnection" />
 
   <ModelWarningDialog :visible="showNoModelDialog" @close="showNoModelDialog = false"
@@ -55,19 +55,22 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, watch } from 'vue'
+import { useWorkspaceEvent } from '../composables/useWorkspaceEvent'
+import { defineAsyncComponent, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useSettings } from '../services/app/settings'
 import { useModelConfig, type AIModel, type ModelSelectionCategory } from '../services/model/config'
 import { useQuestionServer } from '../services/questionServer'
 
 import PortConfigDialog from './home/PortConfigDialog.vue'
 import ModelSelectorDialog from './home/ModelSelectorDialog.vue'
-import OCSConfigDialog from './home/OCSConfigDialog.vue'
 import HomeServerCard from './home/HomeServerCard.vue'
 import HomeRequestLogs from './home/HomeRequestLogs.vue'
-import HomeRequestDetails from './home/HomeRequestDetails.vue'
 import FolderPickerDialog from '../components/ui/FolderPickerDialog.vue'
 import ModelWarningDialog from './home/ModelWarningDialog.vue'
+
+const OCSConfigDialog = defineAsyncComponent(() => import('./home/OCSConfigDialog.vue').then(module => module.default))
+
+const HomeRequestDetails = defineAsyncComponent(() => import('./home/HomeRequestDetails.vue').then(module => module.default))
 
 defineEmits(['navigate'])
 const props = defineProps<{ collapseTrigger?: number }>()
@@ -220,12 +223,11 @@ watch(answerModels, (newModels) => {
 })
 
 onMounted(() => {
-  window.addEventListener('open-ocs-config', openOCSConfig)
 })
 
 onUnmounted(() => {
-  window.removeEventListener('open-ocs-config', openOCSConfig)
 })
+useWorkspaceEvent('home', 'open-ocs-config', openOCSConfig)
 </script>
 
 <style scoped>

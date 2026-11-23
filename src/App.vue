@@ -5,17 +5,12 @@ import { startInstalledWebsiteSync } from './services/agent/websiteRepository';
 import { siteAccountsReady } from './services/agent/siteAccounts';
 import { modelConfigManager } from './services/model/config';
 import { settingsManager } from './services/app/settings';
-import { ref, onMounted, onUnmounted, computed } from "vue";
+import { ref, onMounted, onUnmounted, computed, defineAsyncComponent, reactive } from "vue";
 import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import AppHeader from "./views/AppHeader.vue";
 import Sidebar from "./views/Sidebar.vue";
 import UpdateDialog from "./components/ui/UpdateDialog.vue";
 import Home from "./views/Home.vue";
-import Settings from "./views/Settings.vue";
-import QuestionBank from "./views/QuestionBank.vue";
-import CampusWorkspace from "./views/campus/CampusWorkspace.vue";
-import Study from "./views/Study.vue";
-import Agent from "./views/Agent.vue";
 import LoginDialog from "./components/ui/LoginDialog.vue";
 import { restoreAuthSession } from "./services/app/auth";
 import FileTree from "./views/questions/FileTree.vue";
@@ -27,8 +22,16 @@ import { useAppUpdate } from "./composables/useAppUpdate";
 import { useExclusiveMenu } from "./composables/useExclusiveMenu";
 import { agentBrowserExpanded } from './services/agent/agentBrowser';
 
+// Split independent workspaces while keeping their existing mounted lifetime.
+const Settings = defineAsyncComponent(() => import('./views/Settings.vue'));
+const QuestionBank = defineAsyncComponent(() => import('./views/QuestionBank.vue'));
+const CampusWorkspace = defineAsyncComponent(() => import('./views/campus/CampusWorkspace.vue'));
+const Study = defineAsyncComponent(() => import('./views/Study.vue'));
+const Agent = defineAsyncComponent(() => import('./views/Agent.vue'));
+
 // 当前活跃的页面
 const activeTab = ref('home');
+const visitedWorkspaces = reactive(new Set(['home']));
 // 顶层 tab 切换时用于触发各视图折叠的触发器
 const collapseTrigger = ref(0);
 const questionBankFocusFolderId = ref<number | null>(null);
@@ -112,6 +115,7 @@ const handleNavigate = (tab: string) => {
   if (tab === 'import-tasks') {
     tab = 'agent'
   }
+  visitedWorkspaces.add(tab);
   // 仅在实际切换到不同 tab 时触发折叠
   if (activeTab.value !== tab) {
     activeTab.value = tab;
@@ -126,18 +130,12 @@ const handleNavigate = (tab: string) => {
 const handleGuideAction = (target: string) => {
   if (target === 'model-settings') {
     handleNavigate('settings')
-    setTimeout(() => {
-      // 触发模型设置内部事件（如果是通过 router 可能不同，这里触发一个自定义事件以便 Settings.vue 切换到模型设置）
-      window.dispatchEvent(new Event('open-model-settings'))
-    }, 100)
+    window.dispatchEvent(new Event('open-model-settings'))
   } else if (target === 'home') {
     handleNavigate('home')
   } else if (target === 'ocs-config') {
     handleNavigate('home')
-    setTimeout(() => {
-      // 通知 Home 组件打开 OCS 配置窗口
-      window.dispatchEvent(new Event('open-ocs-config'))
-    }, 100)
+    window.dispatchEvent(new Event('open-ocs-config'))
   }
 }
 
@@ -489,7 +487,7 @@ onUnmounted(() => {
         </div>
 
         <div v-show="activeTab === 'questions'" class="content-view">
-          <QuestionBank
+          <QuestionBank v-if="visitedWorkspaces.has('questions')"
             :collapse-trigger="collapseTrigger"
             :focus-folder-id="questionBankFocusFolderId"
             :focus-folder-request-key="questionBankFocusRequestKey"
@@ -497,22 +495,22 @@ onUnmounted(() => {
         </div>
 
         <div v-show="activeTab === 'campus'" class="content-view">
-          <CampusWorkspace
+          <CampusWorkspace v-if="visitedWorkspaces.has('campus')"
             :active="activeTab === 'campus'"
             :obscured="loginDialogVisible || showUpdateDialog || Boolean(secureStorageState.error)"
           />
         </div>
 
         <div v-show="activeTab === 'study'" class="content-view">
-          <Study />
+          <Study v-if="visitedWorkspaces.has('study')" />
         </div>
 
         <div v-show="activeTab === 'agent' || activeTab === 'import-tasks'" class="content-view">
-          <Agent :active="activeTab === 'agent' || activeTab === 'import-tasks'" :browser-obscured="loginDialogVisible || showUpdateDialog" @open-folder="handleOpenQuestionFolder" />
+          <Agent v-if="visitedWorkspaces.has('agent')" :active="activeTab === 'agent' || activeTab === 'import-tasks'" :browser-obscured="loginDialogVisible || showUpdateDialog" @open-folder="handleOpenQuestionFolder" />
         </div>
 
         <div v-show="activeTab === 'settings'" class="content-view">
-          <Settings @open-question-folder="handleOpenQuestionFolder" />
+          <Settings v-if="visitedWorkspaces.has('settings')" @open-question-folder="handleOpenQuestionFolder" />
         </div>
       </div>
     </div>

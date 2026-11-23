@@ -1,8 +1,6 @@
 import { hasWebsiteRepository, repositoryForHost, readChaoxingRepositoryFile, onWebsiteRepositoryChanged, websiteRepositoryHosts, readWebsiteRepositoryFile } from './websiteRepository'
 
 import type { SiteGraphData } from '../browser/siteGraphCore'
-
-export const CHAOXING_SKILL_ID = 'chaoxing'
 export const SITE_GRAPH_PATH = 'site-graph.json'
 
 const OVERRIDE_DIR = '.local/share/zerror/skill-overrides'
@@ -63,8 +61,6 @@ export const applyLearnedSiteGraphContent = (content: string) => {
 
 export const isLearnedSiteGraphPath = (path: string) => LEARNED_GRAPH.test(String(path || '').replace(/\\/g, '/'))
 export const isLearnedParserPath = (path: string) => LEARNED_PARSER.test(String(path || '').replace(/\\/g, '/'))
-
-export const applyLearnedParserContent = (_path: string, _content: string) => false
 
 export const reloadLearnedSiteGraphs = async () => {
   try {

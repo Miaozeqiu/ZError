@@ -1,3 +1,4 @@
+import { siteBrowserAdapterFor } from '../../browser/siteCapabilities'
 import { notifyCourseIncident } from '../../browser/videoWatchAgent'
 import { hostCapabilitiesFor } from '../hostCapabilities'
 import {
@@ -55,15 +56,15 @@ export const handleCourseTools = async (ctx: Record<string, any>): Promise<strin
     if (!hostCapabilitiesFor(url).catalog) {
       return JSON.stringify({ ok: false, error: '这个站没有目录能力。看快照后用 action=set 提交清单。' })
     }
-    const { readChaoxingCourseItems } = await import('../../platform/chaoxing/courseHost')
-    const titles = await readChaoxingCourseItems(browserId)
+    const adapter = siteBrowserAdapterFor(url)
+    const titles = await adapter?.readCatalog?.(browserId) ?? []
     const items = titles
       .map((label) => normalizeCourseItem({ label, kind: 'other' }, 0))
       .filter((item): item is NonNullable<typeof item> => Boolean(item))
     if (!items.length) {
       return JSON.stringify({ ok: false, error: '目录里没有未完成的章节。', url })
     }
-    const plan = createCoursePlan({ host: host || 'chaoxing', courseId: 'chaoxing', items, skips: skipsOf(args.skips) })
+    const plan = createCoursePlan({ host: host || 'site', courseId: adapter?.id || host || 'course', items, skips: skipsOf(args.skips) })
     rememberCoursePlan(browserId, plan)
     return JSON.stringify({ ok: true, total: items.length, summary: coursePlanSummary(plan) })
   }
@@ -189,17 +190,11 @@ export const handleCourseTools = async (ctx: Record<string, any>): Promise<strin
     const step = await stepCourse(browserId, plan, deps)
     if (step.action === 'watching') {
       const tick = await deps.readTick()
-      const { isChaoxingPlayerUrl } = await import('../../platform/chaoxing/nav')
       const url = await currentUrl(browserId)
-      if (isChaoxingPlayerUrl(url)) {
-        const { startChaoxingCourseWatch } = await import('../../platform/chaoxing/courseHost')
-        await startChaoxingCourseWatch(browserId, sessionId, {
-          title: step.item?.label || '',
-          current: tick?.current,
-          paused: tick?.paused,
-          ended: tick?.ended,
-        })
-      } else if (tick) {
+      const hosted = await siteBrowserAdapterFor(url)?.watchCourse?.(browserId, sessionId, url, {
+        title: step.item?.label || '', current: tick?.current, paused: tick?.paused, ended: tick?.ended,
+      })
+      if (!hosted && tick) {
         const { startNativeWatch } = await import('../../browser/videoWatch')
         startNativeWatch(browserId, sessionId, { ...tick, title: step.item?.label || '' })
       }

@@ -528,13 +528,21 @@ const helpersFor = (input: ProviderRequest, config: ProviderConfig, modelId: str
       };
     };
 
-
-
 return {getRuntimeModelId,buildChatMessages,applyOpenAIThinkingPayload,normalizeBaseUrl,buildHeaders,ensureOk,readSSEPayloads,normalizeOpenAIChunk,parseJsonSafe,buildResponsesInput,mapResponseTool,normalizeResponsesPayload,buildAnthropicMessages,mapAnthropicTool,normalizeAnthropicPayload,ENABLE_THINKING,THINKING};
 }
 
 const chatProvider = (modelId: string, thinking: ReturnType<typeof normalizeThinkingOptions>): ProviderAdapter => async (input, config, fetch, abortSignal) => {
-const {getRuntimeModelId,buildChatMessages,applyOpenAIThinkingPayload,normalizeBaseUrl,buildHeaders,ensureOk,readSSEPayloads,normalizeOpenAIChunk,parseJsonSafe,buildResponsesInput,mapResponseTool,normalizeResponsesPayload,buildAnthropicMessages,mapAnthropicTool,normalizeAnthropicPayload,ENABLE_THINKING,THINKING} = helpersFor(input,config,modelId,thinking);
+const {
+  getRuntimeModelId,
+  buildChatMessages,
+  applyOpenAIThinkingPayload,
+  normalizeBaseUrl,
+  buildHeaders,
+  ensureOk,
+  readSSEPayloads,
+  normalizeOpenAIChunk,
+  parseJsonSafe,
+} = helpersFor(input,config,modelId,thinking);
   const runtimeModelId = getRuntimeModelId();
   const payload: Record<string, any> = {
     model: runtimeModelId,
@@ -573,7 +581,18 @@ const {getRuntimeModelId,buildChatMessages,applyOpenAIThinkingPayload,normalizeB
 }
 
 const responsesProvider = (modelId: string, thinking: ReturnType<typeof normalizeThinkingOptions>): ProviderAdapter => async (input, config, fetch, abortSignal) => {
-const {getRuntimeModelId,buildChatMessages,applyOpenAIThinkingPayload,normalizeBaseUrl,buildHeaders,ensureOk,readSSEPayloads,normalizeOpenAIChunk,parseJsonSafe,buildResponsesInput,mapResponseTool,normalizeResponsesPayload,buildAnthropicMessages,mapAnthropicTool,normalizeAnthropicPayload,ENABLE_THINKING,THINKING} = helpersFor(input,config,modelId,thinking);
+const {
+  getRuntimeModelId,
+  applyOpenAIThinkingPayload,
+  normalizeBaseUrl,
+  buildHeaders,
+  ensureOk,
+  readSSEPayloads,
+  parseJsonSafe,
+  buildResponsesInput,
+  mapResponseTool,
+  normalizeResponsesPayload,
+} = helpersFor(input,config,modelId,thinking);
   const runtimeModelId = getRuntimeModelId();
   const payload: Record<string, any> = {
     model: runtimeModelId,
@@ -666,7 +685,19 @@ const {getRuntimeModelId,buildChatMessages,applyOpenAIThinkingPayload,normalizeB
 }
 
 const anthropicProvider = (modelId: string, thinking: ReturnType<typeof normalizeThinkingOptions>): ProviderAdapter => async (input, config, fetch, abortSignal) => {
-const {getRuntimeModelId,buildChatMessages,applyOpenAIThinkingPayload,normalizeBaseUrl,buildHeaders,ensureOk,readSSEPayloads,normalizeOpenAIChunk,parseJsonSafe,buildResponsesInput,mapResponseTool,normalizeResponsesPayload,buildAnthropicMessages,mapAnthropicTool,normalizeAnthropicPayload,ENABLE_THINKING,THINKING} = helpersFor(input,config,modelId,thinking);
+const {
+  getRuntimeModelId,
+  normalizeBaseUrl,
+  buildHeaders,
+  ensureOk,
+  readSSEPayloads,
+  parseJsonSafe,
+  buildAnthropicMessages,
+  mapAnthropicTool,
+  normalizeAnthropicPayload,
+  ENABLE_THINKING,
+  THINKING,
+} = helpersFor(input,config,modelId,thinking);
   const runtimeModelId = getRuntimeModelId();
   const prepared = buildAnthropicMessages(input.messages || []);
   const payload: Record<string, any> = {

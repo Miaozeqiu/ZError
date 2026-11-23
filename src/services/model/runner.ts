@@ -55,7 +55,7 @@ export interface RunTextModelOptions {
   /** A summary belongs to the same model as the ongoing run. */
   contextModel?: AIModel
   validateTools?: boolean
-  beforeComplete?: (remainingRounds: number) => string | undefined | Promise<string | undefined>
+  beforeComplete?: (remainingRounds: number, response: string) => string | undefined | Promise<string | undefined>
   compactBrowserContext?: boolean
   timeoutMs?: number
   tools?: any[]
@@ -747,7 +747,7 @@ export async function runTextModel(
 
       if (!toolCalls.length || !options?.executeTool) {
         const spoken = fullResponse.trim()
-        const reminder = await options?.beforeComplete?.(maxRounds - round - 1)
+        const reminder = await options?.beforeComplete?.(maxRounds - round - 1, spoken)
         throwIfStopped()
         if (reminder) {
           if (round + 1 >= maxRounds) throw new Error('任务尚未完成，已达到本轮执行次数上限')

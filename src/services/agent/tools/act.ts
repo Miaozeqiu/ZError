@@ -1,3 +1,4 @@
+import { logAgentDebug } from '../debugLog'
 import type { BrowserLocator } from '../../browser/engine/types'
 import { handleCheckTool } from './check'
 import { resultOrderHint } from './resultOrderHint'
@@ -9,21 +10,38 @@ import { rememberPageRefs } from '../../browser/engine/refs'
 
 export const handleActTools = async (ctx: Record<string, any>): Promise<string | null> => {
   const {
-    name, args, browserId, sessionId, wait, role, loop, policy, failWithCard, platformTool,
-    currentUrl, graphUrlOf, liveHref,
-    notePageProbe, readBrowserPage, getBrowserState, peekAppBrowserUrl, emptyPageSnaps, callProtocol,
-    graphNodeId, siteGraphNodeForUrl, isShellNode, SPACE_HINT, COURSE_HW_HINT,
-    browserTaskIntent, sameChaoxingCourse, isChaoxingIframeNavUrl, isSpaceListTopUrl,
-    IFRAME_NAV_HINT, navigateBrowserView, evalBrowserView, pageHostMatches, pageHostOf, reloadBrowserView,
-    goBackBrowserView, goForwardBrowserView, formatMissRefsHint, cssSelectorFromArgs, looksLikeCssSelector,
-    resolveRefLocator, clickByLocator, clickBrowserElement, clickBrowserText, observeAfterClick, asObject,
-    rememberLoginTyped, typeBrowserElement, fillByLocator, waitMs, listAppBrowsers, readChaoxingSpaceContext,
-    readPageSnapshot, isEvalActBusy, displaySiteName, missingHostNeeds, missingNeedsNote, nextStep,
-    screenshotBrowserView, collectPageCaptchaHits, materializeCaptchaImages, captchaScreenshotHint,
-    evaluate, inspectEvalScript, readBrowserLoop, listCachedPageRefs, hostnameOf,
-    siteGraphForUrl,
-    syncPeekedUrl, patchAppBrowser, scrollBrowserView, getBrowserState: _gs,
-    evalBrowserFrames, isCourseChromeTab, withBudget, typedResult,
+    name,
+    navigation,
+    args,
+    browserId,
+    sessionId,
+    wait,
+    role,
+    loop,
+    policy,
+    currentUrl,
+    graphUrlOf,
+    callProtocol,
+    graphNodeId,
+    browserTaskIntent,
+    formatMissRefsHint,
+    cssSelectorFromArgs,
+    looksLikeCssSelector,
+    resolveRefLocator,
+    clickByLocator,
+    clickBrowserText,
+    observeAfterClick,
+    asObject,
+    rememberLoginTyped,
+    fillByLocator,
+    evaluate,
+    inspectEvalScript,
+    listCachedPageRefs,
+    scrollBrowserView,
+    getBrowserState: _gs,
+    evalBrowserFrames,
+    withBudget,
+    typedResult,
   } = ctx
   if (name === 'browser_press') {
     const key = String(args.key || '')
@@ -83,11 +101,11 @@ export const handleActTools = async (ctx: Record<string, any>): Promise<string |
     if (!text) return JSON.stringify({ error: '缺少 text' })
     const nowUrl = await currentUrl(browserId)
     const shellId = graphNodeId(await graphUrlOf(browserId, nowUrl))
-    if (isShellNode(shellId, nowUrl) && /搜索|查找/.test(text)) {
-      if (policy.permissionMode === 'strict') return JSON.stringify({ ok: false, error: SPACE_HINT })
+    if (navigation.isShell(shellId, nowUrl) && /搜索|查找/.test(text)) {
+      if (policy.permissionMode === 'strict') return JSON.stringify({ ok: false, error: navigation.shellHint })
     }
-    if (text === '任务' && /stucoursemiddle|\/mycourse\/stu/i.test(nowUrl) && browserTaskIntent(sessionId) === 'homework') {
-      if (policy.permissionMode === 'strict') return JSON.stringify({ ok: false, error: COURSE_HW_HINT })
+    if (navigation.isHomeworkDetour(nowUrl, text) && browserTaskIntent(sessionId) === 'homework') {
+      if (policy.permissionMode === 'strict') return JSON.stringify({ ok: false, error: navigation.homeworkHint })
     }
     const from = nowUrl
     // DOM 补充控件不一定在 AX 树里。唯一的精确快照命中优先使用原来的节点/frame 身份。
@@ -113,7 +131,7 @@ export const handleActTools = async (ctx: Record<string, any>): Promise<string |
       { ok: false, error: `点击「${text}」超时` },
     ) as { ok?: boolean; error?: string; text?: string }
     if (clicked?.ok) {
-      if (isCourseChromeTab(text)) return JSON.stringify(clicked)
+      if (navigation.isNavigationTab(text)) return JSON.stringify(clicked)
       const seen = await observeAfterClick(browserId, { ok: true, text: clicked.text || text }, from, frame)
       if (/^(我学的课|已学的课|我教的课)$/.test(text)) {
         const extra = clicked as { tab?: string; frame?: string; already?: boolean }
@@ -145,9 +163,9 @@ export const handleActTools = async (ctx: Record<string, any>): Promise<string |
     const text = String(args.text ?? '')
     if (!secret && /\{\{secret:/.test(text)) return JSON.stringify({ ok: false, error: '敏感变量必须放在 secret_ref，不能当作普通文字填写。' })
     const nowUrl = await currentUrl(browserId)
-    const onSpaceShell = isShellNode(graphNodeId(await graphUrlOf(browserId, nowUrl)), nowUrl)
+    const onSpaceShell = navigation.isShell(graphNodeId(await graphUrlOf(browserId, nowUrl)), nowUrl)
     if (onSpaceShell && policy.permissionMode === 'strict') {
-      return JSON.stringify({ ok: false, error: SPACE_HINT })
+      return JSON.stringify({ ok: false, error: navigation.shellHint })
     }
     const css = cssSelectorFromArgs(ref, selector)
     const nth = Number(args.nth) > 0 ? Number(args.nth) : undefined
@@ -207,7 +225,7 @@ export const handleActTools = async (ctx: Record<string, any>): Promise<string |
     if (blocked) {
       return reject(blocked, loop.recipe)
     }
-    if (/\.src\s*=/.test(script) && isSpaceListTopUrl(script)) {
+    if (/\.src\s*=/.test(script) && navigation.isCourseListUrl(script)) {
       return reject('切课表用 click_text「我学的课」点页签，不要改 iframe src。')
     }
     const frame = String(args.frame || '').trim()
@@ -219,7 +237,6 @@ export const handleActTools = async (ctx: Record<string, any>): Promise<string |
     try {
       if (all) {
         const report = await evalBrowserFrames(browserId, script)
-        const { logAgentDebug } = await import('../debugLog')
         logAgentDebug(sessionId, {
           kind: 'browser',
           type: 'eval_frames',

@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { describe, expect, it, vi } from 'vitest'
+import { runtimeFixture } from './fixtures/websiteRuntime'
 import { downloadChaoxingRepository, discoverWebsiteRepositories } from '../../src/services/agent/websiteRepositoryGitHub'
 import type { WebsiteSnapshot } from '../../src/services/agent/websiteRepositoryCore'
 
@@ -9,8 +10,8 @@ const fallback: WebsiteSnapshot = { revision: 'bundled:1', checkedAt: 0, files }
 const website = { version: 1, id: 'chaoxing', name: '学习通', host: 'chaoxing.com', icon: 'assets/icon.png' }
 const icon = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/ZksAAAAASUVORK5CYII=', 'base64')
 const sha = (text: string | Buffer) => createHash('sha1').update(`blob ${Buffer.byteLength(text)}\0`).update(text).digest('hex')
-const fixture = () => {
-  const pack: Record<string, string | Buffer> = { ...files, 'website.json': JSON.stringify(website), 'assets/icon.png': icon }
+const fixture = (extra: Record<string, string> = {}) => {
+  const pack: Record<string, string | Buffer> = { ...files, 'website.json': JSON.stringify(website), 'assets/icon.png': icon, ...extra }
   const entries = Object.entries(pack).map(([path, text]) => ({ path: `skills/chaoxing/${path}`, mode: '100644', type: 'blob', sha: sha(text), size: Buffer.byteLength(text) }))
   const request = vi.fn(async (url: string, init?: RequestInit): Promise<Response> => {
     expect(init?.method).toBe('GET')
@@ -25,6 +26,17 @@ const fixture = () => {
 }
 
 describe('GitHub website snapshot downloads', () => {
+  it('accepts an integrity-checked compiled runtime from the same commit without exposing it as experience text', async () => {
+    const runtime = runtimeFixture()
+    const { request } = fixture({ 'runtime.json': JSON.stringify(runtime) })
+    const result = await downloadChaoxingRepository(fallback, request as typeof fetch, 1000)
+    expect(result.runtime).toEqual(runtime)
+    expect(result.tools?.[0].function.name).toBe('browser_site_chaoxing__read_catalog')
+    expect(result.files['runtime.json']).toBeUndefined()
+    runtime.bundle.code += 'changed'
+    const corrupt = fixture({ 'runtime.json': JSON.stringify(runtime) })
+    await expect(downloadChaoxingRepository(fallback, corrupt.request as typeof fetch)).rejects.toThrow('哈希')
+  })
   it('downloads a public snapshot pinned to one commit, verifying actual blob bytes', async () => {
     const { request } = fixture()
     const result = await downloadChaoxingRepository(fallback, request as typeof fetch, 1000)

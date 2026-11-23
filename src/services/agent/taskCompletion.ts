@@ -9,8 +9,26 @@ const object = (raw?: string): Record<string, unknown> => {
   try { return JSON.parse(raw || '{}') || {} } catch { return {} }
 }
 // 只读问答和网站资料维护可以直接答复；实际网页操作需要网页收尾回执。
-const observation = /^(browser_select_tab|browser_run_status|browser_verify_operation|browser_get_state|browser_get_page|browser_find|browser_screenshot|browser_decode_chaoxing_font|browser_eval|browser_wait|browser_site_graph)$/
+const observation = /^(browser_select_tab|browser_run_status|browser_verify_operation|browser_get_state|browser_get_page|browser_find|browser_screenshot|browser_eval|browser_wait|browser_site_graph)$/
 const needsReceipt = (step: CompletionStep) => step.name.startsWith('browser_') && !observation.test(step.name)
+
+// A plain final reply proposes completion. Only submit it to the normal finish
+// gate after a successful business action; a checklist or a challenge alone is insufficient.
+export function canReviewFinalReply({ steps, todos }: TaskSnapshot) {
+  if (todos.some(item => item.status === 'pending') || steps.some(step => step.status === 'running')) return false
+  const actions = steps.filter(step => needsReceipt(step) && step.name !== 'browser_todo')
+  const action = actions.at(-1)
+  if (!action || action.name === 'browser_finish') return false
+  // A failed follow-up observation (or a tab switch) cannot confirm an older receipt.
+  const subsequent = steps.slice(steps.lastIndexOf(action))
+  if (subsequent.some(step => {
+    const result = object(step.result)
+    return step.status === 'failed' || result.ok === false || result.error || result.denied || step.name === 'browser_select_tab'
+  })) return false
+  const result = object(action.result)
+  return action.status === 'done' && result.ok === true && !result.challenge
+    && result.loggedIn !== false && !result.loginRequired && !result.watching
+}
 
 export const currentTaskFinish = ({ steps, todos }: TaskSnapshot): 'done' | 'blocked' | undefined => {
   const reverseIndex = [...steps].reverse().findIndex(step => step.name === 'browser_finish')

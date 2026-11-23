@@ -1,3 +1,7 @@
+import type { ChatToolContext } from './toolContext'
+import { websiteObservation } from './websiteRuntime/observations'
+import { readNativeVideoTick } from '../browser/videoWatch'
+import { coursePlanFor } from '../browser/coursePlan'
 /** 软件外 Agent 用的浏览器 / 解析器接口。开发桥 127.0.0.1:1429 */
 
 import {
@@ -16,13 +20,9 @@ import {
   scrollBrowserView,
   typeBrowserElement,
   getSelectedBrowserId,
-  peekAppBrowserUrl,
 } from '../browser/appBrowser'
 import { evalBrowserView, evalBrowserViewMain, waitMs } from '../browser/eval'
 import { siteGraphAgentSnap } from '../browser/siteGraph'
-import { ensurePanelStudy, nextPanelStudy, openPanelChapter, playPanelStudy, readPanelStudy } from '../chaoxing/browser/panelStudy'
-import { fillChaoxingCaptcha, readChaoxingVideoTick } from '../chaoxing/study'
-import { runPanelHomework } from '../chaoxing/homework/panelHomework'
 import { redactObject, redactText } from '../security/secretRedaction'
 
 export type BridgeCmd = {
@@ -34,7 +34,7 @@ export type BridgeCmd = {
 export const BRIDGE_ACTIONS = [
   { name: 'help', group: 'meta', hint: '列出全部动作' },
   { name: 'health', group: 'meta', hint: '查看开发版加载状态，不返回凭据或聊天正文' },
-  { name: 'website_repository', group: 'meta', hint: '网站经验验收：op=status|refresh|preview|import，不返回经验正文。' },
+  { name: 'website_repository', group: 'meta', hint: '网站经验验收：op=status|refresh|preview|import|remove（仅移除经验），不返回经验正文。' },
   { name: 'list', group: 'meta', hint: '列出应用内浏览器标签' },
   { name: 'state', group: 'meta', hint: '当前页 + 章节解析器全文 + 任务点' },
   { name: 'goto', group: 'browser', hint: '打开网址。args.url', alias: ['navigate'] },
@@ -51,15 +51,11 @@ export const BRIDGE_ACTIONS = [
   { name: 'screenshot', group: 'browser', hint: '截图，返回 data URL' },
   { name: 'snapshot', group: 'browser', hint: 'Playwright 风格无障碍快照', alias: ['get_page', 'page'] },
   { name: 'eval', group: 'browser', hint: '在页面跑 JS。args.script' },
+  { name: 'website_tools', group: 'parser', hint: '列出当前仓库的工具' },
+  { name: 'website_tool', group: 'parser', hint: '运行已安装仓库工具。args.name、input；默认只读，readOnly=false 才允许修改。' },
   { name: 'chapter', group: 'parser', hint: '强制读目录，返回完整章节树和本节任务点' },
-  { name: 'chapter_open', group: 'parser', hint: '打开一节。args.title / index / chapterId' },
-  { name: 'play', group: 'parser', hint: '播任务点。args.videoIndex / label / title' },
-  { name: 'pause', group: 'parser', hint: '暂停当前视频' },
-  { name: 'next', group: 'parser', hint: '下一未完成视频或下一节' },
   { name: 'probe', group: 'parser', hint: '读当前视频进度', alias: ['watch'] },
-  { name: 'inspect', group: 'parser', hint: '读作业/测验题卡' },
-  { name: 'homework', group: 'parser', hint: '题卡。args.action=inspect|list|open|fill|guess|save|submit' },
-  { name: 'captcha', group: 'parser', hint: '填验证码。args.code' },
+  { name: 'new_chat', group: 'agent', hint: '新建测试对话和独立标签，args.title、url 可选，不发送消息。' },
   { name: 'send', group: 'agent', hint: '给应用内浏览器 Agent 发一句', alias: ['prompt'] },
   { name: 'chat', group: 'agent', hint: '读应用内 Agent 最近一条' },
   { name: 'stop', group: 'agent', hint: '停下应用内 Agent' },
@@ -107,8 +103,6 @@ const resolveBrowserId = async (want?: string) => {
   if (asked) return asked
   const selected = getSelectedBrowserId()
   if (selected && list.some((item) => item.id === selected)) return selected
-  const chaoxing = [...list].reverse().find((item) => /chaoxing\.com/i.test(item.url || ''))
-  if (chaoxing) return chaoxing.id
   const latest = [...list].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))[0]
   return latest?.id || list[0]?.id || ''
 }
@@ -132,10 +126,7 @@ const pageSnap = async (browserId: string, withImage: boolean) => {
   }
 }
 
-const parserSnap = async (browserId: string, refresh = false) => {
-  if (refresh) await ensurePanelStudy(browserId).catch(() => null)
-  return readPanelStudy(browserId)
-}
+const parserSnap = async (browserId: string, _refresh = false) => websiteObservation(browserId)
 
 const waitFor = async (
   browserId: string,
@@ -169,21 +160,6 @@ const waitFor = async (
     await waitMs(200)
   }
   return { ok: false, error: '等待超时', url: last, selector, text }
-}
-
-const homeworkOf = async (
-  browserId: string,
-  action: string,
-  args: Record<string, unknown>,
-) => {
-  const hwAction = ['list', 'open', 'inspect', 'fill', 'guess', 'save', 'submit'].includes(action)
-    ? action
-    : 'inspect'
-  return runPanelHomework(browserId, {
-    action: hwAction,
-    title: arg(args, 'title') || undefined,
-    answers: args.answers ?? args.answer,
-  })
 }
 
 const sendInApp = async (browserId: string, text: string) => {
@@ -243,6 +219,7 @@ export const runBridgeAction = async (cmd: BridgeCmd) => {
     const repositories = await import('./websiteRepository')
     const op = arg(args, 'op') || 'status'
     const host = arg(args, 'host')
+    if (op === 'remove' && import.meta.env.DEV) await repositories.removeWebsiteRepository(host)
     if (op === 'refresh') { await repositories.ensureWebsiteRepository(host); await repositories.refreshWebsiteRepository(host, true) }
     if (op === 'preview' || op === 'import') {
       const candidates = await repositories.previewWebsiteRepository(arg(args, 'url'))
@@ -253,6 +230,18 @@ export const runBridgeAction = async (cmd: BridgeCmd) => {
     }
     const hosts = await repositories.websiteRepositoryHosts()
     return { ok: true, id, action, repositories: hosts.map(host => ({ host, ...repositories.websiteRepositoryStates[host], customUrl: undefined, iconUrl: undefined, hasIcon: Boolean(repositories.websiteRepositoryStates[host]?.iconUrl) })) }
+  }
+
+  if (action === 'new_chat' && import.meta.env.DEV) {
+    const { createChat, selectChat, chatStoreReady } = await import('./chatStore')
+    const { createChatBrowserTab, ensureAgentBrowser } = await import('./agentBrowser')
+    await chatStoreReady
+    const session = createChat({ title: arg(args, 'title') || '浏览器测试' })
+    const tab = createChatBrowserTab(session.id, { url: arg(args, 'url') || 'zerror://home' })
+    selectChat(session.id)
+    window.dispatchEvent(new CustomEvent('navigate-tab', { detail: 'agent' }))
+    await ensureAgentBrowser(session.id)
+    return { ok: true, id, action, sessionId: session.id, browserId: tab.id }
   }
 
   if (action === 'list') {
@@ -313,7 +302,6 @@ export const runBridgeAction = async (cmd: BridgeCmd) => {
     const { resolveContextBudget } = await import('../model/contextBudget')
     const selectedModel = modelConfigManager.getSelectedAgentModel() || modelConfigManager.getSelectedTextModel()
     const { videoWatchFor } = await import('../platform/panelAccess')
-    const { coursePlanFor } = await import('../browser/coursePlan')
     const { hasAgentWait } = await import('./agentWait')
     const watchId = session?.browserId || browserId
     const watch = videoWatchFor(watchId)
@@ -352,11 +340,12 @@ export const runBridgeAction = async (cmd: BridgeCmd) => {
             let params: Record<string, unknown> = {}, result: Record<string, unknown> = {}
             try { params = JSON.parse(step.arguments || '{}') } catch { /* no arguments */ }
             try { result = JSON.parse(step.result || '{}') } catch { /* no JSON result */ }
+            const body = result.result && typeof result.result === 'object' ? result.result as Record<string, unknown> : result
             return { name: step.name, status: step.status,
               frame: params.frame, frameId: params.frameId, loaderId: params.loaderId,
               requestedStatus: params.status, watching: result.watching, finished: result.finished,
               resultStatus: result.status, ok: result.ok,
-              ...(step.name === 'browser_login_zjooc' ? { captchaImageCaptured: result.captchaImage === '[attached]' } : {}),
+              ...(body.captchaImage ? { captchaImageCaptured: body.captchaImage === '[attached]' } : {}),
               ...(args.details === true && step.finishedAt ? { elapsedMs: step.finishedAt - step.startedAt,
                 startedAfterMs: step.startedAt - (message.run?.trace[0]?.at ?? step.startedAt) } : {}),
               ...(args.details === true && (step.status === 'failed' || result.ok === false) ? {
@@ -508,52 +497,29 @@ export const runBridgeAction = async (cmd: BridgeCmd) => {
     }
   }
 
-  if (action === 'chapter_open') {
-    const opened = await openPanelChapter(browserId, {
-      title: arg(args, 'title'),
-      index: arg(args, 'index'),
-      chapterId: arg(args, 'chapterId'),
-    })
-    return { id, action, browserId, ...opened, chapter: await parserSnap(browserId, false) }
+  if (action === 'website_tools') {
+    const { installedExperienceHost, websiteToolsForHost } = await import('./websiteRepository')
+    const { websitePrimaryHost } = await import('./websiteIdentity')
+    const page = await getBrowserState(browserId)
+    return { ok: true, id, action, tools: websiteToolsForHost(installedExperienceHost(websitePrimaryHost(page.url))) }
   }
-
-  if (action === 'play') {
-    const played = await playPanelStudy(browserId, {
-      action: 'play',
-      title: arg(args, 'title') || undefined,
-      index: arg(args, 'index') || undefined,
-      chapterId: arg(args, 'chapterId') || undefined,
-      videoIndex: num(args, 'videoIndex') || undefined,
-      label: arg(args, 'label') || undefined,
-      skipIfDone: args.skipIfDone !== false,
-    })
-    return { id, action, browserId, ...played, chapter: await parserSnap(browserId, false) }
+  if (action === 'website_tool') {
+    const { ensureBrowserChat } = await import('./chat')
+    const { executeInstalledWebsiteTool } = await import('./websiteRuntime/installedTool')
+    const { executeWebsiteHostTool } = await import('./websiteRuntime/hostTools')
+    const session = ensureBrowserChat({ browserId })
+    if (!session) return { ok: false, error: '没有当前标签的对话' }
+    const controller = new AbortController()
+    const ctx: ChatToolContext = { attachment: () => null, folders: () => [], studySubjectId: () => undefined, setStudySubject: () => {}, markDrawingGraph: () => {}, scheduleEval: () => {}, sessionId: session.id, assistantId: '', abort: controller.signal,
+      browserId: () => listAppBrowsers().some(row => row.id === browserId) ? browserId : '',
+      role: args.readOnly === false ? 'execute' as const : 'explore' as const,
+      invokeHostTool: async (name: string, input: Record<string, unknown>): Promise<Record<string, unknown>> => JSON.parse(await executeWebsiteHostTool(name, input, ctx, browserId)),
+    }
+    return JSON.parse(await executeInstalledWebsiteTool(arg(args,'name'), args.input || {}, ctx, browserId))
   }
-
-  if (action === 'pause') {
-    const paused = await playPanelStudy(browserId, { action: 'pause' })
-    return { id, action, browserId, ...paused }
-  }
-
-  if (action === 'next') {
-    const moved = await nextPanelStudy(browserId, { skipQuiz: args.skipQuiz === true })
-    return { id, action, browserId, ...moved, chapter: await parserSnap(browserId, false) }
-  }
-
   if (action === 'probe') {
-    const tick = await readChaoxingVideoTick(browserId).catch(() => null)
-    return { ok: Boolean(tick?.hasVideo), id, action, browserId, tick, chapter: await parserSnap(browserId, false) }
-  }
-
-  if (action === 'inspect') {
-    const card = await homeworkOf(browserId, 'inspect', args)
-    return { ok: true, id, action, browserId, card }
-  }
-
-  if (action === 'homework') {
-    const hwAction = arg(args, 'action') || 'inspect'
-    const card = await homeworkOf(browserId, hwAction, args)
-    return { ok: true, id, action, browserId, homework: hwAction, card }
+    const tick = await readNativeVideoTick(browserId).catch(() => null)
+    return { ok: Boolean(tick?.hasVideo), id, action, browserId, tick, context: websiteObservation(browserId) }
   }
 
   if (action === 'protocol') {
@@ -565,13 +531,6 @@ export const runBridgeAction = async (cmd: BridgeCmd) => {
     const { callProtocol } = await import('../browser/protocol')
     const result = await callProtocol(browserId, op, extra)
     return { ok: result.ok !== false, id, action, browserId, op, ...result }
-  }
-
-  if (action === 'captcha') {
-    const code = arg(args, 'code', 'text')
-    if (!code) return { ok: false, id, action, error: '缺少 code' }
-    const filled = await fillChaoxingCaptcha(browserId, code)
-    return { id, action, browserId, ...filled }
   }
 
   return { ok: false, id, action, error: `未知动作 ${action}` }

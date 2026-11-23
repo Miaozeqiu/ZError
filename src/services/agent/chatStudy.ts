@@ -36,12 +36,14 @@ import {
   splitCompactedHistory,
 } from './context'
 import {
+  describeFileAttachments,
   expandFolderTokens,
   isFolderAttachment,
   isImageAttachment,
   parseFolderTokens,
 } from './folderTokens'
-import { messageHistoryText } from './modelHistory'
+import { messageHistoryText, modelVisibleTranscript } from './modelHistory'
+import { isWebsiteHostCommand } from './websiteRuntime/protocol'
 import { resolveSitePackForUrl } from './sitePack'
 import { siteAccountsPrompt } from './siteAccounts'
 import { websiteDomains, websiteIdentityForHost, websitePrimaryHost } from './websiteIdentity'
@@ -181,7 +183,7 @@ export const modelUserContent = (text: string, items?: AgentChatAttachment[]) =>
     && item.folderId != null
     && !mentioned.has(item.folderId)
   ))
-  return `${expanded}${describeFolders(extra)}`
+  return `${expanded}${describeFolders(extra)}${describeFileAttachments(items)}`
 }
 
 export const toMultimodalUserContent = (text: string, items?: AgentChatAttachment[]) => {
@@ -265,7 +267,7 @@ const pickCompactBoundary = (kept: AgentChatMessage[], keepTokens = CONTEXT_KEEP
 
 const buildCompactTranscript = (messages: AgentChatMessage[]) => messages.map(message => JSON.stringify({
   id: message.id, role: message.role, content: message.modelContent || message.content,
-  transcript: message.transcript || message.steps.map(step => ({ id: step.id, tool: step.name, arguments: step.arguments, result: step.result, status: step.status })),
+  transcript: message.transcript ? modelVisibleTranscript(message.transcript) : message.steps.filter(step => !isWebsiteHostCommand(step.name || '')).map(step => ({ id: step.id, tool: step.name, arguments: step.arguments, result: step.result, status: step.status })),
   todos: message.todos, quizAttempts: message.quizAttempts, taskOutcome: message.taskOutcome,
 })).join('\n')
 
@@ -493,3 +495,5 @@ export const scheduleStudyProgressEval = (input: {
     markEvalEnd(sessionKey)
   })
 }
+
+export const clearStudyEvalCooldown = (sessionId: string) => { evalStartedAt.delete(sessionId) }

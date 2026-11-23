@@ -133,6 +133,7 @@
 </template>
 
 <script setup lang="ts">
+import { useWorkspaceEvent } from '../composables/useWorkspaceEvent'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { Icon } from '@iconify/vue/offline'
 import '../utils/ui/agentIcons'
@@ -436,17 +437,16 @@ const onActivityUpdated = (event: Event) => {
 onMounted(() => {
   void load()
   window.addEventListener('study-graph-updated', onGraphUpdated)
-  window.addEventListener('open-study-graph', onOpenStudyGraph)
   window.addEventListener('study-activity-updated', onActivityUpdated)
   window.addEventListener('question-knowledge-updated', onKnowledgeUpdated)
 })
 
 onUnmounted(() => {
   window.removeEventListener('study-graph-updated', onGraphUpdated)
-  window.removeEventListener('open-study-graph', onOpenStudyGraph)
   window.removeEventListener('study-activity-updated', onActivityUpdated)
   window.removeEventListener('question-knowledge-updated', onKnowledgeUpdated)
 })
+useWorkspaceEvent('study', 'open-study-graph', onOpenStudyGraph)
 </script>
 
 <style scoped src="../styles/icon-action-button.css"></style>

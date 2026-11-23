@@ -1,9 +1,14 @@
 [package]
 name = "zerror"
-version = "2.2.9"
+version = "2.3.0"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
+default-run = "zerror"
+
+[[bin]]
+name = "zerror-cli"
+path = "src/bin/zerror-cli.rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -15,16 +20,13 @@ name = "zerror_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-zip = { version = "0.6", default-features = false, features = ["deflate"] }
-serde_json = "1"
-ring = "0.17"
 tauri-build = { version = "2.0", features = [] }
+cc = "1"
+pkg-config = "0.3"
 
 [dependencies]
 tauri = { version = "2.0", features = [ "macos-private-api", "devtools", "tray-icon", "webview-data-url", "image-png", "unstable"] }
 tauri-plugin-opener = "2.0"
-# tauri-plugin-sql removed - using rusqlite directly
-# tauri-plugin-sql = { version = "2.0", features = ["sqlite"] }
 # 关掉 http2：rustls+h2 对部分国内 CDN/网关（如 EdgeOne）会偶发
 # “error sending request”，HTTP/1.1 更稳。其余沿用插件默认能力。
 tauri-plugin-http = { version = "2.0", default-features = false, features = [
@@ -51,7 +53,7 @@ rusqlite = { version = "0.32", features = ["bundled", "functions"] }
 regex = "1.0"
 ring = "0.17.14"
 zeroize = "1"
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", features = ["json", "blocking"] }
 bytes = "1"
 base64 = "0.22"
 urlencoding = "2.1"
@@ -64,12 +66,13 @@ strsim = "0.10"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 tempfile = "3"
+webkit2gtk = { version = "=2.0.1", features = ["v2_40"] }
 
 [target.'cfg(windows)'.dependencies]
 webview2-com = "0.38"
 windows-core = "0.61"
 runas = "1.0"
-windows = { version = "0.56", features = ["Foundation", "Security_Credentials_UI", "Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging", "Win32_UI_HiDpi", "Win32_UI_Input_KeyboardAndMouse", "Win32_System_LibraryLoader", "Win32_System_Threading", "Win32_System_WinRT", "Win32_Security", "Win32_Security_Cryptography", "Win32_System_Memory"] }
+windows = { version = "0.56", features = ["Foundation", "Security_Credentials_UI", "Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging", "Win32_UI_HiDpi", "Win32_UI_Input_KeyboardAndMouse", "Win32_System_LibraryLoader", "Win32_System_Threading", "Win32_System_WinRT", "Win32_Security", "Win32_Security_Cryptography", "Win32_System_Memory", "Win32_System_Registry"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = "2.11.1"
@@ -78,9 +81,6 @@ block2 = "0.6"
 objc2-foundation = { version = "0.3", features = ["NSProcessInfo", "NSString", "NSObject", "NSUserDefaults", "NSArray", "NSGeometry"] }
 objc2-app-kit = { version = "0.3", features = ["NSView", "NSWindow", "NSGraphics"] }
 objc2-quartz-core = { version = "0.3.2", default-features = false, features = ["CALayer", "CATransaction", "objc2-core-foundation"] }
-objc2-av-foundation = { version = "0.3.2", features = ["AVPlayer", "AVPlayerItem", "AVAsset", "objc2-core-media"] }
-objc2-av-kit = { version = "0.3.2", features = ["AVPlayerView"] }
-objc2-core-media = { version = "0.3.2", features = ["CMTime"] }
 objc2-core-graphics = { version = "0.3.2", default-features = false, features = ["std", "CGEvent", "CGEventTypes"] }
 raw-window-handle = "0.6"
 cef = "151.8.0"

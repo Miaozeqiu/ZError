@@ -101,3 +101,6 @@ export const rememberListed = (sessionId: string, items: { id: number; mastery?:
 }
 
 export const listedQuestionsOf = (sessionId: string) => listedBySession.get(sessionId) || []
+
+
+export const clearListedQuestions = (sessionId: string) => { listedBySession.delete(sessionId) }

@@ -3,7 +3,9 @@ import { describe, expect, it, vi } from 'vitest'
 const { callProtocol } = vi.hoisted(() => ({ callProtocol: vi.fn() }))
 vi.mock('../../src/services/browser/protocol', () => ({ callProtocol }))
 
-import { readBrowserPage } from '../../src/services/browser/appBrowser'
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn().mockResolvedValue(undefined) }))
+
+import { closeBrowserView, readBrowserPage } from '../../src/services/browser/appBrowser'
 import { beginPageSnap, cachedPageSnap, invalidatePageSnap } from '../../src/services/browser/engine/pageSnap'
 import { locatorFromCache } from '../../src/services/browser/engine/refs'
 
@@ -43,6 +45,24 @@ describe('快照与引用缓存一致性', () => {
     expect(await old).toMatchObject({ snapshot: '', error: '页面快照已过期，请重新读取。' })
     expect(locatorFromCache(id, 'e4')?.value).toBe('#new')
     expect(locatorFromCache(id, 'e3')).toBeNull()
+  })
+
+  it('关闭标签释放已读快照和定位引用，晚到的结果不会重新创建它们', async () => {
+    const id = 'closing-tab'
+    const page = { snapshot: '关闭前', refs: [{ id: 'e1', role: 'button', name: '页', locator: { by: 'css', value: '#page' } }] }
+    let resolveLate!: (value: unknown) => void
+    callProtocol.mockReset().mockResolvedValueOnce(page)
+      .mockImplementationOnce(() => new Promise(resolve => { resolveLate = resolve }))
+    await readBrowserPage(id)
+    expect(locatorFromCache(id, 'e1')).not.toBeNull()
+    const late = readBrowserPage(id)
+    await vi.waitFor(() => expect(callProtocol).toHaveBeenCalledTimes(2))
+    await closeBrowserView(id)
+    expect(cachedPageSnap(id)).toBeNull()
+    expect(locatorFromCache(id, 'e1')).toBeNull()
+    resolveLate(page)
+    expect(await late).toMatchObject({ snapshot: '', refs: [] })
+    expect(cachedPageSnap(id)).toBeNull()
   })
 
   it('用户接管使快照失效后，未完成的普通读取不能重新写入引用', async () => {

@@ -32,8 +32,6 @@ for (const [key, content] of Object.entries(rawModules)) {
   bundledStore[parsed.id][parsed.path] = content
 }
 
-export const hasBundledSkill = (id: string) => Boolean(bundledStore[id]?.[SKILL_MAIN])
-
 export const listBundledSkillFiles = (id: string): string[] => {
   const files = bundledStore[id]
   if (!files) return []

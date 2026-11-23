@@ -8,6 +8,8 @@ on:
       - 'src/**'
       - 'src-tauri/**'
       - 'testdata/mcp/**'
+      - 'testdata/cli/**'
+      - 'scripts/test-cli-skills.mjs'
   push:
     branches: [master, dev-improvements]
     paths:
@@ -16,6 +18,8 @@ on:
       - 'src/**'
       - 'src-tauri/**'
       - 'testdata/mcp/**'
+      - 'testdata/cli/**'
+      - 'scripts/test-cli-skills.mjs'
 
 permissions:
   contents: read
@@ -28,21 +32,23 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           cache: npm
       - run: npm ci
       - run: npm run test:mcp
+      - run: npx vitest run testdata/cli
+      - run: npx vue-tsc --noEmit -p testdata/cli/tsconfig.json
       - run: npx vite build
 
   backend-windows:
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
       - uses: dtolnay/rust-toolchain@stable
@@ -50,12 +56,19 @@ jobs:
         with:
           workspaces: src-tauri -> target
       - run: cargo check --manifest-path src-tauri/Cargo.toml --locked --no-default-features
+      - run: cargo test --manifest-path src-tauri/Cargo.toml --locked --no-default-features --bin zerror-cli
+      - run: cargo test --manifest-path src-tauri/Cargo.toml --locked --no-default-features --lib cli::
+      - run: cargo build --manifest-path src-tauri/Cargo.toml --locked --no-default-features --bin zerror-cli
+      - run: node scripts/test-cli-skills.mjs src-tauri/target/debug/zerror-cli.exe
 
   backend-linux:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -71,3 +84,7 @@ jobs:
             libssl-dev
       - run: cargo check --manifest-path src-tauri/Cargo.toml --locked --no-default-features
       - run: cargo test --manifest-path src-tauri/Cargo.toml --locked --no-default-features --lib linux_elevation::tests
+      - run: cargo test --manifest-path src-tauri/Cargo.toml --locked --no-default-features --bin zerror-cli
+      - run: cargo test --manifest-path src-tauri/Cargo.toml --locked --no-default-features --lib cli::
+      - run: cargo build --manifest-path src-tauri/Cargo.toml --locked --no-default-features --bin zerror-cli
+      - run: node scripts/test-cli-skills.mjs src-tauri/target/debug/zerror-cli

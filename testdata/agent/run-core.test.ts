@@ -13,8 +13,8 @@ const call = (id: string, name: string, args = {}) => ({ id, name, arguments: JS
 describe('durable task lifecycle', () => {
   it('records the course landing snapshot as a current-tab observation only after verified entry', async () => {
     const test = setup()
-    const open = (id: string, opened: boolean) => test.controller.execute(call(id, 'browser_open_course'), async () => JSON.stringify({
-      ok: true, opened, snapshot: '- link "章节" [ref=e1]',
+    const open = (id: string, opened: boolean) => test.controller.execute(call(id, 'browser_site_academy__open'), async () => JSON.stringify({
+      ok: true, observed: opened, snapshot: '- link "章节" [ref=e1]',
     }))
     expect(JSON.parse(await open('unverified', false)).observation_id).toBeUndefined()
     expect(test.read().observation).toBeUndefined()

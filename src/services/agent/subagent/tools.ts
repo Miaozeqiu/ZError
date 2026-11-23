@@ -11,6 +11,8 @@ import {
   WRITE_AGENT_SKILL_FILE_TOOL,
 } from '../skillTools'
 import { executeToolNamesFor, hostCapabilitiesFor, type HostCapabilities } from '../hostCapabilities'
+import { installedWebsiteRuntimeTool } from '../websiteRepository'
+import { PASSIVE_WEBSITE_COMMANDS } from '../websiteRuntime/protocol'
 import { SUBAGENTS_ENABLED } from './enabled'
 
 export type BrowserToolRole = AgentToolRole
@@ -21,7 +23,6 @@ const LOOK_NAMES = [
   'browser_get_page',
   'browser_find',
   'browser_screenshot',
-  'browser_decode_chaoxing_font',
   'browser_eval',
   'browser_site_graph',
   'browser_reload',
@@ -39,7 +40,6 @@ const EXPLORE_NAMES = new Set([
   'browser_get_page',
   'browser_find',
   'browser_screenshot',
-  'browser_decode_chaoxing_font',
   'browser_eval',
   'browser_wait',
   'browser_site_graph',
@@ -71,7 +71,7 @@ export const assembleRoleTools = (input: {
     if (SUBAGENTS_ENABLED) names.add('browser_task')
     return [...filterToolsByNames(names), ...siteTools]
   }
-  if (role === 'explore') return [...namesOf(EXPLORE_NAMES), ...siteTools.filter(tool => EXPLORE_NAMES.has(tool.function.name))]
+  if (role === 'explore') return [...namesOf(EXPLORE_NAMES), ...siteTools.filter(tool => installedWebsiteRuntimeTool(tool.function.name)?.tool.commands.every(op => PASSIVE_WEBSITE_COMMANDS.has(op) && !['state.write','service.request'].includes(op)))]
   const caps = input.capabilities || hostCapabilitiesFor(url)
   const names = new Set(executeToolNamesFor(caps))
   return [...filterToolsByNames(names), ...siteTools]

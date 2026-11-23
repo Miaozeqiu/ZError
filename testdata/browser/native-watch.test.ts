@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { judgeFinish } from '../../src/services/agent/finishGate'
 import {
   applyNativeTickState,
@@ -100,6 +100,36 @@ describe('nativeWatchBusy', () => {
     expect(nativeWatchFor('b1')?.sessionId).toBe('s1')
     stopNativeWatch('b1')
     expect(nativeWatchBusy('b1')).toBe(false)
+  })
+})
+
+describe('native watch lifecycle', () => {
+  afterEach(() => { resetNativeWatches(); vi.useRealTimers() })
+
+  it('连续启动和停止监控后不留下定时器', () => {
+    vi.useFakeTimers()
+    for (let index = 0; index < 300; index++) {
+      const id = 'lifecycle-' + index
+      startNativeWatch(id, 'session', { current: 1, duration: 100 }, { readTick: async () => null })
+      stopNativeWatch(id)
+      expect(nativeWatchFor(id)).toBeNull()
+    }
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('同一标签重启监控后，旧请求晚到不会修改新视频', async () => {
+    vi.useFakeTimers()
+    let resolveOld!: (value: any) => void
+    startNativeWatch('reused', 'old-session', { current: 1, duration: 100 }, {
+      readTick: () => new Promise(resolve => { resolveOld = resolve }),
+    })
+    stopNativeWatch('reused')
+    startNativeWatch('reused', 'new-session', { current: 5, duration: 200 }, { readTick: async () => null })
+    resolveOld({ hasVideo: true, current: 100, duration: 100, ended: true })
+    await Promise.resolve(); await Promise.resolve()
+    expect(nativeWatchFor('reused')).toMatchObject({ sessionId: 'new-session', duration: 200, ended: false })
+    stopNativeWatch('reused')
+    expect(vi.getTimerCount()).toBe(0)
   })
 })
 

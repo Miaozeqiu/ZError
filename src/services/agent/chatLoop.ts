@@ -8,8 +8,7 @@ import { finishStudyGraphStream, studyGraphStream } from '../study/graphStream'
 import { finalizeStudySessionSummary } from '../study/timelineSummary'
 import { getActiveAgentProfile } from './agentProfiles'
 import { getEnabledSkillCatalog } from './agentSkills'
-import { browserChapterContext } from './browserChapterProgress'
-import { chapterResumePlan } from './chapterResume'
+import { browserChapterContext } from './websiteRuntime/observations'
 import { formatBrowserLiveContext } from './browserLoop'
 import { rememberBrowserTaskIntent } from './browserTask'
 import { bindAllWatchAgents, flushAllWatchAfterTurn } from '../platform'
@@ -24,6 +23,7 @@ import {
   persistSoon,
   patchMessage,
   sessionFolders,
+  sessionAttachment,
   sessionIsStreaming,
   sessions,
   setChatStudySubject,
@@ -55,8 +55,6 @@ import { assembleAgentTools, availableAgentTools } from './tools'
 import { useSettings } from '../app/settings'
 import { claimBrowserForNewMessage } from '../browser/control'
 import { experienceHostForPage, websiteRepositoryHosts } from './websiteRepository'
-import { websiteToolHost } from './websiteToolDefinitions'
-import { chaoxingStartup } from './chaoxingStartup'
 
 const matchSubjectInText = <T extends { id: number; name: string }>(text: string, subjects: T[]) => {
   const raw = String(text || '')
@@ -91,8 +89,9 @@ const prepareTurn = <T>(signal: AbortSignal, work: () => Promise<T>): Promise<T>
 export const sendChatMessage = async (
   text: string,
   files?: AgentChatAttachment[],
-  options?: { sessionId?: string; kind?: 'watch'; modelText?: string; quizAttemptRef?: AgentQuizAttemptRef; quizOptionQuotes?: AgentQuizOptionQuote[] },
+  options?: { sessionId?: string; assistantId?: string; kind?: 'watch'; modelText?: string; quizAttemptRef?: AgentQuizAttemptRef; quizOptionQuotes?: AgentQuizOptionQuote[] },
 ) => {
+  initializeChatRuntime()
   let content = redactText(text.trim())
   let quizOptionQuotes = options?.quizOptionQuotes?.length ? redactObject(options.quizOptionQuotes) : undefined
   if (!content && !quizOptionQuotes) return
@@ -131,7 +130,7 @@ export const sendChatMessage = async (
   const latestRunMessage = [...session.messages].reverse().find(message => message.role === 'assistant' && message.run)
   const recoveryMessage = options?.kind !== 'watch' && /^(?:请|帮我)?(?:继续|接着|恢复|重试|再试)/.test(content) && latestRunMessage?.run?.status !== 'completed' ? latestRunMessage : undefined
   const recovery = recoveryMessage?.run
-  const assistantId = `assistant-${Date.now()}`
+  const assistantId = options?.assistantId || `assistant-${Date.now()}`
   const assistantMessage: AgentChatMessage = {
     id: assistantId,
     run: { ...newRun(assistantId, Date.now(), recovery), goalMessageId: recovery?.goalMessageId || userMessage.id },
@@ -240,8 +239,12 @@ export const sendChatMessage = async (
       { id: 'recovery', priority: 40, trust: 'context', text: [runRecoveryContext(recovery), originalGoal ? `原任务目标（当前用户消息优先）：${originalGoal}` : ''].filter(Boolean).join('\n') },
       { id: 'environment', priority: 50, trust: 'context', text: envBlock },
     ])
+    const currentFiles = attachments?.length ? attachments.filter(isFileAttachment)
+      : (liveSession(sessionId)?.attachments || []).filter(isFileAttachment)
+    const rememberedFile = !attachments?.length ? sessionAttachment(sessionId) : null
+    const fileContext = currentFiles.length ? currentFiles : rememberedFile ? [rememberedFile] : []
     const promptBody = modelText()
-    const modelPrompt = `【消息ID：${userMessage.id}】\n${modelUserContent(promptBody, promptFolders)}`
+    const modelPrompt = `【消息ID：${userMessage.id}】\n${modelUserContent(promptBody, [...promptFolders, ...fileContext])}`
     const images = (attachments || []).filter((item) => isImageAttachment(item) && item.imageUrl)
     const userContent = images.length
       ? [
@@ -254,15 +257,11 @@ export const sendChatMessage = async (
       : undefined
 
     const liveBrowserId = () => String(sessions.value.find(item => item.id === sessionId)?.browserId || '').trim()
-    const plainCommand = !attachments?.length && !quizOptionQuotes?.length && !options?.kind && !modelFacing
     const currentUrl = peekAppBrowserUrl(liveBrowserId())
-    const startup = plainCommand && !recovery ? chaoxingStartup(content, currentUrl) : undefined
-    const startupHost = startup ? websiteToolHost(startup.name) : undefined
     await prepareTurn(abort.signal, () => Promise.all([
       experienceHostForPage(currentUrl).catch(() => ''),
-      startupHost ? experienceHostForPage(`https://${startupHost}`).catch(() => '') : Promise.resolve(''),
     ]))
-    const currentTools = () => availableAgentTools(assembleAgentTools(peekAppBrowserUrl(liveBrowserId()), startupHost), useSettings().settings.search)
+    const currentTools = () => availableAgentTools(assembleAgentTools(peekAppBrowserUrl(liveBrowserId())), useSettings().settings.search)
     const loop = await runAgentTurnLoop({
       sessionId,
       assistantId,
@@ -273,10 +272,6 @@ export const sendChatMessage = async (
       systemPrompt: turnSystemPrompt,
       tools: currentTools(),
       deferTools: true,
-      startupCommand: plainCommand && !recovery ? content : undefined,
-      chapterResume: plainCommand
-        ? chapterResumePlan({ command: content, browserId, url: peekAppBrowserUrl(browserId), previous: recoveryMessage, current: assistantMessage })
-        : undefined,
       liveTools: currentTools,
       liveContext: async () => {
         const current = sessions.value.find(item => item.id === sessionId)
@@ -385,7 +380,7 @@ export const sendChatMessage = async (
   }
 }
 
-bindAllWatchAgents({
+const bindChatWatch = () => bindAllWatchAgents({
   notify: (sessionId, display, modelText, files) => {
     void sendChatMessage(display, files as AgentChatAttachment[] | undefined, { sessionId, kind: 'watch', modelText })
   },
@@ -396,3 +391,16 @@ bindAllWatchAgents({
     return 'ready'
   },
 })
+
+let stopWatchBindings: (() => void) | null = null
+export const initializeChatRuntime = () => {
+  if (!stopWatchBindings) {
+    const stop = bindChatWatch()
+    const dispose = () => {
+      if (stopWatchBindings !== dispose) return
+      stop?.(); stopWatchBindings = null
+    }
+    stopWatchBindings = dispose
+  }
+  return stopWatchBindings
+}

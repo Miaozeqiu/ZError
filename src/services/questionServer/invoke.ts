@@ -207,7 +207,6 @@ export const callModelWithStreaming = async (
     }
   }, timeoutMs)
 
-  const { invoke } = await import('@tauri-apps/api/core')
   const rawTauriFetch = async (input: RequestInfo | URL, init: RequestInit = {}) => {
     try {
       return await secureFetch(input, {

@@ -19,7 +19,6 @@ use objc2_foundation::{NSArray, NSURL};
 use objc2_web_kit::WKOpenPanelParameters;
 use objc2_web_kit::{
   WKFrameInfo, WKMediaCaptureType, WKPermissionDecision, WKSecurityOrigin, WKUIDelegate,
-  WKWebView,
 };
 
 use crate::{NewWindowFeatures, NewWindowResponse, WryWebView};
@@ -41,9 +40,7 @@ unsafe impl Send for NewWindow {}
 #[cfg(target_os = "macos")]
 impl Drop for NewWindow {
   fn drop(&mut self) {
-    unsafe {
-      self.webview.removeFromSuperview();
-    }
+    self.webview.removeFromSuperview();
   }
 }
 

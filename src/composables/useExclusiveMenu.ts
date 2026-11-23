@@ -18,10 +18,6 @@ export function releaseExclusiveMenu(id: string) {
   }
 }
 
-export function closeAllExclusiveMenus() {
-  activeMenuId.value = null
-}
-
 /** Bind a local boolean: open claims exclusivity; other menus auto-close it */
 export function useExclusiveMenu(id: string, open: Ref<boolean>) {
   watch(

@@ -8,22 +8,19 @@ export const describeActivity = (name: string, args: any, status: ImportTaskStep
     target: extra?.host || args?.website || '当前网站',
     label: status === 'running' ? '正在保存网站图标' : status === 'failed' ? '保存网站图标失败' : '已保存网站图标',
   }
-  if (name === 'browser_login_zjooc' && status === 'done' && extra?.challenge === 'image_captcha') {
-    return { label: '已取得在浙学验证码', target: '在浙学' }
-  }
   const browserLabels: Record<string, [string, string, string]> = {
     search_conversation_history: ['正在查找对话记录', '查找对话记录失败', '已查找对话记录'],
     read_conversation_history: ['正在读取历史原文', '读取历史原文失败', '已读取历史原文'],
     load_agent_tools: ['正在加载工具', '工具加载失败', '已加载所需工具'],
     browser_request_credentials: ['等待填写登录账号', '未取得登录凭据', '登录凭据已就绪'],
+    browser_package_read: ['正在读取页面', '读取页面失败', '已读取页面状态'],
+    browser_package_act: ['正在操作页面', '页面操作失败', '已执行页面操作'],
+    browser_workflows: ['正在处理流程进度', '流程进度处理失败', '已处理流程进度'],
     protect_credentials: ['正在保护凭据', '凭据保存失败', '凭据已安全保存，对话已替换为变量'],
     browser_get_state: ['正在查看网页', '查看网页失败', '查看了当前网页'],
     browser_set_checked: ['正在设置选项', '选项状态未确认，请重新读取页面', '勾选状态已验证'],
     browser_get_page: ['正在读取网页', '读取网页失败', '读取了当前网页'],
     browser_home_shortcuts: ['正在处理导航快捷入口', '导航快捷入口需要核对', '已处理导航快捷入口'],
-    browser_answer_zjooc: ['正在为在浙学题目匹配答案', '在浙学作答需要核对', '已核对本批作答'],
-    browser_play_zjooc: ['正在播放在浙学视频', '在浙学播放需要处理', '已处理在浙学视频播放'],
-    browser_login_zjooc: ['正在登录在浙学', '在浙学登录需要处理', '已确认在浙学登录'],
     browser_login_chaoxing: ['正在登录学习通', '学习通登录需要处理', '已确认学习通登录'],
     browser_list_courses: ['正在读取学习通课表', '未能读取学生课表', '已读取学生课表'],
     browser_open_course: ['正在查找并打开课程', '尚未确认进入课程', '已进入学生课程'],
@@ -241,6 +238,19 @@ export const describeActivity = (name: string, args: any, status: ImportTaskStep
               ? `查看了文件概况，${summary}`
               : '查看了文件概况',
     }
+  }
+  if (name === 'run_file_script') {
+    return {
+      target: '文件题目',
+      label: status === 'running' ? '正在用脚本解析文件'
+        : status === 'failed' ? '脚本解析失败'
+          : `已解析 ${extra?.count ?? 0} 道题目，等待写入`,
+    }
+  }
+  if (name === 'save_import_template') {
+    return { target: '导入算法', label: status === 'running' ? '正在保存导入算法'
+      : status === 'failed' ? '导入算法保存失败'
+        : extra?.saved ? `已保存导入算法「${extra.name}」` : '导入算法尚未保存' }
   }
   if (name === 'read_range') {
     const unit = extra?.unit || '段'
@@ -573,7 +583,7 @@ export const describeActivity = (name: string, args: any, status: ImportTaskStep
         status === 'running'
           ? `正在写入${target}`
           : status === 'failed'
-            ? `写入${target}失败`
+            ? `写入中断，已保存 ${extra?.total_saved ?? count} 道题目`
             : `写入了${target}到「${folder}」`,
     }
   }

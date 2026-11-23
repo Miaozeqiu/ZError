@@ -7,5 +7,5 @@ import {
 
 enableKatex()
 enableMermaid()
-enableD2(() => import('@terrastruct/d2'))
+enableD2(() => import('./d2Loader').then(module => module.loadD2Runtime()))
 enableInfographic(() => import('@antv/infographic'))

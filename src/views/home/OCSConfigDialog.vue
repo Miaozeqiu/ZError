@@ -138,7 +138,7 @@ watch(() => props.visible, async (v) => {
   } else {
     if (cmView) { cmView.destroy(); cmView = null }
   }
-})
+}, { immediate: true })
 
 watch(() => formattedConfig.value, (j) => { if (cmView) setEditorDoc(j) })
 
@@ -188,24 +188,7 @@ const handleOverlayClick = (event: MouseEvent) => {
   }, 0)
 }
 
-const handleTest = async () => {
-  if (!props.currentPort) {
-    alert('请先配置端口号')
-    return
-  }
 
-  try {
-    const response = await fetch(`http://localhost:${props.currentPort}/query?test=true`)
-    if (response.ok) {
-      alert('测试成功！接口可以正常访问。')
-      localStorage.setItem('ocs_config_tested', 'true')
-    } else {
-      alert(`测试失败：HTTP ${response.status}`)
-    }
-  } catch (error) {
-    alert(`测试失败：${error instanceof Error ? error.message : '未知错误'}，请确认服务是否已启动。`)
-  }
-}
 </script>
 
 <style>

@@ -16,26 +16,16 @@ vi.mock('../../src/services/app/settings', () => ({ settingsManager: { get: () =
 vi.mock('../../src/services/agent/debugLog', () => ({ logAgentDebug: vi.fn() }))
 vi.mock('../../src/services/security/secureFetch', () => ({ secureFetch: mock.fetch }))
 import { runTextModel } from '../../src/services/model/runner'
-import { createLearningCompletionCheck } from '../../src/services/agent/siteLearningReview'
 import { createTaskCompletionCheck } from '../../src/services/agent/taskCompletion'
 
-describe('真实模型 runner 的经验收尾检查', () => {
+describe('真实模型 runner 的最终回复检查', () => {
   afterEach(() => mock.fetch.mockReset())
-  it('直接口头结束时触发生产检查，最多补两轮并保留原始回答', async () => {
-    const steps = ['browser_navigate', 'browser_click'].map((name, index) => ({ id: String(index), name, status: 'done' }))
-    const check = createLearningCompletionCheck(() => ({ url: 'https://zjooc.cn/work', steps, enabled: true }))
-    mock.fetch.mockResolvedValue({ status: 200, content: '网页任务已完成' })
-    const text = await runTextModel('完成任务', undefined, { maxRounds: 8, beforeComplete: check.beforeComplete })
+  it('把最终回复交给宿主校验，证据齐全时不追加模型请求', async () => {
+    const beforeComplete = vi.fn(() => undefined)
+    mock.fetch.mockResolvedValueOnce({ status: 200, content: '网页任务已完成' })
+    const text = await runTextModel('完成任务', undefined, { maxRounds: 1, beforeComplete })
+    expect(beforeComplete).toHaveBeenCalledWith(0, '网页任务已完成')
     expect(text).toBe('网页任务已完成')
-    expect(mock.fetch).toHaveBeenCalledTimes(3)
-    const lastInput = JSON.parse(mock.fetch.mock.calls[2][1].body)
-    expect(lastInput.messages.some((message: any) => message.role === 'user' && message.content.includes('sites/zjooc.cn/SKILL.md'))).toBe(true)
-    expect(check.deferred).toBe(true)
-  })
-  it('普通聊天一次完成，不额外请求模型', async () => {
-    const check = createLearningCompletionCheck(() => ({ url: '', steps: [], enabled: true }))
-    mock.fetch.mockResolvedValue({ status: 200, content: '你好' })
-    expect(await runTextModel('你好', undefined, { maxRounds: 8, beforeComplete: check.beforeComplete })).toBe('你好')
     expect(mock.fetch).toHaveBeenCalledOnce()
   })
   it('通用请求超时不假定用户在识别题目', async () => {
@@ -53,19 +43,11 @@ describe('真实模型 runner 的经验收尾检查', () => {
     expect(hint).toBeTruthy()
     expect(hint).not.toMatch(/播放|下一节|不要停下来问用户/)
   })
-  it('最后一轮预算耗尽时如实标记暂未检查，不产生超预算请求', async () => {
-    const steps = ['browser_navigate', 'browser_click'].map((name, index) => ({ id: String(index), name, status: 'done' }))
-    const check = createLearningCompletionCheck(() => ({ url: 'https://zjooc.cn/work', steps, enabled: true }))
-    mock.fetch.mockResolvedValue({ status: 200, content: '网页任务已完成' })
-    await runTextModel('完成任务', undefined, { maxRounds: 1, beforeComplete: check.beforeComplete })
-    expect(mock.fetch).toHaveBeenCalledOnce()
-    expect(check.deferred).toBe(true)
-  })
   it('任务未完成而模型轮次耗尽时抛出未完成状态，不接受普通文字作为成功结果', async () => {
     const todos = [{ id: 'pending', text: '核对最终结果', status: 'pending' as const }]
     const check = createTaskCompletionCheck(() => ({ todos, steps: [] }))
     mock.fetch.mockResolvedValue({ content: '之后再继续。' })
-    await expect(runTextModel('完成任务', undefined, { maxRounds: 1, beforeComplete: check.beforeComplete }))
+    await expect(runTextModel('完成任务', undefined, { maxRounds: 1, beforeComplete: remaining => check.beforeComplete(remaining) }))
       .rejects.toThrow(/任务尚未完成.*次数上限/)
     expect(mock.fetch).toHaveBeenCalledOnce()
     expect(todos[0].status).toBe('pending')

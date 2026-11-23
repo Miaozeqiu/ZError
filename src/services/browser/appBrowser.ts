@@ -6,10 +6,10 @@ import { evalBrowserViewMain } from './eval'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { clickByLocator, fillByLocator } from './engine/act'
 import { clickLabelMatches } from './engine/clickFind'
-import { beginPageSnap, rememberPageSnap } from './engine/pageSnap'
+import { beginPageSnap, invalidatePageSnap, rememberPageSnap } from './engine/pageSnap'
 import { publicRefs, rememberPageRefs, type PageRef } from './engine/refs'
 import { formatAriaSnapshot } from './engine/snapshot'
-import { askFrames, asObject, evalBrowserView, isCefEngine, waitMs } from './eval'
+import { asObject, evalBrowserView, waitMs } from './eval'
 import { claimClickText, guardNavigate } from './pageHooks'
 import { act, clearCookies, cookies, setCookies, wait } from './protocol'
 
@@ -26,14 +26,7 @@ export {
   waitMs,
 } from './eval'
 export { evaluate } from './protocol'
-export {
-  hideNativeVideo,
-  playNativeVideo,
-  readNativeVideo,
-  startNativeVideoLoop,
-  stopNativeVideoLoop,
-  tickNativeVideo,
-} from './nativeVideo'
+
 
 export type AppBrowser = {
   id: string
@@ -90,6 +83,11 @@ export type BrowserBounds = {
 const STORAGE_KEY = 'zerror-app-browsers'
 const SELECTED_KEY = 'zerror-app-browser-selected'
 const temporaryBrowsers = new Map<string, AppBrowser>()
+const closeListeners = new Set<(id: string) => void>()
+export const onAppBrowserClosed = (listener: (id: string) => void) => {
+  closeListeners.add(listener)
+  return () => { closeListeners.delete(listener) }
+}
 
 const createId = () => {
   const raw = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`
@@ -130,15 +128,21 @@ const readSavedList = (): AppBrowser[] => {
     const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]')
     if (!Array.isArray(parsed)) return []
     return parsed
-      .map((item) => ({
-        id: String(item?.id || ''),
-        name: String(item?.name || '').trim(),
-        url: String(item?.url || '').trim() || browserHomeUrl(),
-        title: String(item?.title || '').trim(),
-        zoom: clampBrowserZoom(item?.zoom),
-        createdAt: Number(item?.createdAt) || Date.now(),
-        updatedAt: Number(item?.updatedAt) || Date.now(),
-      }))
+      .map((item) => {
+        const url = String(item?.url || '').trim()
+        // Recover old extension tabs without breaking their chat's tab references.
+        const retiredPage = url === 'zerror://scriptcat'
+          || url.startsWith('chrome-extension://biodkpbccbdobbjiandalbldblopjkhe/')
+        return {
+          id: String(item?.id || ''),
+          name: retiredPage ? '导航' : String(item?.name || '').trim(),
+          url: retiredPage || !url ? browserHomeUrl() : url,
+          title: retiredPage ? '导航' : String(item?.title || '').trim(),
+          zoom: clampBrowserZoom(item?.zoom),
+          createdAt: Number(item?.createdAt) || Date.now(),
+          updatedAt: Number(item?.updatedAt) || Date.now(),
+        }
+      })
       .filter((item) => item.id)
   } catch {
     return []
@@ -250,9 +254,17 @@ export const patchAppBrowser = (id: string, patch: Partial<Pick<AppBrowser, 'nam
   return items[index]
 }
 
+const forgetPageState = (id: string) => {
+  invalidatePageSnap(id)
+  rememberPageRefs(id, [])
+  loadPhase.delete(id)
+}
+
 export const removeAppBrowser = (id: string) => {
+  forgetPageState(id)
   writeList(readList().filter((item) => item.id !== id))
   if (getSelectedBrowserId() === id) setSelectedBrowserId('')
+  for (const listener of closeListeners) listener(id)
 }
 
 export const hostBounds = (el: HTMLElement | null): BrowserBounds | null => {
@@ -299,6 +311,8 @@ export const hideBrowserView = (id: string) => invoke('browser_hide', { id })
 export const hideAllBrowserViews = () => invoke('browser_hide_all')
 export const closeBrowserView = async (id: string) => {
   await invoke('browser_close', { id })
+  for (const listener of closeListeners) listener(id)
+  forgetPageState(id)
   const next = { ...browserAudioMuted.value }
   delete next[id]
   browserAudioMuted.value = next

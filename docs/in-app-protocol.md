@@ -156,7 +156,7 @@ Rust 里已经具备 Playwright 内核在做的事：
 
 1. 加 `src/services/browser/protocol.ts`（上面三个函数）。
 2. 先迁两条最短路径，证明调用方不再直接碰 CDP 命令名：
-   - `src/services/chaoxing/homework/act.ts` → `evaluate` + `act({ op:'click', x, y })`
+   - 网站运行包 → 有界 document 命令 → 原生文档身份校验；不接受站点页面脚本或坐标猜测。
    - `clickBrowserText` / `appBrowser.ts` 里的 `click_text` → `act({ op:'click', at:{ by:'text' } })`
 3. `read` 先包 `evalBrowserView` + `READ_PAGE_DOM`，作业 `inspect.ts` 改走 `read(id, 'homework')`。
 4. **不改** Agent 工具表、不改 CEF、不装 Playwright、不加 Node sidecar。
@@ -191,30 +191,15 @@ Rust 里已经具备 Playwright 内核在做的事：
 
 ---
 
-## 6. 推送（进度 / 题卡 / 元素等待）
+## 6. 媒体监控、页面事件与元素等待
 
-进度读数是**唯一保留的页内 JS**，而且是推不是拉：
+网站运行包通过 `websiteRuntime/scopedHost.ts` 的 `media.read` / `media.wait` 等通用命令读取媒体状态和等待事件。文档身份、资源授权、等待取消和订阅释放由宿主验证，网站规则放在各自仓库。
 
-1. `bind_page` 给 page session 装 `Runtime.addBinding('__zeTick')`，并注入 `ZE_TICK_HOOK`（`src-tauri/src/cef_push.rs`）。
-2. 页内 video 事件 / 作业点选调用 `__zeTick` → CDP `Runtime.bindingCalled` → Rust 写 `last_tick` 缓存并 `app.emit('app-browser-tick', { id, kind, tick })`。
-3. 前端 `src/services/browser/pushEvents.ts` 听该事件，按 browser id 分发给 `watch.ts` / `live.ts`。
-4. `readChaoxingVideoTick` 先 `invoke('browser_push_last')`；`ageMs <= 4000` 且 mid 对得上才用缓存，否则才 `evaluate` 廉价 tick。
+通用媒体监控位于 `src/services/browser/videoWatch.ts`：通过 `media_tick` 协议读取原生状态，或使用运行包绑定的作用域读取器。它负责浏览器归属、生命周期和有界状态更新。`websiteRuntime/pageEvents.ts` 负责当前浏览器的页面加载等待，并在完成、超时或取消后释放监听。
 
-元素等待不再由前端 120ms 轮询 `browser_cdp_find`：
+旧的全局页面轮询时钟、前端 `app-browser-tick` 分发层已退出应用调用链并删除。底层 CEF 的 tick 缓存和内部协议仍有独立入口，不因前端旧分发层删除而取消。
 
-- 主路径一次 `invoke('browser_cdp_find_wait', { id, locator, timeoutMs })`。
-- Rust 先 find；未命中则等 `Page.frameStoppedLoading` / `Page.frameNavigated` / `Network.loadingFinished` / `DOM.documentUpdated` / `Accessibility.nodesUpdated`（防抖 60ms）再 find，另加 250ms 稀疏兜底。
-- 命令不存在（非 macOS / 旧内核）时，`act.ts` 降级 `actByPolling`。
-
-不要用 Media 域，不要订阅全量 DOM 变更。跨源 OOPIF 这次不覆盖，钩子够不到的仍退回 evaluate。
-
-DOM 定位（`src-tauri/src/cef/locate.rs`）的几条硬约束，踩过一次都别再踩：
-
-- `DOM.getDocument` 会作废该 target 之前所有 nodeId。一次定位只调一次；定位与整帧读 HTML（`dom_html`）按浏览器 id 串行（`cef::dom_lock`），否则元素明明在页上却 `not_found`。
-- 同进程 iframe 不是独立 target。学习通播放器在 main → `knowledge/cards` → `ananas/modules/video` 里，`Target.getTargets` 看不见；定位器从父文档 `iframe` 节点 `describeNode` 拿 `contentDocument` 再 pierce 进去。`frame` 提示按 iframe 的 id / name / mid / data-mid / src 匹配，站点侧给提示（如 `ananas/modules/video`）就不必把二十多个帧都查一遍。
-- 「被挡」判断：命中节点的盒子完全落在目标盒子里（自己的文字 span / 图标）不算挡；目标是文字节点时被父元素包住也不算挡。只有伸出目标盒子的才是遮罩。
-- css 多命中按文档顺序取第一个（同 `querySelector`）；文案完全相同的多个可点节点取 AX 顺序第一个，文案不同才报 `ambiguous`。
-- `Input.dispatchMouseEvent` 的 `mouseReleased` 回执在点击触发同步跳转时常不来；事件已送达，超时不算失败。
+元素等待位于 `src/services/browser/engine/act.ts`：先检查当前观察，必要时使用 `find_wait`，不支持该能力的后端使用通用轮询回退。网站运行包继续通过宿主校验的命令操作文档，不能直接调用原生内部协议。
 
 ---
 

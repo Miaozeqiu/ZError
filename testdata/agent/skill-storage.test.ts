@@ -266,3 +266,13 @@ describe('Skill storage and installation', () => {
     expect(io.writes).not.toHaveBeenCalled()
   })
 })
+
+it('通用导入 Skill 不依赖网站仓库是否能加载',async()=>{
+  const mod=await load()
+  const repository=await import('../../src/services/agent/websiteRepository')
+  const hosts=vi.spyOn(repository,'websiteRepositoryHosts').mockRejectedValue(new Error('网站缓存失败'))
+  try {
+    expect(await mod.getSkillFileContent('question-import','references/workflow.md')).toMatchObject({content:expect.stringContaining('本地题库')})
+    expect(hosts).not.toHaveBeenCalled()
+  } finally { hosts.mockRestore() }
+})

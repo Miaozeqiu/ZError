@@ -1,22 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
-import * as pdfjsLib from 'pdfjs-dist'
-import { databaseService } from '../app/database'
-import { associateQuestionsToKnowledge } from '../study/questionKnowledge'
+import { MAX_AGENT_ATTACHMENT_BYTES } from './attachmentFiles'
 import { parseDifficulty, parseImportance, parseMastery } from '../../utils/question/questionMetrics'
-import {
-  addImportTaskStep,
-  createImportTask,
-  patchImportTaskStep,
-  updateImportTask,
-  type ImportTask,
-} from '../app/importTasks'
-import { runTextModel, type ModelToolCall } from '../model/runner'
-import { IMPORT_AGENT_SYSTEM_PROMPT } from './skills/questionImport'
-
-pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
-  'pdfjs-dist/build/pdf.worker.mjs',
-  import.meta.url
-).toString()
 
 export interface ExtractedQuestion {
   question: string
@@ -47,6 +31,9 @@ interface FileCache {
   pages?: string[]
   pdf?: any
   lines?: string[]
+  touched?: number
+  signature?: string
+  extending?: Promise<void>
 }
 
 const MAX_RANGE = {
@@ -61,10 +48,9 @@ const LOAD_CAP = {
   excel: 2000,
   docx: 2000,
   doc: 2000,
-  text: 8000,
 } as const
 
-const FILE_SIZE_MAX = 40 * 1024 * 1024
+const FILE_SIZE_MAX = MAX_AGENT_ATTACHMENT_BYTES
 const FILE_SIZE_WARN = 8 * 1024 * 1024
 
 const formatFileSize = (bytes: number) => {
@@ -72,61 +58,6 @@ const formatFileSize = (bytes: number) => {
   if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`
   return `${bytes} B`
 }
-
-const IMPORT_TOOLS = [
-  {
-    type: 'function',
-    function: {
-      name: 'get_file_info',
-      description: '查看待导入文件的类型和规模。开始识别前应先调用。',
-      parameters: { type: 'object', properties: {} },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'read_range',
-      description: '按范围读取文件内容。Excel 按行，Word 按段落，PDF 按页，文本按行。下标从 0 开始，包含 end。一次不要读太多。',
-      parameters: {
-        type: 'object',
-        properties: {
-          start: { type: 'integer', description: '起始下标，从 0 开始' },
-          end: { type: 'integer', description: '结束下标，包含' },
-        },
-        required: ['start', 'end'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'save_questions',
-      description: '把已经识别出的题目写入题库。每看完一段就保存一批，不要等全部看完。不要编造文件里没有的题目。',
-      parameters: {
-        type: 'object',
-        properties: {
-          questions: {
-            type: 'array',
-            items: {
-              type: 'object',
-              properties: {
-                question: { type: 'string', description: '题干' },
-                options: { type: 'string', description: '选项，没有则空字符串' },
-                answer: { type: 'string', description: '答案' },
-                question_type: { type: 'string', description: '单选/多选/判断/填空' },
-                knowledge_point: { type: 'string', description: '对应知识点或节名，没有就根据题干概括' },
-                node_name: { type: 'string', description: '图谱节点名，可与 knowledge_point 相同' },
-                parent_name: { type: 'string', description: '所属章名' },
-              },
-              required: ['question', 'answer'],
-            },
-          },
-        },
-        required: ['questions'],
-      },
-    },
-  },
-]
 
 const fileNameOf = (path: string) => {
   const parts = path.split(/[/\\]/)
@@ -149,9 +80,11 @@ const decodeBase64Bytes = (base64: string) => {
 }
 
 const openPdf = async (path: string) => {
-  const base64 = await invoke<string>('read_file_bytes', { path })
-  const data = decodeBase64Bytes(base64)
-  return pdfjsLib.getDocument({ data }).promise
+  const [{ getDocument }, base64] = await Promise.all([
+    import('../../utils/ui/pdfDocument'),
+    invoke<string>('read_file_bytes', { path }),
+  ])
+  return getDocument({ data: decodeBase64Bytes(base64) }).promise
 }
 
 const readPdfPage = async (pdf: any, index: number) => {
@@ -160,19 +93,11 @@ const readPdfPage = async (pdf: any, index: number) => {
   return content.items.map((item: any) => item.str || '').join(' ').trim()
 }
 
-const statLocalFile = async (path: string) => {
-  try {
-    const info = await invoke<{ size: number }>('stat_local_file', { path })
-    return Number(info?.size || 0)
-  } catch {
-    return 0
-  }
-}
+const statLocalFile = (path: string) => invoke<{ size: number; modified?: number }>('stat_local_file', { path })
 
 const fileCaches = new Map<string, FileCache>()
 
-const loadFileCache = async (path: string): Promise<FileCache> => {
-  const fileSize = await statLocalFile(path)
+const loadFileCache = async (path: string, fileSize: number): Promise<FileCache> => {
   if (fileSize > FILE_SIZE_MAX) {
     throw new Error(`文件约 ${formatFileSize(fileSize)}，超过 40 MB，请先拆成更小的文件再导入`)
   }
@@ -222,27 +147,58 @@ const loadFileCache = async (path: string): Promise<FileCache> => {
 
   const text = (await invoke<string>('read_file_text', { path })).replace(/\u0000/g, '')
   const lines = text.split(/\r?\n/)
-  const truncated = lines.length > LOAD_CAP.text
+  const truncated = false
   return {
     path,
     kind: 'text',
     unit: '行',
-    total: Math.min(lines.length, LOAD_CAP.text),
+    total: lines.length,
     truncated,
     fileSize,
-    lines: truncated ? lines.slice(0, LOAD_CAP.text) : lines,
+    lines,
   }
 }
 
-const ensureFileCache = async (path: string) => {
-  const cached = fileCaches.get(path)
-  if (cached) return cached
-  const loaded = await loadFileCache(path)
-  fileCaches.set(path, loaded)
-  return loaded
+const pendingFiles = new Map<string, Promise<FileCache>>()
+const disposeCache = (cache: FileCache) => { void cache.pdf?.destroy()?.catch(() => {}) }
+export const clearFileCaches = () => {
+  for (const cache of fileCaches.values()) disposeCache(cache)
+  fileCaches.clear()
 }
 
-const extendLoadedRange = async (cache: FileCache, end: number) => {
+const ensureFileCache = async (path: string) => {
+  if (pendingFiles.has(path)) return pendingFiles.get(path)!
+  const pending = (async () => {
+    const info = await statLocalFile(path)
+    const signature = `${info.size}:${info.modified ?? ''}`
+    const now = Date.now()
+    for (const [key, cache] of fileCaches) {
+      if (now - (cache.touched || 0) > 10 * 60_000 || (key === path && cache.signature !== signature)) {
+        fileCaches.delete(key)
+        disposeCache(cache)
+      }
+    }
+    let cache = fileCaches.get(path)
+    if (!cache) {
+      cache = await loadFileCache(path, info.size)
+      cache.signature = signature
+    }
+    cache.touched = now
+    fileCaches.delete(path)
+    fileCaches.set(path, cache)
+    while (fileCaches.size > 4) {
+      const oldest = fileCaches.keys().next().value!
+      disposeCache(fileCaches.get(oldest)!)
+      fileCaches.delete(oldest)
+    }
+    return cache
+  })()
+  pendingFiles.set(path, pending)
+  try { return await pending } finally { pendingFiles.delete(path) }
+}
+
+const extendLoadedRangeUnlocked = async (cache: FileCache, end: number) => {
+  if (!cache.truncated) return
   if (cache.kind === 'excel') {
     const loaded = cache.rows?.length || 0
     if (end < loaded) return
@@ -276,6 +232,12 @@ const extendLoadedRange = async (cache: FileCache, end: number) => {
   }
 }
 
+const extendLoadedRange = async (cache: FileCache, end: number) => {
+  const operation = (cache.extending || Promise.resolve()).then(() => extendLoadedRangeUnlocked(cache, end))
+  cache.extending = operation.catch(() => {})
+  await operation
+}
+
 const fillPdfPages = async (cache: FileCache, start: number, end: number) => {
   if (!cache.pdf) return
   cache.pages = cache.pages || []
@@ -295,7 +257,7 @@ export const inspectLocalFile = async (path: string) => {
   const warning = cache.fileSize && cache.fileSize > FILE_SIZE_WARN
     ? `文件较大（${formatFileSize(cache.fileSize)}），请严格分段读取，每批保存。`
     : cache.truncated
-      ? `当前先处理前 ${cache.total} ${cache.unit}。读到末尾后如果 nextHint 还允许继续，就继续读；否则请提示用户拆分文件。`
+      ? `当前已预读 ${cache.total} ${cache.unit}，这是数量下限；按 nextStart 继续会自动加载后续内容。`
       : undefined
   return {
     fileName: fileNameOf(path),
@@ -307,76 +269,84 @@ export const inspectLocalFile = async (path: string) => {
     suggestedBatch: batch,
     estimatedBatches: Math.ceil(cache.total / batch),
     warning,
-    hint: `请用 read_range 分段读取，每次不超过 ${batch} ${cache.unit}。读完一段就 save_questions，直到读到末尾。一次写入不要超过 20 道。`,
+    hint: `由 Agent 自行选择：read_range 分段识题并每批保存最多 20 道；或先看样本，再 run_file_script 编写脚本/复用模板，核对后 save_questions(result_id)。每段最多 ${batch} ${cache.unit}。默认本地题库，目标按上下文和目录结构自行选择或创建。`,
   }
 }
 
-export const readLocalFileRange = async (path: string, start: number, end: number) => {
+const contentOf = (cache: FileCache, index: number) => cache.kind === 'excel'
+  ? (cache.rows?.[index] || []).join('\t')
+  : cache.kind === 'pdf' ? cache.pages?.[index] || ''
+    : (cache.kind === 'text' ? cache.lines?.[index] : cache.paragraphs?.[index]) || ''
+
+// 分页只截内容，不截 JSON；超长单段用字符游标续读，不能跳过余文。
+export const readLocalFileRange = async (path: string, start: number, end: number, offset = 0) => {
+  if (![start, end, offset].every(Number.isSafeInteger) || start < 0 || end < start || offset < 0) {
+    throw new Error('start、end、offset 必须是非负整数，且 end 不小于 start')
+  }
   const cache = await ensureFileCache(path)
-  const maxSpan = MAX_RANGE[cache.kind]
-  const last = Math.max(cache.total - 1, 0)
-  const safeStart = Math.max(0, Math.min(Number(start) || 0, last))
-  const safeEnd = Math.max(safeStart, Math.min(Number(end) || safeStart, safeStart + maxSpan - 1))
-  if (cache.kind === 'pdf') {
-    await fillPdfPages(cache, safeStart, Math.min(safeEnd, last))
-  } else if (cache.kind !== 'text') {
-    await extendLoadedRange(cache, safeEnd)
+  const requestedEnd = Math.min(end, start + MAX_RANGE[cache.kind] - 1)
+  if (cache.kind !== 'pdf' && cache.kind !== 'text') await extendLoadedRange(cache, requestedEnd)
+  const last = Math.min(requestedEnd, cache.total - 1)
+  if (cache.kind === 'pdf') await fillPdfPages(cache, start, last)
+  if (start < cache.total && offset > contentOf(cache, start).length) throw new Error('offset 超出当前段落长度')
+  const chunks: string[] = []
+  let remaining = 6000, jsonBudget = 10_000, nextStart = start, nextOffset = offset, actualEnd = start - 1
+  for (let index = start; index <= last; index++) {
+    const text = contentOf(cache, index)
+    const from = index === start ? offset : 0
+    let count = Math.min(text.length - from, remaining)
+    // 控制字符在 JSON 中会膨胀，保证完整回执也能放进模型的工具结果预算。
+    if (JSON.stringify(text.slice(from, from + count)).length > jsonBudget) {
+      let low = 0, high = count
+      while (low < high) {
+        const mid = Math.ceil((low + high) / 2)
+        if (JSON.stringify(text.slice(from, from + mid)).length <= jsonBudget) low = mid
+        else high = mid - 1
+      }
+      count = low
+    }
+    const piece = text.slice(from, from + count)
+    jsonBudget -= JSON.stringify(piece).length
+    chunks.push(piece)
+    actualEnd = index
+    remaining -= piece.length + 1
+    nextStart = index + 1
+    nextOffset = 0
+    if (from + piece.length < text.length) {
+      nextStart = index
+      nextOffset = from + piece.length
+      break
+    }
+    if (remaining <= 0 || jsonBudget <= 8) break
   }
-  const slice = sliceCache(cache, safeStart, safeEnd)
-  const nextEnd = Math.min(slice.end + maxSpan, Math.max(cache.total - 1, 0))
+  const hasMore = nextStart < cache.total || Boolean(cache.truncated)
   return {
-    ...slice,
-    truncated: Boolean(cache.truncated),
-    nextHint: slice.end + 1 < cache.total
-      ? `还可以继续从 ${slice.end + 1} 读到 ${nextEnd}`
-      : cache.truncated
-        ? '当前可读范围已经到末尾。如果题目明显还没读完，请提示用户把文件拆小后再导入。'
-        : '已经读到末尾',
+    start, end: actualEnd, offset, total: cache.total, unit: cache.unit,
+    content: chunks.join('\n'), truncated: Boolean(cache.truncated), hasMore,
+    nextStart: hasMore ? nextStart : null, nextOffset: hasMore ? nextOffset : 0,
+    nextHint: hasMore ? `继续 read_range(start=${nextStart}, end=${nextStart + MAX_RANGE[cache.kind] - 1}, offset=${nextOffset})` : '已经读到末尾',
   }
 }
 
-const sliceCache = (cache: FileCache, start: number, end: number) => {
-  const maxSpan = MAX_RANGE[cache.kind]
-  const last = Math.max((cache.kind === 'excel' ? cache.rows?.length : cache.kind === 'pdf' ? cache.total : cache.kind === 'text' ? cache.lines?.length : cache.paragraphs?.length) || cache.total, 1) - 1
-  const safeStart = Math.max(0, Math.min(start, last))
-  const safeEnd = Math.max(safeStart, Math.min(end, safeStart + maxSpan - 1, last))
-
-  if (cache.kind === 'excel') {
-    const rows = (cache.rows || []).slice(safeStart, safeEnd + 1)
-    return {
-      start: safeStart,
-      end: safeEnd,
-      total: cache.total,
-      unit: cache.unit,
-      content: rows.map((row) => row.join('\t')).join('\n'),
+// 脚本直接消费宿主提取的原文，不经模型转抄；超限明确报错，绝不把部分文件当作全文。
+export const readLocalFileDocument = async (path: string, signal?: AbortSignal) => {
+  const cache = await ensureFileCache(path)
+  let loaded = 0, characters = 0
+  const lines: string[] = []
+  while (loaded < cache.total || cache.truncated) {
+    signal?.throwIfAborted()
+    if (cache.kind === 'pdf') await fillPdfPages(cache, loaded, Math.min(loaded + 99, cache.total - 1))
+    else if (cache.kind !== 'text') await extendLoadedRange(cache, loaded + 1999)
+    if (cache.total > 20_000) throw new Error('脚本输入超过 20000 个文本单元，请拆分文件或分段导入')
+    const stop = Math.min(loaded + (cache.kind === 'pdf' ? 100 : 2000), cache.total)
+    for (; loaded < stop; loaded++) {
+      const text = contentOf(cache, loaded)
+      characters += text.length + 1
+      if (characters > 2_000_000) throw new Error('脚本输入超过 200 万字符，请拆分文件或分段导入')
+      lines.push(text)
     }
   }
-  if (cache.kind === 'pdf') {
-    const pages = (cache.pages || []).slice(safeStart, safeEnd + 1)
-    return {
-      start: safeStart,
-      end: safeEnd,
-      total: cache.total,
-      unit: cache.unit,
-      content: pages.map((page, index) => `--- 第 ${safeStart + index + 1} 页 ---\n${page || ''}`).join('\n\n'),
-    }
-  }
-  const items = (cache.kind === 'text' ? cache.lines : cache.paragraphs) || []
-  return {
-    start: safeStart,
-    end: safeEnd,
-    total: cache.total,
-    unit: cache.unit,
-    content: items.slice(safeStart, safeEnd + 1).join('\n'),
-  }
-}
-
-const parseToolArgs = (raw: string) => {
-  try {
-    return JSON.parse(raw || '{}')
-  } catch {
-    return {}
-  }
+  return { name: fileNameOf(path), type: kindLabel(cache.kind), unit: cache.unit, total: lines.length, lines, text: lines.join('\n'), ...(cache.rows ? { rows: cache.rows } : {}) }
 }
 
 export const parseQuestions = (raw: unknown): ExtractedQuestion[] => {
@@ -396,7 +366,7 @@ export const parseQuestions = (raw: unknown): ExtractedQuestion[] => {
         parent_name: String(item?.parent_name || item?.chapter || '').trim() || undefined,
         subject_id: Number(item?.subject_id || item?.subjectId) > 0 ? Number(item?.subject_id || item?.subjectId) : undefined,
       }))
-      .filter((item) => item.question && item.answer)
+      .filter((item) => item.question)
   }
 
   const text = String(raw || '').trim()
@@ -435,321 +405,4 @@ const kindLabel = (kind: FileKind) => {
     default:
       return '文本'
   }
-}
-
-const describeActivity = (
-  name: string,
-  args: any,
-  status: 'running' | 'done' | 'failed',
-  extra?: any
-) => {
-  if (name === 'get_file_info') {
-    const summary = extra?.type ? `${extra.type}，共 ${extra.total} ${extra.unit}` : ''
-    return {
-      target: summary || '文件概况',
-      label:
-        status === 'running'
-          ? '正在查看文件概况'
-          : status === 'failed'
-            ? '查看文件概况失败'
-            : summary
-              ? `查看了文件概况，${summary}`
-              : '查看了文件概况',
-    }
-  }
-
-  if (name === 'read_range') {
-    const unit = extra?.unit || '段'
-    const start = extra?.start ?? Number(args?.start ?? 0)
-    const end = extra?.end ?? Number(args?.end ?? start)
-    const target = `第 ${start}–${end} ${unit}`
-    return {
-      target,
-      label:
-        status === 'running'
-          ? `正在阅读${target}`
-          : status === 'failed'
-            ? `阅读${target}失败`
-            : `阅读了${target}`,
-    }
-  }
-
-  if (name === 'save_questions') {
-    const count = extra?.saved ?? (Array.isArray(args?.questions) ? args.questions.length : 0)
-    const target = count ? `${count} 道题目` : '题目'
-    return {
-      target,
-      label:
-        status === 'running'
-          ? `正在写入${target}`
-          : status === 'failed'
-            ? `写入${target}失败`
-            : `写入了${target}`,
-    }
-  }
-
-  return { target: name, label: name || '未知动作' }
-}
-
-const clipToolResult = (text: string) => (text.length > 12000 ? `${text.slice(0, 11999)}…` : text)
-
-const SYSTEM_PROMPT = IMPORT_AGENT_SYSTEM_PROMPT
-
-const composeSummary = (raw: string, task: ImportTask, count: number) => {
-  const text = String(raw || '')
-    .replace(/```[\s\S]*?```/g, '')
-    .replace(/^\s*\[.*\]\s*$/s, '')
-    .trim()
-  if (text && text.length <= 280 && !text.startsWith('{') && !text.startsWith('[')) {
-    return text
-  }
-  return `已从「${task.fileName}」写入 ${count} 道题目到「${task.folderName || '指定文件夹'}」。`
-}
-
-let pumping = false
-const queue: ImportTask[] = []
-
-const runTask = async (task: ImportTask) => {
-  let importedCount = 0
-  let cache: FileCache | null = null
-
-  const ensureCache = async () => {
-    if (cache) return cache
-    updateImportTask(task.id, { status: 'reading', progressText: '正在读取文件结构' })
-    cache = await loadFileCache(task.filePath)
-    if (!cache.total) {
-      throw new Error('文件里没有可读的文本')
-    }
-    return cache
-  }
-
-  const saveQuestions = async (items: ExtractedQuestion[]) => {
-    const created: { id: number; item: ExtractedQuestion }[] = []
-    for (const item of items) {
-      const question = await databaseService.addQuestion({
-        content: item.question,
-        options: item.options || '',
-        answer: item.answer,
-        question_type: normalizeType(item.question_type),
-        folderId: task.folderId,
-        isAi: 1,
-      })
-      created.push({ id: question.id, item })
-      importedCount += 1
-      updateImportTask(task.id, {
-        status: 'saving',
-        importedCount,
-        progressText: `正在写入题目，已写入 ${importedCount} 道`,
-      })
-    }
-    if (created.length) {
-      await associateQuestionsToKnowledge(
-        created.map(({ id, item }) => ({
-          questionId: id,
-          question: item.question,
-          knowledge_point: item.knowledge_point,
-          node_name: item.node_name,
-          node_id: item.node_id,
-          parent_name: item.parent_name,
-          subject_id: item.subject_id,
-        })),
-        { hintText: task.fileName, createMissing: true },
-      )
-    }
-    return created.length
-  }
-
-  const executeTool = async (call: ModelToolCall) => {
-    const args = parseToolArgs(call.arguments)
-
-    if (call.name === 'get_file_info') {
-      const file = await ensureCache()
-      updateImportTask(task.id, {
-        status: 'analyzing',
-        progressText: `查看了文件概况，${kindLabel(file.kind)}，共 ${file.total} ${file.unit}`,
-      })
-      return JSON.stringify({
-        fileName: task.fileName,
-        type: kindLabel(file.kind),
-        unit: file.unit,
-        total: file.total,
-        hint: `请用 read_range 分段读取，建议每次不超过 ${MAX_RANGE[file.kind]} ${file.unit}`,
-      })
-    }
-
-    if (call.name === 'read_range') {
-      const file = await ensureCache()
-      const start = Number(args.start ?? 0)
-      const end = Number(args.end ?? start)
-      const slice = sliceCache(file, start, end)
-      updateImportTask(task.id, {
-        status: 'analyzing',
-        progressText: `正在阅读第 ${slice.start}–${slice.end} ${slice.unit}`,
-      })
-      return clipToolResult(JSON.stringify({
-        start: slice.start,
-        end: slice.end,
-        total: slice.total,
-        unit: slice.unit,
-        content: slice.content,
-        nextHint: slice.end + 1 < slice.total ? `还可以继续从 ${slice.end + 1} 读到 ${Math.min(slice.end + MAX_RANGE[file.kind], slice.total - 1)}` : '已经读到末尾',
-      }))
-    }
-
-    if (call.name === 'save_questions') {
-      const questions = parseQuestions(args.questions)
-      if (!questions.length) {
-        return JSON.stringify({ saved: 0, totalSaved: importedCount, message: '没有有效题目，需要 question 和 answer' })
-      }
-      const saved = await saveQuestions(questions)
-      return JSON.stringify({
-        saved,
-        totalSaved: importedCount,
-        message: `本批保存 ${saved} 道，累计 ${importedCount} 道`,
-      })
-    }
-
-    return JSON.stringify({ error: `未知工具 ${call.name}` })
-  }
-
-  try {
-    updateImportTask(task.id, { status: 'analyzing', progressText: '正在查看文件' })
-
-    const finalText = await runTextModel(
-      `请导入文件「${task.fileName}」。先查看文件信息，再分段阅读并提取题目。每识别一批就调用 save_questions。全部完成后用一句话总结。`,
-      undefined,
-      {
-        timeoutMs: 5 * 60 * 1000,
-        tools: IMPORT_TOOLS,
-        systemPrompt: SYSTEM_PROMPT,
-        useAgentModel: true,
-        maxRounds: 48,
-        executeTool,
-        onEvent: (event) => {
-          if (event.type === 'text') {
-            updateImportTask(task.id, { status: 'analyzing', progressText: '正在整理题目' })
-            return
-          }
-
-          if (event.type === 'tool_start') {
-            const args = parseToolArgs(event.arguments)
-            const activity = describeActivity(event.name, args, 'running')
-            addImportTaskStep(task.id, {
-              id: event.id,
-              kind: 'tool',
-              name: event.name,
-              label: activity.label,
-              target: activity.target,
-              preview: event.name === 'save_questions' ? parseQuestions(args.questions) : undefined,
-              status: 'running',
-              startedAt: Date.now(),
-            })
-            updateImportTask(task.id, { status: 'analyzing', progressText: activity.label })
-            return
-          }
-
-          if (event.type === 'tool_end') {
-            let extra: any = null
-            try {
-              extra = JSON.parse(event.result)
-            } catch {
-              extra = null
-            }
-            const status = event.error ? 'failed' : 'done'
-            const activity = describeActivity(event.name, extra, status, extra)
-            patchImportTaskStep(task.id, event.id, {
-              status,
-              label: activity.label,
-              target: activity.target,
-              detail: event.error,
-              finishedAt: Date.now(),
-            })
-            updateImportTask(task.id, {
-              status: event.name === 'save_questions' ? 'saving' : 'analyzing',
-              progressText: event.error ? activity.label : '正在整理题目',
-            })
-          }
-        },
-      }
-    )
-
-    if (!importedCount) {
-      const fallback = parseQuestions(finalText)
-      if (fallback.length) {
-        const fallbackId = `fallback-${Date.now()}`
-        const running = describeActivity('save_questions', { questions: fallback }, 'running')
-        updateImportTask(task.id, { status: 'saving', progressText: running.label })
-        addImportTaskStep(task.id, {
-          id: fallbackId,
-          kind: 'tool',
-          name: 'save_questions',
-          label: running.label,
-          target: running.target,
-          preview: fallback,
-          status: 'running',
-          startedAt: Date.now(),
-        })
-        await saveQuestions(fallback)
-        const done = describeActivity('save_questions', { questions: fallback }, 'done', { saved: fallback.length })
-        patchImportTaskStep(task.id, fallbackId, {
-          status: 'done',
-          label: done.label,
-          target: done.target,
-          finishedAt: Date.now(),
-        })
-      }
-    }
-
-    if (!importedCount) {
-      throw new Error('没有识别到题目，请换一份更清晰的文件或换个模型再试')
-    }
-
-    const summary = composeSummary(finalText, task, importedCount)
-    updateImportTask(task.id, {
-      status: 'done',
-      importedCount,
-      summary,
-      progressText: `已写入 ${importedCount} 道题目`,
-      finishedAt: Date.now(),
-    })
-    window.dispatchEvent(new CustomEvent('questions-imported', { detail: { folderId: task.folderId } }))
-  } catch (error) {
-    updateImportTask(task.id, {
-      status: 'failed',
-      importedCount,
-      summary: importedCount > 0 ? `导入中断，已经写入 ${importedCount} 道题目。` : undefined,
-      error: error instanceof Error ? error.message : String(error),
-      progressText: importedCount > 0 ? `导入中断，已写入 ${importedCount} 道` : '导入失败',
-      finishedAt: Date.now(),
-    })
-  }
-}
-
-const pump = async () => {
-  if (pumping) return
-  pumping = true
-  try {
-    while (queue.length) {
-      const task = queue.shift()
-      if (task) await runTask(task)
-    }
-  } finally {
-    pumping = false
-  }
-}
-
-export const startAgentImport = (input: {
-  filePath: string
-  folderId: number
-  folderName: string
-}) => {
-  const task = createImportTask({
-    fileName: fileNameOf(input.filePath),
-    filePath: input.filePath,
-    folderId: input.folderId,
-    folderName: input.folderName,
-  })
-  queue.push(task)
-  void pump()
-  return task
 }

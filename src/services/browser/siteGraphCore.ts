@@ -599,7 +599,7 @@ const GRAPH_RANK: Record<string, number> = {
 export const siteGraphUrlFromFrames = (topUrl: string, frameSrcs: string[] = []) => {
   const topNode = siteGraphNodeForUrl(topUrl)
   // 播放页 / 独立作答页顶层已定：不要被嵌套 iframe（章节测验 doHomeWork）抢成别的节点
-  if (topNode?.id === 'study' || topNode?.id === 'homework-do' || /studentstudy/i.test(topUrl)) {
+  if (topNode?.id === 'study' || topNode?.id === 'homework-do') {
     for (const src of frameSrcs) {
       const href = String(src || '').trim()
       if (!href) continue

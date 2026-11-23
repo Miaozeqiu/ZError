@@ -1,0 +1,44 @@
+name: Website runtime contracts
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/site-runtime-checks.yml'
+      - 'package*.json'
+      - 'src/**'
+      - 'src-tauri/src/**'
+      - 'public/**'
+      - 'scripts/site-boundary-audit.mjs'
+      - 'docs/site-migration-inventory.json'
+      - 'testdata/agent/**'
+  push:
+    branches: [master, dev, dev-improvements]
+    paths:
+      - '.github/workflows/site-runtime-checks.yml'
+      - 'package*.json'
+      - 'src/**'
+      - 'src-tauri/src/**'
+      - 'public/**'
+      - 'scripts/site-boundary-audit.mjs'
+      - 'docs/site-migration-inventory.json'
+      - 'testdata/agent/**'
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Check migration boundary and website package contracts
+        run: npx vitest run testdata/agent/site-boundary-audit.test.ts testdata/agent/layer-boundary.test.ts testdata/agent/website-runtime.test.ts testdata/agent/website-runtime-resources.test.ts testdata/agent/website-runtime-publications.test.ts testdata/agent/website-runtime-host.test.ts testdata/agent/website-runtime-history.test.ts testdata/agent/website-runtime-open.test.ts testdata/agent/website-runtime-events.test.ts testdata/agent/website-repository-registry.test.ts testdata/agent/website-repository-github.test.ts testdata/agent/website-runtime-services.test.ts testdata/agent/website-runtime-automation.test.ts testdata/agent/website-runtime-scoped.test.ts testdata/agent/website-runtime-checkpoints.test.ts testdata/agent/website-document-script.test.ts testdata/agent/chat-login.test.ts testdata/browser/capabilities.test.ts

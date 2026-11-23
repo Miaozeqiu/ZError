@@ -114,6 +114,7 @@ test('remote connection edits survive reload and sync, and reset restores both c
   })
   expect(manager.getPlatforms()[0].apiProtocolOverride).toBeUndefined()
   await nextTick()
+  await manager.save()
   expect(storage.saved?.platforms[0].baseUrlOverride).toBeUndefined()
   expect(storage.saved?.platforms[0].apiProtocolOverride).toBeUndefined()
 

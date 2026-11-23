@@ -51,6 +51,8 @@
       </div>
     </section>
 
+    <AgentImportSettings @manage="emit('manage-import-templates')" />
+
     <section class="prompt-section" aria-labelledby="agent-rules-heading">
       <div class="section-heading">
         <h3 id="agent-rules-heading">附加提示词</h3>
@@ -75,12 +77,15 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import AgentImportSettings from './AgentImportSettings.vue'
 import SettingsSelect from '../../components/ui/SettingsSelect.vue'
 import Toggle from '../../components/ui/Toggle.vue'
 import {
   agentPolicyState, setAgentPolicy, type PermissionMode, type ConfirmPolicy, type SubmitPolicy,
 } from '../../services/agent/agentPolicy'
 import { getActiveAgentProfile, saveAgentProfile } from '../../services/agent/agentProfiles'
+
+const emit = defineEmits<{ 'manage-import-templates': [] }>()
 
 const activeProfile = computed(() => getActiveAgentProfile())
 const promptInput = ref<HTMLTextAreaElement | null>(null)

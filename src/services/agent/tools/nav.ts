@@ -1,23 +1,39 @@
+import { coursePlanFor, coursePlanSummary } from '../../browser/coursePlan'
 import { experienceHostForPage } from '../websiteRepository'
 
 import { cachedPageSnap, findInSnapshot, observedJson, pageSnapAge, PAGE_SNAP_FRESH_MS } from '../../browser/engine'
 
 export const handleNavTools = async (ctx: Record<string, any>): Promise<string | null> => {
   const {
-    name, args, browserId, sessionId, wait, role, loop, policy, failWithCard, platformTool, onNavigation,
-    currentUrl, graphUrlOf, liveHref,
-    notePageProbe, readBrowserPage, getBrowserState, peekAppBrowserUrl, emptyPageSnaps, callProtocol,
-    graphNodeId, siteGraphNodeForUrl, isShellNode, SPACE_HINT, COURSE_HW_HINT,
-    browserTaskIntent, sameChaoxingCourse, isChaoxingIframeNavUrl, isSpaceListTopUrl,
-    IFRAME_NAV_HINT, navigateBrowserView, evalBrowserView, pageHostMatches, pageHostOf, reloadBrowserView,
-    goBackBrowserView, goForwardBrowserView, formatMissRefsHint, cssSelectorFromArgs, looksLikeCssSelector,
-    resolveRefLocator, clickByLocator, clickBrowserElement, clickBrowserText, observeAfterClick, asObject,
-    rememberLoginTyped, typeBrowserElement, fillByLocator, waitMs, listAppBrowsers, readChaoxingSpaceContext,
-    readPageSnapshot, isEvalActBusy, displaySiteName, missingHostNeeds, missingNeedsNote, nextStep,
-    screenshotBrowserView, collectPageCaptchaHits, materializeCaptchaImages, captchaScreenshotHint,
-    evaluate, inspectEvalScript, readBrowserLoop, listCachedPageRefs, hostnameOf,
-    siteGraphForUrl,
-    syncPeekedUrl, patchAppBrowser, scrollBrowserView, getBrowserState: _gs,
+    name,
+    navigation,
+    args,
+    browserId,
+    sessionId,
+    wait,
+    policy,
+    onNavigation,
+    currentUrl,
+    graphUrlOf,
+    liveHref,
+    notePageProbe,
+    readBrowserPage,
+    getBrowserState,
+    peekAppBrowserUrl,
+    emptyPageSnaps,
+    callProtocol,
+    graphNodeId,
+    siteGraphNodeForUrl,
+    browserTaskIntent,
+    navigateBrowserView,
+    evalBrowserView,
+    pageHostMatches,
+    pageHostOf,
+    reloadBrowserView,
+    goBackBrowserView,
+    goForwardBrowserView,
+    listAppBrowsers,
+    getBrowserState: _gs,
   } = ctx
   if (name === 'browser_get_state') {
     const state = await getBrowserState(browserId).catch(() => null)
@@ -26,7 +42,6 @@ export const handleNavTools = async (ctx: Record<string, any>): Promise<string |
     const graphUrl = await graphUrlOf(browserId, url)
     const { siteGraphAgentSnap } = await import('../../browser/siteGraph')
     await experienceHostForPage(url).catch(() => undefined)
-    const { coursePlanFor, coursePlanSummary } = await import('../../browser/coursePlan')
     const snap = siteGraphAgentSnap(graphUrl || url)
     const summary = coursePlanSummary(coursePlanFor(browserId))
     const nodeId = graphNodeId(graphUrl || url)
@@ -39,7 +54,7 @@ export const handleNavTools = async (ctx: Record<string, any>): Promise<string |
       siteGraph: snap || undefined,
       coursePlan: summary || undefined,
       hint: [
-        isShellNode(nodeId, graphUrl) ? SPACE_HINT : undefined,
+        navigation.isShell(nodeId, graphUrl) ? navigation.shellHint : undefined,
         !snap
           ? '当前网址没有匹配的站点图谱。可用 get_page / screenshot 探路，或 read_agent_skill(site-learn) 记下这个站。'
           : undefined,
@@ -109,8 +124,8 @@ export const handleNavTools = async (ctx: Record<string, any>): Promise<string |
         page: siteGraphNodeForUrl(graphUrl)?.title || '',
         frame: graphUrl !== url ? graphUrl : preferred?.url || undefined,
         hint: [
-          isShellNode(nodeId, graphUrl) ? SPACE_HINT : undefined,
-          wantHw ? COURSE_HW_HINT : undefined,
+          navigation.isShell(nodeId, graphUrl) ? navigation.shellHint : undefined,
+          wantHw ? navigation.homeworkHint : undefined,
           frameHint,
           probes >= 2 ? '快照已经有了。' : undefined,
           page.framesCapped ? '子 frame 已到上限。要某句文案用 browser_find。' : undefined,
@@ -128,27 +143,27 @@ export const handleNavTools = async (ctx: Record<string, any>): Promise<string |
     const url = String(args.url || '').trim()
     if (!url) return JSON.stringify({ error: '缺少网址' })
     const nowCourse = await currentUrl(browserId)
-    if (sameChaoxingCourse(url, nowCourse)) {
+    if (navigation.sameCourse(url, nowCourse)) {
       return JSON.stringify({
         ok: false,
         error: '已经在这门课。切「章节 / 任务 / 作业」用 click_text，不要重新打开课页。',
         url: nowCourse,
       })
     }
-    const iframePage = isChaoxingIframeNavUrl(url)
-    const blockedNav = iframePage || isSpaceListTopUrl(url)
+    const iframePage = navigation.isFrameUrl(url)
+    const blockedNav = iframePage || navigation.isCourseListUrl(url)
     if (blockedNav && policy.permissionMode === 'strict') {
       return JSON.stringify({
         ok: false,
-        error: isSpaceListTopUrl(url)
+        error: navigation.isCourseListUrl(url)
           ? '严格模式下课表用 click_text 点页签打开。'
-          : IFRAME_NAV_HINT,
+          : navigation.frameHint,
       })
     }
     const navWarning = blockedNav
-      ? (isSpaceListTopUrl(url)
+      ? (navigation.isCourseListUrl(url)
         ? '这是课表/iframe 地址，通常应留在外壳里点页签，而不是顶层打开。'
-        : IFRAME_NAV_HINT)
+        : navigation.frameHint)
       : undefined
     const target = url
     const from = await liveHref(browserId).catch(() => currentUrl(browserId))

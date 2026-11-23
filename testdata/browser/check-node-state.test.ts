@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 // Run the actual read-only function deployed in the Rust CDP handler against real DOM.
-const source = readFileSync(resolve('src-tauri/src/cef/browser.rs'), 'utf8')
+const source = readFileSync(resolve('src-tauri/src/cef/browser/interaction.rs'), 'utf8')
 const block = source.slice(source.indexOf('async fn check_node_state('))
 const script = block.match(/"functionDeclaration": r#"([\s\S]*?)"#/)[1]
 const probe = new Function(`return (${script})`)()

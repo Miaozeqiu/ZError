@@ -3,7 +3,7 @@ import { isReadOnlyBrowserScript } from './core/scriptEffect'
 export type ScopedCompletionProof = { observation_id?: unknown; targets?: unknown; evidence?: unknown }
 export type ScopedCompletionEvidence = { stepId: string; targets: string[]; evidence: string }
 type Step = { id: string; name?: string; status: string; result?: string; arguments?: string }
-const passive = /^(browser_get_state|browser_get_page|browser_find|browser_screenshot|browser_decode_chaoxing_font|browser_eval|browser_wait|browser_todo|browser_finish|browser_site_graph)$/
+const passive = /^(browser_get_state|browser_get_page|browser_find|browser_screenshot|browser_eval|browser_wait|browser_todo|browser_finish|browser_site_graph)$/
 
 export const scopedCompletionEvidence = (steps: Step[], browserId: string, currentUrl: string,
   targets: string[], proof?: ScopedCompletionProof, now = Date.now()): ScopedCompletionEvidence | undefined => {

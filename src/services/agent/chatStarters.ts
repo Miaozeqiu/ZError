@@ -90,12 +90,15 @@ export const draftStudyGraphChat = (input?: {
 
 export const startFileImportChat = async (input: {
   filePath: string
-  folderId: number
-  folderName: string
+  folderId?: number
+  folderName?: string
   folderPath?: string
 }) => {
   const fileName = input.filePath.split(/[\\/]/).pop() || '文件'
-  const folder = await resolveFolderRef(input)
+  // 题库内发起时沿用指定位置；首页导入交给 Agent 根据目录结构归类。
+  const folder = input.folderId === undefined ? null : await resolveFolderRef({
+    folderId: input.folderId, folderName: input.folderName || '文件夹', folderPath: input.folderPath,
+  })
   const fileAttachment: AgentChatAttachment = {
     kind: 'file',
     filePath: input.filePath,
@@ -112,7 +115,7 @@ export const startFileImportChat = async (input: {
   await sendChatMessage(
     folder
       ? `请把附件「${fileName}」里的题目识别出来，保存到 ${folder.token}。`
-      : `请把附件「${fileName}」里的题目识别出来，保存到「${input.folderName}」。`,
+      : `请把附件「${fileName}」里的题目导入本地题库。根据上下文判断存放位置；未指定位置时，查看本地题库目录结构，自行选择合适的位置创建文件夹。`,
     attachments,
   )
 }

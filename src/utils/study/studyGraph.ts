@@ -1,9 +1,5 @@
 import type {
-  StudyGraphEdgeRow,
-  StudyGraphNodeInput,
-  StudyGraphNodeRow,
-  StudyGraphPayload,
-  StudySubject,
+  StudyGraphNodeInput, StudyGraphNodeRow, StudyGraphPayload, StudySubject,
 } from '../../services/app/database'
 import { masteryLabel, normalizeMetric } from '../question/questionMetrics'
 import { rolledRetention } from './studyForgetting'

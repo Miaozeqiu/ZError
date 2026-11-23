@@ -290,13 +290,12 @@ export const checkAndShowUrlDialog = async (log: RequestLog) => {
                   console.log('✅ 窗口基本属性可用，标签:', existingWindow.label)
 
                   // 方法2: 尝试检查窗口状态（如果方法存在）
-                  let statusChecked = false
+
                   try {
                     console.log('🔍 检查isVisible方法:', typeof existingWindow.isVisible)
                     if (existingWindow.isVisible) {
                       const isVisible = await existingWindow.isVisible()
                       console.log('✅ 窗口可见状态:', isVisible)
-                      statusChecked = true
                     }
                   } catch (visibilityError) {
                     console.log('⚠️ 无法检查窗口可见性，但窗口可能仍然可用:', visibilityError)
@@ -308,7 +307,6 @@ export const checkAndShowUrlDialog = async (log: RequestLog) => {
                     if (existingWindow.isMinimized) {
                       const isMinimized = await existingWindow.isMinimized()
                       console.log('✅ 窗口最小化状态:', isMinimized)
-                      statusChecked = true
                     }
                   } catch (minimizedError) {
                     console.log('⚠️ 无法检查窗口最小化状态:', minimizedError)

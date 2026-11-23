@@ -156,6 +156,7 @@ const WRITE_INPUT: &str = r#"function (value, origin, type) {
     if (!valid()) return false;
     this.focus();
     if (!valid()) return false;
+    this.setAttribute('data-zerror-private', 'true');
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(this, value);
     this.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
     this.dispatchEvent(new Event('change', { bubbles: true }));

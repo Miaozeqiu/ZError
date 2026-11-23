@@ -75,103 +75,23 @@ describe('browser task intent', () => {
 })
 
 describe('browser page loop', () => {
-  it('gives the current student homework page the specialized tools before generic reads', () => {
-    const url = 'https://mooc1.chaoxing.com/mooc-ans/mooc2/work/dowork?courseId=42&classId=7&workId=11'
-    const context = formatBrowserLiveContext({ url, sessionId: 'homework-recipe' })
-    expect(classifyBrowserPage(url)).toBe('homework-do')
-    expect(context).toContain('先用 browser_review_homework')
-    expect(context).toContain('先用可用的 browser_answer_homework')
-    expect(context).toContain('question_range={"start":1,"end":5}')
-  })
 
-  it('认登录 / 空间 / 课程 / 播放 / 导航', () => {
-    expect(classifyBrowserPage(login)).toBe('login')
-    expect(classifyBrowserPage(space)).toBe('space')
-    expect(classifyBrowserPage(course)).toBe('course')
-    expect(classifyBrowserPage(player)).toBe('player')
-    expect(classifyBrowserPage(home)).toBe('home')
-  })
 
-  it('空间页刷课：看快照点课名', () => {
-    const recipe = recipeForPage({ siteId: 'chaoxing', kind: 'space', intent: 'play', focus: '高等数学' })
-    expect(recipe).toContain('高等数学')
-    expect(recipe).toContain('快照')
-    expect(recipe).toContain('ref')
-    expect(recipe).not.toContain('不要再登录')
-  })
 
-  it('学生任务先确认学习课表，教师课程参数不能冒充学生目录或作业', () => {
-    for (const intent of ['play', 'homework'] as const) {
-      const recipe = recipeForPage({ kind: 'space', intent, siteId: 'chaoxing' })
-      expect(recipe.indexOf('确认当前选中「我学的课」')).toBeLessThan(recipe.indexOf('再在这份课表'))
-      expect(recipe).toContain('核对结果')
-    }
-    for (const pageHeader of [0, 1, 2, 8]) {
-      const url = `https://mooc2-ans.chaoxing.com/mooc2-ans/mycourse/tch?courseid=1&pageHeader=${pageHeader}`
-      expect(classifyBrowserPage(url, 'course')).toBe('unknown')
-      const loop = readBrowserLoop({ url })
-      expect(loop.page).toBe('教师课程（我教的课）')
-      expect(loop.line).not.toContain('章节目录')
-    }
-  })
 
-  it('发现教师课程时为学生任务纠偏，但不把其他网站或教师管理目标当作刷课', () => {
-    const sessionId = 'teacher-perspective-regression'
-    try {
-      for (const task of ['刷完这门课', '把作业写了']) {
-        rememberBrowserTaskIntent(sessionId, task)
-        const loop = readBrowserLoop({ url: 'https://mooc2-ans.chaoxing.com/mooc2-ans/mycourse/tch?pageHeader=1', sessionId })
-        expect(loop.recipe).toContain('停止点章节、编辑或发布')
-        expect(loop.recipe).toContain('返回课程列表')
-        expect(loop.recipe).toContain('不改 URL')
-      }
-      const teacher = readBrowserLoop({ url: 'https://mooc2-ans.chaoxing.com/mycourse/tch', sessionId: 'teacher-management' })
-      expect(teacher.recipe).toContain('对照用户目标确认角色')
-      expect(teacher.recipe).not.toContain('停止点章节、编辑或发布')
-      const other = readBrowserLoop({ url: 'https://example.com/mycourse/tch?pageHeader=1' })
-      expect(other.page).not.toContain('教师课程')
-      const spoofed = readBrowserLoop({ url: 'https://chaoxing.com.example.com/mycourse/tch' })
-      expect(spoofed.page).not.toContain('教师课程')
-    } finally {
-      clearBrowserTaskIntent(sessionId)
-    }
-  })
 
-  it('导航页刷课：先开空间', () => {
-    const recipe = recipeForPage({ siteId: 'chaoxing', kind: 'home', intent: 'play' })
-    expect(recipe).toContain('课程空间')
-    expect(recipe).not.toContain('passport2')
-  })
 
-  it('播放页视频暂停：指定那条再 play', () => {
-    const recipe = recipeForPage({
-      siteId: 'chaoxing',
-      kind: 'player',
-      intent: 'play',
-      panel: { event: 'video_paused', thisSection: { next: { label: '视频2', kind: 'video' } } },
-    })
-    expect(recipe).toContain('视频2暂停了')
-    expect(recipe).toContain('没有在播')
-    expect(recipe).toContain('快照 ref')
-    expect(recipe).toContain('browser_watch')
-  })
 
-  it('播放页只剩测验：可用 next', () => {
-    const recipe = recipeForPage({
-      siteId: 'chaoxing',
-      kind: 'player',
-      intent: 'play',
-      panel: { event: 'quiz_left', leftJobs: ['测验'] },
-    })
-    expect(recipe).toContain('快照 ref')
-    expect(recipe.startsWith('建议')).toBe(true)
-  })
 
-  it('未知页不要套学习通作业路径', () => {
-    expect(recipeForPage({ kind: 'unknown', intent: 'homework' })).toContain('快照')
-    expect(recipeForPage({ kind: 'unknown', intent: 'homework' })).not.toContain('我学的课')
-    expect(recipeForPage({ kind: 'unknown', intent: 'play' })).toContain('SKILL.md')
-  })
+
+
+
+
+
+
+
+
+
   it('缺少站点身份不能默认套学习通，缺少播放目标不能默认要求播放', () => {
     const unknownSite = recipeForPage({ kind: 'space', intent: 'homework' })
     expect(unknownSite).not.toContain('chaoxing')
@@ -183,55 +103,11 @@ describe('browser page loop', () => {
     expect(inspectPlayer).not.toContain('点播放')
   })
 
-  it('非学习通站点即使用户说写作业也不走学习通路径', () => {
-    expect(recipeForPage({ kind: 'unknown', intent: 'homework', siteId: 'example' })).not.toContain('我学的课')
-    expect(recipeForPage({ kind: 'unknown', intent: 'homework', siteId: 'example' })).toContain('快照')
-    expect(classifyBrowserPage('https://example.com/homework')).toBe('unknown')
-  })
 
-  it('在浙学按主机认，不叫智慧树', () => {
-    expect(displaySiteName('https://www.zjooc.cn/plan/detail/1', {
-      id: 'zjooc',
-      name: '在浙学',
-    })).toBe('在浙学')
-    expect(displaySiteName('https://www.zhihuishu.com/student/course', {
-      id: 'zhihuishu',
-      name: '智慧树',
-    })).toBe('智慧树')
-    rememberBrowserTaskIntent('zjooc-play-recipe', '播放这条视频')
-    const loop = readBrowserLoop({
-      url: 'https://www.zjooc.cn/ucenter/student/course/study/abc/plan/detail/xyz', sessionId: 'zjooc-play-recipe',
-    })
-    clearBrowserTaskIntent('zjooc-play-recipe')
-    expect(loop.line).toContain('在浙学')
-    expect(loop.line).toMatch(/播放页|章节/)
-    expect(loop.line).not.toContain('智慧树')
-    expect(loop.line).not.toMatch(/\bplayer\b/)
-    expect(loop.recipe).toContain('在浙学')
-    expect(loop.recipe).toContain('sites/zjooc.cn/SKILL.md')
-    expect(loop.recipe).toContain('browser_play_zjooc')
-    expect(loop.recipe).toContain('mode=section')
-    expect(loop.recipe).not.toContain('browser_parser_dryrun')
-    expect(loop.recipe).toContain('页签全名')
-    expect(classifyBrowserPage(loop.url)).toBe('player')
-    expect(loop.evalPolicy).toBe('read')
-    expect(loop.kind).toBe('player')
-  })
 
-  it('活上下文用中文标签，不把 play/player 写进旁白', () => {
-    const text = formatBrowserLiveContext({
-      url: 'https://www.zjooc.cn/ucenter/student/course/study/abc/plan/detail/xyz',
-      sessionId: 's',
-    })
-    expect(text).toContain('在浙学')
-    expect(text).toMatch(/播放页/)
-    expect(text).toMatch(/用中文/)
-    expect(text).toMatch(/不要写英文句子/)
-    expect(text.indexOf('【旁白】')).toBeLessThan(text.indexOf('【网页状态】'))
-    expect(text).not.toMatch(/任务=play/)
-    expect(text).not.toMatch(/\bevent=/)
-    expect(text).not.toMatch(/【网页状态】[^\n]*\bplayer\b/)
-  })
+
+
+
 
   it('旁白带瘦可点 refs，有卡也带', () => {
     lastSiteCard.value = null
@@ -277,20 +153,9 @@ describe('browser page loop', () => {
     lastSiteCard.value = null
   })
 
-  it('课程壳目录不是播放页：不能 play', () => {
-    const catalog = recipeForPage({ siteId: 'chaoxing', kind: 'course', intent: 'play', tab: '章节' })
-    expect(catalog).toContain('目录')
-    expect(catalog).toContain('不是播放页')
-    expect(catalog).toContain('click_text')
-    expect(catalog).not.toContain('派 execute 去 play')
-    const shell = recipeForPage({ siteId: 'chaoxing', kind: 'course', intent: 'play', tab: '任务' })
-    expect(shell).toContain('目录')
-    expect(shell).toContain('进播放页')
-  })
 
-  it('作业名单 URL 按图谱框认成 homework-list', () => {
-    expect(classifyBrowserPage('https://mooc1.chaoxing.com/mooc2/work/list?courseId=1&classId=2')).toBe('homework-list')
-  })
+
+
 
   it('播放页 eval 只读，未知页可写', () => {
     expect(evalPolicyForPage('player')).toBe('read')

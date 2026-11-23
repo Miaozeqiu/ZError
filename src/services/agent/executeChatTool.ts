@@ -1,3 +1,5 @@
+import { fileImportToolHandlers } from './toolHandlers/fileImport'
+import { SUBAGENTS_ENABLED, SUBAGENT_DISABLED_HINT } from './subagent/enabled'
 import { protectCredentials } from './credentialTools'
 import { redactObject } from '../security/secretRedaction'
 /** 对话工具分发。刷课走 browserTools，校园/题库/练习走 toolHandlers。 */
@@ -11,6 +13,7 @@ import { studyToolHandlers } from './toolHandlers/study'
 import { searchToolHandlers } from './toolHandlers/search'
 import { parseToolArgs } from './toolArgs'
 import type { ChatToolContext, ChatToolHandler } from './toolContext'
+import { isWebsiteRuntimeToolName } from './websiteRuntime/protocol'
 import { getAgentPolicy } from './agentPolicy'
 import { campusWriteDenial } from './campusPolicy'
 import { requestAgentApproval } from './agentApproval'
@@ -59,6 +62,7 @@ const ensureApproved = async (
 
 const CHAT_TOOL_HANDLERS: Record<string, ChatToolHandler> = {
   ...folderToolHandlers,
+  ...fileImportToolHandlers,
   ...campusToolHandlers,
   ...quizToolHandlers,
   ...studyToolHandlers,
@@ -115,6 +119,10 @@ export const executeChatTool = async (input: {
       : { ok: false, error: '当前对话不存在' })
   }
   let browserId = ctx.browserId()
+  if (call.name === 'browser_workflows') {
+    const { websiteWorkflowTool } = await import('./websiteRuntime/workflowTool')
+    return websiteWorkflowTool(args, ctx)
+  }
   if (call.name.startsWith('browser_') && ctx.ensureBrowser) {
     try {
       browserId = await ctx.ensureBrowser()
@@ -125,7 +133,17 @@ export const executeChatTool = async (input: {
     }
   }
 
+  if (isWebsiteRuntimeToolName(call.name)) {
+    const { executeInstalledWebsiteTool } = await import('./websiteRuntime/installedTool')
+    return executeInstalledWebsiteTool(call.name, args, ctx, browserId)
+  }
+
   if (call.name === 'protect_credentials') return protectCredentials({ call, args, ctx })
+
+  if (call.name === 'browser_package_read' || call.name === 'browser_package_act') {
+    const { executeWebsiteHostTool } = await import('./websiteRuntime/hostTools')
+    return executeWebsiteHostTool(call.name, args, ctx, browserId)
+  }
 
   if (call.name === 'list_agent_skills') {
     const { listAgentSkillsForAgent } = await import('./agentSkills')
@@ -294,7 +312,6 @@ export const executeChatTool = async (input: {
   }
 
   if (browserId && call.name === 'browser_task') {
-    const { SUBAGENTS_ENABLED, SUBAGENT_DISABLED_HINT } = await import('./subagent/enabled')
     if (!SUBAGENTS_ENABLED) {
       return JSON.stringify({ ok: false, error: SUBAGENT_DISABLED_HINT })
     }
@@ -330,21 +347,10 @@ export const executeChatTool = async (input: {
         const judged = judgeFinish(String(args.status || ''), String(args.summary || ''), evidence)
         if (!judged.ok) return JSON.stringify({ ok: false, finished: false, error: 'error' in judged ? judged.error : '还不能收工' })
         let learning
-        if (judged.status === 'done' && (!ctx.role || ctx.role === 'parent')) {
-          const { liveSession } = await import('./chatStore')
-          const steps = liveSession(ctx.sessionId)?.messages.find(message => message.id === ctx.assistantId)?.steps || []
-          learning = reviewSiteLearning({
-            url: evidence.url || '',
-            steps,
-            learning: args.learning,
-            writePolicy: getAgentPolicy().writeSkills,
-          })
-          if (!learning.ok) {
-            const attempts = steps.filter(step => step.name === 'browser_finish' && step.result
-              && parseToolArgs(step.result).learningRequired === true).length
-            if (attempts < 2) return JSON.stringify({ finished: false, learningRequired: true, ...learning })
-            learning = { ...learning, ok: true, error: undefined, hint: undefined, decision: 'deferred', reason: '经验检查两次修正后仍不完整，本次未确认保存；网页任务本身已完成。' }
-          }
+        if (args.learning && judged.status === 'done' && (!ctx.role || ctx.role === 'parent')) {
+          learning = reviewSiteLearning({ url: evidence.url || '', steps: currentSteps,
+            learning: args.learning, writePolicy: getAgentPolicy().writeSkills })
+          if (!learning.ok) learning = { decision: 'deferred', reason: learning.error }
         }
         if (judged.status !== 'watching') {
           const { stopWatchFor } = await import('./chatWatch')
@@ -352,40 +358,6 @@ export const executeChatTool = async (input: {
         }
         return JSON.stringify({ ok: true, finished: judged.status !== 'watching', status: judged.status, summary: judged.summary, learning,
           ...(judged.status === 'watching' ? { awaitingVideo: true, taskComplete: false } : {}) })
-      }
-      const homeworkTool = call.name === 'browser_answer_homework' || call.name === 'browser_review_homework' || call.name === 'browser_answer_zjooc'
-      const chapterTool = call.name === 'browser_start_chapter_tasks'
-      if (call.name === 'browser_reply_chapter_discussion') {
-        const { liveSession } = await import('./chatStore')
-        const { permitsChapterDiscussionReply } = await import('./chapterDiscussionIntent')
-        const session = liveSession(gateSession)
-        const current = session?.messages.find(message => message.id === (ctx.parentAssistantId || ctx.assistantId))
-        const goal = session?.messages.find(message => message.role === 'user' && message.id === current?.run?.goalMessageId)
-        if (!goal || !permitsChapterDiscussionReply(goal.content)) {
-          return JSON.stringify({ ok: false, reason: 'invalid', error: '只有当前用户要求回复讨论或完成包含该任务点的章节时才可发送。' })
-        }
-      }
-      const homeworkStore = homeworkTool || chapterTool ? await import('./chatStore') : undefined
-      let chapterQuiz: Parameters<typeof executeBrowserTool>[0]['chapterQuiz']
-      if (homeworkStore) {
-        const session = homeworkStore.liveSession(gateSession)
-        const current = session?.messages.find(message => message.id === (ctx.parentAssistantId || ctx.assistantId))
-        const goal = session?.messages.find(message => message.role === 'user' && message.id === current?.run?.goalMessageId)
-        if (call.name === 'browser_answer_homework' || call.name === 'browser_answer_zjooc') {
-          const { permitsHomeworkAnswers, permitsChapterQuizAnswers } = await import('./homeworkAnswerEvidence')
-          const permits = args.chapter_key !== undefined || args.quiz_job_id !== undefined ? permitsChapterQuizAnswers : permitsHomeworkAnswers
-          if (!goal || !permits(goal.content)) {
-            return JSON.stringify({ ok: false, reason: 'invalid', error: '当前用户请求未授权填写这些题目。可用 browser_review_homework 查看。' })
-          }
-        }
-        const { requestedHomeworkQuestionRange } = await import('./homeworkQuestionRange')
-        const range = goal && requestedHomeworkQuestionRange(goal.content)
-        if (range && homeworkTool) args.question_range = range
-        if (chapterTool && goal && args.video_only !== true
-          && /完成|学完|做完|答题|作答|填写|刷课|做(?:下|一下)|^(?:请)?(?:继续|接着)/.test(goal.content)) {
-          const { permitsChapterQuizAnswers } = await import('./homeworkAnswerEvidence')
-          if (permitsChapterQuizAnswers(goal.content)) chapterQuiz = { range }
-        }
       }
       const blocked = shouldBlockRepeatFail(gateSession, call.name, args)
       if (blocked.block) {
@@ -399,9 +371,6 @@ export const executeChatTool = async (input: {
         signal: ctx.abort,
         wait: waitWithAbort(ctx.abort),
         onNavigation: ctx.onBrowserNavigation,
-        onHomeworkProgress: homeworkStore && (update => homeworkStore.recordHomeworkProgress(gateSession, ctx.parentAssistantId || ctx.assistantId, update)),
-        chapterResume: ctx.chapterResume,
-        chapterQuiz,
         role: ctx.role,
         jobId: ctx.jobId,
       })
