@@ -4,6 +4,7 @@ import { ZERROR_OPEN_ORIGIN } from '../app/openApi'
 import { validateWebsiteSnapshot, type WebsiteSnapshot } from './websiteRepositoryCore'
 import { limitedJson, WebsiteRepositoryHttpError } from './websiteRepositoryGitHub'
 import { parseGitHubWebsiteUrl, websiteManifest, websiteManifestIdentity, type GitHubWebsiteSource } from './websiteRepositoryManifest'
+import { websiteHostAwait } from './websiteRuntime/abortable'
 
 const commitSha = /^[a-f0-9]{40}$/
 
@@ -30,9 +31,10 @@ const catalogUrl = ZERROR_OPEN_ORIGIN + '/v1/website-experience'
 let catalog = new Map<string, OpenCatalogEntry>()
 let catalogExpires = 0
 let loadingCatalog: Promise<void> | undefined
+let catalogError: unknown
 
-export async function findOpenWebsite(host: string, request: typeof fetch) {
-  if (Date.now() >= catalogExpires) {
+export async function findOpenWebsite(host: string, request: typeof fetch, strict = false) {
+  if (Date.now() >= catalogExpires || (strict && catalogError)) {
     loadingCatalog ??= (async () => {
       const response = await request(catalogUrl, {
         headers: { Accept: 'application/json' }, credentials: 'omit', redirect: 'error', signal: AbortSignal.timeout(4000),
@@ -49,10 +51,12 @@ export async function findOpenWebsite(host: string, request: typeof fetch) {
         next.set(site.host, { ...site, source: { owner, name, url, branch: row.branch, root: row.root } })
       }
       catalog = next
+      catalogError = undefined
       catalogExpires = Date.now() + 300_000
-    })().catch(() => { catalogExpires = Date.now() + 30_000 }).finally(() => { loadingCatalog = undefined })
+    })().catch(error => { catalogError = error; catalogExpires = Date.now() + 30_000 }).finally(() => { loadingCatalog = undefined })
     await loadingCatalog
   }
+  if (strict && catalogError) throw catalogError
   // Match locally, most specific domain first. Never send the visited URL to Open.
   for (let suffix = host; suffix.includes('.'); suffix = suffix.slice(suffix.indexOf('.') + 1)) {
     const match = catalog.get(suffix)
@@ -67,8 +71,9 @@ export async function downloadOpenWebsiteExperience(
   identity: { id: string; host: string },
   previous: WebsiteSnapshot,
   request: typeof fetch,
+  signal?: AbortSignal,
 ): Promise<WebsiteSnapshot> {
-  return fetchWebsiteExperience(openWebsiteExperienceUrl(identity.host), identity, request, previous)
+  return fetchWebsiteExperience(openWebsiteExperienceUrl(identity.host), identity, request, previous, previous.website ? 16000 : 45000, signal)
 }
 
 async function fetchWebsiteExperience(
@@ -76,20 +81,34 @@ async function fetchWebsiteExperience(
   identity: { id?: string; host: string },
   request: typeof fetch,
   previous?: WebsiteSnapshot,
+  timeoutMs?: number,
+  signal?: AbortSignal,
 ): Promise<WebsiteSnapshot> {
+  signal?.throwIfAborted()
   const revision = previous?.website && previous.icon
     && commitSha.test(previous.revision) ? previous.revision : ''
   const url = new URL(endpoint)
   if (revision) url.searchParams.set('revision', revision)
   const headers = previous ? { Accept: 'application/json' } : { Accept: 'application/json', 'Cache-Control': 'no-cache' }
+  const timeout = AbortSignal.timeout(timeoutMs ?? (previous ? 16000 : 8000))
+  const requestSignal = signal ? AbortSignal.any([signal, timeout]) : timeout
   const init: RequestInit & { maxRedirections: number } = {
     headers,
-    signal: AbortSignal.timeout(previous ? 16000 : 8000),
+    signal: requestSignal,
     redirect: 'error',
     maxRedirections: 0,
     credentials: 'omit',
   }
-  const response = await request(url.href, init).catch((error: unknown) => {
+  const response = await websiteHostAwait(requestSignal, async () => {
+    const response = await request(url.href, init)
+    if (requestSignal.aborted) {
+      // 兼容原生网络层迟到的回执，取消后不留下未消费的响应流。
+      void response.body?.cancel().catch(() => undefined)
+      requestSignal.throwIfAborted()
+    }
+    return response
+  }).catch((error: unknown) => {
+    signal?.throwIfAborted()
     if (previous) throw error
     throw new Error('无法连接自定义网站经验接口，请检查地址和服务状态。')
   })
@@ -102,7 +121,7 @@ async function fetchWebsiteExperience(
     )
   }
 
-  const data = await limitedJson(response, 13 * 1024 * 1024).catch((error: unknown) => {
+  const data = await websiteHostAwait(requestSignal, () => limitedJson(response, 13 * 1024 * 1024, requestSignal)).catch((error: unknown) => {
     if (!previous && error instanceof SyntaxError) throw new Error('自定义地址应返回网站经验 JSON。')
     throw error
   })
@@ -118,6 +137,7 @@ async function fetchWebsiteExperience(
   }
   const runtime = data.runtime === undefined ? undefined : validateWebsiteRuntime(data.runtime, website.id)
   if (runtime) await verifyWebsiteRuntime(runtime)
+  requestSignal.throwIfAborted()
   const snapshot: WebsiteSnapshot = {
     revision: typeof data.revision === 'string' && data.revision.trim() && data.revision.length <= 128 ? data.revision : 'custom-http',
     files: data.files,

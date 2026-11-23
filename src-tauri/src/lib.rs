@@ -34,6 +34,8 @@ mod secret_access;
 #[cfg(windows)]
 mod webview2;
 #[cfg(windows)]
+mod webview2_input;
+#[cfg(windows)]
 mod webview2_secrets;
 #[cfg(target_os = "macos")]
 mod secret_keychain;

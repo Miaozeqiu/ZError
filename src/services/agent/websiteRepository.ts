@@ -10,6 +10,7 @@ import { CHAOXING_REPOSITORY, ZJOOC_REPOSITORY, ZHIHUISHU_REPOSITORY, downloadWe
 import { findOpenWebsite, customWebsiteExperienceUrl, downloadCustomWebsiteExperience, downloadOpenWebsiteExperience } from './websiteRepositoryOpen'
 import { parseGitHubWebsiteUrl, type GitHubWebsiteSource } from './websiteRepositoryManifest'
 import { BUILTIN_WEBSITES, normalizeWebsiteHost, loadWebsiteIdentities, websiteIdentityForHost, websitePrimaryHost } from './websiteIdentity'
+import { websiteHostAwait } from './websiteRuntime/abortable'
 export { CHAOXING_REPOSITORY, ZJOOC_REPOSITORY }
 export type { WebsiteRepositoryCandidate }
 type Configuration = { id: string; name: string; host: string; source?: GitHubWebsiteSource; open?: true }
@@ -424,7 +425,8 @@ export const importWebsiteRepository = (candidate: WebsiteRepositoryCandidate) =
   return installWebsiteSnapshot(configuration, snapshot)
 })
 
-async function installWebsiteSnapshot(configuration: Configuration, snapshot: WebsiteSnapshot) {
+async function installWebsiteSnapshot(configuration: Configuration, snapshot: WebsiteSnapshot, signal?: AbortSignal) {
+  signal?.throwIfAborted()
   validateWebsiteSnapshot(snapshot, configuration)
   if (snapshot.runtime) await verifyWebsiteRuntime(snapshot.runtime)
   await verifyIcon(snapshot.icon?.dataUrl)
@@ -434,7 +436,8 @@ async function installWebsiteSnapshot(configuration: Configuration, snapshot: We
   const prepared = createWebsiteRepository({ fallback: snapshot, load: async () => dormant?.version === 3 ? { ...dormant, upstream: snapshot } : null,
     save: async () => undefined, download: async () => snapshot, legacy: async () => legacy })
   await prepared.ready()
-  await saveEntry(configuration, prepared.inspect(), true)
+  signal?.throwIfAborted()
+  await saveEntry(configuration, prepared.inspect(), true, () => !signal?.aborted)
   configurations.set(configuration.host, configuration)
   websiteRepositoryStates[configuration.host] ||= initialState()
   repositoryRegistryState.revision++
@@ -454,33 +457,46 @@ export function installedExperienceHost(host: string) {
 const installRetryAt = new Map<string, number>()
 
 /** Resolve a visited or explicitly requested site; discovery failures leave browsing available. */
-async function resolvePageExperience(url: string, reinstallRemoved: boolean): Promise<string> {
-  if (!/^https?:\/\//i.test(url)) return ''
-  await Promise.all([loadRegistry(), loadWebsiteIdentities()])
+async function resolvePageExperience(url: string, reinstallRemoved: boolean, strict = false, signal?: AbortSignal): Promise<string> {
+  signal?.throwIfAborted()
+  const wait = <T>(work: () => Promise<T>) => signal ? websiteHostAwait(signal, work) : work()
+  if (!/^https?:\/\//i.test(url)) {
+    if (strict) throw new Error('请指定网站域名或先打开目标网站。')
+    return ''
+  }
+  await wait(() => Promise.all([loadRegistry(), loadWebsiteIdentities()]))
   const host = websitePrimaryHost(url)
   if (!host || (!reinstallRemoved && wasRemovedFromOpen(host))) return host
   const installed = installedExperienceHost(host)
   if (installed) {
-    await ensureWebsiteRepository(installed)
+    await wait(() => ensureWebsiteRepository(installed))
     return installed
   }
   const fetcher = await request()
-  const entry = await findOpenWebsite(host, fetcher)
-  if (!entry) return host
-  return changeSource(entry.host, async () => {
+  // 目录查询会被其他调用共享；只取消本次等待，不撤销其他调用的查询。
+  const entry = await wait(() => findOpenWebsite(host, fetcher, strict))
+  if (!entry) {
+    if (strict) throw new Error('Open 目录中没有该网站的经验仓库。')
+    return host
+  }
+  return wait(() => changeSource(entry.host, async () => {
+    signal?.throwIfAborted()
     if (!reinstallRemoved && wasRemovedFromOpen(entry.host)) return host
     if (hasWebsiteRepository(entry.host)) return entry.host
     if (!reinstallRemoved && Date.now() < (installRetryAt.get(entry.host) ?? 0)) return host
     try {
-      const snapshot = await downloadOpenWebsiteExperience(entry, { revision: '', checkedAt: 0, files: {} }, fetcher)
-      await installWebsiteSnapshot({ ...entry, name: snapshot.website!.name, open: true }, snapshot)
+      const snapshot = await downloadOpenWebsiteExperience(entry, { revision: '', checkedAt: 0, files: {} }, fetcher, signal)
+      signal?.throwIfAborted()
+      await installWebsiteSnapshot({ ...entry, name: snapshot.website!.name, open: true }, snapshot, signal)
       installRetryAt.delete(entry.host)
       return entry.host
-    } catch {
+    } catch (error) {
+      signal?.throwIfAborted()
       installRetryAt.set(entry.host, Date.now() + 60_000)
+      if (strict) throw error
       return host
     }
-  })
+  }))
 }
 
 /** Passive visits retain the user's uninstall choice. */
@@ -488,3 +504,14 @@ export const experienceHostForPage = (url: string) => resolvePageExperience(url,
 
 /** An explicit website task may reinstall its Open repository; credentials remain separately authorized. */
 export const experienceHostForTask = (url: string) => resolvePageExperience(url, true)
+
+/** Explicit installs report success only after a validated snapshot has been registered. */
+export async function installWebsiteExperience(url: string, signal?: AbortSignal) {
+  const host = await resolvePageExperience(url, true, true, signal)
+  const state = websiteRepositoryStates[host]
+  if (!hasWebsiteRepository(host) || !state?.ready || state.source === 'offline') {
+    throw new Error(state?.error || '网站经验仓库尚未安装完成，请重试。')
+  }
+  return { ok: true, installed: true, host, source: state.source, revision: state.revision,
+    tools: websiteToolsForHost(host).map(tool => tool.function.name) }
+}

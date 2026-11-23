@@ -109,6 +109,18 @@ pub fn guard_cdp(permit: &Option<Permit>, method: &str, params: &mut serde_json:
   }
   Ok(())
 }
+// WebView2 在 UI 线程投递前校验序列化参数；接管后仍须释放输入状态。
+// 仅在撤销后的鼠标/按键事件中解析 JSON，其他敏感参数保持原有的清零缓冲区。
+#[cfg(any(windows, test))]
+pub fn guard_cdp_serialized(permit: &Option<Permit>, method: &str, params: &mut zeroize::Zeroizing<String>) -> Result<(), String> {
+  if let Some(error) = permit.as_ref().and_then(|permit| permit.check().err()) {
+    if !matches!(method, "Input.dispatchMouseEvent" | "Input.dispatchKeyEvent") { return Err(error); }
+    let mut value: serde_json::Value = serde_json::from_str(params.as_str()).map_err(|_| "浏览器输入参数无效".to_string())?;
+    guard_cdp(permit, method, &mut value)?;
+    *params = zeroize::Zeroizing::new(value.to_string());
+  }
+  Ok(())
+}
 fn acquire(id: &str) -> Result<Permit, String> {
   let mut all = controls().lock().map_err(|_| "操作权状态不可用")?;
   let state = state_for(&mut all, id);
@@ -201,6 +213,24 @@ mod tests {
     assert!(guard_cdp(&permit, "Input.insertText", &mut serde_json::json!({"text":"old"})).is_err());
     change("queued-control-test", "agent");
     assert!(guard_cdp(&permit, "Input.dispatchMouseEvent", &mut press).is_err());
+  }
+  #[test]
+  fn serialized_input_cleanup_survives_takeover_without_replaying_actions() {
+    let permit = Some(acquire("serialized-input-cleanup").unwrap());
+    let mut down = zeroize::Zeroizing::new(r#"{"type":"mousePressed","x":100,"y":200}"#.to_owned());
+    assert!(guard_cdp_serialized(&permit, "Input.dispatchMouseEvent", &mut down).is_ok());
+    change("serialized-input-cleanup", "user");
+    assert!(guard_cdp_serialized(&permit, "Input.dispatchMouseEvent", &mut down).is_err());
+    let mut release = zeroize::Zeroizing::new(r#"{"type":"mouseReleased","x":100,"y":200,"clickCount":1}"#.to_owned());
+    guard_cdp_serialized(&permit, "Input.dispatchMouseEvent", &mut release).unwrap();
+    let release: serde_json::Value = serde_json::from_str(release.as_str()).unwrap();
+    assert_eq!(release["x"], -1); assert_eq!(release["y"], -1); assert_eq!(release["clickCount"], 0);
+    let mut up = zeroize::Zeroizing::new(r#"{"type":"keyUp","key":"Enter"}"#.to_owned());
+    assert!(guard_cdp_serialized(&permit, "Input.dispatchKeyEvent", &mut up).is_ok());
+    let mut key_down = zeroize::Zeroizing::new(r#"{"type":"keyDown","key":"Enter"}"#.to_owned());
+    assert!(guard_cdp_serialized(&permit, "Input.dispatchKeyEvent", &mut key_down).is_err());
+    let mut text = zeroize::Zeroizing::new(r#"{"text":"must-not-be-inserted"}"#.to_owned());
+    assert!(guard_cdp_serialized(&permit, "Input.insertText", &mut text).is_err());
   }
   #[test]
   fn registering_an_existing_user_tab_does_not_restore_agent_control() {

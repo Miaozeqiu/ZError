@@ -35,6 +35,63 @@ beforeEach(() => {
 })
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
 describe('website repository registry', () => {
+  it('停止下载后释放安装队列，允许立即重试，迟到结果不会覆盖新版本', async () => {
+    const root = 'https://open.zerrorai.com/v1/website-experience'
+    const host = 'school.example', entry = candidate('school', host)
+    const cloud = { ...snapshot('school', host), runtime: runtimeFixture() }
+    let finish!: (value: Response) => void
+    let networkSignal!: AbortSignal
+    let downloads = 0
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === root) return Response.json({ sites: [{ ...entry.website, ...entry.source }] })
+      if (++downloads === 1) {
+        networkSignal = init!.signal as AbortSignal
+        return new Promise<Response>(resolve => { finish = resolve })
+      }
+      return Response.json({ ...cloud, revision: 'b'.repeat(40) })
+    }))
+    const mod = await import('../../src/services/agent/websiteRepository')
+    const controller = new AbortController()
+    const stopped = mod.installWebsiteExperience('https://' + host, controller.signal).then(value => ({ value }), error => ({ error }))
+    await vi.waitFor(() => expect(networkSignal).toBeDefined())
+    const retry = mod.experienceHostForPage('https://' + host)
+    controller.abort()
+    expect(await stopped).toMatchObject({ error: { name: 'AbortError' } })
+    expect(networkSignal.aborted).toBe(true)
+    expect(await retry).toBe(host)
+    expect(downloads).toBe(2)
+    expect(mod.websiteRepositoryStates[host]).toMatchObject({ ready: true, revision: 'b'.repeat(40) })
+    const cancel = vi.fn()
+    finish(new Response(new ReadableStream({ cancel })))
+    await vi.waitFor(() => expect(cancel).toHaveBeenCalledOnce())
+    expect(mod.websiteRepositoryStates[host].revision).toBe('b'.repeat(40))
+  })
+
+  it('取消目录查询的一个等待者，不会中断其他安装者共用的目录请求', async () => {
+    const root = 'https://open.zerrorai.com/v1/website-experience'
+    const host = 'school.example', entry = candidate('school', host)
+    const cloud = { ...snapshot('school', host), runtime: runtimeFixture() }
+    let finish!: (value: Response) => void
+    let catalogSignal!: AbortSignal
+    const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url !== root) return Response.json(cloud)
+      catalogSignal = init!.signal as AbortSignal
+      return new Promise<Response>(resolve => { finish = resolve })
+    })
+    vi.stubGlobal('fetch', fetcher)
+    const mod = await import('../../src/services/agent/websiteRepository')
+    const controller = new AbortController()
+    const stopped = mod.installWebsiteExperience('https://' + host, controller.signal).then(value => ({ value }), error => ({ error }))
+    await vi.waitFor(() => expect(catalogSignal).toBeDefined())
+    const other = mod.installWebsiteExperience('https://' + host)
+    controller.abort()
+    expect(await stopped).toMatchObject({ error: { name: 'AbortError' } })
+    expect(catalogSignal.aborted).toBe(false)
+    finish(Response.json({ sites: [{ ...entry.website, ...entry.source }] }))
+    expect(await other).toMatchObject({ installed: true, host })
+    expect(fetcher.mock.calls.filter(([url]) => url === root)).toHaveLength(1)
+  })
+
   it('旧工具缓存不会阻断网站列表，重新从 Open 验证运行包后才恢复工具', async () => {
     const { CHAOXING_REPOSITORY } = await import('../../src/services/agent/websiteRepositoryGitHub')
     const host='chaoxing.com'
@@ -433,16 +490,42 @@ describe('website repository registry', () => {
     // An unavailable source must preserve the uninstall marker and permit an explicit retry.
     fail = true
     await mod.experienceHostForTask('https://www.zjooc.cn/login')
+    await expect(mod.installWebsiteExperience('https://www.zjooc.cn/login')).rejects.toThrow('503')
     expect(mod.hasWebsiteRepository(host)).toBe(false)
     expect(storage.value.removedOpenHosts).toContain(host)
     fail = false
-    expect(await mod.experienceHostForTask('https://background.zjooc.cn/login')).toBe(host)
+    expect(await mod.installWebsiteExperience('https://background.zjooc.cn/login')).toMatchObject({
+      ok: true, installed: true, host, revision: cloud.revision, tools: tools.map(tool => tool.function.name),
+    })
     expect(mod.isOpenWebsiteRepository(host)).toBe(true)
     expect(mod.websiteToolsForHost(host)).toEqual(tools)
     expect(mod.installedWebsiteRuntimeTool(tools[0].function.name)?.runtime).toEqual(runtime)
     expect(storage.value.removedOpenHosts).not.toContain(host)
     expect(await mod.websiteRepositoryHosts()).toEqual(['chaoxing.com', host])
     expect(fetcher.mock.calls.every(([url]) => url === root || url === root + '/' + host + '')).toBe(true)
+  })
+  it('reports catalog failure and permits an immediate explicit retry without writing a local replacement', async () => {
+    const root = 'https://open.zerrorai.com/v1/website-experience'
+    const host = 'zjooc.cn'
+    const selected = candidate('zjooc', host)
+    const cloud = { ...snapshot('zjooc', host), runtime: runtimeFixture() }
+    const fetcher = vi.fn().mockResolvedValueOnce(new Response(null, { status: 503 }))
+      .mockImplementation(async (url: string) => url === root
+        ? Response.json({ sites: [{ ...selected.website, ...selected.source }] })
+        : Response.json(cloud))
+    vi.stubGlobal('fetch', fetcher)
+    const mod = await import('../../src/services/agent/websiteRepository')
+    await expect(mod.installWebsiteExperience('https://www.zjooc.cn/')).rejects.toThrow('503')
+    expect(mod.hasWebsiteRepository(host)).toBe(false)
+    expect(mod.websiteToolsForHost(host)).toEqual([])
+    expect(await mod.installWebsiteExperience('https://www.zjooc.cn/')).toMatchObject({ installed: true, host })
+    expect(fetcher).toHaveBeenCalledTimes(3)
+  })
+  it('reports missing official repositories as failed installations', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ sites: [] })))
+    const mod = await import('../../src/services/agent/websiteRepository')
+    await expect(mod.installWebsiteExperience('https://unknown.example/')).rejects.toThrow('Open 目录中没有')
+    expect(mod.hasWebsiteRepository('unknown.example')).toBe(false)
   })
   it('installs only the visited catalog site, shares concurrent requests and refreshes through Open after restart', async () => {
     const root = 'https://open.zerrorai.com/v1/website-experience'

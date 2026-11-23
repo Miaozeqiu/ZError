@@ -834,6 +834,7 @@ pub fn browser_capabilities() -> serde_json::Value {
     "audioMute": chromium,
     "snapshotViaScript": !cef,
     "pageScriptActions": !cef,
+    "cdpInput": cfg!(windows),
   })
 }
 
@@ -1292,6 +1293,12 @@ async fn dispatch_browser_protocol(
   op: String,
   args: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
+  #[cfg(windows)]
+  match op.as_str() {
+    "native_input" => return crate::webview2_input::dispatch(&app,&id,&args).await,
+    "press" => return crate::webview2_input::press(&app,&id,args["key"].as_str().unwrap_or("")).await,
+    _ => (),
+  }
   match op.as_str() {
     "website_document" => documents::dispatch(&app, &id, &args).await,
     #[cfg(windows)]

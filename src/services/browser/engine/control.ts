@@ -1,7 +1,7 @@
 import { asObject, evalBrowserView } from '../eval'
 import { browserCapabilities } from '../capabilities'
 import { callProtocol } from '../protocol'
-import { clickByLocator } from './act'
+import { clickByLocator, setCheckedByLocator } from './act'
 import { buildLocatedActionScript } from './locate'
 import { normalizeLocator, type BrowserLocator } from './types'
 
@@ -57,6 +57,15 @@ export const controlOnBrowser = async (
 ) => {
   const locator = normalizeLocator(input.locator)
   if (!locator.value) return { ok: false, reason: 'invalid' as const, error: '缺少定位条件' }
+  if ((await browserCapabilities()).cdpInput && (input.op === 'check' || input.op === 'uncheck')) {
+    const raw = asObject(await setCheckedByLocator(id, locator, input.op === 'check'))
+    return {
+      ok: raw.ok === true,
+      error: raw.error ? String(raw.error) : undefined,
+      text: raw.text ? String(raw.text) : undefined,
+      checked: raw.checked == null ? undefined : Boolean(raw.checked),
+    }
+  }
   if ((await browserCapabilities()).pageScriptActions) {
     const raw = asObject(await evalBrowserView(id, buildControlScript(locator, input.op, input.value || '')))
     return { ok: Boolean(raw.ok), error: raw.error ? String(raw.error) : undefined,

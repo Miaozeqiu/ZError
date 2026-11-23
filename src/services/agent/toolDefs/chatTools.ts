@@ -12,11 +12,12 @@ import { CAMPUS_TOOLS } from './campusTools'
 import { PRACTICE_QUIZ_TOOLS } from './practiceQuizTools'
 import { STUDY_GRAPH_TOOLS } from './studyGraphTools'
 import { WEB_SEARCH_TOOLS } from './webSearchTools'
-import { WEBSITE_ICON_TOOL } from './websiteTools'
+import { INSTALL_WEBSITE_REPOSITORY_TOOL, WEBSITE_ICON_TOOL } from './websiteTools'
 
 export const CHAT_TOOLS = [
   PROTECT_CREDENTIALS_TOOL,
   WEBSITE_ICON_TOOL,
+  INSTALL_WEBSITE_REPOSITORY_TOOL,
   ...FOLDER_QUESTION_TOOLS,
   ...CAMPUS_TOOLS,
   ...PRACTICE_QUIZ_TOOLS,

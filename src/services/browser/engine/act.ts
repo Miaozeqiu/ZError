@@ -238,6 +238,9 @@ export const actOnBrowser = async (
   const locator = tried[0] || normalizeLocator({ by: 'css', value: '' })
   if (!tried.length) return { ok: false, reason: 'invalid', error: '缺少定位条件' }
   const timeout = Math.min(20000, Math.max(400, input.timeout ?? ACT_TIMEOUT_MS))
+  if ((await browserCapabilities()).cdpInput) {
+    return finish(asResult(await callProtocol(id, 'native_input', { op: input.op, locators: tried, text: input.text, timeout }).catch(error => ({ ok: false, retry: false, error: String(error) }))), locator)
+  }
   try {
     if ((await browserCapabilities()).pageScriptActions) {
       return finish(asResult(await pageScriptAction(id, input.op, tried, input.text, timeout)), locator)
@@ -285,6 +288,10 @@ export const actOnceOnBrowser = async (
   id: string, locator: BrowserLocator, op: 'click' | 'fill', text?: string,
 ): Promise<ActResult & { dispatched: boolean }> => {
   const target = normalizeLocator(locator)
+  if ((await browserCapabilities()).cdpInput) {
+    if (!target.frameId || !target.loaderId) return { ok: false, reason: 'invalid', dispatched: false }
+    return asObject(await callProtocol(id, 'native_input', { op, locators: [target], text })) as ActResult & { dispatched: boolean }
+  }
   let hit: Awaited<ReturnType<typeof locateOnce>>
   try {
     hit = await locateOnce(id, [target])
@@ -308,6 +315,7 @@ export const probeOnBrowser = async (id: string, locator: BrowserLocator): Promi
   const value = String(locator.value || '').trim()
   if (!value) return { ok: false, reason: 'invalid', error: '缺少定位条件' }
   try {
+    if ((await browserCapabilities()).cdpInput) return asResult(await callProtocol(id, 'native_input', { op: 'ready', locators: [normalizeLocator(locator)] }))
     if ((await browserCapabilities()).pageScriptActions) {
       return asResult(await pageScriptAction(id, 'ready', [normalizeLocator(locator)], undefined, 0))
     }
@@ -324,6 +332,7 @@ export const clickByLocator = (id: string, locator: BrowserLocator, timeout?: nu
 
 /** 幂等选项操作。发送一次点击后只读状态，不能在不确定时再次切换。 */
 export const setCheckedByLocator = async (id: string, locator: BrowserLocator, checked: boolean) => {
+  if ((await browserCapabilities()).cdpInput) return callProtocol(id, 'native_input', { op: checked ? 'check' : 'uncheck', locators: [normalizeLocator(locator)] })
   if ((await browserCapabilities()).pageScriptActions) {
     const { evalBrowserView } = await import('../eval')
     const { buildControlScript } = await import('./control')

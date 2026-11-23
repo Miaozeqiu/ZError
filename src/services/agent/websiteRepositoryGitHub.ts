@@ -11,7 +11,8 @@ export class WebsiteRepositoryHttpError extends Error {
   constructor(message: string, public retryAt = 0) { super(message) }
 }
 const shaPattern = /^[0-9a-f]{40}$/
-export const limitedJson = async (response: Response, limit: number) => {
+export const limitedJson = async (response: Response, limit: number, signal?: AbortSignal) => {
+  signal?.throwIfAborted()
   if (Number(response.headers.get('content-length')) > limit) throw new Error('网站仓库响应过大')
   if (!response.body) {
     const text = await response.text()
@@ -19,16 +20,24 @@ export const limitedJson = async (response: Response, limit: number) => {
     return JSON.parse(text)
   }
   const reader = response.body.getReader(), decoder = new TextDecoder('utf-8', { fatal: true })
+  const abort = () => { void reader.cancel(signal?.reason).catch(() => undefined) }
+  signal?.addEventListener('abort', abort, { once: true })
   let text = '', size = 0
   try {
+    signal?.throwIfAborted()
     while (true) {
       const { done, value } = await reader.read()
+      signal?.throwIfAborted()
       if (done) break
       if ((size += value.byteLength) > limit) throw new Error('网站仓库响应过大')
       text += decoder.decode(value, { stream: true })
     }
     return JSON.parse(text + decoder.decode())
-  } finally { await reader.cancel().catch(() => undefined); reader.releaseLock() }
+  } finally {
+    signal?.removeEventListener('abort', abort)
+    await reader.cancel().catch(() => undefined)
+    reader.releaseLock()
+  }
 }
 const githubReader = (source: { owner: string; name: string }, request: typeof fetch, now: number) => {
   const canonical = parseGitHubWebsiteUrl(`${source.owner}/${source.name}`)
