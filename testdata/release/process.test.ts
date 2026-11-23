@@ -30,7 +30,7 @@ it('成功进程返回，启动失败也落盘并结束等待', async () => {
   expect(await readFile(settings.logFile, 'utf8')).toBe('')
 })
 
-it('子进程退出后，孙进程保留输出管道也不能突破截止时间', async () => {
+it('存在长期存活的子孙进程时，输出管道不能突破截止时间', async () => {
   const settings = await options(1500)
   const started = Date.now()
   try {
@@ -38,6 +38,7 @@ it('子进程退出后，孙进程保留输出管道也不能突破截止时间'
       const {spawn}=require('node:child_process');
       const child=spawn(process.execPath,['-e','setTimeout(()=>{},30000)'],{stdio:['ignore','inherit','inherit']});
       console.log('grandchild='+child.pid); child.unref();
+      setInterval(()=>{},30000);
     `], settings)).rejects.toThrow('fixture 超时')
     expect(Date.now() - started).toBeLessThan(6000)
   } finally {
