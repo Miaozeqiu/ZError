@@ -8,7 +8,8 @@ import { clickByLocator, fillByLocator } from './engine/act'
 import { clickLabelMatches } from './engine/clickFind'
 import { beginPageSnap, invalidatePageSnap, rememberPageSnap } from './engine/pageSnap'
 import { publicRefs, rememberPageRefs, type PageRef } from './engine/refs'
-import { formatAriaSnapshot } from './engine/snapshot'
+import { formatAriaSnapshot, readPageSnapshot } from './engine/snapshot'
+import { browserCapabilities } from './capabilities'
 import { asObject, evalBrowserView, waitMs } from './eval'
 import { claimClickText, guardNavigate } from './pageHooks'
 import { act, clearCookies, cookies, setCookies, wait } from './protocol'
@@ -425,6 +426,10 @@ export const readBrowserPage = async (id: string, opts: ReadPageOptions = {}) =>
   // 普通读取也参与版本控制：后台读取晚于用户接管或新快照返回时，不能恢复旧引用。
   const gen = opts.gen ?? beginPageSnap(id)
   try {
+    if ((await browserCapabilities()).snapshotViaScript) {
+      const page = await readPageSnapshot(id, { gen, controlEpoch: opts.controlEpoch })
+      return { ...page, refs: publicRefs(page.refs), frames: [], preferredFrame: null, framesCapped: false }
+    }
     const { callProtocol } = await import('./protocol')
     const cdp = asObject(await callProtocol(id, 'snapshot', {
       ...(opts.frame ? { frame: opts.frame } : {}),

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+vi.mock('../../src/services/browser/capabilities', () => ({ browserCapabilities: async () => ({ pageScriptActions: false }) }))
 
 const invoke = vi.fn()
 

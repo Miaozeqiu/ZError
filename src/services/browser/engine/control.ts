@@ -1,4 +1,5 @@
-import { asObject } from '../eval'
+import { asObject, evalBrowserView } from '../eval'
+import { browserCapabilities } from '../capabilities'
 import { callProtocol } from '../protocol'
 import { clickByLocator } from './act'
 import { buildLocatedActionScript } from './locate'
@@ -47,7 +48,7 @@ const CONTROL_BODY = (op: ControlOp, value: string) => `var wantOp = ${JSON.stri
   return { ok: true, text: String(opts[hit].text || wantVal), value: String(opts[hit].value || '') };`
 
 export const buildControlScript = (locator: BrowserLocator, op: ControlOp, value = '') => (
-  buildLocatedActionScript(locator, CONTROL_BODY(op, value))
+  buildLocatedActionScript(locator, `var ready = __zeReady(el, loc); if (!ready.ok) return ready;\n` + CONTROL_BODY(op, value))
 )
 
 export const controlOnBrowser = async (
@@ -56,6 +57,12 @@ export const controlOnBrowser = async (
 ) => {
   const locator = normalizeLocator(input.locator)
   if (!locator.value) return { ok: false, reason: 'invalid' as const, error: '缺少定位条件' }
+  if ((await browserCapabilities()).pageScriptActions) {
+    const raw = asObject(await evalBrowserView(id, buildControlScript(locator, input.op, input.value || '')))
+    return { ok: Boolean(raw.ok), error: raw.error ? String(raw.error) : undefined,
+      text: raw.text ? String(raw.text) : undefined, reason: raw.reason ? String(raw.reason) : undefined,
+      checked: raw.checked == null ? undefined : Boolean(raw.checked), value: raw.value == null ? undefined : String(raw.value) }
+  }
   if (input.op === 'check' || input.op === 'uncheck') {
     const acted = await clickByLocator(id, locator)
     return {

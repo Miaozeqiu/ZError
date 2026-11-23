@@ -830,6 +830,8 @@ pub fn browser_capabilities() -> serde_json::Value {
     "secureFill": chromium,
     "secureFillInFrames": cef,
     "audioMute": chromium,
+    "snapshotViaScript": !cef,
+    "pageScriptActions": !cef,
   })
 }
 

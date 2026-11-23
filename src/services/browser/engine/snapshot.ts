@@ -444,9 +444,10 @@ export const formatAriaSnapshot = (refs: PageRef[], frames: SnapFrameInfo[] = []
   return lines.join('\n')
 }
 
-export const readPageSnapshot = async (browserId: string) => {
-  const generation = beginPageSnap(browserId)
-  const raw = asObject(await evalBrowserView(browserId, SNAPSHOT_SCRIPT).catch(() => ({ refs: [] })))
+export const readPageSnapshot = async (browserId: string, options: { gen?: number; controlEpoch?: number } = {}) => {
+  const generation = options.gen ?? beginPageSnap(browserId)
+  const raw = asObject(await evalBrowserView(browserId, SNAPSHOT_SCRIPT,
+    options.controlEpoch == null ? undefined : { expectedEpoch: options.controlEpoch }))
   const refs = (Array.isArray(raw.refs) ? raw.refs : []).map((item, index) => {
     const row = asObject(item)
     const locator = asObject(row.locator)
