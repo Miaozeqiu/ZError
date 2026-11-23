@@ -115,17 +115,21 @@ pub fn load(
     random: impl FnOnce() -> Result<Vec<u8>, String>,
     validate: impl Fn(&[u8]) -> Result<(), String>,
 ) -> Result<Vec<u8>, String> {
-    use security_framework::os::macos::code_signing::{Flags, SecCode, SecRequirement};
-    // An ad-hoc build has a different designated requirement after every rebuild.
-    // Never let such a process create/migrate the durable keychain item.
-    let requirement: SecRequirement =
-        r#"identifier "com.zerror.app" and certificate leaf[subject.CN] exists"#
-            .parse()
-            .map_err(|_| "无法校验软件签名")?;
-    let signed = SecCode::for_self(Flags::NONE)
-        .and_then(|code| code.check_validity(Flags::NONE, &requirement));
-    if signed.is_err() {
-        return Err("SECURE_STORAGE_SIGNING_REQUIRED: 当前开发程序需要稳定签名，请通过 npm run tauri:dev 重新启动；原数据已保留".into());
+    #[cfg(debug_assertions)]
+    {
+        use security_framework::os::macos::code_signing::{Flags, SecCode, SecRequirement};
+        // 开发版频繁重编译会改变临时签名，必须使用固定身份，避免反复请求钥匙串授权。
+        // 正式版允许未购买证书的分发，访问权仍由系统钥匙串 ACL 决定；升级后如需
+        // 重新授权，只能经显式恢复入口，后台读取不会弹窗或替换原密钥。
+        let requirement: SecRequirement =
+            r#"identifier "com.zerror.app" and certificate leaf[subject.CN] exists"#
+                .parse()
+                .map_err(|_| "无法校验软件签名")?;
+        let signed = SecCode::for_self(Flags::NONE)
+            .and_then(|code| code.check_validity(Flags::NONE, &requirement));
+        if signed.is_err() {
+            return Err("SECURE_STORAGE_SIGNING_REQUIRED: 当前开发程序需要稳定签名，请通过 npm run tauri:dev 重新启动；原数据已保留".into());
+        }
     }
     load_from(&Keychain(service), create, access, random, validate)
 }
