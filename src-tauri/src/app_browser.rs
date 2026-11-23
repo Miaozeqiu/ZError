@@ -1,4 +1,6 @@
 mod evaluation;
+#[cfg(target_os = "linux")]
+mod evaluation_linux;
 pub use evaluation::*;
 mod protocol;
 mod documents;
@@ -1258,6 +1260,7 @@ pub async fn browser_clear_cookies(
 }
 
 
+#[cfg(not(target_os = "linux"))]
 async fn eval_wait_title(
   webview: &tauri::Webview,
   token: String,
