@@ -119,12 +119,8 @@ async fn click(
 ) -> Result<(), String> {
     let button = if op == "rightclick" { "right" } else { "left" };
     let buttons = if op == "rightclick" { 2 } else { 1 };
-    cdp(
-        view,
-        "Input.dispatchMouseEvent",
-        json!({"type":"mouseMoved","x":x,"y":y,"button":"none"}),
-    )
-    .await?;
+    // 按下、释放已携带落点。隐藏的 WebView2 不绘制移动帧，预先等待
+    // mouseMoved 的回执会一直挂起；直接投递原生点击，不重放结果未知的事件。
     for count in 1..=if op == "dblclick" { 2 } else { 1 } {
         let current = probe(view, object).await?;
         verify(view, doc).await?;
