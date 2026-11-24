@@ -47,7 +47,7 @@ const server = createServer(async (req, res) => {
     res.end(`<button onclick="this.textContent='Frame verified';parent.document.getElementById('input-trust').textContent=event.isTrusted?'Trusted frame click':'Synthetic frame click'">Frame button</button>`);
   } else {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    res.end(`<!doctype html><html><title>CLI fixture</title><body><h1>CLI fixture</h1><input id="fixture-input" aria-label="Fixture input" oninput="document.getElementById('input-trust').textContent=event.isTrusted?'Trusted input':'Synthetic input'"><output id="input-trust"></output><iframe id="fixture-child" src="/frame"></iframe><button onclick="this.textContent='CLI clicked'+document.getElementById('fixture-input').value;document.getElementById('input-trust').textContent=event.isTrusted?'Trusted click':'Synthetic click'">CLI button</button></body></html>`);
+    res.end(`<!doctype html><html><title>CLI fixture</title><body><h1>CLI fixture</h1><input id="fixture-input" aria-label="Fixture input" oninput="document.getElementById('input-trust').textContent=event.isTrusted?'Trusted input':'Synthetic input'"><h2 id="input-trust"></h2><iframe id="fixture-child" src="/frame"></iframe><button onclick="this.textContent='CLI clicked'+document.getElementById('fixture-input').value;document.getElementById('input-trust').textContent=event.isTrusted?'Trusted click':'Synthetic click'">CLI button</button></body></html>`);
   }
 });
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
