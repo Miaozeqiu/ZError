@@ -28,7 +28,7 @@ class Program {
           var raw = await core.ExecuteScriptAsync("JSON.stringify((()=>{const r=document.getElementById('b').getBoundingClientRect();return {x:(r.left+r.width/2)*0.5,y:(r.top+r.height/2)*0.5}})())");
           var point = JsonDocument.Parse(JsonSerializer.Deserialize<string>(raw)).RootElement;
           var x = point.GetProperty("x").GetDouble(); var y = point.GetProperty("y").GetDouble();
-          foreach (var kind in new[]{"mouseMoved", "mousePressed", "mouseReleased"}) {
+          foreach (var kind in mode.Contains("hidden") ? new[]{"mousePressed", "mouseReleased"} : new[]{"mouseMoved", "mousePressed", "mouseReleased"}) {
             var args = JsonSerializer.Serialize(new {type=kind,x,y,button=kind=="mouseMoved"?"none":"left",buttons=kind=="mousePressed"?1:0,clickCount=kind=="mouseMoved"?0:1});
             try {
               var task = core.CallDevToolsProtocolMethodAsync("Input.dispatchMouseEvent", args);
@@ -37,6 +37,11 @@ class Program {
             } catch (Exception error) { Console.WriteLine(mode + " " + kind + " " + error.GetType().Name); }
           }
           Console.WriteLine("RESULT=" + mode + " " + await core.ExecuteScriptAsync("document.getElementById('b').textContent"));
+          await core.ExecuteScriptAsync("document.getElementById('i').focus()");
+          await core.CallDevToolsProtocolMethodAsync("Input.dispatchKeyEvent", "{\"type\":\"keyDown\",\"key\":\"a\",\"code\":\"KeyA\",\"windowsVirtualKeyCode\":65,\"modifiers\":2,\"text\":\"\"}").WaitAsync(TimeSpan.FromSeconds(3));
+          await core.CallDevToolsProtocolMethodAsync("Input.dispatchKeyEvent", "{\"type\":\"keyUp\",\"key\":\"a\",\"code\":\"KeyA\",\"windowsVirtualKeyCode\":65,\"modifiers\":2}").WaitAsync(TimeSpan.FromSeconds(3));
+          await core.CallDevToolsProtocolMethodAsync("Input.insertText", "{\"text\":\"Fixture typed\"}").WaitAsync(TimeSpan.FromSeconds(3));
+          Console.WriteLine("INPUT=" + mode + " " + await core.ExecuteScriptAsync("JSON.stringify({value:document.getElementById('i').value,trust:document.getElementById('b').textContent})"));
           form.Controls.Remove(view);
         }
       } catch (Exception e) { Console.WriteLine(e); Environment.ExitCode=1; }
