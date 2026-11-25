@@ -1,7 +1,7 @@
 {
   "name": "zerror",
   "private": true,
-  "version": "2.3.0",
+  "version": "2.3.1",
   "type": "module",
   "scripts": {
     "test:mcp": "vitest run testdata/mcp",
