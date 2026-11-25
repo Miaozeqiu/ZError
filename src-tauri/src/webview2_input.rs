@@ -88,6 +88,7 @@ async fn key(
 pub(crate) async fn press(app: &AppHandle, id: &str, name: &str) -> Result<Value, String> {
     let _lock = crate::webview2_secrets::lock(id).await;
     let view = crate::app_browser::find_browser(app, id)?;
+    cdp(&view,"Emulation.setFocusEmulationEnabled",json!({"enabled":true})).await?;
     let (key_name, code, vk) = match name {
         "Enter" | "Return" => ("Enter", "Enter", 13),
         "Tab" => ("Tab", "Tab", 9),
@@ -179,6 +180,7 @@ async fn dispatch_once(app: &AppHandle, id: &str, args: &Value) -> Result<Value,
     }
     let _lock = crate::webview2_secrets::lock(id).await;
     let view = crate::app_browser::find_browser(app, id)?;
+    cdp(&view,"Emulation.setFocusEmulationEnabled",json!({"enabled":true})).await?;
     if op == "fill" {
         crate::secret_browser::guard(app, id).await?;
     }
@@ -226,6 +228,7 @@ async fn dispatch_once(app: &AppHandle, id: &str, args: &Value) -> Result<Value,
 
 // The caller holds the tab operation lock and has already checked its scoped document.
 pub(crate) async fn click_object(view: &Webview, object: &str) -> Result<Value, String> {
+    cdp(view, "Emulation.setFocusEmulationEnabled", json!({"enabled":true})).await?;
     let allowed = cdp(view, "Runtime.callFunctionOn", json!({
         "objectId": object,
         "functionDeclaration": "function(){return this.isConnected && this.ownerDocument===document && this.matches('a,button,[role=button],input[type=submit],input[type=button]');}",
