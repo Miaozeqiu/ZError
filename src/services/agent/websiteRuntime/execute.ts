@@ -79,7 +79,7 @@ const sameSite = (raw: string, host: string) => {
   } catch { return false }
 }
 
-/** Every yielded command is validated again by the host. The package has no I/O globals. */
+/** 宿主逐条校验仓库发出的命令；运行包无法直接访问输入输出接口。 */
 export async function executeWebsitePackage(binding: InstalledWebsiteTool, input: unknown, host: WebsiteHost, resume?: Record<string, unknown>) {
   const pinned: InstalledWebsiteTool = JSON.parse(JSON.stringify(binding))
   const active = () => {
@@ -94,7 +94,7 @@ export async function executeWebsitePackage(binding: InstalledWebsiteTool, input
   return withWebsiteSandbox(async evaluate => {
     active()
     evaluate(`${pinned.runtime.bundle.code}\n;const __websiteTask = ZErrorSitePackage.create(${JSON.stringify({ tool: pinned.tool.name, args: input, ...(resume ? { resume } : {}) })}); JSON.stringify(true)`, true)
-    let requiresResumeRead = Boolean(resume), observed = false
+    let requiresResumeRead = Boolean(resume), observed = false, mutated = false
     let response: unknown = null
     for (let index = 0; index < 512; index++) {
       active()
@@ -103,7 +103,7 @@ export async function executeWebsitePackage(binding: InstalledWebsiteTool, input
       if (step.done) {
         if (requiresResumeRead) throw new Error('流程恢复后必须先核对实际页面')
         validateWebsiteValue(step.value, pinned.tool.result, '网站工具结果')
-        return { ok: true, observed, repository: { id: pinned.siteId, revision: pinned.revision, sha256: pinned.runtime.bundle.sha256 }, result: step.value }
+        return { ok: true, observed, read_only: !mutated, repository: { id: pinned.siteId, revision: pinned.revision, sha256: pinned.runtime.bundle.sha256 }, result: step.value }
       }
       const command = step.value as { op?: unknown; args?: unknown } | null
       if (!command || typeof command.op !== 'string' || !Object.hasOwn(commands, command.op)
@@ -123,6 +123,8 @@ export async function executeWebsitePackage(binding: InstalledWebsiteTool, input
         throw new Error('网站工具试图操作其域名范围之外的网页')
       }
       active()
+      // 依据实际发出的宿主命令记录本次调用，不能由仓库自行声明只读。
+      if (spec.mutates || serviceMutation(command.op, args)) mutated = true
       if (spec.mutates && /^(?:browser\.|document\.|media\.|credentials\.)/.test(command.op)) observed = false
       if (command.op === 'resource.read') {
         const resource = pinned.runtime.resources?.find(row => row.id === args.id)

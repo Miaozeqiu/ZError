@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 import { handleNavTools } from '../../src/services/agent/tools/nav'
 
+// 本组只验证页面通道错误，不能让真实 Open 请求影响结果或测试耗时。
+vi.mock('../../src/services/agent/websiteRepository', () => ({
+  experienceHostForPage: vi.fn(async () => 'example.com'),
+}))
+
 const base = () => ({
   name: 'browser_get_page', args: {}, browserId: 'tab', sessionId: 'session',
   currentUrl: async () => 'https://example.com', graphUrlOf: async () => 'https://example.com',

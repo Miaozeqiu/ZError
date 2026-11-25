@@ -16,6 +16,18 @@ const makeHost = () => {
 }
 beforeEach(() => { vi.clearAllMocks(); api.documents = [document]; api.login.mockResolvedValue({ ok: true, references }) })
 describe('隔离凭据及文档宿主', () => {
+  it('跳转期间只读查询返回文档变更回执，动作与其他错误仍然失败', async () => {
+    const host = makeHost()
+    host.invoke.mockImplementation(async () => { api.documents = [{ ...document, loaderId: 'two' }]; throw new Error('页面文档已更换，请重新读取后操作') })
+    expect(await host.execute('document.query', { document, selector: 'a' })).toMatchObject({ ok: false, reason: 'document_changed' })
+    await expect(host.execute('document.click', { document, selector: 'button' })).rejects.toThrow('文档已更换')
+    host.invoke.mockRejectedValueOnce(new Error('授权校验失败'))
+    await expect(host.execute('document.query', { document, selector: 'a' })).rejects.toThrow('授权校验失败')
+    api.documents = [document]
+    host.invoke.mockRejectedValueOnce(new Error('页面文档已更换'))
+    await expect(host.execute('document.query', { document, selector: 'a' })).rejects.toThrow('文档已更换')
+    host.dispose()
+  })
   it('脚本只收到临时授权号，真实填写仍经过宿主工具和原生凭据接口', async () => {
     const host = makeHost()
     const receipt = await host.execute('credentials.request', { document, replaceRejected: true })

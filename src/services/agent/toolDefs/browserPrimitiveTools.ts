@@ -15,7 +15,7 @@ export const BROWSER_PRIMITIVE_TOOLS = [
   ...HISTORY_TOOLS,
   WEBSITE_ICON_TOOL,
   INSTALL_WEBSITE_REPOSITORY_TOOL,
-  { type: 'function', function: { name: 'browser_home_shortcuts', description: '管理 ZError 浏览器「导航」首页的本地快捷入口。按用户要求查看、新增、改名、改网址或删除。必要时先打开导航页。', parameters: {
+  { type: 'function', function: { name: 'browser_home_shortcuts', description: '读取首页入口（含文件夹）。网址未知时用 action=list 查找。仅按用户要求增删改；必要时会打开导航页。', parameters: {
     type: 'object', properties: {
       action: { type: 'string', enum: ['list', 'add', 'update', 'remove'] },
       target: { type: 'string', description: '更新或删除时填写已有入口的 ID、完整名称或完整网址。' },

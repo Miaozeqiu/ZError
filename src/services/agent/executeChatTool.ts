@@ -379,7 +379,7 @@ export const executeChatTool = async (input: {
         role: ctx.role,
         jobId: ctx.jobId,
       })
-      const raw = ctx.browserEpoch == null ? await execute() : await withBrowserAutomation(browserId, ctx.browserEpoch, execute)
+      let raw = ctx.browserEpoch == null ? await execute() : await withBrowserAutomation(browserId, ctx.browserEpoch, execute)
       if (raw.includes('BROWSER_USER_CONTROL')) {
         return JSON.stringify({ ok: false, userTakeover: true, requiresRefresh: true, hint: '用户已接管浏览器，本次自动操作已中断。交还后先重新读取页面。' })
       }
@@ -389,6 +389,16 @@ export const executeChatTool = async (input: {
         ok = parsed.ok !== false && !parsed.error
       } catch {
         ok = !/^\s*\{/.test(raw)
+      }
+      // 主动导航与被动浏览分开：用户委托打开网站时，可重新安装此前卸载的官方经验。
+      // 统一入口覆盖各浏览器后端；等校验与注册完成后，下一轮工具目录才会包含站点能力。
+      if (ok && call.name === 'browser_navigate' && ctx.role !== 'explore') {
+        const result = parseToolArgs(raw)
+        if (typeof result.url === 'string') {
+          const { prepareWebsiteTaskExperience } = await import('./websiteTaskExperience')
+          const experience = await prepareWebsiteTaskExperience(result.url, ctx.abort)
+          if (experience) raw = JSON.stringify({ ...result, website_experience: experience })
+        }
       }
       noteFailAttempt(gateSession, call.name, args, ok)
       try {

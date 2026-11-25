@@ -11,16 +11,16 @@ const host = (signal = new AbortController().signal): WebsiteHost => ({
 const code = (body: string) => `var ZErrorSitePackage = { *create({args}) { ${body} } };`
 describe('网站运行包 API 2',()=>{
   it('只有实际网页读取才产生宿主观察证据，操作后需要重新读取', async () => {
-    for (const [body, observed] of [
-      ["return {title:'done'};", false],
-      ["yield {op:'browser.observe',args:{}};return {title:'done'};", true],
-      ["yield {op:'browser.observe',args:{}};yield {op:'browser.click',args:{ref:'e1'}};return {title:'done'};", false],
-      ["yield {op:'browser.click',args:{ref:'e1'}};yield {op:'browser.observe',args:{}};return {title:'done'};", true],
+    for (const [body, observed, readOnly] of [
+      ["return {title:'done'};", false, true],
+      ["yield {op:'browser.observe',args:{}};return {title:'done'};", true, true],
+      ["yield {op:'browser.observe',args:{}};yield {op:'browser.click',args:{ref:'e1'}};return {title:'done'};", false, false],
+      ["yield {op:'browser.click',args:{ref:'e1'}};yield {op:'browser.observe',args:{}};return {title:'done'};", true, false],
     ] as const) {
       const runtime = runtimeFixture(code(body))
       runtime.tools[0].commands = ['browser.observe', 'browser.click']
       const io = host(); io.invoke = vi.fn(async () => ({ ok: true, snapshot: '当前网页' }))
-      expect(await executeWebsitePackage(runtimeBinding(runtime), {}, io)).toMatchObject({ observed })
+      expect(await executeWebsitePackage(runtimeBinding(runtime), {}, io)).toMatchObject({ observed, read_only: readOnly })
     }
   })
   it('执行第三方包的编译产物并通过宿主读取页面',async()=>{

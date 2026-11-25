@@ -27,6 +27,15 @@ it('keeps new chats small while making every available tool discoverable', () =>
   expect(estimateContextTokens(tools)).toBeLessThan(estimateContextTokens(catalog) / 6)
 })
 
+it('新对话未打开网页也能直接查询首页入口，不必先加载工具或搜索网址', () => {
+  const tools = modelAgentTools(assembleAgentTools(''))
+  expect(validateToolCall(tools, { name: 'browser_home_shortcuts', arguments: '{"action":"list"}' })).toBeUndefined()
+  const prompt = buildAgentSystemPrompt()
+  expect(prompt).toContain('先用 browser_home_shortcuts(action=list)')
+  expect(prompt).toContain('包含文件夹内的网站')
+  expect(prompt).toContain('都没有可用地址时再 web_search')
+})
+
 it('rejects disabled tools at lookup time and excludes them after a settings change', () => {
   const catalog = assembleAgentTools('', 'chaoxing.com')
   const denied = availableAgentTools(catalog, { enabled: false })
@@ -47,6 +56,29 @@ it('offers the follow-up login tool after the host detects an image captcha', ()
   expect(names).toContain('browser_site_zjooc__login')
 })
 
+it('已在网页中的登录任务首轮即可请求安装经验，而非等待用户明确要求安装', () => {
+  const tools = modelAgentTools(assembleAgentTools(''), { browserId: 'owned-tab', messages: [] } as any)
+  expect(validateToolCall(tools, { name: 'install_website_repository', arguments: '{}' })).toBeUndefined()
+  expect(tools.some(tool => tool.function.name === 'read_agent_skill_file')).toBe(true)
+  expect(buildAgentSystemPrompt()).toContain('未安装时主动 install_website_repository')
+})
+
+it('本轮新建浏览器后立即提供普通输入、按键和等待，仍拒绝不存在或被移除的工具', () => {
+  const available = assembleAgentTools('')
+  const session = { messages: [] as any[], browserId: undefined as string | undefined }
+  expect(modelAgentTools(available, session as any).some(tool => tool.function.name === 'browser_type')).toBe(false)
+  session.browserId = 'new-browser-in-this-turn'
+  const tools = modelAgentTools(available, session as any)
+  for (const [name, args] of [
+    ['browser_type', { ref: 'e1', text: '合成搜索词' }],
+    ['browser_press', { key: 'Enter' }],
+    ['browser_wait', { seconds: 1 }],
+  ] as const) expect(validateToolCall(tools, { name, arguments: JSON.stringify(args) })).toBeUndefined()
+  expect(validateToolCall(tools, { name: 'unregistered_tool', arguments: '{}' })).toContain('未在本轮注册')
+  expect(modelAgentTools(available.filter(tool => tool.function.name !== 'browser_type'), session as any)
+    .some(tool => tool.function.name === 'browser_type')).toBe(false)
+})
+
 it('retains loaded website tools on the next user turn and after reopening a conversation', () => {
   const catalog = assembleAgentTools('', 'zjooc.cn')
   const session = { messages: [
@@ -64,6 +96,7 @@ it('retains loaded website tools on the next user turn and after reopening a con
 it('explains how to load a deferred tool and continues rejecting unknown tools', () => {
   const tools = modelAgentTools(assembleAgentTools('', 'zjooc.cn'))
   expect(validateToolCall(tools, { name: 'browser_site_zjooc__login', arguments: '{}' })).toContain('load_agent_tools')
+  expect(validateToolCall(tools, { name: 'browser_site_zjooc__login', arguments: '{}' })).toContain('无需用户重新发消息')
   expect(validateToolCall(tools, { name: 'unregistered_tool', arguments: '{}' })).toContain('未在本轮注册')
 })
 

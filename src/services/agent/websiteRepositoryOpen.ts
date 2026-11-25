@@ -37,7 +37,7 @@ export async function findOpenWebsite(host: string, request: typeof fetch, stric
   if (Date.now() >= catalogExpires || (strict && catalogError)) {
     loadingCatalog ??= (async () => {
       const response = await request(catalogUrl, {
-        headers: { Accept: 'application/json' }, credentials: 'omit', redirect: 'error', signal: AbortSignal.timeout(4000),
+        headers: { Accept: 'application/json' }, credentials: 'omit', redirect: 'error', signal: AbortSignal.timeout(12000),
       })
       if (!response.ok) throw new Error(`Open 目录读取失败（HTTP ${response.status}）`)
       const data = await limitedJson(response, 512 * 1024)

@@ -115,7 +115,21 @@ export function scopedWebsiteHost(input: {
       }
       const action = actions[command]
       if (!action) throw new Error('未知的文档宿主操作')
-      const receipt = await invoke(action, args)
+      let receipt
+      try { receipt = await invoke(action, args) }
+      catch (error) {
+        active()
+        // 只读查询遇到真实的文档切换时返回明确回执，让仓库重新观察；绝不重放填写或点击。
+        if (command === 'document.query' && String(error).includes('文档已更换')) {
+          const expected = documentRecord(args.document)
+          const fresh = await browserDocuments(input.browserId, input.host)
+          active()
+          if (!fresh.documents.some(row => sameBrowserDocument(row, expected))) {
+            return { ok: false, reason: 'document_changed', error: '查询期间文档已更换，请重新读取文档列表' }
+          }
+        }
+        throw error
+      }
       active()
       if (command.startsWith('media.') && receipt.ok !== false) {
         const key = JSON.stringify([args.document, args.selector, args.nth])

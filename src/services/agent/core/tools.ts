@@ -40,7 +40,7 @@ export const validateToolCall = (definitions: unknown[], call: { name: string; a
     const directory = registry.get('load_agent_tools')
     const deferred = directory?.function.parameters?.properties?.names?.items?.enum
     if (Array.isArray(deferred) && deferred.includes(call.name)) {
-      return `工具尚未加载。请先调用 load_agent_tools，参数为 ${JSON.stringify({ names: [call.name] })}，收到加载成功回执后在下一轮调用此工具。`
+      return `工具尚未加载。请先调用 load_agent_tools，参数为 ${JSON.stringify({ names: [call.name] })}，收到新参数定义后继续调用，无需用户重新发消息。`
     }
     return '工具未在本轮注册，不能执行；请只使用当前提供的工具。'
   }

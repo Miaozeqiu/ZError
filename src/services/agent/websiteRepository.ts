@@ -456,7 +456,9 @@ export function installedExperienceHost(host: string) {
 
 const installRetryAt = new Map<string, number>()
 
-/** Resolve a visited or explicitly requested site; discovery failures leave browsing available. */
+export class WebsiteExperienceNotFoundError extends Error {}
+
+/** 查找已访问或主动请求的网站经验；发现失败仍允许继续浏览网页。 */
 async function resolvePageExperience(url: string, reinstallRemoved: boolean, strict = false, signal?: AbortSignal): Promise<string> {
   signal?.throwIfAborted()
   const wait = <T>(work: () => Promise<T>) => signal ? websiteHostAwait(signal, work) : work()
@@ -474,9 +476,14 @@ async function resolvePageExperience(url: string, reinstallRemoved: boolean, str
   }
   const fetcher = await request()
   // 目录查询会被其他调用共享；只取消本次等待，不撤销其他调用的查询。
-  const entry = await wait(() => findOpenWebsite(host, fetcher, strict))
+  let entry
+  try { entry = await wait(() => findOpenWebsite(host, fetcher, strict)) }
+  catch (error) {
+    signal?.throwIfAborted()
+    throw new Error('读取 Open 网站目录失败：' + (error instanceof Error ? error.message : String(error)))
+  }
   if (!entry) {
-    if (strict) throw new Error('Open 目录中没有该网站的经验仓库。')
+    if (strict) throw new WebsiteExperienceNotFoundError('Open 目录中没有该网站的经验仓库。')
     return host
   }
   return wait(() => changeSource(entry.host, async () => {

@@ -1,6 +1,12 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import { runtimeBinding, runtimeFixture } from './fixtures/websiteRuntime'
 import { isReadOnlyReviewGoal, reviewObservationId } from '../../src/services/agent/observationReview'
 import type { ImportTaskStep } from '../../src/services/app/importTasks'
+
+vi.mock('../../src/services/agent/websiteRepository', () => ({
+  installedWebsiteRuntimeTool: (name: string) => name === 'browser_site_academy__read_catalog'
+    ? { ...runtimeBinding(), tool: { ...runtimeFixture().tools[0], commands: ['document.query', 'document.click'] } } : undefined,
+}))
 
 const goal = '本次只做只读复核，不答题、不点击选项、不提交，不进入其他章节。读取当前已提交结果页，核对题号与 ID。'
 const now = 1_000_000
@@ -10,6 +16,20 @@ const read = (patch = {}): ImportTaskStep => ({ id: 'page', name: 'browser_get_p
 const tool = (name: string, status: ImportTaskStep['status'] = 'done'): ImportTaskStep => ({ id: name, name, kind: 'tool', label: name, status })
 
 describe('read-only review completion', () => {
+  it('多用途仓库工具按宿主实际调用判定只读，加载工具不影响收尾', () => {
+    const binding = runtimeBinding(), name = 'browser_site_academy__read_catalog'
+    const receipt = { ok: true, observed: true, read_only: true,
+      repository: { id: binding.siteId, revision: binding.revision, sha256: binding.runtime.bundle.sha256 },
+      observation_id: name, observed_browser_id: 'b1', observed_at: now }
+    const step = (patch = {}): ImportTaskStep => ({ ...tool(name), result: JSON.stringify({ ...receipt, ...patch }) })
+    expect(reviewObservationId(goal, [tool('load_agent_tools'), step()], 'b1', url, now)).toBe(name)
+    for (const patch of [{ read_only: false }, { read_only: undefined, result: { read_only: true } }, { observed: false },
+      { repository: { ...receipt.repository, revision: 'old' } }, { repository: { ...receipt.repository, sha256: 'wrong' } },
+      { observation_id: 'forged' }, { observed_browser_id: 'other' }, { observed_at: now - 120001 }]) {
+      expect(reviewObservationId(goal, [step(patch)], 'b1', url, now), JSON.stringify(patch)).toBeUndefined()
+    }
+    expect(reviewObservationId(goal, [step({ read_only: false }), read()], 'b1', url, now)).toBeUndefined()
+  })
   it('requires an explicit read-only user goal and rejects active course instructions', () => {
     expect(isReadOnlyReviewGoal(goal)).toBe(true)
     expect(isReadOnlyReviewGoal('只读查看已完成章节的成绩')).toBe(true)

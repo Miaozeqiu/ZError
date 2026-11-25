@@ -193,6 +193,75 @@ describe('website repository registry', () => {
       await new Promise<void>(resolve => server.close(() => resolve()))
     }
   })
+  it('首次目录响应超过四秒时仍可完成安装，不需要模型重试', async () => {
+    const host = 'academy.example', selected = candidate('academy', host)
+    const cloud = { ...snapshot('academy', host), runtime: runtimeFixture() }
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let catalogRequests = 0
+    const server = createServer((request, response) => {
+      response.setHeader('Content-Type', 'application/json')
+      if (request.url === '/v1/website-experience') {
+        catalogRequests++
+        timer = setTimeout(() => response.end(JSON.stringify({ sites: [{ ...selected.website, ...selected.source }] })), 4300)
+      } else response.end(JSON.stringify(cloud))
+    })
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+    const base = `http://127.0.0.1:${(server.address() as import('node:net').AddressInfo).port}`
+    const request = globalThis.fetch
+    vi.stubGlobal('fetch', (url: string, init?: RequestInit) => request(url.replace('https://open.zerrorai.com', base), init))
+    try {
+      const mod = await import('../../src/services/agent/websiteRepository')
+      expect(await mod.installWebsiteExperience('https://' + host)).toMatchObject({ installed: true, host })
+      expect(catalogRequests).toBe(1)
+    } finally {
+      clearTimeout(timer)
+      server.closeAllConnections()
+      await new Promise<void>(resolve => server.close(() => resolve()))
+    }
+  }, 15000)
+
+  it('主动导航会重新安装已卸载的 Open 包，并在下一轮工具目录中提供站点能力', async () => {
+    const host = 'academy.example', selected = candidate('academy', host)
+    const cloud = { ...snapshot('academy', host), runtime: runtimeFixture(), hostApi: 2 }
+    const paths: string[] = []
+    const server = createServer((request, response) => {
+      paths.push(request.url!)
+      response.setHeader('Content-Type', 'application/json')
+      response.end(JSON.stringify(request.url === '/v1/website-experience'
+        ? { sites: [{ ...selected.website, ...selected.source }] } : cloud))
+    })
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+    const base = `http://127.0.0.1:${(server.address() as import('node:net').AddressInfo).port}`
+    const request = globalThis.fetch
+    vi.stubGlobal('fetch', (url: string, init?: RequestInit) => request(url.replace('https://open.zerrorai.com', base), init))
+    let navigate: ReturnType<typeof vi.spyOn> | undefined
+    try {
+      const mod = await import('../../src/services/agent/websiteRepository')
+      await mod.experienceHostForPage('https://' + host)
+      await mod.removeWebsiteRepository(host)
+      await mod.experienceHostForPage('https://' + host + '/login')
+      expect(mod.hasWebsiteRepository(host)).toBe(false)
+      const { assembleAgentTools } = await import('../../src/services/agent/tools')
+      const siteTool = 'browser_site_academy__read_catalog'
+      expect(assembleAgentTools('https://' + host).some(tool => tool.function.name === siteTool)).toBe(false)
+      const browser = await import('../../src/services/agent/browserTools')
+      navigate = vi.spyOn(browser, 'executeBrowserTool').mockResolvedValue(JSON.stringify({ ok: true, url: 'https://' + host + '/login' }))
+      const { executeChatTool } = await import('../../src/services/agent/executeChatTool')
+      const result = JSON.parse(await executeChatTool({
+        call: { id: 'task-navigation', name: 'browser_navigate', arguments: JSON.stringify({ url: 'https://' + host }) },
+        ctx: { browserId: () => 'owned-tab', sessionId: 'open-navigation-test', role: 'parent', abort: new AbortController().signal } as any,
+      }))
+      expect(result).toMatchObject({ ok: true, website_experience: { status: 'ready', host, revision: cloud.revision, tools: [siteTool] } })
+      expect(assembleAgentTools('https://' + host).some(tool => tool.function.name === siteTool)).toBe(true)
+      expect(storage.value.removedOpenHosts).not.toContain(host)
+      expect(paths).toEqual(['/v1/website-experience', '/v1/website-experience/' + host, '/v1/website-experience/' + host])
+    } finally {
+      navigate?.mockRestore()
+      server.closeAllConnections()
+      await new Promise<void>(resolve => server.close(() => resolve()))
+    }
+  })
+
   it('通过真实 HTTP 安装第三方编译包，注册新工具并在卸载和重装时撤销旧执行权', async () => {
     const host = 'academy.example'
     let cloud = { ...snapshot('academy', host), runtime: runtimeFixture() }

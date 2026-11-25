@@ -25,6 +25,21 @@ const run = (args: Record<string, unknown>) =>
 
 beforeEach(() => vi.resetAllMocks())
 
+it('读取真实首页中已归类和改过网址的网站，不改动导航配置', async () => {
+  const window = page()
+  window.localStorage.setItem('zerror.browser-home.layout', JSON.stringify({
+    root: ['folder-study'], folders: [{ id: 'folder-study', name: '学习', items: ['zjooc', 'chaoxing'] }],
+  }))
+  mocks.eval.mockImplementation(async (_tab, script) => window.eval(script))
+  await run({ action: 'update', target: 'zjooc', url: 'https://www.zjooc.cn/course' })
+  const before = JSON.stringify({ ...window.localStorage })
+  const listed = await run({ action: 'list' })
+  expect(listed.shortcuts.find((site: { id: string }) => site.id === 'zjooc'))
+    .toMatchObject({ name: '在浙学', url: 'https://www.zjooc.cn/course', folder: '学习' })
+  expect(JSON.stringify({ ...window.localStorage })).toBe(before)
+  expect(mocks.navigate).not.toHaveBeenCalled()
+})
+
 it('changes the real launcher and preserves edits, removed defaults and legacy drag order after reopening', async () => {
   const original = new JSDOM('', { url: homeUrl }).window.localStorage
   original.setItem('zerror.browser-home.order', JSON.stringify(['https://retired.example.org/', 'https://chatgpt.com/', 'https://www.doubao.com/']))

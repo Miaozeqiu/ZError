@@ -2,22 +2,22 @@ import type { AgentChatSession } from './chatTypes'
 import { parseToolArgs } from './toolArgs'
 
 export const LOAD_AGENT_TOOLS = 'load_agent_tools'
-const core = ['protect_credentials', 'read_agent_skill', 'browser_navigate', 'web_search']
+// 网站名称没有附带网址时，首轮即可读取本地导航，不必先解锁工具或联网搜索。
+const core = ['protect_credentials', 'read_agent_skill', 'browser_navigate', 'browser_home_shortcuts', 'web_search']
 type NamedTool = { function: { name: string } }
 const templateTools = ['run_file_script', 'list_import_templates', 'read_import_template', 'save_import_template']
 function includeTemplateTools(selected: Set<string>) {
   if (templateTools.some(name => selected.has(name))) for (const name of templateTools) selected.add(name)
 }
 
-// The host registry remains authoritative. Selection only controls which schemas travel on the wire.
+// 宿主注册表决定工具能否执行；此处只筛选本次提供给模型的参数定义。
 export function modelAgentTools<T extends NamedTool>(available: T[], session?: AgentChatSession | null) {
   const selected = new Set(core)
   if (session?.browserId) {
-    // Keep direct browser interaction and event-driven chapter continuation on their fast path.
-    for (const name of ['browser_get_page', 'browser_click', 'browser_todo', 'browser_finish', 'browser_watch']) selected.add(name)
+    // 浏览器一旦建立，常用读、点、填、按键和等待直接提供；扩展工具继续按需加载。
+    for (const name of ['browser_get_page', 'browser_click', 'browser_type', 'browser_press', 'browser_wait', 'browser_todo', 'browser_finish', 'browser_watch', 'install_website_repository', 'read_agent_skill_file']) selected.add(name)
   }
-  // A conversation retains discovered tools across user turns. The live host
-  // catalog below still removes tools that were disabled or uninstalled.
+  // 对话保留已加载工具；最终仍按实时宿主目录剔除已禁用或卸载的工具。
   for (const message of session?.messages || []) {
     if (message.role !== 'assistant') continue
     for (const step of message.steps || []) {
@@ -44,7 +44,7 @@ export function modelAgentTools<T extends NamedTool>(available: T[], session?: A
     type: 'function' as const,
     function: {
       name: LOAD_AGENT_TOOLS,
-      description: '按任务选择工具名称，可一次加载多个。下一轮提供完整参数，本轮不执行所选操作。',
+      description: '批量加载工具。收到新定义后继续调用，无需用户另发消息；不会执行所选操作。',
       parameters: { type: 'object', required: ['names'], additionalProperties: false, properties: {
         names: { type: 'array', minItems: 1, items: { type: 'string', enum: catalog } },
       } },

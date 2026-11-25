@@ -92,7 +92,7 @@ describe('统一 Agent 浏览器工作区', () => {
     expect(names).toEqual(expect.arrayContaining(['browser_navigate', 'browser_get_page', 'browser_click', 'browser_set_checked', 'browser_finish', 'present_quiz', 'web_search', 'read_agent_skill']))
     expect(new Set(names).size).toBe(names.length)
     expect(availableAgentTools(tools, { enabled: false }).some(tool => tool.function.name === 'web_search')).toBe(false)
-    expect(buildAgentSystemPrompt()).toContain('需要网页时直接调用 browser_navigate')
+    expect(buildAgentSystemPrompt()).toContain('已知网址直接调用 browser_navigate')
   })
 
   it('打开浏览器前不创建标签；首次调用后台创建，后续复用且不展开小窗', async () => {
