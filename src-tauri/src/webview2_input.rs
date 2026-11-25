@@ -77,14 +77,18 @@ async fn key(
     vk: u32,
     modifiers: u32,
 ) -> Result<(), String> {
-    cdp(view,"Input.dispatchKeyEvent",json!({"type":"keyDown","key":name,"code":code,"windowsVirtualKeyCode":vk,"modifiers":modifiers,"text":if name=="Enter" {"\r"} else if name==" " {" "} else {""}})).await?;
-    cdp(view,"Input.dispatchKeyEvent",json!({"type":"keyUp","key":name,"code":code,"windowsVirtualKeyCode":vk,"modifiers":modifiers})).await?;
+    // 按下事件超时也可能已生效，始终尝试释放；保留原始操作错误。
+    let pressed = cdp(view,"Input.dispatchKeyEvent",json!({"type":"keyDown","key":name,"code":code,"windowsVirtualKeyCode":vk,"modifiers":modifiers,"text":if name=="Enter" {"\r"} else if name==" " {" "} else {""}})).await;
+    let released = cdp(view,"Input.dispatchKeyEvent",json!({"type":"keyUp","key":name,"code":code,"windowsVirtualKeyCode":vk,"modifiers":modifiers})).await;
+    pressed?;
+    released?;
     Ok(())
 }
 
 pub(crate) async fn press(app: &AppHandle, id: &str, name: &str) -> Result<Value, String> {
     let _lock = crate::webview2_secrets::lock(id).await;
     let view = crate::app_browser::find_browser(app, id)?;
+    cdp(&view,"Emulation.setFocusEmulationEnabled",json!({"enabled":true})).await?;
     let (key_name, code, vk) = match name {
         "Enter" | "Return" => ("Enter", "Enter", 13),
         "Tab" => ("Tab", "Tab", 9),
@@ -116,12 +120,8 @@ async fn click(
 ) -> Result<(), String> {
     let button = if op == "rightclick" { "right" } else { "left" };
     let buttons = if op == "rightclick" { 2 } else { 1 };
-    cdp(
-        view,
-        "Input.dispatchMouseEvent",
-        json!({"type":"mouseMoved","x":x,"y":y,"button":"none"}),
-    )
-    .await?;
+    // 按下、释放已携带落点。隐藏的 WebView2 不绘制移动帧，预先等待
+    // mouseMoved 的回执会一直挂起；直接投递原生点击，不重放结果未知的事件。
     for count in 1..=if op == "dblclick" { 2 } else { 1 } {
         let current = probe(view, object).await?;
         verify(view, doc).await?;
@@ -180,6 +180,7 @@ async fn dispatch_once(app: &AppHandle, id: &str, args: &Value) -> Result<Value,
     }
     let _lock = crate::webview2_secrets::lock(id).await;
     let view = crate::app_browser::find_browser(app, id)?;
+    cdp(&view,"Emulation.setFocusEmulationEnabled",json!({"enabled":true})).await?;
     if op == "fill" {
         crate::secret_browser::guard(app, id).await?;
     }
@@ -227,6 +228,7 @@ async fn dispatch_once(app: &AppHandle, id: &str, args: &Value) -> Result<Value,
 
 // The caller holds the tab operation lock and has already checked its scoped document.
 pub(crate) async fn click_object(view: &Webview, object: &str) -> Result<Value, String> {
+    cdp(view, "Emulation.setFocusEmulationEnabled", json!({"enabled":true})).await?;
     let allowed = cdp(view, "Runtime.callFunctionOn", json!({
         "objectId": object,
         "functionDeclaration": "function(){return this.isConnected && this.ownerDocument===document && this.matches('a,button,[role=button],input[type=submit],input[type=button]');}",

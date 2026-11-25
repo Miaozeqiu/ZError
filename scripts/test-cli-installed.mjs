@@ -44,10 +44,10 @@ const server = createServer(async (req, res) => {
     res.end('data: [DONE]\n\n');
   } else if (req.url === '/frame') {
     res.writeHead(200, { 'Content-Type':'text/html; charset=utf-8' });
-    res.end('<button onclick="this.textContent=\'Frame verified\'">Frame button</button>');
+    res.end(`<button onclick="this.textContent='Frame verified';parent.document.getElementById('input-trust').textContent=event.isTrusted?'Trusted frame click':'Synthetic frame click'">Frame button</button>`);
   } else {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    res.end('<!doctype html><html><title>CLI fixture</title><body><h1>CLI fixture</h1><input id="fixture-input" aria-label="Fixture input"><iframe id="fixture-child" src="/frame"></iframe><button onclick="this.textContent=\'CLI clicked\'+document.getElementById(\'fixture-input\').value">CLI button</button></body></html>');
+    res.end(`<!doctype html><html><title>CLI fixture</title><body><h1>CLI fixture</h1><input id="fixture-input" aria-label="Fixture input" oninput="document.getElementById('input-trust').textContent=event.isTrusted?'Trusted input':'Synthetic input'"><h2 id="input-trust"></h2><iframe id="fixture-child" src="/frame"></iframe><button onclick="this.textContent='CLI clicked'+document.getElementById('fixture-input').value;document.getElementById('input-trust').textContent=event.isTrusted?'Trusted click':'Synthetic click'">CLI button</button></body></html>`);
   }
 });
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -142,11 +142,14 @@ try {
   await verifyPage('CLI button');
   await browserTool('browser_click', { text: 'CLI button' });
   await verifyPage('CLI clicked'); checks.push('native browser observe, click and verify');
+  if (process.platform === 'win32') await verifyPage('Trusted click');
   await browserTool('browser_type', { selector: '#fixture-input', text: 'Fixture typed' });
+  if (process.platform === 'win32') await verifyPage('Trusted input');
   await browserTool('browser_click', { text: 'CLI clicked' });
   await verifyPage('CLI clickedFixture typed'); checks.push('native browser input and DOM event propagation');
   await browserTool('browser_click', { text: 'Frame button', frame: 'fixture-child' });
   await verifyPage('Frame verified'); checks.push('native child iframe observation and action');
+  if (process.platform === 'win32') { await verifyPage('Trusted frame click'); checks.push('trusted native Windows input under browser scaling'); }
   assert.ok(JSON.stringify((await call('tools.result', { id: browser.sessionId })).result).includes('CLI clicked')); checks.push('complete tool result');
   await call('questions.delete',{id:questionId,confirm:true});
   assert.ok(!JSON.stringify(await call('questions.search',{folderId,keyword:'CLI integration unique fixture'})).includes('CLI integration unique fixture')); checks.push('question deletion and database readback');

@@ -1,6 +1,6 @@
 use serde_json::{json, Value};
 use std::{
-    collections::HashSet,
+    collections::HashMap,
     sync::{Mutex, OnceLock},
     time::Duration,
 };
@@ -31,28 +31,54 @@ pub(crate) async fn call_ms(
 ) -> Result<Value, String> {
     let (send, receive) = oneshot::channel();
     let permit = crate::browser_control::current_permit();
+    let browser_id = crate::app_browser::id_from_label(webview.label()).map(str::to_owned);
     webview
         .with_webview(move |platform| {
             if send.is_closed() {
                 return;
             }
-            if let Some(error) = permit.as_ref().and_then(|permit| permit.check().err()) {
+            let mut params = params;
+            if let Err(error) = crate::browser_control::guard_cdp_serialized(&permit, method, &mut params) {
                 let _ = send.send(Err(error));
                 return;
+            }
+            if method == "Input.dispatchMouseEvent" {
+                // 在 UI 线程读取当前缩放，覆盖点击、双击、勾选及 iframe 的投递路径。
+                let scale = browser_id.as_deref().and_then(|id| presentations().lock().unwrap_or_else(|err| err.into_inner()).get(id).map(|state| state.scale)).unwrap_or(1.0);
+                let projected = serde_json::from_str::<Value>(&params).map_err(|_| "鼠标参数无效".to_owned()).and_then(|mut value| {
+                    crate::browser_geometry::project_mouse_coordinates(&mut value, scale)?;
+                    Ok(Zeroizing::new(value.to_string()))
+                });
+                match projected {
+                    Ok(value) => params = value,
+                    Err(error) => { let _ = send.send(Err(error)); return; }
+                }
             }
             let Ok(core) = (unsafe { platform.controller().CoreWebView2() }) else {
                 let _ = send.send(Err(error.into()));
                 return;
             };
+            let method_name = method;
             let method: Vec<u16> = method.encode_utf16().chain([0]).collect();
             let params = Zeroizing::new(params.encode_utf16().chain([0]).collect::<Vec<_>>());
             let completion = CallDevToolsProtocolMethodCompletedHandler::create(Box::new(
                 move |result, payload| {
-                    let parsed = result
-                        .ok()
-                        .and_then(|_| serde_json::from_str::<Value>(&payload).ok())
-                        .filter(|value| value.get("exceptionDetails").is_none() && value.get("error").is_none())
-                        .ok_or_else(|| error.into());
+                    // 只报告固定方法名、错误码和脚本位置，不回传参数或网页异常正文。
+                    let parsed = result.map_err(|cause| format!("{error} [{method_name}: HRESULT {:#x}]", cause.code().0)).and_then(|_| {
+                        let value: Value = serde_json::from_str(&payload)
+                            .map_err(|_| format!("{error} [{method_name}: invalid_json]"))?;
+                        if let Some(detail) = value.get("exceptionDetails") {
+                            let class = match detail.pointer("/exception/className").and_then(Value::as_str) {
+                                Some("TypeError") => "TypeError", Some("ReferenceError") => "ReferenceError",
+                                Some("SyntaxError") => "SyntaxError", Some("EvalError") => "EvalError", _ => "script_exception",
+                            };
+                            return Err(format!("{error} [{method_name}: {class} @{}:{}]", detail["lineNumber"].as_u64().unwrap_or(0), detail["columnNumber"].as_u64().unwrap_or(0)));
+                        }
+                        if let Some(detail) = value.get("error") {
+                            return Err(format!("{error} [{method_name}: CDP {}]", detail["code"].as_i64().unwrap_or(0)));
+                        }
+                        Ok(value)
+                    });
                     let _ = send.send(parsed);
                     Ok(())
                 },
@@ -66,14 +92,16 @@ pub(crate) async fn call_ms(
                 )
             };
         })
-        .map_err(|_| error)?;
+        .map_err(|_| format!("{error} [{method}: dispatch_failed]"))?;
     tokio::time::timeout(Duration::from_millis(timeout_ms.clamp(80, 35000)), receive)
         .await
-        .map_err(|_| error)?
-        .map_err(|_| error)?
+        .map_err(|_| format!("{error} [{method}: timeout]"))?
+        .map_err(|_| format!("{error} [{method}: response_closed]"))?
 }
 
-static PREVIEWS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+#[derive(Clone, Copy)]
+struct Presentation { scale: f64, preview: bool }
+static PRESENTATIONS: OnceLock<Mutex<HashMap<String, Presentation>>> = OnceLock::new();
 
 pub(crate) async fn set_audio_muted(webview: &Webview, muted: bool) -> Result<(), String> {
     use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2_8;
@@ -101,12 +129,12 @@ pub(crate) async fn screenshot(webview: &Webview) -> Result<Value, String> {
     }))
 }
 
-fn previews() -> &'static Mutex<HashSet<String>> {
-    PREVIEWS.get_or_init(Default::default)
+fn presentations() -> &'static Mutex<HashMap<String, Presentation>> {
+    PRESENTATIONS.get_or_init(Default::default)
 }
 
 pub(crate) fn forget_preview(id: &str) {
-    previews()
+    presentations()
         .lock()
         .unwrap_or_else(|err| err.into_inner())
         .remove(id);
@@ -128,10 +156,10 @@ pub(crate) async fn refresh_browser_input(webview: &Webview, id: String) -> Resu
     webview
         .with_webview(move |platform| {
             let result = browser_host(&platform).map(|host| {
-                let preview = previews()
+                let preview = presentations()
                     .lock()
                     .unwrap_or_else(|err| err.into_inner())
-                    .contains(&id);
+                    .get(&id).is_some_and(|state| state.preview);
                 apply_input(host, &id, preview);
             });
             let _ = send.send(result);
@@ -182,14 +210,7 @@ pub(crate) async fn set_browser_bounds(
     webview
         .with_webview(move |platform| {
             let result = browser_host(&platform).and_then(|host| {
-                if preview {
-                    previews()
-                        .lock()
-                        .unwrap_or_else(|err| err.into_inner())
-                        .insert(id.clone());
-                } else {
-                    forget_preview(&id);
-                }
+                presentations().lock().unwrap_or_else(|err| err.into_inner()).insert(id.clone(), Presentation { scale, preview });
                 apply_input(host, &id, preview);
                 set_preview_region(host, preview)
             });

@@ -61,7 +61,7 @@ fn label_for(id: &str) -> Result<String, String> {
   Ok(format!("{LABEL_PREFIX}{id}"))
 }
 
-fn id_from_label(label: &str) -> Option<&str> {
+pub(crate) fn id_from_label(label: &str) -> Option<&str> {
   label.strip_prefix(LABEL_PREFIX)
 }
 

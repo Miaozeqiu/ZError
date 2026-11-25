@@ -1,4 +1,5 @@
 import { JSDOM, type DOMWindow } from 'jsdom'
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { buildLocateBoxScript } from '../../src/services/browser/engine/locate'
 import { formatAriaSnapshot, SNAPSHOT_SCRIPT, type SnapFrameInfo } from '../../src/services/browser/engine/snapshot'
@@ -28,6 +29,21 @@ const fill = (iframe: HTMLIFrameElement, html: string) => {
 }
 
 describe('多层 iframe 快照', () => {
+  it('安装后回归的可信输入回执能在页面快照中读取', () => {
+    const source = readFileSync(new URL('../../scripts/test-cli-installed.mjs', import.meta.url), 'utf8')
+    const html = source.match(/res\.end\(`(<!doctype html>[^`]+)`\)/)?.[1]
+    expect(html).toBeTruthy()
+    const dom = new JSDOM(html!, { url: 'https://fixture.example/', runScripts: 'outside-only' })
+    install(dom.window)
+    try {
+      for (const state of ['Trusted click', 'Trusted input', 'Trusted frame click']) {
+        dom.window.document.getElementById('input-trust')!.textContent = state
+        const page = dom.window.eval(SNAPSHOT_SCRIPT)
+        expect(formatAriaSnapshot(page.refs, page.iframes)).toContain(state)
+      }
+    } finally { dom.window.close() }
+  })
+
   it('两个视频的播放键都在，隐藏框不出现，题目页看得到，ref 能点回对应框', () => {
     const catalog = Array.from({ length: 120 }, (_, index) => `<button>目录${index}</button>`).join('')
     const dom = new JSDOM(`<!doctype html><body>${catalog}<iframe id="cards"></iframe><iframe id="cross" src="https://other.example/ad"></iframe></body>`, {
