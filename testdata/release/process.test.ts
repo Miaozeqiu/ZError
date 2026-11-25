@@ -10,7 +10,8 @@ async function options(timeout = 5000) {
   directories.push(directory)
   return { cwd: directory, env: process.env, timeout, label: 'fixture', logFile: join(directory, 'step.log') }
 }
-afterEach(async () => { await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true }))) })
+// Windows 终止进程后可能短暂保留工作目录句柄；只对本测试的临时目录进行有界重试。
+afterEach(async () => { await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }))) })
 
 it('保留标准输出、错误输出以及失败前的完整日志', async () => {
   const settings = await options()
