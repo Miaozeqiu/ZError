@@ -6,6 +6,7 @@
     :menu-items="menuItems"
     exclusive-key="model-context-menu"
     menu-class="settings-popup"
+    consume-outside-click
     @item-click="handleItemClick"
     @close="$emit('close')"
   />

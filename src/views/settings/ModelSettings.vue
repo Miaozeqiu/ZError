@@ -265,6 +265,7 @@
               <div class="model-icon-wrap">
                 <img v-if="getModelIcon(model)" :src="getModelIcon(model)" :alt="model.displayName" class="model-icon-img" />
                 <div v-else class="model-icon-fallback">{{ (model.displayName || model.id).charAt(0).toUpperCase() }}</div>
+                <span v-if="isCurrentCategoryModelSelected(model)" class="model-dot" aria-hidden="true"></span>
               </div>
               <div class="model-info">
                 <div class="model-header">
@@ -274,12 +275,22 @@
                 
               </div>
               <div class="model-actions">
-                <div
-                  class="model-selected"
-                  :class="{ 'model-selected--multi': selectedCategory === 'answer' }"
+                <button
+                  class="model-more-button"
+                  :class="{ 'is-open': showModelContextMenu && contextMenuModel?.id === model.id }"
+                  type="button"
+                  title="更多操作"
+                  :aria-label="`${model.displayName}的更多操作`"
+                  aria-haspopup="menu"
+                  :aria-expanded="showModelContextMenu && contextMenuModel?.id === model.id"
+                  @click.stop="showModelContextMenuHandler($event, model)"
                 >
-                  <span v-if="isCurrentCategoryModelSelected(model)" class="model-dot"></span>
-                </div>
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
+                    <circle cx="5" cy="12" r="1.7" />
+                    <circle cx="12" cy="12" r="1.7" />
+                    <circle cx="19" cy="12" r="1.7" />
+                  </svg>
+                </button>
               </div>
             </div>
           </div>

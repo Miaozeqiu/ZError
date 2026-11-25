@@ -200,8 +200,10 @@ export const bindPlatformOps = (ctx: PlatformOpsCtx) => {
   const showModelContextMenuHandler = (event: MouseEvent, model: AIModel) => {
     event.preventDefault()
     claimExclusiveMenu('model-context-menu')
-    modelContextMenuX.value = event.clientX
-    modelContextMenuY.value = event.clientY
+    // 三点按钮按控件位置展开，键盘触发也能正确定位；右键仍使用鼠标位置。
+    const anchor = event.type === 'click' ? (event.currentTarget as HTMLElement | null)?.getBoundingClientRect() : undefined
+    modelContextMenuX.value = anchor ? anchor.left : event.clientX
+    modelContextMenuY.value = anchor ? anchor.bottom + 6 : event.clientY
     contextMenuModel.value = model
     showModelContextMenu.value = true
   }

@@ -168,6 +168,8 @@ interface Props {
   menuClass?: string;
   /** 稳定互斥键；同键视为同一菜单，不同键同时只保留一个 */
   exclusiveKey?: string;
+  /** 点击外部时仅关闭菜单，不触发底层控件的点击事件。 */
+  consumeOutsideClick?: boolean;
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -197,6 +199,15 @@ const close = () => emit('close');
 
 const onDocumentPointerDown = (event: Event) => {
   if (isInsideMenu(event)) return;
+  // 普通点击留到 click 捕获阶段处理，避免先关闭菜单后仍触发底层模型的选择事件。
+  if (props.consumeOutsideClick && event.type === 'pointerdown' && (event as PointerEvent).button === 0) return;
+  close();
+};
+
+const onDocumentClick = (event: MouseEvent) => {
+  if (!props.visible || !props.consumeOutsideClick || isInsideMenu(event)) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
   close();
 };
 
@@ -209,6 +220,7 @@ const unbindOutside = () => {
   outsideBound = false;
   document.removeEventListener('pointerdown', onDocumentPointerDown, true);
   document.removeEventListener('contextmenu', onDocumentPointerDown, true);
+  document.removeEventListener('click', onDocumentClick, true);
   window.removeEventListener('keydown', onKeydown, true);
   window.removeEventListener('blur', close);
   window.removeEventListener('resize', close);
@@ -219,6 +231,7 @@ const bindOutside = () => {
   outsideBound = true;
   document.addEventListener('pointerdown', onDocumentPointerDown, true);
   document.addEventListener('contextmenu', onDocumentPointerDown, true);
+  if (props.consumeOutsideClick) document.addEventListener('click', onDocumentClick, true);
   window.addEventListener('keydown', onKeydown, true);
   window.addEventListener('blur', close);
   window.addEventListener('resize', close);

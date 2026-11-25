@@ -306,8 +306,13 @@ defineEmits<{
   background: var(--bg-secondary);
   color: #718096;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: background-color 150ms ease, color 150ms ease;
   border: none;
+}
+
+.config-btn:hover:not(:disabled),
+.config-btn:focus-visible {
+  background: var(--bg-tertiary);
 }
 
 .config-btn svg {

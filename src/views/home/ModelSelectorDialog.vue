@@ -326,8 +326,8 @@ watch(() => props.show, async (v) => {
   line-height: 1;
   padding: 2px 6px;
   border-radius: 4px;
-  color: #c47b12;
-  background: color-mix(in srgb, #f8bd40 28%, transparent);
+  color: var(--text-tertiary);
+  background: var(--bg-tertiary);
 }
 
 .dialog-title-placeholder {
