@@ -341,12 +341,11 @@ defineEmits<{
   height: 32px;
   position: relative;
   display: inline-block;
-  transition: all 0.3s ease;
 }
 
 .tooltip {
   position: absolute;
-  bottom: 0;
+  top: calc(100% + 8px);
   left: 50%;
   transform: translateX(-50%);
   padding: 0.3em 0.6em;
@@ -358,7 +357,7 @@ defineEmits<{
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
-  transition: all 0.3s ease;
+  transition: opacity 150ms ease, visibility 150ms ease;
   z-index: 1000;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
   border: 1px solid rgba(0, 0, 0, 0.1);
@@ -377,10 +376,9 @@ defineEmits<{
   border-top: 1px solid rgba(0, 0, 0, 0.1);
 }
 
-.tooltip-container:hover .tooltip {
-  bottom: -160%;
+.tooltip-container:hover .tooltip,
+.tooltip-container:focus-within .tooltip {
   opacity: 1;
   visibility: visible;
-  pointer-events: auto;
 }
 </style>

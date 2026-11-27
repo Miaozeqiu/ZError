@@ -54,6 +54,7 @@
         "language": "zh-CN"
       },
       "nsis": {
+        "template": "installers/installer.nsi",
         "languages": ["SimpChinese"],
         "displayLanguageSelector": false,
         "installerIcon": "icons/icon.ico",

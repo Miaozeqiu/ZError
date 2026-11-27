@@ -1,23 +1,8 @@
 <template>
   <div v-if="visible" class="dialog-overlay" @click="handleOverlayClick">
-    <div class="dialog-panel ocs-config-panel" @click.stop>
+    <div class="dialog-panel ocs-config-panel" role="dialog" aria-modal="true" aria-label="OCS 题库配置" @click.stop>
       <div class="dialog-header">
-        <button class="btn-back" @click="closeDialog" title="关闭" >
-            <svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" width="18" height="18">
-              <path d="M768 96c19.2-19.2 19.2-51.2 0-70.4-19.2-19.2-51.2-19.2-70.4 0l-448 448c-19.2 19.2-19.2 51.2 0 70.4l448 448c19.2 19.2 51.2 19.2 70.4 0 19.2-19.2 19.2-51.2 0-70.4L358.4 512l409.6-416z" fill="currentColor"/>
-            </svg>
-        </button>
-        <div class="dialog-title-placeholder" aria-hidden="true"></div>
-        <button class="copy-btn" @click="copyConfig" :class="{ copied: copySuccess }">
-          <svg v-if="!copySuccess" width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <rect x="9" y="9" width="13" height="13" rx="2" ry="2" stroke="currentColor" stroke-width="2" fill="none"/>
-            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke="currentColor" stroke-width="2" fill="none"/>
-          </svg>
-          <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-          {{ copySuccess ? '已复制' : '复制配置' }}
-        </button>
+        <h3 class="dialog-title">OCS 题库配置</h3>
       </div>
 
       <div class="dialog-body">
@@ -27,11 +12,27 @@
           </div>
         </div>
 
+      </div>
+
+      <div class="ocs-config-footer">
         <div class="config-info">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
             <circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
-          <span>当前端口号: <strong>{{ currentPort || '未设置' }}</strong></span>
+          <span>当前端口 <strong>{{ currentPort || '未设置' }}</strong></span>
+        </div>
+        <div class="account-dialog-footer">
+          <button class="account-dialog-cancel" type="button" @click="closeDialog">关闭</button>
+          <button class="btn-confirm copy-btn" type="button" @click="copyConfig">
+            <svg v-if="!copySuccess" width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" stroke-width="2" />
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke="currentColor" stroke-width="2" />
+            </svg>
+            <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            {{ copySuccess ? '已复制' : '复制配置' }}
+          </button>
         </div>
       </div>
     </div>
@@ -197,45 +198,61 @@ const handleOverlayClick = (event: MouseEvent) => {
 
 <style scoped>
 .ocs-config-panel {
-  max-width: 680px;
+  width: min(640px, calc(100vw - 32px));
+  max-width: 640px;
+  height: min(560px, calc(100dvh - 32px));
+  max-height: calc(100dvh - 32px);
   display: flex;
   flex-direction: column;
 }
 
-.dialog-title-placeholder {
+.ocs-config-panel > .dialog-header {
+  justify-content: center;
+  flex: none;
+}
+
+.ocs-config-panel > .dialog-body {
+  display: flex;
   flex: 1;
+  min-height: 0;
+  max-height: none;
+  overflow: hidden;
+}
+
+.ocs-config-footer {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 0 24px 20px;
+}
+
+.ocs-config-footer .account-dialog-footer {
+  margin-inline-start: auto;
+  padding-top: 0;
 }
 
 .copy-btn {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 14px;
-  background: var(--add-btn-icon-bg);
-  color: var(--add-btn-icon-color);
-  border: none;
-  border-radius: 999px;
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: opacity 0.15s;
-  flex-shrink: 0;
 }
-
-.copy-btn:hover { background: var(--add-btn-icon-hover-bg); }
-.copy-btn.copied { background: var(--add-btn-icon-bg); color: var(--add-btn-icon-color); }
 
 .json-container {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
   background: var(--bg-primary);
-  border: 1px solid var(--platform-config-dialog-header-border);
-  border-radius: 8px;
+  border-radius: 12px;
   overflow: hidden;
-  margin-bottom: 16px;
 }
 
-.code-editor { position: relative; height: 280px; }
+.code-editor { position: relative; flex: 1; min-width: 0; min-height: 0; }
 .cm-container { position: absolute; inset: 0; }
-.json-container :deep(.cm-editor) { height: 100%; }
+.json-container :deep(.cm-editor) { height: 100%; background: transparent; color: var(--text-primary); }
+.json-container :deep(.cm-editor.cm-focused) { outline: none; }
 
 .config-info {
   display: flex;
@@ -243,10 +260,12 @@ const handleOverlayClick = (event: MouseEvent) => {
   gap: 8px;
   font-size: 13px;
   color: var(--text-secondary);
+  white-space: nowrap;
 }
 
 .config-info strong {
-  color: #ff8c00;
+  color: var(--text-primary);
+  font-weight: 500;
   font-family: 'DINAlternate-Bold', 'Barlow Semi Condensed', 'mitype-mono', monospace;
 }
 </style>

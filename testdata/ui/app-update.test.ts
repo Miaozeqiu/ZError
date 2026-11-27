@@ -8,13 +8,15 @@ const mocks = vi.hoisted(() => ({
   downloadPackage: vi.fn(),
   openPackage: vi.fn(),
   relaunch: vi.fn(),
+  isTauri: vi.fn(),
+  invoke: vi.fn(),
 }))
 
-vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn().mockResolvedValue(true) }))
+vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }))
 vi.mock('@tauri-apps/plugin-updater', () => ({ check: mocks.check }))
 vi.mock('@tauri-apps/plugin-process', () => ({ relaunch: mocks.relaunch }))
 vi.mock('../../src/services/app/environmentDetector', () => ({
-  environmentDetector: { isTauriEnvironment: () => true },
+  environmentDetector: { isTauriEnvironment: mocks.isTauri },
 }))
 vi.mock('../../src/services/app/versionCheck', () => ({
   VersionCheckService: {
@@ -32,6 +34,8 @@ describe('in-app update action', () => {
   beforeEach(() => {
     vi.resetModules()
     vi.resetAllMocks()
+    mocks.isTauri.mockReturnValue(true)
+    mocks.invoke.mockResolvedValue(true)
     localStorage.clear()
     sessionStorage.clear()
   })
@@ -50,6 +54,7 @@ describe('in-app update action', () => {
   })
 
   it('downloads a regular installer without opening it or restarting the app', async () => {
+    mocks.isTauri.mockReturnValue(false)
     mocks.check.mockResolvedValue(null)
     mocks.checkForUpdate.mockResolvedValue({
       needsUpdate: true, currentVersion: '2.2.8',
@@ -65,5 +70,27 @@ describe('in-app update action', () => {
     expect(mocks.downloadPackage).toHaveBeenCalledTimes(1)
     expect(mocks.openPackage).not.toHaveBeenCalled()
     expect(mocks.relaunch).not.toHaveBeenCalled()
+  })
+
+  it.each(['missing', 'failed'])('retries a %s signed feed without downloading a DMG', async (kind) => {
+    mocks.check.mockImplementation(() => kind === 'failed'
+      ? Promise.reject(new Error('network unavailable')) : Promise.resolve(null))
+    mocks.checkForUpdate.mockResolvedValue({
+      needsUpdate: true, currentVersion: '2.2.8',
+      versionInfo: { version: '2.2.9', changelog: '', downloadUrl: 'https://example.com/ZError.dmg' },
+    })
+    const state = (await import('../../src/composables/useAppUpdate')).useAppUpdate()
+    await state.checkForUpdates()
+    expect(state.tipTitle.value).toBe('点击更新并重启')
+    await state.handleTipClick()
+    expect(state.status.value).toBe('error')
+    expect(mocks.downloadPackage).not.toHaveBeenCalled()
+    expect(mocks.relaunch).not.toHaveBeenCalled()
+
+    mocks.check.mockResolvedValue({ version: '2.2.9', downloadAndInstall: mocks.downloadAndInstall })
+    await state.handleTipClick()
+    expect(mocks.downloadAndInstall).toHaveBeenCalledTimes(1)
+    expect(mocks.relaunch).toHaveBeenCalledTimes(1)
+    expect(mocks.downloadPackage).not.toHaveBeenCalled()
   })
 })

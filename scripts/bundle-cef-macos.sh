@@ -162,6 +162,7 @@ hdiutil create -size 1g -type SPARSE -fs APFS -volname ZError "$SPARSE" >/dev/nu
 hdiutil attach "$SPARSE" -nobrowse -noautoopen -mountpoint "$MNT" >/dev/null
 mounted=1
 ditto "$APP" "$MNT/ZError.app"
+ln -s /Applications "$MNT/Applications"
 
 # GitHub-hosted macOS can briefly hold the volume busy just after the copy.
 for delay in 2 4 8 16; do

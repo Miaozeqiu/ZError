@@ -190,7 +190,7 @@ async function tryNativeUpdaterCheck(): Promise<{
   if (!environmentDetector.isTauriEnvironment()) return null
   try {
     const { check } = await import('@tauri-apps/plugin-updater')
-    const update = await check({ timeout: 12000 })
+    const update = await check({ timeout: 30000 })
     if (!update) return { available: false }
     return {
       available: true,
@@ -306,14 +306,11 @@ async function startAutoDownload(force = false) {
 
   downloadPromise = (async () => {
     try {
-      // 优先安装签名更新包
+      // 桌面端只使用签名更新包；分发暂不可用时允许重试，不能退回 DMG 等普通安装包。
       const native = await tryNativeUpdaterCheck()
-      if (native?.error && !info.downloadUrl) {
-        status.value = 'error'
-        errorMessage.value = `原生更新不可用：${native.error}`
-        tipVisible.value = true
-        return
-      }
+      if (native && !native.available) throw new Error(native.error
+        ? `应用内更新暂不可用，请稍后重试：${native.error}`
+        : '应用内更新包暂未就绪，请稍后重试')
       if (native?.available && native.update) {
         tipVisible.value = true
         updateInfo.value = {
@@ -429,9 +426,9 @@ async function checkForUpdates(options?: { forceDialog?: boolean }) {
     const shouldShowTip = wantDialog || (!suppressAuto && !dismissed)
     tipVisible.value = shouldShowTip
     status.value = 'available'
-    nativeUpdater.value = false
+    nativeUpdater.value = environmentDetector.isTauriEnvironment()
     setDownloadTarget(
-      result.versionInfo.downloadUrl,
+      nativeUpdater.value ? '' : result.versionInfo.downloadUrl,
       result.versionInfo.version,
     )
 

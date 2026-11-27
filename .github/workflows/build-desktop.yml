@@ -73,6 +73,11 @@ jobs:
           zerror --version
           if ($LASTEXITCODE -ne 0) { throw 'Installed zerror launcher failed' }
           "ZERROR_INSTALLED_CLI=$cli" >> $env:GITHUB_ENV
+      - name: Verify visible Windows upgrade and same-version repair
+        shell: pwsh
+        run: |
+          $packages = @(Get-ChildItem src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe)
+          ./scripts/test-windows-upgrade.ps1 -Installer $packages[0].FullName
       - name: Installed desktop functional regression
         shell: pwsh
         run: npm run test:release -- --phase desktop --start --cli "$env:ZERROR_INSTALLED_CLI" --output output/release-desktop
@@ -164,6 +169,8 @@ jobs:
           mkdir -p "$mount"
           hdiutil attach -nobrowse -mountpoint "$mount" "${images[0]}"
           trap 'hdiutil detach "$mount" || true' EXIT
+          test -L "$mount/Applications"
+          test "$(readlink "$mount/Applications")" = /Applications
           ditto "$mount/ZError.app" "$RUNNER_TEMP/ZError-installed.app"
           test -x "$RUNNER_TEMP/ZError-installed.app/Contents/MacOS/zerror-cli"
           printf 'ZERROR_INSTALLED_CLI=%s\n' "$RUNNER_TEMP/ZError-installed.app/Contents/MacOS/zerror-cli" >> "$GITHUB_ENV"
